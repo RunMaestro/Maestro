@@ -17,6 +17,8 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useContextTimelineStore } from '../../../renderer/stores/contextTimelineStore';
 import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { WindowState } from '../../../shared/window-types';
+import { createMockAITab, createMockSession } from '../../helpers';
+import { getBusyTabs } from '../../../renderer/utils/tabHelpers';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
@@ -672,6 +674,62 @@ describe('MainPanel', () => {
 	});
 
 	describe('Render conditions', () => {
+		it.each([false, true])(
+			'opens the working tab from Pianola instead of the idle selected tab (worktree: %s)',
+			async (isChild) => {
+				const actualTabHelpers = await vi.importActual<
+					typeof import('../../../renderer/utils/tabHelpers')
+				>('../../../renderer/utils/tabHelpers');
+				vi.mocked(getBusyTabs).mockImplementation(actualTabHelpers.getBusyTabs);
+				const originalEncoreFeatures = useSettingsStore.getState().encoreFeatures;
+				const originalPianolaView = useUIStore.getState().pianolaView;
+				useSettingsStore.setState({ encoreFeatures: { ...originalEncoreFeatures, pianola: true } });
+				useUIStore.setState({ pianolaView: 'dashboard' });
+				const pianola = createSession({ id: 'pianola', name: 'Pianola', isPianola: true });
+				const parent = createMockSession({ id: 'parent', name: 'Parent' });
+				const idleTab = createMockAITab({ id: 'idle-tab', name: 'Idle task', state: 'idle' });
+				const busyTab = createMockAITab({ id: 'busy-tab', name: 'Working task', state: 'busy' });
+				const busyAgent = createMockSession({
+					id: 'busy-agent',
+					name: 'Busy agent',
+					state: 'busy',
+					parentSessionId: isChild ? parent.id : undefined,
+					aiTabs: [idleTab, busyTab],
+					activeTabId: idleTab.id,
+					activeFileTabId: 'file-tab',
+					activeBrowserTabId: 'browser-tab',
+					activeTerminalTabId: 'terminal-tab',
+					unifiedTabOrder: [
+						{ type: 'ai', id: idleTab.id },
+						{ type: 'ai', id: busyTab.id },
+					],
+				});
+				const panel = renderMainPanel({ activeSession: pianola });
+				try {
+					act(() => {
+						useSessionStore.setState({ sessions: [pianola, parent, busyAgent] });
+					});
+
+					fireEvent.click(screen.getByText('Working task'));
+
+					const state = useSessionStore.getState();
+					expect(state.activeSessionId).toBe(busyAgent.id);
+					expect(state.sessions.find((session) => session.id === busyAgent.id)).toMatchObject({
+						activeTabId: busyTab.id,
+						activeFileTabId: null,
+						activeBrowserTabId: null,
+						activeTerminalTabId: null,
+						inputMode: 'ai',
+					});
+				} finally {
+					panel.unmount();
+					vi.mocked(getBusyTabs).mockReturnValue([]);
+					useSettingsStore.setState({ encoreFeatures: originalEncoreFeatures });
+					useUIStore.setState({ pianolaView: originalPianolaView });
+				}
+			}
+		);
+
 		it('should render LogViewer when logViewerOpen is true', () => {
 			renderMainPanel({ logViewerOpen: true });
 

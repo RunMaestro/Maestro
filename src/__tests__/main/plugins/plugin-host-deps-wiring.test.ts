@@ -31,6 +31,7 @@ import { RELAY_PLUGIN_ID } from '../../../shared/plugins/relay-identity';
 import { getProviderProfileConfig } from '../../../shared/providerProfiles';
 
 vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
+import { PluginAuthorityError } from '../../../main/plugins/plugin-authority';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 
 const indexPath = path.join(__dirname, '../../../main/index.ts');
@@ -86,6 +87,115 @@ function registryRegisterCallCount(): number {
 }
 
 describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
+	it.each(['missing', 'permission-error', 'overlap', 'appears'] as const)(
+		'keeps proof-location admission safe when registered project state is %s',
+		(mode) => {
+			let callback: ts.ArrowFunction | undefined;
+			const visit = (node: ts.Node): void => {
+				if (
+					ts.isVariableDeclaration(node) &&
+					ts.isIdentifier(node.name) &&
+					node.name.text === 'assertToolProofLocation' &&
+					node.initializer &&
+					ts.isArrowFunction(node.initializer)
+				)
+					callback = node.initializer;
+				ts.forEachChild(node, visit);
+			};
+			visit(sf);
+			expect(callback).toBeDefined();
+			const base = path.resolve('synthetic-proof-base'),
+				project = path.resolve('synthetic-deleted-project');
+			let appeared = false;
+			const realpath = (target: string) => {
+				if (target !== project) return target;
+				if (mode === 'overlap' || appeared) return base;
+				throw Object.assign(new Error('private filesystem diagnostic'), {
+					code: mode === 'permission-error' ? 'EACCES' : 'ENOENT',
+				});
+			};
+			const code = ts.transpileModule(`const assertLocation = ${callback!.getText(sf)}`, {
+				compilerOptions: { target: ts.ScriptTarget.ES2024 },
+			}).outputText;
+			const assertLocation = new Function(
+				'DEMO_MODE',
+				'process',
+				'app',
+				'toolProofBase',
+				'realpathSync',
+				'sessionsStore',
+				'path',
+				'PluginAuthorityError',
+				'lstatSync',
+				`${code}\nreturn assertLocation;`
+			)(
+				false,
+				{ platform: 'linux' },
+				{ getPath: () => base },
+				base,
+				realpath,
+				{ get: () => [{ cwd: project, projectRoot: project }] },
+				path,
+				PluginAuthorityError,
+				() => {
+					throw Object.assign(new Error(), { code: 'ENOENT' });
+				}
+			);
+			if (mode === 'permission-error' || mode === 'overlap')
+				expect(assertLocation).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+			else {
+				expect(assertLocation).not.toThrow();
+				if (mode === 'appears') {
+					appeared = true;
+					expect(assertLocation).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+				}
+			}
+		}
+	);
+
+	it('projects worktree parent metadata without exposing session content or changing agent IDs', () => {
+		let callback: ts.ArrowFunction | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isPropertyAssignment(node) &&
+				node.name.getText(sf) === 'listAgents' &&
+				ts.isArrowFunction(node.initializer)
+			)
+				callback = node.initializer;
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(callback).toBeDefined();
+		const projectPath = path.resolve('synthetic', 'project');
+		const worktreePath = path.resolve('synthetic', 'worktree');
+		const sessions = [
+			{
+				id: 'main',
+				name: 'Main agent',
+				cwd: projectPath,
+				toolType: 'codex',
+				logs: ['private'],
+			},
+			{
+				id: 'child',
+				name: 'Worktree agent',
+				parentSessionId: 'main',
+				cwd: worktreePath,
+				secret: 'private',
+			},
+			{ name: 'invalid' },
+		];
+		const js = ts.transpileModule(`const listAgents = ${callback!.getText(sf)}`, {
+			compilerOptions: { target: ts.ScriptTarget.ES2024 },
+		}).outputText;
+		const list = new Function('getLiveSessions', `${js}\nreturn listAgents;`)(() => sessions);
+		expect(list()).toEqual([
+			{ id: 'main', name: 'Main agent', cwd: projectPath, toolType: 'codex' },
+			{ id: 'child', name: 'Worktree agent', cwd: worktreePath, parentSessionId: 'main' },
+		]);
+		expect(sessions[1].parentSessionId).toBe('main');
+	});
+
 	const keys = depsObjectKeys();
 
 	it('wires the act-verb sinks TOGETHER with the host-owned registry resolver', () => {
@@ -361,4 +471,80 @@ describe('production net:connect wiring (persistent socket sink)', () => {
 		expect(source).toMatch(/https\.Agent\(\{[\s\S]*?lookup: pluginEgressGuard\.lookup/);
 		expect(source).toMatch(/maxPayload:/);
 	});
+});
+
+describe('uninstall authority before optional Cue storage', () => {
+	it.each(['secret', 'receipt', 'relay'])(
+		'retires other owned resources even when %s deletion fails',
+		async (failure) => {
+			let callback: ts.ArrowFunction | undefined;
+			const visit = (node: ts.Node): void => {
+				if (
+					ts.isPropertyAssignment(node) &&
+					node.name.getText(sf) === 'purgePluginData' &&
+					ts.isArrowFunction(node.initializer)
+				)
+					callback = node.initializer;
+				ts.forEachChild(node, visit);
+			};
+			visit(sf);
+			expect(callback).toBeDefined();
+			const retired = vi.fn();
+			const secrets = vi.fn(() => {
+				if (failure === 'secret') throw new Error('Synthetic unavailable native keyring');
+			});
+			const sessions = vi.fn();
+			const groups = vi.fn();
+			const background = vi.fn();
+			const relayPurge = vi.fn(async () => {
+				await Promise.resolve();
+				if (failure === 'relay') throw new Error('Synthetic unavailable Relay ledger');
+			});
+			const code = ts.transpileModule(`const purge = ${callback!.getText(sf)}`, {
+				compilerOptions: { target: ts.ScriptTarget.ES2024 },
+			}).outputText;
+			const purge = new Function(
+				'authStore',
+				'primitiveState',
+				'pluginProviderSessions',
+				'purgePluginData',
+				'pluginKvStore',
+				'pluginSettingsDeleteNamespace',
+				'eventBus',
+				'pluginHostViews',
+				'groupingRegistry',
+				'backgroundSupervisor',
+				'purgePluginEventReceipts',
+				'RELAY_PLUGIN_ID',
+				'relayConversations',
+				`${code}\nreturn purge;`
+			)(
+				{ uninstall: retired },
+				{ purgePlugin: secrets },
+				{ purge: sessions },
+				vi.fn(),
+				{},
+				vi.fn(),
+				{},
+				{},
+				{ removePlugin: groups },
+				{ teardown: background },
+				() => {
+					if (failure === 'receipt') throw new Error('Synthetic locked Cue database');
+				},
+				'com.example.owner',
+				{ purge: relayPurge }
+			);
+			await expect(purge('com.example.owner')).rejects.toThrow(
+				failure === 'secret'
+					? 'Synthetic unavailable native keyring'
+					: failure === 'receipt'
+						? 'Synthetic locked Cue database'
+						: 'Synthetic unavailable Relay ledger'
+			);
+			expect(relayPurge).toHaveBeenCalledOnce();
+			for (const operation of [retired, secrets, sessions, groups, background])
+				expect(operation).toHaveBeenCalledWith('com.example.owner');
+		}
+	);
 });

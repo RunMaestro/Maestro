@@ -1,14 +1,19 @@
 /**
  * Tests for useInterruptHandler hook
  *
+ * The hook is the desktop Stop over `interruptTurn()` (services/turnInterrupt.ts),
+ * so these cases drive the agent-scope stop end to end through the hook. Tab
+ * scope and the result shape are covered in services/turnInterrupt.test.ts.
+ *
  * Tests:
  *   - No-op when no active session
  *   - AI mode interrupt: sends SIGINT, adds "Canceled by user" log, clears thinking/tool logs
+ *   - Every live turn process of the agent, forced-parallel siblings included
  *   - Cross-agent consults: Stop reaches the ephemeral `cross-agent-*` processes
- *   - Terminal mode interrupt: sends SIGINT without canceled log
+ *   - Input mode: Stop ends the AI turns whatever view is open
  *   - Execution queue processing after interrupt
  *   - Force kill fallback when interrupt fails
- *   - Kill error handling (error log in AI/terminal mode)
+ *   - Kill error handling
  *   - Synopsis cancellation before interrupt
  */
 
@@ -48,6 +53,7 @@ const mockMaestro = {
 		interrupt: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
+		cancelCommand: vi.fn().mockResolvedValue(false),
 	},
 	crossAgent: {
 		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
@@ -128,7 +134,6 @@ function createSession(overrides: Partial<Session> = {}): Session {
 
 function createDeps(overrides: Partial<UseInterruptHandlerDeps> = {}): UseInterruptHandlerDeps {
 	return {
-		sessionsRef: { current: [] },
 		cancelPendingSynopsis: vi.fn().mockResolvedValue(undefined),
 		processQueuedItem: vi.fn().mockResolvedValue(undefined),
 		...overrides,
@@ -196,7 +201,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-ai',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -218,7 +223,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-syn',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -250,7 +255,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-cancel',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -287,7 +292,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-think',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -319,7 +324,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-idle',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -353,9 +358,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'active',
 			});
 
-			const deps = createDeps({
-				sessionsRef: { current: [activeSession, otherSession] },
-			});
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -389,7 +392,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-multi' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -413,7 +416,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-orphan' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -434,7 +437,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-dedupe' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -459,7 +462,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-idle-bg' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -469,10 +472,17 @@ describe('useInterruptHandler', () => {
 			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-idle-bg-ai-tab-idle');
 		});
 
-		it('interrupts forced-parallel processes of a busy background tab', async () => {
+		it('interrupts every live turn process of the agent, forced-parallel siblings included', async () => {
+			// Agent scope reads main's process table: a `-fp-` sibling cannot be
+			// derived from a tab id, and a turn whose tab the store already settled
+			// idle (#1448) has no other handle. Other agents and non-turn ids
+			// (synopsis, terminal) stay out.
 			mockMaestro.process.getActiveProcesses.mockResolvedValueOnce([
 				{ sessionId: 'sess-fp-ai-tab-a-fp-1700000000' },
-				{ sessionId: 'sess-fp-ai-tab-unrelated' },
+				{ sessionId: 'sess-fp-ai-tab-ghost' },
+				{ sessionId: 'sess-fp-synopsis-1' },
+				{ sessionId: 'sess-fp-ai-tab-shell', isTerminal: true },
+				{ sessionId: 'sess-fp-other-ai-tab-x' },
 			]);
 
 			const backgroundTab = createTab({ id: 'tab-a', state: 'busy' });
@@ -486,7 +496,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-fp' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -494,7 +504,10 @@ describe('useInterruptHandler', () => {
 			});
 
 			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-fp-ai-tab-a-fp-1700000000');
-			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-fp-ai-tab-unrelated');
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-fp-ai-tab-ghost');
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-fp-synopsis-1');
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-fp-ai-tab-shell');
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-fp-other-ai-tab-x');
 		});
 
 		it('force-kills every target when the primary interrupt fails', async () => {
@@ -512,7 +525,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-kill-all' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -542,14 +555,15 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-xa' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
 				await result.current.handleInterrupt();
 			});
 
-			expect(mockMaestro.crossAgent.cancel).toHaveBeenCalledWith('sess-xa');
+			// No tab: the Stop pill ends every consult the agent started.
+			expect(mockMaestro.crossAgent.cancel).toHaveBeenCalledWith('sess-xa', undefined);
 		});
 
 		it('still signals the agent processes when consult cancellation fails', async () => {
@@ -564,7 +578,7 @@ describe('useInterruptHandler', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-xa-fail' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -573,79 +587,65 @@ describe('useInterruptHandler', () => {
 
 			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-xa-fail-ai-tab-y');
 		});
-
-		it('leaves consults alone when Stop is pressed in terminal mode', async () => {
-			// Terminal mode does not target the AI tabs, so it must not reach into
-			// work those tabs started either.
-			const session = createSession({
-				id: 'sess-xa-term',
-				inputMode: 'terminal',
-				state: 'busy',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-xa-term' });
-
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			expect(mockMaestro.crossAgent.cancel).not.toHaveBeenCalled();
-		});
 	});
 
 	// ========================================================================
-	// Terminal mode interrupt
+	// Input mode (D5: Stop is mode-independent)
 	// ========================================================================
-	describe('terminal mode interrupt', () => {
-		it('sends SIGINT to terminal process target', async () => {
+	describe('input mode', () => {
+		it('stops the AI turns and their consults when the agent is in terminal mode', async () => {
+			// The Stop pill only renders in AI mode, but a remote stop can arrive
+			// while the user looks at the shell. It must still end the turn.
+			const tab = createTab({ id: 'tab-t', state: 'busy' });
 			const session = createSession({
 				id: 'sess-term',
 				inputMode: 'terminal',
 				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-t',
 			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-term',
-			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-term' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
 				await result.current.handleInterrupt();
 			});
 
-			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-term-terminal');
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-term-ai-tab-t');
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-term-terminal');
+			expect(mockMaestro.crossAgent.cancel).toHaveBeenCalledWith('sess-term', undefined);
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('idle');
+			expect(updated.aiTabs[0].state).toBe('idle');
 		});
 
-		it('does not add "Canceled by user" log for terminal mode', async () => {
-			const tab = createTab({ id: 'tab-t', state: 'idle' });
+		it('cancels a running terminal-mode command without writing an AI log', async () => {
+			mockMaestro.process.cancelCommand.mockResolvedValueOnce(true);
+			const tab = createTab({ id: 'tab-t2', state: 'idle' });
 			const session = createSession({
 				id: 'sess-term-2',
 				inputMode: 'terminal',
 				state: 'busy',
+				busySource: 'terminal',
 				aiTabs: [tab],
-				activeTabId: 'tab-t',
+				activeTabId: 'tab-t2',
 			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-term-2',
-			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-term-2' });
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
 				await result.current.handleInterrupt();
 			});
 
-			const updatedTab = useSessionStore.getState().sessions[0].aiTabs[0];
-			const cancelLogs = updatedTab.logs.filter(
-				(l: any) => l.source === 'system' && l.text === 'Canceled by user'
-			);
-			expect(cancelLogs).toHaveLength(0);
+			expect(mockMaestro.process.cancelCommand).toHaveBeenCalledWith('sess-term-2');
+			// The command's own exit listener settles the agent; no AI turn ran.
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].logs.some((l: any) => l.text === 'Canceled by user')).toBe(false);
 		});
 	});
 
@@ -682,7 +682,7 @@ describe('useInterruptHandler', () => {
 				} as never,
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 			await act(async () => {
 				await result.current.handleInterrupt();
@@ -725,7 +725,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-queue',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -762,7 +762,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-q2',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -803,7 +803,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-q3',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -836,7 +836,7 @@ describe('useInterruptHandler', () => {
 				activeSessionId: 'sess-msg',
 			});
 
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -874,7 +874,7 @@ describe('useInterruptHandler', () => {
 			});
 
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -904,7 +904,7 @@ describe('useInterruptHandler', () => {
 			});
 
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -933,7 +933,7 @@ describe('useInterruptHandler', () => {
 			});
 
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -942,37 +942,6 @@ describe('useInterruptHandler', () => {
 
 			const updatedTab = useSessionStore.getState().sessions[0].aiTabs[0];
 			const killLogs = updatedTab.logs.filter(
-				(l: any) => l.text === 'Process forcefully terminated'
-			);
-			expect(killLogs).toHaveLength(1);
-			consoleError.mockRestore();
-		});
-
-		it('adds kill log to shell logs in terminal mode', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
-			window.confirm = vi.fn().mockReturnValue(true);
-
-			const session = createSession({
-				id: 'sess-fk-term',
-				inputMode: 'terminal',
-				state: 'busy',
-				shellLogs: [{ id: 'sl-1', timestamp: 1, source: 'system', text: 'Ready.' }],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-fk-term',
-			});
-
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			const killLogs = updated.shellLogs.filter(
 				(l: any) => l.text === 'Process forcefully terminated'
 			);
 			expect(killLogs).toHaveLength(1);
@@ -1003,7 +972,7 @@ describe('useInterruptHandler', () => {
 			});
 
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -1019,39 +988,6 @@ describe('useInterruptHandler', () => {
 
 			// Session should still be set to idle
 			expect(useSessionStore.getState().sessions[0].state).toBe('idle');
-			consoleError.mockRestore();
-		});
-
-		it('adds error log to shell logs when kill fails in terminal mode', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
-			mockMaestro.process.kill.mockRejectedValueOnce(new Error('Kill failed too'));
-			window.confirm = vi.fn().mockReturnValue(true);
-
-			const session = createSession({
-				id: 'sess-err-term',
-				inputMode: 'terminal',
-				state: 'busy',
-				shellLogs: [],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-err-term',
-			});
-
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			const errorLogs = updated.shellLogs.filter((l: any) =>
-				l.text.includes('Failed to terminate')
-			);
-			expect(errorLogs).toHaveLength(1);
-			expect(updated.state).toBe('idle');
 			consoleError.mockRestore();
 		});
 
@@ -1082,7 +1018,7 @@ describe('useInterruptHandler', () => {
 			});
 
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {

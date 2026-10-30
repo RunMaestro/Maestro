@@ -5,8 +5,8 @@
  * names, instead of raising a save dialog nobody is watching.
  *
  * The section toggles mirror the Debug Package modal's checkboxes. Auto Run
- * live state is held only by the renderer, so a CLI-built package marks that
- * section unavailable rather than claiming no runs were active.
+ * live state is held only by the app windows, so main asks each of them for it
+ * and the package records why when none can answer.
  */
 
 import { withMaestroClient } from '../services/maestro-client';

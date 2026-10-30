@@ -3,14 +3,20 @@
  * @description Unit tests for the main-process "is this agent working right now?" probe.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockIsSessionBusyWithCli = vi.fn<(sessionId: string) => boolean>();
 vi.mock('../../../shared/cli-activity', () => ({
 	isSessionBusyWithCli: (sessionId: string) => mockIsSessionBusyWithCli(sessionId),
 }));
 
-import { isAgentBusy, isAiTabProcessActive } from '../../../main/utils/agent-busy';
+import {
+	isAgentBusy,
+	isAiTabProcessActive,
+	snapshotAiTurnProcesses,
+	waitForAiTurnsToExit,
+	type TurnProcessTable,
+} from '../../../main/utils/agent-busy';
 
 /** Process manager double whose live keys are whatever this set contains. */
 function probeWith(liveIds: string[]) {
@@ -78,5 +84,89 @@ describe('agent-busy', () => {
 		it('is idle for an agent with no tabs at all', () => {
 			expect(isAgentBusy({ id: 'agent-1' }, probeWith(['agent-1-ai']))).toBe(false);
 		});
+	});
+});
+
+/** A live process table whose rows the test edits between polls. */
+function tableWith(rows: Array<{ sessionId: string; startTime: number; isTerminal?: boolean }>) {
+	const live = new Map(rows.map((r) => [r.sessionId, { ...r, isTerminal: r.isTerminal ?? false }]));
+	const table: TurnProcessTable = {
+		getAll: () => [...live.values()],
+		get: (sessionId) => live.get(sessionId),
+	};
+	return { table, live };
+}
+
+describe('snapshotAiTurnProcesses', () => {
+	const { table } = tableWith([
+		{ sessionId: 'agent-1-ai-tab-a', startTime: 10 },
+		{ sessionId: 'agent-1-ai-tab-a-fp-1700', startTime: 11 },
+		{ sessionId: 'agent-1-ai-tab-b', startTime: 12 },
+		{ sessionId: 'agent-1-synopsis-1', startTime: 13 },
+		{ sessionId: 'agent-1-ai-shell', startTime: 14, isTerminal: true },
+		{ sessionId: 'agent-2-ai-tab-a', startTime: 15 },
+	]);
+
+	it('takes every turn process of the agent when no tab is named', () => {
+		expect([...snapshotAiTurnProcesses(table, 'agent-1', null)]).toEqual([
+			['agent-1-ai-tab-a', 10],
+			['agent-1-ai-tab-a-fp-1700', 11],
+			['agent-1-ai-tab-b', 12],
+		]);
+	});
+
+	it("takes one tab's turn and its forced-parallel siblings only", () => {
+		expect([...snapshotAiTurnProcesses(table, 'agent-1', 'tab-a').keys()]).toEqual([
+			'agent-1-ai-tab-a',
+			'agent-1-ai-tab-a-fp-1700',
+		]);
+	});
+
+	it('is empty without a process manager', () => {
+		expect(snapshotAiTurnProcesses(null, 'agent-1', null).size).toBe(0);
+	});
+});
+
+describe('waitForAiTurnsToExit', () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it('resolves true at once when nothing was running', async () => {
+		const { table } = tableWith([]);
+		await expect(waitForAiTurnsToExit(table, new Map(), 1000)).resolves.toBe(true);
+	});
+
+	it('resolves true once the stopped process leaves the table', async () => {
+		const { table, live } = tableWith([{ sessionId: 'agent-1-ai-tab-a', startTime: 10 }]);
+		const done = waitForAiTurnsToExit(table, snapshotAiTurnProcesses(table, 'agent-1', null), 1000);
+
+		live.delete('agent-1-ai-tab-a');
+		await vi.advanceTimersByTimeAsync(100);
+
+		await expect(done).resolves.toBe(true);
+	});
+
+	it('treats a new turn on the same key as the old one having exited', async () => {
+		// A queued item can start on the stopped tab right away: same id, new start.
+		const { table, live } = tableWith([{ sessionId: 'agent-1-ai-tab-a', startTime: 10 }]);
+		const done = waitForAiTurnsToExit(table, snapshotAiTurnProcesses(table, 'agent-1', null), 1000);
+
+		live.set('agent-1-ai-tab-a', {
+			sessionId: 'agent-1-ai-tab-a',
+			startTime: 99,
+			isTerminal: false,
+		});
+		await vi.advanceTimersByTimeAsync(100);
+
+		await expect(done).resolves.toBe(true);
+	});
+
+	it('resolves false when the process outlives the budget', async () => {
+		const { table } = tableWith([{ sessionId: 'agent-1-ai-tab-a', startTime: 10 }]);
+		const done = waitForAiTurnsToExit(table, snapshotAiTurnProcesses(table, 'agent-1', null), 300);
+
+		await vi.advanceTimersByTimeAsync(400);
+
+		await expect(done).resolves.toBe(false);
 	});
 });

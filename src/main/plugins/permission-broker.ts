@@ -88,7 +88,12 @@ export class PermissionBroker {
 		const grants = this.deps.getGrants(pluginId);
 		let allowed: boolean;
 		let reason: string | undefined;
-		if (method === 'media.close' || method === 'services.cancel' || method === 'services.status') {
+		if (
+			method === 'net.tlsClose' ||
+			method === 'media.close' ||
+			method === 'services.cancel' ||
+			method === 'services.status'
+		) {
 			// Release ownership and status of an own declared requirement are checked
 			// in the handlers. Revocation must not block cancellation or denied status.
 			allowed = true;

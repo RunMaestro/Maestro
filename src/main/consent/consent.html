@@ -299,6 +299,36 @@
 						label.appendChild(body);
 						li.appendChild(label);
 
+						if (
+							item.capability === 'media:tools' &&
+							item.scope &&
+							item.scope
+								.split(',')
+								.map(function (s) {
+									return s.trim();
+								})
+								.indexOf('discord-original-audio') !== -1
+						) {
+							var exportLabel = el('label', 'cap-unattended');
+							var exportCheck = document.createElement('input');
+							exportCheck.type = 'checkbox';
+							exportCheck.checked = false;
+							exportCheck.className = 'original-audio-export-check';
+							exportLabel.appendChild(exportCheck);
+							exportLabel.appendChild(
+								el(
+									'span',
+									null,
+									'Share the original Discord audio file with a permitted agent and its configured provider. This exports the recording beyond local voice processing.'
+								)
+							);
+							li.appendChild(exportLabel);
+							check.addEventListener('change', function () {
+								exportCheck.disabled = !check.checked;
+								if (!check.checked) exportCheck.checked = false;
+							});
+						}
+
 						// Nested, separately-approvable unattended consent: only meaningful
 						// on top of the interactive approval, so it is disabled (and
 						// cleared) while the parent act-verb row is unchecked.
@@ -383,7 +413,14 @@
 						});
 						setDisabled(true);
 						try {
-							await window.pluginConsent.confirm(approved, approvedHighRisk, unattended);
+							var exportChecked =
+								root.querySelector('.original-audio-export-check:checked:not(:disabled)') !== null;
+							await window.pluginConsent.confirm(
+								approved,
+								approvedHighRisk,
+								unattended,
+								exportChecked
+							);
 						} catch (err) {
 							setDisabled(false);
 						}

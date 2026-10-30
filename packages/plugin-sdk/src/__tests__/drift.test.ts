@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.25.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.31.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.25.0');
+		expect(HOST_API_VERSION).toBe('1.31.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -347,4 +347,56 @@ describe('vendored services contract parity', () => {
 		}
 		expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
 	});
+});
+
+import {
+	PLUGIN_PRIMITIVE_ERRORS,
+	PLUGIN_RECORD_KEY_PATTERN,
+	PLUGIN_TOPIC_PATTERN,
+	parsePluginEndpointScopes,
+} from '../index';
+import {
+	PLUGIN_PRIMITIVE_ERRORS as SOURCE_PRIMITIVE_ERRORS,
+	PLUGIN_RECORD_KEY_PATTERN as SOURCE_RECORD_KEY_PATTERN,
+	PLUGIN_TOPIC_PATTERN as SOURCE_TOPIC_PATTERN,
+	parsePluginEndpointScopes as sourceEndpointScopes,
+} from '../../../../src/shared/plugins/primitives';
+it('ships the exact generic error vocabulary and endpoint scope grammar', () => {
+	expect(PLUGIN_PRIMITIVE_ERRORS).toEqual(SOURCE_PRIMITIVE_ERRORS);
+	expect(PLUGIN_RECORD_KEY_PATTERN.source).toBe(SOURCE_RECORD_KEY_PATTERN.source);
+	expect(PLUGIN_RECORD_KEY_PATTERN.flags).toBe(SOURCE_RECORD_KEY_PATTERN.flags);
+	expect(PLUGIN_TOPIC_PATTERN.source).toBe(SOURCE_TOPIC_PATTERN.source);
+	expect(PLUGIN_TOPIC_PATTERN.flags).toBe(SOURCE_TOPIC_PATTERN.flags);
+	for (const value of [
+		'none',
+		'fixture.example:993',
+		'fixture.example:993,second.example:443',
+		'*',
+		'localhost:993',
+		undefined,
+	])
+		expect(parsePluginEndpointScopes(value)).toEqual(sourceEndpointScopes(value));
+	for (const value of [
+		'Fixture.example:993',
+		'1.2.3.4:993',
+		'fixture.example.:993',
+		'a.localhost:443',
+		'fixture.example:0',
+		'fixture.example:65536',
+		'fixture.example:0993',
+		'fixture.example:993,fixture.example:993',
+		'0x7f.1:993',
+		'127.0x1:993',
+		'example.123:993',
+		'example.0xff:993',
+		Array.from({ length: 17 }, (_, i) => `h${i}.example:443`).join(','),
+		'a'.repeat(4201),
+	]) {
+		expect(parsePluginEndpointScopes(value)).toBeNull();
+		expect(sourceEndpointScopes(value)).toBeNull();
+	}
+	for (const value of ['imap2.example:993', '0x7f.example:993', '123.example:993']) {
+		expect(parsePluginEndpointScopes(value)).toEqual([value]);
+		expect(sourceEndpointScopes(value)).toEqual([value]);
+	}
 });

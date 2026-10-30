@@ -223,6 +223,17 @@ describe('crash -> bounded-backoff restart', () => {
 		expect(sup.healthAll()).toEqual([]);
 	});
 
+	it('catches an asynchronously rejected restart and retries, but never after teardown', async () => {
+		restartPlugin.mockRejectedValueOnce(new Error('async refresh failed'));
+		const sup = makeSupervisor();
+		sup.register('p', { id: 'svc' });
+		sup.onPluginCrash('p', 1);
+		await vi.advanceTimersByTimeAsync(BACKOFF_BASE_MS);
+		expect(sup.health('p').lastError).toBe('async refresh failed');
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(restartPlugin).toHaveBeenCalledTimes(2);
+		sup.stopAll();
+	});
 	it('a throwing restart hook schedules the next attempt instead of losing the plugin', () => {
 		restartPlugin.mockImplementationOnce(() => {
 			throw new Error('refresh failed');

@@ -141,3 +141,29 @@ export function createUntitledFileTab(): FilePreviewTab {
 		navigationIndex: -1,
 	};
 }
+
+/** A file's current bytes and modification time, as a preview tab stores them. */
+export interface FilePreviewDiskContent {
+	content: string;
+	lastModified: number;
+}
+
+/**
+ * Read a preview tab's file from disk (or its SSH remote). Null when the file
+ * has no readable content. Throws when the read itself fails; the caller owns
+ * how that is reported.
+ */
+export async function readFilePreviewContent(
+	path: string,
+	sshRemoteId?: string
+): Promise<FilePreviewDiskContent | null> {
+	const [content, stat] = await Promise.all([
+		window.maestro.fs.readFile(path, sshRemoteId),
+		window.maestro.fs.stat(path, sshRemoteId),
+	]);
+	if (content === null) return null;
+	return {
+		content,
+		lastModified: stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now(),
+	};
+}

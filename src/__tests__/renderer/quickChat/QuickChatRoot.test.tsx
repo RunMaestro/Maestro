@@ -626,6 +626,10 @@ describe('where a message went', () => {
 			snapshot({ busy: true, messages: [sentMessage('m7', 'one more', { status: 'queued' })] })
 		);
 		expect(screen.getByTestId('quick-chat-route-queued')).toHaveTextContent('Queued');
+		// Drawn as the same tinted pill as Steer, not an underlined link.
+		const newTab = screen.getByTestId('quick-chat-route-new-tab');
+		expect(newTab).toHaveClass('rounded-full');
+		expect(newTab).toHaveAccessibleName('Send to a new tab instead of waiting');
 
 		await act(async () =>
 			fireEvent.click(screen.getByRole('button', { name: /Send to a new tab/ }))

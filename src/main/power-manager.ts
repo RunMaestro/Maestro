@@ -95,6 +95,9 @@ class PowerManager {
 	/** The type the active blocker was started with, or null when not blocking */
 	private activeType: PowerBlockerType | null = null;
 
+	/** Observers of the reason set (crash-report context reads it; see onReasonsChanged) */
+	private reasonListeners: Set<(reasons: string[]) => void> = new Set();
+
 	/** User preference - whether sleep prevention feature is enabled */
 	private enabled: boolean = false;
 
@@ -180,6 +183,7 @@ class PowerManager {
 			return;
 		}
 
+		const isNewReason = !this.activeReasons.has(reason);
 		this.activeReasons.set(reason, type);
 		logger.debug(
 			`Added block reason: ${reason} (${type}, total: ${this.activeReasons.size})`,
@@ -187,6 +191,7 @@ class PowerManager {
 		);
 
 		this.syncBlocker();
+		if (isNewReason) this.notifyReasonsChanged();
 	}
 
 	/**
@@ -208,6 +213,7 @@ class PowerManager {
 		);
 
 		this.syncBlocker();
+		this.notifyReasonsChanged();
 	}
 
 	/**
@@ -220,6 +226,33 @@ class PowerManager {
 		logger.info(`Cleared all ${count} block reasons`, CONTEXT);
 
 		this.syncBlocker();
+		if (count > 0) this.notifyReasonsChanged();
+	}
+
+	/**
+	 * Observe the set of active reasons. The listener runs whenever a reason is
+	 * added or removed, regardless of whether sleep prevention is enabled, which
+	 * makes the reasons the main process's live record of background work (Auto
+	 * Run, busy agents, Cue runs, group chats). Returns an unsubscribe function.
+	 */
+	onReasonsChanged(listener: (reasons: string[]) => void): () => void {
+		this.reasonListeners.add(listener);
+		return () => {
+			this.reasonListeners.delete(listener);
+		};
+	}
+
+	/** Tell observers about the current reason set. A throwing observer cannot break sleep blocking. */
+	private notifyReasonsChanged(): void {
+		if (this.reasonListeners.size === 0) return;
+		const reasons = Array.from(this.activeReasons.keys());
+		for (const listener of this.reasonListeners) {
+			try {
+				listener(reasons);
+			} catch (error) {
+				logger.warn('Power reason listener threw', CONTEXT, { error: String(error) });
+			}
+		}
 	}
 
 	/**

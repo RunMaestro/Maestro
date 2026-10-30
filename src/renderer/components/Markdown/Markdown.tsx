@@ -22,6 +22,7 @@ import type { FileNode } from '../../types/fileTree';
 import { buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { usePathExistence } from '../../hooks/utils/usePathExistence';
 import { copyTextWithFlash } from '../../utils/inlineCodeCopy';
 import {
 	createMarkdownComponents,
@@ -166,6 +167,10 @@ export const Markdown = memo(function Markdown({
 		}
 	}, [homeDir]);
 
+	// Answers "does this path exist?" for a link whose extent had to be guessed,
+	// on whichever machine the agent runs on.
+	const pathExists = usePathExistence(sshRemoteId);
+
 	// Memoize file tree indices to avoid O(n) traversal on every render.
 	const fileTreeIndices = useMemo(() => {
 		if (fileTree && fileTree.length > 0) {
@@ -222,7 +227,7 @@ export const Markdown = memo(function Markdown({
 			// authored, where the same string is content.
 			codexDirectives: isChat && codexDirectives,
 			allowRawHtml: effectiveAllowRawHtml,
-			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
+			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir, pathExists },
 			mentionChips: isChat,
 			extraRemarkPlugins,
 			extraRehypePlugins,
@@ -239,6 +244,7 @@ export const Markdown = memo(function Markdown({
 		cwd,
 		projectRoot,
 		homeDir,
+		pathExists,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	]);

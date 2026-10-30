@@ -138,6 +138,16 @@ async function build() {
 
 		await buildDataviewGuest();
 
+		await esbuild.build({
+			entryPoints: [path.join(rootDir, 'src/main/preload/plugin-confirmation.ts')],
+			outfile: path.join(distMainDir, 'plugin-confirmation-preload.js'),
+			...sharedOptions,
+		});
+		fs.copyFileSync(
+			path.join(rootDir, 'src/main/consent/plugin-confirmation.html'),
+			path.join(distMainDir, 'plugin-confirmation.html')
+		);
+
 		// Copy the static consent page next to its preload.
 		fs.mkdirSync(distMainDir, { recursive: true });
 		fs.copyFileSync(consentHtmlSrc, consentHtmlDest);

@@ -7,11 +7,18 @@
  */
 
 import Database from 'better-sqlite3';
+import { cuePhysicalTable, registerCueReceiptReader } from './cue-receipt-schema';
+import type { CueReceiptBaseline } from './cue-receipt-ledger';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createHash } from 'node:crypto';
+import { canonicalJson } from '../../shared/canonicalJson';
 import { captureException } from '../utils/sentry';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { buildCuePersistedOutput } from './cue-text-utils';
+import { PLUGIN_RECEIPT_KEY_PREFIX } from '../../shared/plugins/primitives';
+import { PluginAuthorityError } from '../plugins/plugin-authority';
+import type { AuthIdentity, AuthorizationStore } from '../plugins/authorization-ledger';
 
 const LOG_CONTEXT = '[CueDB]';
 
@@ -361,6 +368,7 @@ export function initCueDb(
 	}
 
 	db = new Database(dbPath);
+	registerCueReceiptReader(db);
 
 	// Tighten permissions so only the current user can read/write the DB. On
 	// NTFS/Windows POSIX modes are largely ignored (near no-op); on network
@@ -399,10 +407,14 @@ export function initCueDb(
 	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
 	migrateCueGitHubSeenAdditiveColumns(db);
 	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
-	db.prepare(CREATE_CUE_EVENT_QUEUE_SQL).run();
+	db.prepare(
+		CREATE_CUE_EVENT_QUEUE_SQL.replace(/cue_event_queue/g, cuePhysicalTable(db, 'cue_event_queue'))
+	).run();
 	migrateCueEventQueueAdditiveColumns(db);
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
-		db.prepare(sql).run();
+		db.prepare(
+			sql.replace('ON cue_event_queue(', `ON ${cuePhysicalTable(db, 'cue_event_queue')}(`)
+		).run();
 	}
 	db.prepare(CREATE_CUE_FAN_IN_STATE_SQL).run();
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
@@ -690,11 +702,17 @@ function backfillOutputExcerpts(database: Database.Database): void {
  * conditional-ALTER pattern of `migrateCueEventsAdditiveColumns`.
  */
 function migrateCueEventQueueAdditiveColumns(database: Database.Database): void {
-	const existing = database.pragma('table_info(cue_event_queue)') as Array<{ name: string }>;
+	const existing = database.pragma(
+		`table_info(${cuePhysicalTable(database, 'cue_event_queue')})`
+	) as Array<{ name: string }>;
 	const existingNames = new Set(existing.map((row) => row.name));
 	for (const column of CUE_EVENT_QUEUE_ADDITIVE_COLUMNS) {
 		if (!existingNames.has(column)) {
-			database.prepare(`ALTER TABLE cue_event_queue ADD COLUMN ${column} TEXT`).run();
+			database
+				.prepare(
+					`ALTER TABLE ${cuePhysicalTable(database, 'cue_event_queue')} ADD COLUMN ${column} TEXT`
+				)
+				.run();
 		}
 	}
 }
@@ -1665,7 +1683,7 @@ export interface CueQueuedEventRecord {
 export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 	getDb()
 		.prepare(
-			`INSERT OR REPLACE INTO cue_event_queue
+			`INSERT OR REPLACE INTO ${cuePhysicalTable(getDb(), 'cue_event_queue')}
 			 (id, session_id, subscription_name, event_json, prompt, output_prompt,
 			  cli_output_json, action, command_json, chain_depth, queued_at,
 			  chain_root_id, parent_event_id, auto_run_json, notify_json, turn_settings_json)
@@ -1694,7 +1712,9 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 /** Remove a persisted queued event by id. Missing rows are a no-op (matches
  *  the in-memory queue's tolerance for races between persist and drain). */
 export function removeQueuedEvent(id: string): void {
-	getDb().prepare(`DELETE FROM cue_event_queue WHERE id = ?`).run(id);
+	getDb()
+		.prepare(`DELETE FROM ${cuePhysicalTable(getDb(), 'cue_event_queue')} WHERE id = ?`)
+		.run(id);
 }
 
 /** Fetch persisted queue entries. Scoped to a session if provided, or the full
@@ -1704,9 +1724,15 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 	const rows = (
 		sessionId
 			? getDb()
-					.prepare(`SELECT * FROM cue_event_queue WHERE session_id = ? ORDER BY queued_at ASC`)
+					.prepare(
+						`SELECT * FROM ${cuePhysicalTable(getDb(), 'cue_event_queue')} WHERE session_id = ? ORDER BY queued_at ASC`
+					)
 					.all(sessionId)
-			: getDb().prepare(`SELECT * FROM cue_event_queue ORDER BY queued_at ASC`).all()
+			: getDb()
+					.prepare(
+						`SELECT * FROM ${cuePhysicalTable(getDb(), 'cue_event_queue')} ORDER BY queued_at ASC`
+					)
+					.all()
 	) as Array<{
 		id: string;
 		session_id: string;
@@ -1751,9 +1777,13 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
  *  in-memory queue from disk. */
 export function clearPersistedQueue(sessionId?: string): void {
 	if (sessionId) {
-		getDb().prepare(`DELETE FROM cue_event_queue WHERE session_id = ?`).run(sessionId);
+		getDb()
+			.prepare(`DELETE FROM ${cuePhysicalTable(getDb(), 'cue_event_queue')} WHERE session_id = ?`)
+			.run(sessionId);
 	} else {
-		getDb().prepare(`DELETE FROM cue_event_queue`).run();
+		getDb()
+			.prepare(`DELETE FROM ${cuePhysicalTable(getDb(), 'cue_event_queue')}`)
+			.run();
 	}
 }
 
@@ -2118,4 +2148,285 @@ export function pruneSusFactorBlocks(olderThanMs: number): void {
 	getDb()
 		.prepare(`DELETE FROM cue_susfactor_blocks WHERE blocked_at < ?`)
 		.run(Date.now() - olderThanMs);
+}
+
+/** Durable deduplication receipts for generic authenticated plugin sources. No automatic eviction. */
+function pluginReceiptTable(db: Database.Database = getDb()): Database.Database {
+	registerCueReceiptReader(db);
+	db.exec(`CREATE TABLE IF NOT EXISTS ${cuePhysicalTable(db, 'cue_plugin_receipts')} (
+  plugin_id TEXT NOT NULL, event_key TEXT NOT NULL, receipt_id TEXT NOT NULL,
+  payload_hash TEXT NOT NULL, proof TEXT NOT NULL, PRIMARY KEY(plugin_id, event_key))`);
+	db.exec(`CREATE TABLE IF NOT EXISTS ${cuePhysicalTable(db, 'cue_plugin_legacy_receipts')} (
+ plugin_id TEXT NOT NULL, event_key TEXT NOT NULL, receipt_id TEXT NOT NULL,
+ payload_hash TEXT NOT NULL, proof TEXT NOT NULL, identity_json TEXT NOT NULL,
+ PRIMARY KEY(plugin_id,event_key))`);
+	return db;
+}
+
+/** Checkpoint only HMAC-authenticated old receipts, before their sealed identity is replaced.
+ * Unknown/malformed history remains untouched and continues to block that owner.
+ * Keeping the old key and proof avoids inventing digest preimages or changing grants.
+ */
+export function checkpointPluginEventReceipts(pluginId: string, store: AuthorizationStore): number {
+	const receiptPath = path.join(resolveUserDataDir(), 'cue.db');
+	if (!db && !fs.existsSync(receiptPath)) return 0;
+	const connection = db ?? new Database(receiptPath, { fileMustExist: true });
+	try {
+		const receiptDb = pluginReceiptTable(connection);
+		const identity = store.entryIdentity(pluginId);
+		if (!identity) return 0;
+		return receiptDb.transaction(() => {
+			const rows = receiptDb
+				.prepare(
+					`SELECT event_key AS id, receipt_id AS receiptId,
+   payload_hash AS payloadHash, proof FROM ${cuePhysicalTable(receiptDb, 'cue_plugin_receipts')}
+   WHERE plugin_id=? AND length(event_key)=64 AND event_key NOT GLOB '*[^0-9a-f]*' LIMIT 4097`
+				)
+				.all(pluginId) as { id: string; receiptId: string; payloadHash: string; proof: string }[];
+			if (rows.length > 4096) throw new PluginAuthorityError('PLUGIN_LIMIT');
+			let migrated = 0;
+			for (const row of rows) {
+				if (!store.authenticateHistoricalPluginReceipt(pluginId, identity, row.id, row)) continue;
+				const previous = receiptDb
+					.prepare(
+						`SELECT receipt_id AS receiptId,payload_hash AS payloadHash,proof,identity_json AS identity FROM ${cuePhysicalTable(receiptDb, 'cue_plugin_legacy_receipts')} WHERE plugin_id=? AND event_key=?`
+					)
+					.get(pluginId, row.id);
+				if (previous) {
+					const old = previous as {
+						receiptId: string;
+						payloadHash: string;
+						proof: string;
+						identity: string;
+					};
+					if (
+						old.receiptId !== row.receiptId ||
+						old.payloadHash !== row.payloadHash ||
+						old.proof !== row.proof ||
+						canonicalJson(JSON.parse(old.identity)) !== canonicalJson(identity)
+					)
+						throw new PluginAuthorityError('PLUGIN_CONFLICT');
+					continue;
+				}
+				receiptDb
+					.prepare(
+						`INSERT INTO ${cuePhysicalTable(receiptDb, 'cue_plugin_legacy_receipts')} VALUES (?,?,?,?,?,?)`
+					)
+					.run(
+						pluginId,
+						row.id,
+						row.receiptId,
+						row.payloadHash,
+						row.proof,
+						JSON.stringify(identity)
+					);
+				// Keep v1 originals: older hosts must still refuse admission on code rollback.
+				migrated++;
+			}
+			return migrated;
+		})();
+	} finally {
+		if (connection !== db) connection.close();
+	}
+}
+
+/** Recover exact old tuple lookups; historical identity grants no execution rights. */
+export function readHistoricalPluginEventReceipt(
+	pluginId: string,
+	current: AuthIdentity,
+	consumerId: string,
+	eventId: string,
+	payloadHash: string,
+	store: AuthorizationStore
+): string | null {
+	store.assertPluginPersistent(pluginId, current);
+	const db = pluginReceiptTable();
+	const rows = db
+		.prepare(
+			`SELECT event_key AS id, receipt_id AS receiptId,
+  payload_hash AS payloadHash, proof, identity_json FROM ${cuePhysicalTable(db, 'cue_plugin_legacy_receipts')} WHERE plugin_id=? LIMIT 4097`
+		)
+		.all(pluginId) as {
+		id: string;
+		receiptId: string;
+		payloadHash: string;
+		proof: string;
+		identity_json: string;
+	}[];
+	if (rows.length > 4096) throw new PluginAuthorityError('PLUGIN_LIMIT');
+	let receiptId: string | null = null;
+	for (const row of rows) {
+		const identity = JSON.parse(row.identity_json) as AuthIdentity;
+		// Validate every checkpoint before admission, including nonmatching tuples:
+		// changing stored identity must never turn an existing receipt into a miss.
+		if (!store.authenticateHistoricalPluginReceipt(pluginId, identity, row.id, row))
+			throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+		if (identity.signerKey !== current.signerKey) continue;
+		const id = createHash('sha256')
+			.update(canonicalJson([pluginId, identity, consumerId, eventId]))
+			.digest('hex');
+		if (id !== row.id) continue;
+		if (row.payloadHash !== payloadHash) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		if (receiptId && receiptId !== row.receiptId) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		receiptId = row.receiptId;
+	}
+	store.assertPluginPersistent(pluginId, current);
+	return receiptId;
+}
+
+export function readPluginEventReceipt(
+	pluginId: string,
+	id: string
+): { receiptId: string; payloadHash: string; proof: string } | null {
+	const db = pluginReceiptTable();
+	const row = db
+		.prepare(
+			`SELECT receipt_id AS receiptId, payload_hash AS payloadHash, proof FROM ${cuePhysicalTable(db, 'cue_plugin_receipts')} WHERE plugin_id=? AND event_key=?`
+		)
+		.get(pluginId, id);
+	return (row as { receiptId: string; payloadHash: string; proof: string } | undefined) ?? null;
+}
+export function writePluginEventReceipt(
+	pluginId: string,
+	id: string,
+	row: { receiptId: string; payloadHash: string; proof: string }
+): void {
+	const db = pluginReceiptTable();
+	db.transaction(() => {
+		const stableFormatOnly = id.startsWith(PLUGIN_RECEIPT_KEY_PREFIX);
+		if (stableFormatOnly && !/^[0-9a-f]{64}$/.test(id.slice(PLUGIN_RECEIPT_KEY_PREFIX.length)))
+			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		if (!pluginEventReceiptCapacityAvailable(pluginId, { stableFormatOnly }))
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
+		db.prepare(
+			`INSERT INTO ${cuePhysicalTable(db, 'cue_plugin_receipts')} (plugin_id,event_key,receipt_id,payload_hash,proof) VALUES (?,?,?,?,?)`
+		).run(pluginId, id, row.receiptId, row.payloadHash, row.proof);
+	})();
+}
+
+export function pluginEventReceiptCapacityAvailable(
+	pluginId: string,
+	options: { stableFormatOnly?: boolean } = {}
+): boolean {
+	const db = pluginReceiptTable();
+	// v1 hashes omitted the original signer/consumer/event identity. Never guess a
+	// migration or dispatch again: retain the namespace and require explicit migration.
+	if (
+		options.stableFormatOnly &&
+		db
+			.prepare(
+				`SELECT 1 FROM ${cuePhysicalTable(db, 'cue_plugin_receipts')} AS r WHERE plugin_id=? AND
+		(event_key NOT GLOB ? OR length(event_key) != ? OR substr(event_key, ?) GLOB '*[^0-9a-f]*')
+ AND NOT EXISTS(SELECT 1 FROM ${cuePhysicalTable(db, 'cue_plugin_legacy_receipts')} AS c WHERE c.plugin_id=r.plugin_id AND c.event_key=r.event_key AND c.receipt_id=r.receipt_id AND c.payload_hash=r.payload_hash AND c.proof=r.proof) LIMIT 1`
+			)
+			.get(
+				pluginId,
+				PLUGIN_RECEIPT_KEY_PREFIX + '*',
+				PLUGIN_RECEIPT_KEY_PREFIX.length + 64,
+				PLUGIN_RECEIPT_KEY_PREFIX.length + 1
+			)
+	)
+		throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+	const count = db
+		.prepare(
+			`SELECT COUNT(*) AS n FROM (SELECT plugin_id,event_key FROM ${cuePhysicalTable(db, 'cue_plugin_receipts')} UNION SELECT plugin_id,event_key FROM ${cuePhysicalTable(db, 'cue_plugin_legacy_receipts')})`
+		)
+		.get() as { n: number };
+	const own = db
+		.prepare(
+			`SELECT COUNT(*) AS n FROM (SELECT event_key FROM ${cuePhysicalTable(db, 'cue_plugin_receipts')} WHERE plugin_id=? UNION SELECT event_key FROM ${cuePhysicalTable(db, 'cue_plugin_legacy_receipts')} WHERE plugin_id=?)`
+		)
+		.get(pluginId, pluginId) as { n: number };
+	return count.n < 100000 && own.n < 4096;
+}
+
+/** Uninstall cleans legacy SQL rows even when Cue is stopped. Independent replay
+ * fences remain permanent and are not part of this namespace cleanup. */
+export function purgePluginEventReceipts(pluginId: string, dbPathOverride?: string): void {
+	const receiptPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+	if (!db && !fs.existsSync(receiptPath)) return;
+	const receiptDb = db ?? new Database(receiptPath, { fileMustExist: true });
+	try {
+		for (const name of ['cue_plugin_receipts', 'cue_plugin_legacy_receipts'] as const) {
+			const physical = cuePhysicalTable(receiptDb, name);
+			if (
+				receiptDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(physical)
+			)
+				receiptDb.prepare(`DELETE FROM ${physical} WHERE plugin_id=?`).run(pluginId);
+		}
+	} finally {
+		if (receiptDb !== db) receiptDb.close();
+	}
+}
+
+/** Retained authenticated contents, never a claim of complete pre-cutover history. */
+export async function authenticatedPluginReceiptBaseline(
+	pluginId: string,
+	store: AuthorizationStore
+): Promise<CueReceiptBaseline> {
+	const receiptPath = path.join(resolveUserDataDir(), 'cue.db');
+	const connection = db ?? new Database(receiptPath, { fileMustExist: true });
+	try {
+		const receiptDb = pluginReceiptTable(connection);
+		const identity = store.entryIdentity(pluginId);
+		if (!identity) throw new PluginAuthorityError('PLUGIN_DENIED');
+		store.assertPluginPersistent(pluginId, identity);
+		const originals = receiptDb
+			.prepare(
+				`SELECT event_key AS key,receipt_id AS receiptId,payload_hash AS payloadHash,proof FROM ${cuePhysicalTable(receiptDb, 'cue_plugin_receipts')} WHERE plugin_id=? LIMIT 4097`
+			)
+			.all(pluginId) as { key: string; receiptId: string; payloadHash: string; proof: string }[];
+		const legacy = receiptDb
+			.prepare(
+				`SELECT event_key AS key,receipt_id AS receiptId,payload_hash AS payloadHash,proof,identity_json AS identityJson FROM ${cuePhysicalTable(receiptDb, 'cue_plugin_legacy_receipts')} WHERE plugin_id=? LIMIT 4097`
+			)
+			.all(pluginId) as {
+			key: string;
+			receiptId: string;
+			payloadHash: string;
+			proof: string;
+			identityJson: string;
+		}[];
+		if (originals.length > 4096 || legacy.length > 4096)
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
+		const rows = new Map<string, CueReceiptBaseline['rows'][number]>();
+		const evidence: Parameters<AuthorizationStore['authenticatePluginReceiptRows']>[2] = [];
+		for (const item of legacy) {
+			const oldIdentity = JSON.parse(item.identityJson) as AuthIdentity;
+			const row = { receiptId: item.receiptId, payloadHash: item.payloadHash, proof: item.proof };
+			rows.set(item.key, { key: 'legacy:' + item.key, row, identity: oldIdentity });
+			evidence.push({ id: item.key, row, identity: oldIdentity, purpose: 'event' });
+		}
+		for (const item of originals) {
+			const row = { receiptId: item.receiptId, payloadHash: item.payloadHash, proof: item.proof };
+			const checkpoint = rows.get(item.key);
+			if (checkpoint) {
+				if (canonicalJson(checkpoint.row) !== canonicalJson(row))
+					throw new PluginAuthorityError('PLUGIN_CONFLICT');
+				continue;
+			}
+			const stable =
+				item.key.startsWith(PLUGIN_RECEIPT_KEY_PREFIX) &&
+				/^[0-9a-f]{64}$/.test(item.key.slice(PLUGIN_RECEIPT_KEY_PREFIX.length));
+			if (!stable && !/^[0-9a-f]{64}$/.test(item.key))
+				throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			rows.set(item.key, {
+				key: stable ? item.key : 'legacy:' + item.key,
+				row,
+				...(!stable ? { identity } : {}),
+			});
+			evidence.push({
+				id: item.key,
+				row,
+				...(!stable ? { identity } : {}),
+				purpose: stable ? 'receipt' : 'event',
+			});
+		}
+		if (rows.size > 4096) throw new PluginAuthorityError('PLUGIN_LIMIT');
+		const verified = await store.authenticatePluginReceiptRows(pluginId, identity, evidence);
+		if (verified.some((value) => !value)) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		return { rows: [...rows.values()], coverage: 'retained-authenticated-only' };
+	} finally {
+		if (connection !== db) connection.close();
+	}
 }

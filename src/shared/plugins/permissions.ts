@@ -22,6 +22,7 @@
  *   silently become an allow-all.
  */
 
+import { parsePluginEndpointScopes } from './primitives';
 import { isValidServiceCallTarget } from './services';
 
 /**
@@ -30,6 +31,12 @@ import { isValidServiceCallTarget } from './services';
  * brokered host call; there is no generic "eval"/"exec arbitrary" capability.
  */
 export type PluginCapability =
+	| 'invocations:inspect'
+	| 'net:tls'
+	| 'secrets:use'
+	| 'records:read'
+	| 'records:confirm'
+	| 'events:publish'
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
 	| 'services:call'
@@ -68,6 +75,13 @@ export type PluginCapability =
 	| 'ui:render-unsafe'; // high-trust custom UI in host-approved, non-protected regions
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
+	'invocations:inspect',
+	'net:tls',
+	'secrets:use',
+	'records:read',
+	'records:confirm',
+	'events:publish',
+
 	'fs:read',
 	'fs:write',
 	'services:call',
@@ -110,6 +124,13 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 export type CapabilityRisk = 'low' | 'medium' | 'high';
 
 const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
+	'invocations:inspect': 'low',
+	'net:tls': 'high',
+	'secrets:use': 'high',
+	'records:read': 'medium',
+	'records:confirm': 'high',
+	'events:publish': 'high',
+
 	'notifications:toast': 'low',
 	'settings:read': 'low',
 	'agents:read': 'low',
@@ -159,9 +180,16 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
  * substring or wildcard), and an unscoped grant is a wildcard and therefore
  * DENIED - the opposite of path/host, where unscoped means broadest.
  */
-type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
+type ScopeKind = 'path' | 'host' | 'endpoint' | 'allowlist' | 'none';
 
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
+	'invocations:inspect': 'none',
+	'net:tls': 'endpoint',
+	'secrets:use': 'endpoint',
+	'records:read': 'allowlist',
+	'records:confirm': 'allowlist',
+	'events:publish': 'allowlist',
+
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
@@ -275,6 +303,8 @@ export interface PermissionGrant {
 	 * user clicks must not thereby dispatch on a timer. Revocable like any grant.
 	 */
 	unattended?: boolean;
+	/** Host-stamped separate original-audio export consent; never inferred from a legacy scope. */
+	originalAudioExport?: boolean;
 }
 
 export interface PermissionParseResult {
@@ -315,6 +345,10 @@ export function parsePermissions(input: unknown): PermissionParseResult {
 		}
 		if (scopeKind === 'none' && typeof scope === 'string' && scope.trim() !== '') {
 			out.errors.push(`capability "${capability}" does not take a scope`);
+			continue;
+		}
+		if (scopeKind === 'endpoint' && parsePluginEndpointScopes(scope) === null) {
+			out.errors.push(`capability ${capability} requires an exact DNS-name:port scope`);
 			continue;
 		}
 		if (scopeKind === 'allowlist') {
@@ -491,7 +525,18 @@ export function isPermitted(
 	const scopeKind = CAPABILITY_SCOPE_KIND[capability];
 	for (const grant of grants) {
 		if (grant.capability !== capability) continue;
+		if (
+			capability === 'media:tools' &&
+			target === 'discord-original-audio' &&
+			grant.originalAudioExport !== true
+		)
+			continue;
 		if (scopeKind === 'none') return true;
+		if (scopeKind === 'endpoint') {
+			if (typeof target === 'string' && parsePluginEndpointScopes(grant.scope)?.includes(target))
+				return true;
+			continue;
+		}
 		if (scopeKind === 'allowlist') {
 			// Service pairs must also be valid when read from persisted grants;
 			// malformed/wildcard members never authorize even an exact target.
@@ -532,6 +577,19 @@ export function isPermittedUnattended(
 /** Human-readable, stable description of a capability for the consent UI. */
 export function describeCapability(capability: PluginCapability): string {
 	switch (capability) {
+		case 'invocations:inspect':
+			return 'Inspect its own active host-verified invocation';
+		case 'net:tls':
+			return 'Exchange arbitrary bounded TLS bytes with this exact endpoint; protocol and read-only policy are enforced by the trusted plugin';
+		case 'secrets:use':
+			return 'Store a secret in the native keyring and consume it as encoded bytes on this exact endpoint; no secret export';
+		case 'records:read':
+			return 'Read its own integrity-protected records';
+		case 'records:confirm':
+			return 'Request trusted user confirmation to change its own sealed records';
+		case 'events:publish':
+			return 'Publish durable events to explicitly enabled Cue consumers owned by the user';
+
 		case 'fs:read':
 			return 'Read files';
 		case 'fs:write':

@@ -101,5 +101,8 @@ export type { CountBadgeProps } from './CountBadge';
 export { MiniBadge } from './MiniBadge';
 export type { MiniBadgeProps } from './MiniBadge';
 
+export { StartTruncatedText } from './StartTruncatedText';
+export type { StartTruncatedTextProps } from './StartTruncatedText';
+
 export { ShortcutHint, shortcutSuffix } from './ShortcutHint';
 export type { ShortcutHintProps } from './ShortcutHint';

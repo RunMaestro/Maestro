@@ -52,7 +52,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 ### Core Features
 
-- 🔄 **Dual-Mode Sessions** - Each agent has both an AI Terminal and Command Terminal. Switch seamlessly between AI conversation and shell commands with `Cmd+J`.
+- 🔄 **Dual-Mode Sessions** - Each agent has both an AI Terminal and Command Terminal. Open a new terminal tab with `Cmd+J`, or jump to the nearest one with `Opt+Cmd+J`.
 - ⌨️ **[Keyboard-First Design](https://docs.runmaestro.ai/keyboard-shortcuts)** - Full keyboard control with customizable shortcuts and [mastery tracking](https://docs.runmaestro.ai/keyboard-shortcuts#keyboard-mastery) that rewards you for leveling up. `Cmd+K` quick actions, rapid agent switching, and focus management designed for flow state.
 - 📋 **Session Discovery** - Automatically discovers and imports existing sessions from all supported providers, including conversations from before Maestro was installed. Browse, search, star, rename, and resume any session.
 - 🔀 **Git Integration** - Automatic repo detection, branch display, diff viewer, commit logs, and git-aware file completion. Work with git without leaving the app.
@@ -137,12 +137,12 @@ npm run dev
 | ------------------- | ----------------- | ------------------- |
 | Quick Actions       | `Cmd+K`           | `Ctrl+K`            |
 | New Agent           | `Cmd+N`           | `Ctrl+N`            |
-| Switch AI/Terminal  | `Cmd+J`           | `Ctrl+J`            |
+| New Terminal Tab    | `Cmd+J`           | `Ctrl+J`            |
 | Previous/Next Agent | `Cmd+[` / `Cmd+]` | `Ctrl+[` / `Ctrl+]` |
-| Toggle Sidebar      | `Cmd+B`           | `Ctrl+B`            |
+| Toggle Left Panel   | `Opt+Cmd+Left`    | `Alt+Ctrl+Left`     |
 | New Tab             | `Cmd+T`           | `Ctrl+T`            |
 | Usage Dashboard     | `Opt+Cmd+U`       | `Alt+Ctrl+U`        |
-| Concerto Stage      | `Opt+C`           | `Alt+C`             |
+| Concerto Stage      | `Opt+Cmd+C`       | `Alt+Ctrl+C`        |
 | All Shortcuts       | `Cmd+/`           | `Ctrl+/`            |
 
 [Full keyboard shortcut reference](https://docs.runmaestro.ai/keyboard-shortcuts)

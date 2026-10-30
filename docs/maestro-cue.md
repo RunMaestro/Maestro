@@ -62,7 +62,7 @@ Open the Cue modal to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
-The modal has six tabs - **Dashboard**, **Scheduled Tasks**, **Pipeline Graph**, **Pipeline List**, **Activity Log**, and **Backup** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+The modal has eight tabs - **Dashboard**, **Scheduled Tasks**, **Pipeline Graph**, **Pipeline List**, **Activity Log**, **Backup**, **Bundles** (see [Cue Bundles](./maestro-cue-bundles)), and **Readiness** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
 
 **From an agent:** ask any Maestro agent to open it and it will run `maestro-cli open cue`, optionally on a tab (`maestro-cli open cue --tab scheduled`). See [Opening a surface from the CLI](./cli-reference#maestro-cli-open).
 
@@ -288,6 +288,12 @@ Click any row - or use **Expand all** - to reveal the full event data: payload f
 ![Activity Log Detail](./screenshots/cue-activity-log-detail.png)
 
 For `file.changed` events the payload includes the path, filename, directory, extension, and change type. For GitHub triggers it includes the PR/issue number, title, author, URL, and body.
+
+## Readiness
+
+The Readiness tab answers one question: could Cue run your enabled subscriptions unattended right now? It checks every agent those subscriptions use (its provider binary, working directory, declared secrets, and SSH remote), every `cue.yaml`, webhook secrets, and `gh` plus a `repo:` on each GitHub trigger. It then shows **Ready**, or **Not ready** with every gap listed, each tagged with its kind and saying what to fix. Press **Refresh** after you fix something.
+
+It is the same report as `maestro-cli cue engine check` (see [Running Cue on a Server](./maestro-cue-server)), and `maestro-cli open cue --tab readiness` opens it.
 
 ## YAML Editor
 

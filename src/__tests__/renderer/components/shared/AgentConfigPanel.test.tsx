@@ -6,12 +6,13 @@
  */
 
 import { useState, useCallback } from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
 import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
 
 import { createMockTheme } from '../../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -955,5 +956,165 @@ describe('AgentConfigPanel - detected installation chooser', () => {
 			expect(keyInputs[1]).toHaveValue('SECOND');
 			expect(screen.getByTitle(/^Enable FIRST/)).toBeInTheDocument();
 		});
+	});
+
+	describe('Advanced (.env) env var mode', () => {
+		const MODE_KEY = 'envVarsEditor.advancedMode';
+
+		beforeEach(() => {
+			// jsdom here ships no working Storage, so the remembered mode needs
+			// the shared in-memory stand-in. A fresh install is also the reset.
+			installLocalStorageMock();
+		});
+
+		// The choice is remembered, so leaving it set would flip every later
+		// test in this file onto the textarea.
+		afterEach(() => {
+			installLocalStorageMock();
+		});
+
+		const openAdvanced = () => fireEvent.click(screen.getByRole('radio', { name: 'Advanced' }));
+		const textarea = () => screen.getByTestId('env-vars-dotenv-textarea') as HTMLTextAreaElement;
+
+		it('offers no toggle to a consumer that cannot replace the record whole', () => {
+			window.localStorage.setItem(MODE_KEY, 'true');
+			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars: { FOO: 'bar' } })} />);
+
+			expect(screen.queryByRole('radio', { name: 'Advanced' })).not.toBeInTheDocument();
+			// The remembered preference must not strand it on a mode it cannot commit from.
+			expect(screen.queryByTestId('env-vars-dotenv-textarea')).not.toBeInTheDocument();
+			expect(screen.getByPlaceholderText('VARIABLE_NAME')).toHaveValue('FOO');
+		});
+
+		it('shows the variables as text and replaces the record on edit', () => {
+			const onEnvVarsReplace = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ customEnvVars: { FOO: 'bar' }, onEnvVarsReplace })}
+				/>
+			);
+
+			openAdvanced();
+			expect(textarea()).toHaveValue('FOO=bar');
+			expect(screen.queryByPlaceholderText('VARIABLE_NAME')).not.toBeInTheDocument();
+			expect(screen.queryByText('Add Variable')).not.toBeInTheDocument();
+
+			fireEvent.change(textarea(), { target: { value: 'FOO=bar\nexport NEW=1\n# OFF=2' } });
+
+			// No parked record was passed, so the commented line is only a comment.
+			expect(onEnvVarsReplace).toHaveBeenLastCalledWith({ FOO: 'bar', NEW: '1' }, {});
+		});
+
+		it('round-trips parked variables when the consumer can park', () => {
+			const onEnvVarsReplace = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						customEnvVars: { FOO: 'bar' },
+						customEnvVarsDisabled: { OFF: 'x' },
+						onEnvVarToggle: vi.fn(),
+						onEnvVarsReplace,
+					})}
+				/>
+			);
+
+			openAdvanced();
+			expect(textarea()).toHaveValue('FOO=bar\n# OFF=x');
+
+			fireEvent.change(textarea(), { target: { value: '# FOO=bar\nOFF=x' } });
+
+			expect(onEnvVarsReplace).toHaveBeenLastCalledWith({ OFF: 'x' }, { FOO: 'bar' });
+		});
+
+		it('accepts the same values the rows accept, with no extra value rule', () => {
+			// The per-agent rows do not validate values, so the text mode must not
+			// drop a variable the rows already hold.
+			const onEnvVarsReplace = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ customEnvVars: { A: '$HOME/bin' }, onEnvVarsReplace })}
+				/>
+			);
+			openAdvanced();
+
+			fireEvent.change(textarea(), { target: { value: 'A=$HOME/bin\nB=1' } });
+
+			expect(onEnvVarsReplace).toHaveBeenLastCalledWith({ A: '$HOME/bin', B: '1' }, {});
+			expect(screen.queryByTestId('env-vars-dotenv-errors')).not.toBeInTheDocument();
+		});
+
+		it('reports a line that is not an assignment', () => {
+			const onEnvVarsReplace = vi.fn();
+			render(<AgentConfigPanel {...createDefaultProps({ onEnvVarsReplace })} />);
+			openAdvanced();
+
+			fireEvent.change(textarea(), { target: { value: 'GOOD=1\nnope' } });
+
+			expect(onEnvVarsReplace).toHaveBeenLastCalledWith({ GOOD: '1' }, {});
+			expect(screen.getByTestId('env-vars-dotenv-errors')).toHaveTextContent(
+				'Line 2 not saved: Expected KEY=value.'
+			);
+		});
+
+		it('persists on blur the way the value fields do', () => {
+			const onEnvVarsBlur = vi.fn();
+			render(
+				<AgentConfigPanel {...createDefaultProps({ onEnvVarsReplace: vi.fn(), onEnvVarsBlur })} />
+			);
+			openAdvanced();
+
+			fireEvent.blur(textarea());
+
+			expect(onEnvVarsBlur).toHaveBeenCalledTimes(1);
+			// No FocusEvent forwarded: a stray event arg was once saved as a value (MAESTRO-11C).
+			expect(onEnvVarsBlur).toHaveBeenCalledWith();
+		});
+
+		it('keeps the read-only built-in variables on screen', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnvVarsReplace: vi.fn(), showBuiltInEnvVars: true })}
+				/>
+			);
+			openAdvanced();
+
+			expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
+		});
+	});
+});
+
+// =============================================================================
+// BLUR CALLBACK ARGUMENTS (MAESTRO-11C)
+// =============================================================================
+
+describe('AgentConfigPanel blur callbacks', () => {
+	// The blur props are typed as no-argument callbacks, and Director's Notes hands
+	// one persist function (whose optional first parameter is a path) to all of
+	// them. Forwarding the FocusEvent stored the event as customPath, and the
+	// settings IPC write threw "An object could not be cloned".
+	it('calls onCustomArgsBlur with no arguments', () => {
+		const onCustomArgsBlur = vi.fn();
+		render(<AgentConfigPanel {...createDefaultProps({ onCustomArgsBlur })} />);
+
+		fireEvent.blur(screen.getByPlaceholderText('--flag value --another-flag'));
+
+		expect(onCustomArgsBlur).toHaveBeenCalledTimes(1);
+		expect(onCustomArgsBlur).toHaveBeenCalledWith();
+	});
+
+	it('calls onEnvVarsBlur with no arguments when an env var value blurs', () => {
+		const onEnvVarsBlur = vi.fn();
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({ onEnvVarsBlur, customEnvVars: { MY_FLAG: 'on' } })}
+			/>
+		);
+
+		fireEvent.blur(screen.getByDisplayValue('on'));
+
+		expect(onEnvVarsBlur).toHaveBeenCalled();
+		for (const call of onEnvVarsBlur.mock.calls) {
+			expect(call).toEqual([]);
+		}
 	});
 });

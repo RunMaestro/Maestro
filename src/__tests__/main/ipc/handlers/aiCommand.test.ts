@@ -160,6 +160,14 @@ describe('aiCommand IPC handler', () => {
 		expect(options.sshStore.getSshRemotes()).toEqual([remote]);
 	});
 
+	// The suggestion runs in the agent's own directory, and can be the first TUI
+	// spawn there (#1872).
+	it("accepts claude's folder trust for the agent's own directory", async () => {
+		await invokeSuggest({});
+
+		expect(mockGroomContext.mock.calls[0][0].acceptWorkspaceTrust).toBe(true);
+	});
+
 	it('passes no remote list for a local agent', async () => {
 		await invokeSuggest();
 

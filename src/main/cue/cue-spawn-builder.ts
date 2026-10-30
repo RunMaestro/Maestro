@@ -20,6 +20,11 @@ import {
 	describeUndeliveredSecrets,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import { buildSpawnPath } from '../utils/spawnPath';
+import {
+	cmdShellArgProblem,
+	windowsShellReason,
+} from '../../shared/maestro-lib/launch/windows-command';
+import { isWindows } from '../../shared/platformDetection';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { sanitizeCustomEnvVars } from './cue-env-sanitizer';
@@ -27,6 +32,7 @@ import {
 	resolveClaudeSpawnMode,
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
+	isAgentOwnWorkingDirectory,
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { logger } from '../utils/logger';
@@ -68,6 +74,37 @@ export interface SpawnSpec {
 	/** Main-process proof to revoke after this Cue run. Never logged. */
 	pluginRunToken?: string;
 	pluginRunProofFile?: string;
+}
+
+/**
+ * A bare flag name: `--long-name` or a single-letter `-c`. Anything else that
+ * starts with `-` can carry a value of its own (`-pSECRET`, a value that
+ * happens to start with a dash), so it is never named in a message.
+ */
+const CMD_SHELL_FLAG_NAME = /^(--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$/;
+
+/**
+ * Name `args[index]` for a refusal message without quoting it. A value can be
+ * a credential (a custom `--api-key=...`), and the message lands in the Cue log
+ * and the run history; a bare flag name is not a secret, so a value is named by
+ * the flag it belongs to, and anything else by its position.
+ */
+function describeCmdShellArg(
+	args: readonly string[],
+	index: number,
+	promptArgs: ReadonlySet<string>
+): string {
+	const arg = args[index];
+	if (promptArgs.has(arg)) return 'the prompt';
+	const eq = arg.indexOf('=');
+	if (eq > 0 && CMD_SHELL_FLAG_NAME.test(arg.slice(0, eq))) {
+		return `the value of ${arg.slice(0, eq)}`;
+	}
+	const previous = index > 0 ? args[index - 1] : undefined;
+	if (previous !== undefined && CMD_SHELL_FLAG_NAME.test(previous)) {
+		return `the value of ${previous}`;
+	}
+	return `argument ${index + 1}`;
 }
 
 /** Error result when the spawn spec cannot be built (e.g. unknown agent). */
@@ -187,16 +224,24 @@ export async function buildSpawnSpec(
 	const sanitizeLayer = (vars: Record<string, string> | undefined) =>
 		vars === undefined ? undefined : sanitizeCustomEnvVars(vars, config.onLog).sanitized;
 
+	// A Windows `.cmd` / `.bat` shim (claude.cmd, codex.cmd) only starts
+	// through cmd.exe (cue-process-lifecycle applies the shell), and cmd.exe ends
+	// a command at a line break, so its prompt goes over stdin for a provider
+	// that reads it there, as the desktop and the CLI session turn send it.
+	const cmdShellLaunch =
+		isWindows() && windowsShellReason(customPath || agentDef.command).reason !== null;
+
 	// 4. The launch plan decides where the run happens, what it execs, its
 	// environment and how the prompt reaches it, as the `cue` surface: the
 	// inherited environment, then the provider defaults, then the agent's own
-	// vars, with the prompt on the command line. An SSH remote that cannot be
-	// resolved fails the run here: it never falls back to running the agent on
-	// this machine.
+	// vars, with the prompt on the command line (on stdin for a cmd.exe launch,
+	// above). An SSH remote that cannot be resolved fails the run here: it never
+	// falls back to running the agent on this machine.
 	const planResult = buildAgentLaunchPlan({
 		surface: 'cue',
 		agent: { ...agentDef, capabilities: agentConfig.capabilities },
 		command: customPath || agentDef.command,
+		cmdShellLaunch,
 		args: finalArgs,
 		cwd: projectRoot,
 		prompt: promptToSend,
@@ -274,6 +319,10 @@ export async function buildSpawnSpec(
 		now: new Date(),
 	});
 
+	// A Cue run is the agent working in its own project root, so a TUI run may
+	// accept claude's folder-trust prompt there (#1872).
+	const acceptWorkspaceTrust = isAgentOwnWorkingDirectory(projectRoot, session);
+
 	if (remoteTarget && sshRemoteConfig && sshStore) {
 		// 5. Remote: hand the plan to the SSH wrapper, which owns the ssh command
 		// and places the prompt (inline or through its stdin script). Claude
@@ -286,6 +335,7 @@ export async function buildSpawnSpec(
 			interactiveModeArgs: agentDef.interactiveModeArgs,
 			remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
 			maxWaitSeconds: Math.ceil(config.timeoutMs / 1000),
+			acceptWorkspaceTrust,
 		});
 		const sshWrapConfig: SshSpawnWrapConfig = {
 			command: plan.command,
@@ -333,6 +383,9 @@ export async function buildSpawnSpec(
 		// claude TUI, and reads the trailing positional as the prompt). The vars
 		// it adds (MAESTRO_CLAUDE_BIN and its Node settings) are merged over the
 		// planned env, which already holds the agent's own.
+		// A prompt the plan sent to stdin (a cmd.exe launch, or one too long for
+		// the command line) stays there: with no trailing positional, maestro-p
+		// reads it from its non-TTY stdin, as in run-agent-turn.
 		const applied = applyClaudeSpawnDecision({
 			decision: claudeSpawnDecision,
 			interactiveModeArgs: agentDef.interactiveModeArgs,
@@ -344,6 +397,7 @@ export async function buildSpawnSpec(
 			// prompt dispatch through maestro-p was capped at 300s regardless of
 			// `timeout_minutes`, killing every long-running background turn.
 			maxWaitSeconds: Math.ceil(config.timeoutMs / 1000),
+			acceptWorkspaceTrust,
 		});
 		command = applied.command;
 		spawnArgs = applied.args;
@@ -360,7 +414,12 @@ export async function buildSpawnSpec(
 		isPluginsFeatureEnabled() &&
 		(getActivePluginManager()?.getContributions().tools.length ?? 0) > 0
 	) {
-		pluginRunToken = pluginToolRunIdentity.issue(session.id, config.timeoutMs + 60_000);
+		pluginRunToken = pluginToolRunIdentity.issue(
+			session.id,
+			config.timeoutMs + 60_000,
+			undefined,
+			true
+		);
 		try {
 			pluginRunProofFile = createPluginRunProofFile(pluginRunToken, config.timeoutMs + 60_000);
 		} catch (error) {
@@ -400,6 +459,37 @@ export async function buildSpawnSpec(
 			}
 			pluginRunToken = undefined;
 			pluginRunProofFile = undefined;
+		}
+	}
+
+	// 7. A local run whose command only starts through cmd.exe gets the shell in
+	// cue-process-lifecycle (applyWindowsShellRules, same condition), and every
+	// argument then rides the cmd.exe command line: the agent's own flags, the
+	// model, custom args, the MCP injection, and the prompt when the provider
+	// cannot read it from stdin (omp). One that cmd.exe would cut off or
+	// rewrite fails the run here rather than handing the agent different
+	// instructions, as planSessionTurn does.
+	if (!sshRemoteUsed && isWindows() && windowsShellReason(command).reason !== null) {
+		const promptArgs = plan.prompt.via === 'argv' ? new Set(plan.prompt.args) : new Set<string>();
+		for (const [index, arg] of spawnArgs.entries()) {
+			const problem = cmdShellArgProblem(arg);
+			if (!problem) continue;
+			// The run never starts, so nothing else would release its MCP identity.
+			if (pluginRunToken) pluginToolRunIdentity.revoke(pluginRunToken);
+			if (pluginRunProofFile) {
+				try {
+					removePluginRunProofFile(pluginRunProofFile);
+				} catch (error) {
+					logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+						error: String(error),
+					});
+				}
+			}
+			const what = describeCmdShellArg(spawnArgs, index, promptArgs);
+			return {
+				ok: false,
+				message: `${agentDef.name} at ${command} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
+			};
 		}
 	}
 

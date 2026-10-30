@@ -263,6 +263,11 @@ function unsupportedDispatch(message: Request): string | undefined {
 	if (str(message.notifyOnComplete)) {
 		return 'A headless host cannot arm a completion callback (--notify-on-complete). Nothing was sent; dispatch without it and poll the tab, or use the desktop app.';
 	}
+	// The host does not consult the agents a message mentions, so a routing for
+	// those consults would be accepted and then do nothing.
+	if (message.mentionRouting !== undefined && message.mentionRouting !== null) {
+		return 'A headless host does not consult @mentioned agents, so it has no mention routing to set (--routing). Nothing was sent; dispatch without it, or use the desktop app.';
+	}
 	return undefined;
 }
 

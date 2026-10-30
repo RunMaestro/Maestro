@@ -12,19 +12,22 @@
  * flushAllPendingEdits() before validating/writing.
  */
 
-const pending = new Set<() => void>();
+const pending = new Set<() => void | boolean>();
 
-export function registerPendingEdit(flushFn: () => void): () => void {
+export function registerPendingEdit(flushFn: () => void | boolean): () => void {
 	pending.add(flushFn);
 	return () => {
 		pending.delete(flushFn);
 	};
 }
 
-export function flushAllPendingEdits(): void {
+/** False means a mounted editor contains an invalid draft and saving must wait. */
+export function flushAllPendingEdits(): boolean {
+	let valid = true;
 	for (const fn of pending) {
-		fn();
+		if (fn() === false) valid = false;
 	}
+	return valid;
 }
 
 /** Test-only: wipe the registry between test cases. */

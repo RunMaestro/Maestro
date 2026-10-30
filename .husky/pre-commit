@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Run lint-staged for formatting and linting on staged files only
-npx lint-staged
+# Bound filename batches below Windows cmd.exe's limit without skipping files.
+npx lint-staged --max-arg-length 6000
 
 # Everything else (tests, type checking) should run in CI

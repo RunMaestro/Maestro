@@ -1,8 +1,6 @@
 /**
- * useWindowState: hydrate panel state from the window's persisted state and
- * write later toggles back. A web-desktop client has no window to persist to
- * (the bridge refuses `windows:setPanelState`), so it must never call it: the
- * refusal surfaced as a "Submission rejected" notice on every panel toggle.
+ * Panel state persists per native window. A web-desktop client must retain its
+ * own navigation rather than reading or changing the host window's panels.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
@@ -54,15 +52,24 @@ describe('useWindowState', () => {
 		});
 	});
 
-	it('hydrates but never persists from a web-desktop client', async () => {
+	it('keeps client panel navigation independent of the host window', async () => {
 		mockIsWebDesktop.mockReturnValue(true);
+		useUIStore.getState().setLeftSidebarOpen(false);
 		getState.mockResolvedValue({ leftPanelCollapsed: false, rightPanelCollapsed: true });
 		await renderHydrated();
-		expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		expect(useUIStore.getState()).toMatchObject({
+			leftSidebarOpen: false,
+			rightPanelOpen: true,
+		});
 
-		act(() => useUIStore.getState().setRightPanelOpen(true));
-		act(() => useUIStore.getState().setLeftSidebarOpen(false));
+		act(() => useUIStore.getState().setRightPanelOpen(false));
+		act(() => useUIStore.getState().setLeftSidebarOpen(true));
 		act(() => vi.advanceTimersByTime(1000));
+		expect(useUIStore.getState()).toMatchObject({
+			leftSidebarOpen: true,
+			rightPanelOpen: false,
+		});
+		expect(getState).not.toHaveBeenCalled();
 		expect(setPanelState).not.toHaveBeenCalled();
 	});
 });

@@ -19,10 +19,13 @@ import { toSpawnGroupChatAgentConfig } from '../group-chat/spawn-config';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
 import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 import type { ConsultRunner } from '../../shared/maestro-lib/agents/consult';
+import type { AgentError } from '../../shared/types';
 
 interface RunningConsult {
 	/** The target's stream-json output so far. Each `data` event is a delta. */
 	buffer: string;
+	/** The user-visible host failure, preserved across a signal's null exit code. */
+	error?: string;
 	toolType: string;
 	detach: () => void;
 }
@@ -52,12 +55,16 @@ export function createDesktopConsultRunner(
 			const onSessionId = (sid: string, agentSessionId: string): void => {
 				if (sid === sessionId) observer.onSessionId(agentSessionId);
 			};
+			const onError = (sid: string, error: AgentError): void => {
+				if (sid === sessionId && error.source === 'host-supervision') run.error ??= error.message;
+			};
 			const onExit = (sid: string, code: number): void => {
 				if (sid !== sessionId) return;
 				run.detach();
 				runs.delete(sessionId);
 				observer.onEnd({
 					exitCode: code,
+					error: run.error,
 					readText: () => extractTextFromStreamJson(run.buffer, spawn.providerId),
 				});
 			};
@@ -66,12 +73,14 @@ export function createDesktopConsultRunner(
 				processManager.off('data', onData);
 				for (const evt of AGENT_LIVENESS_EVENTS) processManager.off(evt, onLiveness);
 				processManager.off('exit', onExit);
+				processManager.off('agent-error', onError);
 				processManager.off('session-id', onSessionId);
 			};
 
 			processManager.on('data', onData);
 			for (const evt of AGENT_LIVENESS_EVENTS) processManager.on(evt, onLiveness);
 			processManager.on('exit', onExit);
+			processManager.on('agent-error', onError);
 			processManager.on('session-id', onSessionId);
 			runs.set(sessionId, run);
 

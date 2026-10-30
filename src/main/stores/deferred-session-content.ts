@@ -104,8 +104,15 @@ export function projectWebSession(session: StoredSession): StoredSession {
 		}
 		createdAt = earliest === Infinity ? Date.now() : earliest;
 	}
+	// Closed-tab stacks belong to each client: a browser keeps its own in memory
+	// and never sees or writes the host's.
+	const {
+		closedTabHistory: _closedTabHistory,
+		unifiedClosedTabHistory: _unifiedClosedTabHistory,
+		...withoutClosedTabs
+	} = projected;
 	return {
-		...projected,
+		...withoutClosedTabs,
 		createdAt,
 		aiLogs: [],
 		shellLogs: [],

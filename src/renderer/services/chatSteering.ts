@@ -405,8 +405,8 @@ export function requestSteerSend(): void {
 
 /**
  * Say why a steer nobody clicked a button for did nothing. The Steer button is
- * hidden for every blocked reason, so it never needs this; a chord has no control
- * to hide and would otherwise look dead.
+ * hidden or dimmed with its reason as a tooltip, so it never needs this; a chord
+ * has no control to hide and would otherwise look dead.
  */
 function notifySteerBlocked(sessionId: string, tabId: string | undefined, reason?: string): void {
 	// A message with a steer already in flight is parked, not queued.

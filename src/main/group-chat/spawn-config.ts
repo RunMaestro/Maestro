@@ -37,6 +37,7 @@ export function toSpawnGroupChatAgentConfig(
 		readOnlyMode: spawn.readOnlyMode,
 		debugLabel: spawn.debugLabel,
 		maxWaitSeconds: spawn.maxWaitSeconds,
+		acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		appendSystemPrompt: spawn.appendSystemPrompt,
 		isResume: spawn.isResume,
 	};

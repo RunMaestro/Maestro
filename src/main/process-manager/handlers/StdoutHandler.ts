@@ -694,6 +694,14 @@ export class StdoutHandler {
 		// Ahead of every early return below, so a subscriber sees each line once.
 		emitParsedEvent(this.emitter, sessionId, event);
 
+		// Nonfatal provider notices use the existing diagnostic channel, not
+		// agent-error or thinking-chunk. They must remain visible with Thinking
+		// off, without consuming the error latch or becoming the final answer.
+		if (event.type === 'warning') {
+			if (event.text) this.emitter.emit('stderr', sessionId, `${event.text}\n`);
+			return;
+		}
+
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
 		// Reset resultEmitted on each new step so the last text event wins instead of the first.
@@ -906,6 +914,9 @@ export class StdoutHandler {
 			// accumulated streamedText (covers Copilot where the result event
 			// is empty and Factory Droid which never sends an explicit result).
 			const resultText = event.text || managedProcess.streamedText || '';
+			// The terminal result supersedes interim narration. Exit consumers must
+			// capture the answer we actually emitted, including a recovered build.
+			managedProcess.streamedText = resultText;
 
 			// Log synopsis result processing (for debugging empty synopsis issue)
 			if (sessionId.includes('-synopsis-')) {
@@ -955,6 +966,7 @@ export class StdoutHandler {
 
 		if (msgRecord.type === 'result' && msgRecord.result && !managedProcess.resultEmitted) {
 			managedProcess.resultEmitted = true;
+			managedProcess.streamedText = msgRecord.result as string;
 			logger.debug('[ProcessManager] Emitting result data', 'ProcessManager', {
 				sessionId,
 				resultLength: (msgRecord.result as string).length,

@@ -26,6 +26,13 @@
  *   user can delete the entry. Say so wherever a guarantee is stated.
  */
 
+import {
+	createKeyringEntry,
+	loadKeyringModule,
+	type KeyringEntry,
+	type KeyringModuleLoader,
+} from './keyring';
+
 /** What an anchor holds. */
 export interface Anchor {
 	installSecret: string;
@@ -44,12 +51,13 @@ export interface AnchorStore {
  * Production `AnchorStore` over a named OS credential entry. `entryFactory`
  * lazily constructs the keyring entry so a missing/unavailable native module
  * degrades to `available() === false` (→ session-only) instead of throwing.
+ *
+ * The entry shape and the lazy module load live in `./keyring.ts`, shared with
+ * A Cappella's credential store, so `@napi-rs/keyring` is required in one place.
+ * The types are re-exported here so this module's importers keep one import site.
  */
-export interface KeyringEntry {
-	getPassword(): string | null;
-	setPassword(password: string): void;
-	deletePassword(): boolean;
-}
+export type { KeyringEntry, KeyringModule } from './keyring';
+export { createKeyringEntry } from './keyring';
 
 export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorStore {
 	let entry: KeyringEntry | null | undefined;
@@ -114,26 +122,11 @@ export function noAnchor(): AnchorStore {
 	};
 }
 
-export interface KeyringModule {
-	Entry: new (service: string, account: string) => KeyringEntry;
-}
-
 /** Lazily adapt `@napi-rs/keyring` without making app startup depend on it. */
 export function createKeyringAnchor(
 	service: string,
 	account: string,
-	loadModule: () => KeyringModule | null = () => {
-		try {
-			const mod = require('@napi-rs/keyring') as Partial<KeyringModule>;
-			return typeof mod.Entry === 'function' ? (mod as KeyringModule) : null;
-		} catch {
-			return null;
-		}
-	}
+	loadModule: KeyringModuleLoader = loadKeyringModule
 ): AnchorStore {
-	return keyringAnchor(() => {
-		const mod = loadModule();
-		if (!mod) return null;
-		return new mod.Entry(service, account);
-	});
+	return keyringAnchor(() => createKeyringEntry(service, account, loadModule));
 }

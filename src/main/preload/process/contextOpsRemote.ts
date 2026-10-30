@@ -1,73 +1,53 @@
 import { ipcRenderer } from 'electron';
+import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 
+type TabContextOpListener = (request: TabContextOpRequest, responseChannel: string) => void;
+
+/** Subscribe to one context-operation channel; returns the unsubscribe. */
+function subscribe(channel: string, callback: TabContextOpListener): () => void {
+	const handler = (_: unknown, request: TabContextOpRequest, responseChannel: string) =>
+		callback(request, responseChannel);
+	ipcRenderer.on(channel, handler);
+	return () => ipcRenderer.removeListener(channel, handler);
+}
+
+/**
+ * The AI tab overlay menu's context items reached remotely (`maestro-cli tab
+ * compact|merge|transfer`). Each request carries an optional source `tabId`
+ * (and, for merge, `targetTabId`); the renderer defaults both to the active
+ * AI tab and answers on the per-call response channel with a
+ * `TabContextOpResult`.
+ */
 export function createContextOpsRemoteApi() {
 	return {
-		/**
-		 * Subscribe to remote merge context from web interface
-		 * Uses request-response pattern with a unique responseChannel
-		 */
-		onRemoteMergeContext: (
-			callback: (sourceSessionId: string, targetSessionId: string, responseChannel: string) => void
-		): (() => void) => {
-			const handler = (
-				_: unknown,
-				sourceSessionId: string,
-				targetSessionId: string,
-				responseChannel: string
-			) => callback(sourceSessionId, targetSessionId, responseChannel);
-			ipcRenderer.on('remote:mergeContext', handler);
-			return () => ipcRenderer.removeListener('remote:mergeContext', handler);
+		/** Context: Merge Into. */
+		onRemoteMergeContext: (callback: TabContextOpListener): (() => void) =>
+			subscribe('remote:mergeContext', callback),
+
+		sendRemoteMergeContextResponse: (responseChannel: string, result: TabContextOpResult): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
-		/**
-		 * Send response for remote merge context
-		 */
-		sendRemoteMergeContextResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
+		/** Context: Send to Agent. */
+		onRemoteTransferContext: (callback: TabContextOpListener): (() => void) =>
+			subscribe('remote:transferContext', callback),
+
+		sendRemoteTransferContextResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
-		/**
-		 * Subscribe to remote transfer context from web interface
-		 * Uses request-response pattern with a unique responseChannel
-		 */
-		onRemoteTransferContext: (
-			callback: (sourceSessionId: string, targetSessionId: string, responseChannel: string) => void
-		): (() => void) => {
-			const handler = (
-				_: unknown,
-				sourceSessionId: string,
-				targetSessionId: string,
-				responseChannel: string
-			) => callback(sourceSessionId, targetSessionId, responseChannel);
-			ipcRenderer.on('remote:transferContext', handler);
-			return () => ipcRenderer.removeListener('remote:transferContext', handler);
-		},
+		/** Context: Compact. */
+		onRemoteSummarizeContext: (callback: TabContextOpListener): (() => void) =>
+			subscribe('remote:summarizeContext', callback),
 
-		/**
-		 * Send response for remote transfer context
-		 */
-		sendRemoteTransferContextResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
-		},
-
-		/**
-		 * Subscribe to remote summarize context from web interface
-		 * Uses request-response pattern with a unique responseChannel
-		 */
-		onRemoteSummarizeContext: (
-			callback: (sessionId: string, responseChannel: string) => void
-		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, responseChannel: string) =>
-				callback(sessionId, responseChannel);
-			ipcRenderer.on('remote:summarizeContext', handler);
-			return () => ipcRenderer.removeListener('remote:summarizeContext', handler);
-		},
-
-		/**
-		 * Send response for remote summarize context
-		 */
-		sendRemoteSummarizeContextResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
+		sendRemoteSummarizeContextResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

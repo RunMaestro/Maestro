@@ -40,15 +40,18 @@ export async function mcpServe(options: McpServeOptions): Promise<void> {
 
 	const { server } = createMcpBridge({
 		serverInfo: { name: 'maestro-plugins', version: '1.0.0' },
-		runToken: (() => {
-			const file = process.env.MAESTRO_PLUGIN_RUN_TOKEN_FILE;
-			if (!file) return undefined;
-			try {
-				return fs.readFileSync(file, 'utf8').trim();
-			} catch {
-				return undefined;
-			}
-		})(),
+		...(process.env.MAESTRO_PLUGIN_RUN_TOKEN_FILE
+			? {
+					runToken: (() => {
+						try {
+							return fs.readFileSync(process.env.MAESTRO_PLUGIN_RUN_TOKEN_FILE!, 'utf8').trim();
+						} catch {
+							// Configured but unreadable proof must not downgrade to anonymous tools.
+							return null;
+						}
+					})(),
+				}
+			: {}),
 		request: (message, responseType, timeoutMs) =>
 			client.sendCommand(message, responseType, timeoutMs),
 		log,

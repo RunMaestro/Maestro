@@ -194,6 +194,7 @@ export function DirectorNotesSection({
 								onEnvVarValueChange={directorNotesAgentState.handleEnvVarValueChange}
 								onEnvVarRemove={directorNotesAgentState.handleEnvVarRemove}
 								onEnvVarAdd={directorNotesAgentState.handleEnvVarAdd}
+								onEnvVarsReplace={(vars) => ac.setCustomEnvVars(vars)}
 								onEnvVarsBlur={directorNotesAgentState.persistCustomConfig}
 								agentConfig={ac.agentConfig}
 								onConfigChange={directorNotesAgentState.handleConfigChange}

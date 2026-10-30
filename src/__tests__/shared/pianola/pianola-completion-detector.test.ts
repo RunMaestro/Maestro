@@ -41,9 +41,9 @@ describe('detectTaskOutcome - completion', () => {
 		expect(r.reason).toContain('idle');
 	});
 
-	it('connecting -> idle with no failure is done', () => {
+	it('connecting -> idle does not prove a worker ran', () => {
 		const r = detectTaskOutcome(input('idle', 'connecting', [msg('assistant', 'Done.')]));
-		expect(r.outcome).toBe('done');
+		expect(r.outcome).toBe('working');
 	});
 
 	it('done verdict requires no message history beyond clean output', () => {

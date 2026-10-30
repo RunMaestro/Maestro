@@ -289,6 +289,9 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 	const config: TriggerNodeData['config'] = {};
 
 	switch (sub.event as CueEventType) {
+		case 'plugin.event':
+			config.plugin = sub.plugin;
+			break;
 		case 'time.heartbeat':
 			if (sub.interval_minutes != null) config.interval_minutes = sub.interval_minutes;
 			break;

@@ -44,6 +44,24 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	validateCueConfig: vi.fn(),
+	loadCueConfigDetailed: vi.fn(),
+}));
+
+// The readiness check itself is covered in cue-readiness.test.ts; here only
+// what the handler hands it (the real input assembly) and what it returns.
+vi.mock('../../../main/cue/cue-readiness', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/cue/cue-readiness')>()),
+	checkCueReadiness: vi.fn(),
+}));
+
+const storedReadiness = vi.hoisted(() => ({
+	sessions: [] as unknown[],
+	configs: {} as Record<string, unknown>,
+}));
+vi.mock('../../../main/stores', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/stores')>()),
+	getSessionsStore: () => ({ get: () => storedReadiness.sessions }),
+	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
 }));
 
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
@@ -84,6 +102,7 @@ import {
 } from '../../../main/cue/config/cue-config-repository';
 import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
 import { renamePipelineOnDisk } from '../../../main/cue/cue-pipeline-rename';
+import { checkCueReadiness } from '../../../main/cue/cue-readiness';
 import * as yaml from 'js-yaml';
 
 // Create a mock CueEngine
@@ -116,8 +135,10 @@ describe('Cue IPC Handlers', () => {
 	let mockEngine: ReturnType<typeof createMockEngine>;
 	// The stored Encore flags; unset resolves to the defaults (Cue on).
 	let encoreFeatures: Record<string, boolean> | undefined;
+	let sshRemotes: unknown;
 	const settingsStore = {
-		get: (key: string) => (key === 'encoreFeatures' ? encoreFeatures : undefined),
+		get: (key: string) =>
+			key === 'encoreFeatures' ? encoreFeatures : key === 'sshRemotes' ? sshRemotes : undefined,
 	};
 
 	beforeEach(() => {
@@ -131,6 +152,9 @@ describe('Cue IPC Handlers', () => {
 		vi.mocked(readCuePromptFile).mockReturnValue(null);
 		mockEngine = createMockEngine();
 		encoreFeatures = undefined;
+		sshRemotes = undefined;
+		storedReadiness.sessions = [];
+		storedReadiness.configs = {};
 	});
 
 	afterEach(() => {
@@ -177,6 +201,7 @@ describe('Cue IPC Handlers', () => {
 				'cue:renamePipeline',
 				'cue:savePipelineLayout',
 				'cue:loadPipelineLayout',
+				'cue:checkReadiness',
 			];
 
 			for (const channel of expectedChannels) {
@@ -271,6 +296,7 @@ describe('Cue IPC Handlers', () => {
 			['cue:renamePipeline', [{ oldName: 'Old', newName: 'New' }]],
 			['cue:updateScheduledTask', [{ projectRoot: '/p', name: 'n', patch: {} }]],
 			['cue:cancelScheduledTask', [{ projectRoot: '/p', name: 'n' }]],
+			['cue:checkReadiness', []],
 		])('%s refuses with CueDisabled and touches nothing', async (channel, args) => {
 			const handler = registerAndGetHandler(channel);
 			await expect(handler(null, ...args)).rejects.toThrow('CueDisabled');
@@ -278,12 +304,43 @@ describe('Cue IPC Handlers', () => {
 			expect(mockEngine.triggerSubscription).not.toHaveBeenCalled();
 			expect(mockEngine.refreshSession).not.toHaveBeenCalled();
 			expect(writeCueConfigFile).not.toHaveBeenCalled();
+			expect(checkCueReadiness).not.toHaveBeenCalled();
 		});
 
 		it('still lets the engine be stopped', async () => {
 			const handler = registerAndGetHandler('cue:disable');
 			await handler(null);
 			expect(mockEngine.stop).toHaveBeenCalledOnce();
+		});
+	});
+
+	describe('cue:checkReadiness', () => {
+		const report = {
+			ready: false,
+			checkedAt: '2026-10-20T12:00:00.000Z',
+			agents: 1,
+			workspaces: 1,
+			subscriptions: 1,
+			gaps: [{ kind: 'binary-missing', agentId: 'a1', message: 'Agent "Coder": not found.' }],
+		};
+
+		it('returns the report built from the live stores, without needing the engine', async () => {
+			vi.mocked(checkCueReadiness).mockResolvedValue(report as never);
+			storedReadiness.sessions = [
+				{ id: 'a1', name: 'Coder', toolType: 'codex', projectRoot: '/p' },
+				{ id: 'pi', name: 'Pianola', toolType: 'claude-code', projectRoot: '/p', isPianola: true },
+			];
+			storedReadiness.configs = { codex: { customPath: '/opt/codex' } };
+			sshRemotes = [{ id: 'r1', name: 'Box' }, null];
+			registerCueHandlers({ getCueEngine: () => null, settingsStore });
+
+			await expect(registeredHandlers.get('cue:checkReadiness')!(null)).resolves.toEqual(report);
+			// Same assembly as `cue engine check`: dormant Pianola dropped, junk remotes skipped.
+			expect(checkCueReadiness).toHaveBeenCalledWith({
+				sessions: [{ id: 'a1', name: 'Coder', toolType: 'codex', projectRoot: '/p' }],
+				agentConfigs: { codex: { customPath: '/opt/codex' } },
+				sshRemotes: [{ id: 'r1', name: 'Box' }],
+			});
 		});
 	});
 

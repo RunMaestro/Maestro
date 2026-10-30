@@ -22,8 +22,8 @@ import {
 	SANDBOX_TO_GUEST_CHANNEL,
 	type DataviewQueryResponse,
 	type SandboxHostMessage,
-	type SandboxIndexSnapshot,
 	type SandboxIoLoadMessage,
+	type SandboxSnapshotPayload,
 	type SandboxQueryDqlMessage,
 } from '../../../../shared/dataview';
 import { joinPath } from '../../../../shared/formatters';
@@ -61,8 +61,11 @@ export interface GuestLoadFailEvent extends Event {
 	isMainFrame?: boolean;
 }
 
-/** The note's index snapshot as main answers it, with the root and host the guest partition is keyed by. */
-export type DataviewJsSnapshot = DataviewQueryResponse<SandboxIndexSnapshot>;
+/**
+ * The note's index snapshot as main answers it, with the root and host the guest partition is keyed by. The
+ * snapshot itself is JSON text this window passes to the guest unread: decoding it here froze the window.
+ */
+export type DataviewJsSnapshot = DataviewQueryResponse<SandboxSnapshotPayload>;
 
 /** Why a guest was stopped (a timeout or a crash) or never ran (a failed load). */
 export type DataviewJsGuestFailure = 'timeout' | 'crashed' | 'loadFailed';

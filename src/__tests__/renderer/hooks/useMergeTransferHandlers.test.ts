@@ -1154,7 +1154,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleSendToAgent - busy target (queue vs Force Send)
 	// ----------------------------------------------------------------
 
-	describe('handleSendToAgent — busy target', () => {
+	describe('handleSendToAgent - busy target', () => {
 		const setupBusyTarget = () => {
 			const targetSession = createMockSession({
 				id: 'busy-target',
@@ -1472,7 +1472,8 @@ describe('useMergeTransferHandlers', () => {
 				expect.any(String), // activeTabId
 				'target-session',
 				'target-tab',
-				{ groomContext: true, maxTokens: 5000 }
+				{ groomContext: true, maxTokens: 5000 },
+				{}
 			);
 		});
 	});
@@ -1496,5 +1497,178 @@ describe('useMergeTransferHandlers', () => {
 			expect(second.handleMergeWith).toBe(first.handleMergeWith);
 			expect(second.handleOpenSendToAgentModal).toBe(first.handleOpenSendToAgentModal);
 		});
+	});
+});
+
+// ============================================================================
+// Explicit-source cores - what `maestro-cli tab merge|transfer` runs, and what
+// handleMerge / handleSendToAgent now wrap.
+// ============================================================================
+
+describe('mergeTabContext / transferTabContext', () => {
+	const seedSourceAndTarget = (target: Partial<Session> = {}) => {
+		const source = createMockSession({
+			id: 'source-agent',
+			name: 'Source',
+			aiTabs: [
+				...createMockSession().aiTabs,
+				{ ...createMockSession().aiTabs[0], id: 'tab-2', name: 'Tab 2' },
+			],
+		});
+		const targetSession = createMockSession({
+			id: 'target-agent',
+			name: 'Target',
+			toolType: 'codex',
+			aiTabs: [{ ...createMockSession().aiTabs[0], id: 'target-tab', logs: [] }],
+			activeTabId: 'target-tab',
+			...target,
+		});
+		useSessionStore.setState({
+			sessions: [createMockSession(), source, targetSession],
+			activeSessionId: 'session-1',
+		});
+	};
+
+	it('merges an explicit source tab and threads the placement to executeMerge', async () => {
+		seedSourceAndTarget();
+		const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+		await act(async () => {
+			await result.current.mergeTabContext(
+				'source-agent',
+				'tab-2',
+				'target-agent',
+				'target-tab',
+				{ createNewSession: false, groomContext: false, preserveTimestamps: true },
+				{ background: true }
+			);
+		});
+
+		expect(mockExecuteMerge).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'source-agent' }),
+			'tab-2',
+			'target-agent',
+			'target-tab',
+			{ createNewSession: false, groomContext: false, preserveTimestamps: true },
+			{ background: true }
+		);
+		// The menu's modal is not involved in the explicit path.
+		expect(mockSetMergeSessionModalOpen).not.toHaveBeenCalled();
+	});
+
+	it('refuses an unknown source agent without merging', async () => {
+		const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+		let outcome: any;
+		await act(async () => {
+			outcome = await result.current.mergeTabContext('ghost', 'tab-1', 'target-agent', undefined, {
+				createNewSession: false,
+				groomContext: false,
+				preserveTimestamps: true,
+			});
+		});
+
+		expect(outcome).toEqual({ success: false, error: 'Agent not found: ghost' });
+		expect(mockExecuteMerge).not.toHaveBeenCalled();
+	});
+
+	it('a background merge completion neither navigates nor toasts', () => {
+		vi.useFakeTimers();
+		try {
+			const setActiveSessionId = vi.fn();
+			renderHook(() => useMergeTransferHandlers(createMockDeps({ setActiveSessionId })));
+
+			act(() => {
+				capturedMergeCallbacks.onMergeComplete(
+					'tab-2',
+					{ success: true, targetSessionId: 'target-agent', targetTabId: 'target-tab' },
+					{ background: true }
+				);
+			});
+			vi.advanceTimersByTime(1000);
+
+			expect(setActiveSessionId).not.toHaveBeenCalled();
+			expect(mockNotifyToast).not.toHaveBeenCalled();
+			expect(mockClearMergeTabState).toHaveBeenCalledWith('tab-2');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('transfers an explicit source tab in the background without moving the view', async () => {
+		seedSourceAndTarget();
+		const setActiveSessionId = vi.fn();
+		const { result } = renderHook(() =>
+			useMergeTransferHandlers(createMockDeps({ setActiveSessionId }))
+		);
+
+		let outcome: any;
+		await act(async () => {
+			outcome = await result.current.transferTabContext(
+				'source-agent',
+				'tab-2',
+				'target-agent',
+				{ groomContext: false, targetSessionId: 'target-agent' },
+				{ background: true }
+			);
+		});
+
+		expect(outcome).toMatchObject({ success: true, newSessionId: 'target-agent' });
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target-agent')!;
+		expect(target.aiTabs.map((t) => t.id)).toContain(outcome.newTabId);
+		expect(target.activeTabId).toBe('target-tab');
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(mockNotifyToast).not.toHaveBeenCalled();
+		expect(mockSetSendToAgentModalOpen).not.toHaveBeenCalled();
+		await vi.waitFor(() => {
+			expect((window as any).maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: `target-agent-ai-${outcome.newTabId}`,
+					prompt: expect.stringContaining('("Source" using claude-code)'),
+				})
+			);
+		});
+	});
+
+	it('reports a busy target as queued', async () => {
+		seedSourceAndTarget({ state: 'busy' });
+		const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+		let outcome: any;
+		await act(async () => {
+			outcome = await result.current.transferTabContext('source-agent', 'tab-2', 'target-agent', {
+				groomContext: false,
+				targetSessionId: 'target-agent',
+			});
+		});
+
+		expect(outcome).toMatchObject({ success: true, queued: true });
+		expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+	});
+
+	it('ignores a terminal buffer the modal left queued unless it is passed in', async () => {
+		seedSourceAndTarget();
+		useTabStore
+			.getState()
+			.setPendingTerminalBufferSend({ content: 'ls -la output', sourceName: 'Terminal 1' });
+		const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+		await act(async () => {
+			await result.current.transferTabContext('source-agent', 'tab-2', 'target-agent', {
+				groomContext: false,
+				targetSessionId: 'target-agent',
+			});
+		});
+
+		await vi.waitFor(() => {
+			expect((window as any).maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: expect.stringContaining('# Context from Previous Session'),
+				})
+			);
+		});
+		// The modal's pending buffer is still there for the modal to use.
+		expect(useTabStore.getState().pendingTerminalBufferSend).not.toBeNull();
+		useTabStore.getState().setPendingTerminalBufferSend(null);
 	});
 });

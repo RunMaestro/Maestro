@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CallbackRegistry } from '../../../../main/web-server/managers/CallbackRegistry';
+import { interruptTurnFailure, type InterruptTurnResult } from '../../../../shared/turnInterrupt';
 import type {
 	SessionData,
 	SessionDetail,
@@ -72,8 +73,14 @@ describe('CallbackRegistry', () => {
 			expect(await registry.executeCommand('session-1', 'ls')).toBe(false);
 		});
 
-		it('interruptSession() returns false when no callback set', async () => {
-			expect(await registry.interruptSession('session-1')).toBe(false);
+		it('interruptSession() answers RENDERER_UNAVAILABLE when no callback set', async () => {
+			expect(await registry.interruptSession('session-1', 'tab-1')).toMatchObject({
+				success: false,
+				code: 'RENDERER_UNAVAILABLE',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				wasBusy: false,
+			});
 		});
 
 		it('switchMode() returns false when no callback set', async () => {
@@ -172,7 +179,9 @@ describe('CallbackRegistry', () => {
 		});
 
 		it('returns true for interruptSession after setting it', () => {
-			registry.setInterruptSessionCallback(async () => false);
+			registry.setInterruptSessionCallback(async () =>
+				interruptTurnFailure('session-1', null, 'SIGNAL_FAILED', 'x')
+			);
 			expect(registry.hasCallback('interruptSession')).toBe(true);
 		});
 
@@ -374,6 +383,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -388,6 +398,7 @@ describe('CallbackRegistry', () => {
 				'session-5',
 				'npm test',
 				'terminal',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -408,6 +419,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -423,6 +435,7 @@ describe('CallbackRegistry', () => {
 				'follow up',
 				'ai',
 				'tab-xyz',
+				undefined,
 				undefined,
 				undefined,
 				undefined
@@ -441,6 +454,7 @@ describe('CallbackRegistry', () => {
 				'ai',
 				undefined,
 				true,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -467,29 +481,49 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				images,
+				undefined,
 				undefined
 			);
 		});
 	});
 
 	describe('setInterruptSessionCallback / interruptSession()', () => {
-		it('returns true when callback resolves to true', async () => {
-			registry.setInterruptSessionCallback(async () => true);
-			expect(await registry.interruptSession('session-1')).toBe(true);
+		const result = (overrides: Partial<InterruptTurnResult> = {}): InterruptTurnResult => ({
+			success: true,
+			sessionId: 'session-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-1'],
+			exited: true,
+			...overrides,
 		});
 
-		it('returns false when callback resolves to false', async () => {
-			registry.setInterruptSessionCallback(async () => false);
-			expect(await registry.interruptSession('session-1')).toBe(false);
+		it('returns the callback result unchanged', async () => {
+			const stopped = result();
+			registry.setInterruptSessionCallback(async () => stopped);
+			expect(await registry.interruptSession('session-1')).toBe(stopped);
 		});
 
-		it('passes sessionId argument to the callback', async () => {
-			const callback = vi.fn().mockResolvedValue(true);
+		it('passes a nothing-to-stop result through as a success', async () => {
+			registry.setInterruptSessionCallback(async () =>
+				result({ wasBusy: false, interrupted: false, stoppedTabIds: [] })
+			);
+			expect(await registry.interruptSession('session-1')).toMatchObject({
+				success: true,
+				wasBusy: false,
+			});
+		});
+
+		it('passes sessionId and the optional tabId to the callback', async () => {
+			const callback = vi.fn().mockResolvedValue(result());
 			registry.setInterruptSessionCallback(callback);
 
 			await registry.interruptSession('session-77');
+			expect(callback).toHaveBeenLastCalledWith('session-77', undefined);
 
-			expect(callback).toHaveBeenCalledWith('session-77');
+			await registry.interruptSession('session-77', 'tab-9');
+			expect(callback).toHaveBeenLastCalledWith('session-77', 'tab-9');
 		});
 	});
 

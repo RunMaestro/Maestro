@@ -18,6 +18,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { closeFileTab } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
 import { requestFileTreeRefresh } from '../utils/fileTreeRefresh';
+import { recordJourney } from './userJourney';
 import { getBasename } from '../../shared/formatters';
 import type { Session } from '../types';
 
@@ -82,6 +83,7 @@ async function deleteFile({ path, sshRemoteId, sessionId }: ResolvedDeleteReques
 		return;
 	}
 
+	recordJourney(sessionId, { kind: 'file.delete', target: path });
 	closePreviewTabsForPath(sessionId, path);
 
 	// Nudge the Files panel so the deleted entry disappears without waiting for

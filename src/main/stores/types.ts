@@ -51,6 +51,7 @@ export interface BootstrapSettings {
 // ============================================================================
 
 export interface MaestroSettings {
+	relayArchiveHours: number;
 	activeThemeId: string;
 	shortcuts: Record<string, any>;
 	fontSize: number;
@@ -125,12 +126,25 @@ export interface MaestroSettings {
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
 	spellCheck: boolean;
+	// Record the User Journey (src/main/user-journey-manager.ts). Off stops recording.
+	userJourneyEnabled: boolean;
 	// Usage Dashboard provider quota auto-refresh cadence, keyed by provider id
 	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
 	// the main-process background scheduler (usage-refresh-scheduler.ts).
 	usageRefreshIntervals: Record<string, number>;
 	/** Add a supervised Pianola watch for each newly created top-level agent. */
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
+	/** Minimum independent matching human samples for a proposal; default three. */
+	pianolaLearningMinSamples?: number;
+	/** Owner binding for learning; absent defaults to verified native desktop ownership. */
+	pianolaLearningIdentity?: {
+		desktopIsOwner?: boolean;
+		ownerWebUserId?: string;
+		/** Legacy fields are read without migration. */
+		desktopOwnerIsChris?: boolean;
+		chrisWebUserId?: string;
+	};
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.

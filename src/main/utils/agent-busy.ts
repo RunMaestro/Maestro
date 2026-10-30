@@ -15,6 +15,7 @@
 
 import { hasHeadlessAgentActivity } from './headless-agent-activity';
 import { isSessionBusyWithCli } from '../../shared/cli-activity';
+import { isTurnProcessInScope } from '../../shared/turnInterrupt';
 
 /**
  * Minimal slice of ProcessManager this module needs, so callers can pass a real
@@ -80,4 +81,58 @@ export function isAgentBusy(
 		}
 	}
 	return false;
+}
+
+/**
+ * The slice of ProcessManager a stop needs to watch its turns exit: the whole
+ * table to snapshot from, and a keyed read to poll.
+ */
+export interface TurnProcessTable {
+	getAll(): Array<{ sessionId: string; startTime: number; isTerminal: boolean }>;
+	get(sessionId: string): { startTime: number } | undefined;
+}
+
+/**
+ * The live turn processes a stop is about to end, as `processId -> startTime`.
+ *
+ * Taken BEFORE the stop is forwarded, so `waitForAiTurnsToExit` can tell the
+ * stopped process apart from a queued turn that starts on the same key right
+ * after (same id, new start time). `tabId` null snapshots the whole agent.
+ */
+export function snapshotAiTurnProcesses(
+	processManager: TurnProcessTable | null | undefined,
+	agentId: string,
+	tabId: string | null
+): Map<string, number> {
+	const snapshot = new Map<string, number>();
+	if (!processManager) return snapshot;
+	for (const proc of processManager.getAll()) {
+		if (proc.isTerminal || !isTurnProcessInScope(proc.sessionId, agentId, tabId)) continue;
+		snapshot.set(proc.sessionId, proc.startTime);
+	}
+	return snapshot;
+}
+
+/**
+ * Wait, bounded, for every snapshotted process to leave the table (or be
+ * replaced by a new turn on the same key). `session list` and `tab show` read
+ * busy/idle from this same table, so true means they already read idle.
+ *
+ * @returns True when every process exited within `timeoutMs`.
+ */
+export async function waitForAiTurnsToExit(
+	processManager: TurnProcessTable | null | undefined,
+	snapshot: ReadonlyMap<string, number>,
+	timeoutMs: number,
+	pollMs = 100
+): Promise<boolean> {
+	if (!processManager || snapshot.size === 0) return true;
+	const stillRunning = () =>
+		[...snapshot].some(([id, startTime]) => processManager.get(id)?.startTime === startTime);
+	const deadline = Date.now() + timeoutMs;
+	while (stillRunning()) {
+		if (Date.now() >= deadline) return false;
+		await new Promise((resolve) => setTimeout(resolve, pollMs));
+	}
+	return true;
 }

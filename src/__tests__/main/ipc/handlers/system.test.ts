@@ -122,13 +122,9 @@ vi.mock('../../../../main/power-manager', () => ({
 	},
 }));
 
-// Mock tunnel manager
-vi.mock('../../../../main/tunnel-manager', () => ({
-	tunnelManager: {
-		start: vi.fn(),
-		stop: vi.fn(),
-		getStatus: vi.fn(),
-	},
+// Mock the Live mode controller registry (the tunnel channels route to it)
+vi.mock('../../../../main/web-server/live-mode', () => ({
+	getLiveModeController: vi.fn(),
 }));
 
 // Mock fs
@@ -145,6 +141,15 @@ vi.mock('fs', () => ({
 	copyFileSync: vi.fn(),
 }));
 
+// shell.openPath never settles on Linux (MAESTRO-QH), so the handlers branch on
+// the platform. Default to "not Linux" so the rest of the suite is platform-neutral
+// on every CI leg; the Linux cases flip it explicitly.
+const { mockIsLinux } = vi.hoisted(() => ({ mockIsLinux: vi.fn(() => false) }));
+vi.mock('../../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../shared/platformDetection')>()),
+	isLinux: mockIsLinux,
+}));
+
 // Import mocked modules for test control
 import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
@@ -153,9 +158,10 @@ import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { captureException } from '../../../../main/utils/sentry';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
-import { tunnelManager } from '../../../../main/tunnel-manager';
+import { getLiveModeController } from '../../../../main/web-server/live-mode';
 import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
+import { INSTALL_DIR_SYNC_PATH_ERROR } from '../../../../shared/syncPath';
 
 describe('system IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -163,12 +169,16 @@ describe('system IPC handlers', () => {
 	let mockApp: any;
 	let mockSettingsStore: any;
 	let mockBootstrapStore: any;
-	let mockWebServer: any;
-	let mockTunnelManager: any;
+	let mockLiveMode: {
+		getStatus: ReturnType<typeof vi.fn>;
+		startRemoteControl: ReturnType<typeof vi.fn>;
+		stopRemoteControl: ReturnType<typeof vi.fn>;
+	};
 	let deps: SystemHandlerDependencies;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsLinux.mockReturnValue(false);
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -207,21 +217,19 @@ describe('system IPC handlers', () => {
 			delete: vi.fn(),
 		};
 
-		// Setup mock web server
-		mockWebServer = {
-			getSecureUrl: vi.fn().mockReturnValue('http://localhost:3000/token-path'),
+		// The registered Live mode controller
+		mockLiveMode = {
+			getStatus: vi.fn(),
+			startRemoteControl: vi.fn(),
+			stopRemoteControl: vi.fn(),
 		};
-
-		// Setup mock tunnel manager (use the imported mock)
-		mockTunnelManager = tunnelManager;
+		vi.mocked(getLiveModeController).mockReturnValue(mockLiveMode as any);
 
 		// Create dependencies
 		deps = {
 			getMainWindow: () => mockMainWindow,
 			app: mockApp as unknown as App,
 			settingsStore: mockSettingsStore as unknown as Store<any>,
-			tunnelManager: mockTunnelManager,
-			getWebServer: () => mockWebServer,
 			bootstrapStore: mockBootstrapStore as unknown as Store<any>,
 		};
 
@@ -992,6 +1000,28 @@ describe('system IPC handlers', () => {
 			// Should not throw - logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
 		});
+
+		// MAESTRO-QH: Electron's Linux openPath never runs its completion callback,
+		// so awaiting it left the invoke unanswered ("reply was never sent").
+		it('replies on Linux even though shell.openPath never settles there', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openPath');
+			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
+		});
+
+		it('openExternal with a file:// URL also replies on Linux', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, 'file:///tmp/report.pdf')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith('/tmp/report.pdf');
+		});
 	});
 
 	describe('tunnel:isCloudflaredInstalled', () => {
@@ -1014,90 +1044,72 @@ describe('system IPC handlers', () => {
 		});
 	});
 
+	// The tunnel channels are the LIVE panel's Remote Control row. They route to
+	// the Live mode controller, the object `maestro-cli live tunnel` reaches too;
+	// the controller's own behavior is covered in live-mode.test.ts.
 	describe('tunnel:start', () => {
-		it('should start tunnel and return full URL with token', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/secret-token');
-			vi.mocked(mockTunnelManager.start).mockResolvedValue({
-				success: true,
-				url: 'https://abc.trycloudflare.com',
-			});
-
-			const handler = handlers.get('tunnel:start');
-			const result = await handler!({} as any);
-
-			expect(mockTunnelManager.start).toHaveBeenCalledWith(3000);
-			expect(result).toEqual({
+		it('starts Remote Control through the Live mode controller', async () => {
+			mockLiveMode.startRemoteControl.mockResolvedValue({
 				success: true,
 				url: 'https://abc.trycloudflare.com/secret-token',
+				status: {},
 			});
+
+			const result = await handlers.get('tunnel:start')!({} as any);
+
+			expect(mockLiveMode.startRemoteControl).toHaveBeenCalledTimes(1);
+			expect(result).toEqual({ success: true, url: 'https://abc.trycloudflare.com/secret-token' });
 		});
 
-		it('should return error when web server not running', async () => {
-			deps.getWebServer = () => null;
-			handlers.clear();
-			registerSystemHandlers(deps);
+		it('relays the refusal while Live mode is off', async () => {
+			mockLiveMode.startRemoteControl.mockResolvedValue({
+				success: false,
+				error: 'Live mode is off. Turn it on before starting Remote Control.',
+				status: {},
+			});
 
-			const handler = handlers.get('tunnel:start');
-			const result = await handler!({} as any);
+			const result = await handlers.get('tunnel:start')!({} as any);
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn it on before starting Remote Control.',
 			});
 		});
 
-		it('should return error when web server URL not available', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue(null);
+		it('answers before startup has registered the controller', async () => {
+			vi.mocked(getLiveModeController).mockReturnValue(null);
 
-			const handler = handlers.get('tunnel:start');
-			const result = await handler!({} as any);
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Web server not running',
-			});
-		});
-
-		it('should return tunnel manager error result', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/token');
-			vi.mocked(mockTunnelManager.start).mockResolvedValue({
-				success: false,
-				error: 'Tunnel failed to start',
-			});
-
-			const handler = handlers.get('tunnel:start');
-			const result = await handler!({} as any);
+			const result = await handlers.get('tunnel:start')!({} as any);
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Tunnel failed to start',
+				error: 'Live mode is not available yet. Try again in a moment.',
 			});
 		});
 	});
 
 	describe('tunnel:stop', () => {
-		it('should stop tunnel and return success', async () => {
-			vi.mocked(mockTunnelManager.stop).mockResolvedValue(undefined);
+		it('stops Remote Control through the Live mode controller', async () => {
+			mockLiveMode.stopRemoteControl.mockResolvedValue({ success: true, status: {} });
 
-			const handler = handlers.get('tunnel:stop');
-			const result = await handler!({} as any);
+			const result = await handlers.get('tunnel:stop')!({} as any);
 
-			expect(mockTunnelManager.stop).toHaveBeenCalled();
+			expect(mockLiveMode.stopRemoteControl).toHaveBeenCalledTimes(1);
 			expect(result).toEqual({ success: true });
 		});
 	});
 
 	describe('tunnel:getStatus', () => {
-		it('should append web server token path to running tunnel URL', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/secret-token');
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
-				isRunning: true,
-				url: 'https://abc.trycloudflare.com',
-				error: null,
+		it('reads Remote Control from the controller status', async () => {
+			mockLiveMode.getStatus.mockReturnValue({
+				live: true,
+				url: 'http://192.168.1.5:3000/secret-token',
+				remoteControl: true,
+				remoteControlUrl: 'https://abc.trycloudflare.com/secret-token',
+				revision: 1,
 			});
 
-			const handler = handlers.get('tunnel:getStatus');
-			const result = await handler!({} as any);
+			const result = await handlers.get('tunnel:getStatus')!({} as any);
 
 			expect(result).toEqual({
 				isRunning: true,
@@ -1106,126 +1118,27 @@ describe('system IPC handlers', () => {
 			});
 		});
 
-		it('should not double-append token when URL already contains it', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/secret-token');
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
-				isRunning: true,
-				url: 'https://abc.trycloudflare.com/secret-token',
-				error: null,
+		it('passes the tunnel error through', async () => {
+			mockLiveMode.getStatus.mockReturnValue({
+				live: true,
+				url: 'http://192.168.1.5:3000/secret-token',
+				remoteControl: false,
+				remoteControlUrl: null,
+				remoteControlError: 'cloudflared exited',
+				revision: 1,
 			});
 
-			const handler = handlers.get('tunnel:getStatus');
-			const result = await handler!({} as any);
+			const result = await handlers.get('tunnel:getStatus')!({} as any);
 
-			expect(result.url).toBe('https://abc.trycloudflare.com/secret-token');
+			expect(result).toEqual({ isRunning: false, url: null, error: 'cloudflared exited' });
 		});
 
-		it('should return bare status when tunnel is not running', async () => {
-			const mockStatus = { isRunning: false, url: null, error: null };
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue(mockStatus);
+		it('reports not running before the controller is registered', async () => {
+			vi.mocked(getLiveModeController).mockReturnValue(null);
 
-			const handler = handlers.get('tunnel:getStatus');
-			const result = await handler!({} as any);
+			const result = await handlers.get('tunnel:getStatus')!({} as any);
 
-			expect(result).toEqual(mockStatus);
-		});
-
-		it('should return bare tunnel URL when web server is unavailable', async () => {
-			deps.getWebServer = () => null;
-			vi.mocked(ipcMain.handle).mockClear();
-			handlers.clear();
-			vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
-				handlers.set(channel, handler);
-			});
-			registerSystemHandlers(deps);
-
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
-				isRunning: true,
-				url: 'https://abc.trycloudflare.com',
-				error: null,
-			});
-
-			const handler = handlers.get('tunnel:getStatus');
-			const result = await handler!({} as any);
-
-			expect(result.url).toBe('https://abc.trycloudflare.com');
-		});
-	});
-
-	// Regression guard: a previous bug had tunnel:start returning a tokenized
-	// URL while tunnel:getStatus returned a bare one. The renderer polls
-	// getStatus every 500-2000ms, so the bare URL overwrote the good one
-	// within seconds, breaking the QR code and remote access. These tests
-	// lock in the invariant that both channels agree on the URL.
-	describe('tunnel URL consistency between start and getStatus', () => {
-		it('tunnel:start and tunnel:getStatus must return the same URL for the same session', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/abc-123-token');
-			const bareTunnelUrl = 'https://raise-skins-flickr-wagner.trycloudflare.com';
-
-			vi.mocked(mockTunnelManager.start).mockResolvedValue({
-				success: true,
-				url: bareTunnelUrl,
-			});
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
-				isRunning: true,
-				url: bareTunnelUrl,
-				error: null,
-			});
-
-			const startHandler = handlers.get('tunnel:start');
-			const statusHandler = handlers.get('tunnel:getStatus');
-
-			const startResult = await startHandler!({} as any);
-			const statusResult = await statusHandler!({} as any);
-
-			expect(startResult.url).toBe(statusResult.url);
-			expect(startResult.url).toBe(`${bareTunnelUrl}/abc-123-token`);
-		});
-
-		it('repeated polling of tunnel:getStatus must not drop the token', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/persistent-token');
-			const bareTunnelUrl = 'https://xyz.trycloudflare.com';
-
-			vi.mocked(mockTunnelManager.start).mockResolvedValue({
-				success: true,
-				url: bareTunnelUrl,
-			});
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
-				isRunning: true,
-				url: bareTunnelUrl,
-				error: null,
-			});
-
-			const startHandler = handlers.get('tunnel:start');
-			const statusHandler = handlers.get('tunnel:getStatus');
-
-			const startResult = await startHandler!({} as any);
-			const expectedUrl = `${bareTunnelUrl}/persistent-token`;
-			expect(startResult.url).toBe(expectedUrl);
-
-			// Simulate the renderer's polling loop (useLiveOverlay.ts:131-136).
-			// Every call must return the tokenized URL - never the bare one.
-			for (let i = 0; i < 5; i++) {
-				const pollResult = await statusHandler!({} as any);
-				expect(pollResult.url).toBe(expectedUrl);
-				expect(pollResult.url).not.toBe(bareTunnelUrl);
-			}
-		});
-
-		it('tunnel:getStatus URL must always contain the web server security token path', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/mandatory-token');
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
-				isRunning: true,
-				url: 'https://tunnel.trycloudflare.com',
-				error: null,
-			});
-
-			const handler = handlers.get('tunnel:getStatus');
-			const result = await handler!({} as any);
-
-			// The token path is required for the web server to accept the request.
-			// Without it, the remote tunnel URL 404s.
-			expect(result.url).toMatch(/\/mandatory-token$/);
+			expect(result).toEqual({ isRunning: false, url: null, error: null });
 		});
 	});
 
@@ -1774,6 +1687,22 @@ describe('system IPC handlers', () => {
 				success: false,
 				error: 'Cannot create directory: /protected/path',
 			});
+		});
+
+		it('should reject a path inside the install directory (#1875)', async () => {
+			mockBootstrapStore.get.mockReturnValue(null);
+			const exe = path.join(path.resolve('/apps/Maestro'), 'Maestro.exe');
+			mockApp.getPath.mockImplementation((name: string) =>
+				name === 'exe' ? exe : '/default/path'
+			);
+
+			const handler = handlers.get('sync:setCustomPath');
+			const result = await handler!({} as any, path.join(path.dirname(exe), 'storage'));
+
+			expect(result).toEqual({ success: false, error: INSTALL_DIR_SYNC_PATH_ERROR });
+			expect(fsSync.mkdirSync).not.toHaveBeenCalled();
+			expect(fsSync.copyFileSync).not.toHaveBeenCalled();
+			expect(mockBootstrapStore.set).not.toHaveBeenCalled();
 		});
 
 		it('should migrate settings files to new location', async () => {

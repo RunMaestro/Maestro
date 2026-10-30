@@ -68,6 +68,40 @@ describe('queue command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 
+		it('prints each item mentionRouting, the read-back for dispatch --routing', async () => {
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'list_queue_result',
+				success: true,
+				queues: [
+					{
+						sessionId: 's1',
+						name: 'A',
+						state: 'busy',
+						items: [
+							{
+								id: 'i1',
+								timestamp: 1,
+								tabId: 't1',
+								type: 'message',
+								text: 'then tell @B',
+								mentionRouting: 'handoff',
+							},
+							{ id: 'i2', timestamp: 2, tabId: 't1', type: 'message', text: 'plain' },
+						],
+					},
+				],
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await queueList({});
+
+			const items = JSON.parse(consoleSpy.mock.calls[0][0]).queues[0].items;
+			expect(items[0].mentionRouting).toBe('handoff');
+			expect(items[1]).not.toHaveProperty('mentionRouting');
+		});
+
 		it('resolves --agent and scopes list_queue to that session', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
 			const mockSendCommand = vi

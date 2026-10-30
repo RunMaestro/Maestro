@@ -192,6 +192,10 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 						const event = createCueEvent('agent.completed', sub.name, {
 							sourceSession: completingName,
 							sourceSessionId: sessionId,
+							...(completionData?.sourceProcessId
+								? { sourceProcessId: completionData.sourceProcessId }
+								: {}),
+							...(completionData?.sourceTabId ? { sourceTabId: completionData.sourceTabId } : {}),
 							status: completionData?.status ?? 'completed',
 							exitCode: completionData?.exitCode ?? null,
 							durationMs: completionData?.durationMs ?? 0,

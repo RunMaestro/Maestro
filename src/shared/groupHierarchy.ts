@@ -87,6 +87,23 @@ export function setGroupHidden(groups: Group[], groupId: string, hidden: boolean
 }
 
 /**
+ * Fold a group in the Left Bar, or unfold it.
+ *
+ * The one write behind the group header's chevron (`toggleGroup` in
+ * `useGroupManagement`), the store's `setGroupCollapsed` /
+ * `toggleGroupCollapsed`, and
+ * `maestro-cli update-group --collapse/--expand`. Nested groups use the same
+ * `collapsed` flag, so this covers them too. Returns the input unchanged when
+ * the group is missing or already reads that way, so a caller can tell a no-op
+ * from a write by identity.
+ */
+export function setGroupCollapsed(groups: Group[], groupId: string, collapsed: boolean): Group[] {
+	const target = groups.find((group) => group.id === groupId);
+	if (!target || !!target.collapsed === collapsed) return groups;
+	return groups.map((group) => (group.id === groupId ? { ...group, collapsed } : group));
+}
+
+/**
  * Repairs persisted hierarchy data that predates nesting validation or was
  * written by an external client. Invalid relationships are promoted to root
  * rather than discarded so no group is lost.
@@ -121,4 +138,36 @@ export function removeGroupAndPromoteChildren(groups: readonly Group[], groupId:
 		.map((group) =>
 			group.parentGroupId === groupId ? { ...group, parentGroupId: undefined } : group
 		);
+}
+
+/** Apply only changes made since this writer read the registry. Unseen peers survive. */
+export function mergeGroupPersistenceChanges(
+	current: Group[],
+	incoming: Group[],
+	baseline: Group[]
+): Group[] {
+	const before = new Map(baseline.map((group) => [group.id, group]));
+	const updates = new Map(incoming.map((group) => [group.id, group]));
+	const merged = current.flatMap((group) => {
+		const previous = before.get(group.id);
+		const update = updates.get(group.id);
+		if (!previous) return [group];
+		if (!update) return [];
+		const next = { ...group };
+		for (const key of Object.keys({ ...previous, ...update }) as (keyof Group)[]) {
+			if (key !== 'id' && update[key] !== previous[key]) {
+				Object.assign(next, { [key]: update[key] });
+			}
+		}
+		return [next];
+	});
+	const present = new Set(current.map((group) => group.id));
+	for (const group of incoming) {
+		// A missing observed id was deleted by a peer, not created by this writer.
+		if (!before.has(group.id) && !present.has(group.id)) {
+			merged.push(group);
+			present.add(group.id);
+		}
+	}
+	return normalizeGroupHierarchy(merged);
 }

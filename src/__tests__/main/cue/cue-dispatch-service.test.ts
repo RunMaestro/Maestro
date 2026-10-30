@@ -5,6 +5,7 @@ import {
 } from '../../../main/cue/cue-dispatch-service';
 import { createCueEvent } from '../../../main/cue/cue-types';
 import type { CueSubscription } from '../../../shared/cue';
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
 
 function makeDeps(
 	sessionsByName: Array<{ id: string; name: string }> = [
@@ -126,6 +127,20 @@ describe('createCueDispatchService', () => {
 	});
 
 	describe('fan-out', () => {
+		it('refuses unsupported durable fan-out before starting any target, even with permissive source authorization', () => {
+			const { deps, executeRun } = makeDeps();
+			executeRun.mockReturnValueOnce(true).mockReturnValueOnce(false);
+			configurePluginCueHost({ register: () => () => {}, authorize: () => true });
+			try {
+				const svc = createCueDispatchService(deps);
+				const sub = makeSub({ event: 'plugin.event', fan_out: ['alpha', 'bravo'] });
+				const event = createCueEvent('plugin.event', 'my-sub');
+				expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(0);
+				expect(executeRun).not.toHaveBeenCalled();
+			} finally {
+				configurePluginCueHost(undefined);
+			}
+		});
 		it('returns 2 when both targets have prompts', () => {
 			const { deps, executeRun } = makeDeps();
 			const svc = createCueDispatchService(deps);

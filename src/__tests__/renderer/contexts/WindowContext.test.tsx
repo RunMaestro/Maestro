@@ -21,6 +21,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // The primary-window-empty guard surfaces a toast; mock it so tests assert the
 // guard fired without the real toast's side effects (logger/notification IPC).
@@ -169,6 +170,33 @@ describe('WindowContext', () => {
 	});
 
 	describe('window number + title badge', () => {
+		it.each([
+			{ secondary: false, name: undefined, title: PRIMARY_HTML_TITLE },
+			{ secondary: true, name: undefined, title: 'Maestro [2]' },
+			{ secondary: true, name: 'Review', title: 'Review' },
+		])(
+			'preserves the native title $title when agents await input',
+			async ({ secondary, name, title }) => {
+				setUrl(secondary ? '/?windowId=win-2' : '/');
+				vi.mocked(windows().getState).mockResolvedValue(
+					makeState({ id: secondary ? 'win-2' : 'primary-1' })
+				);
+				vi.mocked(windows().list).mockResolvedValue([
+					makeInfo({ id: 'primary-1', isMain: true }),
+					makeInfo({ id: 'win-2', name }),
+				]);
+				useSessionStore.setState({
+					sessions: [createMockSession({ id: 'waiting', state: 'waiting_input' })],
+				});
+
+				const { result } = renderHook(() => useWindowContext(), { wrapper });
+				await waitFor(() => expect(result.current.windows).toHaveLength(2));
+				expect(document.title).toBe(title);
+				act(() => useSessionStore.getState().updateSession('waiting', { state: 'idle' }));
+				expect(document.title).toBe(title);
+			}
+		);
+
 		it('reports the primary window as number 1 and leaves its title untouched', async () => {
 			setUrl('/');
 			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'primary-1' }));
@@ -1007,6 +1035,94 @@ describe('WindowContext', () => {
 	});
 
 	describe('web-desktop client (not window-scoped)', () => {
+		it.each([0, 1, 3])('shows %i agents with open input requests in the page title', (count) => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			useSessionStore.setState({
+				sessions: Array.from({ length: count }, (_, index) =>
+					createMockSession({ id: `waiting-${index}`, state: 'waiting_input' })
+				),
+			});
+
+			renderHook(() => useWindowContext(), { wrapper });
+
+			expect(document.title).toBe(count > 0 ? `(${count}) Maestro` : 'Maestro');
+		});
+
+		it('counts each waiting agent once regardless of its tabs or the selected agent', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			useSessionStore.setState({
+				activeSessionId: 'idle',
+				sessions: [
+					createMockSession({ id: 'idle' }),
+					createMockSession({
+						id: 'waiting',
+						state: 'waiting_input',
+						aiTabs: [
+							createMockAITab({ id: 'tab-1', state: 'busy' }),
+							createMockAITab({ id: 'tab-2', state: 'busy', hasUnread: true }),
+						],
+					}),
+				],
+			});
+
+			renderHook(() => useWindowContext(), { wrapper });
+
+			expect(document.title).toBe('(1) Maestro');
+		});
+
+		it('shares the needs-input count exclusions for Pianola and worktree children', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'root', state: 'waiting_input' }),
+					createMockSession({ id: 'manager', isPianola: true, state: 'waiting_input' }),
+					createMockSession({ id: 'child', parentSessionId: 'root', state: 'waiting_input' }),
+				],
+			});
+			renderHook(() => useWindowContext(), { wrapper });
+			expect(document.title).toBe('(1) Maestro');
+		});
+
+		it('excludes empty, idle, unread, busy, connecting and failed agents', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'empty' }),
+					createMockSession({
+						id: 'unread',
+						aiTabs: [createMockAITab({ hasUnread: true })],
+					}),
+					createMockSession({ id: 'busy', state: 'busy' }),
+					createMockSession({ id: 'connecting', state: 'connecting' }),
+					createMockSession({ id: 'error', state: 'error' }),
+				],
+			});
+
+			renderHook(() => useWindowContext(), { wrapper });
+
+			expect(document.title).toBe('Maestro');
+		});
+
+		it('updates when requests open, are answered or their agents are removed', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			seedSessions(['a', 'b']);
+			renderHook(() => useWindowContext(), { wrapper });
+			expect(document.title).toBe('Maestro');
+
+			act(() => useSessionStore.getState().updateSession('a', { state: 'waiting_input' }));
+			expect(document.title).toBe('(1) Maestro');
+			act(() => useSessionStore.getState().updateSession('b', { state: 'waiting_input' }));
+			expect(document.title).toBe('(2) Maestro');
+			act(() => useSessionStore.getState().updateSession('a', { state: 'busy' }));
+			expect(document.title).toBe('(1) Maestro');
+			act(() => useSessionStore.getState().updateSession('b', { state: 'idle' }));
+			expect(document.title).toBe('Maestro');
+			act(() => useSessionStore.getState().updateSession('a', { state: 'waiting_input' }));
+			expect(document.title).toBe('(1) Maestro');
+			act(() => useSessionStore.getState().removeSession('a'));
+			expect(document.title).toBe('Maestro');
+		});
+
 		it('permits every agent and never hydrates the registry ownership map', async () => {
 			vi.mocked(isWebDesktop).mockReturnValue(true);
 			// The registry says a secondary window claimed agent-x. A web client

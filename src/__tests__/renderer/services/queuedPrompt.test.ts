@@ -11,7 +11,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const planCrossAgentMentions = vi.fn();
-vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) => ({
+	// The real `queuedMentionFields`: the fields a queued item carries are the
+	// composer's own, so the test reads them through the same function.
+	...(await importOriginal<typeof import('../../../renderer/services/crossAgentMentions')>()),
 	planCrossAgentMentions: (...args: unknown[]) => planCrossAgentMentions(...args),
 }));
 
@@ -95,7 +98,38 @@ describe('buildQueuedMessageItem', () => {
 		expect(item.crossAgentMention).toBe(true);
 		expect(item.crossAgentOnly).toBe(true);
 		// Planning only - dispatching is processQueuedItem's job at drain time.
-		expect(planCrossAgentMentions).toHaveBeenCalledWith('@Other look', 'session-1');
+		expect(planCrossAgentMentions).toHaveBeenCalledWith('@Other look', 'session-1', undefined);
+		// No routing was picked, so the drain re-plans from the wording.
+		expect(item.mentionRouting).toBeUndefined();
+	});
+
+	it('stamps a picked routing so the drain does not re-route it by wording', () => {
+		planCrossAgentMentions.mockReturnValue({
+			targetSessionIds: ['other'],
+			routing: 'handoff',
+			inferredRouting: 'parallel',
+			routingSource: 'explicit',
+			suppressLocal: false,
+		});
+		const session = seed();
+
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[0],
+			text: 'fix it, @Other too',
+			mentionRouting: 'handoff',
+		});
+
+		expect(planCrossAgentMentions).toHaveBeenCalledWith(
+			'fix it, @Other too',
+			'session-1',
+			'handoff'
+		);
+		expect(item).toMatchObject({
+			crossAgentMention: true,
+			crossAgentOnly: false,
+			mentionRouting: 'handoff',
+		});
 	});
 
 	it('leaves the mention flags off a message that mentions nobody', () => {
@@ -139,6 +173,33 @@ describe('enqueuePromptForTab', () => {
 		enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'second' });
 
 		expect(currentQueue().map((item) => item.text)).toEqual(['first', 'second']);
+	});
+
+	it('carries a picked mention routing onto the queued item', () => {
+		planCrossAgentMentions.mockReturnValue({
+			targetSessionIds: ['other'],
+			routing: 'consult-first',
+			inferredRouting: 'parallel',
+			routingSource: 'explicit',
+			suppressLocal: true,
+		});
+		seed();
+		enqueuePromptForTab({
+			sessionId: 'session-1',
+			tabId: 'a',
+			text: 'review, ask @Other',
+			mentionRouting: 'consult-first',
+		});
+
+		expect(planCrossAgentMentions).toHaveBeenCalledWith(
+			'review, ask @Other',
+			'session-1',
+			'consult-first'
+		);
+		expect(currentQueue()[0]).toMatchObject({
+			mentionRouting: 'consult-first',
+			crossAgentOnly: true,
+		});
 	});
 
 	it('falls back to the active tab when the target tab is gone', () => {

@@ -41,11 +41,15 @@ const consultService = createConsultService();
 /**
  * Stop every consult the given source agent still has in flight. Each is killed and settles
  * stamped `canceled`, not `error`, so the source agent's bubble reports that the user stopped it.
+ * `sourceTabId` narrows it to the consults one tab's turn started.
  *
  * @returns How many consults were cancelled.
  */
-export function cancelCrossAgentRequestsForSource(sourceSessionId: string): number {
-	return consultService.cancelForSource(sourceSessionId);
+export function cancelCrossAgentRequestsForSource(
+	sourceSessionId: string,
+	sourceTabId?: string
+): number {
+	return consultService.cancelForSource(sourceSessionId, sourceTabId);
 }
 
 /**

@@ -726,6 +726,16 @@ function clampLabel(text: string): string {
  * last resort, not the second one.
  */
 export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
+	if (entry.type === 'group') return clampLabel(entry.group.name) || 'Tab group';
+	return getParkedTabLabel(entry);
+}
+
+/**
+ * Display label for one tab held off the strip with its kind: a snoozed tab, a
+ * snoozed group's pane, or a closed-tab entry (`ClosedTabEntry` has the same
+ * `{ type, tab }` shape). Same fallbacks as {@link getSnoozedTabLabel}.
+ */
+export function getParkedTabLabel(entry: SnoozedGroupMember): string {
 	switch (entry.type) {
 		case 'ai': {
 			if (entry.tab.name) return entry.tab.name;
@@ -739,8 +749,6 @@ export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
 			return clampLabel(entry.tab.customTitle || entry.tab.title || entry.tab.url) || 'Browser tab';
 		case 'terminal':
 			return entry.tab.name || clampLabel(entry.tab.cwd) || 'Terminal';
-		case 'group':
-			return clampLabel(entry.group.name) || 'Tab group';
 	}
 }
 

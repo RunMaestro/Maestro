@@ -4,8 +4,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import {
-	atomicWriteJson,
 	atomicWriteFile,
+	atomicWriteJson,
 	createKeyedWriteQueue,
 } from '../../../main/utils/atomic-json-store';
 
@@ -62,6 +62,38 @@ describe('atomicWriteJson', () => {
 		expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toEqual({ good: true });
 		// No temp file left behind by the rejected write.
 		expect(await fs.readdir(dir)).toEqual(['data.json']);
+	});
+});
+
+describe('atomicWriteFile', () => {
+	let dir: string;
+
+	beforeEach(async () => {
+		dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atomic-file-'));
+	});
+
+	afterEach(async () => {
+		await fs.rm(dir, { recursive: true, force: true });
+	});
+
+	// MAESTRO-15K: two overlapping history migrations wrote the same session's
+	// JSONL at once. With a shared `${file}.tmp`, the first rename consumed the
+	// temp file and the second threw ENOENT.
+	it('lets concurrent writers to the same target all succeed', async () => {
+		const file = path.join(dir, 'session.jsonl');
+		const payloads = Array.from({ length: 8 }, (_, i) => `line-${i}\n`);
+		await expect(Promise.all(payloads.map((p) => atomicWriteFile(file, p)))).resolves.toBeDefined();
+		// Last rename wins, and it is always one whole payload.
+		expect(payloads).toContain(await fs.readFile(file, 'utf-8'));
+		expect(await fs.readdir(dir)).toEqual(['session.jsonl']);
+	});
+
+	it('removes its temp file when the rename fails', async () => {
+		// Renaming a file over a directory fails on every platform.
+		const target = path.join(dir, 'occupied');
+		await fs.mkdir(target);
+		await expect(atomicWriteFile(target, 'data')).rejects.toThrow();
+		expect(await fs.readdir(dir)).toEqual(['occupied']);
 	});
 });
 

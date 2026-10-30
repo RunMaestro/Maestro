@@ -24,10 +24,15 @@ import {
 	isTerminalAgentRunStatus,
 	resolveAgentRunProvider,
 	deriveTerminalStatus,
+	redactPrompt,
+	redactAnswerTail,
 	type AgentRun,
 	type AgentRunEvent,
 	type AgentRunStatus,
 } from '../../shared/agent-run';
+import type { AgentError } from '../../shared/types';
+import type { TurnSettlement } from '../process-manager/types';
+import { canonicalJson } from '../../shared/canonicalJson';
 
 const GROUP_CHAT_PREFIX = 'group-chat-';
 
@@ -51,6 +56,8 @@ export interface CaptureSpawnInput {
 export interface CaptureExitInput {
 	sessionId: string;
 	exitCode: number;
+	signal?: number;
+	settlement?: TurnSettlement;
 }
 
 /** Everything the service touches that is not pure. Injected for testability. */
@@ -149,6 +156,30 @@ export class AgentRunCaptureService {
 		}
 	}
 
+	/** Retain a structured provider failure without copying raw provider payloads. */
+	captureError(sessionId: string, error: AgentError): void {
+		try {
+			if (!isCapturable(sessionId)) return;
+			const run = this.deps.findActiveRunBySession(sessionId);
+			if (!run || isTerminalAgentRunStatus(run.status)) return;
+			this.deps.upsertAgentRun({
+				...run,
+				updatedAt: this.now(),
+				metadata: {
+					...run.metadata,
+					agentError: {
+						type: error.type,
+						message: redactPrompt(error.message),
+						recoverable: error.recoverable,
+						timestamp: error.timestamp,
+					},
+				},
+			});
+		} catch (error) {
+			this.report('error', `captureError failed for ${sessionId}`, error);
+		}
+	}
+
 	/**
 	 * Settle a run to completed (exit 0) or failed (nonzero) at process exit,
 	 * recording exitCode + duration and running the optional F2 enrich hook.
@@ -175,9 +206,29 @@ export class AgentRunCaptureService {
 			// Merge enrichment first so review findings are visible, THEN derive the
 			// terminal status: an exit-0 run with open critical/high findings settles
 			// to needs_review, not completed (ISC-8.4/5.8).
-			const merged: AgentRun = { ...existing, ...enrichment };
-			const target = deriveTerminalStatus(merged, input.exitCode);
-			assertTransition(existing.status, target);
+			const current = this.deps.getAgentRun(runId);
+			if (!current || isTerminalAgentRunStatus(current.status)) return undefined;
+			// An enrich hook can wait on git/network while checks, review findings,
+			// or a provider error arrive. Apply only fields unchanged since it began;
+			// never resurrect a superseded run or overwrite those newer facts.
+			const merged: AgentRun = { ...current };
+			for (const key of Object.keys(enrichment) as (keyof AgentRun)[]) {
+				if (
+					['id', 'status', 'createdAt', 'updatedAt', 'sessionId', 'tabId', 'metadata'].includes(key)
+				)
+					continue;
+				if (canonicalJson({ value: existing[key] }) === canonicalJson({ value: current[key] })) {
+					Object.assign(merged, { [key]: enrichment[key] });
+				}
+			}
+			const outcome = input.settlement?.outcome;
+			const target =
+				outcome === 'interrupted'
+					? 'cancelled'
+					: outcome === 'crashed' || input.signal || current.metadata?.agentError
+						? 'failed'
+						: deriveTerminalStatus(merged, input.exitCode);
+			assertTransition(current.status, target);
 
 			const durationMs = Math.max(0, ts - existing.createdAt);
 			const next: AgentRun = {
@@ -185,9 +236,14 @@ export class AgentRunCaptureService {
 				status: target,
 				updatedAt: ts,
 				metadata: {
-					...(existing.metadata ?? {}),
 					...(enrichment.metadata ?? {}),
+					...(current.metadata ?? {}),
 					exitCode: input.exitCode,
+					...(input.signal ? { signal: input.signal } : {}),
+					...(input.settlement ? input.settlement : {}),
+					...(input.settlement?.answerTail
+						? { answerTail: redactAnswerTail(input.settlement.answerTail) }
+						: {}),
 					durationMs,
 					completedAt: ts,
 				},

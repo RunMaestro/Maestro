@@ -104,8 +104,8 @@ export type RuntimeConsultInput = ConsultAskInput;
 export interface RuntimeConsults {
 	/** A `ConsultsApi`, which also takes a hand-off. */
 	readonly api: { ask(input: RuntimeConsultInput): Promise<ClientResult<ConsultAnswer>> };
-	/** Stop every consult `agentId` asked for. Answers how many were stopped. */
-	cancelForSource(agentId: string): number;
+	/** Stop every consult `agentId` (or its tab `tabId`) asked for. Answers how many were stopped. */
+	cancelForSource(agentId: string, tabId?: string): number;
 	/** Consults running now. With the group chat rounds, the work `host stop` refuses to cut off. */
 	inFlight(): number;
 	/**
@@ -433,7 +433,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 
 	return {
 		api: { ask },
-		cancelForSource: (agentId) => service.cancelForSource(agentId),
+		cancelForSource: (agentId, tabId) => service.cancelForSource(agentId, tabId),
 		inFlight: () => inFlight,
 		dispose() {
 			disposed = true;

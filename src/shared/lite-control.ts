@@ -51,6 +51,7 @@ export interface LiteControlState {
 	picker: boolean;
 	commandsVisible?: boolean;
 	canReturn?: boolean;
+	recovery?: { attempt: number; nextRetryAt?: number };
 	profiles: LiteProfile[];
 	aliases: string[];
 	closing?: boolean;

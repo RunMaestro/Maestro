@@ -202,6 +202,69 @@ describe('update-group command', () => {
 		});
 	});
 
+	describe('collapsing and expanding', () => {
+		it('should send collapsed: true for --collapse', async () => {
+			const payload = mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1', collapsed: true });
+
+			await updateGroup('g1', { collapse: true });
+
+			expect(payload()).toMatchObject({ type: 'update_group', groupId: 'g1', collapsed: true });
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('should send collapsed: false for --expand', async () => {
+			const payload = mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1', collapsed: false });
+
+			await updateGroup('g1', { expand: true });
+
+			expect(payload().collapsed).toBe(false);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('should accept --expand on a group stored with no collapsed key', async () => {
+			mockSend({ type: 'update_group_result', success: true });
+			vi.mocked(readGroups).mockReturnValue([
+				{ id: 'g1', name: 'TEAM', emoji: '\u{1F4C2}' } as Group,
+			]);
+
+			await updateGroup('g1', { expand: true });
+
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('should report the collapsed state in --json output', async () => {
+			mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1', collapsed: true });
+
+			await updateGroup('g1', { collapse: true, json: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+			expect(output.group.collapsed).toBe(true);
+		});
+
+		it('should reject --collapse together with --expand', async () => {
+			await updateGroup('g1', { collapse: true, expand: true });
+
+			expect(formatError).toHaveBeenCalledWith('Cannot pass both --collapse and --expand');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('should fail when the desktop reported success but the group is still expanded', async () => {
+			mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1', collapsed: false });
+
+			await updateGroup('g1', { collapse: true });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('group is expanded, expected collapsed')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	describe('validation errors', () => {
 		it('should reject an update that changes nothing', async () => {
 			await updateGroup('g1', {});

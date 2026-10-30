@@ -6,6 +6,7 @@
  */
 
 import * as Sentry from '@sentry/electron/renderer';
+import { isExpectedBridgeError } from '../../shared/bridgeError';
 
 /**
  * Reports an exception to Sentry from the renderer process.
@@ -21,7 +22,7 @@ export function captureException(
 		extra?: Record<string, unknown>;
 	}
 ): void {
-	Sentry.captureException(error, captureContext);
+	if (!isExpectedBridgeError(error)) Sentry.captureException(error, captureContext);
 }
 
 /**
@@ -34,5 +35,5 @@ export function captureMessage(
 	message: string,
 	captureContext?: { level?: Sentry.SeverityLevel; extra?: Record<string, unknown> }
 ): void {
-	Sentry.captureMessage(message, captureContext);
+	if (!isExpectedBridgeError(message)) Sentry.captureMessage(message, captureContext);
 }

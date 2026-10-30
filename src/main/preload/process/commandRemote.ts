@@ -1,5 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
+import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 /**
  * Helper to log via the main process logger.
@@ -31,6 +33,7 @@ export function createCommandRemoteApi() {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => void
 		): (() => void) => {
@@ -44,6 +47,7 @@ export function createCommandRemoteApi() {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => {
 				log('Received remote:executeCommand IPC', {
@@ -54,10 +58,21 @@ export function createCommandRemoteApi() {
 					force,
 					imageCount: images?.length ?? 0,
 					background,
+					mentionRouting,
 					receiptChannel,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force, images, background, receiptChannel);
+					callback(
+						sessionId,
+						command,
+						inputMode,
+						tabId,
+						force,
+						images,
+						background,
+						mentionRouting,
+						receiptChannel
+					);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -207,13 +222,33 @@ export function createCommandRemoteApi() {
 		},
 
 		/**
-		 * Subscribe to remote interrupt from web interface
-		 * Forwards to desktop's handleInterrupt logic
+		 * Subscribe to remote stops (REST interrupt route, `maestro-cli interrupt`).
+		 * Forwards to `interruptTurn()`, the function the desktop Stop runs.
+		 * `tabId` narrows the stop to one tab; absent, the whole agent stops.
+		 * `responseChannel` is the reply channel main mints per request; answer it
+		 * with `sendRemoteInterruptResponse`.
 		 */
-		onRemoteInterrupt: (callback: (sessionId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+		onRemoteInterrupt: (
+			callback: (sessionId: string, tabId?: string, responseChannel?: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId?: unknown, responseChannel?: unknown) =>
+				callback(
+					sessionId,
+					typeof tabId === 'string' ? tabId : undefined,
+					typeof responseChannel === 'string' ? responseChannel : undefined
+				);
 			ipcRenderer.on('remote:interrupt', handler);
 			return () => ipcRenderer.removeListener('remote:interrupt', handler);
+		},
+
+		/** Answer a `remote:interrupt` channel with what the stop did. */
+		sendRemoteInterruptResponse: (responseChannel: string, result: InterruptTurnResult): void => {
+			log('Sending remote interrupt response', {
+				responseChannel,
+				success: result?.success,
+				wasBusy: result?.wasBusy,
+			});
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

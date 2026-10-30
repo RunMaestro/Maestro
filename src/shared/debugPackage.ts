@@ -67,9 +67,27 @@ export interface DebugPackageOptions {
 	includeGroupChats?: boolean; // Default: true
 	includeBatchState?: boolean; // Default: true
 	/**
-	 * Auto Run state captured by the renderer at request time. Omitted when the
-	 * caller has no renderer state to offer; the section then reports that it was
-	 * unavailable rather than silently claiming no runs were active.
+	 * Auto Run state captured by the renderer at request time. When omitted, a
+	 * package main builds asks the app windows for it; if none can answer, the
+	 * section records why rather than silently claiming no runs were active.
 	 */
 	autoRunSnapshots?: AutoRunDebugSnapshot[];
 }
+
+/**
+ * Main asks every app window for its Auto Run snapshots on this channel when
+ * it builds a package with no renderer in the loop (`maestro-cli
+ * support-package`, Feedback's support package). The request carries a
+ * per-call response channel; see `requestAutoRunSnapshots()` in
+ * `src/main/debug-package/autorun-snapshots.ts`.
+ */
+export const AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL = 'debug:autoRunSnapshotRequest';
+
+/**
+ * A window's answer to `AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL`. A capture that
+ * throws answers `ok: false` at once, so main records the reason instead of
+ * waiting out its timeout.
+ */
+export type AutoRunSnapshotReply =
+	| { ok: true; snapshots: AutoRunDebugSnapshot[] }
+	| { ok: false; error: string };

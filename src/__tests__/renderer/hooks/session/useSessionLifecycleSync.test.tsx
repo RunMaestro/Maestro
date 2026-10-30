@@ -237,6 +237,36 @@ describe('useSessionLifecycleSync', () => {
 		expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['a']);
 	});
 
+	it('retires in-flight and queued lifecycle work without blocking post-recovery events', async () => {
+		let release!: () => void;
+		restoreSession.mockImplementationOnce(async (session: Session) => {
+			await new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			return session;
+		});
+		const kept = createMockSession({ id: 'kept' });
+		useSessionStore.setState({ sessions: [kept], activeSessionId: 'kept' });
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		const inFlight = handler!({ added: [createMockSession({ id: 'deleted-during-outage' })] });
+		await waitFor(() => expect(release).toBeDefined());
+		const queued = handler!({ added: [createMockSession({ id: 'old-queued-addition' })] });
+		useSessionStore.setState((state) => ({
+			sessions: [kept],
+			sessionReconciliationGeneration: (state.sessionReconciliationGeneration ?? 0) + 1,
+		}));
+		try {
+			handler!({ added: [createMockSession({ id: 'new-peer' })] });
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['kept', 'new-peer'])
+			);
+		} finally {
+			release();
+			await Promise.all([inFlight, queued]);
+		}
+		expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['kept', 'new-peer']);
+	});
+
 	it('keeps following its peers after one delta fails', async () => {
 		restoreSession.mockRejectedValueOnce(new Error('restore blew up'));
 		useSessionStore.setState({

@@ -31,7 +31,14 @@ export type TaskOutcome = 'done' | 'failed' | 'working';
  * orchestrator observes: idle (settled), busy (running), waiting_input (asking
  * the user), connecting (spinning up), error (broke).
  */
-export type AgentRunState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
+export type AgentRunState =
+	| 'idle'
+	| 'busy'
+	| 'waiting_input'
+	| 'connecting'
+	| 'error'
+	| 'unknown'
+	| 'completed';
 
 /** Inputs the detector reasons over. All read-only; nothing is mutated. */
 export interface CompletionInput {
@@ -72,6 +79,8 @@ export const FAILURE_MARKER_PATTERNS: readonly RegExp[] = [
 	/\b(traceback|stack\s*trace)\b/i,
 	/\bpanic(ked)?\b/i,
 	/\bsegmentation\s+fault\b/i,
+	// Provider refusal fallback when no structured error was delivered.
+	/(^|\n)\s*free usage limit reached[.!]?\s*$/i,
 	// Process exit signals.
 	/\bnon-?zero\s+exit\b/i,
 	/\bexit\s+code\s+[1-9]\b/i,
@@ -139,15 +148,23 @@ export function detectTaskOutcome(input: CompletionInput): {
 		return { outcome: 'failed', reason: 'agent entered error state' };
 	}
 
+	if (currentState === 'unknown') {
+		return { outcome: 'working', reason: 'worker identity or lifecycle is unavailable' };
+	}
+
 	// 2. A failure marker in the latest output fails the task even if the agent
 	//    otherwise settled to idle (a botched run that exited cleanly).
 	if (hasFailureMarker(recentMessages)) {
 		return { outcome: 'failed', reason: 'failure marker found in recent output' };
 	}
 
+	if (currentState === 'completed') {
+		return { outcome: 'done', reason: 'correlated process completion and settled transcript' };
+	}
+
 	// 3. A transition out of a working state into idle, with no failure, is a
 	//    successful completion - the signal the coordinator advances the DAG on.
-	if (isWorkingState(previousState) && currentState === 'idle') {
+	if (previousState === 'busy' && currentState === 'idle') {
 		return {
 			outcome: 'done',
 			reason: 'transitioned from working state to idle with no failure',
