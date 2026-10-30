@@ -1702,12 +1702,9 @@ app
 				// in the project dir. Takes precedence over resolveOverrides.
 				assign: (projectRoot, card, busy) =>
 					resolveCardAssignment(projectRoot, card, busy, boardSpawnContext),
-				spawnCard: (projectRoot, request) =>
-					spawnBoardCard(projectRoot, request, boardSpawnContext),
-				// Stop button: kill the card's in-flight agent process. The run is
-				// addressed by the Cue run id `board-spawn.ts` minted for it, so the
-				// project root is not needed here.
-				cancelCardRun: (_projectRoot, cardId) => cancelBoardCardRun(cardId),
+				spawnCard: (projectRoot, request, boardId) =>
+					spawnBoardCard(projectRoot, request, boardSpawnContext, boardId),
+				cancelCardRun: cancelBoardCardRun,
 				// Terminal card transitions surface as toasts through the SAME
 				// `remote:notifyToast` relay Cue's notify action uses. A blocked card
 				// needs a human, so its toast is sticky; a done card auto-dismisses.
@@ -1787,7 +1784,7 @@ app
 				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when
 				// a board sets `autoDecompose: true`; loads the editable prompt template
 				// and fans triage cards into child cards via the same spawn plumbing.
-				decompose: async (projectRoot, board) => {
+				decompose: async (projectRoot, board, signal) => {
 					const template = getPrompt(PROMPT_IDS.BOARD_DECOMPOSE);
 					// `board` here is the snapshot the tick loaded, and each LLM pass
 					// takes minutes, so the children are merged into a board re-read
@@ -1796,8 +1793,9 @@ app
 					// to revert every status change the dispatcher made in between.
 					return await autoDecomposeBoard(board, {
 						promptTemplate: template,
+						signal,
 						spawn: (prompt, card) =>
-							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext),
+							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext, signal),
 						reload: () => listBoards(projectRoot).find((b) => b.id === board.id) ?? null,
 						save: (merged) => {
 							saveBoard(projectRoot, merged);

@@ -213,6 +213,79 @@ describe('CueEngine.drain', () => {
 		return { engine, exec, onLog, deps };
 	}
 
+	it.each(['stop', 'drain'] as const)(
+		'cancels owned Board preparation and decomposition during %s, preserving Resume',
+		async (mode) => {
+			let board: Board = {
+				id: 'b1',
+				name: 'Board',
+				autoDecompose: true,
+				cards: [
+					{
+						id: 'a',
+						title: 'Work',
+						body: '',
+						parents: [],
+						assigneeAgentId: alpha.id,
+						status: 'todo',
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			};
+			let finish!: (result: { output: string; exitCode: number }) => void;
+			const spawnCard = vi.fn(
+				() =>
+					new Promise<{ output: string; exitCode: number }>((resolve) => {
+						finish = resolve;
+					})
+			);
+			let finishDecompose!: (count: number) => void;
+			let decomposeSignal!: AbortSignal;
+			const cancelCardRun = vi.fn(() => true);
+			const { engine } = boot({
+				getSessions: () => [],
+				board: {
+					getEncoreFeatures: () => ({ maestroCue: true, board: true }),
+					getProjectRoots: () => ['/p/a'],
+					listBoards: () => [structuredClone(board)],
+					saveBoard: (_root, value) => {
+						board = structuredClone(value);
+					},
+					resolveOverrides: () => ({}),
+					spawnCard,
+					cancelCardRun,
+					decompose: (_root, _board, signal) => {
+						decomposeSignal = signal;
+						return new Promise((resolve) => {
+							finishDecompose = resolve;
+						});
+					},
+				},
+			});
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(board.cards[0].status).toBe('running');
+			const shutdown =
+				mode === 'stop' ? (engine.stop(), undefined) : engine.drain({ timeoutMs: 0 });
+			expect(cancelCardRun).toHaveBeenCalledWith('/p/a', 'b1', 'a');
+			expect(decomposeSignal.aborted).toBe(true);
+			expect(board.cards[0]).toMatchObject({ status: 'todo', heldByUser: true });
+			finish({ output: '<!-- maestro:card-complete -->', exitCode: 0 });
+			finishDecompose(0);
+			await flush();
+			if (shutdown) await vi.advanceTimersByTimeAsync(1000);
+			await shutdown;
+			expect(board.cards[0].runs?.[0].outcome).toBe('canceled');
+			expect(board.cards[0].status).toBe('todo');
+			engine.start();
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(spawnCard).toHaveBeenCalledTimes(1);
+			engine.stop();
+			finishDecompose(0);
+			await flush();
+		}
+	);
+
 	it.each([
 		{ draining: false, maestroCue: true, boardEnabled: true, expected: 1 },
 		{ draining: true, maestroCue: true, boardEnabled: true, expected: 0 },

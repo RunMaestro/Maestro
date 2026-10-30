@@ -648,11 +648,15 @@ describe('board-storage card mutations', () => {
 		}
 	);
 
-	it('allows metadata edits that retain an existing running status', () => {
-		saveBoards(projectRoot, [board([card({ id: 'a', status: 'running' })])]);
-		expect(
-			updateCard(projectRoot, 'b1', card({ id: 'a', status: 'running', title: 'Edited' })).cards[0]
-		).toMatchObject({ title: 'Edited', status: 'running' });
+	it('rejects task changes while its current instructions are executing', () => {
+		saveBoards(projectRoot, [
+			board([card({ id: 'a', status: 'running', title: 'Executing task' })]),
+		]);
+		const before = loadBoards(projectRoot);
+		expect(() =>
+			updateCard(projectRoot, 'b1', card({ id: 'a', status: 'running', title: 'Replacement task' }))
+		).toThrow(/running cards cannot be edited/);
+		expect(loadBoards(projectRoot)).toEqual(before);
 	});
 
 	it('updateCard replaces fields in place and preserves createdAt', () => {

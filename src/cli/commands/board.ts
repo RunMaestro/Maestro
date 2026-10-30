@@ -61,6 +61,7 @@ import { listProfiles } from '../../main/profiles/profile-storage';
 import { autoDecomposeBoard, type DecomposeSpawn } from '../../main/board/board-decompose';
 import { readSessions, getSessionById, resolveAgentId } from '../services/storage';
 import { spawnAgent } from '../services/agent-spawner';
+import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { getCliPrompt } from '../services/prompt-loader';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { formatError, formatSuccess, formatWarning } from '../output/formatter';
@@ -640,17 +641,17 @@ function createCardPrFromCli(
 ): Promise<CardPrResult | null> {
 	return maybeCreateCardPr(cardId, {
 		loadBoard: () => getBoard(projectRoot, boardId),
-		stampPrUrl: (id, prUrl) =>
+		stampPrUrl: (id, prUrl, run) =>
 			enqueueBoardWrite(projectRoot, () => {
 				const board = getBoard(projectRoot, boardId);
-				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString())) {
+				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString(), run)) {
 					saveBoard(projectRoot, board);
 				}
 			}),
-		stampPrError: (id, error) =>
+		stampPrError: (id, error, run) =>
 			enqueueBoardWrite(projectRoot, () => {
 				const board = getBoard(projectRoot, boardId);
-				if (board && stampCardPrError(board, id, error, new Date().toISOString())) {
+				if (board && stampCardPrError(board, id, error, new Date().toISOString(), run)) {
 					saveBoard(projectRoot, board);
 				}
 			}),
@@ -1045,8 +1046,7 @@ async function spawnCard(
 	base: SessionInfo,
 	overrides: ProfileSpawnOverrides
 ): Promise<CardSpawnResult> {
-	// The role/system prompt is prepended to the card prompt (parity with the
-	// desktop board-spawn path, whose Cue executor has no system-prompt field).
+	// Preserve role overrides in the task preamble alongside canonical system context.
 	const rolePreamble = overrides.appendSystemPrompt
 		? `${overrides.appendSystemPrompt}\n\n${CARD_HANDOFF_REMINDER}\n\n---\n\n`
 		: `${CARD_HANDOFF_REMINDER}\n\n---\n\n`;
@@ -1071,22 +1071,24 @@ async function spawnCard(
 		worktree = { path: ensured.path, branch: ensured.branch };
 	}
 
-	const result = await spawnAgent(
-		base.toolType as ToolType,
-		worktree?.path ?? projectRoot,
-		prompt,
-		undefined,
-		{
-			customModel: overrides.customModel,
-			customEffort: overrides.customEffort,
-			customArgs: overrides.customArgs,
-			customEnvVars: base.customEnvVars,
-			sshRemoteConfig: base.sessionSshRemoteConfig,
-			enableMaestroP: base.enableMaestroP,
-			maestroPMode: base.maestroPMode,
-			maestroPPath: base.maestroPPath,
-		}
-	);
+	const runCwd = worktree?.path ?? projectRoot;
+	const appendSystemPrompt = await prepareMaestroSystemPromptCli({
+		...base,
+		cwd: runCwd,
+		projectRoot: runCwd,
+	});
+	const result = await spawnAgent(base.toolType as ToolType, runCwd, prompt, undefined, {
+		appendSystemPrompt,
+		additionalDirectories: base.additionalDirectories,
+		customModel: overrides.customModel,
+		customEffort: overrides.customEffort,
+		customArgs: overrides.customArgs,
+		customEnvVars: base.customEnvVars,
+		sshRemoteConfig: base.sessionSshRemoteConfig,
+		enableMaestroP: base.enableMaestroP,
+		maestroPMode: base.maestroPMode,
+		maestroPPath: base.maestroPPath,
+	});
 
 	return {
 		output: result.response ?? '',
@@ -1117,7 +1119,14 @@ function makeDecomposeSpawn(projectRoot: string, sessions: SessionInfo[]): Decom
 			sessions.find((s) => s.projectRoot === projectRoot);
 		if (!base) return null;
 		const overrides = assignment.kind === 'assigned' ? assignment.overrides : undefined;
+		const appendSystemPrompt = await prepareMaestroSystemPromptCli({
+			...base,
+			cwd: projectRoot,
+			projectRoot,
+		});
 		const result = await spawnAgent(base.toolType as ToolType, projectRoot, prompt, undefined, {
+			appendSystemPrompt,
+			additionalDirectories: base.additionalDirectories,
 			customModel: overrides?.customModel,
 			customEffort: overrides?.customEffort,
 			customEnvVars: base.customEnvVars,

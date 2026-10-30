@@ -385,7 +385,7 @@ export function uiSurfaceRefusal(
 	if (surface.encore && encoreFeatures[surface.encore] !== true) {
 		return `${surface.label} is turned off. Turn it on in Settings → Plugins.`;
 	}
-	if (surface.encore === 'board' && encoreFeatures.maestroCue !== true) {
+	if (surface.id === 'board' && encoreFeatures.maestroCue !== true) {
 		return `${surface.label} requires Maestro Cue. Turn it on in Settings → Plugins.`;
 	}
 	if (tab?.encore && encoreFeatures[tab.encore] !== true) {

@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
+import { substituteTemplateVariables } from '../../../shared/templateVariables';
 
 const mockGetSessionById = vi.fn();
 const mockResolveAgentId = vi.fn();
@@ -31,6 +32,13 @@ vi.mock('../../../cli/services/storage', () => ({
 const mockSpawnAgent = vi.fn();
 vi.mock('../../../cli/services/agent-spawner', () => ({
 	spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
+}));
+
+vi.mock('../../../cli/services/system-prompt', () => ({
+	prepareMaestroSystemPromptCli: async (session: any) =>
+		substituteTemplateVariables('Write only within {{AGENT_PATH}}\n{{ADDITIONAL_DIRECTORIES}}', {
+			session,
+		}),
 }));
 
 // X1 task 8: `set-status done` fires the PR-on-done flow. The gh/git plumbing is
@@ -523,6 +531,12 @@ describe('maestro-cli board', () => {
 	});
 
 	it('keeps concurrent card edits while awaiting auto-decomposition', async () => {
+		const session = {
+			...mockGetSessionById(),
+			additionalDirectories: [{ path: '/reference', read: true, write: false }],
+		};
+		mockGetSessionById.mockReturnValue(session);
+
 		const b = createBoard(projectRoot, 'B', { autoDecompose: true });
 		addCard(
 			projectRoot,
@@ -551,6 +565,11 @@ describe('maestro-cli board', () => {
 			return { success: true, response: '<!-- maestro:card-complete -->' };
 		});
 		await boardTick({ agent: 'Alpha', json: true });
+		expect(mockSpawnAgent.mock.calls[0][4]).toMatchObject({
+			appendSystemPrompt: expect.stringContaining(`Write only within ${projectRoot}`),
+			additionalDirectories: session.additionalDirectories,
+		});
+
 		const current = loadBoards(projectRoot)[0];
 		expect(current.cards.find((c) => c.id === 'new-during-llm')?.status).toBe('blocked');
 		expect(current.cards.find((c) => c.id === 'existing')?.title).toBe('Edited during LLM');
@@ -782,6 +801,10 @@ describe('maestro-cli board', () => {
 				projectRoot: repoRoot,
 				cwd: repoRoot,
 				boardWorker: true,
+				additionalDirectories: [
+					{ path: '/reference', read: true, write: false },
+					{ path: '/dropbox', read: false, write: true },
+				],
 			};
 			mockGetSessionById.mockReturnValue(session);
 			mockReadSessions.mockReturnValue([session]);
@@ -822,6 +845,11 @@ describe('maestro-cli board', () => {
 			expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
 			// spawnAgent(toolType, cwd, prompt, ...) - the cwd is the checkout.
 			expect(mockSpawnAgent.mock.calls[0][1]).toBe(worktreePath);
+			const options = mockSpawnAgent.mock.calls[0][4];
+			expect(options.appendSystemPrompt).toContain(`Write only within ${worktreePath}`);
+			expect(options.appendSystemPrompt).toContain('Read only');
+			expect(options.appendSystemPrompt).toContain('Write only');
+			expect(options.additionalDirectories).toEqual(mockGetSessionById().additionalDirectories);
 			expect(fs.existsSync(path.join(worktreePath, 'README.md'))).toBe(true);
 
 			const stored = loadBoards(repoRoot)[0].cards[0];

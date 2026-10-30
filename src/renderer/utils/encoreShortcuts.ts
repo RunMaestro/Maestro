@@ -36,7 +36,8 @@ export function isShortcutAvailable(shortcutId: string, encoreFeatures: EncoreFl
 	// Same predicate the hotkey, palette and menu use: the viewer is also
 	// withheld on the web-desktop build.
 	if (flag === 'computerHistory') return canOpenComputerHistory(encoreFeatures);
-	if (flag === 'board') return encoreFeatures?.board === true && encoreFeatures.maestroCue === true;
+	if (shortcutId === 'openBoard')
+		return encoreFeatures?.board === true && encoreFeatures.maestroCue === true;
 	return encoreFeatures?.[flag] === true;
 }
 

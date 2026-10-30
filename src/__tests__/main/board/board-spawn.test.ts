@@ -29,15 +29,22 @@ vi.mock('../../../main/board/board-worktree', async () => {
 	};
 });
 vi.mock('../../../main/profiles/profile-storage', () => ({ listProfiles: () => [] }));
+const buildSystemPrompt = vi.fn(async () => 'Canonical Maestro prompt');
+vi.mock('../../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: (...args: unknown[]) => buildSystemPrompt(...args),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), cue: vi.fn() },
 }));
 
 import {
 	spawnBoardCard,
+	decomposeBoardCard,
 	cancelBoardCardRun,
 	type BoardSpawnContext,
 } from '../../../main/board/board-spawn';
+import { substituteTemplateVariables } from '../../../shared/templateVariables';
+import { stopCueRun } from '../../../main/cue/cue-executor';
 import { WORKTREE_SSH_UNSUPPORTED } from '../../../main/board/board-worktree';
 import type { BoardCard } from '../../../shared/board/types';
 
@@ -91,7 +98,8 @@ describe('spawnBoardCard worktree isolation', () => {
 		const result = await spawnBoardCard(
 			PROJECT_ROOT,
 			{ card: card(), overrides: {}, agentId: 'agent-1' },
-			context()
+			context(),
+			'b1'
 		);
 
 		expect(ensureCardWorktree).not.toHaveBeenCalled();
@@ -104,7 +112,8 @@ describe('spawnBoardCard worktree isolation', () => {
 		const result = await spawnBoardCard(
 			PROJECT_ROOT,
 			{ card: card({ worktree }), overrides: {}, agentId: 'agent-1' },
-			context()
+			context(),
+			'b1'
 		);
 
 		expect(ensureCardWorktree).toHaveBeenCalledWith(PROJECT_ROOT, worktree);
@@ -129,7 +138,8 @@ describe('spawnBoardCard worktree isolation', () => {
 				overrides: {},
 				agentId: 'agent-1',
 			},
-			context()
+			context(),
+			'b1'
 		);
 
 		expect(executeCuePrompt).not.toHaveBeenCalled();
@@ -145,7 +155,8 @@ describe('spawnBoardCard worktree isolation', () => {
 				overrides: {},
 				agentId: 'agent-1',
 			},
-			context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+			context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			'b1'
 		);
 
 		expect(ensureCardWorktree).not.toHaveBeenCalled();
@@ -157,7 +168,8 @@ describe('spawnBoardCard worktree isolation', () => {
 		await spawnBoardCard(
 			PROJECT_ROOT,
 			{ card: card(), overrides: {}, agentId: 'agent-1' },
-			context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+			context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			'b1'
 		);
 
 		expect(spawnedCwd()).toBe(PROJECT_ROOT);
@@ -180,13 +192,14 @@ describe('Stop during Board launch preparation', () => {
 				overrides: {},
 				agentId: 'agent-1',
 			},
-			context()
+			context(),
+			'b1'
 		);
-		expect(cancelBoardCardRun('c1')).toBe(true);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
 		finish({ ok: true, path: WORKTREE_PATH, branch: WORKTREE_BRANCH });
 		await pending;
 		expect(executeCuePrompt).not.toHaveBeenCalled();
-		expect(cancelBoardCardRun('c1')).toBe(false);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(false);
 	});
 
 	it('keeps a resumed attempt owned when canceled path resolution finishes late', async () => {
@@ -199,9 +212,10 @@ describe('Stop during Board launch preparation', () => {
 		const old = spawnBoardCard(
 			PROJECT_ROOT,
 			{ card: card(), overrides: {}, agentId: 'agent-1' },
-			ctx
+			ctx,
+			'b1'
 		);
-		expect(cancelBoardCardRun('c1')).toBe(true);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
 		let complete!: (value: unknown) => void;
 		executeCuePrompt.mockImplementationOnce(
 			() =>
@@ -212,17 +226,124 @@ describe('Stop during Board launch preparation', () => {
 		const resumed = spawnBoardCard(
 			PROJECT_ROOT,
 			{ card: card(), overrides: {}, agentId: 'agent-1' },
-			context()
+			context(),
+			'b1'
 		);
+		await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(1));
 		const signal = executeCuePrompt.mock.calls[0][0].signal as AbortSignal;
 		finish('/usr/bin/agent');
 		await old;
 		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
 		expect(signal.aborted).toBe(false);
-		expect(cancelBoardCardRun('c1')).toBe(true);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
 		expect(signal.aborted).toBe(true);
 		complete({ stdout: '', exitCode: null });
 		await resumed;
-		expect(cancelBoardCardRun('c1')).toBe(false);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(false);
 	});
+});
+
+describe('Board attempt identity and worker permissions', () => {
+	it.each([
+		{ root: PROJECT_ROOT, boardId: 'b2' },
+		{ root: '/repos/other', boardId: 'b1' },
+	])(
+		'stops only the targeted card when IDs collide ($root, $boardId)',
+		async ({ root, boardId }) => {
+			const releases: Array<() => void> = [];
+			executeCuePrompt.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						releases.push(() => resolve({ stdout: 'ok', exitCode: 0 }));
+					})
+			);
+			const request = { card: card(), overrides: {}, agentId: 'agent-1' };
+			const first = spawnBoardCard(PROJECT_ROOT, request, context(), 'b1');
+			const second = spawnBoardCard(root, request, context(), boardId);
+			await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(2));
+			const [a, b] = executeCuePrompt.mock.calls.map(([config]) => config.signal as AbortSignal);
+			expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
+			expect(a.aborted).toBe(true);
+			expect(b.aborted).toBe(false);
+			releases[0]();
+			await first;
+			expect(cancelBoardCardRun(root, boardId, 'c1')).toBe(true);
+			expect(b.aborted).toBe(true);
+			releases[1]();
+			await second;
+		}
+	);
+
+	it('delivers the canonical prompt and directory grants for the actual checkout, preserving role overrides', async () => {
+		const additionalDirectories = [
+			{ path: '/reference', read: true, write: false },
+			{ path: '/dropbox', read: false, write: true },
+		];
+		await spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: { appendSystemPrompt: 'Reviewer role', customModel: 'model-x' },
+				agentId: 'agent-1',
+			},
+			context({ cwd: '/original', fullPath: '/original', additionalDirectories }),
+			'b1'
+		);
+		expect(buildSystemPrompt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				cwd: WORKTREE_PATH,
+				fullPath: WORKTREE_PATH,
+				projectRoot: WORKTREE_PATH,
+				additionalDirectories,
+			})
+		);
+		expect(executeCuePrompt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				appendSystemPrompt: 'Canonical Maestro prompt',
+				customModel: 'model-x',
+				session: expect.objectContaining({ cwd: WORKTREE_PATH, additionalDirectories }),
+				promptPath: expect.stringContaining('Reviewer role'),
+			})
+		);
+	});
+});
+
+it('stops a live decomposition process and discards its late reply', async () => {
+	let finish!: (value: unknown) => void;
+	executeCuePrompt.mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+	);
+	const controller = new AbortController();
+	const ctx = context();
+	ctx.getPoolAgentIds = () => ['agent-1'];
+	const pending = decomposeBoardCard(PROJECT_ROOT, card(), 'Plan children', ctx, controller.signal);
+	await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(1));
+	const config = executeCuePrompt.mock.calls[0][0];
+	controller.abort();
+	expect(stopCueRun).toHaveBeenCalledWith(config.runId);
+	expect(config.signal.aborted).toBe(true);
+	finish({ stdout: '[{"title":"Child"}]', exitCode: 0 });
+	expect(await pending).toBeNull();
+});
+
+it('authorizes writes in the isolated checkout even when the base agent has fullPath', async () => {
+	buildSystemPrompt.mockImplementationOnce(async (record: any) =>
+		substituteTemplateVariables('Write only within {{AGENT_PATH}}', { session: record })
+	);
+	await spawnBoardCard(
+		PROJECT_ROOT,
+		{
+			card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+			overrides: {},
+			agentId: 'agent-1',
+		},
+		context({ fullPath: '/original', projectRoot: '/original' }),
+		'b1'
+	);
+	expect(executeCuePrompt.mock.calls[0][0].appendSystemPrompt).toBe(
+		`Write only within ${WORKTREE_PATH}`
+	);
 });

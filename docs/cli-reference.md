@@ -1797,6 +1797,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--maestro-p-path <path>`          | Override the maestro-p binary path (empty string clears)                                                                            | -       |
 | `--codex-transport <transport>`    | Codex transport: exec \| app-server (experimental, enables steering; Codex only)                                                    | -       |
 | `--bookmark <bool>`                | Bookmark the agent in the Left Bar (true/false)                                                                                     | -       |
+| `--board-worker <bool>`            | Opt the agent into the Board worker pool (true/false)                                                                               | -       |
 | `--provider <type>`                | Switch to another provider; tabs keep their transcripts and start fresh conversations there                                         | -       |
 | `--convert`                        | With --provider: also convert owned conversations and selected project knowledge (opt-in; implied by the translation options below) | -       |
 | `--force`                          | Alias for --accept-translation-limitations                                                                                          | -       |

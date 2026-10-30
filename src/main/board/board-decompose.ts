@@ -21,6 +21,7 @@
  */
 
 import type { Board, BoardCard, CardRun } from '../../shared/board/types';
+import { getBlockers } from '../../shared/board/graph';
 import { generateUUID } from '../../shared/uuid';
 
 /** Default cap on triage cards decomposed per tick. Mirrors Hermes' default. */
@@ -34,6 +35,7 @@ export type DecomposeSpawn = (prompt: string, triageCard: BoardCard) => Promise<
 
 /** Injected side effects for {@link autoDecomposeBoard}. */
 export interface AutoDecomposeDeps {
+	signal?: AbortSignal;
 	/** Run the decomposition LLM pass. */
 	spawn: DecomposeSpawn;
 	/**
@@ -180,11 +182,14 @@ export async function autoDecomposeBoard(board: Board, deps: AutoDecomposeDeps):
 		deps.maxPerTick && deps.maxPerTick > 0 ? deps.maxPerTick : DEFAULT_AUTO_DECOMPOSE_PER_TICK;
 	const template = deps.promptTemplate?.trim() ? deps.promptTemplate : FALLBACK_TEMPLATE;
 
-	const triage = board.cards.filter((c) => c.status === 'triage').slice(0, maxPerTick);
+	const triage = board.cards
+		.filter((c) => c.status === 'triage' && getBlockers(c, board).length === 0)
+		.slice(0, maxPerTick);
 	if (triage.length === 0) return 0;
 
 	let decomposed = 0;
 	for (const card of triage) {
+		if (deps.signal?.aborted) break;
 		const prompt = buildDecomposePrompt(template, card);
 		let output: string | null;
 		try {
@@ -193,6 +198,7 @@ export async function autoDecomposeBoard(board: Board, deps: AutoDecomposeDeps):
 			deps.onLog?.('warn', `decompose spawn failed for "${card.id}": ${errText(err)}`);
 			continue;
 		}
+		if (deps.signal?.aborted) break;
 		if (!output) {
 			deps.onLog?.('warn', `decompose produced no output for "${card.id}"`);
 			continue;
@@ -232,6 +238,7 @@ function applyDecomposition(
 	deps: AutoDecomposeDeps
 ): boolean {
 	if (!deps.reload || !deps.save) {
+		if (getBlockers(card, board).length > 0) return false;
 		appendChildren(board, card, children, nowIso);
 		return true;
 	}
@@ -246,10 +253,10 @@ function applyDecomposition(
 		deps.onLog?.('warn', `decompose: card "${card.id}" was deleted while decomposing`);
 		return false;
 	}
-	if (freshTriage.status !== 'triage') {
+	if (freshTriage.status !== 'triage' || getBlockers(freshTriage, fresh).length > 0) {
 		deps.onLog?.(
 			'warn',
-			`decompose: card "${card.id}" left triage while decomposing - discarding result`
+			`decompose: card "${card.id}" left triage or gained blockers while decomposing - discarding result`
 		);
 		return false;
 	}

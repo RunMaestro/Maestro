@@ -163,20 +163,20 @@ describe('stampCardPrUrl', () => {
 	it('records the url on the latest run and touches updatedAt', () => {
 		const b = board();
 		expect(
-			stampCardPrUrl(b, 'c1', 'https://github.com/o/r/pull/7', '2026-07-29T00:00:00.000Z')
+			stampCardPrUrl(b, 'c1', 'https://github.com/o/r/pull/7', '2026-07-29T00:00:00.000Z', run())
 		).toBe(true);
 		expect(b.cards[0].runs?.[0].prUrl).toBe('https://github.com/o/r/pull/7');
 		expect(b.cards[0].updatedAt).toBe('2026-07-29T00:00:00.000Z');
 	});
 
 	it('reports false when the card or run vanished in the meantime', () => {
-		expect(stampCardPrUrl(board(), 'gone', 'url', NOW)).toBe(false);
-		expect(stampCardPrUrl(board([card({ runs: [] })]), 'c1', 'url', NOW)).toBe(false);
+		expect(stampCardPrUrl(board(), 'gone', 'url', NOW, run())).toBe(false);
+		expect(stampCardPrUrl(board([card({ runs: [] })]), 'c1', 'url', NOW, run())).toBe(false);
 	});
 
 	it('clears a stale error from an earlier failed attempt', () => {
 		const b = board([card({ runs: [run({ prError: 'Failed to push branch: boom' })] })]);
-		expect(stampCardPrUrl(b, 'c1', 'https://github.com/o/r/pull/7', NOW)).toBe(true);
+		expect(stampCardPrUrl(b, 'c1', 'https://github.com/o/r/pull/7', NOW, run())).toBe(true);
 		expect(b.cards[0].runs?.[0].prError).toBeUndefined();
 	});
 });
@@ -184,9 +184,9 @@ describe('stampCardPrUrl', () => {
 describe('stampCardPrError', () => {
 	it('records the reason on the latest run and touches updatedAt', () => {
 		const b = board();
-		expect(stampCardPrError(b, 'c1', 'gh: not authenticated', '2026-07-29T00:00:00.000Z')).toBe(
-			true
-		);
+		expect(
+			stampCardPrError(b, 'c1', 'gh: not authenticated', '2026-07-29T00:00:00.000Z', run())
+		).toBe(true);
 		expect(b.cards[0].runs?.[0].prError).toBe('gh: not authenticated');
 		expect(b.cards[0].runs?.[0].prUrl).toBeUndefined();
 		expect(b.cards[0].updatedAt).toBe('2026-07-29T00:00:00.000Z');
@@ -194,13 +194,13 @@ describe('stampCardPrError', () => {
 
 	it('truncates a pages-long git error', () => {
 		const b = board();
-		stampCardPrError(b, 'c1', 'x'.repeat(2000), NOW);
+		stampCardPrError(b, 'c1', 'x'.repeat(2000), NOW, run());
 		expect(b.cards[0].runs?.[0].prError).toHaveLength(500);
 	});
 
 	it('reports false when the card or run vanished in the meantime', () => {
-		expect(stampCardPrError(board(), 'gone', 'boom', NOW)).toBe(false);
-		expect(stampCardPrError(board([card({ runs: [] })]), 'c1', 'boom', NOW)).toBe(false);
+		expect(stampCardPrError(board(), 'gone', 'boom', NOW, run())).toBe(false);
+		expect(stampCardPrError(board([card({ runs: [] })]), 'c1', 'boom', NOW, run())).toBe(false);
 	});
 });
 
@@ -225,7 +225,7 @@ describe('maybeCreateCardPr', () => {
 
 		expect(result).toEqual(success);
 		expect(createPr).toHaveBeenCalledTimes(1);
-		expect(stampPrUrl).toHaveBeenCalledWith('c1', success.prUrl);
+		expect(stampPrUrl).toHaveBeenCalledWith('c1', success.prUrl, { attempt: 1, startedAt: NOW });
 		expect(notify).toHaveBeenCalledWith(
 			expect.objectContaining({ color: 'green', message: success.prUrl })
 		);
@@ -277,7 +277,10 @@ describe('maybeCreateCardPr', () => {
 
 		expect(result).toMatchObject({ success: false });
 		expect(stampPrUrl).not.toHaveBeenCalled();
-		expect(stampPrError).toHaveBeenCalledWith('c1', 'gh: not authenticated');
+		expect(stampPrError).toHaveBeenCalledWith('c1', 'gh: not authenticated', {
+			attempt: 1,
+			startedAt: NOW,
+		});
 		// Decision 3: a PR failure never moves the card off `done`.
 		expect(cards[0].status).toBe('done');
 		expect(notify).toHaveBeenCalledWith(
@@ -292,7 +295,10 @@ describe('maybeCreateCardPr', () => {
 			stampPrError,
 			createPr: async () => ({ success: false }),
 		});
-		expect(stampPrError).toHaveBeenCalledWith('c1', 'unknown error');
+		expect(stampPrError).toHaveBeenCalledWith('c1', 'unknown error', {
+			attempt: 1,
+			startedAt: NOW,
+		});
 	});
 
 	it('still reports the failure when the error stamp itself fails', async () => {
@@ -473,4 +479,45 @@ describe('startCardPr', () => {
 		await Promise.resolve();
 		expect(createPullRequest).not.toHaveBeenCalled();
 	});
+});
+
+it.each([true, false])(
+	'attributes a late PR result to its originating run (success=%s)',
+	async (success) => {
+		const current = board();
+		listBoards.mockImplementation(() => [current]);
+		let finishFirst!: (result: CardPrResult) => void;
+		createPullRequest.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishFirst = resolve;
+				})
+		);
+		startCardPr(PROJECT_ROOT, 'b1', 'c1');
+		current.cards[0].runs!.push(run({ attempt: 2, startedAt: '2026-07-29T00:00:00.000Z' }));
+		createPullRequest.mockResolvedValueOnce({
+			success: true,
+			prUrl: 'https://github.com/o/r/pull/8',
+		});
+		startCardPr(PROJECT_ROOT, 'b1', 'c1');
+		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		finishFirst(
+			success
+				? { success: true, prUrl: 'https://github.com/o/r/pull/7' }
+				: { success: false, error: 'old failure' }
+		);
+		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(2));
+		expect(createPullRequest).toHaveBeenCalledTimes(2);
+		const [first, second] = current.cards[0].runs!;
+		expect(first.prUrl).toBe(success ? 'https://github.com/o/r/pull/7' : undefined);
+		expect(first.prError).toBe(success ? undefined : 'old failure');
+		expect(second.prUrl).toBe('https://github.com/o/r/pull/8');
+		expect(second.prError).toBeUndefined();
+	}
+);
+
+it('does not stamp a replacement card with the same attempt number', () => {
+	const replacement = board([card({ runs: [run({ startedAt: '2026-08-01T00:00:00.000Z' })] })]);
+	expect(stampCardPrUrl(replacement, 'c1', 'old-url', NOW, run())).toBe(false);
+	expect(stampCardPrError(replacement, 'c1', 'old-error', NOW, run())).toBe(false);
 });

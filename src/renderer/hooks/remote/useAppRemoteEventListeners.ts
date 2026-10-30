@@ -1954,6 +1954,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'codexTransport',
 			// UI state
 			'bookmarked',
+			'boardWorker',
 		]);
 
 		// Build the field patch. A `null` value clears the field (sets undefined);
@@ -1963,6 +1964,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		for (const key of Object.keys(patch)) {
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
+			if (key === 'boardWorker' && value !== null && typeof value !== 'boolean') {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Invalid value for field '${key}'`,
+				});
+				return;
+			}
 			if (key === 'codexTransport' && value !== null && !isCodexTransport(value)) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,

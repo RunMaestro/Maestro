@@ -2731,6 +2731,43 @@ export function Component() {
 			});
 		});
 
+		it.each([false, true])(
+			'reuses an isolated checkout when the project is itself a worktree (alias=%s)',
+			async (alias) => {
+				const fsPromises = await import('fs/promises');
+				vi.mocked(fsPromises.default.access).mockResolvedValue(undefined);
+				vi.mocked(fsPromises.default.realpath).mockImplementation(async (value) => {
+					const resolved = String(value).replace(/\\/g, '/');
+					return resolved === '/alias/repo/.git' ? '/main/repo/.git' : resolved;
+				});
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_command, args, cwd) => {
+					if (args?.includes('--is-inside-work-tree'))
+						return { stdout: 'true', stderr: '', exitCode: 0 };
+					if (args?.includes('--git-common-dir'))
+						return {
+							stdout:
+								alias && cwd === path.resolve('/worktrees/project')
+									? '/alias/repo/.git'
+									: '/main/repo/.git',
+							stderr: '',
+							exitCode: 0,
+						};
+					if (args?.includes('--git-dir'))
+						return { stdout: '/main/repo/.git/worktrees/project', stderr: '', exitCode: 0 };
+					if (args?.includes('--abbrev-ref'))
+						return { stdout: 'card-branch', stderr: '', exitCode: 0 };
+					throw new Error('Unexpected git command');
+				});
+				const result = await handlers.get('git:worktreeSetup')!(
+					{} as any,
+					'/worktrees/project',
+					'/worktrees/card',
+					'card-branch'
+				);
+				expect(result).toMatchObject({ success: true, created: false, branchMismatch: false });
+			}
+		);
+
 		it('should return existing worktree info when path already exists with same branch', async () => {
 			// Mock fs.access to succeed (path exists)
 			const fsPromises = await import('fs/promises');

@@ -240,13 +240,17 @@ export interface CueEngineBoardDeps {
 		busyAgentIds: ReadonlySet<string>
 	) => CardAssignment;
 	/** Spawn a claimed card's assignee to completion via the existing spawn path. */
-	spawnCard: (projectRoot: string, request: CardSpawnRequest) => Promise<CardSpawnResult>;
+	spawnCard: (
+		projectRoot: string,
+		request: CardSpawnRequest,
+		boardId: string
+	) => Promise<CardSpawnResult>;
 	/**
 	 * Kill the in-flight agent process for a card (user pressed stop). Returns
 	 * `true` when a live run was stopped. Optional: without it a cancel still
 	 * finalizes the card, it just cannot kill the process.
 	 */
-	cancelCardRun?: (projectRoot: string, cardId: string) => boolean;
+	cancelCardRun?: (projectRoot: string, boardId: string, cardId: string) => boolean;
 	/**
 	 * Announce a terminal card transition (`done` / `blocked`) to the user. The
 	 * host turns it into a toast; absent => silent (the CLI's headless path).
@@ -276,7 +280,7 @@ export interface CueEngineBoardDeps {
 	 * many triage cards were expanded. Absent => the step is skipped and triage
 	 * cards wait for manual promotion.
 	 */
-	decompose?: (projectRoot: string, board: Board) => Promise<number>;
+	decompose?: (projectRoot: string, board: Board, signal: AbortSignal) => Promise<number>;
 }
 
 /** One phase of `CueEngine.drain`, as logged (`engineDrain` payload). */
@@ -380,7 +384,8 @@ export class CueEngine {
 	 * double-expanded) by the next tick before it persists. Only used when the
 	 * optional `decompose` dep is wired.
 	 */
-	private boardDecomposeInFlight: Set<string> = new Set();
+	private boardDecomposeInFlight = new Map<string, AbortController>();
+	private boardTasks = new Set<Promise<unknown>>();
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
 	 * does a read → mutate → write cycle that is not atomic on the filesystem;
@@ -1049,9 +1054,7 @@ export class CueEngine {
 
 		this.runManager.reset();
 		this.fanInTracker.reset();
-		// Drop board dispatchers so a re-enable rebuilds them with fresh in-flight
-		// sets (any card left `running` is reclaimed as stale on the next tick).
-		this.boardDispatchers.clear();
+		this.stopBoardWork();
 
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
@@ -1186,7 +1189,7 @@ export class CueEngine {
 		const releaseWebhookListener = holdCueWebhookListener();
 		this.runManager.setDraining(true);
 		const disarmed = this.sessionRuntimeService.disarmAll();
-		const inFlight = this.runManager.getActiveRuns().length;
+		const inFlight = this.runManager.getActiveRuns().length + this.boardTasks.size;
 		this.logDrain(
 			'disarmed',
 			`stopped ${disarmed} trigger source(s); ${inFlight} run(s) in flight, ${queuedCount()} queued event(s) held for the next start`,
@@ -1202,7 +1205,11 @@ export class CueEngine {
 					inFlight
 				);
 				await Promise.race([
-					Promise.all([this.runManager.whenIdle(), this.sessionRuntimeService.settleAll()]),
+					Promise.allSettled([
+						this.runManager.whenIdle(),
+						this.sessionRuntimeService.settleAll(),
+						...this.boardTasks,
+					]),
 					after(timeoutMs),
 					forcedSignal,
 				]);
@@ -1210,6 +1217,8 @@ export class CueEngine {
 
 			// (c) Stop what is left through the stop ladder.
 			const remaining = this.runManager.getActiveRuns().map((run) => run.runId);
+			const remainingBoardTasks = this.boardTasks.size;
+			this.stopBoardWork();
 			if (remaining.length > 0 || forced) {
 				this.logDrain(
 					forced ? 'forced' : 'stopping',
@@ -1227,7 +1236,8 @@ export class CueEngine {
 			// aborted, so it returns `stopped` without spawning. A launch still
 			// pending at the deadline (or after a second signal) cannot spawn
 			// either; it re-checks the signal right before spawning.
-			const busy = () => live() > 0 || this.runManager.getUnsettledStoppedRunCount() > 0;
+			const busy = () =>
+				live() > 0 || this.runManager.getUnsettledStoppedRunCount() > 0 || this.boardTasks.size > 0;
 			if (!forced && busy()) {
 				const deadline = Date.now() + BACKGROUND_STOP_GRACE_MS + DRAIN_PROCESS_EXIT_MARGIN_MS;
 				while (busy() && Date.now() < deadline && !forced) {
@@ -1252,8 +1262,8 @@ export class CueEngine {
 			this.finishDrain();
 			const report: CueDrainReport = {
 				forced,
-				completed: Math.max(0, inFlight - remaining.length),
-				stopped: remaining.length,
+				completed: Math.max(0, inFlight - remaining.length - remainingBoardTasks),
+				stopped: remaining.length + remainingBoardTasks,
 				persistedQueue: persisted,
 				partialFanIns,
 				durationMs: Date.now() - startedAt,
@@ -1276,6 +1286,7 @@ export class CueEngine {
 	 * `clearQueue` / `clearFanInState` find nothing to delete.
 	 */
 	private finishDrain(): void {
+		this.stopBoardWork();
 		this.enabled = false;
 		this.startReason = null;
 		if (this.lockHeartbeat) {
@@ -2194,7 +2205,10 @@ export class CueEngine {
 			// Drop dispatchers whose board vanished (deleted board.yaml / board) so
 			// the map doesn't grow unbounded across the engine's lifetime.
 			for (const key of [...this.boardDispatchers.keys()]) {
-				if (!seenKeys.has(key)) this.boardDispatchers.delete(key);
+				if (!seenKeys.has(key)) {
+					this.boardDispatchers.get(key)?.stop();
+					this.boardDispatchers.delete(key);
+				}
 			}
 		} catch (err) {
 			this.meteredOnLog(
@@ -2216,10 +2230,11 @@ export class CueEngine {
 		if (!decompose) return;
 		if (board.autoDecompose !== true) return;
 		if (this.boardDecomposeInFlight.has(key)) return;
-		this.boardDecomposeInFlight.add(key);
-		decompose(projectRoot, board)
+		const controller = new AbortController();
+		this.boardDecomposeInFlight.set(key, controller);
+		const task = decompose(projectRoot, board, controller.signal)
 			.then((count) => {
-				if (count > 0) {
+				if (count > 0 && !controller.signal.aborted) {
 					this.meteredOnLog('info', `[BOARD] auto-decomposed ${count} triage card(s)`);
 					this.deps.board?.onBoardDecomposed?.(projectRoot, board.id, count);
 				}
@@ -2231,8 +2246,23 @@ export class CueEngine {
 				);
 			})
 			.finally(() => {
-				this.boardDecomposeInFlight.delete(key);
+				if (this.boardDecomposeInFlight.get(key) === controller)
+					this.boardDecomposeInFlight.delete(key);
+				this.boardTasks.delete(task);
 			});
+		this.boardTasks.add(task);
+	}
+
+	private stopBoardWork(): void {
+		for (const controller of this.boardDecomposeInFlight.values()) controller.abort();
+		for (const dispatcher of this.boardDispatchers.values()) {
+			try {
+				dispatcher.stop();
+			} catch (error) {
+				captureException(error, { operation: 'board:stop' });
+			}
+		}
+		this.boardDispatchers.clear();
 	}
 
 	/** Get (or lazily build) the dispatcher bound to one board at a project root. */
@@ -2254,10 +2284,15 @@ export class CueEngine {
 				? (card: BoardCard, busy: ReadonlySet<string>): CardAssignment =>
 						boardDeps.assign!(projectRoot, card, busy)
 				: undefined,
-			spawn: (request: CardSpawnRequest): Promise<CardSpawnResult> =>
-				boardDeps.spawnCard(projectRoot, request),
+			spawn: (request: CardSpawnRequest): Promise<CardSpawnResult> => {
+				const task = boardDeps
+					.spawnCard(projectRoot, request, boardId)
+					.finally(() => this.boardTasks.delete(task));
+				this.boardTasks.add(task);
+				return task;
+			},
 			cancelSpawn: boardDeps.cancelCardRun
-				? (cardId: string): boolean => boardDeps.cancelCardRun!(projectRoot, cardId)
+				? (cardId: string): boolean => boardDeps.cancelCardRun!(projectRoot, boardId, cardId)
 				: undefined,
 			notify: boardDeps.notifyCard
 				? (event: CardNotification): void => boardDeps.notifyCard!(projectRoot, event)

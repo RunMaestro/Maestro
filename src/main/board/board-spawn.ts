@@ -59,6 +59,9 @@ import { createCueEvent } from '../cue/cue-types';
 import type { TemplateContext } from '../../shared/templateVariables';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
+import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
+import type { StoredSession } from '../stores/types';
+import { canonicalJson } from '../../shared/canonicalJson';
 
 /** Default per-card run budget (mirrors the Cue default `timeout_minutes: 30`). */
 const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
@@ -67,8 +70,8 @@ const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
 const activeCardRuns = new Map<string, { runId: string; controller: AbortController }>();
 
 /** Stop preparation and, if already launched, the attempt's Cue process. */
-export function cancelBoardCardRun(cardId: string): boolean {
-	const run = activeCardRuns.get(cardId);
+export function cancelBoardCardRun(projectRoot: string, boardId: string, cardId: string): boolean {
+	const run = activeCardRuns.get(canonicalJson([projectRoot, boardId, cardId]));
 	if (!run) return false;
 	run.controller.abort();
 	stopCueRun(run.runId);
@@ -206,11 +209,13 @@ export function resolveCardOverrides(
 export async function spawnBoardCard(
 	projectRoot: string,
 	request: CardSpawnRequest,
-	ctx: BoardSpawnContext
+	ctx: BoardSpawnContext,
+	boardId: string
 ): Promise<CardSpawnResult> {
 	const { card, overrides, agentId } = request;
 	const run = { runId: `board-${card.id}-${generateUUID()}`, controller: new AbortController() };
-	activeCardRuns.set(card.id, run);
+	const key = canonicalJson([projectRoot, boardId, card.id]);
+	activeCardRuns.set(key, run);
 	try {
 		// Resolve the base session: the pool-chosen worker (`agentId`) on the Phase 6
 		// path, else the card's profile base agent (legacy single-agent path).
@@ -222,8 +227,8 @@ export async function spawnBoardCard(
 				error: `Board card "${card.id}": worker agent could not be resolved.`,
 			};
 		}
-		// The Cue executor has no system-prompt injection field, so the profile's
-		// role (`appendSystemPrompt`) is prepended to the card prompt as a preamble,
+		// Preserve the profile's role as a preamble alongside the canonical
+		// Maestro system prompt delivered by the shared runner,
 		// followed by the four-question handoff reminder (structured completion
 		// metadata). model/effort/args flow through the native override fields below.
 		const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
@@ -251,7 +256,7 @@ export async function spawnBoardCard(
 			run
 		);
 	} finally {
-		if (activeCardRuns.get(card.id) === run) activeCardRuns.delete(card.id);
+		if (activeCardRuns.get(key) === run) activeCardRuns.delete(key);
 	}
 }
 
@@ -324,7 +329,8 @@ export async function decomposeBoardCard(
 	projectRoot: string,
 	card: BoardCard,
 	promptText: string,
-	ctx: BoardSpawnContext
+	ctx: BoardSpawnContext,
+	signal?: AbortSignal
 ): Promise<string | null> {
 	// Decomposition just needs any capable model: prefer the card's pinned/base
 	// agent, else the first opt-in pool worker, else any session in the project.
@@ -340,9 +346,27 @@ export async function decomposeBoardCard(
 					.find((s) => s.projectRoot === projectRoot || s.cwd === projectRoot) ?? null);
 	}
 	if (!baseSession) return null;
-	const result = await runCardPrompt(projectRoot, card, promptText, baseSession, overrides, ctx);
-	if (result.error || result.exitCode !== 0) return null;
-	return result.output;
+	const runId = `board-decompose-${card.id}-${generateUUID()}`;
+	const stop = () => {
+		stopCueRun(runId);
+	};
+	signal?.addEventListener('abort', stop, { once: true });
+	try {
+		const result = await runCardPrompt(
+			projectRoot,
+			card,
+			promptText,
+			baseSession,
+			overrides,
+			ctx,
+			undefined,
+			signal ? { runId, controller: { signal } } : undefined
+		);
+		if (signal?.aborted || result.error || result.exitCode !== 0) return null;
+		return result.output;
+	} finally {
+		signal?.removeEventListener('abort', stop);
+	}
 }
 
 /**
@@ -364,7 +388,7 @@ async function runCardPrompt(
 	overrides: ProfileSpawnOverrides,
 	ctx: BoardSpawnContext,
 	worktree?: { path: string; branch: string },
-	run?: { runId: string; controller: AbortController }
+	run?: { runId: string; controller: Pick<AbortController, 'signal'> }
 ): Promise<CardSpawnResult> {
 	const runCwd = worktree?.path ?? projectRoot;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
@@ -378,6 +402,15 @@ async function runCardPrompt(
 		resolvedAgentPath = await ctx.resolveAgentPath(toolType);
 	}
 
+	const appendSystemPrompt = await buildMaestroSystemPromptForSession({
+		...baseSession,
+		id: baseSession.id,
+		name: baseSession.name,
+		toolType: baseSession.toolType,
+		cwd: runCwd,
+		fullPath: runCwd,
+		projectRoot: runCwd,
+	} as StoredSession);
 	if (run?.controller.signal.aborted) return { output: '', exitCode: null };
 	const runId = run?.runId ?? `board-${card.id}-${generateUUID()}`;
 	const templateContext: TemplateContext = {
@@ -389,6 +422,7 @@ async function runCardPrompt(
 			projectRoot,
 			fullPath: baseSession.fullPath,
 			autoRunFolderPath: baseSession.autoRunFolderPath,
+			additionalDirectories: baseSession.additionalDirectories,
 		},
 		conductorProfile: ctx.getConductorProfile?.() || undefined,
 	};
@@ -397,6 +431,7 @@ async function runCardPrompt(
 	const result = await executeCuePrompt({
 		runId,
 		signal: run?.controller.signal,
+		appendSystemPrompt,
 		session: {
 			id: baseSession.id,
 			name: baseSession.name,
@@ -404,6 +439,7 @@ async function runCardPrompt(
 			cwd: runCwd,
 			projectRoot,
 			autoRunFolderPath: baseSession.autoRunFolderPath,
+			additionalDirectories: baseSession.additionalDirectories,
 		},
 		subscription: {
 			name: `board:${card.title}`,

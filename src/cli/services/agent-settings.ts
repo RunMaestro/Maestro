@@ -22,6 +22,7 @@ export function readAgentSessionSettings(agent: SessionInfo) {
 		// Left Bar bookmark state (settable with `maestro-cli bookmark` /
 		// `unbookmark`, or `update-agent --bookmark`).
 		bookmarked: !!agent.bookmarked,
+		boardWorker: agent.boardWorker === true,
 		nudgeMessage: agent.nudgeMessage ?? null,
 		newSessionMessage: agent.newSessionMessage ?? null,
 		customPath: agent.customPath ?? null,
@@ -54,6 +55,7 @@ export const AGENT_SESSION_SETTING_METADATA: Record<
 	{ description: string; type: string }
 > = {
 	bookmarked: { description: 'Pinned to the Bookmarks section of the Left Bar.', type: 'boolean' },
+	boardWorker: { description: 'Opted into the Board worker pool.', type: 'boolean' },
 	nudgeMessage: {
 		description: 'Appended to every message sent to the agent (not shown in chat).',
 		type: 'string',

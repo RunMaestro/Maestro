@@ -123,6 +123,7 @@ describe('buildBoardCardToastPayload', () => {
 
 describe('buildCardPrToastPayload', () => {
 	const request: CardPrRequest = {
+		run: { attempt: 1, startedAt: '2026-07-28T00:00:00.000Z' },
 		boardId: 'b1',
 		cardId: 'c1',
 		cardTitle: 'Ship the thing',

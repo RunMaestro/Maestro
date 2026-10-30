@@ -327,3 +327,74 @@ describe('autoDecomposeBoard - reload before merge (stale-snapshot clobber)', ()
 		expect(b.cards.find((c) => c.id === 't1')!.status).toBe('done');
 	});
 });
+
+it('discards a stopped decomposition reply and never starts its next triage card', async () => {
+	const controller = new AbortController();
+	let finish!: (output: string) => void;
+	const spawn = vi.fn(
+		() =>
+			new Promise<string>((resolve) => {
+				finish = resolve;
+			})
+	);
+	const source = board([card(), card({ id: 'c2' })], true);
+	const save = vi.fn();
+	const pending = autoDecomposeBoard(source, {
+		signal: controller.signal,
+		spawn,
+		reload: () => structuredClone(source),
+		save,
+	});
+	controller.abort();
+	finish('[{"title":"Child","body":"Details","dependsOn":[]}]');
+	expect(await pending).toBe(0);
+	expect(spawn).toHaveBeenCalledTimes(1);
+	expect(save).not.toHaveBeenCalled();
+	expect(source.cards).toHaveLength(2);
+});
+
+describe('auto-decomposition ancestor gates', () => {
+	it('waits for unfinished and missing ancestors before planning or retiring triage', async () => {
+		const source = board(
+			[card({ id: 'ancestor', status: 'todo' }), card({ id: 'triage', parents: ['ancestor'] })],
+			true
+		);
+		const spawn = vi.fn().mockResolvedValue('[{"title":"Child","body":"Details"}]');
+		expect(await autoDecomposeBoard(source, { spawn })).toBe(0);
+		expect(spawn).not.toHaveBeenCalled();
+		expect(source.cards[1].status).toBe('triage');
+		source.cards[0].status = 'done';
+		expect(await autoDecomposeBoard(source, { spawn })).toBe(1);
+		expect(source.cards[1].status).toBe('done');
+		const missing = board([card({ id: 'triage', parents: ['missing'] })], true);
+		expect(await autoDecomposeBoard(missing, { spawn })).toBe(0);
+		expect(spawn).toHaveBeenCalledTimes(1);
+	});
+	it.each([false, true])(
+		'rechecks ancestors before retirement after the planning await (reload=%s)',
+		async (reload) => {
+			const source = board(
+				[
+					card({ id: 'ancestor', status: 'done' }),
+					card({ id: 'triage', parents: ['ancestor'] }),
+					card({ id: 'dependent', status: 'todo', parents: ['triage'] }),
+				],
+				true
+			);
+			const save = vi.fn();
+			const spawn = vi.fn(async () => {
+				source.cards[0].status = 'todo';
+				return '[{"title":"Child","body":"Details"}]';
+			});
+			expect(
+				await autoDecomposeBoard(source, {
+					spawn,
+					...(reload ? { reload: () => structuredClone(source), save } : {}),
+				})
+			).toBe(0);
+			expect(save).not.toHaveBeenCalled();
+			expect(source.cards).toHaveLength(3);
+			expect(source.cards[1].status).toBe('triage');
+		}
+	);
+});

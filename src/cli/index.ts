@@ -2260,6 +2260,7 @@ program
 		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
 	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
+	.option('--board-worker <bool>', 'Opt the agent into the Board worker pool (true/false)')
 	.option(
 		'--provider <type>',
 		'Switch to another provider; tabs keep their transcripts and start fresh conversations there'

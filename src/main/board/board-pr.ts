@@ -22,6 +22,7 @@
 import type { Board, BoardCard, CardRun } from '../../shared/board/types';
 import { createPullRequest } from '../utils/pr-creator';
 import { listBoards, saveBoard, enqueueBoardWrite } from './board-storage';
+import { canonicalJson } from '../../shared/canonicalJson';
 import { buildCardPrToastPayload, type BoardCardToastPayload } from './board-toast';
 
 /** Everything needed to open one card's pull request. */
@@ -29,6 +30,7 @@ export interface CardPrRequest {
 	boardId: string;
 	cardId: string;
 	cardTitle: string;
+	run: Pick<CardRun, 'attempt' | 'startedAt'>;
 	/** Worktree checkout the branch is pushed from. */
 	worktreePath: string;
 	/** Branch the PR is opened for. */
@@ -55,19 +57,27 @@ export interface CardPrFlowDeps {
 	/** Load the current board snapshot (fresh, like the dispatcher's dep). */
 	loadBoard: () => Board | null;
 	/**
-	 * Record a created PR's url on the card's latest run. Given as one closure
+	 * Record a created PR's url on the card's originating run. Given as one closure
 	 * rather than a load/save pair so the host can do the read-modify-write inside
 	 * its own write queue: the PR call takes seconds, and a tick may well have
 	 * written the board in the meantime. {@link stampCardPrUrl} is the mutation to
 	 * apply inside it.
 	 */
-	stampPrUrl?: (cardId: string, prUrl: string) => void | Promise<void>;
+	stampPrUrl?: (
+		cardId: string,
+		prUrl: string,
+		run: Pick<CardRun, 'attempt' | 'startedAt'>
+	) => void | Promise<void>;
 	/**
-	 * Record why the attempt failed on the card's latest run, so the failure
+	 * Record why the attempt failed on the card's originating run, so the failure
 	 * outlives the toast. Same read-modify-write-inside-the-host's-queue contract
 	 * as {@link stampPrUrl}; {@link stampCardPrError} is the mutation to apply.
 	 */
-	stampPrError?: (cardId: string, error: string) => void | Promise<void>;
+	stampPrError?: (
+		cardId: string,
+		error: string,
+		run: Pick<CardRun, 'attempt' | 'startedAt'>
+	) => void | Promise<void>;
 	/**
 	 * Main repository checkout, used only to resolve the default branch when the
 	 * card names no `targetBranch`. Absent => the worktree itself is used.
@@ -136,6 +146,7 @@ export function resolveCardPrRequest(board: Board, cardId: string): CardPrReques
 		boardId: board.id,
 		cardId: card.id,
 		cardTitle: card.title,
+		run: { attempt: run.attempt, startedAt: run.startedAt },
 		worktreePath,
 		worktreeBranch: run.worktreeBranch,
 		...(card.prOnDone.targetBranch ? { targetBranch: card.prOnDone.targetBranch } : {}),
@@ -145,7 +156,7 @@ export function resolveCardPrRequest(board: Board, cardId: string): CardPrReques
 }
 
 /**
- * Stamp a created PR's url onto the card's latest run, in place. Returns `false`
+ * Stamp a created PR's url onto the card's originating run, in place. Returns `false`
  * when the card or run vanished between the request and the result (the board is
  * reloaded in between, so this is a real case, not a paranoid one).
  *
@@ -156,10 +167,14 @@ export function stampCardPrUrl(
 	board: Board,
 	cardId: string,
 	prUrl: string,
-	nowIso: string
+	nowIso: string,
+	expectedRun: Pick<CardRun, 'attempt' | 'startedAt'>
 ): boolean {
 	const card = board.cards.find((c) => c.id === cardId);
-	const run = card ? latestRun(card) : undefined;
+	const run = card?.runs?.find(
+		(candidate) =>
+			candidate.attempt === expectedRun.attempt && candidate.startedAt === expectedRun.startedAt
+	);
 	if (!card || !run) return false;
 	run.prUrl = prUrl;
 	delete run.prError;
@@ -171,7 +186,7 @@ export function stampCardPrUrl(
 const PR_ERROR_MAX_LENGTH = 500;
 
 /**
- * Stamp a failed attempt's reason onto the card's latest run, in place. Same
+ * Stamp a failed attempt's reason onto the card's originating run, in place. Same
  * vanished-card guard as {@link stampCardPrUrl}. The card's status is untouched:
  * a missing pull request does not undo the work.
  */
@@ -179,10 +194,14 @@ export function stampCardPrError(
 	board: Board,
 	cardId: string,
 	error: string,
-	nowIso: string
+	nowIso: string,
+	expectedRun: Pick<CardRun, 'attempt' | 'startedAt'>
 ): boolean {
 	const card = board.cards.find((c) => c.id === cardId);
-	const run = card ? latestRun(card) : undefined;
+	const run = card?.runs?.find(
+		(candidate) =>
+			candidate.attempt === expectedRun.attempt && candidate.startedAt === expectedRun.startedAt
+	);
 	if (!card || !run) return false;
 	run.prError = error.slice(0, PR_ERROR_MAX_LENGTH);
 	card.updatedAt = nowIso;
@@ -243,7 +262,7 @@ export async function maybeCreateCardPr(
 
 	if (result.success && result.prUrl) {
 		try {
-			await deps.stampPrUrl?.(cardId, result.prUrl);
+			await deps.stampPrUrl?.(cardId, result.prUrl, request.run);
 		} catch (err) {
 			deps.onLog?.(
 				'warn',
@@ -255,7 +274,7 @@ export async function maybeCreateCardPr(
 		const reason = result.error ?? 'unknown error';
 		deps.onLog?.('warn', `card "${cardId}" PR failed: ${reason}`);
 		try {
-			await deps.stampPrError?.(cardId, reason);
+			await deps.stampPrError?.(cardId, reason, request.run);
 		} catch (err) {
 			deps.onLog?.(
 				'warn',
@@ -269,7 +288,7 @@ export async function maybeCreateCardPr(
 }
 
 /**
- * Cards with a PR attempt in flight. `run.prUrl` makes a SEQUENCE of attempts
+ * Runs with a PR attempt in flight. `run.prUrl` makes a SEQUENCE of attempts
  * idempotent, but it is only written once gh answers - so two overlapping
  * transitions into `done` (the dispatcher finalizing while a human drags the card)
  * would both pass the gate and open two PRs. This closes that window.
@@ -297,22 +316,31 @@ export function startCardPr(
 	cardId: string,
 	options: StartCardPrOptions = {}
 ): void {
-	const key = `${projectRoot}::${boardId}::${cardId}`;
+	let request: CardPrRequest | null;
+	try {
+		const board = listBoards(projectRoot).find((entry) => entry.id === boardId);
+		request = board ? resolveCardPrRequest(board, cardId) : null;
+	} catch (error) {
+		options.onLog?.('warn', `card "${cardId}" PR: cannot read board - ${String(error)}`);
+		return;
+	}
+	if (!request) return;
+	const key = canonicalJson([projectRoot, boardId, cardId, request.run]);
 	if (cardPrInFlight.has(key)) return;
 	cardPrInFlight.add(key);
 	void maybeCreateCardPr(cardId, {
 		loadBoard: () => listBoards(projectRoot).find((b) => b.id === boardId) ?? null,
-		stampPrUrl: (id, prUrl) =>
+		stampPrUrl: (id, prUrl, run) =>
 			enqueueBoardWrite(projectRoot, () => {
 				const board = listBoards(projectRoot).find((b) => b.id === boardId);
-				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString())) {
+				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString(), run)) {
 					saveBoard(projectRoot, board);
 				}
 			}),
-		stampPrError: (id, error) =>
+		stampPrError: (id, error, run) =>
 			enqueueBoardWrite(projectRoot, () => {
 				const board = listBoards(projectRoot).find((b) => b.id === boardId);
-				if (board && stampCardPrError(board, id, error, new Date().toISOString())) {
+				if (board && stampCardPrError(board, id, error, new Date().toISOString(), run)) {
 					saveBoard(projectRoot, board);
 				}
 			}),

@@ -13,7 +13,7 @@
  *   - the injected PR dep (F3) fires exactly on a qualifying `done` transition.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
 	BoardDispatcher,
 	promoteEligibleCards,
@@ -834,6 +834,31 @@ describe('BoardDispatcher cancelCard', () => {
 		});
 		return { ...h, killed, settle: (r: CardSpawnResult) => settle?.(r) };
 	}
+
+	it('invalidates every attempt even when persisting a canceled card fails', () => {
+		let failWrites = false;
+		const cancelSpawn = vi.fn(() => true);
+		const h = pendingHarness(board([card({ id: 'a' }), card({ id: 'b' })], 2), {
+			cancelSpawn,
+			saveBoard: () => {
+				if (failWrites) throw new Error('Disk unavailable');
+			},
+			loadBoard: () =>
+				board(
+					[
+						card({ id: 'a', status: failWrites ? 'running' : 'todo' }),
+						card({ id: 'b', status: failWrites ? 'running' : 'todo' }),
+					],
+					2
+				),
+		});
+		h.dispatcher.tick();
+		failWrites = true;
+		expect(() => h.dispatcher.stop()).toThrow('Disk unavailable');
+		expect(cancelSpawn.mock.calls).toEqual([['a'], ['b']]);
+		expect(h.dispatcher.isInFlight('a')).toBe(false);
+		expect(h.dispatcher.isInFlight('b')).toBe(false);
+	});
 
 	it('does not keep a cancel tombstone for a persisted run this dispatcher never spawned', async () => {
 		const h = harness(

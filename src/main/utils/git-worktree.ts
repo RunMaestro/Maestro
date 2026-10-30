@@ -182,18 +182,18 @@ export async function setupWorktreeLocal(
 
 		if (pathExists) {
 			// Get the common dir to check if it's the same repo (parallel)
-			const [gitCommonDirResult, mainGitDirResult] = await Promise.all([
+			const [gitCommonDirResult, mainGitCommonDirResult] = await Promise.all([
 				execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedWorktree),
-				execFileNoThrow('git', ['rev-parse', '--git-dir'], resolvedMainRepo),
+				execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedMainRepo),
 			]);
 
-			if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
-				const worktreeCommonDir = path.resolve(resolvedWorktree, gitCommonDirResult.stdout.trim());
-				const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
-
-				// Normalize paths for comparison
-				const normalizedWorktreeCommon = path.normalize(worktreeCommonDir);
-				const normalizedMainGit = path.normalize(mainGitDir);
+			if (gitCommonDirResult.exitCode === 0 && mainGitCommonDirResult.exitCode === 0) {
+				const [worktreeCommonDir, mainGitCommonDir] = await Promise.all([
+					fs.realpath(path.resolve(resolvedWorktree, gitCommonDirResult.stdout.trim())),
+					fs.realpath(path.resolve(resolvedMainRepo, mainGitCommonDirResult.stdout.trim())),
+				]);
+				const normalizedWorktreeCommon = normalizeWorktreePath(worktreeCommonDir);
+				const normalizedMainGit = normalizeWorktreePath(mainGitCommonDir);
 
 				if (normalizedWorktreeCommon !== normalizedMainGit) {
 					return { success: false, error: 'Worktree path belongs to a different repository' };

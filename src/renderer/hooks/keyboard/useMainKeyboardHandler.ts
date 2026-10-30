@@ -1075,11 +1075,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				openUiSurface('board');
 				trackShortcut('openBoard');
-			} else if (
-				ctx.isShortcut(e, 'openProfiles') &&
-				ctx.encoreFeatures?.board &&
-				ctx.encoreFeatures?.maestroCue
-			) {
+			} else if (ctx.isShortcut(e, 'openProfiles') && ctx.encoreFeatures?.board) {
 				e.preventDefault();
 				openUiSurface('profiles');
 				trackShortcut('openProfiles');

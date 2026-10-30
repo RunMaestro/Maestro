@@ -29,8 +29,10 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { jumpToAgent } from '../services/agentNavigation';
 import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
+import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime, truncatePath } from '../../shared/formatters';
+import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch';
@@ -201,7 +203,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	// string array, so serializing both sides is simpler (and less bug-prone) than
 	// a hand-written field-by-field diff.
 	const isDraftDirty = useMemo(
-		() => !!draft && JSON.stringify(draft) !== JSON.stringify(draftBaselineRef.current),
+		() => !!draft && canonicalJson(draft) !== canonicalJson(draftBaselineRef.current),
 		[draft]
 	);
 
@@ -257,7 +259,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					notifyToast({
 						color: 'red',
 						title: 'Board',
-						message: `Failed to load board: ${err instanceof Error ? err.message : String(err)}`,
+						message: `Failed to load board: ${ipcErrorMessage(err)}`,
 						dismissible: true,
 					});
 				}
@@ -373,7 +375,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			notifyToast({
 				color: 'red',
 				title: 'Board',
-				message: err instanceof Error ? err.message : 'Failed to delete the board.',
+				message: ipcErrorMessage(err),
 			});
 		}
 	}, [board, projectRoot]);
@@ -587,7 +589,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				message: isNew ? `Created "${card.title}".` : `Updated "${card.title}".`,
 			});
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
+			const message = ipcErrorMessage(err);
 			logger.error(`Failed to save card: ${message}`);
 			captureException(err, { tags: { operation: 'board:saveCard' } });
 			// The storage layer rejects cycles too - surface that inline rather than
@@ -623,7 +625,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				notifyToast({
 					color: 'red',
 					title: 'Board',
-					message: err instanceof Error ? err.message : 'Failed to delete card.',
+					message: ipcErrorMessage(err),
 				});
 			}
 		},

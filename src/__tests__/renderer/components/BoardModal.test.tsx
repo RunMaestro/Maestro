@@ -1271,3 +1271,18 @@ describe('BoardModal overlapping refreshes', () => {
 		expect(screen.getByRole('option', { name: 'Current board' })).toBeInTheDocument();
 	});
 });
+
+it('shows the handler message without Electron IPC plumbing on load failure', async () => {
+	installApis([]);
+	boardApi.list.mockRejectedValue(
+		new Error("Error invoking remote method 'board:list': TypeError: Board data: cannot be read")
+	);
+	render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+	await waitFor(() =>
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: 'Failed to load board: Board data: cannot be read',
+			})
+		)
+	);
+});

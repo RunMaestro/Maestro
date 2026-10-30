@@ -763,6 +763,24 @@ export class BoardDispatcher {
 		return true;
 	}
 
+	/** Invalidate every owned attempt before engine teardown, including preparation. */
+	stop(): void {
+		const errors: unknown[] = [];
+		for (const cardId of [...this.inFlight.keys()]) {
+			try {
+				// Cancel even if the card/board vanished while preparation was pending.
+				if (!this.cancelCard(cardId)) {
+					this.inFlight.delete(cardId);
+					this.deps.cancelSpawn?.(cardId);
+				}
+			} catch (error) {
+				// A failed persistence write must not leave other attempts authorized.
+				errors.push(error);
+			}
+		}
+		if (errors.length) throw errors[0];
+	}
+
 	/**
 	 * Resolve a completed (or failed) card run: reload the board fresh, apply the
 	 * result, and persist. Reloading avoids clobbering concurrent card mutations

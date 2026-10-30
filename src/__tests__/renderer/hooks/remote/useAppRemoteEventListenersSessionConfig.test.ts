@@ -373,3 +373,29 @@ describe('provider migration parity', () => {
 		expect(setMany).not.toHaveBeenCalled();
 	});
 });
+
+describe('remote Board worker opt-in parity', () => {
+	it.each([true, false])('persists boardWorker=%s before acknowledging', async (value) => {
+		const sessions = [createMockSession({ id: 'session-1', boardWorker: !value })];
+		const { setSessions } = setup(sessions);
+		dispatchPatch('session-1', { boardWorker: value });
+		await flush();
+		expect(applyUpdate(setSessions, sessions)[0].boardWorker).toBe(value);
+		expect(setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'session-1', boardWorker: value })],
+			[]
+		);
+		expect(setMany.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+	});
+	it('rejects a non-boolean opt-in without writing', async () => {
+		const { setSessions } = setup([createMockSession({ id: 'session-1' })]);
+		dispatchPatch('session-1', { boardWorker: 'true' });
+		await flush();
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: "Invalid value for field 'boardWorker'",
+		});
+	});
+});

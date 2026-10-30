@@ -66,7 +66,7 @@ describe('board worktree naming', () => {
 	});
 
 	it('flattens a slash inside an id so it cannot add branch hierarchy', () => {
-		expect(boardCardBranchName(BOARD_ID, 'a/b')).toBe(`board/${BOARD_ID}/a-b`);
+		expect(boardCardBranchName(BOARD_ID, 'a/b')).toBe(`board/${BOARD_ID}/a_2f_b`);
 	});
 
 	it('puts the checkout in a worktrees folder BESIDE the project, never inside it', () => {
@@ -124,4 +124,12 @@ describe('ensureCardWorktree', () => {
 		expect(result.ok).toBe(false);
 		expect(result.ok === false && result.reason).toMatch(/inside the main repository/i);
 	});
+});
+
+it('keeps formerly colliding IDs isolated in both board and card segments', () => {
+	const ids = ['a/b', 'a-b', 'a_2f_b', 'a b', 'a.b', 'a:b', '', '_empty_', 'Ä', 'ä'];
+	const branches = ids.map((id) => boardCardBranchName('b1', id));
+	expect(new Set(branches).size).toBe(ids.length);
+	expect(new Set(ids.map((id) => boardCardBranchName(id, 'c1'))).size).toBe(ids.length);
+	for (const branch of branches) expect(branch).toMatch(/^board\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/);
 });

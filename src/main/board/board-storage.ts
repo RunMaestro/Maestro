@@ -483,6 +483,10 @@ export function updateCard(projectRoot: string, boardId: string, card: BoardCard
 			'updateCard: card status changed. Refresh the card before editing; use updateCardStatus to move it.'
 		);
 	}
+	if (stored.status === 'running') {
+		throw new Error('updateCard: running cards cannot be edited. Stop the run before editing.');
+	}
+
 	const validated = validateBoardCard(
 		{
 			...card,

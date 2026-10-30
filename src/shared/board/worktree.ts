@@ -18,33 +18,31 @@
  */
 
 import { getParentDir, joinPath } from '../formatters';
-import { sanitizeGitBranchName } from '../gitUtils';
 
 /** Directory (next to the project root) that holds every worktree checkout. */
 export const BOARD_WORKTREE_DIRNAME = 'worktrees';
 
 /**
- * One id as one branch/path segment: the FULL id, git-sanitized, with any
- * surviving `/` flattened so the id can never add hierarchy of its own.
- *
- * The full id matters: `board.yaml` is user-editable, so ids are not always
- * UUIDs - two hand-written ids like `feature-auth` / `feature-api` share a
- * first-8 prefix, and a truncated scheme would silently hand both cards the
- * same checkout, defeating isolation.
+ * Encode an ID as one git-safe path segment without losing identity. Safe ASCII
+ * IDs (including generated UUIDs) keep their existing names. Escape underscores
+ * as well as unsafe UTF-16 code units so literal escape-looking IDs cannot
+ * collide with encoded ones, unlike lossy branch sanitization.
  */
-function idSegment(id: string, fallback: string): string {
-	return sanitizeGitBranchName(id).replace(/\//g, '-') || fallback;
+function idSegment(id: string): string {
+	return (
+		id.replace(/[^A-Za-z0-9-]/g, (unit) => `_${unit.charCodeAt(0).toString(16)}_`) || '_empty_'
+	);
 }
 
 /**
  * Branch name for a card's isolated worktree: `board/<board>/<card>`.
  *
- * Both ids are sanitized so a hand-written board id (`board.yaml` is
+ * Both ids are encoded so a hand-written board id (`board.yaml` is
  * user-editable) can never produce an invalid ref, and kept whole so distinct
  * ids always yield distinct branches (and therefore distinct checkouts).
  */
 export function boardCardBranchName(boardId: string, cardId: string): string {
-	return `board/${idSegment(boardId, 'board')}/${idSegment(cardId, 'card')}`;
+	return `board/${idSegment(boardId)}/${idSegment(cardId)}`;
 }
 
 /**
