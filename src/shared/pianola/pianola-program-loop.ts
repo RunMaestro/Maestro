@@ -30,8 +30,12 @@ export interface ProgramLoopMemoEntry {
 }
 export type ProgramLoopMemo = Record<string, ProgramLoopMemoEntry>;
 
+// Escape each component so prefix cleanup cannot confuse `deploy` with `deploy:db`.
 const taskNotificationKey = (planId: string, task: PianolaPlan['tasks'][number]) =>
-	planId + ':' + task.id + (task.runId ? ':' + task.runId : '');
+	encodeURIComponent(planId) +
+	':' +
+	encodeURIComponent(task.id) +
+	(task.runId ? ':' + encodeURIComponent(task.runId) : '');
 
 export function validateProgramLoopMemo(raw: unknown): ProgramLoopMemo {
 	const result: ProgramLoopMemo = Object.create(null);
@@ -124,7 +128,7 @@ export interface ProgramLoopDeps {
 	wake(
 		agentId: string,
 		prompt: string
-	): Promise<{ success: boolean; tabId?: string; error?: string }>;
+	): Promise<{ success: boolean; tabId?: string; error?: string; code?: string }>;
 	ensureWatch(agentId: string, tabId: string): Promise<void> | void;
 	persistMemo(memo: ProgramLoopMemoEntry): Promise<void> | void;
 	prompt(kind: ProgramLoopWakeKind, variables: Record<string, string>): string;
@@ -207,7 +211,7 @@ export async function runProgramLoopTick(
 		plans.flatMap((plan) =>
 			plan.tasks
 				.filter((task) => task.status === 'pending' || task.status === 'running')
-				.map((task) => plan.id + ':' + task.id)
+				.map((task) => encodeURIComponent(plan.id) + ':' + encodeURIComponent(task.id))
 		)
 	);
 	const retainedNotifications = memo.notifiedTaskIds.filter(
@@ -325,7 +329,12 @@ export async function runProgramLoopTick(
 	}
 	const wake = receipt ?? (await deps.wake(program.leadAgentId, intent.prompt));
 	if (!wake.success) {
-		delete memo.pendingWake;
+		const uncertain =
+			wake.code === 'COMMAND_FAILED' ||
+			wake.code === 'CALLBACK_NOT_ARMED' ||
+			wake.code === 'NEW_TAB_NO_ID' ||
+			wake.code === 'MAESTRO_NOT_RUNNING';
+		if (!uncertain) delete memo.pendingWake;
 		await deps.persistMemo(memo);
 		return result('wake failed (' + intent.kind + ')', false, undefined, wake.error);
 	}

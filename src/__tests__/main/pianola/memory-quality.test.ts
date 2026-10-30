@@ -8,6 +8,7 @@ import {
 	shortlistMemoryCandidates,
 	rankRelevantMemoryCandidates,
 	memoryCosineSimilarity,
+	compareMemoryCandidatesByGuardedPrior,
 } from '../../../main/pianola/memory-ranking';
 const memory = (id = 'one'): ContextualMemory => ({
 	id,
@@ -297,6 +298,20 @@ describe('candidate retrieval versus answerability', () => {
 				1
 			).map((row) => row.memory.id)
 		).toEqual(['exact']);
+	});
+	it('preserves intermediate lexical scores when normalizing the candidate spread', () => {
+		const middle = {
+			...candidate('middle'),
+			cosineDistance: 0.21,
+			lexicalScore: -20,
+		};
+		const weakest = {
+			...candidate('weakest'),
+			cosineDistance: 0.209,
+			lexicalScore: -10,
+		};
+		// Cosine similarity is 1 - distance. The middle lexical score must break the near-tie.
+		expect(compareMemoryCandidatesByGuardedPrior(middle, weakest, 0.8, -30, -10)).toBeLessThan(0);
 	});
 	it('keeps a clearly better embedding ahead of a weak lexical hit', () => {
 		// The contract: a vector-only hit the embedding is confident about must not

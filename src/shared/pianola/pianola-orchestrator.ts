@@ -626,6 +626,8 @@ export async function runOrchestratorIteration(
 			tabId: dispatchedTask.tabId ?? res.tabId,
 		});
 		// A dispatch receipt proves delivery only; wait for a real run observation.
+		// Checkpoint accepted work before another await or task can begin. A supervisor
+		// pause/rebind may terminate this CLI, and resume must not replay this dispatch.
 		deps.persist(plan);
 		// Dispatch acknowledgement is not evidence that a turn started. Wait for an
 		// observed busy state or a new assistant reply before accepting idle as done.

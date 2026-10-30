@@ -61,6 +61,7 @@ function makeDeps(
 		messages?: Record<string, readonly PianolaMessage[]>;
 		ensureAgent?: OrchestratorDeps['ensureAgent'];
 		dispatch?: OrchestratorDeps['dispatch'];
+		persist?: OrchestratorDeps['persist'];
 		notify?: OrchestratorDeps['notify'];
 	} = {}
 ): OrchestratorDeps {
@@ -76,7 +77,7 @@ function makeDeps(
 				agentType: t.agentType ?? 'claude-code',
 			})),
 		dispatch: config.dispatch ?? vi.fn(async () => ({ success: true, tabId: 'tab-1' })),
-		persist: vi.fn(),
+		persist: config.persist ?? vi.fn(),
 		log: vi.fn(),
 		notify: config.notify,
 	};
@@ -466,6 +467,28 @@ describe('runOrchestratorIteration - dispatch failure does not leak agents', () 
 		});
 		expect(statusOf(r.state, 'A')).toBe('running');
 		expect(created).toBe(1);
+	});
+	it('persists each accepted dispatch before starting the next task', async () => {
+		const persisted: PianolaPlan[] = [];
+		let dispatchCalls = 0;
+		const deps = makeDeps({
+			dispatch: vi.fn(async () => {
+				dispatchCalls += 1;
+				if (dispatchCalls === 2) expect(persisted).toHaveLength(1);
+				return { success: true };
+			}),
+			persist: vi.fn((plan) => {
+				persisted.push(structuredClone(plan));
+			}),
+		});
+		await runOrchestratorIteration(
+			initialOrchestratorState(plan([task({ id: 'A' }), task({ id: 'B' })])),
+			deps,
+			{ concurrencyLimit: 2 }
+		);
+		expect(persisted).toHaveLength(3);
+		expect(persisted[0].tasks.find((task) => task.id === 'A')?.status).toBe('running');
+		expect(persisted[1].tasks.find((task) => task.id === 'B')?.status).toBe('running');
 	});
 });
 

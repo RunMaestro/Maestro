@@ -9,7 +9,7 @@ import { MaestroClient } from '../services/maestro-client';
 import { readAgentRuns } from '../services/agent-run-store';
 import { pianolaTaskAgentRunId } from '../../shared/agent-run';
 import { generateUUID } from '../../shared/uuid';
-import { getConfigDirectory, readSshRemotes } from '../services/storage';
+import { getConfigDirectory, readSshRemotes, readLiveSessions } from '../services/storage';
 import { ensurePianolaEnabled } from './pianola';
 import {
 	readPianolaPrograms,
@@ -376,29 +376,7 @@ export async function pianolaProgramApply(options: {
 				? program.remoteEnv
 				: { MAESTRO_CLI_JS: process.argv[1] ?? '', MAESTRO_USER_DATA: getConfigDirectory() };
 			program = { ...program, updatedAt: existing ? Date.now() : program.updatedAt };
-			let desktopSessions:
-				| {
-						id: string;
-						name: string;
-						cwd: string;
-						toolType: string;
-						sessionSshRemoteConfig?: { enabled: boolean; remoteId?: string | null };
-						customEnvVars?: Record<string, string>;
-				  }[]
-				| undefined;
-			const liveSessions = async () => {
-				if (desktopSessions) return desktopSessions;
-				if (!client) {
-					client = new MaestroClient();
-					await client.connect();
-				}
-				const response = await client.sendCommand<{
-					sessions?: NonNullable<typeof desktopSessions>;
-				}>({ type: 'get_sessions' }, 'sessions_list');
-				if (!Array.isArray(response.sessions)) throw new Error('Could not list live role agents');
-				desktopSessions = response.sessions;
-				return desktopSessions;
-			};
+			const liveSessions = () => readLiveSessions();
 			for (const [key, inputRole] of Object.entries(program.roles)) {
 				let role = inputRole;
 				if (!role.agentId) {
@@ -440,7 +418,11 @@ export async function pianolaProgramApply(options: {
 							? session.sessionSshRemoteConfig.remoteId
 							: undefined;
 						if (remoteId !== program.remoteId) {
-							const result = await client!.sendCommand<{ success: boolean; error?: string }>(
+							if (!client) {
+								client = new MaestroClient();
+								await client.connect();
+							}
+							const result = await client.sendCommand<{ success: boolean; error?: string }>(
 								{
 									type: 'update_session_ssh',
 									sessionId: role.agentId,
