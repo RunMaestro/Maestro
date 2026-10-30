@@ -38,7 +38,7 @@ It is not:
 | `windows-shell` | On Windows, the provider is installed as a `.cmd` shim that only starts through cmd.exe, and an argument cannot pass through cmd.exe intact (a prompt with a line break, `%` or `^`, for a provider that cannot read its prompt from stdin). See [Windows](#windows). |
 | `launch`        | The launch could not be planned. The message says why.                                                                                                                                                                                                                |
 
-What each provider supports in maestro-lib `0.3.0`:
+What each provider supports in maestro-lib `0.4.0`:
 
 | Agent id        | Name            | Runs a turn | Resume | Read-only |
 | --------------- | --------------- | ----------- | ------ | --------- |

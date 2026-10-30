@@ -4,30 +4,51 @@ description: Send messages to agents, list sessions, run playbooks, and manage M
 icon: square-terminal
 ---
 
-Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. The CLI requires Node.js (which you already have if you're using Claude Code).
+Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. It runs on the Electron runtime that ships inside Maestro, so it needs no separate Node.js.
 
 ## Installation
 
-The CLI is bundled with Maestro as a JavaScript file. Create a shell wrapper to run it:
+The CLI is bundled with Maestro as a JavaScript file, `maestro-cli.js`, in the app's resources folder. It must run under the app's own executable with `ELECTRON_RUN_AS_NODE=1` set, not under a system `node`: its SQLite module (used by Cue, `maestro-cli host`, and `cue activity`) is built for the app's Electron and does not load in a system Node.js, so there `host start` reports Cue as failed and `cue activity` cannot read `cue.db`.
+
+The simplest way is to let the app write the wrapper: **Settings → General → Maestro CLI → Install / Update CLI**. It writes `~/.local/bin/maestro-cli` (`maestro-cli.cmd` on Windows) in exactly that form and adds `~/.local/bin` to your `PATH`. Run it again after moving or updating the app.
+
+To write the wrapper by hand, use the line for your install:
 
 ```bash
-# macOS (after installing Maestro.app)
-printf '#!/bin/bash\nnode "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+# macOS (Maestro.app in /Applications)
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "/Applications/Maestro.app/Contents/MacOS/Maestro" "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
 
-# Linux (deb/rpm installs to /opt)
-printf '#!/bin/bash\nnode "/opt/Maestro/resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
-
-# Windows (PowerShell as Administrator) - create a batch file
-@"
-@echo off
-node "%ProgramFiles%\Maestro\resources\maestro-cli.js" %*
-"@ | Out-File -FilePath "$env:ProgramFiles\Maestro\maestro-cli.cmd" -Encoding ASCII
+# Linux (deb or rpm, installed to /opt/Maestro)
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "/opt/Maestro/maestro" "/opt/Maestro/resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
 ```
 
-Alternatively, run directly with Node.js:
+**Linux AppImage.** A running AppImage lives in a temporary mount (`/tmp/.mount_*`) that disappears when it exits, so neither a hand-written wrapper nor **Install / Update CLI** run from the AppImage can point into it. Extract it once to a directory that stays, and point the wrapper there:
 
 ```bash
-node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
+# Extracts to ./squashfs-root; repeat after each AppImage update
+./maestro-<version>-x86_64.AppImage --appimage-extract
+mv squashfs-root "$HOME/maestro-app"    # any directory you keep
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "%s/maestro-app/maestro" "%s/maestro-app/resources/maestro-cli.js" "$@"\n' "$HOME" "$HOME" | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+```
+
+**Windows.** The installer puts Maestro in `%LOCALAPPDATA%\Programs\Maestro` when installed for the current user (the default), or in `%ProgramFiles%\Maestro` when installed for all users; you may also have picked another folder. Set `$MaestroDir` to yours, then run in PowerShell (no Administrator needed):
+
+```powershell
+$MaestroDir = "$env:LOCALAPPDATA\Programs\Maestro"   # or "$env:ProgramFiles\Maestro"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\bin" | Out-Null
+@"
+@echo off
+set "ELECTRON_RUN_AS_NODE=1"
+"$MaestroDir\Maestro.exe" "$MaestroDir\resources\maestro-cli.js" %*
+"@ | Out-File -FilePath "$env:USERPROFILE\.local\bin\maestro-cli.cmd" -Encoding ASCII
+```
+
+Then add `%USERPROFILE%\.local\bin` to your user `PATH`. The portable build (`Maestro-Portable-*.exe`) unpacks itself to a temporary folder on each launch and deletes it on exit, so it cannot back a wrapper; use the installer build for the CLI.
+
+To run a single command without a wrapper, use the same form directly:
+
+```bash
+ELECTRON_RUN_AS_NODE=1 "/Applications/Maestro.app/Contents/MacOS/Maestro" "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
 ```
 
 ## Usage
@@ -2185,11 +2206,13 @@ Starts the host as a detached process and returns once it is listening. The host
 
 `start` reports the pid, the port, the log file, and where Cue stands. A Cue that did not start does not fail the start: the host still serves turns and Auto Runs, and the output says Cue is not running and why.
 
-**Signals.** SIGTERM or SIGINT (`systemctl stop`, `systemctl restart`, Ctrl+C on `--foreground`) drains the host: it waits up to `--stop-grace` seconds for chat turns, Auto Runs, group chat rounds, consults, and Cue runs to finish, then stops. A second signal stops it at once. New work is not turned away during the wait, so work that starts in it is waited for too, up to the same deadline. Keep the grace below your service manager's own stop timeout (systemd sends SIGKILL after 90 seconds by default).
+**Signals.** SIGTERM or SIGINT (`systemctl stop`, `systemctl restart`, Ctrl+C on `--foreground`) drains the host: it waits up to `--stop-grace` seconds for chat turns, Auto Runs, group chat rounds, consults, and Cue runs to finish, then stops. A second signal stops it at once. New work is not turned away during the wait, so work that starts in it is waited for too, up to the same deadline. Keep the grace below your service manager's own stop timeout (systemd sends SIGKILL after 90 seconds by default), with a few seconds to spare: Cue runs still going when the grace runs out get up to about 7 more seconds to exit after they are stopped.
+
+Cue drains the way [`cue engine start`](/maestro-cue-server#stop) does. On the first signal every trigger is disarmed at once, so no subscription fires while the host waits, and anything triggered from then on is queued instead of run. Cue runs in flight get the same `--stop-grace`; the ones still running when it ends are stopped and recorded as `stopped`. Queued events and fan-ins still waiting on sources are saved and pick up on the next start of whichever Cue engine serves the data directory. A second signal stops every Cue run and kills its processes at once, and still saves the queue. `host stop` and a host that lost its data directory drain Cue the same way with no wait. Switching Cue off in the settings while the host runs is not a shutdown: it stops the runs and clears the queue, as on the desktop.
 
 ### `host status`
 
-Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
+Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. If another Cue engine takes the Cue lock over while the host runs (the host was suspended long enough for its lock to go stale, say), the host stops its Cue runs and gives Cue up, and the Cue state names the new holder (`not running here: desktop pid 1234 holds the Cue lock`) instead of `running`. The host does not take Cue back on its own: switching Cue off and on again in the settings, or restarting the host, tries again. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
 
 | Flag                | Description                        | Default                       |
 | ------------------- | ---------------------------------- | ----------------------------- |
@@ -2262,6 +2285,42 @@ maestro-cli cue list --json
 ```
 
 Shows each subscription's name, event type, agent, enabled status, and last trigger time.
+
+### Recent Runs
+
+```bash
+# The 20 newest runs across every agent
+maestro-cli cue activity
+
+# One agent's 5 newest, as JSON
+maestro-cli cue activity --agent <agent-id> --limit 5 --json
+```
+
+Each line is a run's start time, status (`running`, `completed`, `failed`), subscription, event type, and duration (or how long a running one has run so far).
+
+### Turning a Subscription On or Off
+
+```bash
+maestro-cli cue disable nightly-report
+maestro-cli cue enable nightly-report --agent <agent-id>
+```
+
+This writes the subscription's `enabled` flag into its cue.yaml, as the switch on the Cue dashboard does. Pass `--agent`, or the full id from `cue list --json`, when two agents share the name.
+
+### Where the Answer Comes From
+
+`cue list`, `cue activity`, `cue enable`, and `cue disable` ask whatever serves the data directory (`--data-dir`, or `MAESTRO_USER_DATA`, or the platform default):
+
+| Serving the data directory                                                                                      | `cue list` / `cue activity`                                                                                                                                                                | `cue enable` / `cue disable`                 |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| The desktop app                                                                                                 | The app's engine answers, run output included                                                                                                                                              | The app's engine writes it                   |
+| `maestro-cli host`, running Cue                                                                                 | The host's engine answers, the same rows the desktop shows, run output included                                                                                                            | The host's engine writes it                  |
+| `maestro-cli host`, not running Cue (another engine holds the Cue lock, or Cue did not start), or an older host | Read from each agent's cue.yaml and from `cue.db`. A run in flight in another engine still reads `running`. Run output is not included, and a line on stderr says where the list came from | Refused, with the reason and what to do      |
+| Nothing (`cue activity` only)                                                                                   | Read from `cue.db`, with the same stderr note. `cue list` reports that the app is not running (exit 3)                                                                                     | Reports that the app is not running (exit 3) |
+
+While a host is shutting down (`host stop`, or a signal), it goes on answering `cue list` and `cue activity` until its Cue runs have finished, and refuses `cue enable`, `cue disable`, and `cue trigger` with a message saying so. If another engine takes the Cue lock over from a host, the host stops answering for Cue, so reads come from disk and a refused change names the engine that now holds the lock.
+
+An older desktop build that does not know a command, or a peer that does not answer in time, is still reported as an error (exit 4 or 5): the CLI never covers a real failure with figures from disk. With Maestro Cue switched off in Encore Features every `cue` verb is refused before it asks anyone. `cue pipeline` edits the desktop Pipeline Graph layout and is not served by a host; beside one it says so and points at cue.yaml.
 
 ### Scheduling Tasks
 
@@ -2499,7 +2558,7 @@ Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh
 
 ## Agent Integration
 
-Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS.
+Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS. That form runs on whatever `node` is on the agent's `PATH`, which is enough for every command that talks to the running app or host. The Cue commands that open `cue.db` themselves (`cue engine`, `host start`, and `cue activity` when neither the app nor the host answers for Cue) need the app's runtime as described under [Installation](#installation).
 
 This means agents can:
 

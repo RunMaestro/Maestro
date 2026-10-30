@@ -37,6 +37,12 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
  */
 export class UnsupportedCommandError extends Error {
 	readonly commandType: string;
+	/**
+	 * The peer that echoed. A caller that can answer from disk falls back only
+	 * for `'headless'`: an old desktop build is a different problem and keeps
+	 * its "rebuild and restart" hint.
+	 */
+	readonly hostKind: CliServerInfo['hostKind'];
 	constructor(commandType: string, hostKind?: CliServerInfo['hostKind']) {
 		super(
 			hostKind === 'headless'
@@ -47,6 +53,7 @@ export class UnsupportedCommandError extends Error {
 		);
 		this.name = 'UnsupportedCommandError';
 		this.commandType = commandType;
+		this.hostKind = hostKind;
 	}
 }
 

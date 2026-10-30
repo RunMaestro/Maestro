@@ -183,7 +183,7 @@ describe('maestro-cli host', () => {
 			);
 			const text = out.join('\n');
 			expect(text).toContain('Host started (pid');
-			expect(text).toContain('Cue: failed to start: better-sqlite3 could not be loaded');
+			expect(text).toContain('Cue: not running: better-sqlite3 could not be loaded');
 			expect(text).toContain('The host is up, but Cue is not');
 			// The host itself did start, and the output says exactly that.
 			expect(process.exitCode).toBeUndefined();
@@ -339,14 +339,22 @@ describe('maestro-cli host', () => {
 	});
 
 	describe('a signal to a foreground host', () => {
-		/** A host whose work is whatever `work` says, and whose stop is recorded. */
+		/** A host whose work is whatever `work` says, and whose stop and Cue drain are recorded. */
 		function drainable(work: () => HostWork) {
 			let finish!: () => void;
 			const stopped = new Promise<void>((resolve) => {
 				finish = resolve;
 			});
-			const stop = vi.fn(async () => finish());
-			return { host: { work, stop, stopped }, stop };
+			const order: string[] = [];
+			const stop = vi.fn(async () => {
+				order.push('stop');
+				finish();
+			});
+			const cue = {
+				drain: vi.fn(async (_timeoutMs: number) => void order.push('cue.drain')),
+				forceStop: vi.fn(() => void order.push('cue.forceStop')),
+			};
+			return { host: { work, stop, stopped, cue }, stop, cue, order };
 		}
 		/** A clock that moves only when the drain sleeps. */
 		function clock() {
@@ -408,6 +416,45 @@ describe('maestro-cli host', () => {
 			expect(time.elapsed()).toBe(5_000);
 			expect(time.lines.join('\n')).toContain('grace period ran out');
 			expect(time.lines.join('\n')).toContain('1 consult');
+		});
+
+		it('starts the Cue drain on the first signal, with the grace, before it waits for anything', async () => {
+			const { host, stop, cue } = drainable(() => ({ turns: 1, runs: [] }));
+			const time = clock();
+			const handler = createSignalDrain(host, 30_000, {
+				...time.deps,
+				sleep: () => new Promise<void>(() => undefined),
+			});
+			handler('SIGTERM');
+			// Disarmed at once, while the host is still waiting on its turn.
+			expect(cue.drain).toHaveBeenCalledWith(30_000);
+			await settle();
+			expect(stop).not.toHaveBeenCalled();
+			expect(cue.forceStop).not.toHaveBeenCalled();
+		});
+
+		it('force-stops Cue on a second signal, then stops the host', async () => {
+			const { host, cue, order } = drainable(() => ({ turns: 0, runs: [], cueRuns: 1 }));
+			const time = clock();
+			const handler = createSignalDrain(host, 30_000, {
+				...time.deps,
+				sleep: () => new Promise<void>(() => undefined),
+			});
+			handler('SIGTERM');
+			await settle();
+			handler('SIGINT');
+			expect(cue.drain).toHaveBeenCalledTimes(1);
+			expect(order).toEqual(['cue.drain', 'cue.forceStop', 'stop']);
+		});
+
+		it('still stops the host when the Cue drain fails', async () => {
+			const { host, stop, cue } = drainable(() => ({ turns: 0, runs: [] }));
+			cue.drain.mockRejectedValueOnce(new Error('db closed'));
+			const time = clock();
+			createSignalDrain(host, 30_000, time.deps)('SIGTERM');
+			await settle();
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(time.lines.join('\n')).toContain('Draining Cue failed: db closed');
 		});
 
 		it('stops at once on a second signal', async () => {

@@ -1113,9 +1113,10 @@ Manually trigger a Cue subscription by name (pipeline siblings with identical tr
 
 List all Cue subscriptions across agents
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue model <subscription-name>`
 
@@ -1136,30 +1137,32 @@ Show or set the model tier, exact model, and effort a Cue subscription runs at (
 
 Turn a Cue subscription on (name, or the full id from `cue list --json`)
 
-| Option             | Description                              | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `-a, --agent <id>` | Disambiguate a name several agents share | -       |
-| `--json`           | Output as JSON (for scripting)           | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Disambiguate a name several agents share                                        | -       |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue disable <subscription>`
 
 Turn a Cue subscription off without deleting it
 
-| Option             | Description                              | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `-a, --agent <id>` | Disambiguate a name several agents share | -       |
-| `--json`           | Output as JSON (for scripting)           | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Disambiguate a name several agents share                                        | -       |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue activity`
 
 Show recent Cue runs, newest first
 
-| Option              | Description                                                                                                         | Default |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`  | Only runs for this agent                                                                                            | -       |
-| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                  | -       |
-| `--json`            | Output as JSON (for scripting)                                                                                      | -       |
-| `--data-dir <path>` | Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default) | -       |
+| Option              | Description                                                                                                                                   | Default |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Only runs for this agent                                                                                                                      | -       |
+| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                                            | -       |
+| `--json`            | Output as JSON (for scripting)                                                                                                                | -       |
+| `--data-dir <path>` | Data directory whose app or host is asked, and whose cue.db is read when neither answers (default: MAESTRO_USER_DATA or the platform default) | -       |
 
 ## `maestro-cli cue schedule`
 

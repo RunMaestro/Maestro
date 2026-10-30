@@ -1,43 +1,8 @@
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
-import type { CueSubscriptionInfo } from '../types';
-import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
-import { cueTurnSettingsOf } from '../../../shared/cue/turn-settings';
 import { toCueActivityEntries } from '../../cue/cue-activity-entries';
-
-/** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
- *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
- *  human-readable string so day-pinned schedules don't show up as
- *  `undefined` in the CLI:
- *
- *  - `schedule_times: ['07:00']`                              → `"07:00"`
- *  - `schedule_times: ['07:00']`, `schedule_days: ['mon','wed']` → `"07:00 (Mon, Wed)"`
- *  - `interval_minutes: 5`                                    → `"every 5m"`
- *  - `schedule_days: ['mon','wed']` (no times, no interval)   → `"days: Mon, Wed"`
- *  - none of the above                                        → `undefined`
- */
-function formatCueSchedule(sub: {
-	schedule_times?: string[];
-	schedule_days?: string[];
-	interval_minutes?: number;
-}): string | undefined {
-	const days =
-		Array.isArray(sub.schedule_days) && sub.schedule_days.length > 0
-			? sub.schedule_days.map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')
-			: null;
-	if (Array.isArray(sub.schedule_times) && sub.schedule_times.length > 0) {
-		const base = sub.schedule_times.join(', ');
-		return days ? `${base} (${days})` : base;
-	}
-	if (typeof sub.interval_minutes === 'number') {
-		return `every ${sub.interval_minutes}m`;
-	}
-	if (days) {
-		return `days: ${days}`;
-	}
-	return undefined;
-}
+import { toCueSubscriptionInfos } from '../../cue/cue-subscription-entries';
 
 export function registerCueCallbacks(
 	server: WebServer,
@@ -59,42 +24,10 @@ export function registerCueCallbacks(
 			logger.warn('getCueGraphData dependency not available', 'WebServer');
 			return [];
 		}
-		const graph = deps.getCueGraphData();
-		const filtered =
-			typeof sessionId === 'string' && sessionId.length > 0
-				? graph.filter((gs) => gs.sessionId === sessionId)
-				: graph;
-		const subs: CueSubscriptionInfo[] = [];
-		for (const session of filtered) {
-			for (const sub of session.subscriptions) {
-				subs.push({
-					// No stable per-subscription id in YAML; compose one from
-					// session + pipeline + name. Names are unique within a
-					// pipeline (validator contract), so the pipeline
-					// discriminator is what guarantees the id stays unique
-					// when two pipelines under the same session each define
-					// a sub with the same name. Without it, downstream
-					// resolvers (e.g. `setSubscriptionEnabled` in the
-					// follow-up PR) would match by name only and silently
-					// toggle the wrong row.
-					id: composeCueSubscriptionId(session.sessionId, sub),
-					name: sub.name,
-					eventType: sub.event,
-					pattern: typeof sub.watch === 'string' ? sub.watch : undefined,
-					schedule: formatCueSchedule(sub),
-					sessionId: session.sessionId,
-					sessionName: session.sessionName,
-					enabled: sub.enabled !== false,
-					// Per-subscription last-triggered / count are not yet
-					// tracked by the engine (only per-session). Leave the
-					// numeric fields zero so the CLI renders "never triggered"
-					// rather than fabricating a value.
-					triggerCount: 0,
-					...cueTurnSettingsOf(sub),
-				});
-			}
-		}
-		return subs;
+		// The mapping (ids, schedules, which agent a row is listed under) lives
+		// in `toCueSubscriptionInfos`, which the headless host and the CLI's
+		// cue.yaml read share.
+		return toCueSubscriptionInfos(deps.getCueGraphData(), sessionId);
 	});
 
 	// Toggle Cue subscription - calls engine directly in the main process.

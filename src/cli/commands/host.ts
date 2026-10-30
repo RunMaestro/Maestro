@@ -293,7 +293,9 @@ async function startDetached(
 }
 
 /** What a signal drain needs from the running host. */
-export type DrainableHost = Pick<RunningHost, 'work' | 'stop' | 'stopped'>;
+export type DrainableHost = Pick<RunningHost, 'work' | 'stop' | 'stopped'> & {
+	cue: Pick<RunningHost['cue'], 'drain' | 'forceStop'>;
+};
 
 export interface SignalDrainDeps {
 	sleep(ms: number): Promise<void>;
@@ -308,6 +310,10 @@ export interface SignalDrainDeps {
  * signal stops at once. Nothing new is turned away while it waits: the runtime has no switch that
  * refuses new work, so a turn that starts during the grace period is waited for too, up to the
  * same deadline.
+ *
+ * Cue is the exception, because its triggers start work on their own: the first signal starts its
+ * drain at once, with the same grace, so no trigger fires while the host waits, and what is queued
+ * is persisted for the next start. The second signal force-stops it before the host stops.
  */
 export function createSignalDrain(
 	host: DrainableHost,
@@ -323,6 +329,10 @@ export function createSignalDrain(
 
 	const drain = async (signal: string): Promise<void> => {
 		const deadline = deps.now() + graceMs;
+		// Its runs count in `work()` below until the drain has let them finish or stopped them.
+		host.cue.drain(graceMs).catch((error: unknown) => {
+			deps.log(`Draining Cue failed: ${error instanceof Error ? error.message : String(error)}`);
+		});
 		let current = host.work();
 		if (hostHasWork(current) && graceMs > 0) {
 			deps.log(
@@ -346,6 +356,7 @@ export function createSignalDrain(
 	return (signal) => {
 		if (draining) {
 			deps.log(`Received ${signal} again: stopping now.`);
+			host.cue.forceStop();
 			stopNow();
 			return;
 		}
@@ -414,7 +425,7 @@ function describeCue(cue: HostCueState): string {
 		case 'held':
 			return `not running here: ${cue.mode} pid ${cue.pid} holds the Cue lock`;
 		case 'failed':
-			return `failed to start: ${cue.reason}`;
+			return `not running: ${cue.reason}`;
 	}
 }
 

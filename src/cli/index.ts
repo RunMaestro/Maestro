@@ -1347,6 +1347,10 @@ cue
 	.command('list')
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueList);
 
 // Read or change the model one subscription runs on. No setting flag = read.
@@ -1374,6 +1378,10 @@ cue
 	.description('Turn a Cue subscription on (name, or the full id from `cue list --json`)')
 	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEnable);
 
 cue
@@ -1381,6 +1389,10 @@ cue
 	.description('Turn a Cue subscription off without deleting it')
 	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueDisable);
 
 cue
@@ -1391,7 +1403,7 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.option(
 		'--data-dir <path>',
-		'Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default)'
+		'Data directory whose app or host is asked, and whose cue.db is read when neither answers (default: MAESTRO_USER_DATA or the platform default)'
 	)
 	.action(cueActivity);
 

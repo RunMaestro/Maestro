@@ -57,6 +57,13 @@ export interface RuntimeServerOptions {
 	onStopRequested(): void;
 	/** What only the host process knows: where Cue stands, how many Cue runs are in flight, and the build version. */
 	describe?(): { cue: HostCueState; cueRuns?: number; version?: string };
+	/**
+	 * Desktop bridge messages the runtime does not serve but the host process can, asked after the
+	 * runtime declined: Cue's, answered by the engine the host runs. The message and reply types are
+	 * the desktop's own, so no client learns anything new. `undefined` echoes the message, as for any
+	 * message nobody serves.
+	 */
+	answer?(message: Record<string, unknown>): Frame | undefined | Promise<Frame | undefined>;
 }
 
 export interface RuntimeServer {
@@ -181,7 +188,7 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 				reply(control.frame, control.afterSend);
 				return;
 			}
-			const answer = await handle(message);
+			const answer = (await handle(message)) ?? (await options.answer?.(message));
 			if (answer) {
 				reply(answer);
 				return;

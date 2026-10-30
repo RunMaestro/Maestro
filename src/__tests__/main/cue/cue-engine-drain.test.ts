@@ -613,6 +613,120 @@ describe('CueEngine.drain', () => {
 		third.engine.stop();
 	});
 
+	it('delivers a queued durable plugin event exactly once across a drain and restart', async () => {
+		let emit: ((event: CueEvent) => number | void) | undefined;
+		const finish = vi.fn();
+		const prepare = vi.fn(async () => true);
+		configurePluginCueHost({
+			register(ctx) {
+				emit = ctx.emit;
+				return () => {};
+			},
+			authorize: () => true,
+			prepare,
+			finish,
+		});
+		configsByProject.set('/p/a', {
+			subscriptions: [
+				{
+					name: 'busy-work',
+					event: 'time.heartbeat',
+					enabled: true,
+					prompt: 'busy',
+					interval_minutes: 60,
+				},
+				{
+					name: 'plugin-sub',
+					event: 'plugin.event',
+					enabled: true,
+					prompt: 'durable prompt',
+					plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+				},
+			],
+			settings: { ...settings, queue_size: 4 },
+		});
+		configsByProject.delete('/p/b');
+
+		const first = boot({ getSessions: vi.fn(() => [alpha]) });
+		await vi.advanceTimersByTimeAsync(0);
+
+		// 'busy-work' has started and holds the slot
+		expect(first.exec.calls).toEqual(['busy-work']);
+
+		// Emit durable plugin event while slot is busy: it gets queued
+		const pluginEvent: CueEvent = {
+			id: 'durable-1',
+			type: 'plugin.event',
+			timestamp: new Date().toISOString(),
+			triggerName: 'plugin-sub',
+			payload: { metadata: 'test' },
+			pluginSource: {
+				pluginId: 'example.plugin',
+				topic: 'mail',
+				consumerId: 'c1',
+				ownerAgentId: alpha.id,
+				receiptKey: 'k1',
+				receiptId: 'r1',
+				proof: '0'.repeat(64),
+				sourceGeneration: 'live',
+			},
+		};
+		expect(emit!(pluginEvent)).toBe(1);
+
+		// Verified queued
+		expect(queueRows()).toHaveLength(1);
+		expect(queueRows()[0].subscriptionName).toBe('plugin-sub');
+
+		// Drain starts
+		const drained = first.engine.drain({ timeoutMs: 60_000 });
+
+		// Finish the busy run during drain
+		first.exec.finish('busy-work');
+		const report = await drained;
+		expect(report.persistedQueue).toBe(1);
+
+		// Row in DB now has drain stamp
+		const rows = queueRows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0].subscriptionName).toBe('plugin-sub');
+		expect(JSON.parse(rows[0].eventJson).maestroDrainedAt).toBeTypeOf('number');
+
+		// Down for 5 hours (far longer than timeout_minutes 30)
+		await vi.advanceTimersByTimeAsync(5 * 60 * 60_000);
+
+		// Restart with heartbeat disabled so only restored work runs
+		for (const cfg of configsByProject.values()) {
+			for (const sub of cfg.subscriptions) if (sub.event === 'time.heartbeat') sub.enabled = false;
+		}
+
+		const second = boot({ getSessions: vi.fn(() => [alpha]) });
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Second engine executes the restored plugin-sub
+		expect(second.exec.calls).toEqual(['plugin-sub']);
+		expect(prepare).toHaveBeenCalled();
+
+		// Settle the execution
+		second.exec.finish('plugin-sub');
+		await flush();
+
+		expect(finish).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'durable-1' }),
+			expect.any(String),
+			true
+		);
+
+		// Queue is now empty
+		expect(queueRows()).toHaveLength(0);
+		second.engine.stop();
+
+		// A third start has nothing left to run
+		const third = boot({ getSessions: vi.fn(() => [alpha]) });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(third.exec.calls).toEqual([]);
+		third.engine.stop();
+	});
+
 	it('drops an UNSTAMPED row left by a crash after the same downtime (rule unchanged)', async () => {
 		const first = boot();
 		await vi.advanceTimersByTimeAsync(0);

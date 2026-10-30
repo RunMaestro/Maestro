@@ -2,7 +2,8 @@
  * @file cue-control.test.ts
  * @description Tests for `cue enable|disable|activity`: name resolution
  * (refusing an ambiguous name), the toggle message, error-frame handling, and
- * `activity`'s read of `cue.db` when the desktop app is not running.
+ * `activity`'s read of `cue.db` when the desktop app is not running, and both
+ * beside a headless host that cannot answer for Cue.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -20,6 +21,10 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	readRecentCueEventsReadOnly: vi.fn(),
 	initCueDb: vi.fn(),
 }));
+// The real reader would read the developer's own agents and cue.yaml files.
+vi.mock('../../../cli/commands/cue-list', () => ({
+	readCueSubscriptionsFromDisk: vi.fn(() => []),
+}));
 // The real lock would read the developer's own data directory.
 vi.mock('../../../main/cue/cue-engine-lock', () => ({
 	readCueEngineLock: vi.fn(() => null),
@@ -31,7 +36,13 @@ import {
 	cueEnable,
 	resolveSubscription,
 } from '../../../cli/commands/cue-control';
-import { CommandTimeoutError, withMaestroClient } from '../../../cli/services/maestro-client';
+import {
+	CommandTimeoutError,
+	UnsupportedCommandError,
+	withMaestroClient,
+} from '../../../cli/services/maestro-client';
+import { readCueSubscriptionsFromDisk } from '../../../cli/commands/cue-list';
+import { ExitCode } from '../../../cli/exit-codes';
 import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
 import { SqliteUnavailableError } from '../../../cli/utils/native-sqlite';
 import { initCueDb, readRecentCueEventsReadOnly } from '../../../main/cue/cue-db';
@@ -308,7 +319,7 @@ describe('cue enable/disable/activity', () => {
 			expect(JSON.parse(printed())).toEqual({
 				success: false,
 				error:
-					'The desktop app is not running and Cue run history could not be read: /data/cue.db does not exist',
+					'Neither the desktop app nor `maestro-cli host` is running, and Cue run history could not be read: /data/cue.db does not exist',
 			});
 		});
 
@@ -365,6 +376,198 @@ describe('cue enable/disable/activity', () => {
 
 			expect(readRecentCueEventsReadOnly).not.toHaveBeenCalled();
 			expect(printed()).toBe('No Cue activity.');
+		});
+	});
+
+	describe('beside a headless host (`maestro-cli host`)', () => {
+		const at = (seconds: number) => Date.parse('2026-10-19T07:00:00.000Z') + seconds * 1000;
+		const records = [
+			{ id: 'h3', sessionId: 'a2', status: 'completed', createdAt: at(3), completedAt: at(4) },
+			{ id: 'h2', sessionId: 'a1', status: 'running', createdAt: at(2), completedAt: null },
+			{ id: 'h1', sessionId: 'a1', status: 'completed', createdAt: at(1), completedAt: at(2) },
+		].map(
+			(r) =>
+				({
+					...r,
+					type: 'time.heartbeat',
+					triggerName: 't',
+					subscriptionName: `sub-${r.id}`,
+					payload: null,
+				}) as CueEventRecord
+		);
+
+		/** A bridge whose peer echoes `unanswered` (as a host does) and answers the rest from `responses`. */
+		function hostBridge(
+			unanswered: string[],
+			responses: Record<string, unknown> = {},
+			peer: 'host' | 'old-desktop' = 'host'
+		) {
+			const hostKind = peer === 'host' ? 'headless' : undefined;
+			const sent: Record<string, unknown>[] = [];
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+						sent.push(payload);
+						const type = payload.type as string;
+						if (unanswered.includes(type)) {
+							return Promise.reject(new UnsupportedCommandError(type, hostKind));
+						}
+						return Promise.resolve(responses[type]);
+					}),
+				} as never)
+			);
+			return sent;
+		}
+
+		function printed(): string {
+			return vi
+				.mocked(console.log)
+				.mock.calls.map((c) => String(c[0]))
+				.join('\n');
+		}
+
+		it("shows the host's own answer when its engine is running, without reading cue.db", async () => {
+			const entry = {
+				id: 'live',
+				subscriptionId: 'a1::p::beat',
+				subscriptionName: 'beat',
+				eventType: 'time.heartbeat',
+				sessionId: 'a1',
+				timestamp: at(9),
+				status: 'completed',
+				result: 'run output',
+				duration: 1500,
+			};
+			const sent = hostBridge([], { get_cue_activity: { type: 'cue_activity', entries: [entry] } });
+
+			await cueActivity({ agent: 'a1', limit: '3', json: true });
+
+			expect(sent).toEqual([{ type: 'get_cue_activity', sessionId: 'a1', limit: 3 }]);
+			expect(JSON.parse(printed())).toEqual([entry]);
+			expect(readRecentCueEventsReadOnly).not.toHaveBeenCalled();
+			expect(console.error).not.toHaveBeenCalled();
+		});
+
+		it('reads cue.db when the host cannot answer, filtered and limited, with a note naming the host', async () => {
+			hostBridge(['get_cue_activity']);
+			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+				ok: true,
+				records,
+				source: 'snapshot',
+			});
+
+			await cueActivity({ agent: 'a1', limit: '1' });
+
+			expect(readRecentCueEventsReadOnly).toHaveBeenCalledWith(1000);
+			const lines = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+			expect(lines).toHaveLength(1);
+			expect(lines[0]).toContain('sub-h2');
+			expect(console.error).toHaveBeenCalledWith(
+				'Read from cue.db: the headless host (`maestro-cli host`) is not running Cue here, or is an older build that cannot answer, so run output is not included.'
+			);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('keeps a run in flight as running when another engine holds the Cue lock (host Cue `held`)', async () => {
+			hostBridge(['get_cue_activity']);
+			vi.mocked(readCueEngineLock).mockReturnValueOnce({
+				pid: 4242,
+				mode: 'standalone',
+			} as never);
+			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+				ok: true,
+				records,
+				source: 'live',
+			});
+
+			await cueActivity({ json: true });
+
+			const entries = JSON.parse(printed());
+			expect(entries.map((e: { id: string; status: string }) => [e.id, e.status])).toEqual([
+				['h3', 'completed'],
+				['h2', 'running'],
+				['h1', 'completed'],
+			]);
+			// --json stays parseable: the note is for people only.
+			expect(console.error).not.toHaveBeenCalled();
+		});
+
+		it('reads an orphaned run as failed when no engine holds the lock (host Cue `disabled` or `failed`)', async () => {
+			hostBridge(['get_cue_activity']);
+			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+				ok: true,
+				records,
+				source: 'snapshot',
+			});
+
+			await cueActivity({ json: true });
+
+			const statuses = JSON.parse(printed()).map((e: { status: string }) => e.status);
+			expect(statuses).toEqual(['completed', 'failed', 'completed']);
+		});
+
+		it('still fails with the restart hint, and reads nothing, when an old DESKTOP build echoes', async () => {
+			hostBridge(['get_cue_activity'], {}, 'old-desktop');
+
+			await expect(cueActivity({})).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.Unsupported);
+			expect(console.error).toHaveBeenCalledWith(expect.stringContaining('rebuild and restart'));
+			expect(readRecentCueEventsReadOnly).not.toHaveBeenCalled();
+		});
+
+		it('still fails on a timeout from the host, and reads nothing', async () => {
+			vi.mocked(withMaestroClient).mockRejectedValue(new CommandTimeoutError('cue_activity'));
+
+			await expect(cueActivity({ json: true })).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.Timeout);
+			expect(readRecentCueEventsReadOnly).not.toHaveBeenCalled();
+		});
+
+		it("enable resolves the name from cue.yaml and reports the host's refusal when it is not running Cue", async () => {
+			vi.mocked(readCueSubscriptionsFromDisk).mockReturnValue(subs as never);
+			const refusal =
+				'This host does not run Cue: a standalone Cue engine (pid 4242) holds the Cue lock for this data directory.';
+			const sent = hostBridge(['get_cue_subscriptions'], {
+				toggle_cue_subscription: { type: 'error', message: refusal },
+			});
+
+			await expect(cueEnable('on-pr', { json: true })).rejects.toThrow('__exit__');
+
+			expect(sent[1]).toEqual({
+				type: 'toggle_cue_subscription',
+				subscriptionId: 'a1::p::on-pr',
+				enabled: true,
+			});
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(JSON.parse(printed())).toEqual({ success: false, error: refusal });
+		});
+
+		it('enable goes through when the host runs Cue and answers both messages', async () => {
+			const sent = hostBridge([], {
+				get_cue_subscriptions: { type: 'cue_subscriptions', subscriptions: subs },
+				toggle_cue_subscription: { type: 'toggle_cue_subscription_result', success: true },
+			});
+
+			await cueDisable('on-pr', {});
+
+			expect(sent[1]).toEqual({
+				type: 'toggle_cue_subscription',
+				subscriptionId: 'a1::p::on-pr',
+				enabled: false,
+			});
+			expect(readCueSubscriptionsFromDisk).not.toHaveBeenCalled();
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('enable does not resolve from disk when an old desktop build echoes the list', async () => {
+			hostBridge(['get_cue_subscriptions'], {}, 'old-desktop');
+
+			await expect(cueEnable('on-pr', {})).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.Unsupported);
+			expect(readCueSubscriptionsFromDisk).not.toHaveBeenCalled();
 		});
 	});
 });
