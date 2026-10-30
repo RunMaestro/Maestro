@@ -15,6 +15,25 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'dracula',
 		category: 'appearance',
 	},
+	themeFollowSystem: {
+		description:
+			"Follow the device's light/dark appearance (prefers-color-scheme) instead of activeThemeId. Each client resolves it on its own, so a phone on the web interface follows the phone and the desktop follows the computer.",
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	lightThemeId: {
+		description: 'Theme shown when themeFollowSystem is on and the device is in light appearance.',
+		type: 'string',
+		default: 'github-light',
+		category: 'appearance',
+	},
+	darkThemeId: {
+		description: 'Theme shown when themeFollowSystem is on and the device is in dark appearance.',
+		type: 'string',
+		default: 'dracula',
+		category: 'appearance',
+	},
 	themeGloss: {
 		description:
 			"How much light the app chrome catches: 'off' (flat, the shipped look), 'sheen', 'strong', or 'max'. Adds highlights and shadows only; it changes no theme color, and it has no effect on light themes.",

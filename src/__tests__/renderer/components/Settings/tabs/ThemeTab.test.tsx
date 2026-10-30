@@ -21,6 +21,11 @@ const mockSetActiveThemeId = vi.fn();
 const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
 const mockSetThemeGloss = vi.fn();
+const mockSetThemeFollowSystem = vi.fn();
+const mockSetLightThemeId = vi.fn();
+const mockSetDarkThemeId = vi.fn();
+
+let mockThemeFollowSystem = false;
 
 // Mutable so a test can model a store that has not hydrated `themeGloss` yet,
 // or a settings blob written by a build that predates the setting.
@@ -51,6 +56,12 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
 		themeGloss: mockThemeGloss,
 		setThemeGloss: mockSetThemeGloss,
+		themeFollowSystem: mockThemeFollowSystem,
+		setThemeFollowSystem: mockSetThemeFollowSystem,
+		lightThemeId: 'github-light',
+		setLightThemeId: mockSetLightThemeId,
+		darkThemeId: 'dracula',
+		setDarkThemeId: mockSetDarkThemeId,
 	}),
 }));
 
@@ -122,6 +133,51 @@ describe('ThemeTab', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockThemeGloss = 'off';
+		mockThemeFollowSystem = false;
+	});
+
+	describe('Follow System Appearance', () => {
+		it('turns following on from its toggle', async () => {
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Follow system appearance' }));
+			expect(mockSetThemeFollowSystem).toHaveBeenCalledWith(true);
+		});
+
+		it('routes a light pick to the light slot and a dark or vibe pick to the dark slot', async () => {
+			mockThemeFollowSystem = true;
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'GitHub Light' }));
+			expect(mockSetLightThemeId).toHaveBeenCalledWith('github-light');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Pedurple' }));
+			expect(mockSetDarkThemeId).toHaveBeenCalledWith('pedurple');
+
+			fireEvent.click(screen.getByText('Custom Theme'));
+			expect(mockSetDarkThemeId).toHaveBeenCalledWith('custom');
+
+			expect(mockSetActiveThemeId).not.toHaveBeenCalled();
+		});
+
+		it('marks both the light and the dark theme as picked', async () => {
+			mockThemeFollowSystem = true;
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByText('Dracula').closest('button')).toHaveClass('ring-2');
+			expect(screen.getByText('GitHub Light').closest('button')).toHaveClass('ring-2');
+			expect(screen.getByText('Pedurple').closest('button')).not.toHaveClass('ring-2');
+			expect(screen.getByText(/Light: GitHub Light\. Dark:/)).toBeInTheDocument();
+		});
 	});
 
 	it('should display theme mode sections', async () => {

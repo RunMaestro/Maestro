@@ -12,6 +12,9 @@ import type { WebClient, WebClientMessage, MessageHandlerContext } from './types
  */
 const ALLOWED_SETTING_KEYS = new Set([
 	'activeThemeId',
+	'themeFollowSystem',
+	'lightThemeId',
+	'darkThemeId',
 	'customThemeColors',
 	'customThemeBaseId',
 	'themeGloss',
