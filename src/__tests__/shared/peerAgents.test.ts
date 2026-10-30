@@ -697,6 +697,16 @@ describe('formatPeerAgentsForPrompt', () => {
 	});
 
 	describe('the table', () => {
+		it('sanitizes advertised specialties and keeps empty cells aligned with caller notes', () => {
+			const block = formatPeerAgentsForPrompt([
+				{ ...peer('a', 'Alpha', R, 'Ask first'), peerDescription: 'Lab | design\nValidation' },
+				peer('b', 'Bravo', RW),
+			]);
+			expect(tableLines(block)[0]).toBe('| Agent | Agent ID | Access | Specialty | Notes |');
+			expect(peerRows(block)[0]).toContain('Lab \\| design Validation | Ask first |');
+			expect(cellsOf(peerRows(block)[1])).toEqual(['Bravo', '`b`', 'Consult + Delegate', '', '']);
+		});
+
 		it('renders three columns when no peer has a description', () => {
 			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R), peer('b', 'Bravo', RW)]);
 			const lines = tableLines(block);

@@ -34,6 +34,7 @@ export const NudgeMessageField = React.memo(function NudgeMessageField({
 			</div>
 			<p className="text-xs opacity-50 mb-2">{description}</p>
 			<textarea
+				aria-label={label}
 				ref={resize.textareaRef}
 				value={value}
 				onChange={(e) => onChange(e.target.value.slice(0, maxLength))}

@@ -86,6 +86,54 @@ function render(
 	return { block, roster };
 }
 
+describe('advertised peer specialties', () => {
+	it.each<Grants>([
+		{ groupPeerAccess: R },
+		{ worktreePeerAccess: R },
+		{ peerAgents: [{ sessionId: 'sibling', ...R, description: 'Ask before publishing' }] },
+	])(
+		'advertises the live specialty through each grant without replacing caller notes: %j',
+		(grants) => {
+			const peers = OTHERS.map((agent) => ({
+				...agent,
+				...(agent.id === 'sibling' ? { peerDescription: '  Builds student labs  ' } : {}),
+			}));
+			const { roster, block } = render(grants, peers);
+			expect(roster.find((peer) => peer.sessionId === 'sibling')).toMatchObject({
+				peerDescription: 'Builds student labs',
+			});
+			expect(block).toContain('Specialty');
+			expect(block).toContain('Builds student labs');
+			if (grants.peerAgents) {
+				expect(block).toContain('| Specialty | Notes |');
+				expect(block).toContain('| Builds student labs | Ask before publishing |');
+			}
+		}
+	);
+
+	it('refreshes changed and cleared specialties from the fleet without editing grants', () => {
+		const grants = { groupPeerAccess: R };
+		const peers = OTHERS.map((agent) => ({ ...agent, peerDescription: 'Lab design' }));
+		expect(render(grants, peers).block).toContain('Lab design');
+		peers[0].peerDescription = 'Lab validation';
+		expect(render(grants, peers).block).toContain('Lab validation');
+		for (const agent of peers) agent.peerDescription = '  ';
+		expect(render(grants, peers).block).not.toContain('Specialty');
+	});
+
+	it('keeps excluded peers and their specialties out of the prompt', () => {
+		const { block } = render(
+			{ groupPeerAccess: R, peerAgents: [{ sessionId: 'sibling', ...NONE }] },
+			OTHERS.map((agent) => ({
+				...agent,
+				peerDescription: agent.id === 'sibling' ? 'Hidden specialty' : '',
+			}))
+		);
+		expect(block).not.toContain('Hidden specialty');
+		expect(block).not.toContain('Specialty');
+	});
+});
+
 interface TableRow {
 	name: string;
 	id: string;

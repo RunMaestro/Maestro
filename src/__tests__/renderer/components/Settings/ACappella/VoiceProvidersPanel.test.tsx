@@ -340,11 +340,13 @@ describe('VoiceProvidersPanel', () => {
 
 		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
 
+		await screen.findByText('Speech-to-Text: Whisper Base (English) is not installed.');
+		const description = within(screen.getByText('Turns your speech into text.').parentElement!);
 		expect(
-			await screen.findByText('Speech-to-Text: Whisper Base (English) is not installed.')
+			description.getByText('Speech-to-Text: Whisper Base (English) is not installed.')
 		).toBeInTheDocument();
-		// A link to the fix, not just a complaint.
-		fireEvent.click(screen.getByText('Download the model'));
+		// Keep the recovery action with the explanation of the missing requirement.
+		fireEvent.click(description.getByRole('button', { name: 'Download the model' }));
 		expect(voice().models.download).toHaveBeenCalledWith('whisper-base-en');
 	});
 

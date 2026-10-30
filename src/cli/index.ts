@@ -2400,6 +2400,10 @@ program
 	// clear a text field (e.g. --nudge "").
 	.option('--nudge <message>', 'Nudge message appended to every message (empty string clears)')
 	.option(
+		'--peer-description <text>',
+		"This agent's specialty advertised to its peers (empty string clears)"
+	)
+	.option(
 		'--new-session-message <message>',
 		'Message prefixed to the first message of new sessions (empty string clears)'
 	)

@@ -346,6 +346,8 @@ export interface SessionInfo {
 	 * (see `shared/peerAgents.ts`); the desktop `Session` documents each field.
 	 */
 	peerAgents?: PeerAgent[];
+	/** This agent's specialty, advertised in other agents' peer rosters. */
+	peerDescription?: string;
 	groupPeerAccess?: PeerAccess;
 	worktreePeerAccess?: PeerAccess;
 	/** Set on a worktree child: the id of the parent agent. Read by the worktree family grant. */

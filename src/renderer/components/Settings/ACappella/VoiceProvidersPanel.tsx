@@ -416,6 +416,16 @@ function SlotSelector({
 							: 'Speaks replies aloud.'}
 				</p>
 				{descriptor && <p className="text-xs opacity-70 mt-2">{descriptor.description}</p>}
+				{problem && (
+					<p className="text-xs mt-2 select-text" style={{ color: theme.colors.error }}>
+						{problem}
+					</p>
+				)}
+				{readiness && (
+					<div className="mt-2">
+						<SlotStatus theme={theme} readiness={readiness} onDownload={onDownload} />
+					</div>
+				)}
 			</div>
 
 			<div className="min-w-0 space-y-2">
@@ -433,13 +443,6 @@ function SlotSelector({
 				>
 					<AssignmentOptionElements groups={groups} />
 				</select>
-				{problem && (
-					<p className="text-xs mt-1.5 select-text" style={{ color: theme.colors.error }}>
-						{problem}
-					</p>
-				)}
-				<SlotStatus theme={theme} readiness={readiness} onDownload={onDownload} />
-
 				{requiresKey && service && (
 					<CredentialSection
 						theme={theme}

@@ -298,13 +298,14 @@ describe('the Peer Agents roster (main builder)', () => {
 			worktreePeerAccess: R,
 			peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }],
 		});
-		storedSessions = [session, alpha, bravo, child];
+		storedSessions = [session, { ...alpha, peerDescription: 'Builds labs' }, bravo, child];
 		const roster = resolvePeerRoster(session as any, storedSessions as any);
 		expect(roster.map((peer) => peer.sessionId)).toEqual(['peer-a', 'peer-b', 'peer-c']);
 
 		const result = await buildMaestroSystemPromptForSession('me');
 		const table = (text: string) => text.split('\n').filter((line) => line.startsWith('| '));
 		expect(table(result ?? '')).toEqual(table(formatPeerAgentsForPrompt(roster)));
+		expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate | Builds labs |');
 	});
 
 	// The one sentence that lets a consulted agent ration. Every case passes a

@@ -1415,6 +1415,14 @@ describe('update-agent command', () => {
 			expect(consoleSpy).toHaveBeenCalledWith('  Peer alpha-id: No access');
 		});
 
+		it("sets and clears the agent's advertised specialty through the config patch", async () => {
+			const sendCommand = mockAgent();
+			await updateAgent('agent-1', { peerDescription: 'Builds labs' });
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({ peerDescription: 'Builds labs' });
+			await updateAgent('agent-1', { peerDescription: '' });
+			expect(sendCommand.mock.calls[1][0].configPatch).toEqual({ peerDescription: null });
+		});
+
 		it('reads the access word after the last colon, so a name may hold one', async () => {
 			IDS['ops: east'] = 'east-id';
 			const sendCommand = mockAgent();

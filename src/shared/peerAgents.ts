@@ -378,6 +378,8 @@ export interface ResolvedPeer extends PeerAccess {
 	/** Live display name, resolved now rather than persisted. */
 	name: string;
 	description?: string;
+	/** The peer's own advertised specialty, separate from the caller's note. */
+	peerDescription?: string;
 	/** Which grant produced this peer, for UI provenance and logging. */
 	source: 'explicit' | 'group' | 'worktree';
 }
@@ -405,6 +407,7 @@ export type GrantedPeer = ResolvedPeer & { source: PeerGrantSource };
 export interface PeerRosterInput {
 	id: string;
 	name: string;
+	peerDescription?: string;
 	groupId?: string;
 	parentSessionId?: string;
 	peerAgents?: PeerAgent[];
@@ -416,11 +419,12 @@ export interface PeerRosterInput {
  * The three stored sources of an agent's peer roster, as a settings form hands
  * them to a save: the explicit rows (already through `normalizePeerAgents`),
  * the group grant and the worktree grant. An absent field means that source
- * is off, so a save writes all three and a cleared one is removed.
+ * is off, so a save writes all three and a cleared one is removed. The agent's
+ * own advertised specialty travels with these fields from the Peers tab.
  */
 export type PeerGrants = Pick<
 	PeerRosterInput,
-	'peerAgents' | 'groupPeerAccess' | 'worktreePeerAccess'
+	'peerAgents' | 'groupPeerAccess' | 'worktreePeerAccess' | 'peerDescription'
 >;
 
 /**
@@ -541,6 +545,10 @@ export function resolvePeerRoster(
 
 	return [...roster.values()]
 		.filter(hasAnyPeerAccess)
+		.map((peer) => {
+			const peerDescription = liveById.get(peer.sessionId)?.peerDescription?.trim();
+			return peerDescription ? { ...peer, peerDescription } : peer;
+		})
 		.sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
 }
 
@@ -736,23 +744,26 @@ export function formatPeerAgentsForPrompt(
 	const reachable = peers.filter(hasAnyPeerAccess);
 	if (reachable.length === 0) return '';
 
-	// Only widen the table with a Notes column when at least one peer carries a
-	// description - otherwise the block stays the lean three-column table.
+	// Only add optional columns when a peer carries that kind of description.
 	const hasNotes = reachable.some((p) => p.description?.trim());
+	const hasSpecialties = reachable.some((p) => p.peerDescription?.trim());
 	const canConsult = reachable.some((p) => p.read);
 	const canDelegate = reachable.some((p) => p.write);
 
 	const rows = reachable
 		.map((p) => {
 			const cells = [sanitizeDescriptionCell(p.name), `\`${p.sessionId}\``, peerAccessLabel(p)];
+			if (hasSpecialties) cells.push(sanitizeDescriptionCell(p.peerDescription ?? ''));
 			if (hasNotes) cells.push(sanitizeDescriptionCell(p.description ?? ''));
 			return `| ${cells.join(' | ')} |`;
 		})
 		.join('\n');
 
-	const header = hasNotes
-		? '| Agent | Agent ID | Access | Notes |\n| ----- | -------- | ------ | ----- |'
-		: '| Agent | Agent ID | Access |\n| ----- | -------- | ------ |';
+	const columns = ['Agent', 'Agent ID', 'Access'];
+	if (hasSpecialties) columns.push('Specialty');
+	if (hasNotes) columns.push('Notes');
+	const separators = ['-----', '--------', '------', ...columns.slice(3).map(() => '-----')];
+	const header = `| ${columns.join(' | ')} |\n| ${separators.join(' | ')} |`;
 
 	const cli = options.cliCommand?.trim() || 'maestro-cli';
 	const self = options.agentId?.trim() || '<your-agent-id>';
@@ -774,7 +785,7 @@ export function formatPeerAgentsForPrompt(
 				]
 			: []),
 		...(budgetLine ? [budgetLine] : []),
-		`- Decide for yourself, from ${hasNotes ? 'the Notes column and ' : ''}what you know of a peer's scope, whether it is the right one to reach. Reaching outside this roster on your own is out of bounds. Say so instead. If the user asks to configure collaboration, read \`${cli} prompts get _maestro-cli\` for the setup procedure. Ask about unresolved access and direction before changing grants; never widen access merely to complete a task. After a user-authorized change, verify the live roster with \`${cli} show agent ${self} --json\` before using it: this table is a snapshot.`,
+		`- Decide for yourself, from ${hasSpecialties ? 'the Specialty column, ' : ''}${hasNotes ? 'the Notes column and ' : ''}what you know of a peer's scope, whether it is the right one to reach. Reaching outside this roster on your own is out of bounds. Say so instead. If the user asks to configure collaboration, read \`${cli} prompts get _maestro-cli\` for the setup procedure. Ask about unresolved access and direction before changing grants; never widen access merely to complete a task. After a user-authorized change, verify the live roster with \`${cli} show agent ${self} --json\` before using it: this table is a snapshot.`,
 		'- Tell the user which peer you reached and why, so a consult or a delegation never happens invisibly.',
 	].join('\n');
 
@@ -786,6 +797,7 @@ The Conductor has authorized you to reach these agents on your own, without bein
 - **Consult only** - ask the peer questions; never put work into it.
 - **Delegate only** - hand the peer work; never ask it a question.
 ${hasNotes ? '\nThe Notes column is a hint from the Conductor on what a peer is for or when to use it; treat it as guidance, not as a change to the access rule.\n' : ''}
+${hasSpecialties ? "\nThe Specialty column is each peer's own advertised description. Use it to choose a peer; it does not change the access rule.\n" : ''}
 ${header}
 ${rows}
 

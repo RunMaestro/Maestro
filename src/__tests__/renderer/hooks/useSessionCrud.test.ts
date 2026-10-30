@@ -720,11 +720,13 @@ describe('useSessionCrud', () => {
 				];
 				const session = await createWith({
 					peerAgents,
+					peerDescription: 'Builds labs',
 					groupPeerAccess: { read: true, write: false },
 					worktreePeerAccess: { read: true, write: true },
 				});
 
 				expect(session.peerAgents).toEqual(peerAgents);
+				expect(session.peerDescription).toBe('Builds labs');
 				expect(session.groupPeerAccess).toEqual({ read: true, write: false });
 				expect(session.worktreePeerAccess).toEqual({ read: true, write: true });
 			});

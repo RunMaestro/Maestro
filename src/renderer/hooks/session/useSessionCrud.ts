@@ -306,6 +306,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// Set from the New Agent Peers tab. Each source is stored only when
 					// it is on: an absent field is what the roster reads as off.
 					peerAgents: peerGrants?.peerAgents,
+					peerDescription: peerGrants?.peerDescription,
 					groupPeerAccess: peerGrants?.groupPeerAccess,
 					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					// Group defaults the New Agent form has no control for, copied from

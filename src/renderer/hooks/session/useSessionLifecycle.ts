@@ -294,6 +294,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// the switch too. Each field is written, so a grant the form
 					// switched off is removed and not left behind.
 					peerAgents: peerGrants?.peerAgents,
+					peerDescription: peerGrants ? peerGrants.peerDescription : s.peerDescription,
 					groupPeerAccess: peerGrants?.groupPeerAccess,
 					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					customPath,

@@ -114,6 +114,7 @@ export function EditAgentModal({
 	// Peer Agents: the explicit rows, and the group and worktree grants. A grant
 	// that is off is `undefined`, never a pair of false bits.
 	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [peerDescription, setPeerDescription] = useState('');
 	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const homeDir = useHomeDir();
@@ -567,6 +568,7 @@ export function EditAgentModal({
 			// The same for the peer rows and the two grants.
 			setPeerAgents((session.peerAgents ?? []).map((peer) => ({ ...peer })));
 			setGroupPeerAccess(session.groupPeerAccess && { ...session.groupPeerAccess });
+			setPeerDescription(session.peerDescription ?? '');
 			setWorktreePeerAccess(session.worktreePeerAccess && { ...session.worktreePeerAccess });
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
@@ -899,6 +901,7 @@ export function EditAgentModal({
 				// A row with neither square lit is kept: it is an exclusion.
 				{
 					peerAgents: normalizePeerAgents(peerAgents),
+					peerDescription: peerDescription.trim() || undefined,
 					groupPeerAccess,
 					worktreePeerAccess,
 				},
@@ -940,6 +943,7 @@ export function EditAgentModal({
 		additionalDirectories,
 		homeDir,
 		peerAgents,
+		peerDescription,
 		groupPeerAccess,
 		worktreePeerAccess,
 		customPath,
@@ -1671,6 +1675,8 @@ export function EditAgentModal({
 						theme={theme}
 						idPrefix="edit-agent"
 						peers={peerAgents}
+						peerDescription={peerDescription}
+						onPeerDescriptionChange={setPeerDescription}
 						onChange={setPeerAgents}
 						groupAccess={groupPeerAccess}
 						onGroupAccessChange={setGroupPeerAccess}

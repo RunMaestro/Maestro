@@ -63,6 +63,7 @@ const createTheme = (): Theme => ({
  */
 const NO_PEER_GRANTS = {
 	peerAgents: undefined,
+	peerDescription: undefined,
 	groupPeerAccess: undefined,
 	worktreePeerAccess: undefined,
 };
@@ -2517,7 +2518,12 @@ describe('NewInstanceModal', () => {
 				expected.codexTransport,
 				undefined, // No gateway override.
 				undefined, // Provider is the default Run-on target.
-				{ peerAgents: undefined, groupPeerAccess: undefined, worktreePeerAccess: undefined },
+				{
+					peerAgents: undefined,
+					peerDescription: undefined,
+					groupPeerAccess: undefined,
+					worktreePeerAccess: undefined,
+				},
 				undefined // No group-seeded extras.
 			);
 		});
@@ -4108,6 +4114,9 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-peers');
 				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
 				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeDisabled();
+				fireEvent.change(screen.getByRole('textbox', { name: 'How peers see this agent' }), {
+					target: { value: '  Reviews lab instructions  ' },
+				});
 
 				// Choosing a group on General enables it, and the count follows.
 				openTab('General');
@@ -4139,6 +4148,7 @@ describe('NewInstanceModal', () => {
 				const grants = onCreate.mock.calls[0][24];
 				expect(grants).toEqual({
 					peerAgents: [{ sessionId: 'peer-docs', read: true, write: true }],
+					peerDescription: 'Reviews lab instructions',
 					groupPeerAccess: { read: true, write: false },
 					worktreePeerAccess: undefined,
 				});

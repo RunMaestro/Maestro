@@ -62,6 +62,7 @@ export type AgentSeed = Partial<
 		| 'projectRoot'
 		| 'additionalDirectories'
 		| 'peerAgents'
+		| 'peerDescription'
 		| 'groupPeerAccess'
 		| 'worktreePeerAccess'
 		| 'nudgeMessage'

@@ -88,6 +88,7 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
  */
 const NO_PEER_GRANTS = {
 	peerAgents: undefined,
+	peerDescription: undefined,
 	groupPeerAccess: undefined,
 	worktreePeerAccess: undefined,
 };
@@ -2839,6 +2840,7 @@ describe('EditAgentModal', () => {
 			it('draws the Peer Agents section from the live fleet and saves the three grants', () => {
 				const session = createSession({
 					groupId: 'g-backend',
+					peerDescription: 'Builds labs',
 					peerAgents: [
 						{ sessionId: 'peer-infra', read: true, write: false, description: 'Owns the infra' },
 					],
@@ -2865,6 +2867,12 @@ describe('EditAgentModal', () => {
 				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeChecked();
 				expect(screen.getByRole('checkbox', { name: /Worktree family/ })).not.toBeChecked();
 				expect(screen.getByDisplayValue('Owns the infra')).toBeInTheDocument();
+				expect(screen.getByRole('textbox', { name: 'How peers see this agent' })).toHaveValue(
+					'Builds labs'
+				);
+				fireEvent.change(screen.getByRole('textbox', { name: 'How peers see this agent' }), {
+					target: { value: '  Builds and validates labs  ' },
+				});
 
 				// The agent being edited is not offered as its own peer.
 				const picker = screen.getByRole('button', { name: 'Peer agent' });
@@ -2891,6 +2899,7 @@ describe('EditAgentModal', () => {
 					],
 					groupPeerAccess: undefined,
 					worktreePeerAccess: { read: true, write: false },
+					peerDescription: 'Builds and validates labs',
 				});
 				// Off is absent, never a pair of false bits.
 				expect(grants.groupPeerAccess).toBeUndefined();

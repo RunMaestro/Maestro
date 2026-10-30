@@ -401,6 +401,7 @@ export function delegationRosterEquality(a: Session[], b: Session[]): boolean {
 			x.name !== y.name ||
 			x.groupId !== y.groupId ||
 			x.parentSessionId !== y.parentSessionId ||
+			x.peerDescription !== y.peerDescription ||
 			!peerAccessEqual(x.groupPeerAccess, y.groupPeerAccess) ||
 			!peerAccessEqual(x.worktreePeerAccess, y.worktreePeerAccess) ||
 			!peerAgentsEqual(x.peerAgents, y.peerAgents)

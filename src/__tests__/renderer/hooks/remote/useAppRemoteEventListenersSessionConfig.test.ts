@@ -104,6 +104,35 @@ beforeEach(() => {
 });
 
 describe('maestro:remoteUpdateSessionConfig', () => {
+	it.each(['Builds labs', '', null])(
+		'persists an advertised specialty before acking: %s',
+		async (peerDescription) => {
+			const sessions = [createMockSession({ id: 'session-1', peerDescription: 'Old specialty' })];
+			const { setSessions } = setup(sessions);
+			dispatchPatch('session-1', { peerDescription });
+			await flush();
+			const expected = peerDescription || undefined;
+			expect(applyUpdate(setSessions, sessions)[0].peerDescription).toBe(expected);
+			expect(setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ id: 'session-1', peerDescription: expected })],
+				[]
+			);
+			expect(ack).toHaveBeenCalledWith('ch', { success: true });
+		}
+	);
+
+	it('rejects a malformed specialty without changing or persisting the agent', async () => {
+		const { setSessions } = setup([createMockSession({ id: 'session-1' })]);
+		dispatchPatch('session-1', { peerDescription: 42 });
+		await flush();
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: 'peerDescription must be text or null.',
+		});
+	});
+
 	it('forwards a tab-scoped translation to the shared client', async () => {
 		setup([createMockSession({ id: 'session-1' })]);
 		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });

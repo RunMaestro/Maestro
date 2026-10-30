@@ -586,6 +586,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		// Friendly labels for the editable config keys; `null` means "cleared".
 		const labels: Record<string, string> = {
 			nudgeMessage: 'Nudge message',
+			peerDescription: 'Peer description',
 			newSessionMessage: 'New session message',
 			customPath: 'Binary path',
 			customArgs: 'Custom args',

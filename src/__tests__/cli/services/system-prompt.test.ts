@@ -291,7 +291,7 @@ describe('prepareMaestroSystemPromptCli', () => {
 				worktreePeerAccess: R,
 				peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }],
 			});
-			const fleet = [session, alpha, bravo, child];
+			const fleet = [session, { ...alpha, peerDescription: 'Builds labs' }, bravo, child];
 			vi.mocked(readSessions).mockReturnValue(fleet);
 			const roster = resolvePeerRoster(session, fleet);
 			expect(roster.map((peer) => peer.sessionId)).toEqual(['peer-a', 'peer-b', 'peer-c']);
@@ -299,6 +299,7 @@ describe('prepareMaestroSystemPromptCli', () => {
 			const result = await prepareMaestroSystemPromptCli(session);
 			const table = (text: string) => text.split('\n').filter((line) => line.startsWith('| '));
 			expect(table(result ?? '')).toEqual(table(formatPeerAgentsForPrompt(roster)));
+			expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate | Builds labs |');
 		});
 
 		it('reads the agent list from the reader it is handed (the builder inside the app)', async () => {

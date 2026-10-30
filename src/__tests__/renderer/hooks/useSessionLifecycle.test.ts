@@ -579,6 +579,7 @@ describe('useSessionLifecycle', () => {
 				act(() => {
 					saveWithPeers(result.current.handleSaveEditAgent, {
 						peerAgents: ROWS,
+						peerDescription: 'Builds labs',
 						groupPeerAccess: { read: true, write: false },
 						worktreePeerAccess: { read: true, write: true },
 					});
@@ -586,6 +587,7 @@ describe('useSessionLifecycle', () => {
 
 				const updated = useSessionStore.getState().sessions[0];
 				expect(updated.peerAgents).toEqual(ROWS);
+				expect(updated.peerDescription).toBe('Builds labs');
 				expect(updated.groupPeerAccess).toEqual({ read: true, write: false });
 				expect(updated.worktreePeerAccess).toEqual({ read: true, write: true });
 			});
@@ -594,6 +596,7 @@ describe('useSessionLifecycle', () => {
 				const session = createMockSession({
 					id: 'session-1',
 					peerAgents: ROWS,
+					peerDescription: 'Builds labs',
 					groupPeerAccess: { read: true, write: false },
 					worktreePeerAccess: { read: true, write: true },
 				});
@@ -610,6 +613,7 @@ describe('useSessionLifecycle', () => {
 
 				const updated = useSessionStore.getState().sessions[0];
 				expect(updated.peerAgents).toBeUndefined();
+				expect(updated.peerDescription).toBeUndefined();
 				expect(updated.groupPeerAccess).toBeUndefined();
 				expect(updated.worktreePeerAccess).toEqual({ read: false, write: true });
 			});

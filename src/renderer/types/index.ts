@@ -1451,6 +1451,8 @@ export interface Session {
 	// Explicit rows. A row replaces any derived grant for that peer, so a row with
 	// neither bit set is a deliberate exclusion.
 	peerAgents?: PeerAgent[];
+	// This agent's specialty, advertised in other agents' peer rosters.
+	peerDescription?: string;
 	// "Peers in my group": every other agent sharing this agent's groupId is a
 	// peer at this access. Absent means the checkbox is off.
 	groupPeerAccess?: PeerAccess;

@@ -106,6 +106,7 @@ export function NewInstanceModal({
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
 	// Peer Agents: the explicit rows and the two grants. An absent grant is off.
 	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [peerDescription, setPeerDescription] = useState('');
 	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [instanceName, setInstanceName] = useState('');
@@ -447,6 +448,7 @@ export function NewInstanceModal({
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
 				// The copy starts with the source's peer grants, cloned for the same reason.
 				setPeerAgents((source.peerAgents ?? []).map((peer) => ({ ...peer })));
+				setPeerDescription(source.peerDescription ?? '');
 				setGroupPeerAccess(source.groupPeerAccess && { ...source.groupPeerAccess });
 				setWorktreePeerAccess(source.worktreePeerAccess && { ...source.worktreePeerAccess });
 				if (source.name !== undefined) {
@@ -982,6 +984,7 @@ export function NewInstanceModal({
 			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined,
 			{
 				peerAgents: normalizePeerAgents(peerAgents),
+				peerDescription: peerDescription.trim() || undefined,
 				groupPeerAccess,
 				worktreePeerAccess,
 			},
@@ -996,6 +999,7 @@ export function NewInstanceModal({
 		handleWorkingDirChange('');
 		setAdditionalDirectories([]);
 		setPeerAgents([]);
+		setPeerDescription('');
 		setGroupPeerAccess(undefined);
 		setWorktreePeerAccess(undefined);
 		setNudgeMessage('');
@@ -1047,6 +1051,7 @@ export function NewInstanceModal({
 		workingDir,
 		additionalDirectories,
 		peerAgents,
+		peerDescription,
 		groupPeerAccess,
 		worktreePeerAccess,
 		homeDir,
@@ -1853,6 +1858,8 @@ export function NewInstanceModal({
 						theme={theme}
 						idPrefix="new-agent"
 						peers={peerAgents}
+						peerDescription={peerDescription}
+						onPeerDescriptionChange={setPeerDescription}
 						onChange={setPeerAgents}
 						groupAccess={groupPeerAccess}
 						onGroupAccessChange={setGroupPeerAccess}
