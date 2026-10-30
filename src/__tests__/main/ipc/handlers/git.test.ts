@@ -2735,10 +2735,11 @@ export function Component() {
 			'reuses an isolated checkout when the project is itself a worktree (alias=%s)',
 			async (alias) => {
 				const fsPromises = await import('fs/promises');
+				const aliasGitDir = path.resolve('/alias/repo/.git');
+				const mainGitDir = path.resolve('/main/repo/.git');
 				vi.mocked(fsPromises.default.access).mockResolvedValue(undefined);
 				vi.mocked(fsPromises.default.realpath).mockImplementation(async (value) => {
-					const resolved = String(value).replace(/\\/g, '/');
-					return resolved === '/alias/repo/.git' ? '/main/repo/.git' : resolved;
+					return String(value) === aliasGitDir ? mainGitDir : String(value);
 				});
 				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_command, args, cwd) => {
 					if (args?.includes('--is-inside-work-tree'))
@@ -2765,6 +2766,7 @@ export function Component() {
 					'card-branch'
 				);
 				expect(result).toMatchObject({ success: true, created: false, branchMismatch: false });
+				if (alias) expect(fsPromises.default.realpath).toHaveBeenCalledWith(aliasGitDir);
 			}
 		);
 
