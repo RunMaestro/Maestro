@@ -229,13 +229,18 @@ export async function runOrchestratorIteration(
 			) {
 				plan = markTaskStatus(plan, task.id, 'needs_review', {
 					runId: ledger?.runId,
+					holdReason: 'acceptance',
 					error: 'Acceptance checks missing, pending or failing',
 				});
 				deps.log(
 					`[orchestrator] task "${task.id}" needs_review (checks missing, pending or failing)`
 				);
 			} else {
-				plan = markTaskStatus(plan, task.id, 'done', { runId: ledger?.runId });
+				plan = markTaskStatus(plan, task.id, 'done', {
+					runId: ledger?.runId,
+					holdReason: undefined,
+					error: undefined,
+				});
 				completedTaskIds.push(task.id);
 				deps.log(`[orchestrator] task "${task.id}" done (${reason})`);
 			}
@@ -268,6 +273,7 @@ export async function runOrchestratorIteration(
 				await safeNotify(deps, plan.tasks.find((entry) => entry.id === task.id) ?? task);
 				continue;
 			}
+			if (task.holdReason === 'delivery_uncertain') continue;
 			const requiredMissing = !!task.requiredChecks?.length && !ledger;
 			const blocked =
 				requiredMissing ||
@@ -275,19 +281,25 @@ export async function runOrchestratorIteration(
 				ledger?.checksPassed === false ||
 				(ledger?.openCriticalOrHighFindings ?? 0) > 0;
 			if (task.status === 'done' && blocked) {
-				plan = markTaskStatus(plan, task.id, 'needs_review', { runId: ledger?.runId });
+				plan = markTaskStatus(plan, task.id, 'needs_review', {
+					runId: ledger?.runId,
+					holdReason: 'acceptance',
+				});
 				const completedIndex = completedTaskIds.indexOf(task.id);
 				if (completedIndex !== -1) completedTaskIds.splice(completedIndex, 1);
 			} else if (
 				task.status === 'needs_review' &&
-				(task.requiredChecks?.length ||
-					task.error === 'Acceptance checks missing, pending or failing') &&
+				task.holdReason === 'acceptance' &&
 				!blocked &&
 				ledger?.checksPassed === true &&
 				(ledger.openFindings ?? 0) === 0 &&
 				deps.reactiveEnabled?.() !== true
 			) {
-				plan = markTaskStatus(plan, task.id, 'done', { runId: ledger.runId });
+				plan = markTaskStatus(plan, task.id, 'done', {
+					runId: ledger.runId,
+					holdReason: undefined,
+					error: undefined,
+				});
 				completedTaskIds.push(task.id);
 			}
 		}
@@ -304,11 +316,7 @@ export async function runOrchestratorIteration(
 	//     in the dep implementations (ISC-8.9/8.10).
 	if (deps.reactiveEnabled?.() === true) {
 		for (const task of plan.tasks.filter((t) => t.status === 'needs_review')) {
-			if (
-				task.error?.includes('confirmed worker tab') ||
-				task.error?.includes('repair dispatch missing confirmed tab identity')
-			)
-				continue;
+			if (task.holdReason === 'delivery_uncertain') continue;
 			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
 			if (ledger?.executionComplete === false) continue;
 			// Fully green (zero open findings of ANY severity AND checks passed): the
@@ -327,7 +335,11 @@ export async function runOrchestratorIteration(
 				} else {
 					deps.log(`[orchestrator] task "${task.id}" done (review resolved, no merger wired)`);
 				}
-				plan = markTaskStatus(plan, task.id, 'done', { runId: ledger.runId });
+				plan = markTaskStatus(plan, task.id, 'done', {
+					runId: ledger.runId,
+					holdReason: undefined,
+					error: undefined,
+				});
 				completedTaskIds.push(task.id);
 				continue;
 			}
@@ -344,6 +356,13 @@ export async function runOrchestratorIteration(
 				continue;
 			}
 			if (deps.dispatchFix && ledger) {
+				const claimed = plan.tasks.filter(
+					(entry) =>
+						entry.status === 'running' ||
+						entry.status === 'fixing' ||
+						entry.holdReason === 'delivery_uncertain'
+				).length;
+				if (claimed >= options.concurrencyLimit) continue;
 				plan = markTaskStatus(plan, task.id, 'fixing', {
 					tabId: undefined,
 					executionRunId: undefined,
@@ -354,6 +373,7 @@ export async function runOrchestratorIteration(
 				const fix = await deps.dispatchFix(task, ledger);
 				if (fix.success && !fix.tabId) {
 					plan = markTaskStatus(plan, task.id, 'needs_review', {
+						holdReason: 'delivery_uncertain',
 						error: 'repair dispatch missing confirmed tab identity; reconcile manually',
 					});
 					continue;
@@ -385,7 +405,10 @@ export async function runOrchestratorIteration(
 	//    count as we go so we never exceed concurrencyLimit within one iteration.
 	// Both running and fixing tasks occupy a concurrency slot (each is a live agent).
 	let runningCount = plan.tasks.filter(
-		(task) => task.status === 'running' || task.status === 'fixing'
+		(task) =>
+			task.status === 'running' ||
+			task.status === 'fixing' ||
+			task.holdReason === 'delivery_uncertain'
 	).length;
 	const ready = computeReadyTasks(plan);
 	for (const task of ready) {
@@ -404,14 +427,22 @@ export async function runOrchestratorIteration(
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
 			agentType: agentResult.agentType,
+			tabId: undefined,
+			runId: task.runId === task.executionRunId ? undefined : task.runId,
+			executionRunId: undefined,
+			completionCursor: '',
+			holdReason: undefined,
+			error: undefined,
 		});
 		deps.persist(plan);
 		const res = await deps.dispatch(task, agentResult.agentId);
 		if (!res.success && res.deliveryUncertain) {
 			plan = markTaskStatus(plan, task.id, 'needs_review', {
+				holdReason: 'delivery_uncertain',
 				error: 'Dispatch outcome unknown without a confirmed worker tab; reconcile before retry',
 			});
 			deps.persist(plan);
+			runningCount += 1;
 			continue;
 		}
 		if (!res.success) {
@@ -434,9 +465,11 @@ export async function runOrchestratorIteration(
 			plan = markTaskStatus(plan, task.id, 'needs_review', {
 				agentId: agentResult.agentId,
 				agentType: agentResult.agentType,
+				holdReason: 'delivery_uncertain',
 				error: 'Dispatch delivered without a confirmed worker tab; manual reconciliation required',
 			});
 			deps.log(`[orchestrator] task "${task.id}" needs_review (missing dispatch tab identity)`);
+			runningCount += 1;
 			continue;
 		}
 

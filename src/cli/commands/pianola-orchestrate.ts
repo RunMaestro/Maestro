@@ -131,7 +131,12 @@ function autopilotEnabledNow(): boolean {
 /** Project a captured AgentRun into the engine's ledger view (F8 / ISC-8.3). */
 function ledgerForTask(task: PianolaTask): PianolaTaskLedger | undefined {
 	const execution = capturedRunForTask(task);
-	const run = task.runId ? getAgentRun(task.runId) : execution;
+	const followsContinuation =
+		task.status === 'running' &&
+		task.runId === task.executionRunId &&
+		execution &&
+		execution.id !== task.executionRunId;
+	const run = followsContinuation ? execution : task.runId ? getAgentRun(task.runId) : execution;
 	if (!run) return undefined;
 	const openFindings = run.reviews.filter((r) => r.status === 'open');
 	const openCriticalOrHigh = openFindings.filter(
@@ -268,15 +273,22 @@ function taskRunStatus(task: PianolaTask, fallback: AgentRunStatus): AgentRunSta
 function capturedRunForTask(task: PianolaTask): AgentRun | undefined {
 	if (!task.agentId || !task.tabId) return undefined;
 	const processId = tabProcessId(task.agentId, task.tabId);
-	if (task.executionRunId) {
-		const run = getAgentRun(task.executionRunId);
-		return run?.sessionId === processId && (!run.tabId || run.tabId === task.tabId)
-			? run
-			: undefined;
-	}
-	return readAgentRuns()
+	const prior = task.executionRunId ? getAgentRun(task.executionRunId) : undefined;
+	if (
+		task.executionRunId &&
+		(!prior || prior.sessionId !== processId || (prior.tabId && prior.tabId !== task.tabId))
+	)
+		return undefined;
+	const newest = readAgentRuns()
 		.filter((run) => run.sessionId === processId && (!run.tabId || run.tabId === task.tabId))
 		.sort((a, b) => b.createdAt - a.createdAt)[0];
+	// A native watcher answer starts a fresh process generation on the SAME tab.
+	// Follow that continuation instead of keeping the completed question receipt.
+	if (!prior) return newest;
+	return newest &&
+		(newest.createdAt > prior.createdAt || prior.metadata?.supersededBy === newest.id)
+		? newest
+		: prior;
 }
 
 function resolvePianolaRunId(planId: string, task: PianolaTask): string {

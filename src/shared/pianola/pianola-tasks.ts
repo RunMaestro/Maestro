@@ -44,6 +44,8 @@ export interface PianolaTask {
 	tabId?: string;
 	/** Failure detail, populated when status is 'failed'. */
 	error?: string;
+	/** Machine-readable controller hold; error remains human-readable detail only. */
+	holdReason?: 'acceptance' | 'delivery_uncertain';
 	/** The captured AgentRun id this task is bound to (F8 / ISC-8.1), so the task
 	 *  and its real run are one record, not a duplicate projection. */
 	runId?: string;
@@ -211,6 +213,14 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 		errors.push(`Task ${label} fixAttempts must be a non-negative integer.`);
 		ok = false;
 	}
+	if (
+		raw.holdReason !== undefined &&
+		raw.holdReason !== 'acceptance' &&
+		raw.holdReason !== 'delivery_uncertain'
+	) {
+		errors.push(`Task ${label} holdReason must be acceptance or delivery_uncertain.`);
+		ok = false;
+	}
 	if (!ok) return null;
 
 	const task: PianolaTask = {
@@ -225,6 +235,8 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 	}
 	if (isStringArray(raw.requiredChecks)) task.requiredChecks = [...raw.requiredChecks];
 	if (typeof raw.fixAttempts === 'number') task.fixAttempts = raw.fixAttempts;
+	if (raw.holdReason === 'acceptance' || raw.holdReason === 'delivery_uncertain')
+		task.holdReason = raw.holdReason;
 	return task;
 }
 
@@ -328,6 +340,7 @@ export function markTaskStatus(
 			| 'executionRunId'
 			| 'fixAttempts'
 			| 'completionCursor'
+			| 'holdReason'
 		>
 	>
 ): PianolaPlan {
@@ -338,8 +351,9 @@ export function markTaskStatus(
 			if ('tabId' in patch) next.tabId = patch.tabId;
 			if (patch.agentId !== undefined) next.agentId = patch.agentId;
 			if (patch.agentType !== undefined) next.agentType = patch.agentType;
-			if (patch.error !== undefined) next.error = patch.error;
-			if (patch.runId !== undefined) next.runId = patch.runId;
+			if ('error' in patch) next.error = patch.error;
+			if ('holdReason' in patch) next.holdReason = patch.holdReason;
+			if ('runId' in patch) next.runId = patch.runId;
 			if ('executionRunId' in patch) next.executionRunId = patch.executionRunId;
 			if (patch.fixAttempts !== undefined) next.fixAttempts = patch.fixAttempts;
 			if (patch.completionCursor !== undefined) next.completionCursor = patch.completionCursor;

@@ -118,6 +118,7 @@ describe('validatePlan', () => {
 					fixAttempts: 2,
 					requiredChecks: ['build', 'acceptance'],
 					completionCursor: 'reply:42',
+					holdReason: 'acceptance',
 				}),
 			])
 		);
@@ -128,6 +129,7 @@ describe('validatePlan', () => {
 			fixAttempts: 2,
 			requiredChecks: ['build', 'acceptance'],
 			completionCursor: 'reply:42',
+			holdReason: 'acceptance',
 		});
 	});
 
@@ -138,6 +140,8 @@ describe('validatePlan', () => {
 		{ executionRunId: {} },
 		{ fixAttempts: -1 },
 		{ fixAttempts: 0.5 },
+		{ holdReason: 'unexpected' },
+		{ holdReason: 42 },
 	])('rejects malformed acceptance/runtime fields %j', (patch) => {
 		const { plan: result, errors } = validatePlan(rawPlan([rawTask({ id: 'a', ...patch })]));
 		expect(result).toBeNull();

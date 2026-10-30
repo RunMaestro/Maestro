@@ -590,4 +590,108 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 		expect(plan.tasks[0].status).toBe('failed');
 		expect(plan.tasks[1].status).toBe('blocked');
 	});
+	it('releases a late checks-only hold on a legacy task after its evidence passes with repairs off', async () => {
+		startBound({ status: 'done', runId: 'captured', executionRunId: 'captured' });
+		runs = [{ ...captured(), checks: [{ name: 'legacy-check', status: 'failed' }] }];
+		await tick();
+		expect(plan.tasks[0]).toMatchObject({ status: 'needs_review', holdReason: 'acceptance' });
+		expect(plan.tasks[1].status).toBe('pending');
+		runs = runs.map((run) => ({ ...run, checks: [{ name: 'legacy-check', status: 'passed' }] }));
+		await tick();
+		expect(plan.tasks[0].status).toBe('done');
+		expect(plan.tasks[1].status).toBe('running');
+	});
+	it('follows a genuine same-tab continuation after a watcher answers a completed question', async () => {
+		startBound();
+		let now = 10;
+		const capture = new AgentRunCaptureService({
+			getAgentRun: mocks.getRun,
+			findActiveRunBySession: mocks.findActive,
+			upsertAgentRun: mocks.upsertRun,
+			appendAgentRunEvent: mocks.appendEvent,
+			now: () => now++,
+		});
+		const question = capture.captureSpawn({
+			sessionId: 'agent-ai-tab',
+			tabId: 'tab',
+			toolType: 'codex',
+			cwd: '/project',
+		})!;
+		await capture.captureExit({
+			sessionId: 'agent-ai-tab',
+			exitCode: 0,
+			settlement: {
+				outcome: 'completed',
+				answerCaptured: true,
+				answerTail: 'Which file should I edit?',
+			},
+		});
+		await tick();
+		expect(plan.tasks[0]).toMatchObject({
+			status: 'running',
+			runId: question.id,
+			executionRunId: question.id,
+		});
+		const continuation = capture.captureSpawn({
+			sessionId: 'agent-ai-tab',
+			tabId: 'tab',
+			toolType: 'codex',
+			cwd: '/project',
+		})!;
+		await capture.captureExit({
+			sessionId: 'agent-ai-tab',
+			exitCode: 0,
+			settlement: {
+				outcome: 'completed',
+				answerCaptured: true,
+				answerTail: 'Completed the selected file.',
+			},
+		});
+		await tick();
+		expect(plan.tasks[0]).toMatchObject({
+			status: 'done',
+			runId: continuation.id,
+			executionRunId: continuation.id,
+		});
+		expect(plan.tasks[1].status).toBe('running');
+	});
+
+	it('clears stale physical identities before a reset task crosses the dispatch boundary', async () => {
+		plan.tasks[0] = {
+			...worker,
+			tabId: 'tab',
+			runId: 'captured',
+			executionRunId: 'captured',
+			completionCursor: 'old-answer',
+		};
+		runs = [
+			{
+				...captured(),
+				metadata: { completedAt: 2, exitCode: 0, answerTail: 'Previous task succeeded.' },
+			},
+		];
+		mocks.dispatch.mockRejectedValueOnce(new Error('lost response'));
+		await tick();
+		expect(plan.tasks[0].tabId).toBeUndefined();
+		expect(plan.tasks[0].executionRunId).toBeUndefined();
+		expect(plan.tasks[0].runId).toBeUndefined();
+		await tick();
+		await tick();
+		expect(plan.tasks[0].status).not.toBe('done');
+		expect(plan.tasks[1].status).toBe('pending');
+		expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+	});
+
+	it('reserves concurrency for uncertain deliveries across ticks', async () => {
+		plan.tasks[1].dependsOn = [];
+		mocks.dispatch.mockResolvedValue({
+			success: false,
+			code: 'COMMAND_FAILED',
+			error: 'lost response after delivery',
+		});
+		await pianolaOrchestrate(plan.id, { once: true, concurrency: '1' });
+		await pianolaOrchestrate(plan.id, { once: true, concurrency: '1' });
+		expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+		expect(plan.tasks[1].status).toBe('pending');
+	});
 });
