@@ -24,6 +24,7 @@ export function PianolaSection({ theme }: { theme: Theme }) {
 				<ToggleSettingRow
 					theme={theme}
 					title="Allow automatic repairs"
+					ariaLabel="Allow automatic repairs"
 					description="Allow up to three repair attempts for orchestrated tasks that need review. Repair workers can change files within their existing access."
 					checked={autoFixEnabled}
 					disabled={saving || !enabled}

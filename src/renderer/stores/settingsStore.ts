@@ -757,7 +757,9 @@ export function resolveForceParallel(optionForce?: boolean): boolean {
 	return optionForce === true || s.forcedParallelAlways;
 }
 
-// Order confirmed auto-watch saves and hydration without exposing unsaved values.
+// Order confirmed Pianola permission saves and hydration without exposing unsaved values.
+let pianolaAutoFixRevision = 0;
+let pianolaAutoFixAppliedRevision = 0;
 let pianolaAutoWatchRevision = 0;
 let pianolaAutoWatchAppliedRevision = 0;
 
@@ -1568,9 +1570,20 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		setPianolaAutoFixEnabled: async (value) => {
-			const saved = await window.maestro.settings.set('pianolaAutoFixEnabled', value);
-			if (saved === false) throw new Error('Automatic repair permission was not saved');
-			set({ pianolaAutoFixEnabled: value });
+			const revision = ++pianolaAutoFixRevision;
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoFixEnabled', value);
+				if (saved === false) throw new Error('Automatic repair permission was not saved');
+				// A newer confirmed save or hydration, including an identical value,
+				// supersedes this acknowledgement.
+				if (revision > pianolaAutoFixAppliedRevision) {
+					pianolaAutoFixAppliedRevision = revision;
+					set({ pianolaAutoFixEnabled: value });
+				}
+			} catch (error) {
+				await loadAllSettings();
+				throw error;
+			}
 		},
 
 		setPianolaAutoWatchNewAgents: async (value) => {
@@ -2063,6 +2076,7 @@ export async function loadAllSettings(): Promise<void> {
 	// they are in flight must survive this load - see the filter before setState.
 	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
 	const pianolaRevisionAtRead = ++pianolaAutoWatchRevision;
+	const pianolaAutoFixRevisionAtRead = ++pianolaAutoFixRevision;
 
 	try {
 		// Batch load all settings in a single IPC call
@@ -2833,6 +2847,9 @@ export async function loadAllSettings(): Promise<void> {
 			const live = useSettingsStore.getState() as unknown as Record<string, unknown>;
 			const patchKeys = patch as unknown as Record<string, unknown>;
 			for (const key of Object.keys(patchKeys)) {
+				// Repair permission has operation ordering below: an older save may
+				// acknowledge during this read without making its value newer.
+				if (key === 'pianolaAutoFixEnabled') continue;
 				if (live[key] !== beforeRead[key]) {
 					delete patchKeys[key];
 				}
@@ -2840,6 +2857,13 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		// Even an identical persisted value supersedes older save acknowledgements.
+		if (patch.pianolaAutoFixEnabled !== undefined) {
+			if (pianolaAutoFixRevisionAtRead > pianolaAutoFixAppliedRevision) {
+				pianolaAutoFixAppliedRevision = pianolaAutoFixRevisionAtRead;
+			} else {
+				delete patch.pianolaAutoFixEnabled;
+			}
+		}
 		if (patch.pianolaAutoWatchNewAgents !== undefined) {
 			if (pianolaRevisionAtRead > pianolaAutoWatchAppliedRevision) {
 				pianolaAutoWatchAppliedRevision = pianolaRevisionAtRead;
