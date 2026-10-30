@@ -120,6 +120,30 @@ describe('recoverNonTerminalRuns', () => {
 		expect(store.events).toHaveLength(0);
 	});
 
+	it('retains acceptance review after confirmed execution ended before a desktop restart', () => {
+		store.seed(
+			run({
+				status: 'needs_review',
+				checks: [{ name: 'acceptance', status: 'pending' }],
+				metadata: { completedAt: 200, exitCode: 0 },
+			})
+		);
+		expect(recoverNonTerminalRuns(store.deps)).toBe(0);
+		expect(store.runs.get('run-1')?.status).toBe('needs_review');
+		expect(store.events).toHaveLength(0);
+	});
+
+	it.each([
+		{ completedAt: 200, exitCode: 1 },
+		{ completedAt: 200, exitCode: 0, outcome: 'crashed' },
+		{ completedAt: 200, exitCode: 0, outcome: 'interrupted' },
+		{ completedAt: 200, exitCode: 0, agentError: { type: 'rate_limited' } },
+	])('does not retain a review state carrying failed execution evidence: %j', (metadata) => {
+		store.seed(run({ status: 'needs_review', metadata }));
+		expect(recoverNonTerminalRuns(store.deps)).toBe(1);
+		expect(store.runs.get('run-1')?.status).toBe('failed');
+	});
+
 	it.each(TERMINAL)('leaves a terminal %s run untouched even with a dead session', (status) => {
 		store.seed(run({ id: `term-${status}`, status, sessionId: `sess-${status}` }));
 

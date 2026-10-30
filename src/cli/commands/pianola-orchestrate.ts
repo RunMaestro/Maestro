@@ -25,6 +25,7 @@ import {
 	getAgentRun,
 	upsertAgentRun,
 	findActiveRunBySession,
+	readAgentRuns,
 } from '../services/agent-run-store';
 import { MaestroClient } from '../services/maestro-client';
 import { runDispatch } from './dispatch';
@@ -50,6 +51,7 @@ import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import { tabProcessId } from '../../shared/maestro-lib/runtime/server-frames';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
@@ -58,6 +60,16 @@ const HISTORY_TAIL = 12;
 // Memoize the desktop session list for this long so the many getRunState calls
 // in one orchestration iteration reuse a single round-trip.
 const SESSION_LIST_TTL_MS = 2000;
+// Only these responses establish that the prompt did not cross the delivery boundary.
+const UNDISPATCHED_CODES = new Set([
+	'INVALID_OPTIONS',
+	'FORCE_NOT_ALLOWED',
+	'AGENT_NOT_FOUND',
+	'SESSION_NOT_FOUND',
+	'DISPATCH_REFUSED',
+	'UNSUPPORTED',
+	'MAESTRO_NOT_RUNNING',
+]);
 
 interface CreateSessionResult {
 	success?: boolean;
@@ -70,10 +82,12 @@ export interface DesktopSessionEntry {
 	sessionId: string;
 	agentId: string;
 	toolType: string;
-	state: 'idle' | 'busy';
+	state: 'idle' | 'busy' | 'unknown';
 }
 
 interface DesktopSessionsList {
+	success?: boolean;
+	error?: string;
 	sessions?: DesktopSessionEntry[];
 }
 
@@ -114,19 +128,47 @@ function autopilotEnabledNow(): boolean {
 }
 
 /** Project a captured AgentRun into the engine's ledger view (F8 / ISC-8.3). */
-function ledgerForTask(planId: string, task: PianolaTask): PianolaTaskLedger | undefined {
-	const runId = resolvePianolaRunId(planId, task);
-	const run = getAgentRun(runId);
+function ledgerForTask(task: PianolaTask): PianolaTaskLedger | undefined {
+	const execution = capturedRunForTask(task);
+	const followsContinuation =
+		task.status === 'running' &&
+		task.runId === task.executionRunId &&
+		execution &&
+		execution.id !== task.executionRunId;
+	const run = followsContinuation ? execution : task.runId ? getAgentRun(task.runId) : execution;
 	if (!run) return undefined;
 	const openFindings = run.reviews.filter((r) => r.status === 'open');
 	const openCriticalOrHigh = openFindings.filter(
 		(r) => r.severity === 'critical' || r.severity === 'high'
 	).length;
 	const checks = run.checks ?? [];
-	const checksPassed = checks.length === 0 ? undefined : checks.every((c) => c.status === 'passed');
+	const required = task.requiredChecks ?? [];
+	const missing = required.some((name) => !checks.some((check) => check.name === name));
+	const checksPending =
+		missing || checks.some((check) => check.status === 'pending' || check.status === 'running');
+	const checksPassed = missing
+		? false
+		: checks.length === 0
+			? undefined
+			: checks.every((c) => c.status === 'passed');
 	return {
 		runId: run.id,
+		executionRunId: execution?.id,
+		executionFailed:
+			!!execution &&
+			(['failed', 'cancelled', 'discarded'].includes(execution.status) ||
+				!!execution.metadata?.agentError),
+		executionComplete:
+			!!execution &&
+			execution.metadata?.completedAt !== undefined &&
+			(execution.status === 'completed' ||
+				execution.status === 'needs_review' ||
+				execution.metadata?.outcome === 'completed' ||
+				execution.metadata?.outcome === 'completed-with-warning'),
+		transcriptSettled:
+			typeof execution?.metadata?.answerTail === 'string' && !!execution.metadata.answerTail.trim(),
 		checksPassed,
+		checksPending,
 		openCriticalOrHighFindings: openCriticalOrHigh,
 		openFindings: openFindings.length,
 		pullRequestUrl: run.pullRequest?.url,
@@ -226,14 +268,35 @@ function taskRunStatus(task: PianolaTask, fallback: AgentRunStatus): AgentRunSta
 	return fallback;
 }
 
+/** Resolve only this worker's capture, including already-terminal fast runs. Never borrow another tab's active run. */
+function capturedRunForTask(task: PianolaTask): AgentRun | undefined {
+	if (!task.agentId || !task.tabId) return undefined;
+	const processId = tabProcessId(task.agentId, task.tabId);
+	const followsLiveContinuation = task.status === 'running' || task.status === 'fixing';
+	const pinnedRunId = task.executionRunId ?? (!followsLiveContinuation ? task.runId : undefined);
+	const prior = pinnedRunId ? getAgentRun(pinnedRunId) : undefined;
+	if (
+		pinnedRunId &&
+		(!prior || prior.sessionId !== processId || (prior.tabId && prior.tabId !== task.tabId))
+	)
+		return undefined;
+	// Settled tasks retain their physical receipt. Later work in the same chat
+	// belongs to a different turn and cannot revoke this task's acceptance.
+	if (!followsLiveContinuation) return prior;
+	const newest = readAgentRuns()
+		.filter((run) => run.sessionId === processId && (!run.tabId || run.tabId === task.tabId))
+		.sort((a, b) => b.createdAt - a.createdAt)[0];
+	// A native watcher answer starts a fresh process generation on the SAME tab.
+	// Follow that continuation instead of keeping the completed question receipt.
+	if (!prior) return newest;
+	return newest &&
+		(newest.createdAt > prior.createdAt || prior.metadata?.supersededBy === newest.id)
+		? newest
+		: prior;
+}
+
 function resolvePianolaRunId(planId: string, task: PianolaTask): string {
-	// F8 (ISC-8.1/8.2): bind to the REAL captured run when one exists (the task
-	// already carries a runId, or the desktop capture recorded one for this
-	// session), so the task and its run are one record. Fall back to the
-	// deterministic projection id only for a pure-CLI task with no captured run.
-	if (task.runId) return task.runId;
-	const captured = task.agentId ? findActiveRunBySession(task.agentId) : undefined;
-	return captured?.id ?? pianolaTaskAgentRunId(planId, task.id);
+	return task.runId ?? capturedRunForTask(task)?.id ?? pianolaTaskAgentRunId(planId, task.id);
 }
 
 function upsertPianolaTaskRun(
@@ -260,11 +323,16 @@ function upsertPianolaTaskRun(
 		createdAt: existing?.createdAt ?? now,
 		updatedAt: now,
 		provider: existing?.provider ?? task.agentType ?? 'unknown',
-		status,
+		status:
+			existing &&
+			(['failed', 'cancelled', 'discarded'].includes(existing.status) ||
+				(existing.metadata?.completedAt !== undefined && status === 'running'))
+				? existing.status
+				: status,
 		agentId: task.agentId,
 		agentName: task.title,
-		sessionId: task.agentId,
-		tabId: task.tabId,
+		sessionId: existing?.sessionId ?? task.agentId,
+		tabId: existing?.tabId ?? task.tabId,
 		cwd: task.cwd,
 		prompt: task.prompt,
 		source: campaignIdForPianolaPlan(planId),
@@ -283,7 +351,7 @@ function upsertPianolaTaskRun(
 		runId,
 		timestamp: now,
 		type: eventType,
-		status,
+		status: run.status,
 		message: task.title,
 		data: { planId, taskId: task.id },
 	});
@@ -297,7 +365,8 @@ function recordPianolaAgentRunProgress(
 	const tasksById = new Map(plan.tasks.map((task) => [task.id, task]));
 	for (const taskId of result.dispatchedTaskIds) {
 		const task = tasksById.get(taskId);
-		if (task) upsertPianolaTaskRun(plan.id, task, 'running', 'pianola.dispatched');
+		if (task && capturedRunForTask(task))
+			upsertPianolaTaskRun(plan.id, task, 'running', 'pianola.dispatched');
 	}
 	for (const taskId of result.completedTaskIds) {
 		const task = tasksById.get(taskId);
@@ -308,13 +377,19 @@ function recordPianolaAgentRunProgress(
 		const task = tasksById.get(taskId);
 		if (task) upsertPianolaTaskRun(plan.id, task, taskRunStatus(task, 'failed'), 'pianola.failed');
 	}
-	// F5/F8 (ISC-5.8): mirror engine-side needs_review routing onto the run
-	// ledger through the guarded producer. The guard only fires when the run
-	// really carries >=1 open finding (a checks-only needs_review task leaves
-	// the run untouched, per the anti-signal), and it is idempotent for a run
-	// already parked in needs_review - so calling it every tick is safe.
+	// Mirror this plan's acceptance decision onto its selected run. The generic
+	// review producer still requires findings and protects terminal records. The
+	// controller's typed acceptance holds use a distinct audited Pianola event
+	// for both late findings and check evidence.
 	for (const task of plan.tasks) {
-		if (task.status === 'needs_review' && task.runId) signals.markNeedsReview(task.runId);
+		if (task.status === 'needs_review' && task.runId) {
+			const ledger = ledgerForTask(task);
+			if (task.holdReason === 'acceptance' || ledger?.checksPassed === false) {
+				const run = getAgentRun(task.runId);
+				if (run && run.status !== 'needs_review')
+					upsertPianolaTaskRun(plan.id, task, 'needs_review', 'pianola.acceptance_pending');
+			} else signals.markNeedsReview(task.runId);
+		}
 	}
 }
 
@@ -506,7 +581,9 @@ export async function pianolaOrchestrate(
 			{ type: 'list_desktop_sessions' },
 			'desktop_sessions_list'
 		);
-		const entries = result.sessions ?? [];
+		if (result.success === false || !Array.isArray(result.sessions))
+			throw new Error(result.error ?? 'Desktop session snapshot unavailable');
+		const entries = result.sessions;
 		sessionsCache = { at: now, entries };
 		return entries;
 	};
@@ -522,7 +599,9 @@ export async function pianolaOrchestrate(
 			{ type: 'get_session_history', tabId, tail: HISTORY_TAIL },
 			'session_history_result'
 		);
-		const messages = (result.messages ?? []).map(
+		if (result.success === false || !Array.isArray(result.messages))
+			throw new Error(result.error ?? 'Worker transcript unavailable');
+		const messages = result.messages.map(
 			(m): PianolaMessage => ({
 				id: m.id,
 				role: m.role,
@@ -533,6 +612,28 @@ export async function pianolaOrchestrate(
 		);
 		historyCache.set(tabId, { at: now, messages });
 		return messages;
+	};
+
+	const getTaskMessages = async (task: PianolaTask): Promise<PianolaMessage[]> => {
+		const run = capturedRunForTask(task);
+		const finalText = run?.metadata?.answerTail;
+		if (
+			run &&
+			typeof finalText === 'string' &&
+			finalText.trim() &&
+			run.metadata?.completedAt !== undefined
+		) {
+			return [
+				{
+					id: `capture:${run.id}`,
+					role: 'assistant',
+					source: 'ai',
+					content: finalText,
+					timestamp: new Date(Number(run.metadata.completedAt)).toISOString(),
+				},
+			];
+		}
+		return task.tabId ? getHistory(task.tabId) : [];
 	};
 
 	const signals = new AgentRunSignals({
@@ -547,31 +648,39 @@ export async function pianolaOrchestrate(
 
 	const deps: OrchestratorDeps = {
 		getRunState: async (task) => {
-			if (!task.tabId) return 'idle';
+			if (!task.tabId || !task.agentId) return 'unknown';
 			const entries = await listDesktopSessions();
-			const entry = entries.find((e) => e.tabId === task.tabId);
-			if (!entry) return 'idle';
-			if (entry.state === 'busy') {
-				if (task.agentId) signals.markWorking(task.agentId);
-				return 'busy';
-			}
-			// The desktop collapses waiting_input to idle, so before treating idle as
-			// a completion signal, check whether the agent is actually awaiting the
-			// user. If so report waiting_input - the detector then keeps the task
-			// running instead of marking it done and launching dependents on an
-			// unanswered question.
-			const messages = await getHistory(task.tabId);
+			const entry = entries.find((e) => e.tabId === task.tabId && e.agentId === task.agentId);
+			if (!entry) return 'unknown';
+			const run = capturedRunForTask(task);
+			if (
+				run &&
+				(run.status === 'failed' ||
+					run.status === 'cancelled' ||
+					run.status === 'discarded' ||
+					run.metadata?.agentError)
+			)
+				return 'error';
+			if (entry.state === 'busy') return 'busy';
+			if (entry.state !== 'idle') return 'unknown';
+			const messages = await getTaskMessages(task);
 			const classification = classifyMessages(enrichWithAwaitingInput(messages));
-			if (classification.kind !== 'none') {
-				// F5/F8 (ISC-5.2/5.7): reflect the awaiting-input signal on the run.
-				if (task.agentId) signals.markWaiting(task.agentId);
-				return 'waiting_input';
-			}
-			return 'idle';
+			if (classification.kind !== 'none') return 'waiting_input';
+			// Idle is also a queued/unstarted dispatch. Only its own terminal capture
+			// can prove that this worker ran, including runs between two polls.
+			if (
+				!run ||
+				(run.status !== 'completed' && run.status !== 'needs_review') ||
+				run.metadata?.completedAt === undefined
+			)
+				return 'connecting';
+			if (!messages.some((message) => message.role === 'assistant' || message.role === 'error'))
+				return 'connecting';
+			return 'completed';
 		},
 		getRecentMessages: async (task) => {
 			if (!task.tabId) return [];
-			return getHistory(task.tabId);
+			return getTaskMessages(task);
 		},
 		ensureAgent: async (task) => {
 			if (task.agentId) {
@@ -650,8 +759,15 @@ export async function pianolaOrchestrate(
 			return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
 		},
 		dispatch: async (task, agentId) => {
-			const res = await runDispatch(agentId, task.prompt, {});
-			return { success: !!res.success, tabId: res.sessionId ?? undefined, error: res.error };
+			const res = await runDispatch(agentId, task.prompt, { newTab: true, background: true });
+			// Dispatch success is delivery, not a run receipt. Never retry a delivered
+			// but unaddressable prompt: that could duplicate work. The engine parks it.
+			return {
+				success: !!res.success,
+				tabId: res.tabId ?? res.sessionId ?? undefined,
+				error: res.error,
+				deliveryUncertain: !res.success && !UNDISPATCHED_CODES.has(res.code ?? ''),
+			};
 		},
 		persist: (p) => {
 			upsertPianolaPlan(p);
@@ -665,12 +781,12 @@ export async function pianolaOrchestrate(
 			}
 		},
 		reactiveEnabled: () => autopilotEnabledNow(),
-		getRunLedger: async (task) => ledgerForTask(plan.id, task),
+		getRunLedger: async (task) => ledgerForTask(task),
 		dispatchFix: async (task, ledger) => {
 			// Gated + audited: only auto-fix with explicit repair permission.
 			if (!autopilotEnabledNow())
 				return { success: false, error: 'Pianola automatic repairs are disabled' };
-			const fixPrompt = `The previous run left ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Address them, then stop.`;
+			const fixPrompt = `The acceptance ledger is AgentRun ${ledger.runId ?? '(unavailable)'}. It has ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Required checks: ${(task.requiredChecks ?? []).join(', ') || '(existing ledger checks)'}. Address them and record evidence on that exact acceptance run, then stop.`;
 			const agentId = task.agentId;
 			if (!agentId) return { success: false, error: 'no agent bound' };
 			auditAgentRunAction(ledger.runId, 'auto-fix', {
@@ -680,7 +796,14 @@ export async function pianolaOrchestrate(
 				attempt: (task.fixAttempts ?? 0) + 1,
 			});
 			try {
-				const res = await runDispatch(agentId, fixPrompt, {});
+				const res = await runDispatch(agentId, fixPrompt, { newTab: true, background: true });
+				const tabId = res.tabId ?? res.sessionId;
+				const uncertain = !res.success && !UNDISPATCHED_CODES.has(res.code ?? '');
+				if ((res.success || uncertain) && !tabId)
+					return {
+						success: true,
+						error: 'repair dispatch missing confirmed tab identity; reconcile manually',
+					};
 				// F5/F8 (ISC-5.9): a REAL dispatch just happened - reflect it on the run
 				// through the guarded producer. The dispatch object is the evidence; on
 				// a failed dispatch nothing is written (the task also stays needs_review).
@@ -690,9 +813,16 @@ export async function pianolaOrchestrate(
 						reason: `auto-fix attempt ${(task.fixAttempts ?? 0) + 1}`,
 					});
 				}
-				return { success: !!res.success, error: res.error };
+				return {
+					success: !!res.success,
+					tabId: tabId ?? undefined,
+					error: res.error,
+					deliveryUncertain: uncertain,
+				};
 			} catch (error) {
-				return { success: false, error: String(error) };
+				// The transport may have lost a response after delivery. Park the claim
+				// without an identity instead of automatically repeating the repair.
+				return { success: true, error: `repair delivery outcome unknown: ${String(error)}` };
 			}
 		},
 		requestMerge: async (task, ledger) => {
@@ -762,6 +892,8 @@ export async function pianolaOrchestrate(
 				// tick re-polls and re-dispatches from the persisted plan.
 				const message = error instanceof Error ? error.message : String(error);
 				console.error(`[orchestrator] iteration error: ${message}`);
+				const persisted = getPianolaPlan(plan.id);
+				if (persisted) state = initialOrchestratorState(persisted);
 				if (once || stopped) break;
 				await sleep(intervalMs);
 				continue;
