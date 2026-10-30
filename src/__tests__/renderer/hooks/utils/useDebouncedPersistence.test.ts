@@ -2952,6 +2952,68 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
 		}
 	});
+	it('keeps a queued item gone once this client runs an item a peer queued', async () => {
+		// A phone queues a message; the desktop runs it and drops it from its queue.
+		// The desktop's own baseline never held the item, so without folding the
+		// peer's save into it the removal diffed as "unchanged" and the store kept
+		// the message queued: shown on every client, and run again after a restart.
+		const originalListener = window.maestro.sessions.onLifecycleSync;
+		const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
+		window.maestro.sessions.onLifecycleSync = (callback) => {
+			listeners.add(callback);
+			return () => listeners.delete(callback);
+		};
+		let host = makeSession({ id: 'drained', name: 'Agent' });
+		vi.mocked(window.maestro.sessions.setMany).mockImplementation(
+			async (updates, _removedIds, baselines) => {
+				for (const update of updates) {
+					const baseline = baselines?.find((session) => session.id === update.id);
+					host = mergeSessionPersistenceChanges(update, host, baseline, true);
+				}
+				return true;
+			}
+		);
+		useSessionStore.setState({ initialLoadComplete: true, sessions: [structuredClone(host)] });
+		const view = renderHook(() => {
+			const persistence = useDebouncedPersistence(makeInitialLoadRef(true));
+			useSessionLifecycleSync(async (session) => session);
+			return persistence;
+		});
+		try {
+			await act(async () => {
+				view.result.current.flushNow(useSessionStore.getState().sessions);
+				await vi.runAllTimersAsync();
+			});
+			const before = structuredClone(host);
+			const queued = { id: 'from-phone', timestamp: 1, tabId: 'tab-1', type: 'message' as const };
+			host = { ...host, executionQueue: [{ ...queued, text: 'run me' }] };
+			await act(async () => {
+				const payload = { added: [], removedIds: [], updated: [host], baselines: [before] };
+				for (const listener of listeners) listener(structuredClone(payload));
+				// Let the delta apply, but not the 2 s save debounce: the run happens
+				// inside that window (Stop right after queueing), so this client never
+				// saved the peer's item itself.
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+
+			await act(async () => {
+				useSessionStore
+					.getState()
+					.setSessions((sessions) =>
+						sessions.map((session) => ({ ...session, executionQueue: [], name: 'Ran it' }))
+					);
+				await vi.runAllTimersAsync();
+			});
+			expect(host.name).toBe('Ran it');
+			expect(host.executionQueue).toEqual([]);
+		} finally {
+			view.unmount();
+			window.maestro.sessions.onLifecycleSync = originalListener;
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
+		}
+	});
+
 	it('saves the first restored bootstrap with the raw observed baseline before sessionsReadOk becomes true', async () => {
 		let stored = makeSession({ id: 'startup-host', name: 'Host', cwd: '/original' });
 		const observed = structuredClone(stored);
