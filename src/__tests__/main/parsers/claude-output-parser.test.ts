@@ -1752,6 +1752,52 @@ describe('ClaudeOutputParser failed results (is_error: true)', () => {
 		});
 	});
 
+	it.each([
+		['tui_exited', /quit before the turn finished/],
+		['timeout', /stopped producing output for too long/],
+		['ready_timeout', /did not finish starting up in time/],
+		['first_byte_timeout', /never began the turn/],
+		['prompt_truncated', /dropped part of the prompt/],
+		['workspace_untrusted', /not been trusted to work in this folder/],
+	])('names the maestro-p failure %s instead of the generic subtype text (#1860)', (code, text) => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			duration_ms: 40_000,
+			is_error: true,
+			error: code,
+		});
+
+		expect(error).toMatchObject({ type: 'unknown', recoverable: true });
+		expect(error?.message).toMatch(text);
+	});
+
+	it("classifies maestro-p's missing-transcript failure as session_not_found", () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'No conversation found with session ID: sess-1',
+		});
+
+		expect(error?.type).toBe('session_not_found');
+	});
+
+	it('shows an unlisted error code beside the subtype text', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			is_error: true,
+			error: 'interrupted',
+		});
+
+		expect(error?.message).toBe(
+			'Claude Code stopped with an error before finishing the turn. (interrupted)'
+		);
+	});
+
 	it('does not show the internal diagnostics array as the message', () => {
 		const error = parser.detectErrorFromParsed({
 			type: 'result',
