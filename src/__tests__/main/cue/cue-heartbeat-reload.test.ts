@@ -115,9 +115,9 @@ describe('cue.yaml reload and time.heartbeat schedules (engine)', () => {
 		).length;
 	}
 
-	function reload(config: CueConfig): void {
+	function reload(config: CueConfig) {
 		mockLoadCueConfig.mockReturnValue(config);
-		engine.refreshSession('session-1', '/projects/test');
+		return engine.refreshSession('session-1', '/projects/test');
 	}
 
 	beforeEach(() => {
@@ -261,12 +261,12 @@ describe('cue.yaml reload and time.heartbeat schedules (engine)', () => {
 	it('several reloads in a row leak no timer and never fire twice', async () => {
 		const config = configWith([heartbeat('beat', 10), heartbeat('slow', 60)]);
 		mockLoadCueConfig.mockReturnValue(config);
-		engine.start('system-boot');
+		await engine.start('system-boot');
 		const timersAfterStart = vi.getTimerCount();
 
 		for (let i = 0; i < 6; i++) {
 			await vi.advanceTimersByTimeAsync(MIN);
-			reload(reread(config));
+			await reload(reread(config));
 			expect(vi.getTimerCount()).toBe(timersAfterStart);
 		}
 		expect(firesOf('beat')).toBe(1);

@@ -359,7 +359,7 @@ Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 | `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | -       |
 | `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | -       |
 
-## `maestro-cli run-doc <docs>`
+## `maestro-cli run-doc <docs...>`
 
 Run one or more Auto Run documents headlessly (no saved playbook required)
 
@@ -803,7 +803,7 @@ Open a file as a preview tab in the Maestro desktop app (audio and video play in
 | `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback | -       |
 | `--json`           | Output as JSON (for scripting)                                                                | -       |
 
-## `maestro-cli open-graph [paths]`
+## `maestro-cli open-graph [paths...]`
 
 Open the Document Graph over specific markdown files or a directory
 
@@ -930,7 +930,7 @@ Refresh Auto Run documents in the Maestro desktop app
 | `--focus`          | Switch to the target agent while refreshing             | -       |
 | `--json`           | Output as JSON (for scripting)                          | -       |
 
-## `maestro-cli auto-run <docs>`
+## `maestro-cli auto-run <docs...>`
 
 Configure and optionally launch an auto-run with documents
 
@@ -2158,7 +2158,7 @@ Import a theme JSON file, apply it live, and activate it
 | `--no-activate` | Save the palette without switching to the Custom theme | -       |
 | `--json`        | Output as JSON (for scripting)                         | -       |
 
-## `maestro-cli theme set [assignments]`
+## `maestro-cli theme set [assignments...]`
 
 Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 
@@ -2349,6 +2349,29 @@ Show settings, or change them with the flags below
 
 Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
+## `maestro-cli pianola resolve <id>`
+
+Resolve a persisted manager handoff or founder ask after revalidation
+
+| Option                | Description                                             | Default |
+| --------------------- | ------------------------------------------------------- | ------- |
+| `--answer <text>`     | Answer the requesting agent exactly once                | -       |
+| `--escalation <text>` | Ask the human to decide, with a concrete recommendation | -       |
+| `--option <text>`     | Resolve a founder ask with this option                  | -       |
+| `--note <text>`       | Add a note to a founder-ask resolution                  | -       |
+| `--background`        | Preserve the active agent and tab                       | -       |
+| `--json`              | Output as JSON                                          | -       |
+
+## `maestro-cli pianola watch-scope <scope-id>`
+
+Run one registered agent/group selection under the native supervisor
+
+| Option      | Description                                 | Default |
+| ----------- | ------------------------------------------- | ------- |
+| `--once`    | Run one bounded scope cycle and exit        | -       |
+| `--dry-run` | Classify and record without sending answers | -       |
+| `--json`    | Output cycle status as JSON                 | -       |
+
 ## `maestro-cli pianola watch <tab-id>`
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
@@ -2423,6 +2446,38 @@ Save a learned decision profile from --file or stdin (per-project or global)
 | `--pair-count <n>` | How many decision pairs this profile was synthesized from      | -       |
 | `--json`           | Output as JSON (for scripting)                                 | -       |
 
+## `maestro-cli pianola memory [action] [value...]`
+
+Backfill and retrieve evidence-backed user and project memory
+
+| Option                     | Description                                                                                               | Default |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| `--project <path>`         | Project scope                                                                                             | -       |
+| `--provider <id>`          | Historical provider for a custom root                                                                     | -       |
+| `--root <path>`            | Custom account/data root                                                                                  | -       |
+| `--mine`                   | Explicitly attribute selected pools to your human-authored history                                        | -       |
+| `--mode <mode>`            | local, hosted, or batch                                                                                   | -       |
+| `--hosted-provider <id>`   | Hosted extraction provider: openai or nan                                                                 | -       |
+| `--model <model>`          | Extraction model                                                                                          | -       |
+| `--endpoint <url>`         | Loopback local extraction endpoint                                                                        | -       |
+| `--qualify-model <model>`  | Recall qualification model (default: qwen3:8b; glm5.3-flash measured equal quality at 66% less latency)   | -       |
+| `--qualify-provider <id>`  | Recall qualification provider: local or hosted                                                            | -       |
+| `--qualify-endpoint <url>` | Qualification endpoint (loopback for local)                                                               | -       |
+| `--rerank-model <model>`   | Hosted recall reranker model (default: rerank)                                                            | -       |
+| `--rerank-endpoint <url>`  | Hosted reranker endpoint                                                                                  | -       |
+| `--tokens <n>`             | Total token cap including reservations                                                                    | -       |
+| `--dollars <n>`            | Total cost cap including reservations                                                                     | -       |
+| `--exclude <paths...>`     | Exclude absolute roots/projects/files before reads                                                        | -       |
+| `--consent-hosted`         | Consent to off-device processing of selected excerpts                                                     | -       |
+| `--kind <kind>`            | preference, project, decision, episode, commitment, or context                                            | -       |
+| `--history`                | List-only: browse all lifecycle statuses and dates                                                        | -       |
+| `--intent <mode>`          | Recall: current, as-of, previous, proposed, contested, or history (default: current; --qualify may infer) | -       |
+| `--at <date>`              | Required instant for --intent as-of                                                                       | -       |
+| `--qualify`                | Opt into slower, fallible local model review; not a correctness guarantee                                 | -       |
+| `--rerank`                 | Opt into hosted reranking; sends the question and shortlisted assertions                                  | -       |
+| `--out <file>`             | Write JSON output to a file                                                                               | -       |
+| `--json`                   | JSON output                                                                                               | -       |
+
 ## `maestro-cli pianola log`
 
 Show recent Pianola decisions from the audit log
@@ -2431,6 +2486,73 @@ Show recent Pianola decisions from the audit log
 | ------------- | ---------------------------------------------- | ------- |
 | `--limit <n>` | Maximum number of records to show (default 20) | -       |
 | `--json`      | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli pianola program`
+
+Manage product programs
+
+## `maestro-cli pianola program apply`
+
+| Option          | Description                   | Default |
+| --------------- | ----------------------------- | ------- |
+| `--file <path>` | YAML or JSON program manifest | -       |
+| `--json`        | Output as JSON                | -       |
+
+## `maestro-cli pianola program list`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program show <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program pause <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program resume <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola escalate`
+
+| Option                      | Description | Default |
+| --------------------------- | ----------- | ------- |
+| `--title <text>`            | -           | -       |
+| `--detail <text>`           | -           | -       |
+| `--program <id>`            | -           | -       |
+| `--agent <id>`              | -           | -       |
+| `--tab <id>`                | -           | -       |
+| `--severity <level>`        | -           | -       |
+| `--requested-action <text>` | -           | -       |
+| `--distinct`                | -           | -       |
+| `--json`                    | -           | -       |
+
+## `maestro-cli pianola needs-me`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
+## `maestro-cli pianola dismiss <askId>`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
+## `maestro-cli pianola brief`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
 
 ## `maestro-cli pianola plan`
 
@@ -2444,6 +2566,23 @@ Save a plan from --file or piped stdin (validated before write)
 | --------------- | ---------------------------------------------------- | ------- |
 | `--file <path>` | Read the plan JSON from this file (else reads stdin) | -       |
 | `--json`        | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli pianola plan revise <planId> <taskId>`
+
+Revise a reviewed or failed task and queue it again without replacing its plan
+
+| Option            | Description                                                       | Default |
+| ----------------- | ----------------------------------------------------------------- | ------- |
+| `--prompt <text>` | Corrected implementation instructions; validation stays unchanged | -       |
+| `--json`          | Output as JSON (for scripting)                                    | -       |
+
+## `maestro-cli pianola plan skip <planId> <taskId>`
+
+Skip a failed task while keeping its dependents blocked
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli pianola plan list`
 
@@ -2472,9 +2611,39 @@ Run a saved plan to completion, dispatching tasks as their dependencies finish
 | `--once`               | Run a single iteration instead of looping | -       |
 | `--json`               | Output as JSON (for scripting)            | -       |
 
+## `maestro-cli pianola validate <planId> <taskId>`
+
+Run the task validation oracle in the sandbox and append its Agent Run check
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola program-loop <programId>`
+
+| Option                 | Description                    | Default |
+| ---------------------- | ------------------------------ | ------- |
+| `--interval <seconds>` | Polling interval (default 120) | -       |
+| `--once`               | Perform one tick and exit      | -       |
+| `--json`               | Output as JSON                 | -       |
+
 ## `maestro-cli pianola supervise`
 
 Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
+
+## `maestro-cli pianola supervise scope`
+
+Create or replace an agent/group watch selection (new selections start paused)
+
+| Option                 | Description                        | Default |
+| ---------------------- | ---------------------------------- | ------- |
+| `--manager <agent-id>` | Manager agent id                   | -       |
+| `--label <label>`      | Selection label                    | -       |
+| `--id <scope-id>`      | Replace an existing selection      | -       |
+| `--agents <ids>`       | Comma-separated agent IDs          | -       |
+| `--groups <ids>`       | Comma-separated group IDs          | -       |
+| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
+| `--json`               | Output as JSON                     | -       |
 
 ## `maestro-cli pianola supervise watch <tabId>`
 
@@ -2496,6 +2665,13 @@ Register a supervised plan orchestration the desktop keeps alive
 | `--concurrency <n>`    | Max tasks running at once (default 3)   | -       |
 | `--interval <seconds>` | Polling interval in seconds (default 5) | -       |
 | `--json`               | Output as JSON (for scripting)          | -       |
+
+## `maestro-cli pianola supervise program <programId>`
+
+| Option                 | Description                    | Default |
+| ---------------------- | ------------------------------ | ------- |
+| `--interval <seconds>` | Polling interval (default 120) | -       |
+| `--json`               | Output as JSON                 | -       |
 
 ## `maestro-cli pianola supervise list`
 

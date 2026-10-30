@@ -108,7 +108,9 @@ export interface WatchTarget {
 export interface PianolaJudgmentRequest {
 	target: WatchTarget;
 	classification: PianolaClassification;
-	profile: PianolaProfileEntry;
+	profile: PianolaProfileEntry | null;
+	/** Scoped advisory memories; evidence only, never authorization. */
+	context?: string;
 	/** The agent's awaiting-input prompt text, when extractable. */
 	promptText?: string;
 	/** Discrete options the agent offered, if any. */
@@ -136,6 +138,8 @@ export interface WatchDeps {
 	 * plain CLI watch with no Pianola agent to hand off to).
 	 */
 	resolveProfile?: (projectPath?: string) => PianolaProfileEntry | null;
+	/** Resolve scoped advisory memory for the uncovered ask. */
+	resolveContext?: (query: string, projectPath?: string) => string | null | Promise<string | null>;
 	/** Hand an uncovered, non-high-risk ask to Pianola to judge against the profile. */
 	requestJudgment?: (
 		request: PianolaJudgmentRequest
@@ -444,7 +448,7 @@ export async function runWatchIteration(
 		uncoveredEscalation &&
 		classification.risk !== 'high' &&
 		!options.dryRun &&
-		!!deps.resolveProfile &&
+		(!!deps.resolveProfile || !!deps.resolveContext) &&
 		!!deps.requestJudgment;
 
 	// A handoff already in flight for THIS prompt: do not re-hand-off. Wait for
@@ -515,12 +519,26 @@ export async function runWatchIteration(
 	// Fresh handoff: rules did not cover this ask, it is not high risk, a profile
 	// exists, and Pianola is reachable. Hand the decision to Pianola to judge.
 	if (handoffEligible) {
-		const profile = deps.resolveProfile!(target.projectPath);
-		if (profile) {
+		const profile = deps.resolveProfile?.(target.projectPath) ?? null;
+		const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
+		const question = relevant?.awaitingInput?.prompt ?? relevant?.content;
+		let context: string | null = null;
+		if (question?.trim() && deps.resolveContext) {
+			try {
+				context = await deps.resolveContext(question, target.projectPath);
+			} catch (error) {
+				deps.log(
+					`memory recall failed; continuing without advisory context: ${error instanceof Error ? error.message : String(error)}`
+				);
+			}
+		}
+		if (profile || context) {
 			const handoffDecision: PianolaDecision = {
 				action: 'escalate',
 				matchedRuleId: null,
-				reason: 'handed off to Pianola for profile-based judgment',
+				reason: profile
+					? 'handed off to Pianola for profile-based judgment'
+					: 'handed off to Pianola for memory-based judgment',
 			};
 			// Audit the intent BEFORE the side effect, mirroring the auto-answer path,
 			// so a handoff is never sent without an audit trail. Intent and outcome
@@ -533,11 +551,11 @@ export async function runWatchIteration(
 			});
 			deps.recordDecision(intent); // throws here => no handoff
 
-			const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
 			const res = await deps.requestJudgment!({
 				target,
 				classification,
 				profile,
+				context: context ?? undefined,
 				promptText: relevant?.awaitingInput?.prompt ?? relevant?.content,
 				options: relevant?.awaitingInput?.options,
 				turnContext: messages.slice(

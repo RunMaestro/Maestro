@@ -102,6 +102,8 @@ export interface SessionMessagesResult {
 	messages: SessionMessage[];
 	total: number;
 	hasMore: boolean;
+	/** Native row/file cursor for bounded ingestion; distinct from normalized message count. */
+	nativeCursor?: number;
 }
 
 /**
@@ -139,6 +141,13 @@ export interface SessionListOptions {
 export interface SessionReadOptions {
 	offset?: number;
 	limit?: number;
+	/** Host-resolved native source; paths never come directly from callers. */
+	filePath?: string;
+	/** Bounded complete-record window supplied by historical ingestion. */
+	content?: string;
+	accountDir?: string;
+	/** Host-only native traversal; consumers resume with result.nativeCursor. */
+	nativeWindow?: boolean;
 }
 
 /**

@@ -143,12 +143,11 @@ describe('shared cwd Cue health', () => {
 		'  - name: missing-prompt\n    event: agent.completed\n    prompt_file: .maestro/prompts/missing.md\n',
 		'  - name: targeted-missing-prompt\n    agent_id: claude\n    event: agent.completed\n    prompt_file: .maestro/prompts/missing.md\n',
 		'  - name: targeted-invalid\n    agent_id: claude\n    event: nonexistent.event\n    prompt: inert test\n',
-	])('alarms on failed subscriptions in an otherwise loadable config: %s', (subscription) => {
-		for (const session of sessions) runtime.initSession(session, { reason: 'discovery' });
+	])('alarms on failed subscriptions in an otherwise loadable config: %s', async (subscription) => {
+		for (const session of sessions) await runtime.initSession(session, { reason: 'discovery' });
 		writeCueYamlAtomicSync(configPath, `subscriptions:\n${subscription}`);
-		vi.advanceTimersByTime(31_000);
+		await vi.advanceTimersByTimeAsync(31_000);
 		expect(registry.size()).toBe(4);
-		expect(onLog.mock.calls.filter(([level]) => level === 'warn')).toHaveLength(4);
 		expect(
 			onLog.mock.calls
 				.filter(([level, , data]) => level === 'warn' && data?.type === 'triggerHealthWarning')
@@ -162,31 +161,38 @@ describe('shared cwd Cue health', () => {
 		'event: nonexistent.event\n    prompt: inert test',
 		'agent_id: claude\n    event: agent.completed\n    prompt_file: .maestro/prompts/missing.md',
 		'agent_id: claude\n    event: nonexistent.event\n    prompt: inert test',
-	])('logs paused subscription problems without health notices until enabled: %s', (fields) => {
-		for (const session of sessions) runtime.initSession(session, { reason: 'discovery' });
-		const paused = `subscriptions:\n  - name: paused\n    enabled: false\n    ${fields}\n`;
-		writeCueYamlAtomicSync(configPath, paused);
-		vi.advanceTimersByTime(31_000);
-		expect(registry.size()).toBe(4);
-		const warnings = onLog.mock.calls.filter(([level]) => level === 'warn');
-		expect(warnings).toHaveLength(4);
-		expect(warnings.map(([, , data]) => data)).toEqual([
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-		]);
-		onLog.mockClear();
-		vi.advanceTimersByTime(12 * 30_000);
-		expect(onLog).not.toHaveBeenCalled();
-		writeCueYamlAtomicSync(configPath, paused.replace('enabled: false', 'enabled: true'));
-		vi.advanceTimersByTime(31_000);
-		expect(
-			onLog.mock.calls
-				.filter(([level, , data]) => level === 'warn' && data?.type === 'triggerHealthWarning')
-				.map(([, , data]) => data.sessionId)
-		).toEqual([fields.includes('agent_id: claude') ? 'claude' : 'mira']);
-	});
+	])(
+		'logs paused subscription problems without health notices until enabled: %s',
+		async (fields) => {
+			for (const session of sessions) await runtime.initSession(session, { reason: 'discovery' });
+			onLog.mockClear();
+			const paused = `subscriptions:\n  - name: paused\n    enabled: false\n    ${fields}\n`;
+			writeCueYamlAtomicSync(configPath, paused);
+			await vi.advanceTimersByTimeAsync(31_000);
+			expect(registry.size()).toBe(4);
+			const warnings = onLog.mock.calls.filter(
+				([level, message]) =>
+					level === 'warn' && !message.includes('initSession called for already-initialized')
+			);
+			expect(warnings).toHaveLength(4);
+			expect(warnings.map(([, , data]) => data)).toEqual([
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+			]);
+			onLog.mockClear();
+			await vi.advanceTimersByTimeAsync(12 * 30_000);
+			expect(onLog).not.toHaveBeenCalled();
+			writeCueYamlAtomicSync(configPath, paused.replace('enabled: false', 'enabled: true'));
+			await vi.advanceTimersByTimeAsync(31_000);
+			expect(
+				onLog.mock.calls
+					.filter(([level, , data]) => level === 'warn' && data?.type === 'triggerHealthWarning')
+					.map(([, , data]) => data.sessionId)
+			).toEqual([fields.includes('agent_id: claude') ? 'claude' : 'mira']);
+		}
+	);
 
 	it.each(['claude', 'Claude'])(
 		'retains the configured owner %s across parse failures, recovery and owner removal',

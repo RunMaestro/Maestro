@@ -15,7 +15,7 @@ import type {
 } from '../../../shared/pianola/types';
 import { generateId } from '../../utils/ids';
 
-export type PianolaTab = 'decisions' | 'rules' | 'suggestions';
+export type PianolaTab = 'decisions' | 'rules' | 'suggestions' | 'memory';
 export type DecisionFilter = 'all' | 'escalate' | 'auto_answer';
 
 export const ACTION_META: Record<

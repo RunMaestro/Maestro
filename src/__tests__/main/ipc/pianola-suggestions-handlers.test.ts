@@ -9,6 +9,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAsActingUser } from '../../../main/web-server/auth/acting-user';
 import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
 import type { PianolaRule } from '../../../shared/pianola/types';
+import type { PianolaAsk, PianolaProgram } from '../../../shared/pianola/pianola-programs';
+import type { PianolaPlan, PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 import type { PianolaSuggestionsFile } from '../../../shared/pianola/storage';
 
 describe('owner identity own-property semantics', () => {
@@ -60,9 +62,30 @@ const store = vi.hoisted(() => ({
 	readRulesResult: vi.fn(() => ({ rules: [] as PianolaRule[], malformed: false })),
 	writeRules: vi.fn((rules: PianolaRule[]) => rules),
 	readDecisions: vi.fn(() => []),
-	readSupervisorTargets: vi.fn(() => []),
-	upsertSupervisorTarget: vi.fn(),
-	removeSupervisorTarget: vi.fn(),
+	readSupervisorTargets: vi.fn(() => [] as PianolaSupervisedTarget[]),
+	writeSupervisorTargetsAsync: vi.fn(async (targets: PianolaSupervisedTarget[]) => targets),
+	updateSupervisorTargetsAsync: vi.fn(
+		async (update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]) => update([])
+	),
+	readPlans: vi.fn(() => [] as PianolaPlan[]),
+	updatePlansAsync: vi.fn(),
+	withPlanLock: vi.fn((_planId: string, operation: () => Promise<unknown>) => operation()),
+	readAsks: vi.fn(() => [] as PianolaAsk[]),
+	writeAsksAsync: vi.fn(async (asks: PianolaAsk[]) => asks),
+	updateAsksAsync: vi.fn(async (update: (asks: PianolaAsk[]) => PianolaAsk[]) => update([])),
+	upsertSupervisorTargetAsync: vi.fn(async () => [] as PianolaSupervisedTarget[]),
+	removeSupervisorTargetAsync: vi.fn(async () => [] as PianolaSupervisedTarget[]),
+	readPrograms: vi.fn(
+		() => [] as Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
+	),
+	updateProgramsAsync:
+		vi.fn<
+			(
+				update: (
+					programs: Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
+				) => Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
+			) => Promise<Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]>
+		>(),
 	readSuggestions: vi.fn(() => ({
 		generatedAt: 0,
 		pairCount: 0,
@@ -106,6 +129,18 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	store.readRulesResult.mockReturnValue({ rules: [], malformed: false });
 	store.writeRules.mockImplementation((rules: PianolaRule[]) => rules);
+	store.readSupervisorTargets.mockReturnValue([]);
+	store.readPlans.mockReturnValue([]);
+	store.updatePlansAsync.mockImplementation(async (update) => update(store.readPlans()));
+	store.readAsks.mockReturnValue([]);
+	store.readPrograms.mockReturnValue([]);
+	store.updateProgramsAsync.mockImplementation(async (update) => update(store.readPrograms()));
+	store.updateAsksAsync.mockImplementation(async (update) => update([]));
+	store.writeAsksAsync.mockImplementation(async (asks) => asks);
+	store.writeSupervisorTargetsAsync.mockImplementation(async (targets) => targets);
+	store.updateSupervisorTargetsAsync.mockImplementation(async (update) =>
+		update(store.readSupervisorTargets())
+	);
 	store.readSuggestions.mockReset();
 	store.readSuggestions.mockReturnValue({
 		generatedAt: 0,
@@ -204,6 +239,260 @@ describe('pianola suggestions IPC handlers', () => {
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
 		await handlers.get('pianola:apply-suggestion')!({}, { profile: { text: 'new profile' } });
 		expect(store.writeSuggestions).not.toHaveBeenCalled();
+	});
+});
+describe('program controls IPC', () => {
+	it('pauses the latest locked program without overwriting a concurrent manifest apply', async () => {
+		const original = {
+			id: 'product',
+			status: 'active' as const,
+			updatedAt: 1,
+			title: 'Old',
+			root: '/old',
+		};
+		store.readPrograms.mockReturnValue([original]);
+		let saved: (Omit<typeof original, 'status'> & { status: 'active' | 'paused' })[] = [
+			{ ...original, title: 'New', root: '/new' },
+		];
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		store.updateProgramsAsync.mockImplementation(async (update) => {
+			await gate;
+			return (saved = update(saved) as typeof saved);
+		});
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const pending = handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
+		await Promise.resolve();
+		expect(saved[0].status).toBe('active');
+		release();
+		await pending;
+		expect(saved[0]).toMatchObject({ status: 'paused', title: 'New', root: '/new' });
+	});
+	it('toggles the latest locked target without overwriting a concurrent tab rebind', async () => {
+		const original: PianolaSupervisedTarget = {
+			id: 'watch',
+			kind: 'watch',
+			agentId: 'lead',
+			tabId: 'old',
+			enabled: true,
+			createdAt: 1,
+		};
+		let saved = [{ ...original, tabId: 'new' }];
+		store.readSupervisorTargets.mockReturnValue([original]);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		store.updateSupervisorTargetsAsync.mockImplementation(async (update) => {
+			await gate;
+			return (saved = update(saved) as typeof saved);
+		});
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const pending = handlers.get('pianola:supervisor-set-enabled')!({}, 'watch', false);
+		await Promise.resolve();
+		expect(store.updateSupervisorTargetsAsync).toHaveBeenCalledOnce();
+		expect(supervisor.reconcile).not.toHaveBeenCalled();
+		expect(saved[0].enabled).toBe(true);
+		release();
+		await pending;
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
+		expect(saved).toEqual([{ ...original, tabId: 'new', enabled: false }]);
+	});
+	it('pauses and restores only the program orchestrator and lead watch', async () => {
+		store.readPrograms.mockReturnValue([
+			{ id: 'product', status: 'active', leadAgentId: 'lead', updatedAt: 1 },
+		]);
+		store.readPlans.mockReturnValue([
+			{ id: 'plan', programId: 'product', title: 'Plan', createdAt: 1, tasks: [] },
+		]);
+		let targets: PianolaSupervisedTarget[] = [
+			{ id: 'orchestrator', kind: 'orchestrate', planId: 'plan', enabled: false, createdAt: 1 },
+			{ id: 'watch', kind: 'watch', agentId: 'lead', tabId: 'tab', enabled: true, createdAt: 1 },
+			{ id: 'other', kind: 'orchestrate', planId: 'other', enabled: true, createdAt: 1 },
+		];
+		store.readSupervisorTargets.mockImplementation(() => targets);
+		store.writeSupervisorTargetsAsync.mockImplementation(async (next) => (targets = next));
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
+		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
+		expect(targets.map((target) => target.enabled)).toEqual([false, true, true]);
+		await handlers.get('pianola:set-program-status')!({}, 'product', 'active');
+		expect(targets.map((target) => target.enabled)).toEqual([false, true, true]);
+		expect(supervisor.reconcile).toHaveBeenCalledTimes(3);
+	});
+	it.each(['pianola:resolve-ask', 'pianola:dismiss-ask'])(
+		'preserves asks raised before the mutation lock is acquired: %s',
+		async (channel) => {
+			const original: PianolaAsk = {
+				id: 'original',
+				title: 'Approval',
+				detail: 'Proceed?',
+				severity: 'high',
+				status: 'open',
+				dedupeKey: 'lead:product',
+				createdAt: '2026-10-01T00:00:00Z',
+				updatedAt: '2026-10-01T00:00:00Z',
+			};
+			const concurrent = { ...original, id: 'concurrent', dedupeKey: 'other:product' };
+			store.readAsks.mockReturnValue([original]);
+			let saved = [original, concurrent];
+			store.writeAsksAsync.mockImplementation(async (asks) => (saved = asks));
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			store.updateAsksAsync.mockImplementation(async (update) => {
+				await gate;
+				return (saved = update(saved));
+			});
+			registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+			let settled = false;
+			const pending = Promise.resolve(
+				handlers.get(channel)!({}, 'original', 'Proceed', 'Approved')
+			);
+			const outcome = pending.then(
+				(value) => {
+					settled = true;
+					return value as PianolaAsk;
+				},
+				(error: unknown) => {
+					settled = true;
+					return error;
+				}
+			);
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(store.updateAsksAsync).toHaveBeenCalledOnce();
+			expect(settled).toBe(false);
+			expect(saved[0].status).toBe('open');
+			release();
+			const result = (await outcome) as PianolaAsk;
+			expect(result.status).toBe(channel === 'pianola:resolve-ask' ? 'resolved' : 'dismissed');
+			expect(saved).toEqual([result, concurrent]);
+		}
+	);
+	it('supervises a known program through the locked target update path', async () => {
+		store.readPrograms.mockReturnValue([{ id: 'product', status: 'active', updatedAt: 1 }]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await handlers.get('pianola:supervise-program')!({}, 'product');
+		expect(store.updateSupervisorTargetsAsync).toHaveBeenCalledOnce();
+		expect(await store.updateSupervisorTargetsAsync.mock.results[0].value).toEqual([
+			expect.objectContaining({
+				kind: 'program',
+				programId: 'product',
+				enabled: true,
+				intervalSeconds: 120,
+			}),
+		]);
+		expect(supervisor.reconcile).toHaveBeenCalled();
+		await expect(handlers.get('pianola:supervise-program')!({}, 'missing')).rejects.toThrow(
+			'InvalidProgramId'
+		);
+	});
+	it('pauses only the selected program and rejects invalid status', async () => {
+		// Assertions below inspect the transaction result, not a pre-lock replacement write.
+		store.readPrograms.mockReturnValue([
+			{ id: 'product', status: 'active', updatedAt: 1 },
+			{ id: 'other', status: 'active', updatedAt: 1 },
+		]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
+		expect(await store.updateProgramsAsync.mock.results[0].value).toEqual([
+			expect.objectContaining({ id: 'product', status: 'paused' }),
+			{ id: 'other', status: 'active', updatedAt: 1 },
+		]);
+		await expect(
+			handlers.get('pianola:set-program-status')!({}, 'product', 'invalid')
+		).rejects.toThrow('InvalidProgramStatus');
+	});
+});
+
+describe('failed task recovery IPC', () => {
+	const failedPlan: PianolaPlan = {
+		id: 'plan-1',
+		title: 'Recovery',
+		createdAt: 1,
+		tasks: [
+			{
+				id: 'task-1',
+				title: 'Broken deploy',
+				prompt: 'Deploy the service',
+				dependsOn: [],
+				status: 'failed',
+				runId: 'run-old',
+				error: 'exit 1',
+			},
+			{
+				id: 'task-2',
+				title: 'Notify',
+				prompt: 'Notify the team',
+				dependsOn: ['task-1'],
+				status: 'pending',
+			},
+		],
+	};
+
+	it('restarts a failed task with its original instructions', async () => {
+		store.readPlans.mockReturnValue([failedPlan]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const result = (await handlers.get('pianola:revise-plan-task')!(
+			{},
+			'plan-1',
+			'task-1'
+		)) as PianolaPlan;
+		expect(result.tasks[0]).toMatchObject({ status: 'pending', prompt: 'Deploy the service' });
+		expect(result.tasks[0].runId).toEqual(expect.any(String));
+		expect(result.tasks[0].runId).not.toBe('run-old');
+		expect(store.withPlanLock).toHaveBeenCalledWith('plan-1', expect.any(Function), {
+			waitForTurn: true,
+		});
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
+	});
+
+	it('accepts replacement instructions for a revision', async () => {
+		store.readPlans.mockReturnValue([failedPlan]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const result = (await handlers.get('pianola:revise-plan-task')!(
+			{},
+			'plan-1',
+			'task-1',
+			'Deploy to staging first'
+		)) as PianolaPlan;
+		expect(result.tasks[0].prompt).toBe('Deploy to staging first');
+	});
+
+	it('skips failed work and leaves its dependents blocked', async () => {
+		store.readPlans.mockReturnValue([failedPlan]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const result = (await handlers.get('pianola:skip-plan-task')!(
+			{},
+			'plan-1',
+			'task-1'
+		)) as PianolaPlan;
+		expect(result.tasks.map((task) => [task.id, task.status])).toEqual([
+			['task-1', 'skipped'],
+			['task-2', 'blocked'],
+		]);
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
+	});
+
+	it('rejects skipping active work and gates both mutations when disabled', async () => {
+		store.readPlans.mockReturnValue([
+			{ ...failedPlan, tasks: [{ ...failedPlan.tasks[0], status: 'running' }] },
+		]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await expect(handlers.get('pianola:skip-plan-task')!({}, 'plan-1', 'task-1')).rejects.toThrow(
+			'Only failed tasks can be skipped.'
+		);
+		registerPianolaHandlers({ settingsStore: settingsStore(false), supervisor });
+		await expect(handlers.get('pianola:revise-plan-task')!({}, 'plan-1', 'task-1')).rejects.toThrow(
+			'PianolaDisabled'
+		);
+		await expect(handlers.get('pianola:skip-plan-task')!({}, 'plan-1', 'task-1')).rejects.toThrow(
+			'PianolaDisabled'
+		);
 	});
 });
 

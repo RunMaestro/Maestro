@@ -130,7 +130,7 @@ function extractText(content: OmpContentBlock[] | string | undefined, role?: str
 	// or an assistant quotation. Keep the payload intact, including nested tags.
 	if (role === 'user') {
 		const promptFile =
-			/^<file name="[^"\r\n]*[\\/]maestro-prompt-[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\.txt">\r?\n([\s\S]*?)\r?\n<\/file>\r?\n?$/i.exec(
+			/^<file name="[^"\r\n]*[\\/]maestro-prompt-(?:\d+-\d+-)?[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\.(?:txt|md)">\r?\n([\s\S]*?)\r?\n<\/file>\r?\n?$/i.exec(
 				text
 			);
 		if (promptFile) return promptFile[1];
@@ -165,17 +165,20 @@ function normalizeCost(cost: OmpUsage['cost']): number {
 export class OmpSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'omp';
 
-	private async parseTranscript(filePath: string): Promise<OmpTranscript | null> {
+	private async parseTranscript(
+		filePath: string,
+		suppliedContent?: string
+	): Promise<OmpTranscript | null> {
 		let raw: string;
 		try {
 			const stat = await fs.stat(filePath);
-			if (stat.size > MAX_SESSION_FILE_SIZE) {
+			if (suppliedContent === undefined && stat.size > MAX_SESSION_FILE_SIZE) {
 				logger.warn(`Skipping oversized omp transcript: ${filePath}`, LOG_CONTEXT, {
 					size: stat.size,
 				});
 				return null;
 			}
-			raw = await fs.readFile(filePath, 'utf-8');
+			raw = suppliedContent ?? (await fs.readFile(filePath, 'utf-8'));
 		} catch (error) {
 			logger.debug(`Failed to read omp transcript: ${filePath}`, LOG_CONTEXT, { error });
 			return null;
@@ -391,10 +394,10 @@ export class OmpSessionStorage extends BaseSessionStorage {
 			return { messages: [], total: 0, hasMore: false };
 		}
 
-		const filePath = await this.findTranscriptPath(projectPath, sessionId);
+		const filePath = options?.filePath ?? (await this.findTranscriptPath(projectPath, sessionId));
 		if (!filePath) return { messages: [], total: 0, hasMore: false };
 
-		const transcript = await this.parseTranscript(filePath);
+		const transcript = await this.parseTranscript(filePath, options?.content);
 		if (!transcript) return { messages: [], total: 0, hasMore: false };
 
 		const messages: SessionMessage[] = [];

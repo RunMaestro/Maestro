@@ -230,6 +230,37 @@ describe('usePipelinePersistence', () => {
 		vi.useRealTimers();
 		__resetPendingEditsRegistryForTests();
 	});
+	it('partitions saves by verified mount roots even when remote project paths are identical', async () => {
+		const roots = ['/mnt/one/home/dev/app', '/mnt/two/home/dev/app'];
+		const h = setup({
+			pipelines: ['Alpha', 'Beta'].map((name, i) =>
+				pipeline(
+					'p-' + i,
+					name,
+					[triggerNode('t' + i), agentNode('a' + i, name)],
+					[{ id: 'e' + i, source: 't' + i, target: 'a' + i }]
+				)
+			),
+			sessions: ['Alpha', 'Beta'].map((name, i) => ({
+				id: 'session-' + name,
+				name,
+				toolType: 'claude-code',
+				projectRoot: roots[i],
+			})),
+		});
+		await act(async () => {
+			await h.result.current.handleSave();
+		});
+		expect(mockWriteYaml).toHaveBeenCalledTimes(2);
+		for (const root of roots) {
+			expect(mockWriteYaml).toHaveBeenCalledWith(root, expect.any(String), expect.any(Object));
+		}
+		expect(mockWriteYaml).not.toHaveBeenCalledWith(
+			'/home/dev/app',
+			expect.anything(),
+			expect.anything()
+		);
+	});
 
 	describe('handleSave - Fix #1 settings-loaded gate', () => {
 		it('returns early with warning toast when settingsLoaded=false', async () => {

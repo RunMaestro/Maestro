@@ -6,7 +6,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildCueTemplateContext } from '../../../main/cue/cue-template-context-builder';
+import {
+	buildCueTemplateContext,
+	projectCueEventPaths,
+} from '../../../main/cue/cue-template-context-builder';
+import { substituteTemplateVariables } from '../../../shared/templateVariables';
 import type { CueEvent, CueSubscription } from '../../../main/cue/cue-types';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -33,6 +37,41 @@ function createSubscription(overrides: Partial<CueSubscription> = {}): CueSubscr
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
+describe('host-mounted file and task execution templates', () => {
+	it.each(['file.changed', 'task.pending'] as const)('projects all path fields for %s', (type) => {
+		const event = createEvent({
+			type,
+			payload: {
+				path: '/mnt/box/home/dev/app/tasks.md',
+				directory: '/mnt/box/home/dev/app',
+				filename: 'tasks.md',
+				taskList: 'L1: work',
+				taskCount: 1,
+			},
+		});
+		const projected = projectCueEventPaths(event, { id: 'box', hostMountRoot: '/mnt/box' });
+		const cue = buildCueTemplateContext(projected, createSubscription({ event: type }), 'run');
+		const template =
+			'{{CUE_FILE_PATH}} {{CUE_FILE_DIR}}' +
+			(type === 'task.pending' ? ' {{CUE_TASK_FILE}} {{CUE_TASK_FILE_DIR}}' : '');
+		expect(
+			substituteTemplateVariables(template, {
+				session: { id: 'remote', name: 'Remote', toolType: 'claude-code', cwd: '/home/dev/app' },
+				cue,
+			})
+		).toBe(
+			'/home/dev/app/tasks.md /home/dev/app' +
+				(type === 'task.pending' ? ' /home/dev/app/tasks.md /home/dev/app' : '')
+		);
+		expect(event.payload.path).toBe('/mnt/box/home/dev/app/tasks.md');
+		expect(projected.payload.taskList).toBe('L1: work');
+	});
+	it('leaves non-file events and unmounted sessions unchanged', () => {
+		const event = createEvent({ type: 'agent.completed', payload: { path: '/mnt/box/report' } });
+		expect(projectCueEventPaths(event, { id: 'box', hostMountRoot: '/mnt/box' })).toBe(event);
+		expect(projectCueEventPaths(createEvent(), { id: 'box' }).payload).toEqual({});
+	});
+});
 
 describe('cue-template-context-builder', () => {
 	describe('base enricher (all event types)', () => {

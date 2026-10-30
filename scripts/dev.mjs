@@ -117,10 +117,16 @@ try {
 }
 
 const cdpPort = process.env.MAESTRO_CDP_PORT;
+const inspectPort = process.env.MAESTRO_MAIN_INSPECT_PORT;
 const mainArgs = ['run', mainScript];
+if (cdpPort || inspectPort) mainArgs.push('--');
 if (cdpPort) {
-	mainArgs.push('--', `--remote-debugging-port=${cdpPort}`);
+	mainArgs.push(`--remote-debugging-port=${cdpPort}`);
 	console.log(`[dev] Electron CDP enabled on port ${cdpPort}`);
+}
+if (inspectPort) {
+	mainArgs.push(`--inspect=${inspectPort}`);
+	console.log(`[dev] Main-process inspector enabled on port ${inspectPort}`);
 }
 
 main = spawnNpm(mainArgs, {

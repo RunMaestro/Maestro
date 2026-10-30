@@ -61,7 +61,7 @@ const METHODS: Record<string, string> = {
 	parquet: 'close export open query',
 	permission: 'respond',
 	pianola:
-		'apply-suggestion get-decisions get-rules get-suggestions resolve-decision review-suggestion save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
+		'apply-suggestion dismiss-ask get-asks get-brief get-decisions get-programs get-rules get-suggestions memory resolve-ask resolve-decision review-suggestion revise-plan-task save-rules set-program-status skip-plan-task supervise-program supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:

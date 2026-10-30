@@ -40,6 +40,7 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
 import { describeTurnSettings } from '../../shared/autorunTurnSettings';
+import { projectCueEventPaths } from './cue-template-context-builder';
 
 /** What `CueEngine` hands its `onCueRun` dependency for one run. */
 export type OnCueRunParams = Parameters<CueEngineDeps['onCueRun']>[0];
@@ -53,7 +54,11 @@ export interface CueRunSessionRecord {
 	projectRoot?: string;
 	fullPath?: string;
 	autoRunFolderPath?: string;
-	sessionSshRemoteConfig?: { enabled: boolean; remoteId: string | null };
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -150,8 +155,17 @@ export async function executeCueRunAction(
 		});
 	if (isLaunchCancelled(signal)) return stoppedResult();
 
+	const ssh = storedSession.sessionSshRemoteConfig;
 	const projectRoot =
-		storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
+		(ssh?.enabled && ssh.workingDirOverride) ||
+		storedSession.projectRoot ||
+		storedSession.cwd ||
+		storedSession.fullPath ||
+		os.homedir();
+	if (ssh?.enabled && (event.type === 'task.pending' || event.type === 'file.changed')) {
+		const remote = deps.sshStore.getSshRemotes().find((candidate) => candidate.id === ssh.remoteId);
+		if (remote) event = projectCueEventPaths(event, remote);
+	}
 	const templateContext: TemplateContext = {
 		session: {
 			id: storedSession.id,
@@ -415,7 +429,6 @@ export async function executeCueRunAction(
 	// the whole board goes quietly red until someone types a message. The
 	// remote id is forwarded only while SSH is enabled: a disabled config
 	// still carries its old id, and the run happened locally.
-	const ssh = storedSession.sessionSshRemoteConfig;
 	await deps.reportAuthFailure?.(
 		result,
 		storedSession.toolType,

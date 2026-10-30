@@ -416,7 +416,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				const result = await storage.readSessionMessages(
 					projectPath,
 					sessionId,
-					options,
+					options ? { offset: options.offset, limit: options.limit } : undefined,
 					sshConfig
 				);
 				logger.info(

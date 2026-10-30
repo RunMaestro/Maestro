@@ -153,20 +153,20 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should write heartbeat immediately on start', () => {
+	it('should write heartbeat immediately on start', async () => {
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
 
 		engine.stop();
 	});
 
-	it('should write heartbeat every 30 seconds', () => {
+	it('should write heartbeat every 30 seconds', async () => {
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		// Initial call
 		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
@@ -229,14 +229,14 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should reconcile when gap exceeds 2 minutes', () => {
+	it('should reconcile when gap exceeds 2 minutes', async () => {
 		// Last heartbeat was 10 minutes ago
 		const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(tenMinutesAgo);
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
 		const reconcileArgs = mockReconcileMissedTimeEvents.mock.calls[0][0];
@@ -250,13 +250,13 @@ describe('CueEngine sleep/wake detection', () => {
 
 	// A gap found at start is the engine's downtime; "Sleep detected" is kept
 	// for a gap seen while running (below).
-	it('should log a gap found at start as downtime with its duration', () => {
+	it('should log a gap found at start as downtime with its duration', async () => {
 		const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(fiveMinutesAgo);
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		expect(deps.onLog).toHaveBeenCalledWith(
 			'cue',
@@ -300,13 +300,13 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should pass session info to the reconciler', () => {
+	it('should pass session info to the reconciler', async () => {
 		const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(tenMinutesAgo);
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		const reconcileArgs = mockReconcileMissedTimeEvents.mock.calls[0][0];
 		const sessions = reconcileArgs.sessions as Map<string, unknown>;
@@ -363,13 +363,14 @@ describe('CueEngine standalone: catch-up after the host slept or paused', () => 
 		vi.useRealTimers();
 	});
 
-	it('reconciles once over the slept window when the heartbeat fires first after the jump', () => {
+	it('reconciles once over the slept window when the heartbeat fires first after the jump', async () => {
 		const engine = startEngine();
+		await vi.advanceTimersByTimeAsync(0);
 		const sleptAt = storedHeartbeat;
 		expect(sleptAt).toBe(Date.now());
 
 		jumpWallClock(10 * 60_000);
-		vi.advanceTimersByTime(30_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 
 		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
 		expect(mockReconcileMissedTimeEvents.mock.calls[0][0]).toMatchObject({
@@ -380,19 +381,20 @@ describe('CueEngine standalone: catch-up after the host slept or paused', () => 
 		// The wake restarted the heartbeat, which wrote the new time.
 		expect(storedHeartbeat).toBe(Date.now());
 
-		for (let i = 0; i < 5; i++) vi.advanceTimersByTime(30_000);
+		for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(30_000);
 		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
 
 		engine.stop();
 	});
 
-	it('logs the gap once through the engine logger', () => {
+	it('logs the gap once through the engine logger', async () => {
 		const deps = createMockDeps({ runnerMode: 'standalone' });
 		const engine = new CueEngine(deps);
 		engine.start();
+		await vi.advanceTimersByTimeAsync(0);
 
 		jumpWallClock(10 * 60_000);
-		vi.advanceTimersByTime(30_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 
 		const sleepLines = vi
 			.mocked(deps.onLog)
@@ -422,16 +424,17 @@ describe('CueEngine standalone: catch-up after the host slept or paused', () => 
 		engine.stop();
 	});
 
-	it('does nothing while a drain is in progress', () => {
-		const engine = startEngine();
+	it('does nothing while a drain is in progress', async () => {
+		const engine = new CueEngine(createMockDeps({ runnerMode: 'standalone' }));
+		await engine.start();
 		void engine.drain({ timeoutMs: 60_000 });
 		mockUpdateHeartbeat.mockClear();
 
 		jumpWallClock(10 * 60_000);
-		vi.advanceTimersByTime(30_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 
-		// The tick ran (and wrote), but the drain suppressed the catch-up.
-		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
+		// A drain suppresses both heartbeat writes and missed-event catch-up.
+		expect(mockUpdateHeartbeat).not.toHaveBeenCalled();
 		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
 		engine.forceStop();
 	});

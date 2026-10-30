@@ -57,7 +57,7 @@ describe('findProtectedPathArg', () => {
 		).not.toBeNull();
 		expect(findProtectedPathArg('fs:readFile', [pathToFileURL(inside).href], ctx)).not.toBeNull();
 		const link = path.join(userData, 'innocent-link');
-		fs.symlinkSync(store(), link);
+		fs.symlinkSync(store(), link, process.platform === 'win32' ? 'junction' : 'dir');
 		expect(
 			findProtectedPathArg('fs:writeFile', [path.join(link, 'not-yet.jsonl')], ctx)
 		).not.toBeNull();

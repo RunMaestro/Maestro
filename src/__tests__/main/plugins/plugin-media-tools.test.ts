@@ -876,8 +876,6 @@ describe('media tools boundary', () => {
 		const modelRoot = path.join(root, 'models');
 		await fs.mkdir(modelRoot);
 		await fs.writeFile(path.join(modelRoot, 'ggml-base.bin'), 'model');
-		await fs.writeFile(path.join(root, 'private'), 'secret');
-		await fs.symlink(path.join(root, 'private'), path.join(modelRoot, 'ggml-small.bin'));
 		vi.stubEnv('MAESTRO_MEDIA_MODEL_DIR', modelRoot);
 		vi.stubEnv('MAESTRO_MEDIA_FFMPEG', path.join(root, 'not-a-binary.cmd'));
 		native.paths.mockResolvedValue([]);
@@ -921,11 +919,20 @@ describe('media tools boundary', () => {
 		const modelRoot = path.join(root, 'models');
 		const alias = path.join(root, 'alias');
 		await fs.mkdir(modelRoot);
-		await fs.symlink(modelRoot, alias, 'dir');
+		await fs.symlink(modelRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
 		await fs.writeFile(path.join(modelRoot, 'ggml-base.bin'), 'model');
 		await fs.writeFile(path.join(modelRoot, 'ggml-base.en.bin'), 'model');
 		await fs.writeFile(path.join(root, 'secret'), 'secret');
-		await fs.symlink(path.join(root, 'secret'), path.join(modelRoot, 'ggml-small.bin'));
+		const escapedModel = path.join(modelRoot, 'ggml-small.bin');
+		if (process.platform === 'win32') {
+			// File symlinks require elevation; supply only their resolved destination.
+			const realpath = fs.realpath;
+			vi.spyOn(fs, 'realpath').mockImplementation((input, options) =>
+				realpath(input === escapedModel ? path.join(root, 'secret') : input, options)
+			);
+		} else {
+			await fs.symlink(path.join(root, 'secret'), escapedModel);
+		}
 		await fs.mkdir(path.join(modelRoot, 'ggml-medium.bin'));
 		expect((await resolveMediaRuntime(alias)).models).toEqual({
 			base: await fs.realpath(path.join(modelRoot, 'ggml-base.bin')),

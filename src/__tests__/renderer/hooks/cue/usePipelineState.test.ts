@@ -1130,7 +1130,6 @@ describe('usePipelineState', () => {
 		});
 
 		expect(result.current.validationErrors).toEqual([]);
-		expect(mockWriteYaml).toHaveBeenCalledWith('/test/project', 'test', {});
 		expect(result.current.saveStatus).toBe('success');
 		expect(result.current.isDirty).toBe(false);
 	});

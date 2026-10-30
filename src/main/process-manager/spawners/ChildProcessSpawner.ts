@@ -2,9 +2,7 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as os from 'os';
-import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -18,7 +16,12 @@ import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder
 import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
-import { saveImageToTempFile, buildImagePromptPrefix, cleanupTempFiles } from '../utils/imageUtils';
+import {
+	saveImageToTempFile,
+	savePromptToTempFile,
+	buildImagePromptPrefix,
+	cleanupTempFiles,
+} from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
 import { isPowerShellShell } from '../utils/shellEscape';
@@ -55,6 +58,9 @@ const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
 	'batch-file': '[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
 	'shebang-script': '[ProcessManager] Auto-enabling shell for Windows to execute shell script',
 };
+
+/** Prompts longer than this go through a file on Windows; well under PowerShell's ~32K argv cap. */
+const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -102,6 +108,7 @@ export class ChildProcessSpawner {
 			imageArgs,
 			imagePromptBuilder,
 			promptArgs,
+			promptFileArgs,
 			contextWindow,
 			ompModelCatalogKey,
 			customEnvVars,
@@ -140,6 +147,31 @@ export class ChildProcessSpawner {
 		// inside bash -c), skip the appending paths below and treat it as already-added.
 		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
+		const deliverPromptFile = promptFileArgs ?? getAgentDefinition(toolType)?.promptFileArgs;
+		const appendPromptArgs = (text: string): void => {
+			// File-backed delivery avoids Windows' argv limit, including image turns.
+			const promptFilePath =
+				isWindows() && deliverPromptFile && text.length > PROMPT_FILE_THRESHOLD_CHARS
+					? savePromptToTempFile(text)
+					: null;
+			if (promptFilePath && deliverPromptFile) {
+				tempFiles.push(promptFilePath);
+				finalArgs = [...finalArgs, ...deliverPromptFile(promptFilePath)];
+				logger.info(
+					'[ProcessManager] Delivering long prompt through a temp file',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						promptLength: text.length,
+					}
+				);
+			} else {
+				finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, text)];
+			}
+			promptAddedToArgs = true;
+		};
+
 		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 			// For agents that support stream-json input (like Claude Code)
 			// Always add --input-format stream-json when sending images via stdin.
@@ -174,11 +206,7 @@ export class ChildProcessSpawner {
 					: buildImagePromptPrefix(tempFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
-					finalArgs = [
-						...finalArgs,
-						...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
-					];
-					promptAddedToArgs = true;
+					appendPromptArgs(effectivePrompt);
 				}
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
 					sessionId,
@@ -196,8 +224,7 @@ export class ChildProcessSpawner {
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
-					finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-					promptAddedToArgs = true;
+					appendPromptArgs(prompt);
 				}
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
 					sessionId,
@@ -207,11 +234,8 @@ export class ChildProcessSpawner {
 				});
 			}
 		} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
-			// Regular batch mode - prompt as CLI arg
-			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
-			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-			promptAddedToArgs = true;
+			finalArgs = args;
+			appendPromptArgs(prompt);
 		} else {
 			finalArgs = args;
 		}
@@ -257,29 +281,6 @@ export class ChildProcessSpawner {
 		});
 
 		try {
-			// OMP expands @file attachments, including on resume. Keep its full prompt
-			// out of the Windows command line without assuming stdin support.
-			const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
-			if (
-				isWindows() &&
-				effectivePrompt &&
-				promptAddedToArgs &&
-				promptFileArgs &&
-				!config.sshStdinScript &&
-				!config.promptAlreadyInArgs
-			) {
-				const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
-				tempFiles.push(promptFile);
-				fs.writeFileSync(promptFile, effectivePrompt, {
-					encoding: 'utf8',
-					mode: 0o600,
-					flag: 'wx',
-				});
-				// `--` makes OMP treat @file as a literal message, not an attachment.
-				const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
-				finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
-			}
-
 			// Build environment
 			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
@@ -709,6 +710,7 @@ export class ChildProcessSpawner {
 							stdinError: undefined,
 						};
 				if (isSuperseded()) {
+					// Release only this generation's files, never the current map entry's.
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
 						pid: childProcess.pid,
@@ -716,6 +718,7 @@ export class ChildProcessSpawner {
 						error: exit.spawnError ? String(exit.spawnError) : undefined,
 					});
 					cleanupTempFiles(managedProcess.tempFiles ?? []);
+					managedProcess.tempFiles = undefined;
 					return;
 				}
 				if (exit.spawnError) {
@@ -822,11 +825,11 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
+			cleanupTempFiles(tempFiles);
 			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});
-			cleanupTempFiles(tempFiles);
 			return {
 				pid: -1,
 				success: false,

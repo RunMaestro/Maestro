@@ -854,9 +854,23 @@ const mockMaestro = {
 	},
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: {
+		memory: vi.fn().mockResolvedValue(undefined),
 		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),
 		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
 		getDecisions: vi.fn().mockResolvedValue([]),
+		getPrograms: vi.fn().mockResolvedValue([]),
+		getAsks: vi.fn().mockResolvedValue([]),
+		resolveAsk: vi.fn().mockResolvedValue(undefined),
+		dismissAsk: vi.fn().mockResolvedValue(undefined),
+		getBrief: vi.fn().mockResolvedValue({
+			generatedAt: '',
+			needsMe: [],
+			inFlight: [],
+			verified: [],
+			programs: [],
+		}),
+		superviseProgram: vi.fn().mockResolvedValue(undefined),
+		setProgramStatus: vi.fn().mockResolvedValue(undefined),
 		getSuggestions: vi.fn().mockResolvedValue({
 			generatedAt: 0,
 			pairCount: 0,

@@ -2,9 +2,8 @@
  * @file HoverTooltip.test.tsx
  * @description Tests for the portaled hover tooltip.
  *
- * The behavior under test is the `maxWidth` mode: a tooltip carrying a full
- * sentence has to wrap and stay inside the window, where the default single-line
- * mode would run a sentence off the edge of the screen.
+ * Every tooltip must remain inside the viewport. Callers may use `maxWidth`
+ * to request a narrower wrapping boundary, but not to exceed the viewport cap.
  */
 
 import React from 'react';
@@ -20,19 +19,39 @@ function open(ui: React.ReactElement) {
 }
 
 describe('HoverTooltip', () => {
-	it('keeps a short label on one line by default', () => {
+	it('keeps every tooltip within the viewport by default', () => {
+		const original = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { value: 200, configurable: true });
+		try {
+			const tip = open(
+				<HoverTooltip
+					theme={mockTheme}
+					label="A default tooltip can contain enough text to exceed the available viewport width."
+				>
+					<span>trigger</span>
+				</HoverTooltip>
+			);
+
+			expect(tip.className).not.toContain('whitespace-nowrap');
+			expect(tip.style.maxWidth).toBe('184px');
+		} finally {
+			Object.defineProperty(window, 'innerWidth', { value: original, configurable: true });
+		}
+	});
+
+	it('preserves the single-line label alignment and line height with a nonshrinking shortcut', () => {
 		const tip = open(
-			<HoverTooltip theme={mockTheme} label="Short">
+			<HoverTooltip theme={mockTheme} label="Run" shortcut="Ctrl+Enter">
 				<span>trigger</span>
 			</HoverTooltip>
 		);
-
-		expect(tip.className).toContain('whitespace-nowrap');
-		expect(tip.style.maxWidth).toBe('');
+		expect(tip.className).toContain('items-center');
+		expect(tip.className).not.toContain('leading-snug');
+		expect(screen.getByText('Ctrl+Enter').className).toContain('shrink-0');
 	});
 
-	// A sentence-length label in nowrap mode becomes a ribbon as wide as the text,
-	// which the viewport clamp can only slide around, not shrink.
+	// Sentence-length labels must wrap; position clamping alone cannot keep a
+	// non-wrapping tooltip inside the viewport.
 	it('wraps and caps its width when given a maxWidth', () => {
 		const tip = open(
 			<HoverTooltip

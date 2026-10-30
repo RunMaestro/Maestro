@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
+const mockWsConstructor = vi.fn();
 // Track WebSocket instances created
 let mockWsInstance: EventEmitter & {
 	close: ReturnType<typeof vi.fn>;
@@ -28,8 +29,9 @@ vi.mock('ws', async () => {
 		send = vi.fn();
 		readyState = WS_OPEN;
 		static OPEN = WS_OPEN;
-		constructor() {
+		constructor(url: string, options?: unknown) {
 			super();
+
 			mockWsInstance = this as unknown as typeof mockWsInstance;
 		}
 	}

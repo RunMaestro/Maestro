@@ -107,6 +107,8 @@ vi.mock('crypto', () => ({
 const mockReadCueConfigFile =
 	vi.fn<(projectRoot: string) => { filePath: string; raw: string } | null>();
 const mockWriteCueConfigFile = vi.fn<(projectRoot: string, content: string) => string>();
+// Null means "fall through to the real resolver" (file absent in tests).
+const mockResolveCueConfigPath = vi.fn<(projectRoot: string) => string | null>(() => null);
 vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 	const actual = await vi.importActual<
 		typeof import('../../../main/cue/config/cue-config-repository')
@@ -116,6 +118,8 @@ vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 		readCueConfigFile: (projectRoot: string) => mockReadCueConfigFile(projectRoot),
 		writeCueConfigFile: (projectRoot: string, content: string) =>
 			mockWriteCueConfigFile(projectRoot, content),
+		resolveCueConfigPath: (projectRoot: string) =>
+			mockResolveCueConfigPath(projectRoot) ?? actual.resolveCueConfigPath(projectRoot),
 	};
 });
 
@@ -132,7 +136,7 @@ describe('CueEngine', () => {
 	let gitHubPollerCleanup: ReturnType<typeof vi.fn>;
 	let taskScannerCleanup: ReturnType<typeof vi.fn>;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 
@@ -162,31 +166,59 @@ describe('CueEngine', () => {
 	});
 
 	describe('lifecycle', () => {
-		it('starts as disabled', () => {
+		it('does not finish an obsolete start after stop and restart', async () => {
+			mockLoadCueConfig.mockReturnValue(createMockConfig());
+			const engine = new CueEngine(createMockDeps());
+			const heartbeat = vi.spyOn((engine as any).heartbeat, 'start');
+			const reconcile = vi.spyOn((engine as any).recoveryService, 'detectSleepAndReconcile');
+			const firstStart = engine.start();
+			engine.stop();
+			const secondStart = engine.start();
+			await Promise.all([firstStart, secondStart]);
+			expect(reconcile).toHaveBeenCalledTimes(1);
+			expect(heartbeat).toHaveBeenCalledTimes(1);
+			engine.stop();
+		});
+
+		it('rolls back a rejected session initialization and allows a retry', async () => {
+			mockLoadCueConfig.mockReturnValue(createMockConfig());
+			mockWatchCueYaml.mockImplementationOnce(() => {
+				throw new Error('watch failed');
+			});
+			const engine = new CueEngine(createMockDeps());
+			await expect(engine.start()).rejects.toThrow('watch failed');
+			expect(engine.isEnabled()).toBe(false);
+			expect((engine as any).registry.size()).toBe(0);
+			await engine.start();
+			expect(engine.getStatus()).toHaveLength(1);
+			engine.stop();
+		});
+
+		it('starts as disabled', async () => {
 			const engine = new CueEngine(createMockDeps());
 			expect(engine.isEnabled()).toBe(false);
 		});
 
-		it('becomes enabled after start()', () => {
+		it('becomes enabled after start()', async () => {
 			mockLoadCueConfig.mockReturnValue(null);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 			expect(engine.isEnabled()).toBe(true);
 		});
 
-		it('becomes disabled after stop()', () => {
+		it('becomes disabled after stop()', async () => {
 			mockLoadCueConfig.mockReturnValue(null);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 			engine.stop();
 			expect(engine.isEnabled()).toBe(false);
 		});
 
-		it('logs start and stop events', () => {
+		it('logs start and stop events', async () => {
 			mockLoadCueConfig.mockReturnValue(null);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			engine.stop();
 
 			expect(deps.onLog).toHaveBeenCalledWith('cue', expect.stringContaining('started'), {
@@ -197,51 +229,51 @@ describe('CueEngine', () => {
 			});
 		});
 
-		it('does not enable when initCueDb throws', () => {
+		it('does not enable when initCueDb throws', async () => {
 			mockInitCueDb.mockImplementation(() => {
 				throw new Error('DB corrupted');
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			expect(engine.isEnabled()).toBe(false);
 		});
 
-		it('logs error when initCueDb throws', () => {
+		it('logs error when initCueDb throws', async () => {
 			mockInitCueDb.mockImplementation(() => {
 				throw new Error('DB corrupted');
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'error',
 				expect.stringContaining('Failed to initialize Cue database')
 			);
 		});
 
-		it('does not initialize sessions when initCueDb throws', () => {
+		it('does not initialize sessions when initCueDb throws', async () => {
 			mockInitCueDb.mockImplementation(() => {
 				throw new Error('DB corrupted');
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			expect(mockLoadCueConfig).not.toHaveBeenCalled();
 		});
 
-		it('does not start heartbeat when initCueDb throws', () => {
+		it('does not start heartbeat when initCueDb throws', async () => {
 			mockInitCueDb.mockImplementation(() => {
 				throw new Error('DB corrupted');
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			// Engine is not enabled, so getStatus should return empty
 			expect(engine.getStatus()).toEqual([]);
 		});
 
-		it('can retry start after DB failure', () => {
+		it('can retry start after DB failure', async () => {
 			mockInitCueDb
 				.mockImplementationOnce(() => {
 					throw new Error('DB corrupted');
@@ -251,16 +283,16 @@ describe('CueEngine', () => {
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 
-			engine.start();
+			await engine.start();
 			expect(engine.isEnabled()).toBe(false);
 
-			engine.start();
+			await engine.start();
 			expect(engine.isEnabled()).toBe(true);
 		});
 	});
 
 	describe('session initialization', () => {
-		it('scans all sessions on start', () => {
+		it('scans all sessions on start', async () => {
 			const sessions = [
 				createMockSession({ id: 's1', projectRoot: '/proj1' }),
 				createMockSession({ id: 's2', projectRoot: '/proj2' }),
@@ -268,22 +300,22 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(null);
 			const deps = createMockDeps({ getSessions: vi.fn(() => sessions) });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			expect(mockLoadCueConfig).toHaveBeenCalledWith('/proj1');
 			expect(mockLoadCueConfig).toHaveBeenCalledWith('/proj2');
 		});
 
-		it('skips sessions without a cue config', () => {
+		it('skips sessions without a cue config', async () => {
 			mockLoadCueConfig.mockReturnValue(null);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			expect(engine.getStatus()).toHaveLength(0);
 		});
 
-		it('initializes sessions with valid config', () => {
+		it('initializes sessions with valid config', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -298,17 +330,17 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const status = engine.getStatus();
 			expect(status).toHaveLength(1);
 			expect(status[0].subscriptionCount).toBe(1);
 		});
 
-		it('sets up YAML file watcher for config changes', () => {
+		it('sets up YAML file watcher for config changes', async () => {
 			mockLoadCueConfig.mockReturnValue(createMockConfig());
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockWatchCueYaml).toHaveBeenCalled();
 		});
@@ -330,7 +362,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Should fire immediately
 			expect(deps.onCueRun).toHaveBeenCalledWith(
@@ -358,7 +390,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Flush microtasks to let the initial run complete and free the concurrency slot
 			await vi.advanceTimersByTimeAsync(0);
@@ -375,7 +407,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('skips disabled subscriptions', () => {
+		it('skips disabled subscriptions', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -390,13 +422,13 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			expect(deps.onCueRun).not.toHaveBeenCalled();
 			engine.stop();
 		});
 
-		it('clears timers on stop', () => {
+		it('clears timers on stop', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -411,7 +443,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			engine.stop();
@@ -422,7 +454,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('file.changed subscriptions', () => {
-		it('creates a file watcher with correct config', () => {
+		it('creates a file watcher with correct config', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -436,7 +468,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueFileWatcher).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -450,7 +482,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('cleans up file watcher on stop', () => {
+		it('cleans up file watcher on stop', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{ name: 'watch', event: 'file.changed', enabled: true, prompt: 'test', watch: '**/*.ts' },
@@ -458,7 +490,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 			engine.stop();
 
 			expect(fileWatcherCleanup).toHaveBeenCalled();
@@ -466,7 +498,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('agent.completed subscriptions', () => {
-		it('fires for single source_session match', () => {
+		it('fires for single source_session match', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -481,7 +513,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			engine.notifyAgentCompleted('agent-a');
@@ -498,7 +530,7 @@ describe('CueEngine', () => {
 			);
 		});
 
-		it('does not fire for non-matching session', () => {
+		it('does not fire for non-matching session', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -513,7 +545,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			engine.notifyAgentCompleted('agent-b');
@@ -521,7 +553,7 @@ describe('CueEngine', () => {
 			expect(deps.onCueRun).not.toHaveBeenCalled();
 		});
 
-		it('tracks fan-in completions', () => {
+		it('tracks fan-in completions', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -536,7 +568,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 
@@ -558,7 +590,7 @@ describe('CueEngine', () => {
 			);
 		});
 
-		it('resets fan-in tracker after firing', () => {
+		it('resets fan-in tracker after firing', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -573,7 +605,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 
@@ -590,7 +622,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('session management', () => {
-		it('removeSession tears down subscriptions', () => {
+		it('removeSession tears down subscriptions', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -605,7 +637,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			engine.removeSession('session-1');
 			// Session still appears in getSessions() + config still on disk → shows as dormant
@@ -615,7 +647,7 @@ describe('CueEngine', () => {
 			expect(yamlWatcherCleanup).toHaveBeenCalled();
 		});
 
-		it('refreshSession re-reads config', () => {
+		it('refreshSession re-reads config', async () => {
 			const config1 = createMockConfig({
 				subscriptions: [
 					{
@@ -648,9 +680,13 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValueOnce(config1).mockReturnValue(config2);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			const status = engine.getStatus();
 			expect(status).toHaveLength(1);
@@ -659,7 +695,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('YAML hot reload', () => {
-		it('logs "Config reloaded" with subscription count when config changes', () => {
+		it('logs "Config reloaded" with subscription count when config changes', async () => {
 			const config1 = createMockConfig({
 				subscriptions: [
 					{
@@ -692,10 +728,14 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValueOnce(config1).mockReturnValue(config2);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'cue',
@@ -704,7 +744,7 @@ describe('CueEngine', () => {
 			);
 		});
 
-		it('passes data to onLog for IPC push on config reload', () => {
+		it('passes data to onLog for IPC push on config reload', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -719,10 +759,14 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			// Verify data parameter is passed (triggers cue:activityUpdate in main process)
 			const reloadCall = (deps.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
@@ -736,7 +780,147 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('logs "Config removed" when YAML file is deleted', () => {
+		it('refreshes with the root getSessions resolves, not the root the caller passed', async () => {
+			// An SSH agent's renderer-side root is a remote path; Cue reads the remote
+			// through its host mount, which getSessions() resolves. A refresh request
+			// carrying the raw remote path must not make the engine read a path that is
+			// not there and tear the config down.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'sub',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockImplementation((projectRoot: string) =>
+				projectRoot === '\\\\wsl.localhost\\Ubuntu\\home\\dev\\app' ? config : null
+			);
+			const session = createMockSession({
+				id: 'session-1',
+				projectRoot: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\app',
+			});
+			const deps = createMockDeps({ getSessions: vi.fn(() => [session]) });
+			const engine = new CueEngine(deps);
+			await engine.start();
+			try {
+				expect(engine.getStatus()).toHaveLength(1);
+				vi.clearAllMocks();
+				{
+					const refresh = engine.refreshSession('session-1', '/home/dev/app');
+					await vi.advanceTimersByTimeAsync(450);
+					await refresh;
+				}
+				expect(engine.getStatus()).toHaveLength(1);
+				expect(deps.onLog).not.toHaveBeenCalledWith(
+					'cue',
+					expect.stringContaining('Config removed'),
+					expect.anything()
+				);
+			} finally {
+				mockLoadCueConfig.mockReset();
+				engine.stop();
+			}
+		});
+
+		it('keeps a config whose file reads as missing for an instant but is still there', async () => {
+			// A UNC or 9P root (a WSL distro) can drop one stat under load; the engine
+			// re-checks the path before it tears a previously-good config down.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'sub',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig
+				.mockReturnValueOnce(config)
+				.mockReturnValueOnce(null)
+				.mockReturnValue(config);
+			mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			await engine.start();
+			try {
+				vi.clearAllMocks();
+				mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+				expect(engine.getStatus()).toEqual([
+					expect.objectContaining({
+						sessionId: 'session-1',
+						subscriptionCount: 1,
+						enabled: true,
+					}),
+				]);
+				expect(deps.onLog).not.toHaveBeenCalledWith(
+					'cue',
+					expect.stringContaining('Config removed'),
+					expect.anything()
+				);
+			} finally {
+				mockResolveCueConfigPath.mockReturnValue(null);
+				engine.stop();
+			}
+		});
+
+		it('reloads changed subscriptions and schedules when a missing config reappears', async () => {
+			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
+			const original = createMockConfig({
+				subscriptions: [
+					{ name: 'A', event: 'time.scheduled', prompt: 'old', schedule_times: ['09:00'] },
+				],
+			});
+			const replacement = createMockConfig({
+				subscriptions: [
+					{ name: 'B', event: 'time.scheduled', prompt: 'new', schedule_times: ['10:00'] },
+				],
+			});
+			mockLoadCueConfig
+				.mockReturnValueOnce(original)
+				.mockReturnValueOnce(null)
+				.mockReturnValue(replacement);
+			mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			await engine.start();
+			try {
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(150);
+				await refresh;
+				expect(engine.getStatus()).toEqual([
+					expect.objectContaining({
+						sessionId: 'session-1',
+						subscriptionCount: 1,
+						enabled: true,
+						nextTrigger: new Date('2026-03-09T10:00:00').toISOString(),
+					}),
+				]);
+				expect(engine.getGraphData()[0].subscriptions.map((sub) => sub.name)).toEqual(['B']);
+				expect(deps.onLog).toHaveBeenCalledWith(
+					'cue',
+					expect.stringContaining('Config reloaded'),
+					expect.objectContaining({ type: 'configReloaded', sessionId: 'session-1' })
+				);
+				await vi.advanceTimersByTimeAsync(61 * 60_000);
+				expect(deps.onCueRun).toHaveBeenCalledExactlyOnceWith(
+					expect.objectContaining({ subscriptionName: 'B', prompt: 'new' })
+				);
+			} finally {
+				mockResolveCueConfigPath.mockReturnValue(null);
+				engine.stop();
+			}
+		});
+
+		it('logs "Config removed" when YAML file is deleted', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -752,10 +936,14 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'cue',
@@ -765,7 +953,7 @@ describe('CueEngine', () => {
 			expect(engine.getStatus()).toHaveLength(0);
 		});
 
-		it('retains the yaml watcher after config deletion for re-creation', () => {
+		it('retains the yaml watcher after config deletion for re-creation', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -780,17 +968,21 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const initialWatchCalls = mockWatchCueYaml.mock.calls.length;
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			// Keep the original watcher alive for deletion, re-creation and read retries.
 			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls);
 			expect(yamlWatcherCleanup).not.toHaveBeenCalled();
 		});
 
-		it('recovers when config file is re-created after deletion', () => {
+		it('recovers when config file is re-created after deletion', async () => {
 			const config1 = createMockConfig({
 				subscriptions: [
 					{
@@ -821,10 +1013,14 @@ describe('CueEngine', () => {
 				.mockReturnValue(config2);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Delete config
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 			expect(engine.getStatus()).toHaveLength(0);
 
 			// Capture the pending yaml watcher callback
@@ -840,7 +1036,7 @@ describe('CueEngine', () => {
 			expect(status[0].subscriptionCount).toBe(1);
 		});
 
-		it('cleans up pending yaml watchers on engine stop', () => {
+		it('cleans up pending yaml watchers on engine stop', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -856,17 +1052,21 @@ describe('CueEngine', () => {
 			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
-			// Delete config - the original watcher now waits for re-creation
-			engine.refreshSession('session-1', '/projects/test');
+			// Delete config - the original watcher now waits for re-creation.
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			// Stop engine - should clean up pending watcher
 			engine.stop();
 			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
-		it('cleans up pending yaml watchers on removeSession', () => {
+		it('cleans up pending yaml watchers on removeSession', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -882,17 +1082,21 @@ describe('CueEngine', () => {
 			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
-			// Delete config - the original watcher now waits for re-creation
-			engine.refreshSession('session-1', '/projects/test');
+			// Delete config - the original watcher now waits for re-creation.
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			// Remove session - should clean up pending watcher
 			engine.removeSession('session-1');
 			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
-		it('triggers refresh via yaml watcher callback on file change', () => {
+		it('triggers refresh via yaml watcher callback on file change', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -907,7 +1111,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Capture the yaml watcher callback
 			const watchCall = mockWatchCueYaml.mock.calls[0];
@@ -919,6 +1123,7 @@ describe('CueEngine', () => {
 
 			// Simulate file change by invoking the watcher callback
 			onChange();
+			await vi.advanceTimersByTimeAsync(0);
 
 			// refreshSession should have been called (loadCueConfig invoked for re-init)
 			expect(mockLoadCueConfig).toHaveBeenCalledWith('/projects/test');
@@ -929,15 +1134,19 @@ describe('CueEngine', () => {
 			);
 		});
 
-		it('does not log "Config removed" when session never had config', () => {
+		it('does not log "Config removed" when session never had config', async () => {
 			mockLoadCueConfig.mockReturnValue(null);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			// Session never had a config, so refreshSession with null should not log "Config removed"
-			engine.refreshSession('session-1', '/projects/test');
+			{
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			const removedCall = (deps.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
 				(call: unknown[]) => typeof call[1] === 'string' && call[1].includes('Config removed')
@@ -962,7 +1171,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Wait for the async run to complete
 			await vi.advanceTimersByTimeAsync(100);
@@ -987,7 +1196,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Run multiple intervals
 			await vi.advanceTimersByTimeAsync(1 * 60 * 1000);
@@ -1006,7 +1215,7 @@ describe('CueEngine', () => {
 		// `setToggleCueSubscriptionCallback` (and the web UI's per-row toggle).
 		// Subscription ids follow `${sessionId}::${pipeline}::${name}` so two
 		// pipelines under one session that share a sub name don't collide.
-		beforeEach(() => {
+		beforeEach(async () => {
 			mockReadCueConfigFile.mockReset();
 			mockWriteCueConfigFile.mockReset();
 		});
@@ -1156,7 +1365,7 @@ describe('CueEngine', () => {
 				})
 			);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 			mockReadCueConfigFile.mockClear();
 			mockWriteCueConfigFile.mockClear();
 			mockReadCueConfigFile.mockReturnValue({
@@ -1236,7 +1445,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('run management', () => {
-		it('stopRun returns false for non-existent run', () => {
+		it('stopRun returns false for non-existent run', async () => {
 			const engine = new CueEngine(createMockDeps());
 			expect(engine.stopRun('nonexistent')).toBe(false);
 		});
@@ -1258,7 +1467,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(10);
 
@@ -1287,7 +1496,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(10);
 
@@ -1321,7 +1530,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Allow async execution to start
 			await vi.advanceTimersByTimeAsync(10);
@@ -1336,7 +1545,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('github.pull_request / github.issue subscriptions', () => {
-		it('github.pull_request subscription creates a GitHub poller with correct config', () => {
+		it('github.pull_request subscription creates a GitHub poller with correct config', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1351,7 +1560,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueGitHubPoller).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1367,7 +1576,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('github.issue subscription creates a GitHub poller', () => {
+		it('github.issue subscription creates a GitHub poller', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1381,7 +1590,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueGitHubPoller).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1395,7 +1604,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('cleanup function is called on session teardown', () => {
+		it('cleanup function is called on session teardown', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1409,14 +1618,14 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			engine.removeSession('session-1');
 
 			expect(gitHubPollerCleanup).toHaveBeenCalled();
 		});
 
-		it('passes gh_state to GitHub poller config', () => {
+		it('passes gh_state to GitHub poller config', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1431,7 +1640,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueGitHubPoller).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1444,7 +1653,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('disabled github subscription is skipped', () => {
+		it('disabled github subscription is skipped', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1457,7 +1666,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueGitHubPoller).not.toHaveBeenCalled();
 
@@ -1466,7 +1675,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('task.pending subscriptions', () => {
-		it('creates a task scanner with correct config', () => {
+		it('creates a task scanner with correct config', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1481,7 +1690,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueTaskScanner).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1495,7 +1704,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('defaults poll_minutes to 1 when not specified', () => {
+		it('defaults poll_minutes to 1 when not specified', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1509,7 +1718,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueTaskScanner).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1520,7 +1729,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('cleanup function is called on session teardown', () => {
+		it('cleanup function is called on session teardown', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1534,14 +1743,14 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			engine.removeSession('session-1');
 
 			expect(taskScannerCleanup).toHaveBeenCalled();
 		});
 
-		it('disabled task.pending subscription is skipped', () => {
+		it('disabled task.pending subscription is skipped', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1555,7 +1764,7 @@ describe('CueEngine', () => {
 			});
 			mockLoadCueConfig.mockReturnValue(config);
 			const engine = new CueEngine(createMockDeps());
-			engine.start();
+			await engine.start();
 
 			expect(mockCreateCueTaskScanner).not.toHaveBeenCalled();
 
@@ -1564,7 +1773,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('getStatus', () => {
-		it('returns correct status for active sessions', () => {
+		it('returns correct status for active sessions', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1586,7 +1795,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const status = engine.getStatus();
 			expect(status).toHaveLength(1);
@@ -1598,7 +1807,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('returns sessions with cue configs when engine is disabled', () => {
+		it('returns sessions with cue configs when engine is disabled', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1624,7 +1833,7 @@ describe('CueEngine', () => {
 			expect(status[0].activeRuns).toBe(0);
 		});
 
-		it('returns sessions with enabled=false after engine is stopped', () => {
+		it('returns sessions with enabled=false after engine is stopped', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1639,7 +1848,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// While running, enabled is true
 			expect(engine.getStatus()[0].enabled).toBe(true);
@@ -1694,7 +1903,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -1747,7 +1956,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -1799,7 +2008,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -1828,7 +2037,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -1840,7 +2049,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('getGraphData', () => {
-		it('returns graph data for active sessions', () => {
+		it('returns graph data for active sessions', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1855,7 +2064,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const graph = engine.getGraphData();
 			expect(graph).toHaveLength(1);
@@ -1865,7 +2074,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('returns graph data from disk configs when engine is disabled', () => {
+		it('returns graph data from disk configs when engine is disabled', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1889,7 +2098,7 @@ describe('CueEngine', () => {
 			expect(graph[0].subscriptions).toHaveLength(1);
 		});
 
-		it('returns graph data after engine is stopped', () => {
+		it('returns graph data after engine is stopped', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1904,7 +2113,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			engine.stop();
 
 			const graph = engine.getGraphData();
@@ -1912,7 +2121,7 @@ describe('CueEngine', () => {
 			expect(graph[0].sessionId).toBe('session-1');
 		});
 
-		it('filters out subscriptions whose agent_id targets a different session', () => {
+		it('filters out subscriptions whose agent_id targets a different session', async () => {
 			// getGraphData reports only subscriptions that belong to each session
 			// (agent_id matches, or agent_id absent) so the pipeline editor never
 			// sees a subscription under an unrelated session.
@@ -1937,7 +2146,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const graph = engine.getGraphData();
 			expect(graph).toHaveLength(1);
@@ -1948,7 +2157,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('filters foreign-agent_id subscriptions when loading from disk (engine disabled)', () => {
+		it('filters foreign-agent_id subscriptions when loading from disk (engine disabled)', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1979,7 +2188,7 @@ describe('CueEngine', () => {
 			expect(graph[0].subscriptions.map((s) => s.name)).toEqual(['trigger']);
 		});
 
-		it('scopes subscriptions to their owning session when multiple sessions share a config', () => {
+		it('scopes subscriptions to their owning session when multiple sessions share a config', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -2007,7 +2216,7 @@ describe('CueEngine', () => {
 				getSessions: vi.fn(() => [session1, session2]),
 			});
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const graph = engine.getGraphData();
 			expect(graph).toHaveLength(2);
@@ -2021,11 +2230,11 @@ describe('CueEngine', () => {
 	});
 
 	describe('calculateNextScheduledTime', () => {
-		it('returns null for empty times array', () => {
+		it('returns null for empty times array', async () => {
 			expect(calculateNextScheduledTime([])).toBeNull();
 		});
 
-		it('returns next occurrence today if time is ahead', () => {
+		it('returns next occurrence today if time is ahead', async () => {
 			// Monday 2026-03-09 at 08:00
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 			const result = calculateNextScheduledTime(['09:00']);
@@ -2036,7 +2245,7 @@ describe('CueEngine', () => {
 			expect(date.getDate()).toBe(9); // same day
 		});
 
-		it('returns next occurrence tomorrow if time has passed', () => {
+		it('returns next occurrence tomorrow if time has passed', async () => {
 			// Monday 2026-03-09 at 10:00
 			vi.setSystemTime(new Date('2026-03-09T10:00:00'));
 			const result = calculateNextScheduledTime(['09:00']);
@@ -2047,7 +2256,7 @@ describe('CueEngine', () => {
 			expect(date.getDate()).toBe(10); // next day
 		});
 
-		it('picks earliest matching time', () => {
+		it('picks earliest matching time', async () => {
 			// Monday 2026-03-09 at 08:00
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 			const result = calculateNextScheduledTime(['14:00', '09:00']);
@@ -2057,7 +2266,7 @@ describe('CueEngine', () => {
 			expect(date.getMinutes()).toBe(0);
 		});
 
-		it('respects days filter - skips non-matching days', () => {
+		it('respects days filter - skips non-matching days', async () => {
 			// Monday 2026-03-09 at 10:00
 			vi.setSystemTime(new Date('2026-03-09T10:00:00'));
 			const result = calculateNextScheduledTime(['09:00'], ['wed']);
@@ -2068,7 +2277,7 @@ describe('CueEngine', () => {
 			expect(date.getHours()).toBe(9);
 		});
 
-		it('returns null for invalid time strings', () => {
+		it('returns null for invalid time strings', async () => {
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 			const result = calculateNextScheduledTime(['25:99']);
 			// Out-of-bounds hour (25) and minute (99) must be rejected - the function
@@ -2076,7 +2285,7 @@ describe('CueEngine', () => {
 			expect(result).toBeNull();
 		});
 
-		it('handles midnight crossing', () => {
+		it('handles midnight crossing', async () => {
 			// Monday 2026-03-09 at 23:30
 			vi.setSystemTime(new Date('2026-03-09T23:30:00'));
 			const result = calculateNextScheduledTime(['00:15']);
@@ -2087,7 +2296,7 @@ describe('CueEngine', () => {
 			expect(date.getMinutes()).toBe(15);
 		});
 
-		it('handles all days when no days filter provided', () => {
+		it('handles all days when no days filter provided', async () => {
 			// Monday 2026-03-09 at 08:00
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 			const result = calculateNextScheduledTime(['09:00']);
@@ -2097,7 +2306,7 @@ describe('CueEngine', () => {
 			expect(date.getDate()).toBe(9);
 		});
 
-		it('wraps around week boundary', () => {
+		it('wraps around week boundary', async () => {
 			// Saturday 2026-03-14 at 10:00
 			vi.setSystemTime(new Date('2026-03-14T10:00:00'));
 			const result = calculateNextScheduledTime(['09:00'], ['mon']);
@@ -2114,7 +2323,7 @@ describe('CueEngine', () => {
 		// the function returned null, leaving the schedule silently dead
 		// until the user toggled Cue or restarted. The fix bumped the
 		// bound to `<= 7` so weekly schedules always resolve.
-		it("resolves to same day next week when today's slot has passed", () => {
+		it("resolves to same day next week when today's slot has passed", async () => {
 			// Monday 2026-03-09 at 09:01 - schedule for Monday 09:00 has
 			// already passed by one minute. Without the fix, this returned null.
 			vi.setSystemTime(new Date('2026-03-09T09:01:00'));
@@ -2128,7 +2337,7 @@ describe('CueEngine', () => {
 			expect(date.getMinutes()).toBe(0);
 		});
 
-		it('resolves to same day next week with multi-day filter when today is the only matching day past its slot', () => {
+		it('resolves to same day next week with multi-day filter when today is the only matching day past its slot', async () => {
 			// Wednesday 2026-03-11 at 23:59 - schedule fires Wed/Fri at 09:00.
 			// Wednesday's slot is past, Friday is offset 2 → that's the next
 			// fire, NOT next Wednesday. Verifies the picks-earliest semantic
@@ -2161,7 +2370,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Advance past the 60s check interval - time becomes 09:00
 			await vi.advanceTimersByTimeAsync(60_000);
@@ -2199,7 +2408,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2227,7 +2436,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2255,7 +2464,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2264,7 +2473,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('skips when schedule_times is empty', () => {
+		it('skips when schedule_times is empty', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -2279,7 +2488,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// No interval should be created, no run triggered
 			expect(deps.onCueRun).not.toHaveBeenCalled();
@@ -2304,7 +2513,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			engine.stop(); // Disable
 
 			await vi.advanceTimersByTimeAsync(60_000);
@@ -2331,7 +2540,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2360,7 +2569,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2382,7 +2591,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('tracks nextTriggers via calculateNextScheduledTime', () => {
+		it('tracks nextTriggers via calculateNextScheduledTime', async () => {
 			// Monday 2026-03-09 at 08:00 - next trigger should be 09:00 today
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 
@@ -2400,7 +2609,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const status = engine.getStatus();
 			const sessionStatus = status.find((s) => s.sessionId === 'session-1');
@@ -2429,7 +2638,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const statusBefore = engine.getStatus();
 			const subBefore = statusBefore.find((s) => s.sessionId === 'session-1');
@@ -2474,7 +2683,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2527,7 +2736,7 @@ describe('CueEngine', () => {
 			});
 
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(60_000);
 
@@ -2543,7 +2752,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('clears timers on stop', () => {
+		it('clears timers on stop', async () => {
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 
 			const config = createMockConfig({
@@ -2560,7 +2769,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			engine.stop();
 
 			// After stop, advancing to 08:59 then 60s more = 09:00
@@ -2570,7 +2779,7 @@ describe('CueEngine', () => {
 			expect(deps.onCueRun).not.toHaveBeenCalled();
 		});
 
-		it('skips disabled subscriptions', () => {
+		it('skips disabled subscriptions', async () => {
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2587,7 +2796,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.advanceTimersByTime(60_000);
 
@@ -2596,7 +2805,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('does not double-fire when config is refreshed within the same minute', () => {
+		it('does not double-fire when config is refreshed within the same minute', async () => {
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2614,19 +2823,54 @@ describe('CueEngine', () => {
 			const session = createMockSession();
 			const deps = createMockDeps({ getSessions: vi.fn(() => [session]) });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Advance to 09:00 - should fire once
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 			// Simulate config refresh within the same minute (e.g., YAML hot reload)
-			engine.refreshSession(session.id, session.projectRoot);
+			{
+				const refresh = engine.refreshSession(session.id, session.projectRoot);
+				await vi.advanceTimersByTimeAsync(450);
+				await refresh;
+			}
 
 			// The new timer fires again in the same 09:00 minute - should NOT double-fire
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
+			engine.stop();
+		});
+
+		it('fires the next-minute schedule after refresh and prunes older dedup keys', async () => {
+			vi.setSystemTime(new Date('2026-03-09T09:00:00'));
+			mockLoadCueConfig.mockReturnValue(
+				createMockConfig({
+					subscriptions: [
+						{
+							name: 'two-minutes',
+							event: 'time.scheduled',
+							prompt: 'Run',
+							schedule_times: ['09:00', '09:01'],
+						},
+					],
+				})
+			);
+			const session = createMockSession();
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			await engine.start();
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			await engine.refreshSession(session.id, session.projectRoot);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+			await vi.advanceTimersByTimeAsync(60_000);
+			// If 09:00 survived the non-matching 09:02 tick, this would return false.
+			expect((engine as any).registry.markScheduledFired(session.id, 'two-minutes', '09:00')).toBe(
+				true
+			);
 			engine.stop();
 		});
 
@@ -2647,7 +2891,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Advance to 09:00 - fires
 			await vi.advanceTimersByTimeAsync(60_000);
@@ -2664,7 +2908,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('clears scheduled fired keys when engine is stopped and restarted', () => {
+		it('clears scheduled fired keys when engine is stopped and restarted', async () => {
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2683,14 +2927,14 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 
 			// First start: fire at 09:00
-			engine.start();
+			await engine.start();
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 			// Stop and restart - keys should be cleared
 			engine.stop();
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
-			engine.start();
+			await engine.start();
 			vi.advanceTimersByTime(60_000);
 
 			// Should fire again because the engine was stopped (keys cleared)
@@ -2741,7 +2985,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -2794,7 +3038,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -2845,7 +3089,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			await vi.advanceTimersByTimeAsync(100);
 
@@ -2925,7 +3169,7 @@ describe('CueEngine', () => {
 			});
 
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Let the heartbeat fire (immediate) + output prompt + completion chain
 			await vi.advanceTimersByTimeAsync(100);
@@ -2968,7 +3212,7 @@ describe('CueEngine', () => {
 				return vi.fn();
 			});
 
-			engine.start();
+			await engine.start();
 			await vi.advanceTimersByTimeAsync(0);
 			vi.clearAllMocks();
 
@@ -3033,7 +3277,7 @@ describe('CueEngine', () => {
 			});
 
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			await vi.advanceTimersByTimeAsync(0);
 			vi.clearAllMocks();
 
@@ -3085,12 +3329,14 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValueOnce(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 			await vi.advanceTimersByTimeAsync(0);
 
 			// Reload returns null (YAML deleted)
 			mockLoadCueConfig.mockReturnValue(null);
 			capturedOnChange!();
+
+			await vi.advanceTimersByTimeAsync(450);
 
 			// Session state should be removed
 			expect(engine.getStatus()).toHaveLength(0);
@@ -3104,7 +3350,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('scheduledFiredKeys are cleaned on refresh', async () => {
+		it('fires the next scheduled minute after a refresh without repeating the current minute', async () => {
 			// Start at 08:59 - 1 minute before the scheduled time
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
@@ -3115,7 +3361,7 @@ describe('CueEngine', () => {
 						event: 'time.scheduled',
 						enabled: true,
 						prompt: 'scheduled task',
-						schedule_times: ['09:00'],
+						schedule_times: ['09:00', '09:01'],
 					},
 				],
 			});
@@ -3129,17 +3375,18 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Advance to 09:00 - should fire
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Refresh session - scheduledFiredKeys are cleared in teardownSession
+			// Reloading in the current minute must not dispatch it again.
 			capturedOnChange!();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Reset system time to 08:59 so the next 60s advance lands at 09:00 again
-			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
+			// A genuinely new scheduled minute still dispatches after the reload.
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
 
@@ -3198,7 +3445,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config1);
 			const deps = createMockDeps({ onCueRun });
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// First heartbeat fires immediately, occupying the single slot
 			await vi.advanceTimersByTimeAsync(0);
@@ -3251,7 +3498,7 @@ describe('CueEngine', () => {
 		// loadCueConfigDetailed().warnings, which session-runtime-service forwards to
 		// the logger. These tests inject the warning directly via the detailed mock to
 		// verify the integration path: loader warnings → engine logger.
-		it('logs a structured health warning when prompt_file is set but prompt is empty', () => {
+		it('logs a structured health warning when prompt_file is set but prompt is empty', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3273,7 +3520,7 @@ describe('CueEngine', () => {
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const message = `[CUE] ${warning}`;
 			expect(deps.onLog).toHaveBeenCalledWith('warn', message, {
@@ -3285,7 +3532,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('does not warn when prompt_file is set and prompt is populated', () => {
+		it('does not warn when prompt_file is set and prompt is populated', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3305,7 +3552,7 @@ describe('CueEngine', () => {
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const warnCalls = (deps.onLog as ReturnType<typeof vi.fn>).mock.calls.filter(
 				(call: unknown[]) =>
@@ -3318,7 +3565,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('triggerSubscription with sourceAgentId', () => {
-		it('should include sourceAgentId in the event payload', () => {
+		it('should include sourceAgentId in the event payload', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3333,7 +3580,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const result = engine.triggerSubscription('test-sub', undefined, 'agent-xyz-123');
 			expect(result).toBe(true);
@@ -3353,7 +3600,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('should not include sourceAgentId in event payload when not provided', () => {
+		it('should not include sourceAgentId in event payload when not provided', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3368,7 +3615,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			engine.triggerSubscription('test-sub');
 
@@ -3388,7 +3635,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('should include both sourceAgentId and cliPrompt in event payload', () => {
+		it('should include both sourceAgentId and cliPrompt in event payload', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3403,7 +3650,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			engine.triggerSubscription('test-sub', 'override prompt', 'agent-abc');
 
@@ -3422,13 +3669,13 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('should return false when subscription is not found', () => {
+		it('should return false when subscription is not found', async () => {
 			const config = createMockConfig({ subscriptions: [] });
 			mockLoadCueConfig.mockReturnValue(config);
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const result = engine.triggerSubscription('nonexistent', undefined, 'agent-xyz');
 			expect(result).toBe(false);
@@ -3439,7 +3686,7 @@ describe('CueEngine', () => {
 	});
 
 	describe('triggerSubscription enriches task.pending payload (issue #1151)', () => {
-		it('scans the watched file and populates task variables on manual trigger', () => {
+		it('scans the watched file and populates task variables on manual trigger', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3464,7 +3711,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			const result = engine.triggerSubscription('research queue');
 			expect(result).toBe(true);
@@ -3491,7 +3738,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('leaves the payload unenriched when no watched file has pending tasks', () => {
+		it('leaves the payload unenriched when no watched file has pending tasks', async () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3508,7 +3755,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			engine.triggerSubscription('research queue');
 
@@ -3538,7 +3785,7 @@ describe('CueEngine', () => {
 			queue_size: 10,
 		};
 
-		it('fires every branch sub sharing pipeline_name + event config when exact name matches', () => {
+		it('fires every branch sub sharing pipeline_name + event config when exact name matches', async () => {
 			const config = createMockConfig({
 				settings: CONCURRENT_SETTINGS,
 				subscriptions: [
@@ -3568,7 +3815,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			const result = engine.triggerSubscription('Pipeline 1-cmd-a');
@@ -3582,7 +3829,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('falls back to pipeline_name when no sub has that exact name', () => {
+		it('falls back to pipeline_name when no sub has that exact name', async () => {
 			// Pipeline-editor Play-button case: a freshly-rebuilt trigger node
 			// that hasn't been reloaded from YAML carries only the pipeline
 			// name. No sub is named "Pipeline 1" exactly in the per-branch
@@ -3617,7 +3864,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			const result = engine.triggerSubscription('Pipeline 1');
@@ -3631,7 +3878,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('does NOT fire chain subs (agent.completed) even if they share pipeline_name', () => {
+		it('does NOT fire chain subs (agent.completed) even if they share pipeline_name', async () => {
 			// Chain subs exist for every non-initial node in a pipeline.
 			// They must only fire on their upstream's completion, not on a
 			// manual pipeline trigger - otherwise a chain would dispatch
@@ -3663,7 +3910,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			const result = engine.triggerSubscription('Pipeline 1');
@@ -3678,7 +3925,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('fires only the anchor (not the group) when promptOverride is provided', () => {
+		it('fires only the anchor (not the group) when promptOverride is provided', async () => {
 			// CLI-shaped call: `maestro cue trigger <sub> --prompt "..."` wants
 			// exactly that sub to run with the override. Applying the override
 			// to sibling branches would surprise the caller.
@@ -3705,7 +3952,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			const result = engine.triggerSubscription('Pipeline 1-cmd-a', 'override prompt');
@@ -3719,7 +3966,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('does NOT fire unrelated triggers that share pipeline_name but differ in event config', () => {
+		it('does NOT fire unrelated triggers that share pipeline_name but differ in event config', async () => {
 			// Multi-trigger pipelines: morning schedule (07:00) and evening
 			// schedule (19:00) share pipeline_name but are intentionally
 			// independent. The group key pins on event-specific config so
@@ -3763,7 +4010,7 @@ describe('CueEngine', () => {
 
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			vi.clearAllMocks();
 			const result = engine.triggerSubscription('morning-1');
@@ -3797,7 +4044,7 @@ describe('CueEngine', () => {
 			const emitPluginEvent =
 				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
 			const engine = new CueEngine(createMockDeps({ emitPluginEvent }));
-			engine.start();
+			await engine.start();
 			await vi.advanceTimersByTimeAsync(10);
 
 			const topics = emitPluginEvent.mock.calls.map((c) => c[0].topic);
@@ -3831,7 +4078,7 @@ describe('CueEngine', () => {
 					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
 				})
 			);
-			engine.start();
+			await engine.start();
 			await vi.advanceTimersByTimeAsync(10);
 
 			const activeRun = engine.getActiveRuns()[0];

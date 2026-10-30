@@ -14,6 +14,8 @@ import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { PianolaSupervisor } from './pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola-relearn-scheduler';
 import { runRelearnJob } from './pianola-relearn';
+import { initializePianolaMemory } from './memory-host';
+import type { PianolaMemoryHost } from './memory-host';
 import { isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
 import {
 	readRules,
@@ -104,6 +106,7 @@ export interface PianolaLifecycleDependencies {
 export interface PianolaLifecycle {
 	supervisor: PianolaSupervisor;
 	relearnScheduler: PianolaRelearnScheduler;
+	memoryHost: PianolaMemoryHost;
 }
 
 export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): PianolaLifecycle {
@@ -152,5 +155,11 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 		},
 	});
 
-	return { supervisor, relearnScheduler };
+	return {
+		supervisor,
+		relearnScheduler,
+		memoryHost: initializePianolaMemory(() =>
+			isEncoreFeatureEnabled(deps.settingsStore, 'pianola')
+		),
+	};
 }

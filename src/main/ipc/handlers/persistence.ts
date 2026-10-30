@@ -210,7 +210,7 @@ export interface PersistenceHandlerDependencies {
 		added: StoredSession[],
 		current: StoredSession[],
 		removedIds: string[]
-	) => void;
+	) => void | Promise<void>;
 }
 
 /**
@@ -939,7 +939,7 @@ export function registerPersistenceHandlers(
 				// left, so an agent created or closed in one of them stops being
 				// invisible to - and resurrectable by - the rest.
 				const removedIds = removeIds.filter((id) => previousMap.has(id));
-				onSessionsPersisted?.(
+				await onSessionsPersisted?.(
 					sessionsToPersist.filter((s) => !previousMap.has(s.id)),
 					sessionsToPersist,
 					removedIds
@@ -1110,6 +1110,12 @@ export function registerPersistenceHandlers(
 					incomingIds.has(session.id) &&
 					previousSessionMap.has(session.id) &&
 					JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
+			);
+			// Tell the other clients about agents this bootstrap flush introduced.
+			await onSessionsPersisted?.(
+				sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
+				sessionsToPersist,
+				[]
 			);
 			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
 				added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),

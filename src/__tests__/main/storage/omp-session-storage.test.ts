@@ -219,6 +219,12 @@ describe('OmpSessionStorage', () => {
 			'Keep <file>example</file>',
 		],
 		[
+			'generated markdown prompt',
+			'user',
+			'<file name="C:\\Temp\\maestro-prompt-1790000000000-42-193d3119-8a93-4b08-8d1f-d59d57cff686.md">\nNew format\n</file>\n',
+			'New format',
+		],
+		[
 			'ordinary attachment',
 			'user',
 			'<file name="/tmp/example.txt">\nHello!\n</file>\n',

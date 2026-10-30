@@ -41,6 +41,7 @@ import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
+import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 
 export interface ProcessManagerOptions {
@@ -239,6 +240,8 @@ export class ProcessManager extends EventEmitter {
 				// Drop the dead entry and let the spawn below take the session id. No
 				// kill() here: there is no process left to signal, and kill() would
 				// emit a spurious exit for a turn that ended long ago.
+				cleanupTempFiles(existing.tempFiles ?? []);
+				existing.tempFiles = undefined;
 				this.processes.delete(config.sessionId);
 			} else if (existingProcessRunning) {
 				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {
