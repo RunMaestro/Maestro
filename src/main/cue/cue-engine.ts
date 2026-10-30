@@ -2158,7 +2158,7 @@ export class CueEngine {
 	private boardDispatchTick(): void {
 		const board = this.deps.board;
 		if (!board) return;
-		if (!this.enabled) return;
+		if (!this.enabled || this.drainInProgress) return;
 
 		try {
 			// Dual-gate: Board requires Cue. Read both flags fresh each tick so a

@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 import type { CueEngineDeps } from '../../../main/cue/cue-engine';
+import type { Board } from '../../../shared/board/types';
 import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 import {
 	createInMemoryCueDb,
@@ -211,6 +212,60 @@ describe('CueEngine.drain', () => {
 		engine.start();
 		return { engine, exec, onLog, deps };
 	}
+
+	it.each([
+		{ draining: false, maestroCue: true, boardEnabled: true, expected: 1 },
+		{ draining: true, maestroCue: true, boardEnabled: true, expected: 0 },
+		{ draining: false, maestroCue: false, boardEnabled: true, expected: 0 },
+		{ draining: false, maestroCue: true, boardEnabled: false, expected: 0 },
+	])(
+		'starts Board cards only before drain with both flags enabled ($draining/$maestroCue/$boardEnabled)',
+		async ({ draining, maestroCue, boardEnabled, expected }) => {
+			let board: Board = {
+				id: 'board-1',
+				name: 'Project board',
+				cards: [
+					{
+						id: 'card-1',
+						title: 'Work',
+						body: 'Implement',
+						parents: [],
+						assigneeAgentId: alpha.id,
+						status: 'todo',
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			};
+			const spawnCard = vi.fn(async () => ({ output: 'Finished', exitCode: 0 }));
+			const { engine } = boot({
+				board: {
+					getEncoreFeatures: () => ({ maestroCue, board: boardEnabled }),
+					getProjectRoots: () => ['/p/a'],
+					listBoards: () => [structuredClone(board)],
+					saveBoard: (_root, saved) => {
+						board = structuredClone(saved);
+					},
+					resolveOverrides: () => ({}),
+					spawnCard,
+				},
+			});
+			await flush();
+			// Existing Cue turns stay in flight while the next shared heartbeat fires.
+			expect(engine.getActiveRuns()).toHaveLength(2);
+			const drain = draining ? engine.drain({ timeoutMs: 60_000 }) : undefined;
+			try {
+				await vi.advanceTimersByTimeAsync(30_000);
+				expect(spawnCard).toHaveBeenCalledTimes(expected);
+				expect(board.cards[0].status).toBe(expected ? 'done' : 'todo');
+			} finally {
+				if (drain) {
+					engine.forceStop();
+					await drain;
+				} else engine.stop();
+			}
+		}
+	);
 
 	it.each([
 		{ action: 'remove', snapshotFailure: false },
