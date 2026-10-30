@@ -2,6 +2,7 @@
 export {
 	atomicWriteJson,
 	atomicWriteFile,
+	atomicWriteFileSync,
 	createKeyedWriteQueue,
 	type KeyedWriteQueue,
 } from '../../shared/maestro-lib/storage/atomic-json-store';

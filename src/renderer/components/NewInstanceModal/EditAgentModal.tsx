@@ -94,6 +94,9 @@ export function EditAgentModal({
 	// Agent Resilience (auto-retry) toggles. Both default ON; read with `?? true`.
 	const [retryOnAvailabilityErrors, setRetryOnAvailabilityErrors] = useState(true);
 	const [retryOnTokenExhaustion, setRetryOnTokenExhaustion] = useState(true);
+	// Board worker pool opt-in (Board Phase 6). Default OFF: an agent is never a
+	// board worker unless explicitly enabled here.
+	const [boardWorker, setBoardWorker] = useState(false);
 	// Codex automatic usage resets. Defaults OFF - see `codexAutoResetOnExhaustion`
 	// on Session for why this one does NOT follow the resilience flags' default-on
 	// rule: reset credits are finite and irreversible.
@@ -414,6 +417,7 @@ export function EditAgentModal({
 		// for a non-Codex agent, and saving it back would erase the preference
 		// of an agent that was moved off Codex and may move back.
 		setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
+		setBoardWorker(session.boardWorker === true);
 
 		return () => {
 			stale = true;
@@ -674,6 +678,11 @@ export function EditAgentModal({
 				workingDirChanged ? trimmedWorkingDir : undefined,
 				codexAutoReset,
 				codexTransport,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				boardWorker,
 			];
 			if (converting) {
 				// Limitations are shown as a notice; opting in and saving accepts them.
@@ -720,6 +729,7 @@ export function EditAgentModal({
 		codexAutoReset,
 		codexTransport,
 		agent,
+		boardWorker,
 		agentConfig,
 		sshRemoteConfig,
 		selectedToolType,
@@ -1023,6 +1033,26 @@ export function EditAgentModal({
 					usesInteractiveTokenSource={usesInteractiveTokenSource}
 				/>
 
+				{/* Board worker pool opt-in (Board Phase 6). Default OFF so an agent is
+				    never auto-assigned board work unless explicitly enabled. */}
+				<label
+					className="flex items-start gap-2 cursor-pointer"
+					style={{ color: theme.colors.textMain }}
+				>
+					<input
+						type="checkbox"
+						className="mt-0.5"
+						checked={boardWorker}
+						onChange={(e) => setBoardWorker(e.target.checked)}
+					/>
+					<span className="text-xs">
+						<span className="font-bold">Board worker</span>
+						<span className="block opacity-70">
+							Let the Board auto-assign role-only cards to this agent when it is free. Cards can
+							still pin this agent by name regardless of this setting.
+						</span>
+					</span>
+				</label>
 				{/* Working Directory */}
 				<div>
 					<FormInput

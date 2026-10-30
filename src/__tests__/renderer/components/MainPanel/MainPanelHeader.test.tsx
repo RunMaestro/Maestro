@@ -19,6 +19,9 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			showAgentName: true,
 			showSessionIdPill: true,
 			showSessionCostPill: true,
+			// BoardStatusIndicator reads encoreFeatures.board/.maestroCue; both off
+			// here keeps the pill hidden so these header tests stay board-agnostic.
+			encoreFeatures: {},
 			// The header derives the Context Details width from the Timeline's
 			// remembered modal size, so the partial store needs the record even
 			// when no size was ever saved.

@@ -32,7 +32,8 @@ export type UiSurfaceEncoreFlag =
 	| 'concerto'
 	| 'computerHistory'
 	| 'quickChat'
-	| 'throughputGauge';
+	| 'throughputGauge'
+	| 'board';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -69,6 +70,26 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 ];
 
 export const UI_SURFACES: UiSurface[] = [
+	{
+		id: 'board',
+		label: 'Board',
+		modal: 'boardModal',
+		description: 'Project task DAG and dispatch status.',
+		shortcutId: 'openBoard',
+		commandPalette: 'Board',
+		click: 'Left Bar hamburger > Board',
+		encore: 'board',
+	},
+	{
+		id: 'profiles',
+		label: 'Agent Profiles',
+		modal: 'profilesModal',
+		description: 'Project profiles used to assign Board cards.',
+		shortcutId: 'openProfiles',
+		commandPalette: 'Agent Profiles',
+		click: 'Left Bar hamburger > Agent Profiles',
+		encore: 'board',
+	},
 	{
 		id: 'notification-center',
 		shortcutId: 'openNotificationCenter',
@@ -363,6 +384,9 @@ export function uiSurfaceRefusal(
 ): string | null {
 	if (surface.encore && encoreFeatures[surface.encore] !== true) {
 		return `${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	}
+	if (surface.encore === 'board' && encoreFeatures.maestroCue !== true) {
+		return `${surface.label} requires Maestro Cue. Turn it on in Settings → Plugins.`;
 	}
 	if (tab?.encore && encoreFeatures[tab.encore] !== true) {
 		return `The ${tab.label} tab of ${surface.label} is turned off. Turn it on in Settings → Plugins.`;
