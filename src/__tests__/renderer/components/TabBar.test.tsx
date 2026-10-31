@@ -3716,6 +3716,65 @@ describe('FileTab overlay menu', () => {
 		vi.useRealTimers();
 	});
 
+	it('hides path actions on an unsaved Untitled file tab (MAESTRO-17Q)', async () => {
+		vi.useFakeTimers();
+		const mockOpenPath = vi.fn().mockResolvedValue(undefined);
+		window.maestro = {
+			...window.maestro,
+			shell: {
+				...window.maestro.shell,
+				openPath: mockOpenPath,
+			},
+		} as typeof window.maestro;
+
+		const untitledTab: FilePreviewTab = {
+			...fileTab,
+			id: 'file-tab-untitled',
+			path: '',
+			name: 'Untitled',
+			extension: '',
+			content: '',
+			editMode: true,
+		};
+
+		render(
+			<TabBar
+				tabs={defaultTabs}
+				activeTabId="tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={[
+					{ type: 'ai' as const, id: 'tab-1', data: aiTab },
+					{ type: 'file' as const, id: 'file-tab-untitled', data: untitledTab },
+				]}
+				activeFileTabId={null}
+				onFileTabSelect={vi.fn()}
+				onFileTabClose={vi.fn()}
+			/>
+		);
+
+		const fileTabElement = screen
+			.getByText('Untitled')
+			.closest('[data-tab-id="file-tab-untitled"]');
+
+		await act(async () => {
+			fireEvent.mouseEnter(fileTabElement!);
+			vi.advanceTimersByTime(450);
+		});
+
+		// The menu is open (Copy File Name has no path to need), but nothing that
+		// would hand an empty path to the OS is offered.
+		expect(screen.getByText('Copy File Name')).toBeInTheDocument();
+		expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
+		expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
+		expect(screen.queryByText(/Reveal in (Finder|Explorer|File Manager)/)).not.toBeInTheDocument();
+		expect(mockOpenPath).not.toHaveBeenCalled();
+
+		vi.useRealTimers();
+	});
+
 	it('shows Close Tab action and calls onFileTabClose when clicked', async () => {
 		vi.useFakeTimers();
 		const mockFileTabClose = vi.fn();
