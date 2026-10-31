@@ -506,6 +506,10 @@ export class ChildProcessSpawner {
 					// second copy here would only grow for as long as the process lives.
 					stdoutTailLimit: 0,
 					stderrTailLimit: 0,
+					// The app has no terminal whose Ctrl+C or hangup the agent would
+					// miss, so it gets its own group and a Stop ends every tool it
+					// started, even one started just before it exited (#1689).
+					processGroup: true,
 					sessionId,
 					label: toolType,
 				}
