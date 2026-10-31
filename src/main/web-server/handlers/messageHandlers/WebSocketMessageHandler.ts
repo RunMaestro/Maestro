@@ -97,6 +97,7 @@ import {
 	handleMarketplaceImportPlaybook,
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
+import { handleListAgentModels } from './models';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -740,6 +741,10 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_diagnose':
 				void handleFeedbackDiagnose(this.ctx, client, message);
+				break;
+
+			case 'list_agent_models':
+				void handleListAgentModels(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

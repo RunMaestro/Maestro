@@ -1832,6 +1832,9 @@ interface MaestroAPI {
 			global: string[];
 		}>;
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		onModelsRefreshed: (
+			callback: (payload: import('../shared/agentModelsRefresh').ModelsRefreshedPayload) => void
+		) => () => void;
 		getConfigOptions: (
 			agentId: string,
 			optionKey: string,

@@ -9,7 +9,6 @@ import {
 	AGENT_DEFINITIONS,
 	getAgentCapabilities,
 	parseOpenCodeConfig,
-	extractModelsFromConfig,
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
 	getCodexSkillDirs,
@@ -30,11 +29,11 @@ import {
 } from '../../utils/ipcHandler';
 import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
+import { discoverAgentModels, SSH_MODEL_TIMEOUT_MS } from '../../agents/model-discovery';
 import { SshRemoteConfig } from '../../../shared/types';
 import type { AgentCapabilities } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
-import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	getAllSnapshots as getAllClaudeUsageSnapshots,
 	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
@@ -650,242 +649,6 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	}
 
 	return agents;
-}
-
-// Remote model discovery cache
-const remoteModelCache = new Map<string, { models: string[]; timestamp: number }>();
-const REMOTE_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
-const SSH_MODEL_TIMEOUT_MS = 10000;
-
-/**
- * Read OpenCode config files from a remote SSH host and extract model IDs.
- *
- * Probes the same config paths OpenCode uses on POSIX systems:
- *   ~/.opencode/opencode.json, ~/.opencode.json, ~/.config/opencode/opencode.json
- *
- * Uses a single SSH command with a shell script that cats each file, avoiding
- * multiple round-trips. Returns unique model IDs in provider/model format.
- */
-async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Promise<string[]> {
-	// Shell script that probes each config path and prints its content with delimiters.
-	// We use a delimiter so we can split multiple config files from a single stdout.
-	const configPaths = [
-		'~/.opencode/opencode.json',
-		'~/.opencode.json',
-		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
-	];
-
-	// Build a script that cats each config file if it exists
-	const catScript = configPaths
-		.map(
-			(p) =>
-				`if [ -f ${p} ]; then echo "___OPENCODE_CONFIG_START___"; cat ${p}; echo "___OPENCODE_CONFIG_END___"; fi`
-		)
-		.join('; ');
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: 'sh',
-		args: ['-c', catScript],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0 || !result.stdout.includes('___OPENCODE_CONFIG_START___')) {
-			return [];
-		}
-
-		// Parse delimited config blocks from stdout
-		const seen = new Set<string>();
-		const models: string[] = [];
-		const blocks = result.stdout.split('___OPENCODE_CONFIG_START___').slice(1);
-
-		for (const block of blocks) {
-			const endIdx = block.indexOf('___OPENCODE_CONFIG_END___');
-			const jsonStr = endIdx >= 0 ? block.slice(0, endIdx).trim() : block.trim();
-			if (!jsonStr) continue;
-
-			const config = parseOpenCodeConfig(jsonStr);
-			if (!config) continue;
-
-			for (const modelId of extractModelsFromConfig(config)) {
-				if (!seen.has(modelId)) {
-					seen.add(modelId);
-					models.push(modelId);
-				}
-			}
-		}
-
-		if (models.length > 0) {
-			logger.info(
-				`Extracted ${models.length} models from remote OpenCode configs on ${sshRemote.host}`,
-				LOG_CONTEXT,
-				{ models }
-			);
-		}
-
-		return models;
-	} catch (error) {
-		if (error instanceof Error && error.message.includes('timed out')) {
-			logger.warn(`Timed out reading remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT);
-			return [];
-		}
-		// Non-fatal: config reading failure shouldn't block CLI-based discovery
-		logger.warn(`Failed to read remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT, {
-			error,
-		});
-		return [];
-	}
-}
-
-/**
- * Discover available models for an agent on a remote SSH host.
- * Uses the agent's `models` subcommand over SSH, supplemented by models
- * from remote opencode.json config files for OpenCode agents.
- * Returns an empty array on timeout, non-zero exit, or unknown agent.
- * Throws on unexpected errors (e.g., SSH config issues, parsing bugs).
- */
-async function discoverModelsRemote(
-	agentId: string,
-	sshRemote: SshRemoteConfig,
-	forceRefresh: boolean
-): Promise<string[]> {
-	const cacheKey = `${agentId}:${sshRemote.id}`;
-
-	// Check cache unless force refresh
-	if (!forceRefresh) {
-		const cached = remoteModelCache.get(cacheKey);
-		if (cached && Date.now() - cached.timestamp < REMOTE_MODEL_CACHE_TTL_MS) {
-			logger.info(`Using cached remote models for ${agentId} on ${sshRemote.host}`, LOG_CONTEXT);
-			return cached.models;
-		}
-	}
-
-	// Look up the agent's binary name
-	const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
-	if (!agentDef) {
-		logger.warn(`Unknown agent for remote model discovery: ${agentId}`, LOG_CONTEXT);
-		return [];
-	}
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: agentDef.binaryName,
-		args: agentId === 'omp' ? ['models', '--json'] : ['models'],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		logger.info(
-			`Discovering models for "${agentDef.name}" on remote ${sshRemote.host}`,
-			LOG_CONTEXT
-		);
-
-		// Execute with timeout matching detectAgentsRemote pattern
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(
-					() =>
-						reject(
-							new Error(`SSH model discovery timed out after ${SSH_MODEL_TIMEOUT_MS / 1000}s`)
-						),
-					SSH_MODEL_TIMEOUT_MS
-				);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0) {
-			logger.warn(
-				`Remote model discovery for "${agentDef.name}" exited with code ${result.exitCode}`,
-				LOG_CONTEXT,
-				{ stderr: result.stderr }
-			);
-			return [];
-		}
-
-		const seen = new Set<string>();
-		const models: string[] = [];
-		const sanitizedStdout = stripAnsi(result.stdout);
-
-		if (agentId === 'omp') {
-			// `omp models` prints a human table; the machine-readable form is
-			// `omp models --json` -> { models: [{ selector, id, ... }] }. Use the
-			// provider-qualified selector, mirroring the local discovery path so the
-			// remote picker is not filled with table headings/box rows.
-			try {
-				const parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
-					sanitizedStdout
-				);
-				for (const entry of parsed.models ?? []) {
-					const modelId = entry.selector || entry.id;
-					if (modelId && !seen.has(modelId)) {
-						seen.add(modelId);
-						models.push(modelId);
-					}
-				}
-			} catch (parseError) {
-				logger.warn('Failed to parse remote omp models --json output', LOG_CONTEXT, {
-					error: parseError,
-				});
-			}
-		} else {
-			// Source 1: CLI-discovered models (one per line)
-			const cliModels = sanitizedStdout
-				.split('\n')
-				.map((l) => l.trim())
-				.filter((l) => l.length > 0);
-			for (const m of cliModels) {
-				if (!seen.has(m)) {
-					seen.add(m);
-					models.push(m);
-				}
-			}
-		}
-
-		// Source 2: Remote opencode.json config files (OpenCode only)
-		if (agentId === 'opencode') {
-			const configModels = await discoverModelsFromRemoteConfigs(sshRemote);
-			for (const m of configModels) {
-				if (!seen.has(m)) {
-					seen.add(m);
-					models.push(m);
-				}
-			}
-		}
-
-		logger.info(
-			`Discovered ${models.length} models for "${agentDef.name}" on remote ${sshRemote.host}`,
-			LOG_CONTEXT
-		);
-
-		// Cache the result
-		remoteModelCache.set(cacheKey, { models, timestamp: Date.now() });
-
-		return models;
-	} catch (error) {
-		// Timeout is an expected SSH failure - return empty gracefully
-		if (error instanceof Error && error.message.includes('SSH model discovery timed out')) {
-			logger.warn(
-				`Timed out discovering models for "${agentDef.name}" on ${sshRemote.host}`,
-				LOG_CONTEXT
-			);
-			return [];
-		}
-		// Unexpected errors should propagate to withIpcErrorLogging / Sentry
-		throw error;
-	}
 }
 
 /**
@@ -1671,24 +1434,14 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getModels'),
 			async (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => {
-				logger.info(`Discovering models for agent: ${agentId}`, LOG_CONTEXT, {
-					forceRefresh,
-					sshRemoteId,
-				});
-
-				// If SSH remote ID provided, discover models on remote host
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
-					}
-					return discoverModelsRemote(agentId, sshConfig, forceRefresh ?? false);
-				}
-
-				// Local discovery
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
-				const models = await agentDetector.discoverModels(agentId, forceRefresh ?? false);
-				return models;
+				// A forced discovery also broadcasts the list to every open picker.
+				return discoverAgentModels(
+					{
+						getAgentDetector: () => requireDependency(getAgentDetector, 'Agent detector'),
+						getSshRemote: (id) => getSshRemoteById(settingsStore, id),
+					},
+					{ agentId, forceRefresh: forceRefresh ?? false, sshRemoteId }
+				);
 			}
 		)
 	);

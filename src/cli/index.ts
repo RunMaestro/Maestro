@@ -69,6 +69,7 @@ import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
+import { listModels } from './commands/list-models';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
@@ -316,6 +317,16 @@ list
 	.description('List all configured SSH remotes')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listSshRemotes);
+
+list
+	.command('models <provider>')
+	.description(
+		'List the models a provider offers (e.g. opencode, claude-code), as the model pickers see them'
+	)
+	.option('--refresh', 'Re-run discovery past the cache and update every open model picker')
+	.option('--ssh-remote <id>', 'Discover on this SSH remote instead of this machine')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(listModels);
 
 list
 	.command('terminals')

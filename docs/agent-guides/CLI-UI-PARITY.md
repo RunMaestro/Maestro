@@ -253,6 +253,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Toggle Save to History                                                   | `tab save-to-history`                                                                            |
 | Composer chips: thinking, read-only access                               | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                            |
 | Model / effort pills on one tab                                          | `tab model`, `tab effort` (`inherit` clears the override)                                        |
+| Refresh the model list (pill dropdown, Model & Effort console, Settings) | `list models <provider> --refresh`; read: `list models <provider>`                               |
 | Enter-to-send chip                                                       | `tab enter-to-send`                                                                              |
 | Read one tab's settings back                                             | `tab show`, or `session list --json`                                                             |
 | Move Tab to First / Last                                                 | `tab move <tab-id> first\|last\|<index>`                                                         |
