@@ -8,7 +8,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { PerformanceMetrics } from '../../shared/performance-metrics';
 import type { StatsTimeRange } from '../../shared/stats-types';
-import { toLocalYmd } from '../../shared/localDay';
+import { startOfLocalDay, toLocalYmd } from '../../shared/localDay';
 
 export const LOG_CONTEXT = '[StatsDB]';
 
@@ -83,7 +83,8 @@ export function getTimeRangeStart(range: StatsTimeRange): number {
 
 	switch (range) {
 		case 'day':
-			return now - day;
+			// "Today" is the local calendar day, not a rolling 24 hours.
+			return startOfLocalDay(now);
 		case 'week':
 			return now - 7 * day;
 		case 'month':

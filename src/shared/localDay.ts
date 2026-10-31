@@ -18,6 +18,13 @@ export function toLocalYmd(value: number | Date): string {
 	).padStart(2, '0')}`;
 }
 
+/** Local midnight (ms) of the calendar day a timestamp (ms) or Date falls on. */
+export function startOfLocalDay(value: number | Date): number {
+	const d = new Date(value);
+	d.setHours(0, 0, 0, 0);
+	return d.getTime();
+}
+
 /** Parse a local `YYYY-MM-DD` into a local-midnight Date, or null if malformed. */
 export function parseLocalYmd(value: string): Date | null {
 	const parts = value.split('-').map(Number);
