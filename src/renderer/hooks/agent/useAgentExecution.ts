@@ -340,8 +340,25 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
+								lastOutputAt = Date.now();
 								agentSessionId = capturedId;
 							}
+						})
+					);
+
+					// Any agent event is activity for the inactivity watchdog, not only
+					// `data`. Stream-json providers (Claude Code) emit `data` only for the
+					// final result; mid-turn work arrives as tool executions, thinking
+					// chunks and usage updates. Counting only `data` turned the silence
+					// watchdog into a wall-clock limit that killed busy tasks (#1962).
+					cleanupFns.push(
+						window.maestro.process.onToolExecution((sid: string) => {
+							if (sid === targetSessionId) lastOutputAt = Date.now();
+						})
+					);
+					cleanupFns.push(
+						window.maestro.process.onThinkingChunk((sid: string) => {
+							if (sid === targetSessionId) lastOutputAt = Date.now();
 						})
 					);
 
@@ -349,6 +366,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onUsage((sid: string, usageStats) => {
 							if (sid === targetSessionId) {
+								lastOutputAt = Date.now();
 								// Accumulate usage stats for this task (there may be multiple usage events per task)
 								taskUsageStats = accumulateUsageStats(taskUsageStats, usageStats);
 								// Keep the last event for context estimation (accumulated totals can exceed context window)
@@ -609,8 +627,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 					// Watchdog for hung Auto Run batch tasks. Two independent triggers,
 					// each with a 0 = "unlimited" sentinel that disables it:
-					//   1. Inactivity: force-kill after a stretch of NO output. Catches a
-					//      truly silent/hung agent.
+					//   1. Inactivity: force-kill after a stretch with NO agent event
+					//      (output, tool execution, thinking, usage, session id). Catches
+					//      a truly silent/hung agent.
 					//   2. Max duration: force-kill once total wall-clock runtime exceeds a
 					//      cap, regardless of output. Catches a stuck-but-chatty agent that
 					//      keeps emitting (resetting lastOutputAt) yet never finishes the
