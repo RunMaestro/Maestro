@@ -71,6 +71,7 @@ vi.mock('electron', () => ({
 		isDestroyed() {
 			return false;
 		}
+		destroy = vi.fn();
 		setContentSize(width: number, height: number) {
 			this.width = width;
 			this.height = height;
@@ -284,5 +285,22 @@ describe('shared host browser page', () => {
 		await hostInput;
 		expect(await result).toMatchObject({ message: expect.stringContaining('lease expired') });
 		expect(send.mock.calls).toEqual([['Input.insertText', { text: 'host' }]]);
+	});
+
+	it('closes a live page and treats a page that is already gone as closed (MAESTRO-17P)', async () => {
+		const native = { sender: owner.webContents };
+		// Never opened: nothing to close, and nothing to report.
+		await expect(invoke('browser:pageClose', native, target)).resolves.toBeUndefined();
+
+		await invoke('browser:pageOpen', native, target, 'host-view', nativeSize);
+		const window = ipc.windows[0] as WindowFixture & { destroy: ReturnType<typeof vi.fn> };
+		await invoke('browser:pageClose', native, target);
+		expect(window.destroy).toHaveBeenCalledTimes(1);
+
+		// The tab's guest unmounted before the renderer's close arrived, which
+		// drops the page entry. The close must still settle cleanly.
+		window.webContents.emit('destroyed');
+		await expect(invoke('browser:pageClose', native, target)).resolves.toBeUndefined();
+		expect(window.destroy).toHaveBeenCalledTimes(1);
 	});
 });
