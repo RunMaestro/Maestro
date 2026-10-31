@@ -148,8 +148,14 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 
 	// Process a queued item - delegates to agentStore action.
 	// Stable identity: conductor profile + command refs read from depsRef.
+	//
+	// NOT side-effect gated. Every caller has already taken the item out of the
+	// queue and drawn its card (Force Send, an idle slash command, Quick Actions
+	// release), so returning here loses the message: in a browser client it
+	// vanished, and the owning desktop renderer had nothing left to send. The
+	// paths every client sees gate BEFORE they dequeue instead: the drain below,
+	// the exit listener (`ownsSideEffects`), and Stop (`ownsQueue`).
 	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
-		if (!sideEffectGate.current?.(sessionId)) return;
 		await useAgentStore
 			.getState()
 			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));

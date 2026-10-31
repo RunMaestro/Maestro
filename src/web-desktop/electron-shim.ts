@@ -17,6 +17,7 @@ import { captureException } from './sentry-shim';
 import {
 	BridgeTransportError,
 	isExpectedBridgeError,
+	isUnsupportedInvokeError,
 	WEB_BRIDGE_STATE_EVENT,
 } from '../shared/bridgeError';
 // Also a side-effect import: the module declares `window.__MAESTRO_CONFIG__`
@@ -33,7 +34,10 @@ import {
 	writeClientViewState,
 } from '../renderer/utils/activeSessionPersistence';
 
-const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission';
+// v2: earlier builds stored alerts for refused channels and lost autosaves,
+// which this build no longer raises. A phone tab still holding one would show
+// it again on every reload until dismissed, so the old key is not read.
+const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission:v2';
 
 // IPC queries follow the preload getter/list/read naming convention. The
 // non-prefixed query methods below are explicit exceptions, not error filters.
@@ -156,6 +160,15 @@ function isPersistenceChannel(channel: string): boolean {
 	return (
 		channel === 'sessions:setMany' || channel === 'sessions:setAll' || channel === 'groups:setAll'
 	);
+}
+/**
+ * Whether a lost acknowledgement needs the user's attention. Autosaves do not:
+ * the bridge marks persistence uncertain and restores host state on reconnect,
+ * and the user never submitted them. A phone suspends the socket on every lock
+ * and app switch, so alerting on them put the banner up constantly.
+ */
+function alertsOnUncertainty(channel: string): boolean {
+	return isSubmissionChannel(channel) && !isPersistenceChannel(channel);
 }
 function requestTimeoutMs(channel: string): number {
 	// Repository transfers and recursive filesystem reads legitimately outlast ordinary UI requests.
@@ -385,7 +398,9 @@ class BridgeClient {
 				if (msg.ok) pending.resolve(msg.result);
 				else {
 					const error = String(msg.error ?? 'bridge error');
-					if (isSubmissionChannel(pending.channel))
+					// A channel this interface does not offer never ran on the host. The
+					// caller gets the rejection; there is no submission to warn about.
+					if (isSubmissionChannel(pending.channel) && !isUnsupportedInvokeError(error))
 						showSubmissionNotice(
 							'Submission rejected for ' +
 								pending.channel +
@@ -444,7 +459,7 @@ class BridgeClient {
 					pending.channel +
 					'. The host may have accepted it. Check host state before submitting again; it was not automatically retried.'
 				: reason + ' before response to ' + pending.channel;
-			if (submission) showSubmissionNotice(message);
+			if (alertsOnUncertainty(pending.channel)) showSubmissionNotice(message);
 			if (isPersistenceChannel(pending.channel)) this.uncertainPersistence = true;
 			pending.reject(
 				new BridgeTransportError(
@@ -798,7 +813,7 @@ class BridgeClient {
 						channel +
 						' timed out before acknowledgement. Check host state before submitting again; it was not automatically retried.'
 					: 'Bridge request timed out: ' + channel;
-				if (submission) showSubmissionNotice(message);
+				if (alertsOnUncertainty(channel)) showSubmissionNotice(message);
 				reject(
 					new BridgeTransportError(
 						message,
@@ -824,7 +839,7 @@ class BridgeClient {
 			} catch (error) {
 				this.pending.delete(requestId);
 				clearTimeout(timer);
-				if (isSubmissionChannel(channel))
+				if (alertsOnUncertainty(channel))
 					showSubmissionNotice(
 						'Submission uncertainty: transport failed while sending ' +
 							channel +

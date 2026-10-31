@@ -137,7 +137,11 @@ describe('interruptTurn: one tab', () => {
 	it('narrows the retry, compaction, hand-off and consult cancel to that tab', async () => {
 		seedAgent();
 		const cancelPendingSynopsis = vi.fn().mockResolvedValue(undefined);
-		registerTurnInterruptDeps({ cancelPendingSynopsis, processQueuedItem: vi.fn() });
+		registerTurnInterruptDeps({
+			cancelPendingSynopsis,
+			processQueuedItem: vi.fn(),
+			ownsQueue: () => true,
+		});
 
 		await interruptTurn('agent-1', { tabId: 'tab-b' });
 
@@ -194,12 +198,70 @@ describe('interruptTurn: one tab', () => {
 		};
 		seedAgent({ executionQueue: [queued] });
 		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
-		registerTurnInterruptDeps({ cancelPendingSynopsis: vi.fn(), processQueuedItem });
+		registerTurnInterruptDeps({
+			cancelPendingSynopsis: vi.fn(),
+			processQueuedItem,
+			ownsQueue: () => true,
+		});
 
 		await interruptTurn('agent-1', { tabId: 'tab-b' });
 
 		expect(agent().executionQueue).toEqual([queued]);
 		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+});
+
+describe('interruptTurn: queued work after a whole-agent stop', () => {
+	const queued: QueuedItem = {
+		id: 'q1',
+		timestamp: 1,
+		tabId: 'tab-c',
+		type: 'message',
+		text: 'next',
+	};
+
+	it('starts the next item in the client that drains the queue', async () => {
+		vi.useFakeTimers();
+		try {
+			seedAgent({ executionQueue: [queued] });
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			registerTurnInterruptDeps({
+				cancelPendingSynopsis: vi.fn(),
+				processQueuedItem,
+				ownsQueue: () => true,
+			});
+
+			await interruptTurn('agent-1');
+			await vi.runAllTimersAsync();
+
+			expect(agent().executionQueue).toEqual([]);
+			expect(processQueuedItem).toHaveBeenCalledWith('agent-1', queued);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('leaves the item queued for the owner in a browser client', async () => {
+		// The owning desktop renderer's exit listener starts it. Taking it out here
+		// either lost it or would send it twice.
+		vi.useFakeTimers();
+		try {
+			seedAgent({ executionQueue: [queued] });
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			registerTurnInterruptDeps({
+				cancelPendingSynopsis: vi.fn(),
+				processQueuedItem,
+				ownsQueue: () => false,
+			});
+
+			await interruptTurn('agent-1');
+			await vi.runAllTimersAsync();
+
+			expect(agent().executionQueue).toEqual([queued]);
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

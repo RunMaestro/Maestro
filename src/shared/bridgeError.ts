@@ -62,6 +62,17 @@ export function isExpectedBridgeError(error: unknown): boolean {
 	);
 }
 
+/**
+ * The error text the bridge answers an unregistered or denied channel with.
+ * The host never ran the request, so there is no submission to be uncertain about.
+ */
+export function isUnsupportedInvokeError(text: string): boolean {
+	return (
+		text.includes('No ipcMain handler registered') ||
+		text.includes('is not available over the web interface')
+	);
+}
+
 export const WEB_BRIDGE_STATE_EVENT = 'maestro:bridge-state';
 
 /** Native Electron has no bridge state. Browser work resumes after reconciliation. */
