@@ -39,6 +39,8 @@ interface BuildFeatureCommandsArgs {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenBoard?: () => void;
+	onOpenProfiles?: () => void;
 	onOpenPianola?: () => void;
 	/** Present only when Computer History can be opened here (Encore on, desktop). */
 	onOpenComputerHistory?: () => void;
@@ -64,6 +66,8 @@ interface BuildFeatureCommandsArgs {
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
+		openBoard?: QuickAction['shortcut'];
+		openProfiles?: QuickAction['shortcut'];
 		computerHistory?: QuickAction['shortcut'];
 		fuzzyFileSearch?: QuickAction['shortcut'];
 		editClipboardImage?: QuickAction['shortcut'];
@@ -104,6 +108,8 @@ export function buildFeatureCommands({
 	onOpenSymphony,
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
+	onOpenBoard,
+	onOpenProfiles,
 	onOpenPianola,
 	onOpenComputerHistory,
 	onConfigureCue,
@@ -377,6 +383,32 @@ export function buildFeatureCommands({
 			subtext: 'Event-driven automation dashboard',
 			action: () => {
 				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenBoard) {
+		commands.push({
+			id: 'board',
+			label: 'Board',
+			shortcut: shortcuts.openBoard,
+			subtext: 'Card DAG kanban dispatched on the Cue tick',
+			action: () => {
+				onOpenBoard();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenProfiles) {
+		commands.push({
+			id: 'agent-profiles',
+			label: 'Agent Profiles',
+			shortcut: shortcuts.openProfiles,
+			subtext: 'Manage the assignees board cards dispatch to',
+			action: () => {
+				onOpenProfiles();
 				setQuickActionOpen(false);
 			},
 		});

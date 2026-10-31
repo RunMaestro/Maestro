@@ -5472,3 +5472,30 @@ describe('group chat chords that must act on the room', () => {
 		});
 	});
 });
+
+describe('useMainKeyboardHandler - Profiles Cue independence', () => {
+	const initialEncore = useSettingsStore.getState().encoreFeatures;
+	beforeEach(() => useModalStore.setState({ modals: new Map() }));
+	afterEach(() => {
+		useModalStore.setState({ modals: new Map() });
+		useSettingsStore.setState({ encoreFeatures: initialEncore });
+	});
+	it.each([
+		{ board: true, expected: true },
+		{ board: false, expected: false },
+	])('opens Profiles with Cue off only when Board is enabled ($board)', ({ board, expected }) => {
+		useSettingsStore.setState({ encoreFeatures: { ...initialEncore, board, maestroCue: false } });
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'openProfiles',
+			encoreFeatures: { board, maestroCue: false },
+			sessions: [{ id: 'test' }],
+		});
+		act(() =>
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'P', metaKey: true, shiftKey: true, bubbles: true })
+			)
+		);
+		expect(useModalStore.getState().modals.has('profilesModal')).toBe(expected);
+	});
+});

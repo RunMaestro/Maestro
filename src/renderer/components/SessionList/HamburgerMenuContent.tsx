@@ -429,6 +429,30 @@ export function HamburgerMenuContent({
 					{quickChatHotkey.length > 0 && <ShortcutHint theme={theme} keys={quickChatHotkey} />}
 				</button>
 			)}
+			{encoreFeatures.board && encoreFeatures.maestroCue && (
+				<button
+					onClick={() => {
+						openUiSurface('board');
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 text-left"
+					style={{ color: theme.colors.textMain }}
+				>
+					Board <ShortcutHint theme={theme} keys={shortcuts.openBoard?.keys ?? []} />
+				</button>
+			)}
+			{encoreFeatures.board && (
+				<button
+					onClick={() => {
+						openUiSurface('profiles');
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 text-left"
+					style={{ color: theme.colors.textMain }}
+				>
+					Agent Profiles <ShortcutHint theme={theme} keys={shortcuts.openProfiles?.keys ?? []} />
+				</button>
+			)}
 			{encoreFeatures.pianola && (
 				<button
 					onClick={() => {

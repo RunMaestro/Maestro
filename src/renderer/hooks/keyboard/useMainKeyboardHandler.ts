@@ -40,6 +40,7 @@ import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 /**
@@ -1066,6 +1067,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.handleOpenQueueBrowser();
 				trackShortcut('executionQueue');
+			} else if (
+				ctx.isShortcut(e, 'openBoard') &&
+				ctx.encoreFeatures?.board &&
+				ctx.encoreFeatures?.maestroCue
+			) {
+				e.preventDefault();
+				openUiSurface('board');
+				trackShortcut('openBoard');
+			} else if (ctx.isShortcut(e, 'openProfiles') && ctx.encoreFeatures?.board) {
+				e.preventDefault();
+				openUiSurface('profiles');
+				trackShortcut('openProfiles');
 			} else if (ctx.isShortcut(e, 'openSymphony') && ctx.encoreFeatures?.symphony) {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);

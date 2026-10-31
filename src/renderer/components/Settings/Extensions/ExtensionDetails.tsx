@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HelpCircle, Settings as SettingsIcon, Trash2, KeyRound, RefreshCw } from 'lucide-react';
-import type { Theme } from '../../../types';
+import type { EncoreFeatureFlags, Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { formatCalendarDay } from '../../../../shared/formatters';
 import { PermissionList, RISK_COLOR } from './PermissionList';
@@ -32,7 +32,12 @@ import type {
 } from '../../../../shared/plugins/contributions';
 import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
-import { CATEGORY_LABELS, extensionBadge, type UnifiedExtension } from './extensionModel';
+import {
+	CATEGORY_LABELS,
+	extensionBadge,
+	isDependencyMet,
+	type UnifiedExtension,
+} from './extensionModel';
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
 import { pluginSettingsId } from '../../../../shared/plugins/panel-host';
 import { getModalActions, useModalStore } from '../../../stores/modalStore';
@@ -42,6 +47,7 @@ import type { EncoreTileRequest } from '../tabs/EncoreTab/types';
 interface ExtensionDetailsProps {
 	theme: Theme;
 	ext: UnifiedExtension;
+	encoreFeatures?: EncoreFeatureFlags;
 	contributions: AggregatedContributions | null;
 	busy: boolean;
 	onTogglePlugin: (record: PluginRecord) => void;
@@ -82,6 +88,7 @@ const CONTRIB_BUCKETS: ReadonlyArray<{
 export function ExtensionDetails({
 	theme,
 	ext,
+	encoreFeatures,
 	contributions,
 	busy,
 	onTogglePlugin,
@@ -148,6 +155,7 @@ export function ExtensionDetails({
 		record?.signature?.status,
 	]);
 
+	const isBoard = !isPlugin && ext.flag === 'board';
 	const isPianola = !isPlugin && ext.flag === 'pianola';
 	// Web Login manages its accounts in its own tile: the channels behind that
 	// pane are desktop-only, so there is nowhere else they could be offered.
@@ -225,6 +233,16 @@ export function ExtensionDetails({
 	);
 
 	const grantedCaps = new Set((grants?.granted ?? []).map((g) => g.capability));
+	// Dependency gate (e.g. Board requires Maestro Cue): block ENABLING until the
+	// required flag is on. Disabling stays allowed so a feature can always be
+	// turned off. Mirrors the main-process dispatcher's dual-gate.
+	const dependencyMet = encoreFeatures ? isDependencyMet(ext, encoreFeatures) : true;
+	const dependencyName =
+		ext.dependsOn && ext.dependsOn in FIRST_PARTY_PLUGINS
+			? FIRST_PARTY_PLUGINS[ext.dependsOn as keyof typeof FIRST_PARTY_PLUGINS].name
+			: ext.dependsOn;
+	const enableBlockedByDependency = !isPlugin && !dependencyMet && ext.state !== 'enabled';
+
 	const isEnabled = ext.state === 'enabled';
 	const toggleBlocked = busy || (isPlugin && ext.loadStatus !== 'ok');
 
@@ -288,7 +306,8 @@ export function ExtensionDetails({
 						aria-checked={isEnabled}
 						aria-label={isEnabled ? `Disable ${ext.name}` : `Enable ${ext.name}`}
 						data-testid="extension-enable-toggle"
-						disabled={toggleBlocked}
+						disabled={toggleBlocked || enableBlockedByDependency}
+						title={enableBlockedByDependency ? `Requires ${dependencyName}` : undefined}
 						onClick={() => {
 							if (isPlugin && record) onTogglePlugin(record);
 							else if (ext.flag) onToggleBuiltin(ext.flag);
@@ -309,6 +328,16 @@ export function ExtensionDetails({
 					</button>
 				</div>
 			</div>
+
+			{enableBlockedByDependency && (
+				<span
+					data-testid="extension-dependency-hint"
+					className="text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					Requires {dependencyName}. Enable it first.
+				</span>
+			)}
 
 			<p className="text-sm mt-3" style={{ color: theme.colors.textMain }}>
 				{ext.description || 'No description provided.'}
@@ -730,6 +759,32 @@ export function ExtensionDetails({
 							Open {panel.title}
 						</button>
 					))}
+
+					{/* Board: the kanban surface lives in its own modal. The open action
+					    also requires the Cue dependency: with Cue off the modal will not
+					    mount (AppStandaloneModals), so an active button would be a no-op. */}
+					{isBoard &&
+						(ext.state === 'enabled' && dependencyMet ? (
+							<button
+								type="button"
+								data-testid="extension-open-board"
+								onClick={() => getModalActions().setBoardModalOpen(true)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								<SettingsIcon className="w-4 h-4" /> Open Board
+							</button>
+						) : (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								{ext.state === 'enabled'
+									? `Enable ${dependencyName ?? 'Maestro Cue'} to open the Board.`
+									: 'Enable Board to open its kanban surface.'}
+							</div>
+						))}
 
 					{/* Plugin: consent-gated live editor for contributed settings */}
 					{isPlugin && canConfigurePlugin && (

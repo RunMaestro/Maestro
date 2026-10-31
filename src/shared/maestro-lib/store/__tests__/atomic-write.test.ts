@@ -7,6 +7,7 @@ import * as path from 'path';
 // the one function the mock routes; everything else stays the real fs.
 const hooks = vi.hoisted(() => ({
 	rename: null as null | ((from: string, to: string) => Promise<void>),
+	renameSync: null as null | ((from: string, to: string) => void),
 }));
 
 vi.mock('fs/promises', async () => {
@@ -16,7 +17,14 @@ vi.mock('fs/promises', async () => {
 	return { ...actual, rename, default: { ...actual, rename } };
 });
 
-import { atomicWriteFile, atomicWriteJson } from '../atomic-write';
+vi.mock('fs', async () => {
+	const actual = await vi.importActual<typeof import('fs')>('fs');
+	const renameSync = (from: string, to: string) =>
+		hooks.renameSync ? hooks.renameSync(from, to) : actual.renameSync(from, to);
+	return { ...actual, renameSync, default: { ...actual, renameSync } };
+});
+
+import { atomicWriteFile, atomicWriteFileSync, atomicWriteJson } from '../atomic-write';
 
 function errnoError(code: string): NodeJS.ErrnoException {
 	return Object.assign(new Error(code), { code });
@@ -30,11 +38,29 @@ describe('atomicWriteFile', () => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-atomic-write-'));
 		target = path.join(dir, 'store.json');
 		hooks.rename = null;
+		hooks.renameSync = null;
 	});
 
 	afterEach(() => {
 		hooks.rename = null;
+		hooks.renameSync = null;
 		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('keeps interleaved synchronous writes to the same destination independent', async () => {
+		const actual = await vi.importActual<typeof import('fs')>('fs');
+		let interleaved = false;
+		hooks.renameSync = (from, to) => {
+			if (!interleaved) {
+				interleaved = true;
+				atomicWriteFileSync(target, 'inner');
+				expect(fs.readFileSync(target, 'utf-8')).toBe('inner');
+			}
+			actual.renameSync(from, to);
+		};
+		expect(() => atomicWriteFileSync(target, 'outer')).not.toThrow();
+		expect(fs.readFileSync(target, 'utf-8')).toBe('outer');
+		expect(fs.readdirSync(dir)).toEqual(['store.json']);
 	});
 
 	it('replaces the file wholesale and leaves no temp file behind', async () => {

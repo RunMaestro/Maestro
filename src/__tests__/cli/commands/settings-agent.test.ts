@@ -113,6 +113,13 @@ describe('settings agent', () => {
 	});
 
 	describe('list', () => {
+		it.each([true, false])('lists the worker opt-in with its metadata (%s)', (value) => {
+			vi.mocked(getSessionById).mockReturnValue({ ...codexAgent, boardWorker: value });
+			settingsAgentList(codexAgent.id, { json: true });
+			expect(jsonLines(logSpy).find((line) => line.key === 'boardWorker')).toMatchObject({ value });
+			expect(errorSpy).not.toHaveBeenCalled();
+		});
+
 		it("lists the agent's own settings for an agent ID", () => {
 			settingsAgentList(codexAgent.id, { json: true });
 

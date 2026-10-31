@@ -83,6 +83,14 @@ describe('show-agent command', () => {
 	});
 
 	describe('basic display', () => {
+		it.each([true, false, undefined])('reads back the Board worker opt-in (%s)', (value) => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ boardWorker: value }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).boardWorker).toBe(value === true);
+		});
+
 		it('should display agent details in human-readable format', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession());
 			vi.mocked(readGroups).mockReturnValue([]);
