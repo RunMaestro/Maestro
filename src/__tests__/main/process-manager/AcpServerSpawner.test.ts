@@ -283,6 +283,18 @@ describe('AcpServerSpawner', () => {
 		await vi.waitFor(() => expect(fallback).toHaveBeenCalled());
 	});
 
+	it('does not restart a cancelled startup through the current transport', async () => {
+		const agent = new FakeAcpAgent(false);
+		const h = harness(agent);
+		h.spawner.spawn(h.config({ permissionMode: 'full' }));
+		const managed = h.processes.get('maestro-acp')!;
+		await managed.harnessControl!.interrupt();
+		agent.exit(1);
+
+		await expect(h.exited).resolves.toBe(0);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+	});
+
 	it('does not fall back to prompt-less CLI for Standard setup failures', async () => {
 		class FailingAgent extends FakeAcpAgent {
 			override send(msg: ClientMessage): void {

@@ -68,6 +68,8 @@ function launchDefinition(
 interface NativePreparation {
 	env: NodeJS.ProcessEnv;
 	prompt: string;
+	modelId?: string;
+	effort?: string;
 }
 
 function stringEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -85,13 +87,20 @@ function prepareNativeLaunch(
 	command: string
 ): NativePreparation | { error: string } {
 	const stored = readAgentConfig(toolType);
+	const definition = getAgentDefinition(toolType);
+	if (!definition) return { error: `Native CLI control is not available for ${toolType}` };
+	const configResolution = applyAgentConfigOverrides(launchDefinition(definition), [], {
+		agentConfigValues: options.agentConfigValues ?? stored,
+		sessionCustomModel: options.customModel,
+		sessionCustomEffort: options.customEffort,
+	});
 	const agentCustomEnvVars =
 		stored.customEnvVars && typeof stored.customEnvVars === 'object'
 			? (stored.customEnvVars as Record<string, string>)
 			: undefined;
 	const result = buildAgentLaunchPlan({
 		surface: 'cli',
-		agent: getAgentDefinition(toolType),
+		agent: definition,
 		command,
 		args: [],
 		cwd,
@@ -137,6 +146,8 @@ function prepareNativeLaunch(
 			toolType !== 'copilot-cli'
 				? embedSystemPromptInPrompt(options.appendSystemPrompt, prompt)
 				: prompt,
+		modelId: configResolution.modelId,
+		effort: configResolution.effort,
 	};
 }
 
@@ -272,6 +283,11 @@ export async function spawnNativeSdkAgent(
 			command
 		);
 		if ('error' in prepared) return spawnFailureResult(prepared.error);
+		nativeOptions = {
+			...nativeOptions,
+			customModel: prepared.modelId,
+			customEffort: prepared.effort,
+		};
 		const effectivePrompt = prepared.prompt;
 		if (toolType === 'claude-code') {
 			return spawnClaudeNative(

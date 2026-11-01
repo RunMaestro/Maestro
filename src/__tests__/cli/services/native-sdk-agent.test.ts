@@ -11,6 +11,13 @@ vi.mock('@github/copilot-sdk', () => ({
 }));
 
 const queryMock = vi.mocked(query);
+const readAgentConfigMock = vi.hoisted(() =>
+	vi.fn(() => ({ model: 'saved-model', effort: 'high' }))
+);
+vi.mock('../../../cli/services/storage', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../cli/services/storage')>();
+	return { ...actual, readAgentConfig: readAgentConfigMock };
+});
 
 function claudeQuery(
 	params: {
@@ -47,6 +54,19 @@ function claudeQuery(
 
 describe('CLI native SDK ownership', () => {
 	beforeAll(() => initializeOutputParsers());
+
+	it('uses saved model and effort when native options omit overrides', async () => {
+		queryMock.mockImplementation((params) => claudeQuery(params, () => undefined));
+
+		await spawnNativeSdkAgent('claude-code', process.cwd(), 'test', undefined, {
+			harnessControlMode: 'native',
+		});
+
+		expect(queryMock.mock.calls.at(-1)?.[0].options).toMatchObject({
+			model: 'saved-model',
+			effort: 'high',
+		});
+	});
 
 	it('denies a standard approval immediately when no interactive owner exists', async () => {
 		let decision = '';

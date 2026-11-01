@@ -97,4 +97,18 @@ describe('native spawn configuration', () => {
 		expect(spawned.permissionMode).toBe('readonly');
 		expect(spawned.nativeRpcArgs).toEqual(expect.arrayContaining(['--mode', 'rpc-ui']));
 	});
+
+	it('allows Standard mode on current transports without native opt-in', async () => {
+		const codex = await spawnNative('codex', {
+			harnessControlMode: 'current',
+			permissionMode: 'standard',
+		});
+		expect(codex.harnessControlMode).toBe('current');
+
+		const qwen = await spawnNative('qwen3-coder', {
+			harnessControlMode: 'current',
+			permissionMode: 'standard',
+		});
+		expect(qwen.harnessControlMode).toBe('current');
+	});
 });

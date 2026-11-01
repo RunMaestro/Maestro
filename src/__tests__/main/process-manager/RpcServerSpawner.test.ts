@@ -132,11 +132,12 @@ function harness(agent: FakeRpcAgent) {
 	mockSpawn.mockReturnValue(agent);
 	const processes = new Map<string, ManagedProcess>();
 	const emitter = new EventEmitter();
+	const fallbackToCli = vi.fn(() => ({ pid: 999, success: true }));
 	const spawner = new RpcServerSpawner(
 		processes,
 		emitter,
 		new DataBufferManager(processes, emitter),
-		vi.fn(() => ({ pid: 999, success: true }))
+		fallbackToCli
 	);
 	const data: string[] = [];
 	const verdicts: SteeringResultFrame[] = [];
@@ -156,7 +157,7 @@ function harness(agent: FakeRpcAgent) {
 		prompt: 'Run tests',
 		tabId: 'tab-a',
 	};
-	return { spawner, config, processes, data, verdicts, exited };
+	return { spawner, config, processes, data, verdicts, exited, fallbackToCli };
 }
 
 function answerWindow(): HarnessInteractionRequest[] {
@@ -225,6 +226,18 @@ describe('RpcServerSpawner', () => {
 				(record) => record.type === 'extension_ui_response' && record.confirmed === true
 			)
 		).toBe(true);
+	});
+
+	it('does not restart a cancelled startup through the current transport', async () => {
+		const agent = new FakeRpcAgent();
+		const h = harness(agent);
+		h.spawner.spawn(h.config);
+		const managed = h.processes.get('maestro-omp')!;
+		await managed.harnessControl!.interrupt();
+		agent.exit(1);
+
+		await expect(h.exited).resolves.toBe(0);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
 	});
 
 	it('closes stdin when the provider rejects a prompt', async () => {

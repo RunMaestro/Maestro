@@ -74,7 +74,6 @@ import {
 	buildNativeAcpBaseArgs,
 	buildNativeRpcBaseArgs,
 	nativeRpcProtocol,
-	supportsNativeControl,
 } from '../../../../shared/maestro-lib/providers/native-control';
 import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
@@ -734,38 +733,6 @@ async function handleProcessSpawnImpl(
 			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
-	}
-
-	if (
-		config.toolType === 'codex' &&
-		config.permissionMode === 'standard' &&
-		codexTransport !== 'app-server'
-	) {
-		reportSpawnRefusal(
-			deps,
-			config.sessionId,
-			'Codex Standard permission mode requires the opt-in app-server transport. ' +
-				'Select app-server for this agent, or use Full Access or Read-Only.'
-		);
-		cleanupPluginRunProof();
-		return { success: false, pid: 0 };
-	}
-
-	if (
-		config.toolType !== 'claude-code' &&
-		config.toolType !== 'opencode' &&
-		supportsNativeControl(config.toolType) &&
-		config.permissionMode === 'standard' &&
-		harnessControlMode !== 'native'
-	) {
-		reportSpawnRefusal(
-			deps,
-			config.sessionId,
-			'Standard permission mode requires native control for this agent. ' +
-				'Select native control in Control Mode, or use Full Access or Read-Only.'
-		);
-		cleanupPluginRunProof();
-		return { success: false, pid: 0 };
 	}
 
 	if (harnessControlMode === 'native' && isSshEnabled) {

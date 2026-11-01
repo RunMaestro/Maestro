@@ -29,6 +29,7 @@ import { harnessInteractionBroker } from '../../harness-control/integration';
 import type {
 	HarnessControlCapabilities,
 	HarnessInteractionOption,
+	HarnessInteractionQuestion,
 } from '../../../shared/harness-control/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
@@ -74,7 +75,7 @@ export class HermesApiSpawner {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new HermesTurn(this.context, resolveHermesGatewayLaunch(config)).start();
+			return new HermesTurn(this.context, resolveHermesGatewayLaunch(config), config).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -117,7 +118,8 @@ class HermesTurn {
 
 	constructor(
 		private readonly ctx: HermesTurnContext,
-		private readonly config: ProcessConfig
+		private readonly config: ProcessConfig,
+		private readonly fallbackConfig: ProcessConfig
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -515,11 +517,12 @@ class HermesTurn {
 	}
 
 	private async onServerRequest(record: NdJsonRecord): Promise<NdJsonServerResponse> {
-		const method = typeof record.method === 'string' ? record.method : '';
+		const method = typeof record.method === 'string' ? record.method.replace(/\.request$/, '') : '';
 		const params = (record.params ?? {}) as Record<string, unknown>;
 		const nativeId =
 			typeof record.id === 'string' || typeof record.id === 'number' ? String(record.id) : '';
 		const options: HarnessInteractionOption[] = [];
+		const questions: HarnessInteractionQuestion[] = [];
 		if (method === 'approval') {
 			const choices = Array.isArray(params.choices) ? params.choices : ['once', 'deny'];
 			for (const choice of choices) {
@@ -537,22 +540,29 @@ class HermesTurn {
 					options.push({ optionId: 'deny', label: 'Deny', kind: 'reject-once' });
 			}
 		} else if (method === 'clarify') {
-			const questions = Array.isArray(params.questions) ? params.questions : [];
-			for (const question of questions) {
+			const rawQuestions = Array.isArray(params.questions) ? params.questions : [];
+			for (const [index, question] of rawQuestions.entries()) {
 				if (!question || typeof question !== 'object') continue;
 				const q = question as Record<string, unknown>;
 				const questionOptions = Array.isArray(q.options) ? q.options : [];
-				for (const [index, option] of questionOptions.entries()) {
-					if (typeof option === 'string') {
-						options.push({
-							optionId: `${String(q.id)}:option-${index}`,
-							label: option,
-							kind: 'choice',
-						});
-					}
-				}
+				questions.push({
+					id: typeof q.id === 'string' ? q.id : `question-${index}`,
+					question: typeof q.question === 'string' ? q.question : String(q.title ?? 'Continue?'),
+					allowCustom: true,
+					options: questionOptions.flatMap((option, optionIndex) =>
+						typeof option === 'string'
+							? [
+									{
+										optionId: `option-${optionIndex}`,
+										label: option,
+										kind: 'choice' as const,
+									},
+								]
+							: []
+					),
+				});
 			}
-			if (options.length === 0)
+			if (questions.length === 0 && options.length === 0)
 				options.push({ optionId: 'cancel', label: 'Cancel', kind: 'reject-once' });
 		}
 		if (method === 'approval' && this.config.permissionMode === 'full') {
@@ -571,6 +581,7 @@ class HermesTurn {
 			toolName: method,
 			input: params,
 			options,
+			questions,
 			secret: method === 'secret' || method === 'sudo' || String(method).startsWith('vault'),
 		});
 		if (nativeId) this.pendingRequests.set(nativeId, opened.request.requestId);
@@ -681,6 +692,10 @@ class HermesTurn {
 
 	private handleRunError(error: unknown): void {
 		if (this.finished || this.isSuperseded()) return;
+		if (this.cancelled) {
+			this.finish(0);
+			return;
+		}
 		const canFallback = !this.promptSent;
 		if (canFallback && this.config.permissionMode !== 'standard') {
 			logger.warn('[HermesTurn] Native setup failed; using current transport', LOG_CONTEXT, {
@@ -699,7 +714,7 @@ class HermesTurn {
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
 				this.ctx.processes.delete(this.config.sessionId);
-				this.ctx.fallbackToCli(this.config);
+				this.ctx.fallbackToCli(this.fallbackConfig);
 			}
 			return;
 		}

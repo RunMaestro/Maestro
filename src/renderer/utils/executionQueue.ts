@@ -816,8 +816,12 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
+	const claudeTuiActive =
+		session.toolType === 'claude-code' && session.claudeInteractive?.mode === 'interactive';
 	const nativeSteering =
-		session.harnessControlMode === 'native' && supportsNativeSteering(session.toolType);
+		!claudeTuiActive &&
+		session.harnessControlMode === 'native' &&
+		supportsNativeSteering(session.toolType);
 	if (nativeSteering) {
 		// Native control is local-only; its adapter owns the in-turn protocol channel.
 		if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };

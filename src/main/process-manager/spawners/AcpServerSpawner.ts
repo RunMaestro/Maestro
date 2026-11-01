@@ -371,6 +371,10 @@ class AcpTurn {
 
 	private handleRunError(error: unknown): void {
 		if (this.finished || this.isSuperseded()) return;
+		if (this.cancelled) {
+			this.finish(0);
+			return;
+		}
 		const canFallback = !this.promptSent;
 		if (canFallback && this.config.permissionMode !== 'standard') {
 			logger.warn('[AcpTurn] Native setup failed; using current transport', LOG_CONTEXT, {

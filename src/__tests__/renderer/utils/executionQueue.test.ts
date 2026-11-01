@@ -883,6 +883,16 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(acpSession, item).blockedReason).toBe('not-claude');
 	});
 
+	it('keeps the TUI prefix guard when native startup resolves to interactive fallback', () => {
+		const session = steerableSession({
+			harnessControlMode: 'native',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		});
+		expect(getSteerEligibility(session, { ...item, text: '/clear' }).blockedReason).toBe(
+			'tui-command-prefix'
+		);
+	});
+
 	it('allows a Codex agent on the app-server transport', () => {
 		// `turn/steer` reaches a running app-server turn; the Claude token-mode check
 		// does not apply to Codex at all.
