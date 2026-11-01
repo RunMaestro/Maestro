@@ -9,6 +9,7 @@ import {
 	normalizeModelId,
 	calculateModelCost,
 	computeClaudeUsageCost,
+	createClaudeUsageAccumulator,
 	DEFAULT_MODEL_PRICING,
 	MODEL_PRICING,
 } from '../../shared/modelPricing';
@@ -251,6 +252,40 @@ describe('computeClaudeUsageCost', () => {
 			});
 		const result = computeClaudeUsageCost([line('req_1'), line('req_2')].join('\n'));
 		expect(result.inputTokens).toBe(2_000_000);
+	});
+});
+
+describe('createClaudeUsageAccumulator', () => {
+	const line = (id: string, model: string, inputTokens: number) =>
+		JSON.stringify({
+			type: 'assistant',
+			requestId: `req_${id}`,
+			message: { id, model, usage: { input_tokens: inputTokens, output_tokens: 1000 } },
+		});
+
+	it('prices several documents the same as their joined text', () => {
+		const docs = [
+			[
+				line('msg_a', 'claude-opus-4-8', 1_000_000),
+				line('msg_a', 'claude-opus-4-8', 1_000_000),
+			].join('\n'),
+			line('msg_b', 'claude-haiku-4-5', 2_000_000),
+			line('msg_c', 'claude-opus-4-8', 500_000),
+		];
+		const usage = createClaudeUsageAccumulator();
+		for (const doc of docs) usage.add(doc);
+		expect(usage.finish()).toEqual(computeClaudeUsageCost(docs.join('\n')));
+	});
+
+	it('counts a response repeated in a later document once', () => {
+		const usage = createClaudeUsageAccumulator();
+		usage.add(line('msg_a', 'claude-opus-4-8', 1_000_000));
+		usage.add(line('msg_a', 'claude-opus-4-8', 1_000_000));
+		expect(usage.finish().inputTokens).toBe(1_000_000);
+	});
+
+	it('reports zeros when nothing was added', () => {
+		expect(createClaudeUsageAccumulator().finish()).toEqual(computeClaudeUsageCost(''));
 	});
 });
 

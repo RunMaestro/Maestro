@@ -3,7 +3,7 @@
  * `<sessionId>/subagents/agent-*.jsonl` and must be priced into it.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -11,6 +11,7 @@ import {
 	claudeSubagentDir,
 	computeClaudeSessionUsage,
 	computeClaudeUsageWithSubagents,
+	iterateClaudeSubagentTranscripts,
 	readClaudeSubagentTranscripts,
 	readClaudeSubagentTranscriptsSync,
 } from '../../shared/claudeSessionUsage';
@@ -64,5 +65,33 @@ describe('claudeSessionUsage', () => {
 	it('counts a response once even if it appears in both the parent and a subagent', () => {
 		const shared = usageLine('msg_same', 1_000_000);
 		expect(computeClaudeUsageWithSubagents(shared, [shared]).inputTokens).toBe(1_000_000);
+	});
+
+	it('never joins the parent and subagent transcripts into one string (MAESTRO-17M)', () => {
+		// A joined copy of a long session plus its subagents can pass V8's maximum
+		// string length, so pricing must walk each document on its own.
+		const join = vi.spyOn(Array.prototype, 'join');
+		try {
+			const usage = computeClaudeUsageWithSubagents(usageLine('msg_parent', 1_000_000), [
+				usageLine('msg_a', 2_000_000),
+				usageLine('msg_b', 3_000_000),
+			]);
+			expect(usage.inputTokens).toBe(6_000_000);
+			expect(join).not.toHaveBeenCalled();
+		} finally {
+			join.mockRestore();
+		}
+	});
+
+	it('yields subagent transcripts one file at a time, in name order', async () => {
+		const subagents = claudeSubagentDir(sessionFile);
+		await fs.mkdir(subagents, { recursive: true });
+		await fs.writeFile(path.join(subagents, 'agent-b.jsonl'), 'b');
+		await fs.writeFile(path.join(subagents, 'agent-a.jsonl'), 'a');
+
+		const seen: string[] = [];
+		for await (const content of iterateClaudeSubagentTranscripts(sessionFile)) seen.push(content);
+		expect(seen).toEqual(['a', 'b']);
+		expect(await readClaudeSubagentTranscripts(sessionFile)).toEqual(['a', 'b']);
 	});
 });
