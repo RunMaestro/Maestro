@@ -25,6 +25,7 @@ import {
 	describeUndeliveredSecrets,
 	type AgentLaunchPlanResult,
 } from '../../shared/maestro-lib/launch/launch-plan';
+import { windowsShellReason } from '../../shared/maestro-lib/launch/windows-command';
 import {
 	resolveSystemPromptDelivery,
 	type SystemPromptDelivery,
@@ -422,7 +423,8 @@ function resolveAgentOverrides(
  * Plan a CLI agent launch with the shared `buildAgentLaunchPlan`, as the `cli`
  * surface: provider defaults fill only what the shell has not set, so a value
  * exported in the shell that runs the command survives; the user's own vars
- * override it; and the prompt goes on the command line on every host. The
+ * override it; and the prompt goes on the command line on every host, except
+ * over stdin for a launch through cmd.exe (a Windows `.cmd` shim). The
  * CLI's own inputs: SSH remotes read from disk, and batch-mode vars always on
  * (every CLI spawn is a batch spawn). A desktop-backed local turn with live
  * global settings uses the canonical desktop environment rules, including
@@ -450,6 +452,13 @@ function planCliLaunch(
 		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
+		// A Windows `.cmd` shim (codex.cmd, claude.cmd from npm) only starts
+		// through cmd.exe, which caps the whole command line at 8191 characters
+		// and ends it at a line break. The CreateProcess check in the launch plan
+		// allows 30,000, so a long prompt passed it and failed the spawn with
+		// ENAMETOOLONG (#1971). Send it over stdin instead, as Cue and the CLI
+		// session turn do, for a provider that reads it there.
+		cmdShellLaunch: isWindows() && windowsShellReason(input.command).reason !== null,
 		args: input.args,
 		cwd: input.cwd,
 		prompt: input.prompt,

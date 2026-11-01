@@ -3786,6 +3786,35 @@ Some text with [x] in it that's not a checkbox
 			}
 		});
 
+		it('sends a Windows codex.cmd prompt over stdin, not the cmd.exe command line (#1971)', async () => {
+			// A `.cmd` shim starts through cmd.exe, which caps the command line at
+			// 8191 characters and ends it at a line break. An Auto Run prompt fit
+			// the 30,000-character CreateProcess check, so it stayed in argv and
+			// the spawn failed with ENAMETOOLONG.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const shim = 'C:\\Users\\t\\AppData\\Roaming\\npm\\codex.cmd';
+			pathProbeResolver = () => shim;
+			const prompt = `# Task\n\n${'x'.repeat(9000)}\n- [ ] create a one-line file`;
+
+			try {
+				const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+				await driveSpawnToCompletion(
+					freshSpawnAgent('codex', 'C:\\project', prompt),
+					0,
+					CODEX_INIT()
+				);
+
+				const { args } = spawnCall();
+				expect(args.some((arg) => arg.includes('create a one-line file'))).toBe(false);
+				const written = mockStdin.write.mock.calls.map((call) => String(call[0])).join('');
+				expect(written).toContain('create a one-line file');
+				expect(mockStdin.end).toHaveBeenCalled();
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
 		it('resolves a JSON-line agent on a cold cache too', async () => {
 			mockCheckBinaryExists.mockResolvedValue({ exists: true, path: '/opt/homebrew/bin/codex' });
 
