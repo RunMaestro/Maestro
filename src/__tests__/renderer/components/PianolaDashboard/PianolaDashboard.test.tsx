@@ -160,6 +160,8 @@ describe('PianolaDashboard data mapping', () => {
 		expect(screen.getByRole('button', { name: '+ Add selection' })).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
 		expect(screen.getByText('Agent 0')).toBeInTheDocument();
+		expect(screen.getByText('Agent 5')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Hide agents' }));
 		expect(screen.queryByText('Agent 5')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
 		expect(screen.getByText('Agent 5')).toBeInTheDocument();
@@ -533,6 +535,7 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 	beforeEach(() => {
 		hookMock.usePianolaDashboardData.mockReturnValue({
 			data: emptyData(),
+			portfolio: emptyPortfolio(),
 			decisions: [structuredClone(pendingRecord)],
 			refresh,
 		});
@@ -560,6 +563,7 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 			record.lifecycle = { ...record.lifecycle!, status, nextActor, nextAction };
 			hookMock.usePianolaDashboardData.mockReturnValue({
 				data: emptyData(),
+				portfolio: emptyPortfolio(),
 				decisions: [record],
 				refresh,
 			});
@@ -587,6 +591,7 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 			}
 			hookMock.usePianolaDashboardData.mockReturnValue({
 				data: emptyData(),
+				portfolio: emptyPortfolio(),
 				decisions: [record],
 				refresh,
 			});
@@ -660,6 +665,7 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 		const view = render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 		hookMock.usePianolaDashboardData.mockReturnValue({
 			data: emptyData(),
+			portfolio: emptyPortfolio(),
 			decisions: [rejected],
 			refresh,
 		});
@@ -693,7 +699,6 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 		);
 		expect(screen.getByRole('status')).not.toHaveTextContent('Error invoking remote method');
 		expect(screen.getByRole('textbox', { name: 'Human answer' })).toHaveValue('Use count');
-		);
 	});
 });
 describe('PianolaDashboard program loop', () => {

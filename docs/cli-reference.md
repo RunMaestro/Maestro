@@ -2349,6 +2349,29 @@ Show settings, or change them with the flags below
 
 Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
+## `maestro-cli pianola resolve <id>`
+
+Resolve a persisted manager handoff or founder ask after revalidation
+
+| Option                | Description                                             | Default |
+| --------------------- | ------------------------------------------------------- | ------- |
+| `--answer <text>`     | Answer the requesting agent exactly once                | -       |
+| `--escalation <text>` | Ask the human to decide, with a concrete recommendation | -       |
+| `--option <text>`     | Resolve a founder ask with this option                  | -       |
+| `--note <text>`       | Add a note to a founder-ask resolution                  | -       |
+| `--background`        | Preserve the active agent and tab                       | -       |
+| `--json`              | Output as JSON                                          | -       |
+
+## `maestro-cli pianola watch-scope <scope-id>`
+
+Run one registered agent/group selection under the native supervisor
+
+| Option      | Description                                 | Default |
+| ----------- | ------------------------------------------- | ------- |
+| `--once`    | Run one bounded scope cycle and exit        | -       |
+| `--dry-run` | Classify and record without sending answers | -       |
+| `--json`    | Output cycle status as JSON                 | -       |
+
 ## `maestro-cli pianola watch <tab-id>`
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
@@ -2519,14 +2542,6 @@ Manage product programs
 | -------- | ----------- | ------- |
 | `--json` | -           | -       |
 
-## `maestro-cli pianola resolve <askId>`
-
-| Option            | Description | Default |
-| ----------------- | ----------- | ------- |
-| `--option <text>` | -           | -       |
-| `--note <text>`   | -           | -       |
-| `--json`          | -           | -       |
-
 ## `maestro-cli pianola dismiss <askId>`
 
 | Option   | Description | Default |
@@ -2615,6 +2630,20 @@ Run the task validation oracle in the sandbox and append its Agent Run check
 ## `maestro-cli pianola supervise`
 
 Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
+
+## `maestro-cli pianola supervise scope`
+
+Create or replace an agent/group watch selection (new selections start paused)
+
+| Option                 | Description                        | Default |
+| ---------------------- | ---------------------------------- | ------- |
+| `--manager <agent-id>` | Manager agent id                   | -       |
+| `--label <label>`      | Selection label                    | -       |
+| `--id <scope-id>`      | Replace an existing selection      | -       |
+| `--agents <ids>`       | Comma-separated agent IDs          | -       |
+| `--groups <ids>`       | Comma-separated group IDs          | -       |
+| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
+| `--json`               | Output as JSON                     | -       |
 
 ## `maestro-cli pianola supervise watch <tabId>`
 

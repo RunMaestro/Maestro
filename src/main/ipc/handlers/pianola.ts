@@ -17,7 +17,6 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import type { MemoryRequest } from '../../../shared/pianola/memory';
 import { getPianolaMemory } from '../../pianola/memory-host';
-import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
 	readRulesResult,
@@ -25,9 +24,6 @@ import {
 	readDecisions,
 	readSupervisorTargets,
 	readScopeCheckpoint,
-	upsertSupervisorTarget,
-	updateSupervisorTargets,
-	removeSupervisorTarget,
 	upsertSupervisorTargetAsync,
 	updateSupervisorTargetsAsync,
 	removeSupervisorTargetAsync,

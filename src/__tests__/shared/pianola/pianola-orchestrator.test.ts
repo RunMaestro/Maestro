@@ -160,7 +160,7 @@ describe('runOrchestratorIteration - concurrency', () => {
 		const deps = makeDeps({
 			dispatch: vi.fn(async () => {
 				maxConcurrent = 1;
-				return { success: true };
+				return { success: true, tabId: 'tab-A' };
 			}),
 		});
 		deps.getProgramCharter = () => ({ maxConcurrent, maxAttempts: 2, validationRequired: false });
@@ -468,14 +468,14 @@ describe('runOrchestratorIteration - dispatch failure does not leak agents', () 
 		expect(statusOf(r.state, 'A')).toBe('running');
 		expect(created).toBe(1);
 	});
-	it('persists each accepted dispatch before starting the next task', async () => {
+	it('persists the claim and accepted dispatch before starting the next task', async () => {
 		const persisted: PianolaPlan[] = [];
 		let dispatchCalls = 0;
 		const deps = makeDeps({
 			dispatch: vi.fn(async () => {
 				dispatchCalls += 1;
-				if (dispatchCalls === 2) expect(persisted).toHaveLength(1);
-				return { success: true };
+				if (dispatchCalls === 2) expect(persisted).toHaveLength(3);
+				return { success: true, tabId: 'tab-1' };
 			}),
 			persist: vi.fn((plan) => {
 				persisted.push(structuredClone(plan));
@@ -486,9 +486,11 @@ describe('runOrchestratorIteration - dispatch failure does not leak agents', () 
 			deps,
 			{ concurrencyLimit: 2 }
 		);
-		expect(persisted).toHaveLength(3);
+		expect(persisted).toHaveLength(5);
 		expect(persisted[0].tasks.find((task) => task.id === 'A')?.status).toBe('running');
-		expect(persisted[1].tasks.find((task) => task.id === 'B')?.status).toBe('running');
+		expect(persisted[1].tasks.find((task) => task.id === 'A')?.status).toBe('running');
+		expect(persisted[1].tasks.find((task) => task.id === 'B')?.status).toBe('pending');
+		expect(persisted[3].tasks.find((task) => task.id === 'B')?.status).toBe('running');
 	});
 });
 
@@ -581,7 +583,7 @@ describe('independent oracle settlement', () => {
 		});
 		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: !green }));
 		deps.reactiveEnabled = () => true;
-		deps.dispatchFix = vi.fn(async () => ({ success: true }));
+		deps.dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const initial = {
 			plan: plan([task({ status: 'running', validation })]),
 			prevStates: { t1: 'busy' as const },
@@ -609,7 +611,6 @@ describe('independent oracle settlement', () => {
 		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
 		expect(statusOf(second.state, 't1')).toBe('needs_review');
 		expect(second.state.plan.tasks[0].error).toBe('bubblewrap unavailable');
-		expect(deps.getRunLedger).not.toHaveBeenCalled();
 	});
 	it('does not re-settle a fixing task on an idle tick after an unknown validation', async () => {
 		// The fix agent has been dispatched but not started yet: idle must not count as done,

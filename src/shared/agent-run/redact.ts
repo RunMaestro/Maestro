@@ -65,5 +65,7 @@ export function redactPrompt(prompt: string | undefined): string | undefined {
 
 /** Redact before clipping, so a tail boundary cannot remove a credential's label. */
 export function redactAnswerTail(answer: string): string {
-	return redactSecrets(answer, { placeholder: PLACEHOLDER, hexBlobs: true }).text.slice(-4000);
+	return redactCanonicalSecrets(answer, { placeholder: PLACEHOLDER, hexBlobs: true }).text.slice(
+		-4000
+	);
 }

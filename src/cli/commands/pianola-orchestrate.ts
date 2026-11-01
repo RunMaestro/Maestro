@@ -72,12 +72,7 @@ import { enrichWithAwaitingInput } from '../../shared/pianola/pianola-awaiting-d
 import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
-import {
-	pianolaTaskAgentRunId,
-	type AgentRun,
-	type AgentRunCheck,
-	type AgentRunStatus,
-} from '../../shared/agent-run';
+import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
 import { tabProcessId } from '../../shared/maestro-lib/runtime/server-frames';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
@@ -97,16 +92,6 @@ const UNDISPATCHED_CODES = new Set([
 	'UNSUPPORTED',
 	'MAESTRO_NOT_RUNNING',
 ]);
-const DEFAULT_SANDBOX_RUNNER = [
-	'wsl.exe',
-	'-d',
-	'Ubuntu',
-	'-u',
-	'dev',
-	'--',
-	'python3',
-	'/mnt/c/Users/Administrator/Software/Maestro/.worktrees/pianola-portfolio/scripts/pianola-sandbox/sandbox_runner.py',
-];
 const SANDBOX_LAUNCH_GRACE_SECONDS = 60;
 
 class SandboxRunnerConfigurationError extends Error {}
@@ -166,7 +151,6 @@ export interface DesktopSessionEntry {
 	agentId: string;
 	toolType: string;
 	state: 'idle' | 'busy' | 'unknown';
-	state: 'idle' | 'busy';
 	active?: boolean;
 }
 
@@ -259,12 +243,6 @@ function ledgerForTask(task: PianolaTask): PianolaTaskLedger | undefined {
 		pullRequestUrl: run.pullRequest?.url,
 		merged: run.merge?.status === 'merged',
 	};
-}
-
-/** The checks recorded on a task's run, for telling a fix agent what actually failed. */
-async function readAgentRunChecks(runId: string | undefined): Promise<AgentRunCheck[]> {
-	if (!runId) return [];
-	return getAgentRun(runId)?.checks ?? [];
 }
 
 /** Append an audit-before-action ledger event for an autonomous F8 action
@@ -1225,7 +1203,6 @@ export async function pianolaOrchestrate(
 		},
 		dispatch: async (task, agentId) => {
 			if (programPausedNow()) return { success: false, error: 'program paused' };
-			if (!task.tabId) return { success: false, error: 'no target tab bound' };
 			let context = '';
 			try {
 				const packet = await requestPianolaMemory<MemoryPacket>({
@@ -1246,7 +1223,7 @@ export async function pianolaOrchestrate(
 						.maxConcurrent ?? concurrencyLimit)
 				: concurrencyLimit;
 			const activeCount = currentPlan.tasks.filter(
-				(entry) => entry.status === 'running' || entry.status === 'fixing'
+				(entry) => entry.id !== task.id && (entry.status === 'running' || entry.status === 'fixing')
 			).length;
 			if (activeCount >= currentLimit)
 				return { success: false, error: 'program concurrency limit reached' };
@@ -1293,7 +1270,6 @@ export async function pianolaOrchestrate(
 			const fixPrompt = `The acceptance ledger is AgentRun ${ledger.runId ?? '(unavailable)'}. It has ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Required checks: ${(task.requiredChecks ?? []).join(', ') || '(existing ledger checks)'}. Address them and record evidence on that exact acceptance run, then stop.`;
 			const agentId = task.agentId;
 			if (!agentId) return { success: false, error: 'no agent bound' };
-			if (!task.tabId) return { success: false, error: 'no target tab bound' };
 			if (programPausedNow()) return { success: false, error: 'program paused' };
 			auditAgentRunAction(ledger.runId, 'auto-fix', {
 				taskId: task.id,

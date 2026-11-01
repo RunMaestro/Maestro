@@ -15,6 +15,7 @@
 import {
 	readPianolaSupervisorTargets,
 	updatePianolaSupervisorTargets,
+	upsertPianolaSupervisorTarget,
 	removePianolaSupervisorTarget,
 	type PianolaSupervisedTarget,
 } from '../services/pianola-store';

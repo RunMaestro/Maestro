@@ -73,7 +73,12 @@ function makeReactiveDeps(config: ReactiveConfig = {}): OrchestratorDeps {
 		notify: config.notify,
 		reactiveEnabled: config.reactiveEnabled,
 		getRunLedger: config.getRunLedger,
-		dispatchFix: config.dispatchFix,
+		dispatchFix: config.dispatchFix
+			? vi.fn(async (task, ledger) => {
+					const result = await config.dispatchFix!(task, ledger);
+					return result.success ? { ...result, tabId: result.tabId ?? 'fix-tab' } : result;
+				})
+			: undefined,
 		requestMerge: config.requestMerge,
 	};
 }

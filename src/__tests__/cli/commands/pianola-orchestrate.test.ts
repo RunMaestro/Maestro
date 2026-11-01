@@ -197,7 +197,10 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 			return [value];
 		});
 		await pianolaOrchestrate(PLAN.id, { once: true });
-		expect(runDispatch).toHaveBeenCalledWith('engineer', 'Founder correction', { tab: 'tab' });
+		expect(runDispatch).toHaveBeenCalledWith('engineer', 'Founder correction', {
+			newTab: true,
+			background: true,
+		});
 		expect(persisted?.tasks[0]).toEqual(completed);
 		expect(persisted?.tasks[1]).toMatchObject({ prompt: 'Founder correction', status: 'running' });
 	});
@@ -214,7 +217,9 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 	});
 	it('honors a program pause before side effects inside an already-started tick', async () => {
 		let paused = false;
-		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: true, autopilot: true }
+		);
 		vi.mocked(getPianolaPlan).mockReturnValue({ ...PLAN, programId: 'p' });
 		vi.mocked(readPianolaPrograms).mockImplementation(
 			() =>
@@ -322,8 +327,10 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		await pianolaOrchestrate('plan-1', { once: true });
 		expect(runDispatch).not.toHaveBeenCalled();
 	});
-	it('pins boundary reads, initial dispatch, and fix dispatch to the same active tab', async () => {
-		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+	it('pins boundary reads and uses guarded background dispatch for initial and fix work', async () => {
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: true, autopilot: true }
+		);
 		sendCommandMock.mockImplementation(async (command) =>
 			command.type === 'list_desktop_sessions'
 				? {
@@ -369,10 +376,15 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 				const bound = { ...task, tabId: agent.tabId };
 				await deps.getRecentMessages(bound, { fresh: true });
 				await deps.dispatch(bound, 'agent-1');
-				await deps.dispatchFix!(bound, { runId: 'run-1', checksPassed: false });
-				expect(runDispatch).toHaveBeenNthCalledWith(1, 'agent-1', 'p', { tab: 'target-tab' });
+				const fixResult = await deps.dispatchFix!(bound, { runId: 'run-1', checksPassed: false });
+				expect(fixResult.error).toBeUndefined();
+				expect(runDispatch).toHaveBeenNthCalledWith(1, 'agent-1', 'p', {
+					newTab: true,
+					background: true,
+				});
 				expect(runDispatch).toHaveBeenNthCalledWith(2, 'agent-1', expect.any(String), {
-					tab: 'target-tab',
+					newTab: true,
+					background: true,
 				});
 				return doneResult(state);
 			}
@@ -395,7 +407,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 			}
 		);
 		await pianolaOrchestrate('plan-1', { once: true });
-		expect(runDispatch).toHaveBeenCalledWith('agent-1', prompt, { tab: 'target-tab' });
+		expect(runDispatch).toHaveBeenCalledWith('agent-1', prompt, { newTab: true, background: true });
 		expect(memoryRequestMock.mock.calls[0][0].query.query).toHaveLength(16_000);
 	});
 	it('surfaces runner configuration changes during an iteration instead of swallowing them', async () => {
@@ -545,6 +557,8 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 			updatedAt: 100,
 			provider: 'claude-code',
 			status: 'needs_review',
+			sessionId: 'agent-1-ai-tab-1',
+			tabId: 'tab-1',
 			artifacts: [],
 			touchedFiles: [],
 			checks: [{ name: 'independent-validation', status: 'failed' }],
@@ -552,6 +566,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		};
 		getAgentRunMock.mockReturnValue(previousRun);
 		findActiveRunBySessionMock.mockReturnValue(previousRun);
+		readAgentRunsMock.mockReturnValue([previousRun]);
 		const plan: PianolaPlan = {
 			id: 'plan-2',
 			title: 'Ship',
@@ -848,7 +863,9 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 	});
 
 	it('invalidates cached history after a fix dispatch and honors explicit fresh boundary reads', async () => {
-		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: true, autopilot: true }
+		);
 		let history = [
 			{
 				id: 'old',

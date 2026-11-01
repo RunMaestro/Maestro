@@ -26,6 +26,7 @@ import {
 	EyeOff,
 	GitBranch,
 	Eye,
+	Plus,
 	X,
 	ChevronDown,
 	ChevronRight,
@@ -127,7 +128,6 @@ function HumanDecision({
 }
 
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { focusAiTabInSession } from '../../utils/tabHelpers';
 interface PianolaDashboardProps {
@@ -143,6 +143,7 @@ interface SectionProps {
 	emptyLabel: React.ReactNode;
 	headerAction?: React.ReactNode;
 	controlRow?: React.ReactNode;
+	collapsed?: boolean;
 	children: React.ReactNode;
 }
 
@@ -156,6 +157,7 @@ function Section({
 	emptyLabel,
 	headerAction,
 	controlRow,
+	collapsed = false,
 	children,
 }: SectionProps): React.ReactElement {
 	return (
@@ -176,7 +178,7 @@ function Section({
 				<div className="text-sm px-1 py-4" style={{ color: theme.colors.textDim }}>
 					{emptyLabel}
 				</div>
-			) : (
+			) : collapsed ? null : (
 				<div className="flex flex-col gap-2">{children}</div>
 			)}
 		</div>
@@ -957,13 +959,74 @@ function WatchedSection({
 	onJumpToAgent: (sessionId: string) => void;
 	supervisor: PianolaSupervisorState;
 }): React.ReactElement {
-	const { watched, unwatch, setEnabled, autoWatchNewAgents, setAutoWatchNewAgents } = supervisor;
+	const {
+		watched,
+		watchable,
+		watch,
+		unwatch,
+		setEnabled,
+		autoWatchNewAgents,
+		setAutoWatchNewAgents,
+	} = supervisor;
+	const [pickerOpen, setPickerOpen] = React.useState(false);
 	const [expanded, setExpanded] = React.useState(false);
 	const canCollapse = watched.length > 5;
 	const collapsed = canCollapse && !expanded;
 	const failingCount = watched.filter(
 		(row) => row.enabled && (row.state === 'failed' || row.state === 'backing-off')
 	).length;
+
+	const addButton = (
+		<div className="relative">
+			<button
+				type="button"
+				disabled={watchable.length === 0}
+				onClick={() => setPickerOpen((open) => !open)}
+				className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-default normal-case"
+				style={{ color: theme.colors.textDim }}
+				title={watchable.length === 0 ? 'No unwatched agents' : 'Watch an agent with Pianola'}
+			>
+				<Plus className="w-3.5 h-3.5" />
+				Watch an agent
+			</button>
+			{pickerOpen && watchable.length > 0 && (
+				<>
+					<button
+						type="button"
+						aria-hidden
+						tabIndex={-1}
+						className="fixed inset-0 z-40 cursor-default"
+						onClick={() => setPickerOpen(false)}
+					/>
+					<div
+						className="absolute right-0 mt-1 z-50 rounded overflow-y-auto scrollbar-thin whitespace-nowrap normal-case py-1"
+						style={{
+							minWidth: '12rem',
+							maxWidth: '20rem',
+							maxHeight: '15rem',
+							...elevatedSurfaceStyle(theme),
+						}}
+					>
+						{watchable.map((agent) => (
+							<button
+								key={agent.agentId}
+								type="button"
+								onClick={() => {
+									setPickerOpen(false);
+									void watch(agent.agentId, agent.tabId);
+								}}
+								className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-white/5 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Eye className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
+								<span className="truncate">{agent.agentName}</span>
+							</button>
+						))}
+					</div>
+				</>
+			)}
+		</div>
+	);
 
 	return (
 		<Section
@@ -1069,22 +1132,6 @@ function WatchedSection({
 					</button>
 				</div>
 			))}
-			{canCollapse && (
-				<button
-					type="button"
-					aria-expanded={!collapsed}
-					onClick={() => setExpanded((value) => !value)}
-					className="flex items-center gap-1 self-start text-xs px-2 py-1 rounded hover:bg-white/5 normal-case"
-					style={{ color: theme.colors.textDim }}
-				>
-					{collapsed ? (
-						<ChevronRight className="w-3.5 h-3.5" />
-					) : (
-						<ChevronDown className="w-3.5 h-3.5" />
-					)}
-					{collapsed ? 'Show agents' : 'Hide agents'}
-				</button>
-			)}
 		</Section>
 	);
 }

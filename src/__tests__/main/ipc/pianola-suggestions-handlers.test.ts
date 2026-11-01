@@ -1049,7 +1049,6 @@ describe('OW owner review', () => {
 		expect(store.writeSuggestions).toHaveBeenCalledTimes(
 			allowed ? (operation === 'reject' ? 1 : 2) : 0
 		);
-		);
 	});
 });
 describe('program controls IPC', () => {
@@ -1254,7 +1253,8 @@ describe('failed task recovery IPC', () => {
 			'task-1'
 		)) as PianolaPlan;
 		expect(result.tasks[0]).toMatchObject({ status: 'pending', prompt: 'Deploy the service' });
-		expect(result.tasks[0].runId).toBeUndefined();
+		expect(result.tasks[0].runId).toEqual(expect.any(String));
+		expect(result.tasks[0].runId).not.toBe('run-old');
 		expect(store.withPlanLock).toHaveBeenCalledWith('plan-1', expect.any(Function), {
 			waitForTurn: true,
 		});

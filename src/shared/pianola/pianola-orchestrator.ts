@@ -262,6 +262,7 @@ export async function runOrchestratorIteration(
 						: 'validation required by program charter but task declares none',
 				});
 				continue;
+			}
 			// A capture can finish before the renderer has persisted its last output.
 			// Require a stable post-exit transcript across ticks; persist the cursor
 			// so controller recovery cannot turn an empty/partial snapshot into success.
@@ -464,6 +465,9 @@ export async function runOrchestratorIteration(
 			}
 			if (deps.dispatchFix && ledger) {
 				if (activeCount() >= dispatchLimit()) continue;
+				const beforeDispatch = await deps.getRecentMessages(task, { fresh: true });
+				const previousId = beforeDispatch[beforeDispatch.length - 1]?.id ?? null;
+				if (activeCount() >= dispatchLimit()) continue;
 				const claimed = plan.tasks.filter(
 					(entry) =>
 						entry.status === 'running' ||
@@ -478,9 +482,6 @@ export async function runOrchestratorIteration(
 					fixAttempts: attempts + 1,
 				});
 				deps.persist(plan);
-				const beforeDispatch = await deps.getRecentMessages(task, { fresh: true });
-				const previousId = beforeDispatch[beforeDispatch.length - 1]?.id ?? null;
-				if (activeCount() >= dispatchLimit()) continue;
 				const fix = await deps.dispatchFix(task, ledger);
 				// An uncertain failure may already have started work. Keep its persisted
 				// claim and attempt count; only a confirmed refusal can restore them.
@@ -616,8 +617,7 @@ export async function runOrchestratorIteration(
 			continue;
 		}
 
-		const dispatchedTask = { ...task, agentId: agentResult.agentId, tabId: res.tabId };
-		const transcriptAtDispatch = await deps.getRecentMessages(dispatchedTask, { fresh: true });
+		dispatchedTask.tabId = res.tabId;
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
 			agentType: agentResult.agentType,
@@ -629,9 +629,6 @@ export async function runOrchestratorIteration(
 		// Checkpoint accepted work before another await or task can begin. A supervisor
 		// pause/rebind may terminate this CLI, and resume must not replay this dispatch.
 		deps.persist(plan);
-		// Dispatch acknowledgement is not evidence that a turn started. Wait for an
-		// observed busy state or a new assistant reply before accepting idle as done.
-		prevStates[task.id] = 'idle';
 		dispatchedTaskIds.push(task.id);
 		runningCount += 1;
 		deps.log(`[orchestrator] task "${task.id}" dispatched to agent "${agentResult.agentId}"`);
