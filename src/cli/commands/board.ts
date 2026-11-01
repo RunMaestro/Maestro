@@ -14,7 +14,7 @@ import { requestBoardCommand } from '../../shared/maestro-lib/client/board';
 import type { BoardCommand, BoardCommandTarget } from '../../shared/board/commands';
 import type { BoardWorkspaceQueryResult, BoardWorkspaceCollection } from '../../shared/board/types';
 import { generateUUID } from '../../shared/uuid';
-import { type CardPrResult } from '../../main/board/board-pr';
+import type { CardPrResult } from '../../main/board/board-pr';
 import type { Board, BoardCard, CardPrOnDone, CardStatus } from '../../shared/board/types';
 import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { buildCardWorktreeRef } from '../../shared/board/worktree';

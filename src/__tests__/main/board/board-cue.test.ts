@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import { BoardStorageFacade, configureBoardCaptureHost } from '../../../main/board/board-storage';
@@ -71,7 +72,7 @@ function newRuntime(
 	);
 }
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/cue-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-cue-'));
 	db = openBoardDb(path.join(dir, 'fixture.sqlite'));
 	storage = new BoardStorageFacade(db, (root) => [root]);
 	roots = [path.join(dir, 'a'), path.join(dir, 'b')];

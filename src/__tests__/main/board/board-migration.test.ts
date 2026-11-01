@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 
@@ -10,7 +11,7 @@ import {
 	setBoardWorkerPaused,
 } from '../../../main/board/board-workspace-storage';
 
-const root = path.resolve('.maestro/board-global-workers-20261031');
+const root = os.tmpdir();
 let dir: string;
 afterEach(() => {
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });

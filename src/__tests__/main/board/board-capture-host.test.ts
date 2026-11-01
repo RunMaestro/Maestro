@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
@@ -87,7 +88,7 @@ function command(value = card()): BoardCaptureCommand {
 	};
 }
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/capture-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-capture-'));
 	db = openBoardDb(path.join(dir, 'board.sqlite'));
 	const plan = planBoardMigration({
 		source: { location: { kind: 'local' }, path: dir },

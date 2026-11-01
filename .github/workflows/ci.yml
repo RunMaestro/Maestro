@@ -53,4 +53,6 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      # npm ci prepares Electron native modules; the test runner uses plain Node.
+      - run: npm rebuild better-sqlite3 --build-from-source
       - run: npm run test -- --shard=${{ matrix.shard }}/2

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
 	listBoardWorkers,
@@ -18,7 +19,7 @@ afterEach(() => {
 
 describe('Board worker registry', () => {
 	it('preserves restrictions and pause on registration retry and after reopen', () => {
-		dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/workers-'));
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-workers-'));
 		const file = path.join(dir, 'board.sqlite');
 		let db = openBoardDb(file);
 		try {
@@ -56,7 +57,7 @@ describe('Board worker registry', () => {
 	});
 
 	it('updates access without discarding provenance or changing a pause', () => {
-		dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/workers-'));
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-workers-'));
 		const db = openBoardDb(path.join(dir, 'board.sqlite'));
 		try {
 			registerBoardWorker(db, 'agent');

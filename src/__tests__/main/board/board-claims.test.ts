@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { createRequire } from 'node:module';
 import { fork, type ChildProcess } from 'node:child_process';
 import { build } from 'esbuild';
@@ -22,7 +23,7 @@ import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
 import type { BoardCard } from '../../../shared/board/types';
 
-const fixtureRoot = path.resolve('.maestro/board-global-workers-20261031');
+const fixtureRoot = os.tmpdir();
 let bundleDir: string;
 let bundle: string;
 let dir: string;

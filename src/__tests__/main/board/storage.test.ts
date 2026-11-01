@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'node:os';
 import * as yaml from 'js-yaml';
 import { BOARD_CONFIG_PATH } from '../../../shared/maestro-paths';
 import {
@@ -44,9 +45,7 @@ let db: ReturnType<typeof openBoardDb>;
 let facade: BoardStorageFacade;
 
 beforeEach(() => {
-	projectRoot = fs.mkdtempSync(
-		path.resolve('.maestro/board-global-workers-20261031/storage-test-')
-	);
+	projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-storage-test-'));
 	db = openBoardDb(path.join(projectRoot, 'board.sqlite'));
 	facade = new BoardStorageFacade(db);
 	configureBoardStorage(facade);

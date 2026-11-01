@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import { BoardStorageFacade } from '../../../main/board/board-storage';
@@ -14,7 +15,7 @@ afterEach(() => {
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 it('discovers asynchronously outside transactions and preserves filesystem errors', async () => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/source-async-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-async-'));
 	const root = path.join(dir, 'root');
 	fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
 	fs.writeFileSync(path.join(root, '.maestro/board.yaml'), '{"boards":[]}');
@@ -56,7 +57,7 @@ it('discovers asynchronously outside transactions and preserves filesystem error
 	}
 });
 it('cold-discovers registered repositories and legacy input, retains closed sources, and edits roles centrally', async () => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/source-host-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-host-'));
 	const roots = ['a', 'b'].map((name) => {
 		const root = path.join(dir, name);
 		fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
@@ -105,7 +106,7 @@ it('cold-discovers registered repositories and legacy input, retains closed sour
 });
 
 it('never treats an SSH session directory as a local migration source', async () => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/source-remote-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-remote-'));
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	try {
 		const storage = new BoardStorageFacade(db);
@@ -125,7 +126,7 @@ it('never treats an SSH session directory as a local migration source', async ()
 });
 
 it('completes repository discovery when the first collection was created before the first catalog read', async () => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/source-bootstrap-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-bootstrap-'));
 	execFileSync('git', ['init', '--quiet', dir]);
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	try {
@@ -151,7 +152,7 @@ it('completes repository discovery when the first collection was created before 
 });
 
 it('explicitly revalidates unresolved imported sources without rewriting original bytes, blockers, holds or runs', async () => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/source-repair-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-repair-'));
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	try {
 		const storage = new BoardStorageFacade(db);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import {
@@ -42,7 +43,7 @@ let facade: BoardStorageFacade;
 let roots: string[];
 let sources: string[];
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/query-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-query-'));
 	roots = ['a', 'b'].map((name) => {
 		const root = path.join(dir, name);
 		fs.mkdirSync(root);

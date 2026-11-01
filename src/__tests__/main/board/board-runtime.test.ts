@@ -8,6 +8,7 @@ import {
 } from '../../../main/board/board-review';
 import { configureBoardStorage } from '../../../main/board/board-storage';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import { BoardStorageFacade, configureBoardCaptureHost } from '../../../main/board/board-storage';
 import {
@@ -90,7 +91,7 @@ function newRuntime(
 	);
 }
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/lifecycle-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-lifecycle-'));
 	db = openBoardDb(path.join(dir, 'fixture.sqlite'));
 	storage = new BoardStorageFacade(db, (root) => [root]);
 	roots = [path.join(dir, 'a'), path.join(dir, 'b')];

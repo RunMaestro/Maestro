@@ -2,6 +2,7 @@ import { executeBoardCommand } from '../../../main/board/board-command-host';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
@@ -65,9 +66,7 @@ function transport(root: string): BoardRemoteTransport {
 	};
 }
 function fixture() {
-	dir = fs.mkdtempSync(
-		path.resolve('.maestro/board-global-workers-20261031/recovery-09-remote-fixture-')
-	);
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-recovery-09-remote-fixture-'));
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	return { db, storage: new BoardStorageFacade(db) };
 }

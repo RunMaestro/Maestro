@@ -22,6 +22,7 @@ import type { CardSpawnResult } from '../../../main/board/board-dispatcher';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import WebSocket from 'ws';
 import { buildSync } from 'esbuild';
 import { execFile } from 'node:child_process';
@@ -51,7 +52,7 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 let cliBuildDir: string;
 beforeAll(() => {
-	cliBuildDir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/cli-build-'));
+	cliBuildDir = fs.mkdtempSync(path.resolve('.maestro-board-cli-build-'));
 	buildSync({
 		entryPoints: ['src/cli/index.ts'],
 		outfile: path.join(cliBuildDir, 'cli.cjs'),
@@ -68,7 +69,7 @@ async function cli(...args: string[]) {
 			'node',
 			[path.join(cliBuildDir, 'cli.cjs'), 'board', ...args],
 			{
-				env: { ...process.env, MAESTRO_USER_DATA: dir },
+				env: { ...process.env, VITEST: '', MAESTRO_USER_DATA: dir },
 				timeout: 15000,
 			}
 		);
@@ -77,7 +78,9 @@ async function cli(...args: string[]) {
 		const failure = error as { code: number; stdout: string; stderr: string };
 		return {
 			code: failure.code,
-			value: failure.stdout ? JSON.parse(failure.stdout) : { stderr: failure.stderr },
+			value: failure.stdout
+				? JSON.parse(failure.stdout)
+				: { stderr: failure.stderr ?? String(error) },
 		};
 	}
 }
@@ -141,7 +144,7 @@ const raw = (fields: Record<string, unknown>) =>
 	);
 
 beforeEach(async () => {
-	dir = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/transport-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-transport-'));
 	roots = [path.join(dir, 'one'), path.join(dir, 'two')];
 	db = openBoardDb(path.join(dir, 'board.sqlite'));
 	namespaces = roots.map((root, i) => {

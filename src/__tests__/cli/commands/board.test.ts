@@ -20,6 +20,7 @@ import { decomposeBoardCard, createBoardRunService } from '../../../main/board/b
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'node:os';
 import { execFileSync } from 'child_process';
 import { substituteTemplateVariables } from '../../../shared/templateVariables';
 
@@ -189,7 +190,7 @@ describe('maestro-cli board', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		runTasks = [];
-		projectRoot = fs.mkdtempSync(path.resolve('.maestro/board-global-workers-20261031/cli-'));
+		projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-cli-'));
 		db = openBoardDb(path.join(projectRoot, 'board.sqlite'));
 		const plan = planBoardMigration({
 			source: { location: { kind: 'local' }, path: projectRoot },
