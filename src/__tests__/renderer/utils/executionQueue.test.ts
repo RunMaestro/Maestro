@@ -883,6 +883,14 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(acpSession, item).blockedReason).toBe('not-claude');
 	});
 
+	it('allows native steering after Claude publishes API transport mode', () => {
+		const session = steerableSession({
+			harnessControlMode: 'native',
+			claudeInteractive: { mode: 'api', modeReason: 'auto' },
+		});
+		expect(getSteerEligibility(session, { ...item, text: '/clear' }).canSteer).toBe(true);
+	});
+
 	it('keeps the TUI prefix guard when native startup resolves to interactive fallback', () => {
 		const session = steerableSession({
 			harnessControlMode: 'native',

@@ -46,6 +46,8 @@ import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import { resolveHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
+import { resolveCodexTransport } from '../../../shared/codexTransport';
 import {
 	buildSlotRemap,
 	moveStagedImage,
@@ -161,6 +163,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const thinkingItems = useThinkingItems(ownsSession);
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
+	const encoreFeatures = useSettingsStore((state) => state.encoreFeatures);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 	const {
 		modelMenuOpen,
@@ -173,6 +176,23 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Get agent capabilities for conditional feature rendering
 	const { hasCapability } = useAgentCapabilities(session.toolType);
+	const harnessControlMode = resolveHarnessControlMode({
+		toolType: session.toolType,
+		harnessControlMode: session.harnessControlMode,
+	});
+	const hasStandardCapability =
+		hasCapability('supportsStandardPermissionMode') &&
+		(harnessControlMode === 'native' ||
+			session.toolType === 'claude-code' ||
+			(session.toolType === 'codex' &&
+				resolveCodexTransport({
+					toolType: session.toolType,
+					codexTransport: session.codexTransport,
+				}) === 'app-server') ||
+			(session.toolType === 'opencode' &&
+				encoreFeatures.opencodeServer === true &&
+				!session.sessionSshRemoteConfig?.enabled &&
+				stagedImages.length === 0));
 
 	// PERF: Memoize activeTab lookup to avoid O(n) search on every render
 	const activeTab = useMemo(
@@ -721,7 +741,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							isTerminalMode={isTerminalMode}
 							canAttachImages={canAttachImages}
 							hasReadOnlyCapability={hasCapability('supportsReadOnlyMode')}
-							hasStandardCapability={hasCapability('supportsStandardPermissionMode')}
+							hasStandardCapability={hasStandardCapability}
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}

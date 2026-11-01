@@ -11,6 +11,20 @@ vi.mock('@github/copilot-sdk', () => ({
 }));
 
 const queryMock = vi.mocked(query);
+const rpcRequestMock = vi.hoisted(() => vi.fn());
+const rpcCloseMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../shared/maestro-lib/harness/rpc/connection', () => ({
+	NdJsonConnection: class {
+		request = rpcRequestMock;
+		close = rpcCloseMock;
+	},
+}));
+vi.mock('../../../shared/maestro-lib/run/start-turn', () => ({
+	startTurn: vi.fn(() => ({
+		child: { stdin: { end: vi.fn() } },
+		done: Promise.resolve({ exitCode: 0 }),
+	})),
+}));
 const readAgentConfigMock = vi.hoisted(() =>
 	vi.fn(() => ({ model: 'saved-model', effort: 'high' }))
 );
@@ -66,6 +80,31 @@ describe('CLI native SDK ownership', () => {
 			model: 'saved-model',
 			effort: 'high',
 		});
+	});
+
+	it('preserves explicit effort for RPC providers without a shared effort option', async () => {
+		rpcRequestMock.mockImplementation(async (method: string) => {
+			if (method === 'get_state') {
+				return { sessionId: 'omp-session', isStreaming: false, pendingMessageCount: 0 };
+			}
+			if (method === 'prompt') return { disposition: 'handled' };
+			return {};
+		});
+
+		await spawnNativeSdkAgent(
+			'omp',
+			process.cwd(),
+			'test',
+			undefined,
+			{
+				harnessControlMode: 'native',
+				customEffort: 'max',
+				agentConfigValues: {},
+			},
+			'omp'
+		);
+
+		expect(rpcRequestMock).toHaveBeenCalledWith('set_thinking_level', { level: 'max' });
 	});
 
 	it('denies a standard approval immediately when no interactive owner exists', async () => {

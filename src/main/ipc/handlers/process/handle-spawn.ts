@@ -75,7 +75,11 @@ import {
 	buildNativeRpcBaseArgs,
 	nativeRpcProtocol,
 } from '../../../../shared/maestro-lib/providers/native-control';
-import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
+import {
+	mergeClaudeSpawnEnvLayers,
+	type ClaudeSpawnEnvLayers,
+} from '../../../agents/claudeSpawnCore';
+import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
@@ -689,7 +693,12 @@ async function handleProcessSpawnImpl(
 	// or the interactive (maestro-p/TUI) path, which renders its own
 	// native prompts.
 	// ========================================================================
-	if (isClaudeCode && claudeResolvedMode === 'api' && config.permissionMode === 'standard') {
+	if (
+		harnessControlMode !== 'native' &&
+		isClaudeCode &&
+		claudeResolvedMode === 'api' &&
+		config.permissionMode === 'standard'
+	) {
 		if (isSshEnabled) {
 			// Fail loud: never silently downgrade to full/unsafe over SSH.
 			// The relay socket is local-only, so it cannot mediate a remote
@@ -733,6 +742,25 @@ async function handleProcessSpawnImpl(
 			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
+	}
+
+	const hasStandardApprovalChannel =
+		harnessControlMode === 'native' ||
+		config.toolType === 'claude-code' ||
+		(config.toolType === 'codex' && codexTransport === 'app-server') ||
+		(config.toolType === 'opencode' &&
+			encoreFeatures?.opencodeServer === true &&
+			!!config.prompt &&
+			!isSshEnabled &&
+			!(config.images && config.images.length > 0));
+	if (config.permissionMode === 'standard' && !hasStandardApprovalChannel) {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Standard permission mode needs a native approval channel. Select Native ACP or switch to Full Access or Read-Only.'
+		);
+		cleanupPluginRunProof();
+		return { success: false, pid: 0 };
 	}
 
 	if (harnessControlMode === 'native' && isSshEnabled) {
@@ -1244,6 +1272,26 @@ async function handleProcessSpawnImpl(
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
 	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
+	if (
+		result.success &&
+		harnessControlMode === 'native' &&
+		config.toolType === 'claude-code' &&
+		processManager.getHarnessControlCapabilities(config.sessionId)
+	) {
+		persistClaudeInteractiveMode(
+			config,
+			{
+				...claudeContext,
+				isClaudeCode: true,
+				claudeResolvedMode: 'api',
+				claudeResolvedReason: 'auto',
+				resolvedConfigDirKey:
+					claudeContext.resolvedConfigDirKey ??
+					resolveConfigDirKey(mergeClaudeSpawnEnvLayers(claudeEnvLayers)),
+			},
+			{ sessionsStore: deps.sessionsStore, safeSend, getMainWindow }
+		);
+	}
 	if (result.success) proofCleanup.release = undefined;
 
 	// The prime outran the spawn cap, so the process started without a usable

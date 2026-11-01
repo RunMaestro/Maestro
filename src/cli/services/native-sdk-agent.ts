@@ -286,7 +286,7 @@ export async function spawnNativeSdkAgent(
 		nativeOptions = {
 			...nativeOptions,
 			customModel: prepared.modelId,
-			customEffort: prepared.effort,
+			customEffort: nativeOptions.customEffort || prepared.effort,
 		};
 		const effectivePrompt = prepared.prompt;
 		if (toolType === 'claude-code') {

@@ -6,6 +6,7 @@ import { getAgentCapabilities } from '../../../../../shared/maestro-lib/provider
 import { getAgentDefinition } from '../../../../../shared/maestro-lib/providers/definitions';
 import type { ToolType } from '../../../../../shared/types';
 import type * as ProviderSessionWriter from '../../../../../main/utils/provider-session-writer';
+import { resolveConfigDirKey } from '../../../../../main/stores/claudeUsageStore';
 
 vi.mock('electron', () => ({ app: { getPath: () => process.cwd() } }));
 vi.mock('../../../../../main/utils/provider-session-writer', async (importOriginal) => {
@@ -15,11 +16,16 @@ vi.mock('../../../../../main/utils/provider-session-writer', async (importOrigin
 		acquireProviderSessionWriter: vi.fn(async () => () => {}),
 	};
 });
-async function spawnNative(
+async function spawnNativeWithResult(
 	toolType: ToolType,
 	overrides: Partial<SpawnProcessConfig> = {},
-	agentConfigValues: Record<string, unknown> = {}
-): Promise<ProcessConfig> {
+	agentConfigValues: Record<string, unknown> = {},
+	options: {
+		nativeCapabilities?: Record<string, unknown> | null;
+		opencodeServer?: boolean;
+		shellEnvVars?: Record<string, string>;
+	} = {}
+) {
 	const definition = getAgentDefinition(toolType)!;
 	const detected = {
 		...definition,
@@ -32,6 +38,19 @@ async function spawnNative(
 		get: vi.fn(),
 		getAll: vi.fn(() => []),
 		on: vi.fn(),
+		off: vi.fn(),
+		getHarnessControlCapabilities: vi.fn(() =>
+			options.nativeCapabilities === undefined ? { protocol: 'test' } : options.nativeCapabilities
+		),
+	};
+	const safeSend = vi.fn();
+	const webContentsSend = vi.fn();
+	let sessions: Array<Record<string, unknown>> = [];
+	const sessionsStore = {
+		get: (key: string, fallback: unknown) => (key === 'sessions' ? sessions : fallback),
+		set: (key: string, value: unknown) => {
+			if (key === 'sessions') sessions = value as Array<Record<string, unknown>>;
+		},
 	};
 	const config = {
 		sessionId: 'agent-1-ai-tab-1',
@@ -45,19 +64,46 @@ async function spawnNative(
 		permissionMode: 'standard',
 		...overrides,
 	} as SpawnProcessConfig;
-	await handleProcessSpawn(config, {
+	const result = await handleProcessSpawn(config, {
 		getProcessManager: () => processManager as never,
 		getAgentDetector: () => ({ getAgent: async () => detected }) as never,
 		agentConfigsStore: {
 			get: (key: string, fallback: unknown) =>
 				key === 'configs' ? { [toolType]: agentConfigValues } : fallback,
 		} as never,
-		settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
-		getMainWindow: () => null,
-		sessionsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+		settingsStore: {
+			get: (key: string, fallback: unknown) => {
+				if (key === 'encoreFeatures') return { opencodeServer: options.opencodeServer === true };
+				if (key === 'shellEnvVars') return options.shellEnvVars ?? fallback;
+				return fallback;
+			},
+		} as never,
+		getMainWindow: () =>
+			({
+				isDestroyed: () => false,
+				webContents: { isDestroyed: () => false, send: webContentsSend },
+			}) as never,
+		safeSend,
+		sessionsStore,
 	});
-	expect(processManager.spawn).toHaveBeenCalledOnce();
-	return processManager.spawn.mock.calls[0][0] as ProcessConfig;
+	return {
+		config: processManager.spawn.mock.calls[0]?.[0] as ProcessConfig | undefined,
+		result,
+		processManager,
+		safeSend,
+		webContentsSend,
+	};
+}
+
+async function spawnNative(
+	toolType: ToolType,
+	overrides: Partial<SpawnProcessConfig> = {},
+	agentConfigValues: Record<string, unknown> = {}
+): Promise<ProcessConfig> {
+	const attempt = await spawnNativeWithResult(toolType, overrides, agentConfigValues);
+	expect(attempt.result.success).toBe(true);
+	expect(attempt.processManager.spawn).toHaveBeenCalledOnce();
+	return attempt.config!;
 }
 
 describe('native spawn configuration', () => {
@@ -98,17 +144,76 @@ describe('native spawn configuration', () => {
 		expect(spawned.nativeRpcArgs).toEqual(expect.arrayContaining(['--mode', 'rpc-ui']));
 	});
 
-	it('allows Standard mode on current transports without native opt-in', async () => {
-		const codex = await spawnNative('codex', {
+	it('refuses Standard mode on current transports without an approval channel', async () => {
+		const attempt = await spawnNativeWithResult('qwen3-coder', {
 			harnessControlMode: 'current',
 			permissionMode: 'standard',
 		});
-		expect(codex.harnessControlMode).toBe('current');
+		expect(attempt.result.success).toBe(false);
+		expect(attempt.processManager.spawn).not.toHaveBeenCalled();
+	});
 
-		const qwen = await spawnNative('qwen3-coder', {
+	it('allows Standard mode when Codex app-server provides approvals', async () => {
+		const spawned = await spawnNative('codex', {
 			harnessControlMode: 'current',
 			permissionMode: 'standard',
+			codexTransport: 'app-server',
 		});
-		expect(qwen.harnessControlMode).toBe('current');
+		expect(spawned.harnessControlMode).toBe('current');
+	});
+
+	it('allows OpenCode Standard only when the server route carries the turn', async () => {
+		const server = await spawnNativeWithResult(
+			'opencode',
+			{ harnessControlMode: 'current', permissionMode: 'standard' },
+			{},
+			{ opencodeServer: true }
+		);
+		expect(server.webContentsSend.mock.calls).toEqual([]);
+		expect(server.result.success).toBe(true);
+		expect(server.config?.harnessControlMode).toBe('current');
+
+		const imageTurn = await spawnNativeWithResult(
+			'opencode',
+			{ harnessControlMode: 'current', permissionMode: 'standard', images: ['image.png'] },
+			{},
+			{ opencodeServer: true }
+		);
+		expect(imageTurn.result.success).toBe(false);
+		expect(imageTurn.processManager.spawn).not.toHaveBeenCalled();
+	});
+
+	it('publishes API mode only after native Claude control is registered', async () => {
+		const native = await spawnNativeWithResult(
+			'claude-code',
+			{},
+			{},
+			{
+				shellEnvVars: { CLAUDE_CONFIG_DIR: '/accounts/work' },
+			}
+		);
+		expect(native.result.success).toBe(true);
+		expect(native.safeSend).toHaveBeenCalledWith(
+			'process:claude-mode-resolved',
+			'agent-1-ai-tab-1',
+			{
+				mode: 'api',
+				reason: 'auto',
+				configDirKey: resolveConfigDirKey({ CLAUDE_CONFIG_DIR: '/accounts/work' }),
+			}
+		);
+
+		const fallback = await spawnNativeWithResult(
+			'claude-code',
+			{},
+			{},
+			{ nativeCapabilities: null }
+		);
+		expect(fallback.result.success).toBe(true);
+		expect(fallback.safeSend).not.toHaveBeenCalledWith(
+			'process:claude-mode-resolved',
+			'agent-1-ai-tab-1',
+			expect.objectContaining({ mode: 'api' })
+		);
 	});
 });
