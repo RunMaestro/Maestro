@@ -49,7 +49,6 @@ beforeAll(async () => {
 		bundle: true,
 		platform: 'node',
 		format: 'cjs',
-		packages: 'external',
 		plugins: [
 			{
 				name: 'fixture-sqlite',

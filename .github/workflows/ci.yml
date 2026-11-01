@@ -54,5 +54,12 @@ jobs:
           cache: 'npm'
       - run: npm ci
       # npm ci prepares Electron native modules; the test runner uses plain Node.
-      - run: npm rebuild better-sqlite3 --build-from-source
+      - if: runner.os != 'Windows'
+        run: npm rebuild better-sqlite3 --build-from-source
+      # Invoke the pinned binary directly: npm's bundled node-gyp may be too old for VS 2026.
+      - if: runner.os == 'Windows'
+        run: npm install --prefix "$env:RUNNER_TEMP/maestro-node-gyp" --no-save --ignore-scripts node-gyp@12.1.0
+      - if: runner.os == 'Windows'
+        working-directory: node_modules/better-sqlite3
+        run: node "$env:RUNNER_TEMP/maestro-node-gyp/node_modules/node-gyp/bin/node-gyp.js" rebuild --release
       - run: npm run test -- --shard=${{ matrix.shard }}/2
