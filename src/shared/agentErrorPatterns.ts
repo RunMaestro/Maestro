@@ -397,6 +397,15 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 			message: 'Too many requests. Please slow down.',
 			recoverable: true,
 		},
+		{
+			// A plan out of quota, e.g. OpenCode Go's "Go usage limit exceeded".
+			// Without this it fell through to type `unknown`, so callers that ask
+			// "is this the user's quota?" by type (grooming, Auto Run) treated it
+			// as a fault (MAESTRO-17W).
+			pattern: /usage.?limit/i,
+			message: 'Usage limit reached. Check your plan for available quota.',
+			recoverable: true,
+		},
 	],
 
 	network_error: [
