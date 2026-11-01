@@ -313,6 +313,7 @@ function printedDayLabels(container: HTMLElement): string[] {
 describe('ActivityHeatmap day labels', () => {
 	afterEach(() => {
 		vi.mocked(useElementWidth).mockReturnValue(0);
+		vi.useRealTimers();
 	});
 
 	it('labels every column when each one has room', () => {
@@ -324,7 +325,12 @@ describe('ActivityHeatmap day labels', () => {
 		expect(printedDayLabels(container).length).toBe(30);
 	});
 
-	it('thins the labels when the columns are too narrow to print into', () => {
+	it.each([
+		{ scenario: 'across a month boundary', today: new Date(2026, 9, 15, 12), month: 'Oct' },
+		{ scenario: 'at month end', today: new Date(2026, 9, 31, 12), month: null },
+	])('thins narrow-column labels $scenario', ({ today, month }) => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(today);
 		vi.mocked(useElementWidth).mockReturnValue(270);
 		const { container } = render(
 			<ActivityHeatmap data={monthData()} timeRange="month" theme={theme} />
@@ -333,9 +339,8 @@ describe('ActivityHeatmap day labels', () => {
 		const labels = printedDayLabels(container);
 		expect(labels.length).toBeGreaterThan(1);
 		expect(labels.length).toBeLessThan(30);
-		// The month boundary is the one label kept off-stride. The grid is built
-		// from today rather than from the data, so assert on its SHAPE (a month
-		// abbreviation among day numbers) instead of naming a month.
-		expect(labels.filter((text) => !/^\d+$/.test(text)).length).toBeGreaterThanOrEqual(1);
+		// A 30-day window ending on the 31st contains no first-of-month column.
+		if (month) expect(labels).toContain(month);
+		else expect(labels.every((text) => /^\d+$/.test(text))).toBe(true);
 	});
 });

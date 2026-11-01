@@ -6982,7 +6982,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				'hello',
 				undefined,
 				expect.any(AbortSignal),
-				'user',
+				'auto',
 				undefined,
 				undefined,
 				// `requirePluginTools`, which sits ahead of the turn settings.
@@ -7023,7 +7023,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			'hello',
 			undefined,
 			expect.any(AbortSignal),
-			'user',
+			'auto',
 			undefined,
 			undefined,
 			false,

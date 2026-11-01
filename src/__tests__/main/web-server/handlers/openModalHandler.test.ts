@@ -6,6 +6,7 @@
 // group is gone.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { WebSocket } from 'ws';
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -23,7 +24,11 @@ import type { WebClient } from '../../../../main/web-server/handlers/messageHand
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: {
+			send: vi.fn(),
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+		} as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

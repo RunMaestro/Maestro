@@ -91,6 +91,16 @@ const walked = walk(program);
 const paths = new Set(walked.map((entry) => entry.path));
 
 describe('maestro-cli command tree', () => {
+	it('declares explicit global scope on both timeline commands', () => {
+		for (const words of [['timeline'], ['timeline', 'show']]) {
+			const command = descendCommandTree(words).command;
+			expect(declaredFlags(command).has('--global')).toBe(true);
+			expect(command.options.find((option) => option.long === '--agent')?.description).toContain(
+				'default: calling agent'
+			);
+		}
+	});
+
 	it('registers host start, status and stop', () => {
 		for (const command of ['host', 'host start', 'host status', 'host stop']) {
 			expect(paths.has(command), command).toBe(true);

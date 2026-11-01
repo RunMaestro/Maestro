@@ -4,11 +4,13 @@ import { useTabStore } from '../../../stores/tabStore';
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
+import { projectTabProvider, resolveTabNativeProvider } from '../../../utils/providerTabSessions';
+import { notifyToast } from '../../../stores/notificationStore';
 import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
 export function useScrollLogHandlers(): ScrollLogHandlersReturn {
-	const handleDeleteLog = useCallback((logId: string): number | null => {
+	const handleDeleteLog = useCallback(async (logId: string): Promise<number | null> => {
 		const { setSessions } = useSessionStore.getState();
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return null;
@@ -71,25 +73,38 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		}
 
 		if (isAIMode && currentActiveTab) {
-			const agentSessionId = currentActiveTab.agentSessionId;
-			if (agentSessionId && currentSession.cwd) {
-				window.maestro.claude
-					.deleteMessagePair(currentSession.cwd, agentSessionId, logId, log.text)
-					.then((result) => {
-						if (!result.success) {
-							logger.warn(
-								'[handleDeleteLog] Failed to delete from Claude session:',
-								undefined,
-								result.error
-							);
-						}
-					})
-					.catch((err) => {
-						logger.error('[handleDeleteLog] Error deleting from Claude session:', undefined, err);
+			const provider =
+				log.turnProvider ?? resolveTabNativeProvider(currentActiveTab, currentSession);
+			const projected = projectTabProvider(currentSession, currentActiveTab, provider);
+			const agentSessionId = projected.tab?.agentSessionId;
+			if (agentSessionId) {
+				try {
+					if (projected.agent.sessionSshRemoteConfig?.enabled) {
+						throw new Error('Delete is not supported for remote sessions.');
+					}
+					const result = await window.maestro.agentSessions.deleteMessagePair(
+						provider,
+						currentSession.cwd,
+						agentSessionId,
+						logId,
+						log.text
+					);
+					if (!result.success) throw new Error(result.error || 'The provider refused deletion.');
+				} catch (error) {
+					logger.error('[handleDeleteLog] Provider deletion failed', undefined, error);
+					notifyToast({
+						type: 'error',
+						title: 'Message was not deleted',
+						message: `It remains in the agent's context. ${error instanceof Error ? error.message : String(error)}`,
+						sessionId: currentSession.id,
+						tabId: currentActiveTab.id,
 					});
+					return null;
+				}
 			}
 
 			const commandText = log.text.trim();
+			const deletedLogIds = new Set(logs.slice(logIndex, endIndex).map((entry) => entry.id));
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
@@ -101,7 +116,9 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 						...s,
 						aiCommandHistory: newAICommandHistory,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === currentActiveTab.id ? { ...tab, logs: newLogs } : tab
+							tab.id === currentActiveTab.id
+								? { ...tab, logs: tab.logs.filter((entry) => !deletedLogIds.has(entry.id)) }
+								: tab
 						),
 					};
 				})

@@ -991,7 +991,8 @@ Show what happened, oldest first: agent turns, user actions in Maestro, commits
 
 | Option             | Description                                              | Default |
 | ------------------ | -------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Agent ID or name (default: every agent)                  | -       |
+| `-a, --agent <id>` | Agent GUID or name (default: calling agent)              | -       |
+| `--global`         | Read every agent instead of the calling agent            | -       |
 | `--since <time>`   | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)  | -       |
 | `--until <time>`   | End (default now)                                        | -       |
 | `--sources <list>` | Comma list of sources (default history,journey,git)      | -       |
@@ -1000,14 +1001,25 @@ Show what happened, oldest first: agent turns, user actions in Maestro, commits
 | `--grep <text>`    | Only events whose line matches (regex, case-insensitive) | -       |
 | `--json`           | Output as JSON (for scripting)                           | -       |
 
+```bash
+maestro-cli timeline
+maestro-cli timeline --agent <agent-id> --since 1w
+maestro-cli timeline --global --since 1h
+```
+
 ## `maestro-cli timeline show <entry>`
 
 Show one agent turn in full (its reply, tab, and timing) by an [entry &lt;id>] handle
 
-| Option             | Description                                    | Default |
-| ------------------ | ---------------------------------------------- | ------- |
-| `-a, --agent <id>` | Agent ID or name (default: search every agent) | -       |
-| `--json`           | Output as JSON (for scripting)                 | -       |
+| Option             | Description                                     | Default |
+| ------------------ | ----------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent GUID or name (default: calling agent)     | -       |
+| `--global`         | Search every agent instead of the calling agent | -       |
+| `--json`           | Output as JSON (for scripting)                  | -       |
+
+```bash
+maestro-cli timeline show <entry-id> --agent <agent-id>
+```
 
 ## `maestro-cli journey`
 
@@ -1020,6 +1032,10 @@ Show what the user did in Maestro: files opened/saved/renamed, pages browsed
 | `--tail <n>`          | Only the newest N entries per agent (applied after the other filters) | -       |
 | `--kind <kinds>`      | Comma list of kinds, e.g. file.save,browser.navigate                  | -       |
 | `--json`              | Output as JSON (for scripting)                                        | -       |
+
+```bash
+maestro-cli journey --agent <agent-id> --kind file.save --tail 10
+```
 
 ## `maestro-cli group-chat`
 

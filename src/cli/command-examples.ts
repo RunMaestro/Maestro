@@ -80,6 +80,13 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'list sessions': ['maestro-cli list sessions <agent-id> --limit 10 --search "auth"'],
 	'list ssh-remotes': ['maestro-cli list ssh-remotes --json'],
 	'list terminals': ['maestro-cli list terminals --agent <agent-id>'],
+	journey: ['maestro-cli journey --agent <agent-id> --kind file.save --tail 10'],
+	timeline: [
+		'maestro-cli timeline',
+		'maestro-cli timeline --agent <agent-id> --since 1w',
+		'maestro-cli timeline --global --since 1h',
+	],
+	'timeline show': ['maestro-cli timeline show <entry-id> --agent <agent-id>'],
 	'show agent': [
 		'maestro-cli show agent <agent-id> --json',
 		'maestro-cli show agent <agent-id> --show-secrets',

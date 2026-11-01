@@ -24,7 +24,6 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
-import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
 import { createMockAITab } from '../../helpers/mockTab';
 
 // Mock dependencies
@@ -1972,8 +1971,13 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Delete?')).toBeInTheDocument();
 		});
 
-		it('calls onDeleteLog when delete is confirmed', async () => {
-			const onDeleteLog = vi.fn().mockReturnValue(null);
+		it('waits for onDeleteLog before dismissing the confirmation', async () => {
+			let finish!: (nextIndex: number | null) => void;
+			const onDeleteLog = vi.fn().mockReturnValue(
+				new Promise<number | null>((resolve) => {
+					finish = resolve;
+				})
+			);
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'log-1', text: 'User message', source: 'user' }),
 			];
@@ -2005,6 +2009,11 @@ describe('TerminalOutput', () => {
 			});
 
 			expect(onDeleteLog).toHaveBeenCalledWith('log-1');
+			expect(screen.getByText('Delete?')).toBeInTheDocument();
+			await act(async () => {
+				finish(null);
+			});
+			expect(screen.queryByText('Delete?')).not.toBeInTheDocument();
 		});
 
 		it('does not show delete button when onDeleteLog is not provided', () => {

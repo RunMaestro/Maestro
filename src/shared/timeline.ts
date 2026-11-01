@@ -292,7 +292,9 @@ const COMPUTER_FOLLOW_UP_MS = 5 * 60 * 1000;
  * invokes `maestro-cli`.
  */
 export function timelineFollowUp(event: TimelineEvent): string | undefined {
-	if (event.source === 'history' && event.ref) return `timeline show ${event.ref}`;
+	if (event.source === 'history' && event.ref) {
+		return `timeline show ${event.ref}${event.agentId ? ` --agent ${event.agentId}` : ''}`;
+	}
 	if (event.source === 'git' && event.ref) return `git show ${event.ref}`;
 	if (event.source === 'computer') {
 		const since = new Date(event.ts).toISOString();
@@ -310,7 +312,9 @@ export function timelineFollowUps(events: readonly TimelineEvent[]): string[] {
 	const present = new Set(events.map((e) => e.source));
 	const lines: string[] = [];
 	if (present.has('history')) {
-		lines.push('timeline show <entry>    a turn in full: reply, tab, transcript command');
+		lines.push(
+			'timeline show <entry> --agent <id>    a turn in full: reply, tab, transcript command'
+		);
 	}
 	if (present.has('git')) lines.push('git show <commit>        a commit and its diff');
 	if (present.has('journey')) {
@@ -319,6 +323,6 @@ export function timelineFollowUps(events: readonly TimelineEvent[]): string[] {
 	if (present.has('computer')) {
 		lines.push('computer-history query   captured text and windows, with --since and --grep');
 	}
-	lines.push('--since 1w | --grep <text> | --sources <list> | no --agent for every agent');
+	lines.push('--since 1w | --grep <text> | --sources <list> | --global for every agent');
 	return lines;
 }

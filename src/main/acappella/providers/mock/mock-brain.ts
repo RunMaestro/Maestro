@@ -136,7 +136,10 @@ export class MockBrainProvider implements BrainProvider {
 
 	async route(input: string, context: VoiceRouteContext): Promise<RouteDecision> {
 		const normalized = normalize(input);
-		const named = matchAgentByName(normalized, context.roster);
+		const request = context.clarification?.utterance ?? input;
+		const named =
+			matchAgentByName(normalized, context.roster) ??
+			(context.clarification ? matchAgentByName(normalize(request), context.roster) : null);
 		const boundAgentId = voiceScopeAgentId(context.scope);
 		const scoped = boundAgentId
 			? (context.roster.find((agent) => agent.sessionId === boundAgentId) ?? null)
@@ -144,13 +147,36 @@ export class MockBrainProvider implements BrainProvider {
 
 		// A name in the utterance beats the binding: "ask backend about X" said to
 		// an agent-scoped session means backend, not the agent on screen.
-		const agent = named ?? scoped;
+		let agent = named ?? scoped;
 
-		const cued = detectTabAction(normalized);
+		const cued =
+			detectTabAction(normalized) ??
+			(context.clarification ? detectTabAction(normalize(request)) : null);
 		let tabAction: RouteTabAction = cued ?? 'current';
 		let tabId: string | undefined;
 
-		if (tabAction === 'recall') {
+		// An answer can identify the conversation even when STT split the agent's
+		// name ("Ped Sidian"). Require a unique full tab name, never just overlap.
+		if (cued !== 'new' && (cued === 'recall' || context.clarification)) {
+			const tabInput =
+				context.clarification && named ? `${normalized} ${normalize(request)}` : normalized;
+			const matches = context.roster
+				.filter((candidate) => !agent || candidate.sessionId === agent.sessionId)
+				.flatMap((candidate) => candidate.tabs.map((tab) => ({ agent: candidate, tab })))
+				.filter(
+					({ tab }) =>
+						!!tab.name &&
+						tabNameOverlap(tab, tabInput) > 0 &&
+						containsPhrase(tabInput, normalize(tab.name))
+				);
+			if (matches.length === 1) {
+				agent = matches[0].agent;
+				tabId = matches[0].tab.id;
+				tabAction = 'recall';
+			}
+		}
+
+		if (tabAction === 'recall' && !tabId) {
 			const tab = agent ? pickRecallTab(agent, normalized) : null;
 			// Nothing to go back to. Downgrading beats emitting a `recall` with no
 			// `tabId`, which the executor could only fail on.
@@ -158,12 +184,13 @@ export class MockBrainProvider implements BrainProvider {
 			else tabAction = 'current';
 		}
 
-		const prompt = cleanPrompt(input, named?.name) || input.trim();
+		const prompt = cleanPrompt(request, named?.name) || request.trim();
 		const tabName = tabAction === 'new' ? deriveTabName(prompt) : undefined;
 
 		let confidence = BASE_CONFIDENCE;
 		if (named) confidence += AGENT_MATCH_BONUS;
 		else if (scoped) confidence += SCOPE_MATCH_BONUS;
+		else if (tabId) confidence += AGENT_MATCH_BONUS;
 		if (cued) confidence += CUE_MATCH_BONUS;
 
 		return {

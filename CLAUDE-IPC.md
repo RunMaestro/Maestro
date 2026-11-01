@@ -41,6 +41,12 @@ transport and exit events take precedence over an older snapshot.
 - `memory` - Claude Code per-project memory (list, read, write, create, delete, search, getPath). `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
 - `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
 
+Message deletion uses `agentSessions.deleteMessagePair()` with the message's
+provider and its native session, including parked provider sessions. Await a
+successful result before removing the visible message pair or command history.
+Unsupported providers, remote sessions, and failed requests keep the message
+visible and show an error. Preserve logs appended while deletion is pending.
+
 ## Git Integration
 
 - `git` - Status, diff, isRepo, numstat, branches, tags, info

@@ -1010,7 +1010,8 @@ session
 const timelineCommand = program
 	.command('timeline')
 	.description('Show what happened, oldest first: agent turns, user actions in Maestro, commits')
-	.option('-a, --agent <id>', 'Agent ID or name (default: every agent)')
+	.option('-a, --agent <id>', 'Agent GUID or name (default: calling agent)')
+	.option('--global', 'Read every agent instead of the calling agent')
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
 	.option('--until <time>', 'End (default now)')
 	.option('--sources <list>', 'Comma list of sources (default history,journey,git)')
@@ -1023,7 +1024,8 @@ const timelineCommand = program
 timelineCommand
 	.command('show <entry>')
 	.description('Show one agent turn in full (its reply, tab, and timing) by an [entry <id>] handle')
-	.option('-a, --agent <id>', 'Agent ID or name (default: search every agent)')
+	.option('-a, --agent <id>', 'Agent GUID or name (default: calling agent)')
+	.option('--global', 'Search every agent instead of the calling agent')
 	.option('--json', 'Output as JSON (for scripting)')
 	// `timeline` declares --agent and --json too, and commander hands a shared
 	// flag to the parent, so read both levels.
