@@ -279,6 +279,29 @@ describe('OpenCodeOutputParser', () => {
 		});
 	});
 
+	describe('detectErrorFromLine', () => {
+		// MAESTRO-17W: OpenCode Go's plan quota error parsed as `unknown`, so
+		// group chat grooming reported it to Sentry as a Maestro fault.
+		it('classifies the OpenCode Go usage limit as rate_limited', () => {
+			const error = parser.detectErrorFromLine(
+				JSON.stringify({
+					type: 'error',
+					error: { name: 'APIError', data: { message: 'Go usage limit exceeded' } },
+				})
+			);
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.message).toBe('Usage limit reached. Please wait or check your plan quota.');
+		});
+
+		it('still reports an unrecognized error as unknown with its own text', () => {
+			const error = parser.detectErrorFromLine(
+				JSON.stringify({ type: 'error', error: { name: 'APIError', data: { message: 'boom' } } })
+			);
+			expect(error?.type).toBe('unknown');
+			expect(error?.message).toBe('boom');
+		});
+	});
+
 	describe('edge cases', () => {
 		it('should handle step_finish without reason', () => {
 			// step_finish without reason defaults to system event
