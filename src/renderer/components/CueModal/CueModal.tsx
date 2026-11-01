@@ -38,8 +38,6 @@ import { ActivityLog } from './ActivityLog';
 import { PipelineListTab } from './PipelineListTab';
 import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
-import { BundlesTab } from './BundlesTab';
-import { ReadinessTab } from './ReadinessTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
 // In-memory only - last tab the user was on. Reopening the modal lands here
@@ -304,8 +302,6 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		'pipeline-list',
 		'activity',
 		'backup',
-		'bundles',
-		'readiness',
 	]);
 	useEffect(() => {
 		const handleTabCycle = (e: KeyboardEvent) => {
@@ -446,14 +442,6 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						) : activeTab === 'backup' ? (
 							<div className="flex-1 min-h-0 flex flex-col">
 								<BackupTab theme={theme} />
-							</div>
-						) : activeTab === 'bundles' ? (
-							<div className="flex-1 min-h-0 flex flex-col">
-								<BundlesTab theme={theme} pipelines={dashboardPipelines} onImported={handleRetry} />
-							</div>
-						) : activeTab === 'readiness' ? (
-							<div className="flex-1 min-h-0 flex flex-col">
-								<ReadinessTab theme={theme} />
 							</div>
 						) : (
 							<CuePipelineEditor

@@ -29,7 +29,7 @@ const METHODS: Record<string, string> = {
 	coworking: 'getInstallStatus removeSession',
 	'cross-agent': 'cancel send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
-	cue: 'cancelScheduledTask checkReadiness createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
+	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
 	cueBackup: 'create delete getDiffStatus inspect list readFile readLive restoreAll restoreFile',
 	// DQL only (DV-14). DataviewJS reads and the trust list stay desktop and CLI only.
 	dataview: 'query queryInline rebuild status',

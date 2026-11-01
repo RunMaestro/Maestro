@@ -1582,7 +1582,7 @@ export class WebServer {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
 			},
-			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// Bundles: the same service the Export Agent and Import Agent modals call, with
 			// the app context its IPC handlers own (live agents, renderer hand-off).
 			exportCueBundle: async (request) => {
 				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');

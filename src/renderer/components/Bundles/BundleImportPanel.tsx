@@ -6,8 +6,8 @@
  * commands), then import. Same importer as `maestro-cli bundle import`;
  * agents land in the Left Bar through the renderer (`useCueBundleAgentSync`).
  *
- * Shown by the Cue modal's Bundles tab and by the Left Bar's Import Agent
- * modal, which passes the group the agents go in. An exact copy (an export
+ * Shown by the Left Bar's Import Agent modal, which passes the group the
+ * agents go in. It imports any bundle, an agent or a pipeline. An exact copy (an export
  * with "Exact copy" on) restores its machine settings and suggests the
  * folders it came from, unless the user turns that off.
  */

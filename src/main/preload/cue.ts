@@ -25,7 +25,6 @@ import type {
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { CueMetrics } from '../cue/cue-metrics';
 import type { FanInHealthEntry } from '../cue/cue-fan-in-tracker';
-import type { CueReadinessReport } from '../../shared/cue/readiness';
 export type {
 	CueEvent,
 	CueEventType,
@@ -81,9 +80,6 @@ export function createCueApi() {
 
 		// Lifetime count of Cue events (dashboard stats)
 		getEventCount: (): Promise<number> => ipcRenderer.invoke('cue:getEventCount'),
-
-		// Can this data directory run Cue unattended? Same report as `cue engine check`.
-		checkReadiness: (): Promise<CueReadinessReport> => ipcRenderer.invoke('cue:checkReadiness'),
 
 		// Enable the Cue engine (runtime control)
 		enable: (): Promise<void> => ipcRenderer.invoke('cue:enable'),

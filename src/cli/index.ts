@@ -1635,7 +1635,7 @@ cueEngine
 
 // Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
 // import one. With the app running (and no --data-dir), export and import go
-// through it, the same as the Cue modal's Bundles tab; otherwise they read and
+// through it, the same as the Export Agent and Import Agent modals; otherwise they read and
 // write the data directory directly.
 const bundle = program
 	.command('bundle')

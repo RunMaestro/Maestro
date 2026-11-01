@@ -35,12 +35,7 @@ import {
 	updateScheduledTask,
 	type ScheduledTaskAgent,
 } from '../../cue/cue-scheduled-tasks';
-import { getAgentConfigsStore, getLiveSessions, getSessionsStore } from '../../stores';
-import {
-	buildCueReadinessInputs,
-	checkCueReadiness,
-	type CueReadinessReport,
-} from '../../cue/cue-readiness';
+import { getLiveSessions } from '../../stores';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
 import { renamePipelineOnDisk, type RenamePipelineResult } from '../../cue/cue-pipeline-rename';
 import { captureException } from '../../utils/sentry';
@@ -56,7 +51,6 @@ import type {
 	CueSettings,
 } from '../../cue/cue-types';
 import type { PipelineLayoutState } from '../../../shared/cue-pipeline-types';
-import type { SessionInfo } from '../../../shared/types';
 import type {
 	ScheduledTask,
 	ScheduledTaskCreateInput,
@@ -191,24 +185,6 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		'cue:getEventCount',
 		withIpcErrorLogging(handlerOpts('getEventCount'), async (): Promise<number> => {
 			return requireEngine().getEventCount();
-		})
-	);
-
-	// Can this data directory run Cue unattended? The same report as
-	// `maestro-cli cue engine check`, over the app's live stores. Powers the
-	// Cue modal's Readiness tab. Needs no engine: it reads stores and probes.
-	ipcMain.handle(
-		'cue:checkReadiness',
-		withIpcErrorLogging(handlerOpts('checkReadiness'), async (): Promise<CueReadinessReport> => {
-			requireCue();
-			return checkCueReadiness(
-				buildCueReadinessInputs({
-					sessions: () => getSessionsStore().get('sessions', []) as SessionInfo[],
-					encoreFeatures: () => deps.settingsStore.get('encoreFeatures'),
-					agentConfigs: () => getAgentConfigsStore().get('configs', {}),
-					sshRemotes: () => deps.settingsStore.get('sshRemotes'),
-				})
-			);
 		})
 	);
 
