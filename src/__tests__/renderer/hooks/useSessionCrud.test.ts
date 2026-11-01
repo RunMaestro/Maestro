@@ -418,6 +418,66 @@ describe('useSessionCrud', () => {
 			);
 		});
 
+		it('reports the persisted real ID even after the native dialog closes during creation', async () => {
+			const onCreated = vi.fn();
+			const onCreationError = vi.fn();
+			useModalStore
+				.getState()
+				.openModal('newInstance', { duplicatingSessionId: null, onCreated, onCreationError });
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+			await act(async () => {
+				const creating = result.current.createNewSession('codex', '/test/project', 'Board worker');
+				useModalStore.getState().closeModal('newInstance');
+				await creating;
+			});
+			const [session] = useSessionStore.getState().sessions;
+			expect(onCreated).toHaveBeenCalledExactlyOnceWith(session.id);
+			expect(deps.flushSessionPersistence).toHaveBeenCalledWith([session]);
+			expect(onCreationError).not.toHaveBeenCalled();
+		});
+
+		it('retains the real ID after a post-insertion persistence failure for registration retry', async () => {
+			const onCreated = vi.fn();
+			const onCreationError = vi.fn();
+			useModalStore
+				.getState()
+				.openModal('newInstance', { duplicatingSessionId: null, onCreated, onCreationError });
+			const flush = vi
+				.fn()
+				.mockRejectedValueOnce(new Error('save unavailable'))
+				.mockResolvedValue(undefined);
+			const { result } = renderHook(() =>
+				useSessionCrud(createDeps({ flushSessionPersistence: flush }))
+			);
+			await act(async () => {
+				await result.current.createNewSession('codex', '/test/project', 'Retained');
+			});
+			const [session] = useSessionStore.getState().sessions;
+			expect(session.name).toBe('Retained');
+			expect(onCreated).toHaveBeenCalledExactlyOnceWith(session.id);
+			expect(onCreationError).not.toHaveBeenCalled();
+		});
+
+		it('reports native validation failure without a success ID or inserted session', async () => {
+			const onCreated = vi.fn();
+			const onCreationError = vi.fn();
+			useModalStore
+				.getState()
+				.openModal('newInstance', { duplicatingSessionId: null, onCreated, onCreationError });
+			vi.mocked(validateNewSession).mockReturnValueOnce({
+				valid: false,
+				error: 'Invalid name/path',
+			});
+			const { result } = renderHook(() => useSessionCrud(createDeps()));
+			await act(async () => {
+				await result.current.createNewSession('codex', '/bad', 'Bad');
+			});
+			expect(onCreated).not.toHaveBeenCalled();
+			expect(onCreationError).toHaveBeenCalledExactlyOnceWith('Invalid name/path');
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+		});
+
 		it('rejects duplicate sessions via validation', async () => {
 			(validateNewSession as any).mockReturnValueOnce({
 				valid: false,

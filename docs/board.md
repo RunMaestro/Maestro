@@ -4,54 +4,27 @@ description: A persistent board (a DAG of cards) that dispatches work to Agent P
 icon: kanban
 ---
 
-The **Board** turns a project into a persistent, git-trackable graph of cards. Each **card** is a unit of work assigned to an **Agent Profile**, and a card only becomes eligible to run once every card it depends on is `done`. On the Maestro Cue heartbeat, a dispatcher drains the graph: it promotes eligible cards, spawns their assignees, and moves them to `done`, `review`, or `blocked` based on how the run ended.
+The **Board** is a central, persistent graph of work across projects. Cards carry their own execution scope and repository; their creator does not need to be a worker. Dependencies must be done before a card can run. Maestro Cue drives dispatch through the shared host runtime.
 
-The Board is an Encore Feature and depends on **Maestro Cue** (the Board rides Cue's engine tick, so Cue must be enabled too). The manual Board is fully useful on its own; auto-decompose is a separate, off-by-default layer.
+Board and Maestro Cue are Encore Features and both must be enabled for automatic dispatch.
 
-## Data model
+## Central storage and migration
 
-The board lives in `.maestro/board.yaml` at the project root, alongside `.maestro/cue.yaml`. It is human-diffable and meant to be committed. A board holds an ordered list of cards:
+Maestro stores collections, cards, runs, profiles and worker configuration centrally in its local database. Existing project `.maestro/board.yaml` and `.maestro/profiles.yaml` files are imported as sources, preserving their identities and run history; repeated discovery does not duplicate them or overwrite central edits. Machine-local worker and group identities are not automatically exported to project files.
 
-```yaml
-boards:
-  - id: 8f3c1d2e
-    name: Backend rework
-    maxInProgress: 2 # optional work-in-progress cap
-    autoDecompose: false # optional, off by default
-    cards:
-      - id: a
-        title: Design the schema
-        body: Lay out the tables and relationships.
-        assigneeProfileId: architect
-        parents: []
-        status: todo
-        priority: high # optional: high | normal | low (normal is the default and is not written)
-        createdAt: 2026-07-10T00:00:00.000Z
-        updatedAt: 2026-07-10T00:00:00.000Z
-      - id: b
-        title: Add the migration
-        body: Implement the migration from the design.
-        assigneeProfileId: builder
-        assigneeAgentId: agent-2 # optional: pin this card to one agent
-        parents: [a] # waits until card "a" is done
-        status: done
-        worktree: # optional: run this card in its own checkout
-          branch: board/8f3c1d2e/b
-          path: /home/you/worktrees/board/8f3c1d2e/b
-        prOnDone: # optional: open a pull request when this card finishes
-          targetBranch: develop # optional; omit for the repo's default branch
-        runs: # one entry per dispatch attempt, appended by the dispatcher
-          - attempt: 1
-            startedAt: 2026-07-10T00:05:00.000Z
-            endedAt: 2026-07-10T00:19:00.000Z
-            outcome: done
-            summary: Added the migration and a round-trip test.
-            workerAgentId: agent-2
-            worktreeBranch: board/8f3c1d2e/b
-            prUrl: https://github.com/you/repo/pull/42
-```
+Each source has an explicit identity and profile namespace. Select the source to manage its advanced roles; no active project agent is required. If a source or captured reference cannot be resolved, use its explicit revalidation and repair flow. Migration provenance and safety holds are retained; repair does not guess a replacement source. SSH sources use their configured remote identity, never a local interpretation of a remote path. Remote worktree, review artifact and PR operations that cannot be verified are reported as unsupported or unresolved.
 
-Cards are written by hand or by the app; the `runs` list, the derived statuses, and the timestamps are the dispatcher's bookkeeping. Each run records one attempt and never disappears, so a card that took three tries keeps all three.
+## Workers and execution scope
+
+Manage existing workers, create workers, assign roles and pause intake from the Board. Each executable card requires either one agent or one group as its scope. A group card may additionally require a role or pin a member. Membership, availability, role, repository and working directory are checked again at claim time; a missing or busy target waits with a reason instead of falling back to another worker or directory. Existing worker markings are migrated into the central registry.
+
+The board default controls whether new cards enter with approval required or are directly eligible; a card can override it. New boards default to approval, and imported cards retain their prior intent. A required approval is granted through the desktop, not by changing a status or passing CLI authority flags. Open the saved card and choose **Approve start**. Save pending edits first so the action approves the specification you read. The editor shows the refreshed host approval state; if approval is rejected, it keeps your draft and displays the error. Start approval leaves holds and human review unchanged.
+
+## Cards and runs
+
+Use separate linked work, review, test and documentation cards when these need distinct assignments and results. Add Review captures the source run's verified branch, worktree, exact commit and check evidence for the review card. An agent review is separate from the human approval of a card in Review; it does not create an automatic review/fix loop.
+
+A run records an attempt and its result, including the worker and original scope. Runs and their histories remain available across reloads.
 
 ### Run outcomes
 
@@ -84,33 +57,20 @@ Cards are written by hand or by the app; the `runs` list, the derived statuses, 
 
 A card sitting in `review` is inert: nothing retries it, nothing counts it against the circuit breaker, and it holds no slot against the WIP cap. Crucially it does **not** unblock its children - a child only becomes eligible once every parent is strictly `done` - so a card parked for approval keeps the work behind it parked too.
 
-The only way out is a human: move the card from **Review** to **Done** (drag it, or press `m` on the tile and use the "Move to" picker). That single move is the approval, and it is what releases the children. Moving it back to `todo` sends it around again instead.
+A human approves the review through the desktop review action. Ordinary status edits and CLI commands cannot grant that approval. Until approval, dependent cards remain waiting.
 
 ## Profiles
 
-An **Agent Profile** is the "assignee" a card points at. A profile is a named override bundle layered on an existing Left Bar agent (the "base agent"): it overrides the model, reasoning effort, role system-prompt, and optionally extra CLI args, while keeping the base agent's binary, working directory, custom env, and SSH config. Profiles live in `.maestro/profiles.yaml`:
-
-```yaml
-profiles:
-  - id: architect
-    name: Architect
-    baseAgentId: agent-1
-    model: claude-opus-4-8
-    effort: high
-    appendSystemPrompt: You are a careful systems designer.
-```
-
-At spawn time each field resolves as **profile value, then base agent value, then unset** - so a profile only overrides what it names.
+A role uses the existing **Agent Profile** override fields, including model, effort, role prompt and extra arguments. The Board's advanced profile editor operates on the selected source namespace. At spawn, a profile override takes precedence over the base agent's corresponding value; omitted fields retain the base value. Imported namespaces remain distinct rather than being merged by name.
 
 ## Dispatcher lifecycle
 
-On each Maestro Cue engine tick, the Board dispatcher runs one pass per board (gated on both the Cue and Board Encore flags, read fresh each tick):
+The desktop Cue bootstrap installs the central Board runtime behind the same host entry used by desktop controls and authenticated CLI commands. On each existing heartbeat, it scans every registered collection, including sources without an open project agent. Both Cue and Board feature flags must be enabled.
 
-1. **Reclaim** stale `running` cards. A card left `running` with no live process (for example after the app restarted mid-run) is returned to `ready` and its open run is closed as `reclaimed`.
-2. **Auto-decompose** (optional, see below).
-3. **Promote** every `todo` card whose parents are all `done` to `ready`, skipping any card you have stopped and not yet resumed.
-4. **Claim** `ready` cards up to the work-in-progress cap, mark each `running`, open a run record, and spawn its assignee. The board is persisted _before_ any spawn resolves, so a crash or the next tick sees the cards as `running` and never double-dispatches them.
-5. **Apply** each finished run's outcome (see completion markers).
+1. Re-read current group membership, registered worker availability, role and pin requirements, repository evidence, approval, holds, dependencies and global/collection WIP limits.
+2. Claim each eligible card and worker atomically in SQLite. A pin outside its scope, an empty pool, disabled/paused worker or another active reservation produces a waiting reason in Cue's log; execution never falls back outside the scope.
+3. Start the fenced attempt through the existing Cue run service. Persisted claims, native process start and completed work are separate states. Native runs participate in Cue's drain/stop accounting.
+4. Apply a result only to its matching owner, attempt and run token. Reconciliation retains uncertain starts and reservations until native termination evidence exists; elapsed time or a missing in-memory process alone cannot release capacity.
 
 A card that fails repeatedly is force-blocked by a circuit breaker (two consecutive non-completing runs by default), so a broken card cannot spin forever.
 
@@ -124,14 +84,11 @@ Press **Stop** on a `running` card to kill its agent process. The attempt is rec
 
 Stop is a **hold**, not a pause that expires. The card returns to **To Do** carrying an explicit user hold, and the dispatcher's promote pass skips held cards entirely, so it will not be picked up again on the next tick or any tick after it. A held tile shows a `held` badge so it is clear why it is sitting still.
 
-You resume it yourself, either way:
-
-- Press **Resume** on the tile (it appears in the same spot Stop occupied).
-- Move the card out of To Do and back - drag it, press `m` on the tile and use the "Move to" picker, or run `maestro-cli board set-status <cardId> todo`. Any manual status move releases the hold.
+Press **Resume** on the tile, or use `board resume` with the exact run token after termination. Ordinary card edits and status moves preserve holds.
 
 A held card does **not** unblock its children, exactly like any other non-`done` card: a child only becomes eligible once every parent is strictly `done`. So stopping a card parks the work behind it too.
 
-Cancellation itself is a desktop-app action. `maestro-cli` cannot stop an in-flight run, because the agent process belongs to whichever dispatcher started it, in another process. Releasing a hold from the CLI works fine, because that is only a board file change.
+Desktop Stop and CLI `board hold` use the same host runtime and exact persisted run token. Stop sets a durable hold immediately; capacity stays reserved until the owning run service confirms termination. `board resume` clears only the hold after termination and never grants dispatch or review approval.
 
 ## Notifications
 
@@ -147,9 +104,7 @@ Both are stamped as coming from **Board**. When a card is in flight, the Main Wi
 
 ## Multiple boards
 
-A project can hold as many boards as you like in the same `.maestro/board.yaml`. Use the board picker in the Board window header to switch, rename, or delete the current board, and **New board** to create one. Maestro remembers the last board you had open per project.
-
-Every board is dispatched independently, each with its own `maxInProgress` cap and its own view of which workers are busy, so splitting work across boards raises total concurrency. Keep that in mind if you rely on the pool's one-card-per-worker rule: it holds within a board, and two boards in the same project can hand the same agent a card at the same time. Pin cards to different agents, or keep parallel work on one board, if that matters to you.
+Collections can contain multiple boards and sources. Use the board picker to switch, rename, delete or create a board. Each board has its own WIP cap, while worker reservations are global across collections: the same managed worker cannot claim two cards at once. Managed desktop and headless starts also participate in admission; external unmanaged processes and terminals are outside this guarantee.
 
 Deleting a board takes its cards and their run history with it, so a board with anything that is not `done` asks for confirmation first (`--force` from the CLI).
 
@@ -200,7 +155,7 @@ git branch -d board/8f3c1d2e/b
 
 ### Open a PR when the card is done
 
-An isolated card can open a pull request for its branch the moment it finishes. Turn on **Open PR when done** in the card editor's worktree section (it only appears once **Run in isolated worktree** is on) and optionally name a **PR target branch**; leave that blank to target the repository's default branch, resolved when the PR is actually opened rather than baked into `board.yaml`.
+An isolated card can open a pull request for its branch the moment it finishes. Turn on **Open PR when done** in the card editor's worktree section (it only appears once **Run in isolated worktree** is on) and optionally name a **PR target branch**; leave that blank to target the repository's default branch, resolved when the PR is actually opened when the PR is opened.
 
 What happens when such a card reaches `done`: Maestro pushes the card's branch and runs `gh pr create` against the target branch, with the card title as the PR title and the card body plus the run's handoff summary as the PR description. The resulting URL is toasted, stored on the card's run as `prUrl`, and never opened twice for the same run. Nothing is merged - the branch is still yours to merge, the PR just puts it in front of a reviewer.
 
@@ -210,14 +165,18 @@ Requirements and edges worth knowing:
 
 - The [GitHub CLI](https://cli.github.com) (`gh`) must be installed and authenticated. A failure (no `gh`, no auth, a rejected push) raises a red sticky toast and leaves the card `done` - the PR is a side effect, never a gate on the card's status.
 - The option only does anything on a card with worktree isolation on and a branch actually recorded on its last run. A card that ran in the shared project root has no branch to open a PR for and is silently skipped.
-- It is a desktop-app feature. `maestro-cli board tick` applies card outcomes but does not open pull requests.
-- Removing the toggle (or isolation) simply drops the field from `board.yaml`; boards written before this option existed are unaffected.
+- The shared host runtime handles automatic completion, including requests initiated by `board tick`. Manual completion also uses the run checkout and exact run identity.
+- Removing the toggle or isolation disables this option for future completion.
 
 Worktree cards are local-only: an agent configured to run over an SSH remote executes on the remote host, where a worktree created on your machine does not exist. Such a card is blocked with a clear reason rather than quietly running in the shared project directory. Clear its worktree setting or move it to a local agent.
 
 ## CLI
 
-The Board and Profiles are fully drivable headlessly with `maestro-cli`, mirroring the in-app actions. Every command resolves the project from a target agent.
+Board list, show, capture and CRUD commands use the running Maestro host through its authenticated command bridge. With no filter, `board list --json` returns all central collections. `--agent` selects that agent's registered project; `--project-root`, `--source` and `--collection` select explicit central identities. Legacy board/card IDs or prefixes are accepted only when the filtered host snapshot resolves exactly one match. Mutations require a project root or target agent, and never infer a repository from the creator's working directory.
+
+Use `--revision` and `--card-revision` to retain a previously read optimistic concurrency token. Without these flags, the command reads the current host snapshot and submits its revisions; a concurrent write is still rejected. JSON failures retain the readable `error` and include machine-readable `details.code`, `details.message` and host capture errors. An unavailable host returns an error without falling back to a local database.
+
+Capture accepts `--scope-agent` or `--scope-group`, optional `--assignee-agent` pin, `--assignee` with `--profile-namespace`, `--repository`, `--working-directory` and `--start-mode direct|approval`. The host validates current membership and repository boundaries. Any Maestro agent can capture a draft without joining the worker registry. Missing execution bindings remain non-executable drafts. Required dispatch approval and human review cannot be granted by CLI status edits or authority flags; an already authorized direct policy remains usable. Tick/watch use the same host claim/lifecycle entry.
 
 ```bash
 # Profiles
@@ -235,7 +194,7 @@ maestro-cli board rename <boardId> "New name" --agent <id-or-name>
 maestro-cli board delete <boardId> --agent <id-or-name> [--force]
 
 # Cards
-maestro-cli board add-card <boardId> --agent <id-or-name> --title "Design schema" --assignee <profileId> --body "..." --parents <id1,id2> --worktree
+maestro-cli board add-card <boardId> --agent <id-or-name> --source <sourceKey> --title "Design schema" --scope-group <groupId> --assignee <profileId> --profile-namespace <namespace> --repository <repositoryId> --working-directory <path> --body "..." --parents <id1,id2> --worktree
 maestro-cli board update-card <cardId> --agent <id-or-name> --title "Design the schema" --priority high
 maestro-cli board remove-card <cardId> --agent <id-or-name>
 maestro-cli board set-status <cardId> done --agent <id-or-name>
@@ -247,13 +206,17 @@ maestro-cli board tick --agent <id-or-name>
 maestro-cli board watch --agent <id-or-name> --interval 60
 ```
 
-`board tick` reuses the same promotion, WIP, and completion logic as the desktop dispatcher and the same agent spawn path as the rest of the CLI, so SSH remotes and profile model/effort/role overrides are honored exactly as they are in the app. Drive an entire board to completion by adding cards with dependencies, then running `board tick` until every card is terminal (`done`, `review`, or `blocked`) - a single pass can leave cards `running`, `ready`, or awaiting a retry, so check `board show --json` (card `status` fields) rather than stopping after a quiet tick. Add `--json` to any command for machine-readable output.
+`board tick` reuses the same promotion, WIP, and completion logic as the desktop dispatcher and the same agent spawn path as the rest of the CLI, using the configured source and worker identity. Unsupported remote operations fail visibly rather than falling back to local paths. Drive an entire board to completion by adding cards with dependencies, then running `board tick` until every card is terminal (`done`, `review`, or `blocked`) - a single pass can leave cards `running`, `ready`, or awaiting a retry, so check `board show --json` (card `status` fields) rather than stopping after a quiet tick. Add `--json` to any command for machine-readable output.
 
 A few behaviors worth knowing:
 
-- `board create` is the bootstrap command: a board id is all the other commands need, so you never have to open the app to start a headless workflow.
+- `board create` uses the running host. Mutations require a registered project/source and unambiguous collection identity.
 - `board delete` refuses a board that still has cards which are not `done` unless you pass `--force`. Force only bypasses unfinished-card confirmation; running cards must still be stopped first. Deletion takes the whole board, cards and run history included.
 - `board update-card` and `profile update` change only the flags you actually pass. Pass an empty string (`--assignee ""`, `--model ""`) to clear a field. `profile update` keeps the profile's id, so cards assigned to that role keep working; `profile create` would mint a new id and leave them pointing at nothing.
-- A `running` card cannot be edited, moved or removed. Stop it before deleting it or its board; `--force` does not bypass this protection. The CLI has no handle on the in-flight agent process (it belongs to whichever dispatcher started it), so it cannot stop the run for you - use the stop button on the card in the app.
-- `board set-status` accepts manual statuses (`triage`, `todo`, `review`, `blocked`, `done`), so a headless approval is `board set-status <cardId> done`. For a qualifying card carrying `prOnDone`, this command opens the pull request and waits for the result. `board tick` never opens a pull request.
-- `board watch` is just `board tick` on a timer (default 30 seconds, minimum 5), stopped with Ctrl-C. It does not daemonize and takes no lock. Running two dispatchers on the same board (the desktop app with Cue enabled, plus a `watch`) is unsupported: each one can overwrite the other's latest card transition, because their read-modify-write cycles are not serialized across processes (atomic writes only prevent torn files). Pick one dispatcher per board - the CLI tick is meant for headless projects the app is not also dispatching.
+- A `running` card cannot be edited, moved or removed. Use `board hold <cardId> --run-id <id> --owner-epoch <n> --generation <n> --agent <agent> --json` to request Stop on the exact host attempt; `--force` cannot release its reservation. Use `board resume` with that token after termination.
+- `board set-status` accepts manual statuses (`triage`, `todo`, `review`, `blocked`, `done`), but cannot approve a human review or grant required dispatch approval. For a qualifying card carrying `prOnDone`, this command opens the pull request and waits for the result. Automatic completion uses the shared host PR service as well.
+- `board tick` and `board watch` request the existing host runtime through the authenticated command socket. They never open a Board DB, spawn an agent, reclaim a run by age or start a scheduler locally. `watch` polls that same host entry (default 30 seconds, minimum 5) until Ctrl-C. Concurrent desktop/CLI requests share fenced claims and attempts. Missing host/owner and conflicts return machine-readable errors or per-card waiting reasons. A successful intake reports `accepted` and a run token; it does not establish process execution or task success.
+- CLI `board approve` cannot grant required human approval. The native `board.runtimeCommand` IPC endpoint derives that authority from the actual desktop main-frame sender, with grants bound to the captured specification revision. Hold/Resume and ordinary status changes preserve required approval.
+- The desktop Cue/bootstrap context installs `configureBoardRuntimeHost` with the central owner and existing Cue lock/run service. CLI requests attach to this owner; they do not create one. An unavailable owner returns `runtime-unavailable`. Legacy `boardWorker` session markers no longer participate in active dispatch; the migrated central registry and migration holds remain authoritative.
+
+Cards display their explicit agent or group scope and the host's current waiting reasons. Capture responses and global Refresh use the same read-only worker eligibility checks as claims, including current membership, role and repository access. Empty eligible scopes, paused intake, durable reservations, native busy/dormant workers, required start approval and Hold remain visible. Missing native occupancy evidence is reported as unknown. An otherwise available card waits for Cue's final dispatch checks; reading a card never claims, releases or renews a reservation. Intake pause prevents new Board starts while existing work continues.

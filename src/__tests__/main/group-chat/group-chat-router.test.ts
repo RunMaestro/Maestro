@@ -10,7 +10,7 @@
  * - Read-only mode propagation (5.6)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mocked } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs/promises';
@@ -142,7 +142,7 @@ const realSetTimeout = globalThis.setTimeout;
 const realSleep = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
 
 describe('group-chat-router', () => {
-	let mockProcessManager: IProcessManager;
+	let mockProcessManager: Mocked<IProcessManager>;
 	let mockAgentDetector: AgentDetector;
 	let createdChats: string[] = [];
 	let testDir: string;
@@ -1048,6 +1048,7 @@ describe('group-chat-router', () => {
 				call[0]?.prompt?.includes('review the login form')
 			);
 			expect(spawnCall).toBeDefined();
+			expect(spawnCall?.[0].originWorkerId).toBe('session-cia');
 		});
 
 		it('auto-adds the parenthesized session when moderator uses its legacy alias', async () => {
@@ -1176,8 +1177,8 @@ describe('group-chat-router', () => {
 
 		it('spawns multiple mentioned agents', async () => {
 			const chat = await createTestChatWithModerator('Multi Forward Test');
-			const client = await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
-			const server = await addParticipant(chat.id, 'Server', 'claude-code', mockProcessManager);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await addParticipant(chat.id, 'Server', 'claude-code', mockProcessManager);
 
 			await routeModeratorResponse(
 				chat.id,

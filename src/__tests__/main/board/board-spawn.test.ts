@@ -29,9 +29,10 @@ vi.mock('../../../main/board/board-worktree', async () => {
 	};
 });
 vi.mock('../../../main/profiles/profile-storage', () => ({ listProfiles: () => [] }));
-const buildSystemPrompt = vi.fn(async () => 'Canonical Maestro prompt');
+const buildSystemPrompt = vi.fn(async (_record: unknown) => 'Canonical Maestro prompt');
 vi.mock('../../../main/utils/maestro-system-prompt', () => ({
-	buildMaestroSystemPromptForSession: (...args: unknown[]) => buildSystemPrompt(...args),
+	buildMaestroSystemPromptForSession: (...args: Parameters<typeof buildSystemPrompt>) =>
+		buildSystemPrompt(...args),
 }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), cue: vi.fn() },
@@ -41,12 +42,14 @@ import {
 	spawnBoardCard,
 	decomposeBoardCard,
 	cancelBoardCardRun,
+	createBoardRunService,
 	type BoardSpawnContext,
 } from '../../../main/board/board-spawn';
 import { substituteTemplateVariables } from '../../../shared/templateVariables';
 import { stopCueRun } from '../../../main/cue/cue-executor';
 import { WORKTREE_SSH_UNSUPPORTED } from '../../../main/board/board-worktree';
 import type { BoardCard } from '../../../shared/board/types';
+import type { BoardRunSpecification } from '../../../main/board/board-claims';
 
 const PROJECT_ROOT = '/repos/project';
 const WORKTREE_PATH = '/repos/worktrees/board/b1/c1';
@@ -94,6 +97,65 @@ beforeEach(() => {
 });
 
 describe('spawnBoardCard worktree isolation', () => {
+	it('threads the immutable run identity, validated cwd, overrides and native hooks through the existing Cue runner', async () => {
+		const specification: BoardRunSpecification = {
+			key: { sourceKey: 'source', collectionKey: 'collection', cardId: 'c1' },
+			card: { ...card() },
+			readRevision: { workspace: 1, collection: 1, card: 1, registry: 1 },
+			runToken: { runId: 'immutable-run', ownerEpoch: 1, generation: 2 },
+			attempt: 2,
+			owner: { processIdentity: 'boot:start', epoch: 1 },
+			workerAgentId: 'agent-1',
+			repository: {
+				id: 'repo',
+				workingDirectory: '/explicit-checkout',
+				record: {},
+				identity: 'git:repo',
+				location: { kind: 'local' },
+			},
+			overrides: { customModel: 'snapshot-model' },
+		};
+		const hooks = { canPrepare: () => true, beforeLaunch: vi.fn(() => true), onStarted: vi.fn() };
+		executeCuePrompt.mockResolvedValueOnce({
+			stdout: 'ok',
+			exitCode: 0,
+			executionStarted: true,
+			terminationConfirmed: true,
+		});
+		const result = await createBoardRunService(context()).spawn(specification, hooks);
+		expect(executeCuePrompt.mock.calls[0][0]).toMatchObject({
+			runId: 'immutable-run',
+			projectRoot: '/explicit-checkout',
+			customModel: 'snapshot-model',
+			beforeLaunch: hooks.beforeLaunch,
+			onStarted: hooks.onStarted,
+		});
+		expect(result).toMatchObject({ executionStarted: true, terminationConfirmed: true });
+		expect(createBoardRunService(context()).probe(specification, { phase: 'uncertain' })).toBe(
+			'unknown'
+		);
+	});
+	it('does not provision or run an invalidated prepared attempt', async () => {
+		const result = await spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: {},
+				agentId: 'agent-1',
+				lifecycle: {
+					runId: 'invalidated',
+					canPrepare: () => false,
+					beforeLaunch: () => false,
+					onStarted: vi.fn(),
+				},
+			},
+			context(),
+			'b1'
+		);
+		expect(result.executionStarted).toBe(false);
+		expect(ensureCardWorktree).not.toHaveBeenCalled();
+		expect(executeCuePrompt).not.toHaveBeenCalled();
+	});
 	it('runs a plain card in the shared project root and provisions nothing', async () => {
 		const result = await spawnBoardCard(
 			PROJECT_ROOT,
@@ -231,6 +293,8 @@ describe('Stop during Board launch preparation', () => {
 		);
 		await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(1));
 		const signal = executeCuePrompt.mock.calls[0][0].signal as AbortSignal;
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1', 'older-run-id')).toBe(false);
+		expect(signal.aborted).toBe(false);
 		finish('/usr/bin/agent');
 		await old;
 		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
@@ -346,4 +410,43 @@ it('authorizes writes in the isolated checkout even when the base agent has full
 	expect(executeCuePrompt.mock.calls[0][0].appendSystemPrompt).toBe(
 		`Write only within ${WORKTREE_PATH}`
 	);
+});
+
+it('routes a claimed SSH repository through the selected worker SSH config and blocks changed locations before executing', async () => {
+	const specification: BoardRunSpecification = {
+		key: { sourceKey: 'remote-source', collectionKey: 'remote-collection', cardId: 'c1' },
+		card: { ...card() },
+		readRevision: { workspace: 1, collection: 1, card: 1, registry: 1 },
+		runToken: { runId: 'remote-run', ownerEpoch: 1, generation: 1 },
+		attempt: 1,
+		owner: { processIdentity: 'owner', epoch: 1 },
+		workerAgentId: 'agent-1',
+		overrides: {},
+		repository: {
+			id: 'remote-repo',
+			workingDirectory: '/remote-only/repo',
+			record: {},
+			identity: 'remote-proof',
+			location: { kind: 'ssh', remoteId: 'remote-one' },
+		},
+	};
+	const hooks = { canPrepare: () => true, beforeLaunch: vi.fn(() => true), onStarted: vi.fn() };
+	await createBoardRunService(
+		context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' } })
+	).spawn(specification, hooks);
+	expect(executeCuePrompt).toHaveBeenCalledWith(
+		expect.objectContaining({
+			projectRoot: '/remote-only/repo',
+			sshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+			beforeLaunch: hooks.beforeLaunch,
+		})
+	);
+	expect(ensureCardWorktree).not.toHaveBeenCalled();
+	executeCuePrompt.mockClear();
+	for (const session of [{}, { sessionSshRemoteConfig: { enabled: true, remoteId: 'other' } }]) {
+		const result = await createBoardRunService(context(session)).spawn(specification, hooks);
+		expect(result.executionStarted).toBe(false);
+		expect(result.output).toContain('execution location changed');
+	}
+	expect(executeCuePrompt).not.toHaveBeenCalled();
 });

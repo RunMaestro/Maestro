@@ -1,3 +1,4 @@
+import type { BoardRuntimeCommand, BoardCommandResult } from '../../shared/board/commands';
 /**
  * Preload API for Board operations
  *
@@ -7,7 +8,17 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { Board, BoardCard, CardStatus } from '../../shared/board/types';
+import type { StoredBoardWorker } from '../board/board-workspace-storage';
+import type {
+	BoardCaptureCatalog,
+	BoardCaptureCommand,
+	BoardCaptureResponse,
+	Board,
+	BoardCard,
+	CardStatus,
+	BoardWorkspaceQuery,
+	BoardWorkspaceQueryResponse,
+} from '../../shared/board/types';
 
 export type { Board, BoardCard, CardStatus } from '../../shared/board/types';
 
@@ -16,6 +27,46 @@ export type { Board, BoardCard, CardStatus } from '../../shared/board/types';
  */
 export function createBoardApi() {
 	return {
+		sourceCommand: (
+			command: import('../../shared/board/types').BoardSourceCommand
+		): Promise<import('../../shared/board/types').BoardSourceResponse> =>
+			ipcRenderer.invoke('board:sourceCommand', command),
+
+		upsertRole: (
+			projectRoot: string,
+			profile: import('../../shared/profiles/types').AgentProfile
+		): Promise<import('../../shared/board/types').BoardRoleRef> =>
+			ipcRenderer.invoke('board:upsertRole', { projectRoot, profile }),
+		setStartPolicy: (
+			projectRoot: string,
+			boardId: string,
+			expectedRevision: number,
+			mode: 'approval' | 'direct'
+		): Promise<BoardCaptureResponse> =>
+			ipcRenderer.invoke('board:setStartPolicy', { projectRoot, boardId, expectedRevision, mode }),
+		captureCatalog: (): Promise<BoardCaptureCatalog> => ipcRenderer.invoke('board:captureCatalog'),
+		runtimeCommand: (command: BoardRuntimeCommand): Promise<BoardCommandResult> =>
+			ipcRenderer.invoke('board:runtimeCommand', command),
+		captureCard: (command: BoardCaptureCommand): Promise<BoardCaptureResponse> =>
+			ipcRenderer.invoke('board:captureCard', command),
+		queryWorkspace: (query?: BoardWorkspaceQuery): Promise<BoardWorkspaceQueryResponse> =>
+			ipcRenderer.invoke('board:queryWorkspace', query),
+		listWorkerAccessOptions: (): Promise<
+			ReturnType<typeof import('../board/board-workspace-storage').listBoardWorkerAccessOptions>
+		> => ipcRenderer.invoke('board:listWorkerAccessOptions'),
+		listWorkers: (): Promise<StoredBoardWorker[]> => ipcRenderer.invoke('board:listWorkers'),
+		registerWorker: (agentId: string): Promise<StoredBoardWorker[]> =>
+			ipcRenderer.invoke('board:registerWorker', { agentId }),
+		setWorkerAccess: (
+			agentId: string,
+			roleRefs: { namespace: string; profileId: string }[],
+			allowedRepositoryIds: string[]
+		): Promise<StoredBoardWorker[]> =>
+			ipcRenderer.invoke('board:setWorkerAccess', { agentId, roleRefs, allowedRepositoryIds }),
+		pauseWorker: (agentId: string, paused: boolean): Promise<StoredBoardWorker[]> =>
+			ipcRenderer.invoke('board:pauseWorker', { agentId, paused }),
+		enableWorker: (agentId: string, enabled: boolean): Promise<StoredBoardWorker[]> =>
+			ipcRenderer.invoke('board:enableWorker', { agentId, enabled }),
 		// List all boards for a project.
 		list: (projectRoot: string): Promise<Board[]> =>
 			ipcRenderer.invoke('board:list', { projectRoot }),
@@ -60,6 +111,8 @@ export function createBoardApi() {
 
 		// Cancel a running card: kills the agent process and returns the card to
 		// `todo` with a `canceled` run. Returns the updated board.
+		resumeCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
+			ipcRenderer.invoke('board:resumeCard', { projectRoot, boardId, cardId }),
 		cancelCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
 			ipcRenderer.invoke('board:cancelCard', { projectRoot, boardId, cardId }),
 

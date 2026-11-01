@@ -46,6 +46,7 @@
  */
 
 import { vi } from 'vitest';
+import type { CueRunResult } from '../../../main/cue/cue-types';
 import type { CueEventRecord, CueFanInStateRecord } from '../../../main/cue/cue-db';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -649,7 +650,7 @@ export function createOnCueRunSpy(
 	})
 ) {
 	const calls: WiredOnCueRunCall[] = [];
-	const fn = vi.fn(async (req: WiredOnCueRunCall) => {
+	const fn = vi.fn(async (req: WiredOnCueRunCall): Promise<CueRunResult> => {
 		calls.push({
 			runId: req.runId,
 			sessionId: req.sessionId,
@@ -657,7 +658,7 @@ export function createOnCueRunSpy(
 			prompt: req.prompt,
 			event: req.event,
 		});
-		return (await defaultResponse()) as ReturnType<typeof fn> extends Promise<infer U> ? U : never;
+		return (await defaultResponse()) as CueRunResult;
 	});
 	return { fn, calls };
 }

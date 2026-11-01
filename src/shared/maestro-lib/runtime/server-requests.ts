@@ -1,3 +1,4 @@
+import { answerBoardCommand, type BoardCommandHost } from '../../board/commands';
 /**
  * The requests a detached host answers: the desktop bridge's typed messages, run against a
  * `MaestroClient`.
@@ -342,11 +343,16 @@ async function projectSessions(client: MaestroClient): Promise<Frame[]> {
 export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
 
 /** Answer the desktop bridge's typed messages with `client`. */
-export function createRequestHandler(client: MaestroClient): RequestHandler {
+export function createRequestHandler(
+	client: MaestroClient,
+	boardHost?: BoardCommandHost
+): RequestHandler {
 	const sessionId = (message: Request): string => str(message.sessionId) ?? '';
 
 	return async (message) => {
 		switch (message.type) {
+			case 'board_command':
+				return answerBoardCommand(message, boardHost);
 			case 'ping':
 				return { type: 'pong' };
 

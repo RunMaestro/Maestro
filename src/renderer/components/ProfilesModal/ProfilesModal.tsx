@@ -17,6 +17,8 @@ import { captureException } from '../../utils/sentry';
 export interface ProfilesModalProps {
 	theme: Theme;
 	onClose: () => void;
+	/** Pinned central source; no active-agent or YAML fallback. */
+	source?: { sourceKey: string; namespace: string };
 }
 
 /** Effort choices offered in the picker. Blank means "inherit the base agent". */
@@ -26,20 +28,18 @@ const EFFORT_OPTIONS = ['', 'low', 'medium', 'high'] as const;
 const TITLE_ID = 'profiles-modal-title';
 
 /**
- * Minimal Agent Profiles manager. Lists the profiles stored in the active
- * project's `.maestro/profiles.yaml` and lets the user create one by picking a
- * base agent, a model, an effort, and an optional role prompt. Intentionally
- * minimal - the Board (later phase) is the primary consumer.
- *
- * Reads/writes through the gated `window.maestro.profiles` bridge, which owns
- * the YAML file. Base agents come from the Left Bar session list.
+ * Shared profile editor. A pinned source uses the central Board host; standalone
+ * callers retain the legacy project bridge. Every override remains editable,
+ * including values from providers or base agents that are no longer open.
  */
-export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
+export function ProfilesModal({ theme, onClose, source }: ProfilesModalProps) {
 	useModalLayer(MODAL_PRIORITIES.PROFILES_MODAL, 'Agent Profiles', onClose);
 
 	const sessions = useSessionStore((s) => s.sessions);
 	const activeSession = useSessionStore(selectActiveSession);
-	const projectRoot = activeSession?.projectRoot ?? '';
+	const projectRoot = source?.sourceKey ?? activeSession?.projectRoot ?? '';
+	const sourceKey = source?.sourceKey;
+	const namespace = source?.namespace;
 
 	const [profiles, setProfiles] = useState<AgentProfile[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -51,6 +51,9 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 	const [effort, setEffort] = useState('');
 	const [role, setRole] = useState('');
 	const [saving, setSaving] = useState(false);
+	const [editing, setEditing] = useState<AgentProfile | null>(null);
+	const [customArgs, setCustomArgs] = useState('');
+	const [error, setError] = useState<string | null>(null);
 
 	const baseAgentName = useCallback(
 		(id: string) => sessions.find((s) => s.id === id)?.name ?? id,
@@ -66,8 +69,16 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 			}
 			if (showSpinner) setLoading(true);
 			try {
-				setProfiles(await window.maestro.profiles.list(projectRoot));
+				setProfiles(
+					sourceKey
+						? (await window.maestro.board.captureCatalog()).profiles
+								.filter((p) => p.namespace === namespace)
+								.map((p) => p.profile)
+						: await window.maestro.profiles.list(projectRoot)
+				);
+				setError(null);
 			} catch (err) {
+				setError(String(err));
 				logger.error(`Failed to load profiles: ${String(err)}`);
 				captureException(err, { tags: { operation: 'profiles:list' } });
 				notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to load profiles.' });
@@ -75,7 +86,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 				if (showSpinner) setLoading(false);
 			}
 		},
-		[projectRoot]
+		[projectRoot, sourceKey, namespace]
 	);
 
 	useEffect(() => {
@@ -89,22 +100,22 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 	// separate process with no listener registered and hand edits to the YAML are
 	// not watched, so both require the manual refresh button as the escape hatch.
 	useEffect(() => {
-		if (!projectRoot) return;
+		if (!projectRoot || sourceKey) return;
 		return window.maestro.profiles.onProfilesChanged?.((payload) => {
 			if (payload?.projectRoot !== projectRoot) return;
 			void load(false);
 		});
-	}, [projectRoot, load]);
+	}, [projectRoot, sourceKey, load]);
 
 	// Default the base-agent picker to the active session ONCE, so a later choice
 	// of "None (pool role)" (baseAgentId = '') is not snapped back to an agent.
 	const baseInitRef = useRef(false);
 	useEffect(() => {
-		if (!baseInitRef.current && activeSession) {
+		if (!sourceKey && !baseInitRef.current && activeSession) {
 			setBaseAgentId(activeSession.id);
 			baseInitRef.current = true;
 		}
-	}, [activeSession]);
+	}, [activeSession, sourceKey]);
 
 	// A profile needs a name; the base agent is optional (empty = a pool role that
 	// floats to any free worker - Board Phase 6).
@@ -116,44 +127,84 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 	const handleCreate = useCallback(async () => {
 		if (!canSave) return;
 		const profile: AgentProfile = {
-			id: generateUUID(),
+			...editing,
+			id: editing?.id ?? generateUUID(),
 			name: name.trim(),
 			// Empty base = a pool role that floats to any free opt-in worker.
-			...(baseAgentId ? { baseAgentId } : {}),
-			...(model.trim() ? { model: model.trim() } : {}),
-			...(effort ? { effort } : {}),
-			...(role.trim() ? { appendSystemPrompt: role.trim() } : {}),
+			baseAgentId: baseAgentId || undefined,
+			model: model || undefined,
+			effort: effort || undefined,
+			appendSystemPrompt: role || undefined,
+			customArgs: customArgs || undefined,
 		};
 		setSaving(true);
 		try {
-			const updated = await window.maestro.profiles.upsert(projectRoot, profile);
-			setProfiles(updated);
+			if (sourceKey && namespace) {
+				const result = await window.maestro.board.sourceCommand({
+					action: 'save-role',
+					sourceKey,
+					namespace,
+					profile,
+				});
+				if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+				await load(false);
+			} else setProfiles(await window.maestro.profiles.upsert(projectRoot, profile));
 			// Reset the form (keep the base agent selection for quick repeat creation).
 			setName('');
 			setModel('');
 			setEffort('');
 			setRole('');
-			notifyToast({ color: 'green', title: 'Profiles', message: `Created "${profile.name}".` });
+			setCustomArgs('');
+			setEditing(null);
+			notifyToast({
+				color: 'green',
+				title: 'Profiles',
+				message: `${editing ? 'Saved' : 'Created'} "${profile.name}".`,
+			});
 		} catch (err) {
+			setError(String(err));
 			logger.error(`Failed to create profile: ${String(err)}`);
 			captureException(err, { tags: { operation: 'profiles:upsert' } });
 			notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to save profile.' });
 		} finally {
 			setSaving(false);
 		}
-	}, [canSave, name, baseAgentId, model, effort, role, projectRoot]);
+	}, [
+		canSave,
+		name,
+		baseAgentId,
+		model,
+		effort,
+		role,
+		customArgs,
+		editing,
+		projectRoot,
+		sourceKey,
+		namespace,
+		load,
+	]);
 
 	const handleDelete = useCallback(
 		async (profileId: string) => {
 			try {
-				setProfiles(await window.maestro.profiles.delete(projectRoot, profileId));
+				if (sourceKey && namespace) {
+					const result = await window.maestro.board.sourceCommand({
+						action: 'delete-role',
+						sourceKey,
+						namespace,
+						profileId,
+					});
+					if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+					await load(false);
+				} else setProfiles(await window.maestro.profiles.delete(projectRoot, profileId));
 			} catch (err) {
+				setError(String(err));
 				logger.error(`Failed to delete profile: ${String(err)}`);
 				captureException(err, { tags: { operation: 'profiles:delete' } });
 				notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to delete profile.' });
 			}
 		},
-		[projectRoot]
+		[projectRoot, sourceKey, namespace, load]
 	);
 
 	const inputStyle = {
@@ -249,6 +300,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 
 				{/* Body */}
 				<div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+					{error && <div role="alert">{error}</div>}
 					{!projectRoot && (
 						<div className="text-sm" style={{ color: theme.colors.textDim }}>
 							Select an agent first so profiles can be stored for its project.
@@ -292,6 +344,21 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 									</div>
 								</div>
 								<button
+									type="button"
+									aria-label={`Edit ${p.name}`}
+									onClick={() => {
+										setEditing(p);
+										setName(p.name);
+										setBaseAgentId(p.baseAgentId ?? '');
+										setModel(p.model ?? '');
+										setEffort(p.effort ?? '');
+										setRole(p.appendSystemPrompt ?? '');
+										setCustomArgs(p.customArgs ?? '');
+									}}
+								>
+									Edit
+								</button>
+								<button
 									onClick={() => void handleDelete(p.id)}
 									className="p-1.5 rounded-md hover:bg-white/10 transition-colors shrink-0"
 									style={{ color: theme.colors.textDim }}
@@ -313,7 +380,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 							className="text-xs font-semibold uppercase tracking-wide"
 							style={{ color: theme.colors.textDim }}
 						>
-							New profile
+							{editing ? `Edit ${editing.name}` : 'New profile'}
 						</div>
 
 						<label className="block space-y-1">
@@ -342,6 +409,9 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 								{/* Empty = a pool role: the Board floats it to any free opt-in
 								    worker instead of pinning one agent (Board Phase 6). */}
 								<option value="">None (pool role - any free worker)</option>
+								{baseAgentId && !sessions.some((s) => s.id === baseAgentId) && (
+									<option value={baseAgentId}>Unavailable agent: {baseAgentId}</option>
+								)}
 								{sessions.map((s) => (
 									<option key={s.id} value={s.id}>
 										{s.name}
@@ -373,7 +443,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 									className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
 									style={inputStyle}
 								>
-									{EFFORT_OPTIONS.map((opt) => (
+									{[...new Set([...EFFORT_OPTIONS, effort])].map((opt) => (
 										<option key={opt || 'inherit'} value={opt}>
 											{opt || 'inherit base agent'}
 										</option>
@@ -396,6 +466,15 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 							/>
 						</label>
 
+						<label className="block space-y-1">
+							<span>Extra CLI args (optional)</span>
+							<input
+								value={customArgs}
+								onChange={(e) => setCustomArgs(e.target.value)}
+								style={inputStyle}
+								className="w-full rounded-md px-2 py-1.5 text-sm"
+							/>
+						</label>
 						<button
 							onClick={() => void handleCreate()}
 							disabled={!canSave}
@@ -403,7 +482,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
 						>
 							<Plus className="w-4 h-4" />
-							Create profile
+							{editing ? 'Save profile' : 'Create profile'}
 						</button>
 					</div>
 				</div>

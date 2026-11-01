@@ -214,20 +214,43 @@ import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
-import { listBoards, saveBoard, setBoardSavedListener } from './board/board-storage';
+import {
+	configureBoardCaptureHost,
+	configureBoardReadinessHost,
+	listBoardWorkers,
+	getBoardStorage,
+	listBoards,
+	saveBoard,
+	setBoardSavedListener,
+} from './board/board-storage';
 import { setProfilesSavedListener } from './profiles/profile-storage';
 import {
 	resolveCardOverrides,
 	resolveCardAssignment,
 	spawnBoardCard,
+	createBoardRunService,
 	decomposeBoardCard,
 	cancelBoardCardRun,
 	type BoardSpawnContext,
 } from './board/board-spawn';
-import { selectPoolAgentIds } from '../shared/board/pool';
+import { isPidAlive } from '../shared/maestro-lib/client/discovery';
+import { BoardStorageError } from './board/board-storage';
+import { probeBoardRemoteRepository } from './board/board-remote-source';
+import { configureBoardSourceHost } from './board/board-source-host';
+import { BoardCueHost } from './board/board-cue';
+import { configureBoardRuntimeHost } from './board/board-runtime-host';
+import type { BoardClaimHostContext } from './board/board-claims';
+import type { BoardCardKey } from './board/board-workspace-storage';
+import { readCueEngineLock, isCueEngineLockOwnedByThisProcess } from './cue/cue-engine-lock';
+import { execGitReadOnly } from './utils/remote-git';
+import { isAgentDormant } from '../shared/agentVisibility';
+
 import { autoDecomposeBoard } from './board/board-decompose';
 import { buildBoardCardToastPayload } from './board/board-toast';
-import { startCardPr } from './board/board-pr';
+import { prepareBoardReviewHandoff } from './board/board-review';
+import { boardWorkerCanStart } from './board/board-claims';
+import { configureAgentAdmission } from './utils/headless-agent-activity';
+import { startBoardRunPr, startCardPr } from './board/board-pr';
 import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -610,6 +633,11 @@ noteSentryAgentInventory(sessionsStore.get('sessions', []));
 noteSentryWorkReasons(powerManager.getStatus().reasons);
 powerManager.onReasonsChanged(noteSentryWorkReasons);
 const groupsStore = getGroupsStore();
+configureBoardCaptureHost(() => ({
+	agents: sessionsStore.get('sessions', []),
+	groups: groupsStore.get('groups', []),
+}));
+configureBoardSourceHost(() => sessionsStore.get('sessions', []));
 const agentConfigsStore = getAgentConfigsStore();
 const agentCapabilitiesStore = getAgentCapabilitiesStore();
 const windowStateStore = getWindowStateStore();
@@ -1497,22 +1525,202 @@ app
 			},
 			getSshStore: () => createSshRemoteStoreAdapter(store),
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
-			// Board Phase 6 worker pool: opt-in (`boardWorker: true`) agents whose
-			// working directory is inside the board's project dir (or a sub-folder),
-			// in Left Bar order. Only these float role-only cards.
-			getPoolAgentIds: (projectRoot) => {
-				const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
-				return selectPoolAgentIds(
-					projectRoot,
-					sessions.map((s) => ({
-						id: s.id,
-						dir: s.projectRoot || s.cwd || s.fullPath,
-						boardWorker: s.boardWorker === true,
-					}))
-				);
-			},
 			nowMs: () => Date.now(),
 		};
+
+		// One central owner, using Cue's already-held lock and existing process service.
+		const repositoryProofs = new Map<string, NonNullable<BoardClaimHostContext['repository']>>();
+		const reviewProofs = new Map<string, string>();
+		let registryFingerprint = '';
+		let registryRevision = 0;
+		const boardIntakeState = (): Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> => {
+			const sessions = boardSpawnContext.getStoredSessions();
+			const flags = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			return {
+				dispatchEnabled:
+					cueEngine?.isEnabled() === true && flags.maestroCue === true && flags.board === true,
+				agentStates: Object.fromEntries(
+					sessions.map((session) => [
+						session.id,
+						{
+							live: !isAgentDormant(session, flags),
+							busy: isAgentBusy(session as { id: string }, processManager),
+							location: session.sessionSshRemoteConfig?.enabled
+								? { kind: 'ssh' as const, remoteId: session.sessionSshRemoteConfig.remoteId }
+								: { kind: 'local' as const },
+							baseValues: {
+								customModel: session.customModel,
+								customEffort: session.customEffort,
+								customArgs: session.customArgs,
+								appendSystemPrompt: session.appendSystemPrompt,
+							},
+						},
+					])
+				),
+			};
+		};
+		configureBoardReadinessHost(boardIntakeState);
+		const boardContext = (key: BoardCardKey): Omit<BoardClaimHostContext, 'owner'> => {
+			const storage = getBoardStorage();
+			const catalog = storage.captureCatalog();
+			const fingerprint = canonicalJson({
+				catalog,
+				workers: listBoardWorkers(),
+				sshRemotes: store.get('sshRemotes', []),
+			});
+			if (fingerprint !== registryFingerprint) {
+				registryFingerprint = fingerprint;
+				registryRevision++;
+			}
+			let repository = repositoryProofs.get(canonicalJson(key)) ?? null;
+			if (repository?.location.kind === 'local') {
+				try {
+					const stat = lstatSync(realpathSync(repository.workingDirectory));
+					const identity = canonicalJson([
+						realpathSync(repository.workingDirectory),
+						stat.dev,
+						stat.ino,
+					]);
+					if (!repository.identity.startsWith(identity + '\n')) repository = null;
+				} catch (error) {
+					if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+						void captureException(error, { operation: 'board:repositoryIdentity' });
+					repository = null;
+				}
+			}
+			return {
+				registryRevision,
+				reviewArtifact: reviewProofs.get(canonicalJson(key)) ?? null,
+				...boardIntakeState(),
+				repository,
+			};
+		};
+		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
+		const globalBoardHost = new BoardCueHost({
+			storage: getBoardStorage,
+			lock: () => {
+				const held = readCueEngineLock();
+				if (!held || !isCueEngineLockOwnedByThisProcess(held)) return null;
+				// Cue rewrites boot-time samples on each heartbeat. Pin this process's
+				// identity once; verify the native random ownership token on every use.
+				const info = (boardOwnerInfo ??= held);
+				return {
+					info: {
+						pid: info.pid,
+						bootTime: info.bootTime,
+						startedAt: info.startedAt,
+						mode: 'desktop' as const,
+					},
+					verify: () => {
+						const current = readCueEngineLock();
+						return current &&
+							isCueEngineLockOwnedByThisProcess(current) &&
+							current.token === info.token
+							? { ok: true as const }
+							: { ok: false as const, reason: 'owner-conflict' };
+					},
+				};
+			},
+			context: boardContext,
+			prepare: async (key) => {
+				const storage = getBoardStorage();
+				const card = storage.workspace
+					.readCollection(key)
+					?.cards.find((c) => c.cardId === key.cardId);
+				const id = canonicalJson(key);
+				repositoryProofs.delete(id);
+				reviewProofs.delete(id);
+				if (card?.payload.kind === 'review' && card.payload.reviewHandoff) {
+					const handoff = card.payload
+						.reviewHandoff as import('../shared/board/types').BoardReviewHandoff;
+					const proof = await prepareBoardReviewHandoff(storage, handoff);
+					if (proof) reviewProofs.set(id, proof);
+				}
+				if (!card || typeof card.payload.repositoryId !== 'string') return;
+				const row = storage.db
+					.prepare('SELECT payload_json FROM repositories WHERE id=?')
+					.get(card?.payload.repositoryId) as { payload_json: string } | undefined;
+				if (!row || typeof card?.payload.workingDirectory !== 'string') return;
+				const record = JSON.parse(row.payload_json);
+				if (record.validated !== true) return;
+				const cwd = card.payload.workingDirectory;
+				if (record.location?.kind === 'ssh') {
+					try {
+						const identity = await probeBoardRemoteRepository(
+							record.location.remoteId,
+							record.workingDirectory,
+							cwd
+						);
+						repositoryProofs.set(id, {
+							id: String(card.payload.repositoryId),
+							workingDirectory: cwd,
+							record,
+							location: record.location,
+							identity,
+						});
+					} catch (error) {
+						if (!(error instanceof BoardStorageError)) throw error;
+						// An unresolved remote never enters the local Git/realpath path.
+					}
+					return;
+				}
+				// Native Git validates the explicit directory; never substitute a worker CWD.
+				const git = await execGitReadOnly(
+					['rev-parse', '--show-toplevel', '--absolute-git-dir'],
+					cwd
+				);
+				if (git.exitCode !== 0) return;
+				try {
+					const physical = realpathSync(cwd);
+					const stat = lstatSync(physical);
+					const root = git.stdout.trim().split('\n')[0];
+					if (realpathSync(record.workingDirectory) !== realpathSync(root)) return;
+					repositoryProofs.set(id, {
+						id: String(card.payload.repositoryId),
+						workingDirectory: cwd,
+						record,
+						location: { kind: 'local' },
+						identity: canonicalJson([physical, stat.dev, stat.ino]) + '\n' + git.stdout.trim(),
+					});
+				} catch (error) {
+					if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+						void captureException(error, { operation: 'board:prepareRepository' });
+					/* Missing native paths leave the repository unresolved. */
+				}
+			},
+			// An empty root invalidates the central view, whose listener refetches all sources.
+			onChanged: () => safeSend('board:changed', { projectRoot: '' }),
+			onCompleted: (spec) => {
+				const task = startBoardRunPr(spec, {
+					notify: (payload) => safeSend('remote:notifyToast', payload),
+					onLog: (_level, message) => logger.cue(message, 'Board'),
+				}).finally(() => safeSend('board:changed', { projectRoot: '' }));
+				cueEngine?.trackBoardTask(task);
+			},
+			onTask: (task) => cueEngine?.trackBoardTask(task),
+			service: createBoardRunService(boardSpawnContext),
+			// Only native PID death or a different boot proves the old local owner gone.
+			ownerLiveness: (identity) => {
+				const old = JSON.parse(identity) as { pid?: number; bootTime?: number };
+				const current = readCueEngineLock();
+				if (!current || !isCueEngineLockOwnedByThisProcess(current)) return 'unknown';
+				if (
+					typeof old.bootTime === 'number' &&
+					typeof current.bootTime === 'number' &&
+					Math.abs(old.bootTime - current.bootTime) > 60_000
+				)
+					return 'dead';
+				return Number.isSafeInteger(old.pid) && old.pid! > 0 && !isPidAlive(old.pid!)
+					? 'dead'
+					: 'unknown';
+			},
+			onWait: (key, reason) =>
+				logger.cue(`[Board] ${key.collectionKey}/${key.cardId}: ${reason}`, 'Cue'),
+		});
+		configureAgentAdmission((agentId, runId) =>
+			boardWorkerCanStart(getBoardStorage().db, agentId, runId)
+		);
+		configureBoardRuntimeHost(globalBoardHost.runtimeFor);
 
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
@@ -1679,6 +1887,8 @@ app
 			// board-agnostic. The dispatch pass is gated on BOTH `maestroCue` and
 			// `board` (Board requires Cue) inside the engine's board pass.
 			board: {
+				tickGlobal: () => globalBoardHost.tick(),
+				stopGlobal: () => globalBoardHost.stop(),
 				getEncoreFeatures: () => {
 					const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 					return { maestroCue: ef.maestroCue === true, board: ef.board === true };
@@ -1694,7 +1904,7 @@ app
 				},
 				listBoards: (projectRoot) => listBoards(projectRoot),
 				saveBoard: (projectRoot, board) => {
-					saveBoard(projectRoot, board);
+					saveBoard(projectRoot, board, board.storage?.expectedRevision);
 				},
 				resolveOverrides: (projectRoot, card) =>
 					resolveCardOverrides(projectRoot, card, boardSpawnContext),
@@ -1798,7 +2008,7 @@ app
 							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext, signal),
 						reload: () => listBoards(projectRoot).find((b) => b.id === board.id) ?? null,
 						save: (merged) => {
-							saveBoard(projectRoot, merged);
+							saveBoard(projectRoot, merged, merged.storage?.expectedRevision);
 						},
 						onLog: (level, message) => {
 							if (level === 'error') logger.error(message, 'Board');

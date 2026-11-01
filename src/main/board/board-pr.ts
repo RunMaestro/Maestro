@@ -1,3 +1,4 @@
+import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
 /**
  * Board per-card "open PR when done" (Board F3).
  *
@@ -21,7 +22,14 @@
 
 import type { Board, BoardCard, CardRun } from '../../shared/board/types';
 import { createPullRequest } from '../utils/pr-creator';
-import { listBoards, saveBoard, enqueueBoardWrite } from './board-storage';
+import {
+	getBoardStorage,
+	queryBoardWorkspace,
+	listBoards,
+	stampBoardRunPr,
+	enqueueBoardWrite,
+} from './board-storage';
+import type { BoardRunSpecification } from './board-claims';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { buildCardPrToastPayload, type BoardCardToastPayload } from './board-toast';
 
@@ -56,6 +64,8 @@ export interface CardPrResult {
 export interface CardPrFlowDeps {
 	/** Load the current board snapshot (fresh, like the dispatcher's dep). */
 	loadBoard: () => Board | null;
+	/** Fenced completion must never select a later attempt. */
+	expectedRun?: Pick<CardRun, 'attempt' | 'startedAt'>;
 	/**
 	 * Record a created PR's url on the card's originating run. Given as one closure
 	 * rather than a load/save pair so the host can do the read-modify-write inside
@@ -241,50 +251,63 @@ export async function maybeCreateCardPr(
 	deps: CardPrFlowDeps
 ): Promise<CardPrResult | null> {
 	let request: CardPrRequest | null = null;
+	let identity: unknown;
 	try {
 		const board = deps.loadBoard();
 		if (!board) return null;
 		request = resolveCardPrRequest(board, cardId);
+		identity = board.storage
+			? [board.storage.sourceKey, board.storage.collectionKey, cardId]
+			: [deps.mainRepoCwd ?? null, board.id, cardId];
 	} catch (err) {
 		deps.onLog?.('warn', `card "${cardId}" PR: cannot read board - ${(err as Error).message}`);
 		return null;
 	}
 	if (!request) return null;
+	if (deps.expectedRun && canonicalJson(request.run) !== canonicalJson(deps.expectedRun))
+		return null;
 
-	let result: CardPrResult;
+	const key = canonicalJson([identity, request.run]);
+	if (cardPrInFlight.has(key)) return null;
+	cardPrInFlight.add(key);
 	try {
-		result = deps.createPr
-			? await deps.createPr(request)
-			: await defaultCreatePr(request, deps.mainRepoCwd, deps.onLog);
-	} catch (err) {
-		result = { success: false, error: err instanceof Error ? err.message : String(err) };
-	}
-
-	if (result.success && result.prUrl) {
+		let result: CardPrResult;
 		try {
-			await deps.stampPrUrl?.(cardId, result.prUrl, request.run);
+			result = deps.createPr
+				? await deps.createPr(request)
+				: await defaultCreatePr(request, deps.mainRepoCwd, deps.onLog);
 		} catch (err) {
-			deps.onLog?.(
-				'warn',
-				`card "${cardId}" PR opened at ${result.prUrl} but could not be recorded on the board - ${(err as Error).message}`
-			);
+			result = { success: false, error: err instanceof Error ? err.message : String(err) };
 		}
-		deps.onLog?.('info', `card "${cardId}" -> PR ${result.prUrl}`);
-	} else {
-		const reason = result.error ?? 'unknown error';
-		deps.onLog?.('warn', `card "${cardId}" PR failed: ${reason}`);
-		try {
-			await deps.stampPrError?.(cardId, reason, request.run);
-		} catch (err) {
-			deps.onLog?.(
-				'warn',
-				`card "${cardId}" PR failure could not be recorded on the board - ${(err as Error).message}`
-			);
-		}
-	}
 
-	notifySafely(deps, buildCardPrToastPayload(request, result));
-	return result;
+		if (result.success && result.prUrl) {
+			try {
+				await deps.stampPrUrl?.(cardId, result.prUrl, request.run);
+			} catch (err) {
+				deps.onLog?.(
+					'warn',
+					`card "${cardId}" PR opened at ${result.prUrl} but could not be recorded on the board - ${(err as Error).message}`
+				);
+			}
+			deps.onLog?.('info', `card "${cardId}" -> PR ${result.prUrl}`);
+		} else {
+			const reason = result.error ?? 'unknown error';
+			deps.onLog?.('warn', `card "${cardId}" PR failed: ${reason}`);
+			try {
+				await deps.stampPrError?.(cardId, reason, request.run);
+			} catch (err) {
+				deps.onLog?.(
+					'warn',
+					`card "${cardId}" PR failure could not be recorded on the board - ${(err as Error).message}`
+				);
+			}
+		}
+
+		notifySafely(deps, buildCardPrToastPayload(request, result));
+		return result;
+	} finally {
+		cardPrInFlight.delete(key);
+	}
 }
 
 /**
@@ -317,7 +340,15 @@ export function startCardPr(
 	options: StartCardPrOptions = {}
 ): void {
 	let request: CardPrRequest | null;
+	let remoteSource = false;
 	try {
+		if (projectRoot.startsWith(BOARD_SOURCE_PROJECT_PREFIX)) {
+			const sourceKey = projectRoot.slice(BOARD_SOURCE_PROJECT_PREFIX.length);
+			remoteSource =
+				queryBoardWorkspace({ sourceKey }).sources.find((source) => source.sourceKey === sourceKey)
+					?.location?.location.kind === 'ssh';
+		}
+
 		const board = listBoards(projectRoot).find((entry) => entry.id === boardId);
 		request = board ? resolveCardPrRequest(board, cardId) : null;
 	} catch (error) {
@@ -325,28 +356,82 @@ export function startCardPr(
 		return;
 	}
 	if (!request) return;
-	const key = canonicalJson([projectRoot, boardId, cardId, request.run]);
-	if (cardPrInFlight.has(key)) return;
-	cardPrInFlight.add(key);
 	void maybeCreateCardPr(cardId, {
 		loadBoard: () => listBoards(projectRoot).find((b) => b.id === boardId) ?? null,
 		stampPrUrl: (id, prUrl, run) =>
 			enqueueBoardWrite(projectRoot, () => {
 				const board = listBoards(projectRoot).find((b) => b.id === boardId);
-				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString(), run)) {
-					saveBoard(projectRoot, board);
-				}
+				if (board) stampBoardRunPr(projectRoot, board, id, run, { prUrl });
 			}),
 		stampPrError: (id, error, run) =>
 			enqueueBoardWrite(projectRoot, () => {
 				const board = listBoards(projectRoot).find((b) => b.id === boardId);
-				if (board && stampCardPrError(board, id, error, new Date().toISOString(), run)) {
-					saveBoard(projectRoot, board);
-				}
+				if (board)
+					stampBoardRunPr(projectRoot, board, id, run, {
+						prError: error.slice(0, PR_ERROR_MAX_LENGTH),
+					});
 			}),
-		mainRepoCwd: projectRoot,
+		// Resolve the default base in the run's checkout. A Board source is a
+		// storage identity and may belong to a different repository entirely.
 		...options,
-	}).finally(() => cardPrInFlight.delete(key));
+		...(remoteSource
+			? {
+					createPr: async () => ({
+						success: false,
+						error: 'Remote PR completion requires an explicit remote Git/PR adapter',
+					}),
+				}
+			: {}),
+	});
+}
+
+/** Global completion uses the claimed repository, never the collection source as cwd.
+ * The supplied attempt is checked again when the PR flow reads its snapshot. */
+export function startBoardRunPr(
+	spec: BoardRunSpecification,
+	options: StartCardPrOptions & Pick<CardPrFlowDeps, 'createPr'> = {}
+): Promise<CardPrResult | null> {
+	const storage = getBoardStorage();
+	const loadBoard = () =>
+		queryBoardWorkspace({ sourceKey: spec.key.sourceKey }).collections.find(
+			(entry) => entry.collectionKey === spec.key.collectionKey
+		)?.board ?? null;
+	const board = loadBoard();
+	const run = board?.cards
+		.find((card) => card.id === spec.key.cardId)
+		?.runs?.find((candidate) => candidate.attempt === spec.attempt);
+	if (!run || run.outcome !== 'done') return Promise.resolve(null);
+	const expectedRun = { attempt: run.attempt, startedAt: run.startedAt };
+	const stamp = (result: { prUrl: string } | { prError: string }) => {
+		const collection = storage.workspace.readCollection(spec.key);
+		const card = collection?.cards.find((entry) => entry.cardId === spec.key.cardId);
+		if (!collection || !card) return;
+		storage.workspace.stampRunPr({
+			...spec.key,
+			expectedRevision: collection.revision,
+			expectedCardRevision: card.revision,
+			run: expectedRun,
+			result,
+			updatedAt: new Date().toISOString(),
+		});
+	};
+
+	return maybeCreateCardPr(spec.key.cardId, {
+		loadBoard,
+		expectedRun,
+		stampPrUrl: (_id, prUrl) => stamp({ prUrl }),
+		stampPrError: (_id, error) => stamp({ prError: error.slice(0, PR_ERROR_MAX_LENGTH) }),
+		mainRepoCwd: spec.repository.workingDirectory,
+		...options,
+		...(spec.repository.location.kind === 'ssh'
+			? {
+					createPr: async () => ({
+						success: false,
+						error: 'Remote PR completion requires an explicit remote Git/PR adapter',
+					}),
+				}
+			: {}),
+	});
 }
 
 /** A toast sink that throws must never break the flow that already succeeded. */

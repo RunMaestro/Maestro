@@ -81,6 +81,10 @@ export interface SettingsModalData {
 
 /** New instance modal data */
 export interface NewInstanceModalData {
+	/** Receives the real session ID after native creation and persistence submission. */
+	onCreated?: (sessionId: string) => void;
+	onCreationStarted?: () => void;
+	onCreationError?: (message: string) => void;
 	duplicatingSessionId: string | null;
 	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set - duplicates inherit the source's group). */
 	presetGroupId?: string | null;

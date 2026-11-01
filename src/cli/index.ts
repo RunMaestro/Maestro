@@ -92,6 +92,7 @@ import {
 	boardRemoveCard,
 	boardSetStatus,
 	boardTick,
+	boardControl,
 	boardWatch,
 } from './commands/board';
 import {
@@ -1560,15 +1561,15 @@ const board = encoreCommand(program, 'board', 'board', encoreFlags).description(
 
 board
 	.command('list')
-	.description("List all boards in an agent's project")
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.description('List central Board collections, optionally filtered by source or agent project')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardList);
 
 board
 	.command('create <name>')
 	.description("Create a new, empty board in an agent's project")
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project will own the board')
+	.option('-a, --agent <id-or-name>', 'Agent whose project will own the board')
 	.option('--max-in-progress <n>', 'Cap how many cards may run at once')
 	.option('--auto-decompose', 'Let the dispatcher fan triage cards out with one LLM pass')
 	.option('--json', 'Output as JSON (for scripting)')
@@ -1577,14 +1578,14 @@ board
 board
 	.command('rename <boardId> <newName>')
 	.description('Rename a board (cards and their ids are untouched)')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardRename);
 
 board
 	.command('delete <boardId>')
 	.description('Delete a board and every card on it')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
 	.option('--force', 'Delete even when the board still has cards that are not done')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardDelete);
@@ -1592,14 +1593,14 @@ board
 board
 	.command('show <boardId>')
 	.description('Show a board and its cards')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardShow);
 
 board
 	.command('add-card <boardId>')
 	.description('Add a card to a board')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
 	.requiredOption('-t, --title <title>', 'Card title')
 	.option(
 		'--assignee <profileId>',
@@ -1623,7 +1624,7 @@ board
 board
 	.command('update-card <cardId>')
 	.description('Edit a card in place (only the flags you pass are changed)')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('-t, --title <title>', 'New card title')
 	.option('-b, --body <body>', 'New card body / instructions')
@@ -1644,7 +1645,7 @@ board
 board
 	.command('remove-card <cardId>')
 	.description("Delete a card (its children inherit the card's parents)")
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('--force', 'Compatibility flag; running cards must be stopped before removal')
 	.option('--json', 'Output as JSON (for scripting)')
@@ -1655,28 +1656,76 @@ board
 	.description(
 		`Set a card's status (${CARD_STATUS_LIST}). Moving to done opens the card's PR when it opted in`
 	)
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardSetStatus);
 
+for (const operation of ['hold', 'resume', 'approve'] as const) {
+	board
+		.command(`${operation} <cardId>`)
+		.description(
+			operation === 'approve'
+				? 'Request approval (requires native human authority)'
+				: `${operation} a fenced Board attempt`
+		)
+		.option('-a, --agent <id-or-name>', 'Agent project context')
+		.option('--board <id>', 'Collection legacy id')
+		.option('--run-id <id>', 'Exact host run identity')
+		.option('--owner-epoch <n>', 'Exact host owner epoch')
+		.option('--generation <n>', 'Exact host attempt generation')
+		.option('--json', 'Machine-readable response')
+		.action((cardId, options) => boardControl(cardId, { ...options, operation }));
+}
+
+// Central identity and capture flags are registered on the actual Commander commands.
+for (const command of board.commands) {
+	command
+		.option(
+			'--project-root <path>',
+			'Registered source project root (required for mutations without --agent)'
+		)
+		.option('--source <key>', 'Canonical source identity; list without filters queries all sources')
+		.option('--collection <key>', 'Canonical collection identity')
+		.option('--revision <n>', 'Expected collection revision')
+		.option('--card-revision <n>', 'Expected card revision');
+	if (['add-card', 'update-card'].includes(command.name())) {
+		command
+			.option('--kind <kind>', 'work, review, test, or documentation')
+			.option('--review-of <cardId>', 'Bind a new review to this exact source card id')
+			.option('--review-attempt <n>', 'Exact completed source attempt for --review-of')
+			.option('--scope-agent <id>', 'Execute only on this agent')
+			.option('--scope-group <id>', 'Execute only within this group')
+			.option('--profile-namespace <key>', 'Namespace for --assignee role')
+			.option('--repository <id>', 'Registered repository identity')
+			.option('--working-directory <path>', 'Explicit execution directory')
+			.option(
+				'--start-mode <mode>',
+				'direct or approval; required approvals remain host protected'
+			);
+	}
+}
+
 board
 	.command('tick')
-	.description('Run one dispatcher pass headlessly (promote, claim, spawn, apply)')
+	.description('Request one fenced Board dispatch pass from the running host')
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
 	.option('--board <boardId>', 'Tick only a specific board')
+	.option('--request-id <id>', 'Stable operation identity for retry')
+	.option('--source <key>', 'Canonical source identity')
+	.option('--collection <key>', 'Canonical collection identity')
+	.option('--revision <n>', 'Expected collection revision')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardTick);
 
 board
 	.command('watch')
-	.description(
-		'Run `board tick` on a loop until Ctrl-C. The desktop Cue engine ticks the same ' +
-			'boards; overlapping dispatchers on the same board are unsupported: the write ' +
-			'chain is process-local. Use one dispatcher per board. No daemonization, no lock files.'
-	)
+	.description('Request fenced host ticks until Ctrl-C; the host owns every run.')
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
 	.option('--board <boardId>', 'Watch only a specific board')
+	.option('--source <key>', 'Canonical source identity')
+	.option('--collection <key>', 'Canonical collection identity')
+	.option('--revision <n>', 'Expected collection revision')
 	.option('--interval <seconds>', 'Seconds between ticks (default 30, minimum 5)')
 	.option('--json', 'Output one JSON object per tick (for scripting)')
 	.action(boardWatch);

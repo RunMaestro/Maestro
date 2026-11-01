@@ -211,6 +211,9 @@ export interface CueEngineDeps {
 
 /** Injected side effects for the Board Phase 3 dispatch pass. */
 export interface CueEngineBoardDeps {
+	/** Central host intake replaces project-local dispatch when installed. */
+	tickGlobal?: () => Promise<void>;
+	stopGlobal?: () => void;
 	/**
 	 * Read the current Encore flags fresh each tick (the existing on-demand
 	 * idiom, no listener). The board pass runs only when BOTH `maestroCue` and
@@ -386,6 +389,16 @@ export class CueEngine {
 	 */
 	private boardDecomposeInFlight = new Map<string, AbortController>();
 	private boardTasks = new Set<Promise<unknown>>();
+	private globalBoardTickInFlight = false;
+
+	/** Native Board runs participate in the existing Cue drain accounting. */
+	trackBoardTask(task: Promise<unknown>): void {
+		this.boardTasks.add(task);
+		void task.then(
+			() => this.boardTasks.delete(task),
+			() => this.boardTasks.delete(task)
+		);
+	}
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
 	 * does a read → mutate → write cycle that is not atomic on the filesystem;
@@ -2177,6 +2190,22 @@ export class CueEngine {
 			const ef = board.getEncoreFeatures();
 			if (!ef.maestroCue || !ef.board) return;
 
+			if (board.tickGlobal) {
+				if (this.globalBoardTickInFlight) return;
+				this.globalBoardTickInFlight = true;
+				const task = board
+					.tickGlobal()
+					.catch((error) => {
+						this.meteredOnLog('warn', `[BOARD] Global tick failed: ${String(error)}`);
+						captureException(error, { operation: 'board:globalTick' });
+					})
+					.finally(() => {
+						this.globalBoardTickInFlight = false;
+						this.boardTasks.delete(task);
+					});
+				this.boardTasks.add(task);
+				return;
+			}
 			const roots = new Set(board.getProjectRoots());
 			const seenKeys = new Set<string>();
 			for (const projectRoot of roots) {
@@ -2254,6 +2283,7 @@ export class CueEngine {
 	}
 
 	private stopBoardWork(): void {
+		this.deps.board?.stopGlobal?.();
 		for (const controller of this.boardDecomposeInFlight.values()) controller.abort();
 		for (const dispatcher of this.boardDispatchers.values()) {
 			try {

@@ -212,6 +212,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Board - persistent task DAG stored in .maestro/board.yaml. The engine is
 	// needed for `board:cancelCard`, which routes through the live dispatcher.
 	registerBoardHandlers({
+		getMainWindow: deps.getMainWindow,
 		getCueEngine: deps.getCueEngine,
 		// Board F3: a manual move into Done opens the card's PR out of band, so the
 		// handler needs the same toast relay and log sink the dispatcher path uses.

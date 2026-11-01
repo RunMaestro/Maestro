@@ -138,7 +138,7 @@ describe('EditAgentModal', () => {
 		});
 	});
 
-	it('hides the Board worker control until Board is enabled', async () => {
+	it('does not expose Board worker enrollment when Board is enabled', async () => {
 		const flags = useSettingsStore.getState().encoreFeatures;
 		useSettingsStore.setState({ encoreFeatures: { ...flags, board: false } });
 		render(
@@ -153,7 +153,7 @@ describe('EditAgentModal', () => {
 		);
 		expect(screen.queryByText('Board worker')).not.toBeInTheDocument();
 		act(() => useSettingsStore.setState({ encoreFeatures: { ...flags, board: true } }));
-		expect(await screen.findByRole('checkbox', { name: /Board worker/ })).toBeChecked();
+		expect(screen.queryByRole('checkbox', { name: /Board worker/i })).not.toBeInTheDocument();
 		act(() => useSettingsStore.setState({ encoreFeatures: flags }));
 	});
 
@@ -931,8 +931,7 @@ describe('EditAgentModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				undefined,
-				false // boardWorker (defaults off, checkbox untouched)
+				undefined
 			);
 		});
 
@@ -1037,8 +1036,7 @@ describe('EditAgentModal', () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
-			false // boardWorker (defaults off, checkbox untouched)
+			undefined
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -1280,8 +1278,7 @@ describe('EditAgentModal', () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
-			false // boardWorker (defaults off, checkbox untouched)
+			undefined
 		);
 	});
 
@@ -1363,8 +1360,7 @@ describe('EditAgentModal', () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
-			false // boardWorker (defaults off, checkbox untouched)
+			undefined
 		);
 	});
 
@@ -1452,8 +1448,7 @@ describe('EditAgentModal', () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
-			false // boardWorker (defaults off, checkbox untouched)
+			undefined
 		);
 	});
 

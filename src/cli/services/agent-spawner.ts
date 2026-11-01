@@ -1,6 +1,10 @@
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
+import {
+	startAdmittedAgentTurn,
+	type AgentTurnAdmissionProof,
+} from '../../main/utils/headless-agent-activity';
 import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -34,6 +38,10 @@ import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/lau
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
 	startTurn,
+	TurnNotStartedError,
+	type TurnProcessSpec,
+	type TurnHandlers,
+	type TurnHandle,
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
@@ -173,6 +181,8 @@ type SpawnOverrides = Pick<
 	| 'onProgress'
 	| 'onProcessStarted'
 	| 'requireProcessExit'
+	| 'originWorkerId'
+	| 'workerAdmission'
 	| 'maestroPMaxWaitSeconds'
 	| 'acceptWorkspaceTrust'
 > & { deadlineAt?: number };
@@ -765,6 +775,46 @@ function cliTurnOptions(signal: AbortSignal | undefined): StartTurnOptions {
 	};
 }
 
+/** The host proof is consumed only here, after all async launch/SSH preparation.
+ * The release belongs to this native child, not its caller's promise or stop request.
+ * An exception after spawn without a returned handle conservatively retains occupancy. */
+function startCliTurn(
+	spec: TurnProcessSpec,
+	handlers: TurnHandlers,
+	options: StartTurnOptions,
+	overrides: SpawnOverrides,
+	remote: boolean
+): TurnHandle {
+	const release =
+		overrides.originWorkerId !== undefined || overrides.workerAdmission !== undefined
+			? startAdmittedAgentTurn(overrides.workerAdmission, overrides.originWorkerId)
+			: undefined;
+	try {
+		const turn = startTurn(spec, { ...handlers, onStarted: undefined }, options);
+		if (release) {
+			const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+				// A stopped local SSH client does not prove its remote child has ended.
+				if (!remote || (code === 0 && !signal && !overrides.signal?.aborted)) release();
+			};
+			turn.child.once('exit', onExit);
+			turn.child.once('close', onExit);
+			turn.child.once('error', () => {
+				if (!turn.child.pid) release();
+			});
+		}
+		try {
+			handlers.onStarted?.(turn.pid);
+		} catch (error) {
+			turn.terminate();
+			throw error;
+		}
+		return turn;
+	} catch (error) {
+		if (error instanceof TurnNotStartedError) release?.();
+		throw error;
+	}
+}
+
 /**
  * Spawn Claude Code with a prompt and return the result.
  *
@@ -1146,7 +1196,7 @@ async function spawnClaudeAgent(
 	if (overrides.signal?.aborted) return interruptedResult();
 	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
 		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
-	const turn = startTurn(
+	const turn = startCliTurn(
 		{
 			command: spawnCommand,
 			args: spawnArgs,
@@ -1164,7 +1214,9 @@ async function spawnClaudeAgent(
 			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
-		cliTurnOptions(undefined)
+		cliTurnOptions(undefined),
+		overrides,
+		!!sshRemoteConfig?.enabled
 	);
 	let forcedStop!: () => void;
 	const forced = new Promise<undefined>((resolve) => {
@@ -1191,7 +1243,7 @@ async function spawnClaudeAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
-	if (overrides.requireProcessExit) await supervision.processExited;
+	if (overrides.requireProcessExit || overrides.workerAdmission) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1493,7 +1545,7 @@ async function spawnJsonLineAgent(
 	if (overrides.signal?.aborted) return interruptedResult();
 	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
 		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
-	const turn = startTurn(
+	const turn = startCliTurn(
 		{
 			command: spawnCommand,
 			args: spawnArgs,
@@ -1580,7 +1632,9 @@ async function spawnJsonLineAgent(
 			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
-		{ ...cliTurnOptions(undefined), parser }
+		{ ...cliTurnOptions(undefined), parser },
+		overrides,
+		!!sshRemoteConfig?.enabled
 	);
 	let forcedStop!: () => void;
 	const forced = new Promise<undefined>((resolve) => {
@@ -1608,7 +1662,7 @@ async function spawnJsonLineAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
-	if (overrides.requireProcessExit) await supervision.processExited;
+	if (overrides.requireProcessExit || overrides.workerAdmission) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1662,6 +1716,10 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/** Host-owned Maestro worker identity; never the provider id or CWD. */
+	originWorkerId?: string;
+	/** Required for managed headless turns; final spawn validates the live capability. */
+	workerAdmission?: AgentTurnAdmissionProof;
 	/**
 	 * Host-owned original attachments must outlive the actual child. On an
 	 * unconfirmed stop, retain this call and its caller's resources until exit,
@@ -1864,6 +1922,8 @@ async function spawnAgentOnce(
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
 		requireProcessExit: options?.requireProcessExit,
+		originWorkerId: options?.originWorkerId,
+		workerAdmission: options?.workerAdmission,
 		signal: options?.signal,
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,

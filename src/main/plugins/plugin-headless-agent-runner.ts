@@ -10,7 +10,11 @@ import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
-import { trackHeadlessAgentActivity } from '../utils/headless-agent-activity';
+import {
+	issueAgentTurnAdmission,
+	revokeAgentTurnAdmission,
+	type AgentTurnAdmissionProof,
+} from '../utils/headless-agent-activity';
 import { MediaError } from './plugin-media-tools';
 import type { OriginalAttachmentReceipt } from '../../shared/plugins/media-tools';
 import { checkCustomPath } from '../agents/path-prober';
@@ -120,8 +124,7 @@ export function createPluginHeadlessAgentRunner(
 		}
 		let runToken: string | undefined;
 		let pluginRunProofFile: string | undefined;
-		let releaseActivity: (() => void) | undefined;
-		let settled = false;
+		let workerAdmission: AgentTurnAdmissionProof | undefined;
 		let conversationId = providerSessionId;
 		let attachmentReceipt: OriginalAttachmentReceipt | undefined;
 		try {
@@ -229,8 +232,11 @@ export function createPluginHeadlessAgentRunner(
 						: 'Agent run stopped: absolute runtime ceiling exceeded',
 				};
 			}
+			workerAdmission = issueAgentTurnAdmission(agent.id, signal);
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
-				...(attachment ? { requireProcessExit: true } : {}),
+				requireProcessExit: true,
+				originWorkerId: agent.id,
+				workerAdmission,
 				customModel: agent.customModel,
 				customEffort: agent.customEffort,
 				customArgs: agent.customArgs,
@@ -250,11 +256,6 @@ export function createPluginHeadlessAgentRunner(
 				timeoutMs: Math.max(1, deadlineAt - Date.now()),
 				idle: deps.idleProfile ?? HEADLESS_IDLE_PROFILE,
 				signal,
-				onProcessStarted: (pid) => {
-					if (pid && !signal?.aborted && !settled && !releaseActivity) {
-						releaseActivity = trackHeadlessAgentActivity(agent.id);
-					}
-				},
 				onProgress,
 			});
 			attachment?.check();
@@ -284,8 +285,7 @@ export function createPluginHeadlessAgentRunner(
 						}),
 			};
 		} finally {
-			settled = true;
-			releaseActivity?.();
+			if (workerAdmission) revokeAgentTurnAdmission(workerAdmission);
 			// Provenance belongs to the conversation even when delivery is cancelled.
 			// The broker deliberately refuses late results/bindings on plugin stop;
 			// recording here preserves origin without granting resume authority.

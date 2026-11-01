@@ -19,7 +19,7 @@ import type { AdditionalDirectory, ToolType, Session } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { useModalStore } from '../../stores/modalStore';
+import { useModalStore, selectModalData } from '../../stores/modalStore';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
@@ -39,7 +39,7 @@ import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 
 export interface UseSessionCrudDeps {
 	/** Flush session persistence immediately (from useDebouncedPersistence) */
-	flushSessionPersistence: () => void;
+	flushSessionPersistence: (latestSessions?: Session[]) => void | Promise<void>;
 	/** Track removed worktree paths to prevent re-discovery */
 	setRemovedWorktreePaths: React.Dispatch<React.SetStateAction<Set<string>>>;
 	/** Show confirmation dialog before destructive operations (from useSessionLifecycle) */
@@ -185,11 +185,19 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport
 		) => {
+			// Capture before the native modal closes while its asynchronous creation runs.
+			const creationRequest = selectModalData('newInstance')(useModalStore.getState());
+			creationRequest?.onCreationStarted?.();
+			let createdSessionId: string | undefined;
+			let creationReported = false;
 			try {
 				// Get agent definition to get correct command
 				const agent = await (window as any).maestro.agents.get(agentId);
 				if (!agent) {
 					logger.error(`Agent not found: ${agentId}`);
+					const message = `Agent provider not found: ${agentId}`;
+					notifyToast({ type: 'error', title: 'Agent Creation Failed', message });
+					creationRequest?.onCreationError?.(message);
 					return;
 				}
 				const currentSessions = useSessionStore.getState().sessions;
@@ -202,6 +210,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				);
 				if (!validation.valid) {
 					logger.error(`Session validation failed: ${validation.error}`);
+					creationRequest?.onCreationError?.(validation.error || 'Invalid agent configuration');
 					notifyToast({
 						type: 'error',
 						title: 'Agent Creation Failed',
@@ -280,6 +289,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				};
 
 				setSessions((prev) => [...prev, newSession]);
+				createdSessionId = newId;
 				setActiveSessionId(newId);
 				// The first spawn reads its routing (Codex transport, Claude token mode)
 				// from the persisted record, so do not leave the new agent sitting in a
@@ -291,7 +301,12 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				void registerNewSession?.(newId);
 				// Publish membership immediately: output from another agent can keep
 				// resetting the debounce, leaving this agent without a host owner.
-				flushSessionPersistence();
+				const persistence = flushSessionPersistence(useSessionStore.getState().sessions);
+				if (creationRequest?.onCreated) {
+					await persistence;
+					creationReported = true;
+					creationRequest.onCreated(newId);
+				}
 				(window as any).maestro.stats.recordSessionCreated({
 					sessionId: newId,
 					agentType: agentId,
@@ -305,6 +320,19 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				setTimeout(() => inputRef.current?.focus(), 50);
 			} catch (error) {
 				logger.error('Failed to create session:', undefined, error);
+				const message = error instanceof Error ? error.message : String(error);
+				// An inserted agent survives later setup/persistence errors. Hand off its
+				// identity so the Board retries registration rather than creating a duplicate.
+				if (createdSessionId) {
+					if (!creationReported) creationRequest?.onCreated?.(createdSessionId);
+				} else {
+					creationRequest?.onCreationError?.(message);
+				}
+				notifyToast({
+					type: 'error',
+					title: createdSessionId ? 'Agent Setup Failed' : 'Agent Creation Failed',
+					message,
+				});
 			}
 		},
 		[

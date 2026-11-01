@@ -3,17 +3,24 @@
  *
  * Provides IPC handlers for the persistent Board (the task DAG stored in
  * `.maestro/board.yaml`): list boards, get a board, and card-level mutations
- * (create / update / delete / set status). No dispatcher yet (Phase 3).
+ * (create / update / delete / set status), plus the shared fenced runtime entry.
  *
  * This module is a thin transport layer: filesystem I/O, validation, and cycle
  * rejection live in the domain module (`src/main/board/board-storage.ts`). Each
  * handler is a 1-line delegation, mirroring the Cue and Profiles IPC handlers.
  */
 
-import { ipcMain } from 'electron';
+import { captureBoardCardFromHost } from '../../board/board-review';
+import { refreshBoardSources, executeBoardSourceCommand } from '../../board/board-source-host';
+import { ipcMain, type BrowserWindow } from 'electron';
+import { getLiveSessions } from '../../stores/getters';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
+	getBoardCaptureCatalog,
+	getBoardStorage,
 	listBoards,
+	queryBoardWorkspaceAsync,
+	BoardStorageError,
 	getBoard,
 	createBoard,
 	renameBoard,
@@ -22,13 +29,31 @@ import {
 	updateCard,
 	updateCardStatus,
 	deleteCard,
-	saveBoard,
 	enqueueBoardWrite,
+	listBoardWorkers,
+	listBoardWorkerAccessOptions,
+	registerBoardWorker,
+	setBoardWorkerPaused,
+	setBoardWorkerEnabled,
+	setBoardWorkerAccess,
 } from '../../board/board-storage';
-import { applyCardCancel } from '../../board/board-dispatcher';
+import {
+	executeBoardRuntimeCommand,
+	cancelBoardRuntimeCard,
+	controlBoardRuntimeCard,
+} from '../../board/board-runtime-host';
+import { parseBoardCommand, type BoardCommandResult } from '../../../shared/board/commands';
 import { startCardPr } from '../../board/board-pr';
 import type { BoardCardToastPayload } from '../../board/board-toast';
-import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
+import type {
+	BoardCaptureCommand,
+	BoardCaptureResponse,
+	Board,
+	BoardCard,
+	CardStatus,
+	BoardWorkspaceQuery,
+	BoardWorkspaceQueryResponse,
+} from '../../../shared/board/types';
 import type { CueEngine } from '../../cue/cue-engine';
 
 const LOG_CONTEXT = '[Board]';
@@ -40,6 +65,7 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 
 /** Dependencies required for Board handler registration. */
 export interface BoardHandlerDependencies {
+	getMainWindow?: () => BrowserWindow | null;
 	/** The live Cue engine (Board rides its tick), or `null` before it is built. */
 	getCueEngine: () => CueEngine | null;
 	/**
@@ -55,10 +81,261 @@ export interface BoardHandlerDependencies {
 /**
  * Register all Board IPC handlers. Storage handlers need no service dependency -
  * the storage layer reads/writes `.maestro/board.yaml` under the passed project
- * root on demand. `board:cancelCard` is the exception: it goes through the live
- * dispatcher so the in-flight process is actually killed.
+ * root on demand. Stop/Resume resolve the persisted attempt and call the same
+ * owning runtime as CLI; an unavailable owner never fabricates termination.
  */
 export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
+	ipcMain.handle(
+		'board:runtimeCommand',
+		async (event, input: Record<string, unknown>): Promise<BoardCommandResult> => {
+			try {
+				const command = input && parseBoardCommand(input);
+				if (!command || (command.action !== 'tick' && command.action !== 'control'))
+					throw new BoardStorageError('invalid-input', 'Invalid Board runtime command');
+				const window = deps.getMainWindow?.();
+				const native =
+					!!window &&
+					!window.isDestroyed() &&
+					event.sender === window.webContents &&
+					event.senderFrame === window.webContents.mainFrame;
+				return await executeBoardRuntimeCommand(
+					command,
+					native ? 'native-desktop-main-frame' : undefined
+				);
+			} catch (error) {
+				if (!(error instanceof BoardStorageError)) throw error;
+				return { ok: false, error: { code: error.code, message: error.message } };
+			}
+		}
+	);
+
+	ipcMain.handle(
+		'board:setStartPolicy',
+		async (
+			event,
+			options: {
+				projectRoot: string;
+				boardId: string;
+				expectedRevision: number;
+				mode: 'approval' | 'direct';
+			}
+		): Promise<BoardCaptureResponse> => {
+			try {
+				const window = deps.getMainWindow?.();
+				const human =
+					!!window &&
+					!window.isDestroyed() &&
+					event?.sender === window.webContents &&
+					event.senderFrame === window.webContents.mainFrame;
+				if (!human)
+					throw new BoardStorageError(
+						'protected-field',
+						'Board start policy requires the desktop main frame'
+					);
+				if (
+					!options ||
+					Object.keys(options).some(
+						(key) => !['projectRoot', 'boardId', 'expectedRevision', 'mode'].includes(key)
+					)
+				)
+					throw new BoardStorageError('invalid-input', 'Invalid policy command');
+				const value = await enqueueBoardWrite(options.projectRoot, () =>
+					getBoardStorage().setStartPolicy(
+						options.projectRoot,
+						options.boardId,
+						options.expectedRevision,
+						options.mode,
+						true
+					)
+				);
+				return { ok: true, value, readiness: getBoardStorage().captureReadiness(value) };
+			} catch (error) {
+				if (!(error instanceof BoardStorageError)) throw error;
+				return { ok: false, error: { code: error.code, message: error.message } };
+			}
+		}
+	);
+
+	ipcMain.handle(
+		'board:sourceCommand',
+		async (event, command: import('../../../shared/board/types').BoardSourceCommand) => {
+			const window = deps.getMainWindow?.();
+			if (
+				!window ||
+				window.isDestroyed() ||
+				event?.sender !== window.webContents ||
+				event.senderFrame !== window.webContents.mainFrame
+			)
+				return {
+					ok: false,
+					error: {
+						code: 'protected-field',
+						message: 'Source management requires the desktop main frame',
+					},
+				};
+			return executeBoardSourceCommand(command);
+		}
+	);
+
+	ipcMain.handle(
+		'board:upsertRole',
+		async (
+			event,
+			options: {
+				projectRoot: string;
+				profile: import('../../../shared/profiles/types').AgentProfile;
+			}
+		) => {
+			const window = deps.getMainWindow?.();
+			if (
+				!window ||
+				window.isDestroyed() ||
+				event?.sender !== window.webContents ||
+				event.senderFrame !== window.webContents.mainFrame
+			)
+				throw new BoardStorageError(
+					'protected-field',
+					'Board role editing requires the desktop main frame'
+				);
+			await refreshBoardSources();
+			return enqueueBoardWrite(options.projectRoot, () =>
+				getBoardStorage().upsertRole(options.projectRoot, options.profile)
+			);
+		}
+	);
+
+	ipcMain.handle(
+		'board:captureCatalog',
+		withIpcErrorLogging(handlerOpts('captureCatalog'), async () => {
+			await refreshBoardSources();
+			return getBoardCaptureCatalog();
+		})
+	);
+	// This native-only channel derives authority from the actual top-level desktop sender.
+	// Remote/web/CLI callers use ordinary mutations and cannot claim human policy authority.
+	ipcMain.handle(
+		'board:captureCard',
+		async (event, command: BoardCaptureCommand): Promise<BoardCaptureResponse> => {
+			try {
+				const window = deps.getMainWindow?.();
+				const human =
+					!!window &&
+					!window.isDestroyed() &&
+					event?.sender === window.webContents &&
+					event.senderFrame === window.webContents.mainFrame;
+				if (!human)
+					throw new BoardStorageError(
+						'protected-field',
+						'Native human capture requires the desktop main frame'
+					);
+				if (
+					!command ||
+					Object.keys(command).some(
+						(key) => !['projectRoot', 'boardId', 'expectedRevision', 'card'].includes(key)
+					)
+				)
+					throw new BoardStorageError('invalid-input', 'Invalid capture command');
+				return await enqueueBoardWrite(command.projectRoot, () =>
+					captureBoardCardFromHost(command, true)
+				);
+			} catch (error) {
+				if (!(error instanceof BoardStorageError)) throw error;
+				return {
+					ok: false,
+					error: {
+						code: error.code,
+						message: error.message,
+						captureErrors: error.details.captureErrors,
+					},
+				};
+			}
+		}
+	);
+
+	ipcMain.handle(
+		'board:queryWorkspace',
+		withIpcErrorLogging(
+			handlerOpts('queryWorkspace'),
+			async (query?: BoardWorkspaceQuery): Promise<BoardWorkspaceQueryResponse> => {
+				try {
+					await refreshBoardSources();
+					return { ok: true, value: await queryBoardWorkspaceAsync(query) };
+				} catch (error) {
+					if (!(error instanceof BoardStorageError)) throw error;
+					return { ok: false, error: { code: error.code, message: error.message } };
+				}
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'board:listWorkers',
+		withIpcErrorLogging(handlerOpts('listWorkers'), async () => listBoardWorkers())
+	);
+	ipcMain.handle(
+		'board:listWorkerAccessOptions',
+		withIpcErrorLogging(handlerOpts('listWorkerAccessOptions'), async () =>
+			listBoardWorkerAccessOptions()
+		)
+	);
+	ipcMain.handle(
+		'board:registerWorker',
+		withIpcErrorLogging(handlerOpts('registerWorker'), async (options: { agentId: string }) => {
+			if (
+				!options ||
+				typeof options.agentId !== 'string' ||
+				!getLiveSessions().some((session) => session.id === options.agentId)
+			) {
+				throw new Error('Live agent not found');
+			}
+			registerBoardWorker(options.agentId);
+			return listBoardWorkers();
+		})
+	);
+	ipcMain.handle(
+		'board:setWorkerAccess',
+		withIpcErrorLogging(
+			handlerOpts('setWorkerAccess'),
+			async (options: {
+				agentId: string;
+				roleRefs: { namespace: string; profileId: string }[];
+				allowedRepositoryIds: string[];
+			}) => {
+				if (!options || typeof options.agentId !== 'string')
+					throw new Error('Invalid Board worker');
+				if (!getLiveSessions().some((session) => session.id === options.agentId))
+					throw new Error('Live agent not found');
+				setBoardWorkerAccess(options.agentId, options.roleRefs, options.allowedRepositoryIds);
+				return listBoardWorkers();
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'board:enableWorker',
+		withIpcErrorLogging(
+			handlerOpts('enableWorker'),
+			async (options: { agentId: string; enabled: boolean }) => {
+				if (!options || typeof options.agentId !== 'string')
+					throw new Error('Invalid Board worker');
+				setBoardWorkerEnabled(options.agentId, options.enabled);
+				return listBoardWorkers();
+			}
+		)
+	);
+	ipcMain.handle(
+		'board:pauseWorker',
+		withIpcErrorLogging(
+			handlerOpts('pauseWorker'),
+			async (options: { agentId: string; paused: boolean }) => {
+				if (!options || typeof options.agentId !== 'string')
+					throw new Error('Invalid Board worker');
+				setBoardWorkerPaused(options.agentId, options.paused);
+				return listBoardWorkers();
+			}
+		)
+	);
+
 	// List all boards for a project.
 	ipcMain.handle(
 		'board:list',
@@ -197,29 +474,17 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('cancelCard'),
 			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> => {
-				const { projectRoot, boardId, cardId } = options;
-				// Preferred path: the dispatcher that owns this board kills the process
-				// and persists the cancel itself.
-				const canceled =
-					deps.getCueEngine()?.cancelBoardCard(projectRoot, boardId, cardId) ?? false;
-				if (!canceled) {
-					// No dispatcher owns the board in this process (engine off, or the app
-					// restarted while the card was running), so there is nothing to kill -
-					// but the card is still stuck `running` in the file. Finalize it so the
-					// user can act on it now instead of waiting out the stale-reclaim
-					// window. Serialized like every other async read-modify-write.
-					await enqueueBoardWrite(projectRoot, () => {
-						const board = listBoards(projectRoot).find((b) => b.id === boardId);
-						if (!board) throw new Error(`Board "${boardId}" not found`);
-						if (applyCardCancel(board, cardId, new Date().toISOString())) {
-							saveBoard(projectRoot, board);
-						}
-					});
-				}
-				const updated = getBoard(projectRoot, boardId);
-				if (!updated) throw new Error(`Board "${boardId}" not found`);
-				return updated;
+				return cancelBoardRuntimeCard(options.projectRoot, options.boardId, options.cardId);
 			}
+		)
+	);
+
+	ipcMain.handle(
+		'board:resumeCard',
+		withIpcErrorLogging(
+			handlerOpts('resumeCard'),
+			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> =>
+				controlBoardRuntimeCard(options.projectRoot, options.boardId, options.cardId, 'resume')
 		)
 	);
 

@@ -32,6 +32,8 @@ export interface SdkProcessController {
  */
 export interface ProcessConfig {
 	sessionId: string;
+	/** Real Maestro worker selected by the caller, absent for standalone moderators. */
+	originWorkerId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

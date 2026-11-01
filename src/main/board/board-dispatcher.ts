@@ -52,6 +52,10 @@ export const DEFAULT_STALE_RUNNING_MS = 30 * 60 * 1000;
 
 /** The result of running a card's assignee to completion. */
 export interface CardSpawnResult {
+	artifact?: import('../../shared/board/types').BoardRunArtifact;
+	/** Native runner proof. Omitted means launch/termination is uncertain. */
+	executionStarted?: boolean;
+	terminationConfirmed?: boolean;
 	/** Combined agent output, scanned for `<!-- maestro:card-* -->` markers. */
 	output: string;
 	/** Process exit code; `null` when unknown (killed / spawn failure). */
@@ -70,6 +74,13 @@ export interface CardSpawnResult {
 
 /** A claimed card plus the resolved profile overrides used to spawn it. */
 export interface CardSpawnRequest {
+	/** Trusted host lifecycle hooks, never populated by a transport payload. */
+	lifecycle?: {
+		runId: string;
+		canPrepare: () => boolean;
+		beforeLaunch: () => boolean;
+		onStarted: (pid: number | undefined) => void;
+	};
 	card: BoardCard;
 	overrides: ProfileSpawnOverrides;
 	/**
@@ -236,12 +247,12 @@ export function promoteEligibleCards(board: Board, nowIso: string): BoardCard[] 
  * added today should jump a `normal` backlog - while the age tie-break keeps
  * dispatch deterministic and stable across ticks within one priority.
  */
-function readyCardsInDispatchOrder(board: Board): BoardCard[] {
+export function readyCardsInDispatchOrder(board: Board, includeTodo = false): BoardCard[] {
 	return board.cards
 		.map((card, index) => ({ card, index }))
 		.filter(
 			(entry) =>
-				entry.card.status === 'ready' &&
+				(entry.card.status === 'ready' || (includeTodo && entry.card.status === 'todo')) &&
 				!entry.card.heldByUser &&
 				getBlockers(entry.card, board).length === 0
 		)

@@ -1,5 +1,6 @@
 // src/main/process-manager/ProcessManager.ts
 
+import { canStartAgentTurn, trackHeadlessAgentActivity } from '../utils/headless-agent-activity';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import type {
@@ -118,6 +119,51 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const workerId = config.originWorkerId ?? resolveOwningMaestroSessionId(config.sessionId);
+		if (config.toolType !== 'terminal' && !canStartAgentTurn(workerId)) {
+			return {
+				pid: -1,
+				success: false,
+				error: 'Board worker is reserved; wait for its current attempt to settle',
+			};
+		}
+		if (config.toolType === 'terminal') return this.spawnManaged(config);
+		const release = trackHeadlessAgentActivity(workerId);
+		// Attach to the actual child before returning. Caller stop/kill may remove
+		// the process-table row before the OS confirms termination.
+		const result = this.spawnManaged(config);
+		const process = this.processes.get(config.sessionId);
+		if (!result.success) {
+			release();
+		} else if (process?.childProcess) {
+			const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+				// Local SSH-client termination cannot free an uncertain remote worker.
+				if (
+					!(config.sshStdinScript || config.sshRemoteCommand || config.sshRemoteId) ||
+					(code === 0 && !signal)
+				)
+					release();
+			};
+			process.childProcess.once('exit', onExit);
+			process.childProcess.once('close', onExit);
+			process.childProcess.once('error', () => {
+				if (!process.childProcess?.pid) release();
+			});
+		} else if (process?.ptyProcess) {
+			process.ptyProcess.onExit(release);
+		} else {
+			// Server-backed turns report their native completion on this seam.
+			const onExit = (id: string) => {
+				if (id !== config.sessionId) return;
+				this.off('exit', onExit);
+				release();
+			};
+			this.on('exit', onExit);
+		}
+		return result;
+	}
+
+	private spawnManaged(config: ProcessConfig): SpawnResult {
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&

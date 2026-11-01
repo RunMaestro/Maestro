@@ -4907,6 +4907,52 @@ interface MaestroAPI {
 
 	// Board API (persistent task DAG stored in .maestro/board.yaml)
 	board: {
+		captureCatalog: () => Promise<import('../shared/board/types').BoardCaptureCatalog>;
+		runtimeCommand: (
+			command: import('../shared/board/commands').BoardRuntimeCommand
+		) => Promise<import('../shared/board/commands').BoardCommandResult>;
+		sourceCommand: (
+			command: import('../shared/board/types').BoardSourceCommand
+		) => Promise<import('../shared/board/types').BoardSourceResponse>;
+
+		upsertRole: (
+			projectRoot: string,
+			profile: import('../shared/profiles/types').AgentProfile
+		) => Promise<import('../shared/board/types').BoardRoleRef>;
+		setStartPolicy: (
+			projectRoot: string,
+			boardId: string,
+			expectedRevision: number,
+			mode: 'approval' | 'direct'
+		) => Promise<import('../shared/board/types').BoardCaptureResponse>;
+		captureCard: (
+			command: import('../shared/board/types').BoardCaptureCommand
+		) => Promise<import('../shared/board/types').BoardCaptureResponse>;
+		queryWorkspace: (
+			query?: import('../shared/board/types').BoardWorkspaceQuery
+		) => Promise<import('../shared/board/types').BoardWorkspaceQueryResponse>;
+		listWorkerAccessOptions: () => Promise<
+			ReturnType<
+				typeof import('../main/board/board-workspace-storage').listBoardWorkerAccessOptions
+			>
+		>;
+		listWorkers: () => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		registerWorker: (
+			agentId: string
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		pauseWorker: (
+			agentId: string,
+			paused: boolean
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		enableWorker: (
+			agentId: string,
+			enabled: boolean
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		setWorkerAccess: (
+			agentId: string,
+			roleRefs: { namespace: string; profileId: string }[],
+			allowedRepositoryIds: string[]
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
 		list: (projectRoot: string) => Promise<import('../shared/board/types').Board[]>;
 		get: (
 			projectRoot: string,
@@ -4948,6 +4994,11 @@ interface MaestroAPI {
 		) => Promise<import('../shared/board/types').Board>;
 		// Cancel a running card: kills the agent process and returns the card to
 		// `todo` with a `canceled` run (excluded from the failure circuit breaker).
+		resumeCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string
+		) => Promise<import('../shared/board/types').Board>;
 		cancelCard: (
 			projectRoot: string,
 			boardId: string,

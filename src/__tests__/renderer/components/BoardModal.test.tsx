@@ -9,13 +9,24 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 
 import { act, fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useModalStore, selectModalData } from '../../../renderer/stores/modalStore';
 import { BoardModal } from '../../../renderer/components/BoardModal';
+import { observedWorkerRuns } from '../../../renderer/utils/boardWorkerStatus';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { openUrl } from '../../../renderer/utils/openUrl';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
-import type { Board, BoardCard, CardRun } from '../../../shared/board/types';
+import type {
+	Board,
+	BoardCard,
+	CardRun,
+	BoardCaptureCommand,
+	BoardCaptureCatalog,
+	BoardWorkspaceQueryResponse,
+} from '../../../shared/board/types';
+import type { BoardReadinessReason } from '../../../shared/board/domain';
+import { canonicalJson } from '../../../shared/canonicalJson';
 
 // The layer stack is exercised elsewhere; here it is a no-op so the modal can
 // render without a LayerStackProvider.
@@ -61,37 +72,45 @@ function makeCard(overrides: Partial<BoardCard> & { id: string; title: string })
 // Board IPC stub, reassigned per test. The global test harness does not include
 // the board/profiles namespaces, so install them here.
 let boardApi: {
-	list: ReturnType<typeof vi.fn>;
-	create: ReturnType<typeof vi.fn>;
-	rename: ReturnType<typeof vi.fn>;
-	delete: ReturnType<typeof vi.fn>;
-	addCard: ReturnType<typeof vi.fn>;
-	updateCard: ReturnType<typeof vi.fn>;
-	setCardStatus: ReturnType<typeof vi.fn>;
-	deleteCard: ReturnType<typeof vi.fn>;
-	cancelCard: ReturnType<typeof vi.fn>;
-	onBoardChanged: ReturnType<typeof vi.fn>;
+	runtimeCommand: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	sourceCommand: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	upsertRole: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	setStartPolicy: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	queryWorkspace: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	captureCatalog: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	captureCard: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	list: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	create: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	rename: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	delete: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	addCard: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	updateCard: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	setCardStatus: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	deleteCard: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	cancelCard: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	resumeCard: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	onBoardChanged: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 };
 
 /** Profiles IPC stub, reassigned per test alongside `boardApi`. */
 let profilesApi: {
-	list: ReturnType<typeof vi.fn>;
-	upsert: ReturnType<typeof vi.fn>;
-	delete: ReturnType<typeof vi.fn>;
-	onProfilesChanged: ReturnType<typeof vi.fn>;
+	list: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	upsert: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	delete: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+	onProfilesChanged: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 };
 
 /** Captured `board:changed` subscribers, so a test can fire the push the main
  * process would send after a board.yaml write. */
 let boardChangedListeners: Array<(payload: { projectRoot: string }) => void>;
 /** Unsubscribe spy returned by the mocked subscription. */
-let unsubscribeBoardChanged: ReturnType<typeof vi.fn>;
+let unsubscribeBoardChanged: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 
 /** Captured `profiles:changed` subscribers, so a test can fire the push the main
  * process would send after a profiles.yaml write from a desktop window. */
 let profilesChangedListeners: Array<(payload: { projectRoot: string }) => void>;
 /** Unsubscribe spy returned by the mocked profiles subscription. */
-let unsubscribeProfilesChanged: ReturnType<typeof vi.fn>;
+let unsubscribeProfilesChanged: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 
 function emitBoardChanged(projectRoot = PROJECT_ROOT): void {
 	for (const listener of boardChangedListeners) listener({ projectRoot });
@@ -101,12 +120,79 @@ function emitProfilesChanged(projectRoot = PROJECT_ROOT): void {
 	for (const listener of profilesChangedListeners) listener({ projectRoot });
 }
 
+function workspaceResponse(boards: Board[]): BoardWorkspaceQueryResponse {
+	return {
+		ok: true,
+		value: {
+			revision: 1,
+			sources: [{ sourceKey: 'source-one', projectRef: { sourceKey: 'source-one' } }],
+			collections: boards.map((board) => ({
+				sourceKey: 'source-one',
+				collectionKey: board.id,
+				revision: board.storage?.expectedRevision ?? 1,
+				projectRef: { sourceKey: 'source-one' },
+				board: {
+					...board,
+					storage: board.storage ?? {
+						sourceKey: 'source-one',
+						collectionKey: board.id,
+						expectedRevision: 1,
+						cardRevisions: Object.fromEntries(
+							board.cards.map((card) => [card.id, card.storageRevision ?? 0])
+						),
+					},
+				},
+			})),
+		},
+	};
+}
+
 function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 	boardChangedListeners = [];
 	unsubscribeBoardChanged = vi.fn();
 	profilesChangedListeners = [];
 	unsubscribeProfilesChanged = vi.fn();
 	boardApi = {
+		runtimeCommand: vi.fn(),
+		sourceCommand: vi.fn().mockResolvedValue({ ok: true }),
+		upsertRole: vi.fn(async (_root: string, profile: { id: string }) => ({
+			namespace: 'fixture-namespace',
+			profileId: profile.id,
+		})),
+		setStartPolicy: vi.fn().mockResolvedValue({ ok: true }),
+		queryWorkspace: vi.fn(async (query) =>
+			workspaceResponse(query ? initialBoards : await boardApi.list())
+		),
+		captureCatalog: vi.fn(
+			async (): Promise<BoardCaptureCatalog> => ({
+				agents: useSessionStore.getState().sessions.map(({ id, groupId }) => ({ id, groupId })),
+				groups: useSessionStore.getState().groups.map(({ id }) => ({ id })),
+				profiles: (await profilesApi.list()).map((profile: { id: string }) => ({
+					namespace: 'fixture-namespace',
+					profile,
+				})),
+				repositories: [{ id: 'fixture-repo', workingDirectory: PROJECT_ROOT, validated: true }],
+				defaultStartMode: 'approval',
+			})
+		),
+		captureCard: vi.fn(async (command: BoardCaptureCommand) => {
+			const original = initialBoards.find((board) => board.id === command.boardId)!;
+			const card = { ...command.card, storageRevision: (command.card.storageRevision ?? 0) + 1 };
+			return {
+				ok: true,
+				value: {
+					...original,
+					cards: [...original.cards.filter((entry) => entry.id !== card.id), card],
+					storage: {
+						sourceKey: 'source-one',
+						collectionKey: original.id,
+						expectedRevision: command.expectedRevision + 1,
+						cardRevisions: { [card.id]: card.storageRevision },
+					},
+				},
+				readiness: { [card.id]: [] },
+			};
+		}),
 		list: vi.fn().mockResolvedValue(initialBoards),
 		create: vi.fn(),
 		rename: vi.fn(),
@@ -116,6 +202,7 @@ function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 		setCardStatus: vi.fn().mockResolvedValue(initialBoards[0]),
 		deleteCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		cancelCard: vi.fn().mockResolvedValue(initialBoards[0]),
+		resumeCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		onBoardChanged: vi.fn((cb: (payload: { projectRoot: string }) => void) => {
 			boardChangedListeners.push(cb);
 			return unsubscribeBoardChanged;
@@ -144,6 +231,7 @@ beforeEach(() => {
 	useSessionStore.setState({
 		sessions: [createMockSession({ id: 's1', projectRoot: PROJECT_ROOT })],
 		activeSessionId: 's1',
+		groups: [],
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	} as any);
 });
@@ -154,7 +242,51 @@ afterEach(() => {
 });
 
 describe('BoardModal card creation', () => {
-	it('creates a card through the editor and persists it via addCard', async () => {
+	it('filters visible cards by type and status without changing the board', async () => {
+		const cards = [
+			makeCard({ id: 'a', title: 'Work item', kind: 'work', status: 'todo' }),
+			makeCard({ id: 'b', title: 'Review item', kind: 'review', status: 'done' }),
+			makeCard({ id: 'c', title: 'Old item', status: 'todo' }),
+		];
+		installApis([{ id: 'b1', name: 'Board', cards }]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByText('Review item')).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'work' } });
+		expect(screen.getByText('Work item')).toBeInTheDocument();
+		expect(screen.queryByText('Review item')).not.toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'done' } });
+		expect(screen.queryByText('Work item')).not.toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'all' } });
+		fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'unspecified' } });
+		expect(screen.getByText('Old item')).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'all' } });
+		expect(screen.getByText('Work item')).toBeInTheDocument();
+		expect(screen.getByText('Review item')).toBeInTheDocument();
+		expect(boardApi.updateCard).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+	});
+	it('saves an edited card with the revision read when editing began', async () => {
+		const original = makeCard({ id: 'c1', title: 'Original', storageRevision: 4 });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [original] };
+		installApis([board]);
+		boardApi.captureCard.mockImplementation(async ({ card }: BoardCaptureCommand) => {
+			if (card.storageRevision !== 4) throw new Error('stale revision');
+			return {
+				ok: true,
+				value: { ...board, cards: [{ ...card, storageRevision: 5 }] },
+				readiness: { [card.id]: [] },
+			};
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Original'));
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Edited' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+		expect(await screen.findByText('Edited')).toBeInTheDocument();
+		expect(boardApi.captureCard.mock.calls[0][0].card.storageRevision).toBe(4);
+	});
+	it('captures an incomplete card through the host command without implicit assignment', async () => {
 		const board: Board = { id: 'b1', name: 'My Board', cards: [] };
 		installApis([board]);
 
@@ -170,13 +302,18 @@ describe('BoardModal card creation', () => {
 		});
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
-		const [proj, boardId, card] = boardApi.addCard.mock.calls[0];
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		const {
+			projectRoot: proj,
+			boardId,
+			card,
+			expectedRevision,
+		} = boardApi.captureCard.mock.calls[0][0];
+		expect(expectedRevision).toBe(1);
 		expect(proj).toBe(PROJECT_ROOT);
 		expect(boardId).toBe('b1');
 		expect(card).toMatchObject({
 			title: 'Design the schema',
-			assigneeProfileId: 'p1',
 			status: 'todo',
 			parents: [],
 		});
@@ -246,6 +383,7 @@ describe('BoardModal destructive actions', () => {
 			expect(screen.queryByPlaceholderText('e.g. Design the schema')).not.toBeInTheDocument()
 		);
 		expect(boardApi.updateCard).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
 	});
 
 	it('closes an untouched editor without asking', async () => {
@@ -297,14 +435,15 @@ describe('BoardModal run cancellation', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
 				color: 'orange',
-				message: 'Stopped the run. The card is held in To Do until you resume it.',
+				message:
+					'Stop requested. The card is held; capacity is released after termination is confirmed.',
 			})
 		);
 	});
 
 	// AB1 / Decision 2: Resume mirrors Stop. It only shows on held cards, and it
-	// clears the flag through `updateCard` so the promote pass sees the card again.
-	it('shows a resume button on held cards only, and clears the hold through updateCard', async () => {
+	// requests the fenced host to release the hold after termination.
+	it('shows a resume button on held cards only, and requests hold release through the owning runtime', async () => {
 		const held = makeCard({ id: 'cardA', title: 'Card A', heldByUser: true });
 		const idle = makeCard({ id: 'cardB', title: 'Card B' });
 		const board: Board = { id: 'b1', name: 'My Board', cards: [held, idle] };
@@ -318,12 +457,8 @@ describe('BoardModal run cancellation', () => {
 		expect(screen.getByText('held')).toBeInTheDocument();
 
 		fireEvent.click(resume);
-		await waitFor(() => expect(boardApi.updateCard).toHaveBeenCalledTimes(1));
-		expect(boardApi.updateCard).toHaveBeenCalledWith(
-			PROJECT_ROOT,
-			'b1',
-			expect.objectContaining({ id: 'cardA', status: 'todo', heldByUser: false })
-		);
+		await waitFor(() => expect(boardApi.resumeCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.resumeCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA');
 	});
 });
 
@@ -336,11 +471,11 @@ describe('BoardModal live updates', () => {
 		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(1));
 		expect(boardApi.onBoardChanged).toHaveBeenCalled();
 
-		// A push for this project refetches; a push for another project is ignored.
+		// Every project push refreshes the central workspace.
 		emitBoardChanged();
 		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
 		emitBoardChanged('/some/other/project');
-		expect(boardApi.list).toHaveBeenCalledTimes(2);
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(3));
 
 		unmount();
 		expect(unsubscribeBoardChanged).toHaveBeenCalled();
@@ -378,20 +513,27 @@ describe('BoardModal live updates', () => {
 		// and no role is offered in the assignee dropdown yet.
 		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
 		expect(await screen.findByText(/No roles yet/i)).toBeInTheDocument();
-		expect(screen.queryByRole('option', { name: 'Reviewer' })).toBeNull();
+		expect(screen.queryByRole('option', { name: 'Reviewer (fixture-namespace)' })).toBeNull();
 
 		// A profile is created (inline or in the layered Profiles modal): the push
 		// fires and the (now non-empty) refetch surfaces the role live, without a
 		// manual refresh and without tearing down the open editor.
 		profilesApi.list.mockResolvedValue([{ id: 'p1', name: 'Reviewer', baseAgentId: 'a1' }]);
 		emitProfilesChanged();
-		await waitFor(() => expect(profilesApi.list).toHaveBeenCalledTimes(2));
-		expect(await screen.findByRole('option', { name: 'Reviewer' })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				screen.getByRole('option', { name: 'Reviewer (fixture-namespace)' })
+			).toBeInTheDocument()
+		);
+		expect(
+			await screen.findByRole('option', { name: 'Reviewer (fixture-namespace)' })
+		).toBeInTheDocument();
 		expect(screen.queryByText(/No roles yet/i)).toBeNull();
 
-		// A push for another project root is ignored (no extra fetch).
-		emitProfilesChanged('/some/other/project');
-		expect(profilesApi.list).toHaveBeenCalledTimes(2);
+		// Global namespaces also refresh after a foreign project's profile change.
+		const previousCalls = boardApi.captureCatalog.mock.calls.length;
+		act(() => emitProfilesChanged('/some/other/project'));
+		await waitFor(() => expect(boardApi.captureCatalog).toHaveBeenCalledTimes(previousCalls + 1));
 
 		unmount();
 		expect(unsubscribeProfilesChanged).toHaveBeenCalled();
@@ -422,15 +564,36 @@ describe('BoardModal cycle rejection', () => {
 		// Inline cycle error is surfaced and nothing is persisted.
 		expect(await screen.findByText(/cycle/i)).toBeInTheDocument();
 		expect(boardApi.updateCard).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
 	});
 });
 
 describe('BoardModal status conflict', () => {
+	it('shows the host error and keeps the draft when a save fails', async () => {
+		const card = makeCard({ id: 'cardA', title: 'Card A' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
+		boardApi.captureCard.mockRejectedValue(new Error('Repository is unavailable'));
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Unsaved title' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					message: expect.stringContaining('Repository is unavailable'),
+				})
+			)
+		);
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Unsaved title');
+	});
+
 	it('refreshes the board while preserving the draft, then reopens the current status', async () => {
 		const card = makeCard({ id: 'cardA', title: 'Card A' });
 		const board: Board = { id: 'b1', name: 'My Board', cards: [card] };
 		installApis([board]);
-		boardApi.updateCard.mockRejectedValue(new Error('Card status changed'));
+		boardApi.captureCard.mockRejectedValue(new Error('Card status changed'));
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		fireEvent.click(await screen.findByText('Card A'));
@@ -471,11 +634,14 @@ describe('BoardModal worktree isolation (Phase 4)', () => {
 		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
 			target: { value: 'Isolated work' },
 		});
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: PROJECT_ROOT },
+		});
 		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
-		const card = boardApi.addCard.mock.calls[0][2];
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		const card = boardApi.captureCard.mock.calls[0][0].card;
 		// Branch follows `board/<board-id-8>/<card-id-8>`, checked out in a
 		// worktrees folder BESIDE the project (never nested inside it).
 		expect(card.worktree.branch).toBe(`board/1a2b3c4d-b/${card.id}`);
@@ -499,8 +665,8 @@ describe('BoardModal worktree isolation (Phase 4)', () => {
 		expect(screen.queryByPlaceholderText(/auto: board/i)).toBeNull();
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
-		expect(boardApi.addCard.mock.calls[0][2].worktree).toBeUndefined();
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.captureCard.mock.calls[0][0].card.worktree).toBeUndefined();
 	});
 
 	it('badges the tile with the branch the last run used', async () => {
@@ -846,15 +1012,17 @@ describe('BoardModal multi-board management (Phase 6)', () => {
 		await waitFor(() => expect(boardApi.delete).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', true));
 	});
 
-	it('still exposes the "Manage roles" escape hatch into the Profiles modal', async () => {
+	it('opens central Manage roles without an active agent', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		// The advanced link lives on the card editor now, not the board header.
 		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
 
 		fireEvent.click(screen.getByRole('button', { name: /Manage roles/i }));
-		expect(setProfilesModalOpen).toHaveBeenCalledWith(true);
+		expect(await screen.findByRole('dialog', { name: 'Agent Profiles' })).toBeInTheDocument();
+		expect(setProfilesModalOpen).not.toHaveBeenCalled();
 	});
 });
 
@@ -881,14 +1049,14 @@ describe('BoardModal profile gate removal (G2)', () => {
 		fireEvent.change(screen.getByLabelText(/Pin to agent/i), { target: { value: 's1' } });
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
-		const card = boardApi.addCard.mock.calls[0][2];
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		const card = boardApi.captureCard.mock.calls[0][0].card;
 		expect(card.assigneeAgentId).toBe('s1');
 		// Blank role fields are omitted on save, so a pin-only card carries no role.
-		expect(card).not.toHaveProperty('assigneeProfileId');
+		expect(card.assigneeProfileId).toBeUndefined();
 	});
 
-	it('keeps Save disabled for a card with neither a role nor a pinned agent', async () => {
+	it('allows incomplete capture with neither a role nor a pinned agent', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
@@ -897,10 +1065,10 @@ describe('BoardModal profile gate removal (G2)', () => {
 		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
 			target: { value: 'No assignee' },
 		});
-		// canSaveDraft still requires a role OR a pin, so the assignee model holds
-		// even though the up-front gate is gone.
-		expect(screen.getByRole('button', { name: /Create card/i })).toBeDisabled();
-		expect(boardApi.addCard).not.toHaveBeenCalled();
+		await waitFor(() => expect(screen.getByRole('button', { name: /Create card/i })).toBeEnabled());
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.captureCard.mock.calls[0][0].card.executionScope).toBeUndefined();
 	});
 });
 
@@ -951,15 +1119,19 @@ describe('BoardModal inline role quick-create (G2)', () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
 		// Echo the upserted profile back as the full list, the way the main process
 		// returns it after writing profiles.yaml.
-		profilesApi.upsert.mockImplementation(async (_root: string, p: unknown) => [p]);
+		boardApi.upsertRole.mockImplementation(async (_root: string, p: unknown) => {
+			profilesApi.list.mockResolvedValue([p]);
+			return { namespace: 'fixture-namespace', profileId: (p as { id: string }).id };
+		});
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		const nameInput = await openMiniForm();
 		fireEvent.change(nameInput, { target: { value: 'Reviewer' } });
 		fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
 
-		await waitFor(() => expect(profilesApi.upsert).toHaveBeenCalledTimes(1));
-		const [proj, profile] = profilesApi.upsert.mock.calls[0];
+		await waitFor(() => expect(boardApi.upsertRole).toHaveBeenCalledTimes(1));
+		expect(profilesApi.upsert).not.toHaveBeenCalled();
+		const [proj, profile] = boardApi.upsertRole.mock.calls[0];
 		expect(proj).toBe(PROJECT_ROOT);
 		// Base agent defaults to the active Left Bar agent (s1).
 		expect(profile).toMatchObject({ name: 'Reviewer', baseAgentId: 's1' });
@@ -970,13 +1142,18 @@ describe('BoardModal inline role quick-create (G2)', () => {
 		await waitFor(() =>
 			expect(screen.queryByPlaceholderText('Role name, e.g. Reviewer')).not.toBeInTheDocument()
 		);
-		const option = screen.getByRole('option', { name: 'Reviewer' });
-		expect(option.closest('select')).toHaveValue(profile.id);
+		const option = screen.getByRole('option', { name: 'Reviewer (fixture-namespace)' });
+		expect(option.closest('select')).toHaveValue(
+			canonicalJson({ namespace: 'fixture-namespace', profileId: profile.id })
+		);
 	});
 
 	it('omits baseAgentId when the pool role ("None") is chosen', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
-		profilesApi.upsert.mockImplementation(async (_root: string, p: unknown) => [p]);
+		boardApi.upsertRole.mockImplementation(async (_root: string, p: unknown) => {
+			profilesApi.list.mockResolvedValue([p]);
+			return { namespace: 'fixture-namespace', profileId: (p as { id: string }).id };
+		});
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		const nameInput = await openMiniForm();
@@ -987,8 +1164,8 @@ describe('BoardModal inline role quick-create (G2)', () => {
 		fireEvent.change(baseSelect, { target: { value: '' } });
 		fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
 
-		await waitFor(() => expect(profilesApi.upsert).toHaveBeenCalledTimes(1));
-		const profile = profilesApi.upsert.mock.calls[0][1];
+		await waitFor(() => expect(boardApi.upsertRole).toHaveBeenCalledTimes(1));
+		const profile = boardApi.upsertRole.mock.calls[0][1];
 		expect(profile).toMatchObject({ name: 'Floater' });
 		// A pool role floats to any free worker, so it stores no base agent.
 		expect(profile).not.toHaveProperty('baseAgentId');
@@ -996,7 +1173,7 @@ describe('BoardModal inline role quick-create (G2)', () => {
 
 	it('surfaces a red toast and keeps the mini-form open when the upsert rejects', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
-		profilesApi.upsert.mockRejectedValue(new Error('disk full'));
+		boardApi.upsertRole.mockRejectedValue(new Error('disk full'));
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		const nameInput = await openMiniForm();
@@ -1012,7 +1189,7 @@ describe('BoardModal inline role quick-create (G2)', () => {
 
 		// The draft's role is untouched: cancelling back to the picker shows no role.
 		fireEvent.click(within(miniForm).getByRole('button', { name: /^Cancel$/i }));
-		const roleOption = screen.getByRole('option', { name: /No role \(free worker pool\)/i });
+		const roleOption = screen.getByRole('option', { name: /^No role$/i });
 		expect(roleOption.closest('select')).toHaveValue('');
 	});
 });
@@ -1132,6 +1309,9 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 		// A PR needs a branch of its own, so the toggle is hidden for shared-tree cards.
 		expect(screen.queryByLabelText(/Open PR when done/i)).toBeNull();
 
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: PROJECT_ROOT },
+		});
 		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
 		expect(screen.getByLabelText(/Open PR when done/i)).toBeInTheDocument();
 		// The target-branch field only appears behind the toggle itself.
@@ -1146,6 +1326,9 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		await openNewCard('Isolated work');
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: PROJECT_ROOT },
+		});
 		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
 		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
 		fireEvent.change(screen.getByPlaceholderText('repo default branch'), {
@@ -1153,9 +1336,11 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 		});
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
 		// Trimmed, so a stray space never reaches `gh pr create --base`.
-		expect(boardApi.addCard.mock.calls[0][2].prOnDone).toEqual({ targetBranch: 'develop' });
+		expect(boardApi.captureCard.mock.calls[0][0].card.prOnDone).toEqual({
+			targetBranch: 'develop',
+		});
 	});
 
 	it('persists an empty prOnDone when no target branch is typed', async () => {
@@ -1163,13 +1348,16 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		await openNewCard('Isolated work');
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: PROJECT_ROOT },
+		});
 		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
 		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
 		// `{}` is the armed "resolve the repo default branch at PR time" case.
-		expect(boardApi.addCard.mock.calls[0][2].prOnDone).toEqual({});
+		expect(boardApi.captureCard.mock.calls[0][0].card.prOnDone).toEqual({});
 	});
 
 	it('omits prOnDone when either toggle is turned back off', async () => {
@@ -1177,6 +1365,9 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		await openNewCard('Isolated work');
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: PROJECT_ROOT },
+		});
 		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
 		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
 		fireEvent.change(screen.getByPlaceholderText('repo default branch'), {
@@ -1184,12 +1375,15 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 		});
 
 		// Dropping isolation disarms the PR even though the inner toggle stayed on.
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: PROJECT_ROOT },
+		});
 		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 
-		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
-		const card = boardApi.addCard.mock.calls[0][2];
-		expect(card).not.toHaveProperty('prOnDone');
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		const card = boardApi.captureCard.mock.calls[0][0].card;
+		expect(card.prOnDone).toBeUndefined();
 		expect(card.worktree).toBeUndefined();
 	});
 
@@ -1212,9 +1406,9 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
 		fireEvent.click(screen.getByRole('button', { name: /Save changes/i }));
 
-		await waitFor(() => expect(boardApi.updateCard).toHaveBeenCalledTimes(1));
-		const saved = boardApi.updateCard.mock.calls[0][2];
-		expect(saved).not.toHaveProperty('prOnDone');
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		const saved = boardApi.captureCard.mock.calls[0][0].card;
+		expect(saved.prOnDone).toBeUndefined();
 		// Isolation itself is untouched: only the PR opt-in was dropped.
 		expect(saved.worktree).toMatchObject({ branch: 'board/b1/cardA' });
 	});
@@ -1242,7 +1436,9 @@ describe('BoardModal profile refresh during edit (G1 interplay)', () => {
 		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
 
 		// The dropdown now offers the freshly-added role...
-		expect(await screen.findByRole('option', { name: 'Implementer' })).toBeInTheDocument();
+		expect(
+			await screen.findByRole('option', { name: 'Implementer (fixture-namespace)' })
+		).toBeInTheDocument();
 		// ...and the in-progress title edit is untouched.
 		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Survives refresh');
 	});
@@ -1285,4 +1481,1287 @@ it('shows the handler message without Electron IPC plumbing on load failure', as
 			})
 		)
 	);
+});
+
+describe('observed worker runs', () => {
+	it('uses the first active latest run in board order and drops stale observations on refresh', () => {
+		const running = (id: string, title: string, workerAgentId: string) =>
+			makeCard({
+				id,
+				title,
+				status: 'running',
+				runs: [{ attempt: 1, startedAt: '2026-10-31T00:00:00Z', workerAgentId }],
+			});
+		const first = running('a', 'First', 's1');
+		const second = running('b', 'Second', 's1');
+		const ended = makeCard({
+			...running('c', 'Ended', 's2'),
+			runs: [
+				{
+					attempt: 1,
+					startedAt: '2026-10-31T00:00:00Z',
+					endedAt: '2026-10-31T01:00:00Z',
+					workerAgentId: 's2',
+				},
+			],
+		});
+		const boards: Board[] = [
+			{ id: 'one', name: 'One', cards: [first, ended] },
+			{ id: 'two', name: 'Two', cards: [second] },
+		];
+		expect(observedWorkerRuns(boards).get('s1')).toBe('First');
+		expect(observedWorkerRuns(boards).has('s2')).toBe(false);
+		expect(observedWorkerRuns(boards.slice(1)).get('s1')).toBe('Second');
+		expect(observedWorkerRuns([]).has('s1')).toBe(false);
+	});
+});
+
+describe('Board worker registry interactions', () => {
+	it('shows session changes, missing agents and observed runs without asserting a reservation', async () => {
+		const card = makeCard({
+			id: 'run',
+			title: 'Observed work',
+			status: 'running',
+			runs: [{ attempt: 1, startedAt: '2026-10-31T00:00:00Z', workerAgentId: 's1' }],
+		});
+		installApis([{ id: 'b1', name: 'Board', cards: [card] }]);
+		Object.assign(boardApi, {
+			listWorkers: vi.fn().mockResolvedValue([
+				{
+					agentId: 's1',
+					enabled: true,
+					paused: false,
+					payload: { roleRefs: [], allowedRepositoryIds: [] },
+				},
+				{
+					agentId: 'gone',
+					enabled: false,
+					paused: true,
+					payload: { roleRefs: [], allowedRepositoryIds: [] },
+				},
+			]),
+			listWorkerAccessOptions: vi.fn().mockResolvedValue({ roles: [], repositories: [] }),
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Workers' }));
+		expect(
+			await screen.findByText(/gone — agent missing; disabled, intake paused; occupancy unknown/)
+		).toBeInTheDocument();
+		expect(
+			await screen.findByText(
+				/global occupancy unknown; observed running card in loaded boards: Observed work/
+			)
+		).toBeInTheDocument();
+		act(() =>
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((session) => ({ ...session, state: 'busy' })),
+			}))
+		);
+		expect(screen.getByText(/Agent state: busy; global occupancy unknown/)).toBeInTheDocument();
+		boardApi.list.mockResolvedValue([{ id: 'b1', name: 'Board', cards: [] }]);
+		act(() => emitBoardChanged());
+		await waitFor(() =>
+			expect(screen.queryByText(/observed running card in loaded boards/)).not.toBeInTheDocument()
+		);
+		expect(screen.getByText(/Agent state: busy; global occupancy unknown/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/gone — agent missing; disabled, intake paused; occupancy unknown/)
+		).toBeInTheDocument();
+	});
+	it('registers an agent and updates role, repository, pause and enabled state visibly', async () => {
+		installApis([{ id: 'b1', name: 'Board', cards: [] }]);
+		let workers: Array<{
+			agentId: string;
+			enabled: boolean;
+			paused: boolean;
+			payload: {
+				roleRefs: Array<{ namespace: string; profileId: string }>;
+				allowedRepositoryIds: string[];
+			};
+		}> = [];
+		const api = {
+			listWorkers: vi.fn(async () => structuredClone(workers)),
+			listWorkerAccessOptions: vi.fn(async () => ({
+				roles: [{ namespace: 'project', profileId: 'review', name: 'Reviewer' }],
+				repositories: [{ id: 'repo', name: 'Repository' }],
+			})),
+			registerWorker: vi.fn(async (agentId: string) => {
+				workers = [
+					{
+						agentId,
+						enabled: true,
+						paused: false,
+						payload: { roleRefs: [], allowedRepositoryIds: [] },
+					},
+				];
+				return structuredClone(workers);
+			}),
+			setWorkerAccess: vi.fn(
+				async (
+					_id: string,
+					roleRefs: (typeof workers)[number]['payload']['roleRefs'],
+					allowedRepositoryIds: string[]
+				) => {
+					workers[0].payload = { roleRefs, allowedRepositoryIds };
+					return structuredClone(workers);
+				}
+			),
+			pauseWorker: vi.fn(async (_id: string, paused: boolean) => {
+				workers[0].paused = paused;
+				return structuredClone(workers);
+			}),
+			enableWorker: vi.fn(async (_id: string, enabled: boolean) => {
+				workers[0].enabled = enabled;
+				return structuredClone(workers);
+			}),
+		};
+		Object.assign(boardApi, api);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Workers' }));
+		fireEvent.click(await screen.findByRole('button', { name: 'Add worker' }));
+		await screen.findByText(/enabled/);
+		fireEvent.click(screen.getByRole('checkbox', { name: 'Reviewer (project)' }));
+		await waitFor(() =>
+			expect(screen.getByRole('checkbox', { name: 'Reviewer (project)' })).toBeChecked()
+		);
+		fireEvent.click(screen.getByRole('checkbox', { name: 'Repository' }));
+		await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Repository' })).toBeChecked());
+		fireEvent.click(screen.getByRole('button', { name: 'Pause intake' }));
+		await screen.findByText(/intake paused/);
+		fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+		await screen.findByText(/disabled, intake paused/);
+		api.setWorkerAccess.mockRejectedValueOnce(new Error('Board worker role not found'));
+		fireEvent.click(screen.getByRole('checkbox', { name: 'Reviewer (project)' }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ message: expect.stringContaining('Board worker role not found') })
+			)
+		);
+		expect(screen.getByRole('checkbox', { name: 'Reviewer (project)' })).toBeChecked();
+		expect(workers[0].payload).toEqual({
+			roleRefs: [{ namespace: 'project', profileId: 'review' }],
+			allowedRepositoryIds: ['repo'],
+		});
+	});
+});
+
+describe('Board native worker creation', () => {
+	beforeEach(() => useModalStore.getState().closeAll());
+
+	function setupCreator() {
+		installApis([{ id: 'b1', name: 'Board', cards: [] }]);
+		const api = {
+			listWorkers: vi.fn().mockResolvedValue([]),
+			listWorkerAccessOptions: vi.fn().mockResolvedValue({ roles: [], repositories: [] }),
+			registerWorker: vi.fn(async (agentId: string) => [
+				{
+					agentId,
+					enabled: true,
+					paused: false,
+					payload: { roleRefs: [], allowedRepositoryIds: [] },
+				},
+			]),
+		};
+		Object.assign(boardApi, api);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Workers' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Create agent and add worker' }));
+		return { api, request: selectModalData('newInstance')(useModalStore.getState())! };
+	}
+
+	it('opens the existing native creator and registers only its successful real ID once', async () => {
+		const open = vi.spyOn(useModalStore.getState(), 'openModal');
+		const { api, request } = setupCreator();
+		expect(open).toHaveBeenCalledTimes(1);
+		expect(request).toMatchObject({ duplicatingSessionId: null, presetWorkingDir: PROJECT_ROOT });
+		expect(screen.getByRole('button', { name: 'Create agent and add worker' })).toBeDisabled();
+		expect(api.registerWorker).not.toHaveBeenCalled();
+		const session = createMockSession({
+			id: 'native-real-id',
+			name: 'Native worker',
+			projectRoot: PROJECT_ROOT,
+		});
+		act(() => {
+			request.onCreationStarted?.();
+			useModalStore.getState().closeModal('newInstance');
+			useSessionStore.getState().addSession(session);
+			request.onCreated?.(session.id);
+			request.onCreated?.(session.id);
+		});
+		await screen.findByText('Native worker — enabled');
+		expect(api.registerWorker).toHaveBeenCalledExactlyOnceWith(session.id);
+		open.mockRestore();
+	});
+
+	it('retains the created agent and retries registration without reopening the creator', async () => {
+		const open = vi.spyOn(useModalStore.getState(), 'openModal');
+		const { api, request } = setupCreator();
+		api.registerWorker.mockRejectedValueOnce(new Error('registry unavailable'));
+		const session = createMockSession({
+			id: 'created-id',
+			name: 'Retained agent',
+			projectRoot: PROJECT_ROOT,
+		});
+		act(() => {
+			useModalStore.getState().closeModal('newInstance');
+			useSessionStore.getState().addSession(session);
+			request.onCreated?.(session.id);
+		});
+		expect(await screen.findByRole('alert')).toHaveTextContent('registry unavailable');
+		expect(screen.getByRole('button', { name: 'Create agent and add worker' })).toBeDisabled();
+		fireEvent.click(screen.getByRole('button', { name: 'Retry worker registration' }));
+		await screen.findByText('Retained agent — enabled');
+		expect(api.registerWorker.mock.calls).toEqual([[session.id], [session.id]]);
+		expect(open).toHaveBeenCalledTimes(1);
+		expect(useSessionStore.getState().sessions.filter((s) => s.id === session.id)).toHaveLength(1);
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: 'Retry worker registration' })
+		).not.toBeInTheDocument();
+		open.mockRestore();
+	});
+
+	it('shows creation failures and cancellation never registers a phantom worker', async () => {
+		const { api, request } = setupCreator();
+		act(() => {
+			request.onCreationStarted?.();
+			useModalStore.getState().closeModal('newInstance');
+			request.onCreationError?.('Invalid native agent path');
+		});
+		expect(await screen.findByRole('alert')).toHaveTextContent('Invalid native agent path');
+		expect(api.registerWorker).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('button', { name: 'Create agent and add worker' }));
+		act(() => useModalStore.getState().closeModal('newInstance'));
+		expect(screen.getByRole('button', { name: 'Create agent and add worker' })).toBeEnabled();
+		expect(api.registerWorker).not.toHaveBeenCalled();
+	});
+});
+
+describe('BoardModal central workspace identity', () => {
+	function installWorkspace() {
+		const card = makeCard({
+			id: 'same-card',
+			title: 'Project one card',
+			kind: 'work',
+			storageRevision: 4,
+			executionScope: { kind: 'group', groupId: 'g1' },
+			assigneeAgentId: 's1',
+		});
+		const response = workspaceResponse([]);
+		if (!response.ok) throw new Error('fixture');
+		response.value.sources = ['one', 'two'].map((sourceKey) => ({
+			sourceKey,
+			projectRef: { sourceKey },
+		}));
+		response.value.collections = ['one', 'two'].map((sourceKey, index) => ({
+			sourceKey,
+			collectionKey: `collection-${sourceKey}`,
+			revision: index + 10,
+			projectRef: { sourceKey },
+			board: {
+				id: 'same-board',
+				name: `Board ${sourceKey}`,
+				storage: {
+					sourceKey,
+					collectionKey: `collection-${sourceKey}`,
+					expectedRevision: index + 10,
+					cardRevisions: { 'same-card': 4 + index },
+				},
+				cards: [{ ...card, title: `Project ${sourceKey} card`, storageRevision: 4 + index }],
+			},
+		}));
+		installApis([]);
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 's1',
+					name: 'Agent one',
+					projectRoot: '/project-one',
+					groupId: 'g1',
+				}),
+				createMockSession({ id: 's2', name: 'Agent two', projectRoot: '/project-two' }),
+			],
+			groups: [{ id: 'g1', name: 'Group one', emoji: 'G', collapsed: false }],
+		});
+		boardApi.queryWorkspace.mockImplementation(async (query) => {
+			const value = structuredClone(response.value);
+			if (query?.projectRoot)
+				value.collections = value.collections.filter(
+					(entry) => entry.sourceKey === (query.projectRoot === '/project-one' ? 'one' : 'two')
+				);
+			return { ok: true, value };
+		});
+		return response.value;
+	}
+
+	it('uses collection keys across projects and combines all five filters over the central cards', async () => {
+		installWorkspace();
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Project one card');
+		expect(boardApi.queryWorkspace).toHaveBeenCalledWith();
+		expect(boardApi.list).not.toHaveBeenCalled();
+		fireEvent.change(screen.getByLabelText('Select board'), {
+			target: { value: 'collection-two' },
+		});
+		expect(screen.getByText('Project two card')).toBeInTheDocument();
+		expect(screen.queryByText('Project one card')).not.toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by project'), { target: { value: 'two' } });
+		expect(screen.queryByRole('option', { name: 'Board one' })).not.toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by group'), { target: { value: 'g1' } });
+		fireEvent.change(screen.getByLabelText('Filter by agent'), { target: { value: 's1' } });
+		fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'work' } });
+		fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'todo' } });
+		expect(screen.getByText('Project two card')).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by agent'), { target: { value: 's2' } });
+		expect(screen.queryByText('Project two card')).not.toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by agent'), { target: { value: 's1' } });
+		expect(screen.getByText('Project two card')).toBeInTheDocument();
+	});
+
+	it('opens the selected colliding card by keyboard and saves only to its host-confirmed source with its read card revision', async () => {
+		const value = installWorkspace();
+		boardApi.captureCard.mockResolvedValue({
+			ok: true,
+			value: value.collections[1].board,
+			readiness: { 'same-card': [] },
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Project one card');
+		fireEvent.change(screen.getByLabelText('Select board'), {
+			target: { value: 'collection-two' },
+		});
+		const tile = screen.getByText('Project two card').closest('[tabindex]')!;
+		fireEvent.keyDown(tile, { key: 'Enter' });
+		expect(await screen.findByPlaceholderText('e.g. Design the schema')).toHaveValue(
+			'Project two card'
+		);
+		expect(screen.getByLabelText('Select board')).toBeDisabled();
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Edited two' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() =>
+			expect(boardApi.captureCard).toHaveBeenCalledWith({
+				projectRoot: '/project-two',
+				boardId: 'same-board',
+				expectedRevision: 11,
+				card: expect.objectContaining({ id: 'same-card', storageRevision: 5, title: 'Edited two' }),
+			})
+		);
+		fireEvent.change(screen.getByLabelText('Select board'), {
+			target: { value: 'collection-one' },
+		});
+		expect(screen.getByText('Project one card')).toBeInTheDocument();
+	});
+
+	it('refreshes other projects centrally while retaining the editor collection revision and unsaved draft', async () => {
+		const value = installWorkspace();
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Project one card'));
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Keep this draft' },
+		});
+		value.collections[0].revision = 12;
+		value.collections[0].board.storage!.expectedRevision = 12;
+		value.collections[1].board.cards[0].title = 'Centrally changed two';
+		act(() => emitBoardChanged('/project-two'));
+		await waitFor(() => expect(boardApi.queryWorkspace).toHaveBeenCalledTimes(6));
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Keep this draft');
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		expect(boardApi.updateCard).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('collection changed') })
+		);
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Keep this draft');
+	});
+
+	it('refreshes the selected collection from a foreign-project push and preserves selection isolation', async () => {
+		const value = installWorkspace();
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Project one card');
+		fireEvent.change(screen.getByLabelText('Select board'), {
+			target: { value: 'collection-two' },
+		});
+		value.collections[1].board.cards[0].title = 'Changed centrally';
+		act(() => emitBoardChanged('/project-two'));
+		expect(await screen.findByText('Changed centrally')).toBeInTheDocument();
+		expect(screen.getByLabelText('Select board')).toHaveValue('collection-two');
+		fireEvent.change(screen.getByLabelText('Select board'), {
+			target: { value: 'collection-one' },
+		});
+		expect(screen.getByText('Project one card')).toBeInTheDocument();
+		expect(screen.queryByText('Changed centrally')).not.toBeInTheDocument();
+	});
+
+	it('edits a persisted source using its host location after the last agent disappears', async () => {
+		const value = installWorkspace();
+		value.sources = value.sources.map((source) => ({
+			...source,
+			location: {
+				location: { kind: 'local' as const },
+				path: source.sourceKey === 'one' ? '/project-one' : '/project-two',
+			},
+		}));
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		boardApi.captureCard.mockResolvedValue({
+			ok: true,
+			value: value.collections[0].board,
+			readiness: {},
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Project one card'));
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Edited closed source' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.captureCard.mock.calls[0][0]).toMatchObject({
+			projectRoot: '/project-one',
+			boardId: 'same-board',
+			expectedRevision: 10,
+			card: { title: 'Edited closed source' },
+		});
+	});
+	it.each([false, true])(
+		'edits and repairs an SSH source through its explicit central reference (active SSH agent: %s)',
+		async (activeRemote) => {
+			const value = installWorkspace();
+			value.sources[0].location = {
+				location: { kind: 'ssh', remoteId: 'remote-one' },
+				path: '/remote-only/repo',
+			};
+			useSessionStore.setState({
+				sessions: activeRemote
+					? [
+							createMockSession({
+								id: 'ssh-agent',
+								projectRoot: '/remote-only/repo',
+								sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+							}),
+						]
+					: [],
+				activeSessionId: activeRemote ? 'ssh-agent' : '',
+			});
+			boardApi.captureCard.mockResolvedValue({
+				ok: true,
+				value: value.collections[0].board,
+				readiness: {},
+			});
+			render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+			fireEvent.click(await screen.findByText('Project one card'));
+			fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Edited SSH card' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Revalidate selected source' }));
+			await waitFor(() =>
+				expect(boardApi.sourceCommand).toHaveBeenCalledWith({
+					action: 'revalidate',
+					sourceKey: 'one',
+				})
+			);
+			fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+			await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+			expect(boardApi.captureCard.mock.calls[0][0]).toMatchObject({
+				projectRoot: 'maestro-board-source:one',
+				boardId: 'same-board',
+				card: { title: 'Edited SSH card' },
+			});
+			expect(boardApi.queryWorkspace).not.toHaveBeenCalledWith({
+				projectRoot: '/remote-only/repo',
+			});
+		}
+	);
+
+	it('loads global collections without an active agent or a project-root fallback', async () => {
+		installWorkspace();
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByText('Project one card')).toBeInTheDocument();
+		expect(boardApi.queryWorkspace).toHaveBeenCalledTimes(1);
+		expect(boardApi.queryWorkspace).toHaveBeenCalledWith();
+	});
+
+	it('shows unmapped central sources without mutating the active project', async () => {
+		installWorkspace();
+		boardApi.queryWorkspace.mockImplementation(async (query) =>
+			query
+				? { ok: false, error: { code: 'legacy-mapping-missing', message: 'No mapping' } }
+				: {
+						ok: true,
+						value: {
+							revision: 1,
+							sources: [{ sourceKey: 'unmapped', projectRef: { sourceKey: 'unmapped' } }],
+							collections: [
+								{
+									sourceKey: 'unmapped',
+									collectionKey: 'unmapped-collection',
+									revision: 3,
+									projectRef: { sourceKey: 'unmapped' },
+									board: {
+										id: 'same-board',
+										name: 'Unmapped',
+										cards: [makeCard({ id: 'same-card', title: 'Unmapped card' })],
+									},
+								},
+							],
+						},
+					}
+		);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Unmapped card'));
+		expect(await screen.findByRole('button', { name: /Save changes/ })).toBeDisabled();
+		expect(boardApi.updateCard).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+	});
+});
+
+describe('BoardModal host capture editor', () => {
+	const catalog: BoardCaptureCatalog = {
+		agents: [
+			{ id: 's1', groupId: 'team' },
+			{ id: 'foreign', groupId: 'other' },
+		],
+		groups: [{ id: 'team' }, { id: 'other' }],
+		profiles: [
+			{
+				namespace: 'namespace-one',
+				profile: { id: 'same-role', name: 'Reviewer', baseAgentId: 's1' },
+			},
+			{
+				namespace: 'namespace-two',
+				profile: { id: 'same-role', name: 'Reviewer', baseAgentId: 'foreign' },
+			},
+		],
+		repositories: [
+			{ id: 'repo-one', workingDirectory: '/one', validated: true },
+			{ id: 'repo-two', workingDirectory: '/two', validated: true },
+		],
+		defaultStartMode: 'approval',
+	};
+	function installCapture(card?: BoardCard) {
+		const board: Board = {
+			id: 'b1',
+			name: 'Capture board',
+			defaultStartMode: 'approval',
+			cards: card ? [card] : [],
+			storage: {
+				sourceKey: 'source-one',
+				collectionKey: 'b1',
+				expectedRevision: 12,
+				cardRevisions: card ? { [card.id]: card.storageRevision ?? 3 } : {},
+			},
+		};
+		installApis([board]);
+		boardApi.captureCatalog.mockResolvedValue(structuredClone(catalog));
+		return board;
+	}
+	async function openNew() {
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Explicit capture' } });
+	}
+	function selectScope(
+		scope: { kind: 'agent'; agentId: string } | { kind: 'group'; groupId: string }
+	) {
+		fireEvent.change(screen.getByLabelText('Execution scope'), {
+			target: { value: canonicalJson(scope) },
+		});
+	}
+	function selectRole(namespace: string) {
+		fireEvent.change(screen.getByLabelText('Role (profile)'), {
+			target: { value: canonicalJson({ namespace, profileId: 'same-role' }) },
+		});
+	}
+
+	it('captures with default approval, approves the read specification and shows only host-confirmed granted state', async () => {
+		const board = installCapture();
+		boardApi.captureCard.mockImplementationOnce(async ({ card }: BoardCaptureCommand) => {
+			board.cards = [
+				{
+					...card,
+					storageRevision: 3,
+					capturePolicy: {
+						effectiveStartMode: 'approval',
+						dispatchApproval: 'required',
+						specificationRevision: 3,
+					},
+				},
+			];
+			return { ok: true, value: board, readiness: { [card.id]: ['approval-required'] } };
+		});
+		let grant!: () => void;
+		boardApi.runtimeCommand.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					grant = () => {
+						board.cards[0] = {
+							...board.cards[0],
+							storageRevision: 4,
+							capturePolicy: {
+								...board.cards[0].capturePolicy!,
+								dispatchApproval: 'granted',
+							},
+						};
+						board.storage = { ...board.storage!, expectedRevision: 13 };
+						resolve({ ok: true, value: { accepted: true } });
+					};
+				})
+		);
+		await openNew();
+		selectScope({ kind: 'agent', agentId: 's1' });
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		fireEvent.click(
+			await screen.findByText('Explicit capture', { selector: '[class*="font-medium"]' })
+		);
+		const approve = screen.getByRole('button', { name: 'Approve start' });
+		fireEvent.click(approve);
+		expect(boardApi.runtimeCommand).toHaveBeenCalledWith({
+			action: 'control',
+			operation: 'approve',
+			target: {
+				projectRoot: PROJECT_ROOT,
+				sourceKey: 'source-one',
+				collectionKey: 'b1',
+				expectedRevision: 12,
+			},
+			cardId: board.cards[0].id,
+			cardRevision: 3,
+		});
+		expect(approve).toBeDisabled();
+		expect(screen.queryByText('Start approval: granted')).not.toBeInTheDocument();
+		await act(async () => grant());
+		expect(await screen.findByText('Start approval: granted')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Approve start' })).not.toBeInTheDocument();
+		expect(boardApi.setCardStatus).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).toHaveBeenCalledTimes(1);
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Edit after grant' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(2));
+		expect(boardApi.captureCard.mock.calls[1][0]).toMatchObject({
+			expectedRevision: 13,
+			card: { storageRevision: 4 },
+		});
+	});
+
+	it('keeps the read snapshot when the post-approval host refresh fails', async () => {
+		installCapture(
+			makeCard({
+				id: 'c1',
+				title: 'Refresh approval',
+				storageRevision: 3,
+				capturePolicy: {
+					effectiveStartMode: 'approval',
+					dispatchApproval: 'required',
+					specificationRevision: 3,
+				},
+			})
+		);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Refresh approval'));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		boardApi.runtimeCommand.mockResolvedValue({ ok: true, value: { accepted: true } });
+		boardApi.queryWorkspace.mockResolvedValue({
+			ok: false,
+			error: { code: 'source-unavailable', message: 'Could not read approval state' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Approve start' }));
+		expect(await screen.findByRole('alert')).toHaveTextContent('Could not read approval state');
+		expect(screen.getByLabelText('Title')).toHaveValue('Refresh approval');
+		expect(screen.queryByText('Start approval: granted')).not.toBeInTheDocument();
+		expect(screen.getByText('Start approval: required')).toBeInTheDocument();
+	});
+
+	it.each(['stale-revision', 'protected-field', 'runtime-unavailable', 'transport-error'])(
+		'preserves the draft and read tokens after rejected approval: %s',
+		async (code) => {
+			const original = makeCard({
+				id: 'c1',
+				title: 'Approval draft',
+				storageRevision: 3,
+				capturePolicy: {
+					effectiveStartMode: 'approval',
+					dispatchApproval: 'required',
+					specificationRevision: 3,
+				},
+			});
+			const board = installCapture(original);
+			if (code === 'transport-error')
+				boardApi.runtimeCommand.mockRejectedValue(new Error('Transport lost'));
+			else
+				boardApi.runtimeCommand.mockResolvedValue({
+					ok: false,
+					error: { code, message: 'Approval rejected' },
+				});
+			render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+			fireEvent.click(await screen.findByText('Approval draft'));
+			await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+			fireEvent.change(screen.getByLabelText('Body / instructions'), {
+				target: { value: 'Unsaved instructions' },
+			});
+			expect(screen.getByRole('button', { name: 'Approve start' })).toBeDisabled();
+			fireEvent.change(screen.getByLabelText('Body / instructions'), { target: { value: '' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Approve start' }));
+			expect(await screen.findByRole('alert')).toHaveTextContent(code);
+			expect(screen.getByLabelText('Title')).toHaveValue('Approval draft');
+			expect(screen.getByLabelText('Body / instructions')).toHaveValue('');
+			boardApi.list.mockResolvedValue([
+				{
+					...board,
+					storage: { ...board.storage!, expectedRevision: 14 },
+					cards: [{ ...original, storageRevision: 5 }],
+				},
+			]);
+			await act(async () => {
+				emitBoardChanged();
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Approve start' }));
+			await waitFor(() => expect(boardApi.runtimeCommand).toHaveBeenCalledTimes(2));
+			expect(boardApi.runtimeCommand.mock.calls[1][0]).toMatchObject({
+				target: { expectedRevision: 12 },
+				cardRevision: 3,
+			});
+			expect(boardApi.captureCard).not.toHaveBeenCalled();
+			expect(boardApi.setCardStatus).not.toHaveBeenCalled();
+		}
+	);
+
+	it('sends explicit group, pin, namespaced role, repository, cwd and direct policy via the exact command', async () => {
+		installCapture();
+		await openNew();
+		expect(screen.getByLabelText('Execution scope')).toHaveValue('');
+		expect(screen.getByLabelText('Working directory')).toHaveValue('');
+		selectScope({ kind: 'group', groupId: 'team' });
+		fireEvent.change(screen.getByLabelText(/Pin to agent/), { target: { value: 's1' } });
+		selectRole('namespace-one');
+		fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'repo-one' } });
+		// Choosing a repository never borrows its root or the active agent's cwd.
+		expect(screen.getByLabelText('Working directory')).toHaveValue('');
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: '/one/subdir' },
+		});
+		fireEvent.change(screen.getByLabelText('Start mode'), { target: { value: 'direct' } });
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		const command = boardApi.captureCard.mock.calls[0][0];
+		expect(Object.keys(command).sort()).toEqual([
+			'boardId',
+			'card',
+			'expectedRevision',
+			'projectRoot',
+		]);
+		expect(command).toMatchObject({
+			projectRoot: PROJECT_ROOT,
+			boardId: 'b1',
+			expectedRevision: 12,
+			card: {
+				executionScope: { kind: 'group', groupId: 'team' },
+				assigneeAgentId: 's1',
+				role: { namespace: 'namespace-one', profileId: 'same-role' },
+				repositoryId: 'repo-one',
+				workingDirectory: '/one/subdir',
+				startModeOverride: 'direct',
+			},
+		});
+		expect(boardApi.addCard).not.toHaveBeenCalled();
+		expect(boardApi.updateCard).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['pin-outside-scope', 'Pin is outside the selected group'],
+		['pin-role-conflict', 'Pin conflicts with the role'],
+	] as const)('shows typed %s and keeps all selections for correction', async (code, message) => {
+		installCapture();
+		boardApi.captureCard.mockResolvedValueOnce({
+			ok: false,
+			error: { code: 'invalid-input', message, captureErrors: [code] },
+		});
+		await openNew();
+		selectScope({ kind: 'group', groupId: 'team' });
+		fireEvent.change(screen.getByLabelText(/Pin to agent/), { target: { value: 'foreign' } });
+		selectRole('namespace-one');
+		fireEvent.change(screen.getByLabelText('Body / instructions'), {
+			target: { value: 'Preserve this body' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		expect(await screen.findByRole('alert')).toHaveTextContent(code);
+		expect(screen.getByLabelText('Title')).toHaveValue('Explicit capture');
+		expect(screen.getByLabelText('Body / instructions')).toHaveValue('Preserve this body');
+		expect(screen.getByLabelText(/Pin to agent/)).toHaveValue('foreign');
+		fireEvent.change(screen.getByLabelText(/Pin to agent/), { target: { value: 's1' } });
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		await screen.findByText('Explicit capture', { selector: '[class*="font-medium"]' });
+		expect(boardApi.captureCard.mock.calls[1][0].card).toMatchObject({
+			body: 'Preserve this body',
+			assigneeAgentId: 's1',
+			role: { namespace: 'namespace-one', profileId: 'same-role' },
+		});
+	});
+
+	it('preserves a repository conflict draft, then sends an explicit agent scope and approval override', async () => {
+		installCapture();
+		boardApi.captureCard.mockResolvedValueOnce({
+			ok: false,
+			error: { code: 'invalid-input', message: 'Repository and working directory conflict' },
+		});
+		await openNew();
+		selectScope({ kind: 'agent', agentId: 's1' });
+		fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'repo-two' } });
+		fireEvent.change(screen.getByLabelText('Working directory'), { target: { value: '/one' } });
+		fireEvent.change(screen.getByLabelText('Start mode'), { target: { value: 'approval' } });
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		expect(await screen.findByRole('alert')).toHaveTextContent(
+			'Repository and working directory conflict'
+		);
+		expect(screen.getByLabelText('Repository')).toHaveValue('repo-two');
+		expect(screen.getByLabelText('Working directory')).toHaveValue('/one');
+		fireEvent.change(screen.getByLabelText('Working directory'), {
+			target: { value: '/two/subdir' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(2));
+		expect(boardApi.captureCard.mock.calls[1][0].card).toMatchObject({
+			executionScope: { kind: 'agent', agentId: 's1' },
+			repositoryId: 'repo-two',
+			workingDirectory: '/two/subdir',
+			startModeOverride: 'approval',
+		});
+	});
+
+	it('takes canonical host values, readiness and both new read revisions into the next edit', async () => {
+		const board = installCapture();
+		const saved = makeCard({
+			id: 'saved',
+			title: 'Host title',
+			storageRevision: 9,
+			executionScope: { kind: 'agent', agentId: 'gone' },
+			capturePolicy: {
+				effectiveStartMode: 'approval',
+				dispatchApproval: 'required',
+				specificationRevision: 9,
+			},
+		});
+		boardApi.captureCard.mockResolvedValue({
+			ok: true,
+			value: {
+				...board,
+				cards: [saved],
+				storage: { ...board.storage!, expectedRevision: 25, cardRevisions: { saved: 9 } },
+			},
+			readiness: {},
+		});
+		// A capture response's readiness is indexed by the submitted card ID.
+		boardApi.captureCard.mockImplementationOnce(async ({ card }: BoardCaptureCommand) => ({
+			ok: true,
+			value: {
+				...board,
+				cards: [{ ...saved, id: card.id }],
+				storage: { ...board.storage!, expectedRevision: 25, cardRevisions: { [card.id]: 9 } },
+			},
+			readiness: { [card.id]: ['target-missing', 'repository-unresolved'] },
+		}));
+		await openNew();
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+		expect(await screen.findByRole('status')).toHaveTextContent(
+			'target-missing, repository-unresolved'
+		);
+		expect(screen.getByRole('status')).toHaveTextContent('Start approval: required');
+		fireEvent.click(screen.getByText('Host title'));
+		expect(screen.getByLabelText('Title')).toHaveValue('Host title');
+		expect(screen.getByRole('option', { name: 'Missing agent: gone' })).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Re-edit host value' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(2));
+		expect(boardApi.captureCard.mock.calls[1][0]).toMatchObject({
+			expectedRevision: 25,
+			card: { storageRevision: 9 },
+		});
+	});
+
+	it('keeps the draft and original tokens on a typed stale response despite a newer central refresh', async () => {
+		const original = makeCard({ id: 'c1', title: 'Original', storageRevision: 3 });
+		const board = installCapture(original);
+		boardApi.captureCard.mockResolvedValue({
+			ok: false,
+			error: { code: 'stale-revision', message: 'Card changed since read' },
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Original'));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved title' } });
+		selectRole('namespace-two');
+		boardApi.list.mockResolvedValue([
+			{
+				...board,
+				storage: { ...board.storage!, expectedRevision: 13 },
+				cards: [{ ...original, title: 'New host version', storageRevision: 4 }],
+			},
+		]);
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		expect(await screen.findByRole('alert')).toHaveTextContent(
+			'stale-revision: Card changed since read'
+		);
+		expect(screen.getByLabelText('Title')).toHaveValue('Unsaved title');
+		expect(screen.getByLabelText('Role (profile)')).toHaveValue(
+			canonicalJson({ namespace: 'namespace-two', profileId: 'same-role' })
+		);
+		expect(boardApi.captureCard.mock.calls[0][0]).toMatchObject({
+			expectedRevision: 12,
+			card: { storageRevision: 3 },
+		});
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		expect(boardApi.captureCard).toHaveBeenCalledTimes(1);
+		expect(screen.getByRole('alert')).toHaveTextContent('Reopen the card before saving');
+	});
+
+	it('preserves run history, holds, host policy and legacy nulls while editing other fields', async () => {
+		const original = makeCard({
+			id: 'c1',
+			title: 'Held card',
+			storageRevision: 3,
+			heldByUser: true,
+			runs: [{ attempt: 1, startedAt: '2026-10-01', endedAt: '2026-10-02', outcome: 'canceled' }],
+			capturePolicy: {
+				effectiveStartMode: 'direct',
+				dispatchApproval: 'not-required',
+				specificationRevision: 3,
+			},
+		});
+		Object.assign(original, {
+			repositoryId: null,
+			workingDirectory: null,
+			executionScope: null,
+			profileNamespace: null,
+			humanReview: { status: 'pending' },
+			custom: { retained: true },
+		});
+		installCapture(original);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Held card'));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		fireEvent.change(screen.getByLabelText('Body / instructions'), {
+			target: { value: 'Only instructions changed' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.captureCard.mock.calls[0][0].card).toMatchObject({
+			heldByUser: true,
+			runs: original.runs,
+			capturePolicy: original.capturePolicy,
+			repositoryId: null,
+			workingDirectory: null,
+			executionScope: null,
+			profileNamespace: null,
+			humanReview: { status: 'pending' },
+			custom: { retained: true },
+		});
+	});
+
+	it('retains missing role and repository identities and displays host readiness without substituting another namespace', async () => {
+		const original = makeCard({
+			id: 'c1',
+			title: 'Missing references',
+			assigneeProfileId: 'same-role',
+			storageRevision: 3,
+			role: { namespace: 'deleted-namespace', profileId: 'same-role' },
+			repositoryId: 'deleted-repo',
+			workingDirectory: '/deleted',
+			executionScope: { kind: 'group', groupId: 'deleted-group' },
+			assigneeAgentId: 'deleted-agent',
+		});
+		const board = installCapture(original);
+		boardApi.captureCard.mockResolvedValue({
+			ok: true,
+			value: board,
+			readiness: {
+				c1: ['group-missing', 'target-missing', 'role-missing', 'repository-unresolved'],
+			},
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Missing references'));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		expect(screen.getByLabelText('Role (profile)')).toHaveDisplayValue(
+			'Missing role: deleted-namespace / same-role'
+		);
+		expect(screen.getByLabelText('Repository')).toHaveDisplayValue(
+			'Missing repository: deleted-repo'
+		);
+		expect(screen.getByLabelText(/Pin to agent/)).toHaveDisplayValue(
+			'Missing agent: deleted-agent'
+		);
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		expect(await screen.findByRole('status')).toHaveTextContent(
+			'group-missing, target-missing, role-missing, repository-unresolved'
+		);
+		expect(boardApi.captureCard.mock.calls[0][0].card.role).toEqual(original.role);
+	});
+
+	it('replaces and clears explicit role namespaces without retaining stale legacy aliases', async () => {
+		const original = makeCard({
+			id: 'c1',
+			title: 'Qualified role',
+			storageRevision: 3,
+			assigneeProfileId: 'same-role',
+			role: { namespace: 'namespace-one', profileId: 'same-role' },
+		});
+		Object.assign(original, { profileNamespace: 'namespace-one' });
+		installCapture(original);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Qualified role'));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		selectRole('namespace-two');
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await screen.findByRole('button', { name: /^Qualified role, To Do$/ });
+		expect(boardApi.captureCard.mock.calls[0][0].card).toMatchObject({
+			role: { namespace: 'namespace-two', profileId: 'same-role' },
+			profileNamespace: 'namespace-two',
+			assigneeProfileId: 'same-role',
+		});
+		fireEvent.click(screen.getByRole('button', { name: /^Qualified role, To Do$/ }));
+		fireEvent.change(screen.getByLabelText('Role (profile)'), { target: { value: '' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(2));
+		const sent = boardApi.captureCard.mock.calls[1][0].card;
+		expect(sent.role).toBeUndefined();
+		expect(sent.profileNamespace).toBeUndefined();
+		expect(sent.assigneeProfileId).toBeUndefined();
+	});
+
+	it('adopts its own Move response revisions while preserving unsaved instructions for capture', async () => {
+		const original = makeCard({ id: 'c1', title: 'Move then edit', storageRevision: 3 });
+		const board = installCapture(original);
+		boardApi.setCardStatus.mockResolvedValue({
+			...board,
+			storage: { ...board.storage!, expectedRevision: 13, cardRevisions: { c1: 4 } },
+			cards: [{ ...original, status: 'blocked', storageRevision: 4 }],
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Move then edit'));
+		await screen.findByRole('option', { name: 'Reviewer (namespace-two)' });
+		fireEvent.change(screen.getByLabelText('Body / instructions'), {
+			target: { value: 'Keep these instructions' },
+		});
+		fireEvent.change(screen.getByLabelText('Move to'), { target: { value: 'blocked' } });
+		await waitFor(() => expect(screen.getByLabelText('Move to')).toHaveValue('blocked'));
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.captureCard.mock.calls[0][0]).toMatchObject({
+			expectedRevision: 13,
+			card: { storageRevision: 4, status: 'blocked', body: 'Keep these instructions' },
+		});
+	});
+
+	it('offers catalog retry and preserves a draft across catalog and native sender errors', async () => {
+		installCapture();
+		boardApi.captureCatalog.mockRejectedValue(new Error('Host catalog offline'));
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Retained draft' } });
+		expect(await screen.findByRole('alert')).toHaveTextContent('Host catalog offline');
+		expect(screen.getByRole('button', { name: /Create card/ })).toBeDisabled();
+		boardApi.captureCatalog.mockResolvedValue(catalog);
+		fireEvent.click(screen.getByRole('button', { name: /Retry catalog/ }));
+		await waitFor(() => expect(screen.getByRole('button', { name: /Create card/ })).toBeEnabled());
+		boardApi.captureCard.mockResolvedValue({
+			ok: false,
+			error: {
+				code: 'protected-field',
+				message: 'Native human capture requires the desktop main frame',
+			},
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Create card/ }));
+		expect(await screen.findByRole('alert')).toHaveTextContent('protected-field');
+		expect(screen.getByLabelText('Title')).toHaveValue('Retained draft');
+	});
+
+	it('does not invent a namespace or create a second role when a legacy role write is absent from the host catalog', async () => {
+		installCapture();
+		boardApi.upsertRole.mockResolvedValue({ namespace: 'missing-namespace', profileId: 'missing' });
+		await openNew();
+		fireEvent.click(screen.getByRole('button', { name: /New role/ }));
+		fireEvent.change(screen.getByPlaceholderText('Role name, e.g. Reviewer'), {
+			target: { value: 'Legacy role' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+		expect(await screen.findByRole('alert')).toHaveTextContent('Board namespace is not available');
+		const previousCalls = boardApi.captureCatalog.mock.calls.length;
+		fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+		await waitFor(() => expect(boardApi.captureCatalog).toHaveBeenCalledTimes(previousCalls + 1));
+		expect(boardApi.upsertRole).toHaveBeenCalledTimes(1);
+		expect(screen.getByLabelText('Title')).toHaveValue('Explicit capture');
+	});
+});
+
+describe('separate review card', () => {
+	it('creates a dependent review with its own assignment and explicit artifact, leaving work unchanged', async () => {
+		const work = makeCard({
+			id: 'work',
+			title: 'Implement',
+			kind: 'work',
+			status: 'done',
+			runs: [
+				{
+					attempt: 1,
+					startedAt: '2026-01-01',
+					worktreeBranch: 'feature/x',
+					worktreePath: '/repo/tree',
+					summary: 'tests passed',
+					artifact: { worktreePath: '/repo/tree', branch: 'feature/x', commit: 'a'.repeat(40) },
+				},
+			],
+		});
+		installApis([{ id: 'b1', name: 'Board', cards: [work] }]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Implement'));
+		fireEvent.click(screen.getByRole('button', { name: 'Add review' }));
+		expect(screen.getByLabelText('Task type')).toHaveValue('review');
+		expect(screen.getByLabelText('Review branch')).toHaveValue('feature/x');
+		expect(screen.getByLabelText('Review commit')).toHaveValue('a'.repeat(40));
+		expect(screen.getByLabelText('Review commit')).toHaveAttribute('readonly');
+		expect(screen.getByLabelText('Review checks')).toHaveAttribute('readonly');
+		fireEvent.click(screen.getByRole('button', { name: 'Create card' }));
+		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.captureCard.mock.calls[0][0].reviewSource).toEqual({
+			cardId: 'work',
+			attempt: 1,
+		});
+		const card = boardApi.captureCard.mock.calls[0][0].card;
+		expect(card).toMatchObject({ kind: 'review', parents: ['work'], status: 'todo' });
+		expect(card.id).not.toBe(work.id);
+		expect(card.assigneeAgentId).toBeUndefined();
+		expect(card.body).toContain('Commit: ' + 'a'.repeat(40));
+		expect(card.body).toContain('Checks: tests passed');
+		expect(work.status).toBe('done');
+	});
+});
+
+it('sends the displayed collection revision when a human changes its start policy', async () => {
+	installApis([{ id: 'b1', name: 'Board', cards: [] }]);
+	render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+	const select = await screen.findByLabelText('Board start policy');
+	fireEvent.change(select, { target: { value: 'direct' } });
+	await waitFor(() =>
+		expect(boardApi.setStartPolicy).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 1, 'direct')
+	);
+	expect(boardApi.captureCard).not.toHaveBeenCalled();
+	expect(boardApi.setCardStatus).not.toHaveBeenCalled();
+});
+
+it('revalidates the pinned source and displays typed repair failures without saving a draft', async () => {
+	installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+	useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	boardApi.sourceCommand.mockResolvedValueOnce({
+		ok: false,
+		error: { code: 'identity-mismatch', message: 'Source changed' },
+	});
+	render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+	fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+	fireEvent.click(screen.getByRole('button', { name: 'Revalidate selected source' }));
+	expect(await screen.findByRole('status')).toHaveTextContent('identity-mismatch: Source changed');
+	expect(boardApi.sourceCommand).toHaveBeenCalledWith({
+		action: 'revalidate',
+		sourceKey: 'source-one',
+	});
+	expect(boardApi.captureCard).not.toHaveBeenCalled();
+	fireEvent.click(screen.getByRole('button', { name: 'Revalidate selected source' }));
+	await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Source revalidated'));
+	expect(boardApi.captureCard).not.toHaveBeenCalled();
+});
+
+describe('Board host wait explanations', () => {
+	it('shows exact scopes and refreshed host reasons after reload and filtering, without sending runtime commands', async () => {
+		const board: Board = {
+			id: 'b1',
+			name: 'Global',
+			cards: [
+				makeCard({
+					id: 'group',
+					title: 'Group work',
+					kind: 'work',
+					assigneeProfileId: undefined,
+					executionScope: { kind: 'group', groupId: 'allowed-group' },
+				}),
+				makeCard({
+					id: 'agent',
+					title: 'Agent work',
+					assigneeProfileId: undefined,
+					executionScope: { kind: 'agent', agentId: 's1' },
+				}),
+			],
+		};
+		installApis([board]);
+		let groupReasons: BoardReadinessReason[] = [
+			'emptyEligibleWorkers',
+			'worker-paused',
+			'approval-required',
+		];
+		boardApi.queryWorkspace.mockImplementation(async () => {
+			const response = workspaceResponse([board]);
+			if (response.ok)
+				response.value.collections[0].readiness = {
+					group: groupReasons,
+					agent: ['occupancy-unknown'],
+				};
+			return response;
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByText('Group: allowed-group')).toBeInTheDocument();
+		expect(screen.getByText(/Agent: .*s1/)).toBeInTheDocument();
+		expect(
+			screen.getByText('Waiting: emptyEligibleWorkers, worker-paused, approval-required')
+		).toBeInTheDocument();
+		expect(screen.getByText('Waiting: occupancy-unknown')).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'work' } });
+		expect(screen.queryByText('Agent work')).not.toBeInTheDocument();
+		expect(
+			screen.getByText('Waiting: emptyEligibleWorkers, worker-paused, approval-required')
+		).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'all' } });
+		groupReasons = ['worker-busy', 'held'];
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+		expect(await screen.findByText('Waiting: worker-busy, held')).toBeInTheDocument();
+		expect(screen.queryByText(/Waiting: emptyEligibleWorkers/)).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Workers' }));
+		expect(
+			await screen.findByText(
+				'Intake pause prevents new Board starts. Work already running continues.'
+			)
+		).toBeInTheDocument();
+		expect(screen.queryByText(/settings are not yet enforced/)).not.toBeInTheDocument();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+	});
+	it('replaces capture-time waiting evidence on global reload instead of keeping a stale saved banner', async () => {
+		const board: Board = {
+			id: 'b1',
+			name: 'Board',
+			cards: [makeCard({ id: 'c', title: 'Captured' })],
+		};
+		installApis([board]);
+		const captured = { ...board.cards[0], storageRevision: 1 };
+		boardApi.captureCard.mockResolvedValue({
+			ok: true,
+			value: { ...board, cards: [captured] },
+			readiness: { c: ['emptyEligibleWorkers'] },
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Captured'));
+		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Saved card' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+		expect(await screen.findByRole('status')).toHaveTextContent('emptyEligibleWorkers');
+		expect(screen.getByText('Waiting: emptyEligibleWorkers')).toBeInTheDocument();
+		boardApi.queryWorkspace.mockImplementation(async () => {
+			const response = workspaceResponse([board]);
+			if (response.ok) response.value.collections[0].readiness = { c: ['worker-busy'] };
+			return response;
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+		expect(await screen.findByText('Waiting: worker-busy')).toBeInTheDocument();
+		expect(screen.queryByRole('status')).not.toBeInTheDocument();
+		expect(screen.queryByText(/emptyEligibleWorkers/)).not.toBeInTheDocument();
+	});
+
+	it('retains an explicit unknown diagnosis when an older/unavailable host supplies no evidence', async () => {
+		installApis([{ id: 'b1', name: 'Board', cards: [makeCard({ id: 'c', title: 'Unknown' })] }]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByText('Waiting: host diagnosis unknown')).toBeInTheDocument();
+	});
 });

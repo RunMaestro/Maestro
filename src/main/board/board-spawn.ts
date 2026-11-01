@@ -43,6 +43,8 @@
  * with a clear reason instead of silently running in the project root.
  */
 
+import { readBoardRunArtifact } from './board-review';
+import { captureException } from '../utils/sentry';
 import { listProfiles } from '../profiles/profile-storage';
 import {
 	resolveProfileSpawnOverrides,
@@ -62,6 +64,7 @@ import { logger } from '../utils/logger';
 import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 import type { StoredSession } from '../stores/types';
 import { canonicalJson } from '../../shared/canonicalJson';
+import type { BoardRunService } from './board-runtime';
 
 /** Default per-card run budget (mirrors the Cue default `timeout_minutes: 30`). */
 const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
@@ -69,10 +72,58 @@ const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
 /** Attempt-owned cancellation covers preparation as well as the live process. */
 const activeCardRuns = new Map<string, { runId: string; controller: AbortController }>();
 
+/** Bind the durable adapter to Cue's existing run and stop paths. A missing
+ * process in an in-memory registry is not evidence of termination after restart. */
+export function createBoardRunService(
+	ctx: BoardSpawnContext,
+	probe: BoardRunService['probe'] = () => 'unknown'
+): BoardRunService {
+	return {
+		spawn: (spec, hooks) => {
+			const worker = ctx.getStoredSessions().find((session) => session.id === spec.workerAgentId);
+			const location = worker?.sessionSshRemoteConfig?.enabled
+				? { kind: 'ssh', remoteId: worker.sessionSshRemoteConfig.remoteId }
+				: worker?.sshRemoteId
+					? { kind: 'ssh', remoteId: worker.sshRemoteId }
+					: { kind: 'local' };
+			if (!worker || canonicalJson(location) !== canonicalJson(spec.repository.location))
+				return Promise.resolve({
+					...blockedSpawnResult('Selected worker execution location changed'),
+					executionStarted: false,
+				});
+			return spawnBoardCard(
+				spec.repository.workingDirectory,
+				{
+					card: spec.card as unknown as BoardCard,
+					agentId: spec.workerAgentId,
+					overrides: spec.overrides,
+					lifecycle: { runId: spec.runToken.runId, ...hooks },
+				},
+				ctx,
+				spec.key.collectionKey
+			);
+		},
+		stop: (spec) => {
+			cancelBoardCardRun(
+				spec.repository.workingDirectory,
+				spec.key.collectionKey,
+				spec.key.cardId,
+				spec.runToken.runId
+			);
+		},
+		probe,
+	};
+}
+
 /** Stop preparation and, if already launched, the attempt's Cue process. */
-export function cancelBoardCardRun(projectRoot: string, boardId: string, cardId: string): boolean {
+export function cancelBoardCardRun(
+	projectRoot: string,
+	boardId: string,
+	cardId: string,
+	expectedRunId?: string
+): boolean {
 	const run = activeCardRuns.get(canonicalJson([projectRoot, boardId, cardId]));
-	if (!run) return false;
+	if (!run || (expectedRunId !== undefined && run.runId !== expectedRunId)) return false;
 	run.controller.abort();
 	stopCueRun(run.runId);
 	return true;
@@ -213,10 +264,27 @@ export async function spawnBoardCard(
 	boardId: string
 ): Promise<CardSpawnResult> {
 	const { card, overrides, agentId } = request;
-	const run = { runId: `board-${card.id}-${generateUUID()}`, controller: new AbortController() };
+	const run = {
+		runId: request.lifecycle?.runId ?? `board-${card.id}-${generateUUID()}`,
+		controller: new AbortController(),
+	};
 	const key = canonicalJson([projectRoot, boardId, card.id]);
+	if (request.lifecycle && activeCardRuns.has(key))
+		return {
+			output: '',
+			exitCode: null,
+			error: 'Board attempt already active',
+			executionStarted: false,
+		};
 	activeCardRuns.set(key, run);
 	try {
+		if (request.lifecycle && !request.lifecycle.canPrepare())
+			return {
+				output: '',
+				exitCode: null,
+				executionStarted: false,
+				error: 'Prepared Board claim invalidated',
+			};
 		// Resolve the base session: the pool-chosen worker (`agentId`) on the Phase 6
 		// path, else the card's profile base agent (legacy single-agent path).
 		const baseSession = resolveBaseSession(projectRoot, card, agentId, ctx);
@@ -225,6 +293,7 @@ export async function spawnBoardCard(
 				output: '',
 				exitCode: null,
 				error: `Board card "${card.id}": worker agent could not be resolved.`,
+				...(request.lifecycle ? { executionStarted: false } : {}),
 			};
 		}
 		// Preserve the profile's role as a preamble alongside the canonical
@@ -233,17 +302,30 @@ export async function spawnBoardCard(
 		// metadata). model/effort/args flow through the native override fields below.
 		const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
 		const promptText =
-			`${roleLine}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
+			`${roleLine}${card.reviewHandoff ? `Review the host-bound artifact: ${canonicalJson(card.reviewHandoff)}\n\n` : ''}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
 
 		// Phase 4: a card that opted into isolation runs in its own checkout. The
 		// worktree is created on first claim and reused by every retry.
 		let worktree: { path: string; branch: string } | undefined;
 		if (card.worktree) {
 			const provisioned = await provisionCardWorktree(projectRoot, card, baseSession);
-			if (run.controller.signal.aborted) return { output: '', exitCode: null };
-			if (!provisioned.ok) return provisioned.result;
+			if (run.controller.signal.aborted)
+				return {
+					output: '',
+					exitCode: null,
+					...(request.lifecycle ? { executionStarted: false } : {}),
+				};
+			if (!provisioned.ok)
+				return { ...provisioned.result, ...(request.lifecycle ? { executionStarted: false } : {}) };
 			worktree = provisioned.worktree;
 		}
+		if (request.lifecycle && !request.lifecycle.canPrepare())
+			return {
+				output: '',
+				exitCode: null,
+				executionStarted: false,
+				error: 'Prepared Board claim invalidated',
+			};
 
 		return await runCardPrompt(
 			projectRoot,
@@ -253,7 +335,8 @@ export async function spawnBoardCard(
 			overrides,
 			ctx,
 			worktree,
-			run
+			run,
+			request.lifecycle
 		);
 	} finally {
 		if (activeCardRuns.get(key) === run) activeCardRuns.delete(key);
@@ -388,7 +471,8 @@ async function runCardPrompt(
 	overrides: ProfileSpawnOverrides,
 	ctx: BoardSpawnContext,
 	worktree?: { path: string; branch: string },
-	run?: { runId: string; controller: Pick<AbortController, 'signal'> }
+	run?: { runId: string; controller: Pick<AbortController, 'signal'> },
+	lifecycle?: CardSpawnRequest['lifecycle']
 ): Promise<CardSpawnResult> {
 	const runCwd = worktree?.path ?? projectRoot;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
@@ -411,7 +495,8 @@ async function runCardPrompt(
 		fullPath: runCwd,
 		projectRoot: runCwd,
 	} as StoredSession);
-	if (run?.controller.signal.aborted) return { output: '', exitCode: null };
+	if (run?.controller.signal.aborted)
+		return { output: '', exitCode: null, ...(lifecycle ? { executionStarted: false } : {}) };
 	const runId = run?.runId ?? `board-${card.id}-${generateUUID()}`;
 	const templateContext: TemplateContext = {
 		session: {
@@ -431,6 +516,17 @@ async function runCardPrompt(
 	const result = await executeCuePrompt({
 		runId,
 		signal: run?.controller.signal,
+		beforeLaunch: lifecycle?.beforeLaunch,
+		prepareLaunch: card.reviewHandoff
+			? async () => {
+					if (baseSession.sessionSshRemoteConfig?.enabled) return false;
+					const artifact = await readBoardRunArtifact(card.reviewHandoff!.artifact.worktreePath);
+					return (
+						!!artifact && canonicalJson(artifact) === canonicalJson(card.reviewHandoff!.artifact)
+					);
+				}
+			: undefined,
+		onStarted: lifecycle?.onStarted,
 		appendSystemPrompt,
 		session: {
 			id: baseSession.id,
@@ -475,9 +571,32 @@ async function runCardPrompt(
 		agentConfigValues,
 	});
 
+	let artifact;
+	if (
+		lifecycle &&
+		result.executionStarted &&
+		result.terminationConfirmed &&
+		!baseSession.sessionSshRemoteConfig?.enabled
+	) {
+		try {
+			artifact = (await readBoardRunArtifact(runCwd)) ?? undefined;
+		} catch (error) {
+			void captureException(error, { operation: 'board:completionArtifact' });
+		}
+	}
+
 	return {
+		artifact,
 		output: result.stdout,
 		exitCode: result.exitCode,
+		...(lifecycle
+			? {
+					executionStarted: result.executionStarted,
+					// The executor resolves after the native turn settles. For SSH the
+					// local ssh client's exit alone cannot prove remote termination.
+					terminationConfirmed: result.terminationConfirmed,
+				}
+			: {}),
 		...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
 	};
 }

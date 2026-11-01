@@ -14,6 +14,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Execution is injected through onCueRun; avoid loading native provider stores.
+vi.mock('../../../main/cue/cue-executor', () => ({ getCueRunLiveOutput: () => null }));
+
 import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';

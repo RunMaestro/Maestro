@@ -340,8 +340,7 @@ describe('useSessionLifecycle', () => {
 
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 
-			// A caller that does not pass boardWorker (unlike EditAgentModal, which
-			// always sends a boolean) must not clear the opt-in as a side effect.
+			// Editing an agent without changing enrollment must preserve the opt-in.
 			act(() => {
 				result.current.handleSaveEditAgent('session-1', 'Renamed');
 			});

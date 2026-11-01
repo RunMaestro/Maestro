@@ -11,6 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Execution is injected through onCueRun; avoid loading native provider stores.
+vi.mock('../../../main/cue/cue-executor', () => ({ getCueRunLiveOutput: () => null }));
+
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 import type { CueEngineDeps } from '../../../main/cue/cue-engine';
 import type { Board } from '../../../shared/board/types';
@@ -212,6 +215,51 @@ describe('CueEngine.drain', () => {
 		engine.start();
 		return { engine, exec, onLog, deps };
 	}
+
+	it('uses only central intake, gates both features, and drains native Board tasks', async () => {
+		let boardEnabled = true;
+		let finish!: () => void;
+		const listBoards = vi.fn(() => []);
+		const getProjectRoots = vi.fn(() => []);
+		const stopGlobal = vi.fn();
+		const tickGlobal = vi.fn(async () => {});
+		const { engine } = boot({
+			getSessions: () => [],
+			board: {
+				getEncoreFeatures: () => ({ maestroCue: true, board: boardEnabled }),
+				getProjectRoots,
+				listBoards,
+				saveBoard: vi.fn(),
+				resolveOverrides: () => ({}),
+				spawnCard: vi.fn(),
+				tickGlobal,
+				stopGlobal,
+			},
+		});
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(tickGlobal).toHaveBeenCalledOnce();
+		expect(getProjectRoots).not.toHaveBeenCalled();
+		expect(listBoards).not.toHaveBeenCalled();
+		boardEnabled = false;
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(tickGlobal).toHaveBeenCalledOnce();
+		engine.trackBoardTask(
+			new Promise<void>((resolve) => {
+				finish = resolve;
+			})
+		);
+		let drained = false;
+		const drain = engine.drain({ timeoutMs: 5_000 }).then(() => {
+			drained = true;
+		});
+		await vi.advanceTimersByTimeAsync(100);
+		expect(drained).toBe(false);
+		finish();
+		await vi.advanceTimersByTimeAsync(1000);
+		await drain;
+		expect(drained).toBe(true);
+		expect(stopGlobal).toHaveBeenCalled();
+	});
 
 	it.each(['stop', 'drain'] as const)(
 		'cancels owned Board preparation and decomposition during %s, preserving Resume',

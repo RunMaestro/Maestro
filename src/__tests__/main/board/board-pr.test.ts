@@ -12,13 +12,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const listBoards = vi.fn();
-const saveBoard = vi.fn();
+const queryBoardWorkspace = vi.fn();
+const stampBoardRunPr = vi.fn();
 const enqueueBoardWrite = vi.fn(async (_root: string, fn: () => void) => fn());
 const createPullRequest = vi.fn();
 
 vi.mock('../../../main/board/board-storage', () => ({
 	listBoards: (...args: unknown[]) => listBoards(...args),
-	saveBoard: (...args: unknown[]) => saveBoard(...args),
+	queryBoardWorkspace: (...args: unknown[]) => queryBoardWorkspace(...args),
+	stampBoardRunPr: (...args: unknown[]) => stampBoardRunPr(...args),
 	enqueueBoardWrite: (...args: unknown[]) => enqueueBoardWrite(...(args as [string, () => void])),
 }));
 vi.mock('../../../main/utils/pr-creator', () => ({
@@ -75,6 +77,21 @@ function board(cards: BoardCard[] = [card()]): Board {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// The host flow delegates persistence to the narrow result writer. Its real
+	// SQLite behavior is exercised by the isolated writer fixture, not this mock.
+	stampBoardRunPr.mockImplementation(
+		(
+			_root: string,
+			value: Board,
+			cardId: string,
+			expectedRun: Pick<CardRun, 'attempt' | 'startedAt'>,
+			result: { prUrl?: string; prError?: string }
+		) => {
+			if (result.prUrl) stampCardPrUrl(value, cardId, result.prUrl, NOW, expectedRun);
+			if (result.prError) stampCardPrError(value, cardId, result.prError, NOW, expectedRun);
+			return value;
+		}
+	);
 	enqueueBoardWrite.mockImplementation(async (_root: string, fn: () => void) => fn());
 });
 
@@ -132,9 +149,10 @@ describe('resolveCardPrRequest', () => {
 	});
 
 	it('falls back to the card worktree path when the run recorded none', () => {
+		const legacyWorktree = { enabled: true, path: '/elsewhere/checkout' };
 		const handWritten = card({
 			runs: [run({ worktreePath: undefined })],
-			worktree: { enabled: true, path: '/elsewhere/checkout' },
+			worktree: legacyWorktree,
 		});
 		expect(resolveCardPrRequest(board([handWritten]), 'c1')?.worktreePath).toBe(
 			'/elsewhere/checkout'
@@ -388,6 +406,31 @@ describe('maybeCreateCardPr', () => {
 });
 
 describe('startCardPr', () => {
+	it.each([PROJECT_ROOT, 'maestro-board-source:local-source'])(
+		'resolves the PR base in the run checkout rather than Board source %s',
+		async (source) => {
+			listBoards.mockReturnValue([board()]);
+			queryBoardWorkspace.mockReturnValue({
+				sources: [
+					{
+						sourceKey: 'local-source',
+						location: { location: { kind: 'local' }, path: PROJECT_ROOT },
+					},
+				],
+			});
+			createPullRequest.mockResolvedValue({
+				success: true,
+				prUrl: 'https://github.com/o/r/pull/7',
+			});
+			startCardPr(source, 'b1', 'c1');
+			await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
+			expect(createPullRequest).toHaveBeenCalledWith(
+				expect.objectContaining({ worktreePath: WORKTREE_PATH })
+			);
+			expect(createPullRequest.mock.calls[0][0]).not.toHaveProperty('mainRepoCwd');
+		}
+	);
+
 	/** Resolve the pending gh call on demand, so overlap is observable. */
 	function deferredCreate() {
 		let release!: (result: CardPrResult) => void;
@@ -410,7 +453,7 @@ describe('startCardPr', () => {
 		expect(createPullRequest).toHaveBeenCalledTimes(1);
 
 		deferred.release();
-		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
 	});
 
 	it('stamps the url through the board write queue', async () => {
@@ -420,10 +463,17 @@ describe('startCardPr', () => {
 		startCardPr(PROJECT_ROOT, 'b1', 'c2-unrelated');
 		startCardPr(PROJECT_ROOT, 'b1', 'c1');
 
-		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
 		expect(enqueueBoardWrite).toHaveBeenCalledWith(PROJECT_ROOT, expect.any(Function));
-		const saved = saveBoard.mock.calls[0][1] as Board;
+		const saved = stampBoardRunPr.mock.calls[0][1] as Board;
 		expect(saved.cards[0].runs?.[0].prUrl).toBe('https://github.com/o/r/pull/7');
+		expect(stampBoardRunPr).toHaveBeenCalledWith(
+			PROJECT_ROOT,
+			saved,
+			'c1',
+			expect.objectContaining({ attempt: 1, startedAt: NOW }),
+			{ prUrl: 'https://github.com/o/r/pull/7' }
+		);
 	});
 
 	it('persists the failure reason through the board write queue and keeps the card done', async () => {
@@ -433,9 +483,9 @@ describe('startCardPr', () => {
 
 		startCardPr(PROJECT_ROOT, 'b1', 'c1');
 
-		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
 		expect(enqueueBoardWrite).toHaveBeenCalledWith(PROJECT_ROOT, expect.any(Function));
-		const saved = saveBoard.mock.calls[0][1] as Board;
+		const saved = stampBoardRunPr.mock.calls[0][1] as Board;
 		expect(saved.cards[0].runs?.[0].prError).toBe('Failed to push branch: boom');
 		expect(saved.cards[0].runs?.[0].prUrl).toBeUndefined();
 		expect(saved.cards[0].status).toBe('done');
@@ -448,8 +498,8 @@ describe('startCardPr', () => {
 
 		startCardPr(PROJECT_ROOT, 'b1', 'c1');
 
-		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
-		const saved = saveBoard.mock.calls[0][1] as Board;
+		await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
+		const saved = stampBoardRunPr.mock.calls[0][1] as Board;
 		expect(saved.cards[0].runs?.[0].prUrl).toBe('https://github.com/o/r/pull/7');
 		expect(saved.cards[0].runs?.[0].prError).toBeUndefined();
 	});
@@ -500,13 +550,13 @@ it.each([true, false])(
 			prUrl: 'https://github.com/o/r/pull/8',
 		});
 		startCardPr(PROJECT_ROOT, 'b1', 'c1');
-		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
 		finishFirst(
 			success
 				? { success: true, prUrl: 'https://github.com/o/r/pull/7' }
 				: { success: false, error: 'old failure' }
 		);
-		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(2));
 		expect(createPullRequest).toHaveBeenCalledTimes(2);
 		const [first, second] = current.cards[0].runs!;
 		expect(first.prUrl).toBe(success ? 'https://github.com/o/r/pull/7' : undefined);
@@ -520,4 +570,29 @@ it('does not stamp a replacement card with the same attempt number', () => {
 	const replacement = board([card({ runs: [run({ startedAt: '2026-08-01T00:00:00.000Z' })] })]);
 	expect(stampCardPrUrl(replacement, 'c1', 'old-url', NOW, run())).toBe(false);
 	expect(stampCardPrError(replacement, 'c1', 'old-error', NOW, run())).toBe(false);
+});
+
+it('records and surfaces unsupported remote PR completion without invoking local Git or gh', async () => {
+	const saved = board();
+	listBoards.mockReturnValue([saved]);
+	queryBoardWorkspace.mockReturnValue({
+		sources: [
+			{
+				sourceKey: 'remote-source',
+				location: { location: { kind: 'ssh', remoteId: 'remote' }, path: '/remote-only/repo' },
+			},
+		],
+	});
+	const notify = vi.fn();
+	startCardPr('maestro-board-source:remote-source', 'b1', 'c1', { notify });
+	await vi.waitFor(() => expect(stampBoardRunPr).toHaveBeenCalledTimes(1));
+	expect(createPullRequest).not.toHaveBeenCalled();
+	expect(saved.cards[0].runs?.[0].prError).toContain('remote Git/PR adapter');
+	expect(notify).toHaveBeenCalledWith(
+		expect.objectContaining({
+			color: 'red',
+			dismissible: true,
+			message: expect.stringContaining('remote Git/PR adapter'),
+		})
+	);
 });

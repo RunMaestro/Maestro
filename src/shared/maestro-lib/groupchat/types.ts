@@ -184,6 +184,8 @@ export type GroupChatPromptId =
 export interface GroupChatSpawn {
 	/** Process id; the shapes are in `session-ids.ts`. */
 	processId: string;
+	/** Real Maestro worker selected by the caller, absent for standalone moderators. */
+	originWorkerId?: string;
 	providerId: string;
 	agent: AgentConfig;
 	command?: string;

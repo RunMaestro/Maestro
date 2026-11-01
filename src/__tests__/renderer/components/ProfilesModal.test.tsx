@@ -111,3 +111,68 @@ describe('ProfilesModal', () => {
 		await waitFor(() => expect(profilesApi.list).toHaveBeenCalledTimes(2));
 	});
 });
+
+it('edits every advanced role field for a pinned central source without an active agent or YAML writes', async () => {
+	installApi([]);
+	useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	const profile: AgentProfile = {
+		id: 'p',
+		name: 'Advanced',
+		baseAgentId: 'closed-worker',
+		model: 'custom-model',
+		effort: 'xhigh',
+		appendSystemPrompt: '  original prompt\n',
+		customArgs: '--original "two words"',
+	};
+	let saved = profile;
+	const captureCatalog = vi.fn(async () => ({
+		agents: [],
+		groups: [],
+		repositories: [],
+		defaultStartMode: 'approval' as const,
+		profiles: [
+			{ namespace: 'legacy:selected', profile: saved },
+			{ namespace: 'legacy:other', profile: { id: 'p', name: 'Foreign' } },
+		],
+	}));
+	const sourceCommand = vi.fn(async (command) => {
+		saved = command.profile;
+		return { ok: true as const };
+	});
+	window.maestro.board = { ...window.maestro.board, captureCatalog, sourceCommand };
+	const props = {
+		theme: mockTheme,
+		onClose: vi.fn(),
+		source: { sourceKey: 'selected', namespace: 'legacy:selected' },
+	};
+	const view = render(<ProfilesModal {...props} />);
+	expect(await screen.findByText('Advanced')).toBeInTheDocument();
+	expect(screen.queryByText('Foreign')).not.toBeInTheDocument();
+	fireEvent.click(screen.getByRole('button', { name: 'Edit Advanced' }));
+	expect(screen.getByRole('option', { name: 'Unavailable agent: closed-worker' })).toHaveProperty(
+		'selected',
+		true
+	);
+	expect(screen.getByLabelText('Model (optional)')).toHaveValue('custom-model');
+	expect(screen.getByLabelText('Effort (optional)')).toHaveValue('xhigh');
+	expect(screen.getByLabelText('Extra CLI args (optional)')).toHaveValue(profile.customArgs);
+	fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Renamed' } });
+	fireEvent.change(screen.getByLabelText('Extra CLI args (optional)'), {
+		target: { value: '--changed "two words"' },
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+	await waitFor(() =>
+		expect(sourceCommand).toHaveBeenCalledWith({
+			action: 'save-role',
+			sourceKey: 'selected',
+			namespace: 'legacy:selected',
+			profile: { ...profile, name: 'Renamed', customArgs: '--changed "two words"' },
+		})
+	);
+	view.unmount();
+	render(<ProfilesModal {...props} />);
+	expect(await screen.findByText('Renamed')).toBeInTheDocument();
+	expect(profilesApi.list).not.toHaveBeenCalled();
+	expect(profilesApi.upsert).not.toHaveBeenCalled();
+	expect(profilesApi.delete).not.toHaveBeenCalled();
+});

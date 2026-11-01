@@ -108,8 +108,7 @@ export interface EditAgentModalProps {
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
 		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-		convertProviderHistory?: boolean,
-		boardWorker?: boolean
+		convertProviderHistory?: boolean
 	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;
