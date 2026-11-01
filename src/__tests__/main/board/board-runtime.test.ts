@@ -31,12 +31,13 @@ import {
 	hasHeadlessAgentActivity,
 } from '../../../main/utils/headless-agent-activity';
 import * as binaryProber from '../../../shared/maestro-lib/launch/path-prober';
+import * as agentDefinitions from '../../../shared/maestro-lib/providers/definitions';
 import { spawnAgent } from '../../../cli/services/agent-spawner';
 import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
 import type { SessionInfo } from '../../../shared/types';
 import { spawnGroupChatAgent } from '../../../main/group-chat/spawnGroupChatAgent';
 import { pathToFileURL } from 'node:url';
-import { FAKE_AGENT_PATH } from '../../shared/maestro-lib/run/fakeAgent';
+import { FAKE_AGENT_PATH, fakeAgentSpec } from '../../shared/maestro-lib/run/fakeAgent';
 import { isAgentBusy } from '../../../main/utils/agent-busy';
 import { ProcessManager } from '../../../main/process-manager';
 import type { BoardClaimHostContext } from '../../../main/board/board-claims';
@@ -44,7 +45,6 @@ import type { CardSpawnResult } from '../../../main/board/board-dispatcher';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
 import { runProcess, stopProcess } from '../../../main/cue/cue-process-lifecycle';
-import { fakeAgentSpec } from '../../shared/maestro-lib/run/fakeAgent';
 
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: () => undefined,
@@ -57,6 +57,7 @@ vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 let dir: string;
+let providerScript: string;
 let db: ReturnType<typeof openBoardDb>;
 let storage: BoardStorageFacade;
 let runtime: BoardRuntime;
@@ -92,6 +93,24 @@ function newRuntime(
 }
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-lifecycle-'));
+	providerScript = path.join(dir, 'provider fixture.mjs');
+	fs.copyFileSync(FAKE_AGENT_PATH, providerScript);
+	// A provider fixture is JavaScript input to Node, never an OS executable.
+	fs.chmodSync(providerScript, 0o644);
+	const getDefinition = agentDefinitions.getAgentDefinition;
+	vi.spyOn(agentDefinitions, 'getAgentDefinition').mockImplementation((id) => {
+		const definition = getDefinition(id);
+		if (id !== 'codex' || !definition) return definition;
+		return {
+			...definition,
+			// Put the script before Codex's real arguments so Node does not parse
+			// provider flags. Admission, launch planning and the child remain real.
+			workingDirArgs: (cwd: string) => [
+				providerScript,
+				...(definition.workingDirArgs?.(cwd) ?? []),
+			],
+		};
+	});
 	db = openBoardDb(path.join(dir, 'fixture.sqlite'));
 	storage = new BoardStorageFacade(db, (root) => [root]);
 	roots = [path.join(dir, 'a'), path.join(dir, 'b')];
@@ -339,7 +358,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			vi.spyOn(binaryProber, 'checkBinaryExists').mockImplementationOnce(async () => {
 				prepared();
 				await planning;
-				return { exists: true, path: FAKE_AGENT_PATH };
+				return { exists: true, path: fake.command };
 			});
 			const pending = run('worker', 'fixture', undefined, undefined, 'relay');
 			await ready;
@@ -358,17 +377,24 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		'keeps a real %s headless child exclusive before tab persistence and through abort',
 		async (origin) => {
 			configureAgentAdmission((id, runId) => boardWorkerCanStart(db, id, runId));
+			const argvOut = path.join(dir, 'provider-argv.json');
 			const fake = fakeAgentSpec(
 				dir,
 				{ chunks: [], close: { code: 0, signal: null } },
-				{ hold: true }
+				{ hold: true, argvOut }
 			);
 			const controller = new AbortController();
 			let pid: number | undefined;
 			const run = createPluginHeadlessAgentRunner({
 				getAgent: () =>
-					({ id: 'worker', toolType: 'codex', cwd: dir, customEnvVars: fake.env }) as SessionInfo,
-				detectAgent: async () => ({ available: true, path: FAKE_AGENT_PATH }),
+					({
+						id: 'worker',
+						toolType: 'codex',
+						cwd: dir,
+						customEnvVars: fake.env,
+						customArgs: '--fixture-label "spaces and $literal"',
+					}) as SessionInfo,
+				detectAgent: async () => ({ available: true, path: fake.command }),
 				hasPluginTools: () => false,
 				prepareSystemPrompt: async () => undefined,
 				issueRunToken: vi.fn(),
@@ -389,6 +415,11 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			const pending = run('worker', 'fixture', undefined, controller.signal, origin);
 			try {
 				await vi.waitFor(() => expect(pid).toBeGreaterThan(0));
+				await vi.waitFor(() => expect(fs.existsSync(argvOut)).toBe(true));
+				const argv = JSON.parse(fs.readFileSync(argvOut, 'utf8'));
+				expect(argv.slice(0, 3)).toEqual(['-C', dir, 'exec']);
+				expect(argv).toContain('--json');
+				expect(argv.slice(-4)).toEqual(['--fixture-label', 'spaces and $literal', '--', 'fixture']);
 				expect(() => process.kill(pid!, 0)).not.toThrow();
 				expect(isAgentBusy({ id: 'worker', aiTabs: [] }, null)).toBe(true);
 				host.agentStates.worker.busy = isAgentBusy({ id: 'worker', aiTabs: [] }, null);
@@ -421,7 +452,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			await expect(
 				spawnAgent('codex', dir, 'fixture', undefined, {
 					...options,
-					agentCommand: FAKE_AGENT_PATH,
+					agentCommand: process.execPath,
 					agentConfigValues: {},
 				})
 			).rejects.toThrow('admission proof');
@@ -436,7 +467,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		const holding = fakeAgentSpec(
 			dir,
 			{ chunks: [], close: { code: 0, signal: null } },
-			{ hold: true }
+			{ hold: true, argvOut: path.join(dir, 'sibling-argv.json') }
 		);
 		const rejected = fakeAgentSpec(dir, {
 			chunks: [],
@@ -452,54 +483,85 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			close: { code: 0, signal: null },
 		});
 		const counter = path.join(dir, 'attempts');
-		const shim = path.join(dir, 'retry.cjs');
+		const attemptRecords = path.join(dir, 'attempt-records.jsonl');
+		const shimDir = path.join(dir, 'retry provider');
+		fs.mkdirSync(shimDir);
+		const shim = path.join(shimDir, 'retry.cjs');
 		fs.writeFileSync(
 			shim,
-			`#!/usr/bin/env node
-const fs = require('node:fs');
+			`const fs = require('node:fs');
 const n = fs.existsSync(process.env.ATTEMPTS) ? Number(fs.readFileSync(process.env.ATTEMPTS, 'utf8')) : 0;
 fs.writeFileSync(process.env.ATTEMPTS, String(n + 1));
+fs.appendFileSync(process.env.ATTEMPT_RECORDS, JSON.stringify({ attempt: n + 1, pid: process.pid, execPath: process.execPath, argv: process.argv.slice(2) }) + '\\n');
 process.env.FAKE_AGENT_RECORDING = n === 0 ? process.env.FIRST_RECORDING : process.env.SECOND_RECORDING;
 import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 `,
-			{ mode: 0o755 }
+			{ mode: 0o644 }
 		);
 		const siblingProof = issueAgentTurnAdmission('worker');
 		const retryProof = issueAgentTurnAdmission('worker');
 		const controller = new AbortController();
-		let started = false;
+		let siblingPid: number | undefined;
 		const sibling = spawnAgent('codex', dir, 'hold', undefined, {
 			originWorkerId: 'worker',
 			workerAdmission: siblingProof,
-			agentCommand: FAKE_AGENT_PATH,
+			agentCommand: holding.command,
 			agentConfigValues: {},
 			customEnvVars: holding.env as Record<string, string>,
 			signal: controller.signal,
-			onProcessStarted: () => {
-				started = true;
+			onProcessStarted: (pid) => {
+				siblingPid = pid;
 			},
 		});
 		try {
-			await vi.waitFor(() => expect(started).toBe(true));
+			await vi.waitFor(() => expect(siblingPid).toBeGreaterThan(0));
+			await vi.waitFor(() => expect(fs.existsSync(holding.env!.FAKE_AGENT_ARGV_OUT!)).toBe(true));
+			providerScript = shim;
 			const attempts: number[] = [];
+			const attemptPids: number[] = [];
 			const result = await spawnAgent('codex', dir, 'retry', undefined, {
 				originWorkerId: 'worker',
 				workerAdmission: retryProof,
-				agentCommand: shim,
+				agentCommand: completed.command,
 				agentConfigValues: {},
 				customEffort: 'minimal',
 				customEnvVars: {
 					ATTEMPTS: counter,
+					ATTEMPT_RECORDS: attemptRecords,
 					FIRST_RECORDING: rejected.env.FAKE_AGENT_RECORDING!,
 					SECOND_RECORDING: completed.env.FAKE_AGENT_RECORDING!,
 				},
-				onProcessStarted: () => {
+				onProcessStarted: (pid) => {
+					expect(pid).toBeGreaterThan(0);
+					expect(() => process.kill(pid!, 0)).not.toThrow();
+					expect(() => process.kill(siblingPid!, 0)).not.toThrow();
+					for (const previousPid of attemptPids) {
+						expect(() => process.kill(previousPid, 0)).toThrow();
+					}
+					attemptPids.push(pid!);
 					attempts.push(getHeadlessAgentActivity().counts.worker);
 				},
 			});
 			expect(result).toMatchObject({ success: true, response: 'Done' });
 			expect(fs.readFileSync(counter, 'utf8')).toBe('2');
 			expect(attempts).toEqual([2, 2]); // no prior native child overlaps its retry
+			const records = fs
+				.readFileSync(attemptRecords, 'utf8')
+				.trim()
+				.split('\n')
+				.map((line) => JSON.parse(line));
+			expect(records.map((record) => record.attempt)).toEqual([1, 2]);
+			expect(records.map((record) => record.pid)).toEqual(attemptPids);
+			expect(new Set(attemptPids).size).toBe(2);
+			for (const record of records) {
+				expect(record.execPath).toBe(process.execPath);
+				expect(record.argv.slice(0, 3)).toEqual(['-C', dir, 'exec']);
+				expect(record.argv).toContain('--json');
+				expect(record.argv.slice(-2)).toEqual(['--', 'retry']);
+				expect(() => process.kill(record.pid, 0)).toThrow();
+			}
+			expect(records[0].argv).toContain('model_reasoning_effort="minimal"');
+			expect(records[1].argv).not.toContain('model_reasoning_effort="minimal"');
 			expect(getHeadlessAgentActivity().counts.worker).toBe(1);
 			const failed = await spawnAgent('codex', dir, 'missing binary', undefined, {
 				originWorkerId: 'worker',
@@ -519,6 +581,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 			revokeAgentTurnAdmission(retryProof);
 		}
 		expect(hasHeadlessAgentActivity('worker')).toBe(false);
+		expect(() => process.kill(siblingPid!, 0)).toThrow();
 	});
 
 	it('keeps occupancy through a throwing native start observer until the actual child exits', async () => {
@@ -533,11 +596,13 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 			spawnAgent('codex', dir, 'fixture', undefined, {
 				originWorkerId: 'worker',
 				workerAdmission: proof,
-				agentCommand: FAKE_AGENT_PATH,
+				agentCommand: fake.command,
 				agentConfigValues: {},
 				customEnvVars: fake.env as Record<string, string>,
 				onProcessStarted: (value) => {
 					pid = value;
+					expect(pid).toBeGreaterThan(0);
+					expect(() => process.kill(pid!, 0)).not.toThrow();
 					throw new Error('observer failed');
 				},
 			})
@@ -557,7 +622,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 			spawnAgent('codex', dir, 'fixture', undefined, {
 				originWorkerId: 'worker',
 				workerAdmission: proof,
-				agentCommand: FAKE_AGENT_PATH,
+				agentCommand: process.execPath,
 				agentConfigValues: {},
 			})
 		).rejects.toThrow('reserved');

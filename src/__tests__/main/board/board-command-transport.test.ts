@@ -144,7 +144,7 @@ const raw = (fields: Record<string, unknown>) =>
 	);
 
 beforeEach(async () => {
-	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-transport-'));
+	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-transport-')));
 	roots = [path.join(dir, 'one'), path.join(dir, 'two')];
 	db = openBoardDb(path.join(dir, 'board.sqlite'));
 	namespaces = roots.map((root, i) => {

@@ -190,7 +190,7 @@ describe('maestro-cli board', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		runTasks = [];
-		projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-cli-'));
+		projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-cli-')));
 		db = openBoardDb(path.join(projectRoot, 'board.sqlite'));
 		const plan = planBoardMigration({
 			source: { location: { kind: 'local' }, path: projectRoot },

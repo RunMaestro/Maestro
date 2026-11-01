@@ -1,5 +1,6 @@
 /** Exercise remote worktree path resolution against a real POSIX shell and filesystem. */
 import { spawnSync } from 'child_process';
+import { findPortableShell } from '../../helpers/portableShell';
 import {
 	chmodSync,
 	existsSync,
@@ -30,26 +31,6 @@ import {
 	resolveWorktreePathsRemote,
 } from '../../../main/utils/remote-git';
 import { buildShellCommand, shellEscape } from '../../../main/utils/shell-escape';
-
-function findPortableShell(): string | undefined {
-	const candidates = ['sh'];
-	if (process.platform === 'win32') {
-		const git = spawnSync('git', ['--exec-path'], { encoding: 'utf8' });
-		if (git.status === 0) {
-			let directory = path.resolve(git.stdout.trim());
-			while (path.dirname(directory) !== directory) {
-				for (const relative of ['usr/bin/sh.exe', 'bin/sh.exe']) {
-					const executable = path.join(directory, relative);
-					if (existsSync(executable)) candidates.unshift(executable);
-				}
-				directory = path.dirname(directory);
-			}
-		}
-	}
-	return candidates.find(
-		(candidate) => spawnSync(candidate, ['-c', 'exit 0'], { timeout: 5000 }).status === 0
-	);
-}
 
 const portableShell = findPortableShell();
 const gitAvailable = spawnSync('git', ['--version'], { timeout: 5000 }).status === 0;

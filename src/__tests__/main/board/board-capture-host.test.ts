@@ -88,7 +88,7 @@ function command(value = card()): BoardCaptureCommand {
 	};
 }
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-capture-'));
+	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-capture-')));
 	db = openBoardDb(path.join(dir, 'board.sqlite'));
 	const plan = planBoardMigration({
 		source: { location: { kind: 'local' }, path: dir },
