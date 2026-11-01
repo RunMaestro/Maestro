@@ -289,10 +289,14 @@ export class MemoryEngine {
 		this.database.transport.drainOwner(this.transportOwner);
 		return this.database.transport.status();
 	}
-	private evidence(source: MemorySource, messages: SessionMessage[]): MemoryEvidence[] {
-		let housekeeping = false;
-		let sessionOnly = false;
-		return messages.flatMap((m) => {
+	private evidence(
+		source: MemorySource,
+		messages: SessionMessage[],
+		state = { housekeeping: false, sessionOnly: false }
+	): MemoryEvidence[] {
+		let housekeeping = state.housekeeping;
+		let sessionOnly = state.sessionOnly;
+		const evidence = messages.flatMap((m) => {
 			const role = m.role ?? m.type;
 			if (role === 'user') housekeeping = isHousekeepingPrompt(m.content);
 			if (housekeeping) return [];
@@ -370,6 +374,9 @@ export class MemoryEngine {
 				})
 				.filter(isUsableMemoryEvidence);
 		});
+		state.housekeeping = housekeeping;
+		state.sessionOnly = sessionOnly;
+		return evidence;
 	}
 	private episodeIdentityVersion(job: PendingExtraction): string | null {
 		// Only an already-persisted v10 job may retain its original identity.
@@ -876,9 +883,13 @@ export class MemoryEngine {
 		const window = await readHistoricalWindow(source, source.cursor, this.policy!, 32000, () =>
 			this.enabledSource(source, this.database.config())
 		);
-		const evidence = this.evidence(source, window.messages).filter(
+		const provenance = this.database.get<{ housekeeping: boolean; sessionOnly: boolean }>(
+			'provenance:' + source.id
+		) ?? { housekeeping: false, sessionOnly: false };
+		const evidence = this.evidence(source, window.messages, provenance).filter(
 			(e) => !this.database.hasEvent(e.id) && !this.database.suppressedEvidence(source.userId!, e)
 		);
+		this.database.set('provenance:' + source.id, provenance);
 		if (!evidence.length) {
 			this.database.sourceState(source.id, window.cursor, window.complete ? 'complete' : 'pending');
 			return true;
@@ -1028,6 +1039,7 @@ export class MemoryEngine {
 			case 'status':
 				return { config, progress: this.database.progress(this.running, this.phase, this.error) };
 			case 'configure': {
+				const resumeAfterSave = this.running || this.timer !== null;
 				await this.drain();
 				this.models.invalidateQueryCache();
 				const next = { ...config, ...request.config, userId: config.userId };
@@ -1059,6 +1071,7 @@ export class MemoryEngine {
 				}
 				if (!next.enabled) this.pause('disabled');
 				else if (next.mode !== 'local' && !next.hostedConsent) this.pause('hosted-consent');
+				else if (resumeAfterSave) this.start();
 				return {
 					config: next,
 					progress: this.database.progress(this.running, this.phase, this.error),

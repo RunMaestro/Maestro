@@ -2469,6 +2469,8 @@ Backfill and retrieve evidence-backed user and project memory
 | `--dollars <n>`            | Total cost cap including reservations                                                                     | -       |
 | `--exclude <paths...>`     | Exclude absolute roots/projects/files before reads                                                        | -       |
 | `--consent-hosted`         | Consent to off-device processing of selected excerpts                                                     | -       |
+| `--ongoing`                | Continue incremental learning after backfill completes                                                    | -       |
+| `--no-ongoing`             | Stop after the current backfill completes                                                                 | -       |
 | `--kind <kind>`            | preference, project, decision, episode, commitment, or context                                            | -       |
 | `--history`                | List-only: browse all lifecycle statuses and dates                                                        | -       |
 | `--intent <mode>`          | Recall: current, as-of, previous, proposed, contested, or history (default: current; --qualify may infer) | -       |

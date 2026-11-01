@@ -2928,6 +2928,8 @@ pianola
 	.option('--dollars <n>', 'Total cost cap including reservations')
 	.option('--exclude <paths...>', 'Exclude absolute roots/projects/files before reads')
 	.option('--consent-hosted', 'Consent to off-device processing of selected excerpts')
+	.option('--ongoing', 'Continue incremental learning after backfill completes')
+	.option('--no-ongoing', 'Stop after the current backfill completes')
 	.option('--kind <kind>', 'preference, project, decision, episode, commitment, or context')
 	.option('--history', 'List-only: browse all lifecycle statuses and dates')
 	.option(

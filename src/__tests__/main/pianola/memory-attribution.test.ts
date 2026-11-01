@@ -141,6 +141,42 @@ describe('memory attribution admission', () => {
 		]);
 		expect(rows.map((r) => r.text)).toEqual(['I prefer careful reviews.']);
 	});
+	it('carries housekeeping and session scope across history windows', () => {
+		const state = { housekeeping: false, sessionOnly: false };
+		const classify = (messages: SessionMessage[]): MemoryEvidence[] =>
+			(
+				Object.create(MemoryEngine.prototype) as {
+					evidence(
+						source: MemorySource,
+						messages: SessionMessage[],
+						state: typeof state
+					): MemoryEvidence[];
+				}
+			).evidence(source, messages, state);
+		classify([message('user', 'Generate a brief synopsis of what you just accomplished.')]);
+		expect(state.housekeeping).toBe(true);
+		expect(classify([message('assistant', 'The user prefers silent retries.')])).toEqual([]);
+		expect(classify([message('user', 'I prefer careful reviews.')]).map((row) => row.text)).toEqual(
+			['I prefer careful reviews.']
+		);
+		expect(state.housekeeping).toBe(false);
+
+		const sessionState = { housekeeping: false, sessionOnly: false };
+		const classifySession = (messages: SessionMessage[]): MemoryEvidence[] =>
+			(
+				Object.create(MemoryEngine.prototype) as {
+					evidence(
+						source: MemorySource,
+						messages: SessionMessage[],
+						state: typeof sessionState
+					): MemoryEvidence[];
+				}
+			).evidence(source, messages, sessionState);
+		classifySession([message('user', 'For this session, use SQLite.')]);
+		expect(sessionState.sessionOnly).toBe(true);
+		const reply = classifySession([message('assistant', 'The user prefers silent retries.')]);
+		expect(reply[0]?.durability).toBe('session');
+	});
 	it('strips a fenced assistant handoff while retaining the explicit human suffix', () => {
 		const pasted = [
 			'```text',

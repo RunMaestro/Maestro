@@ -83,6 +83,14 @@ const sentConfigure = (): Partial<MemoryConfig> => {
 };
 
 describe('memory qualification configuration', () => {
+	it.each([
+		[true, true],
+		[false, false],
+	] as const)('sets ongoing learning to %s from the CLI option', async (ongoing, expected) => {
+		await pianolaMemory('configure', [], { ongoing });
+		expect(sentConfigure().ongoing).toBe(expected);
+	});
+
 	it('leaves the qualification unset when no qualification option is given', async () => {
 		await pianolaMemory('configure', [], { mode: 'local' });
 		const config = sentConfigure();

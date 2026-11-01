@@ -76,6 +76,15 @@ async function fixture() {
 	engine.database.store(memory, vector);
 	return engine;
 }
+it('restores the active scheduler after a successful configuration save', async () => {
+	const engine = await fixture();
+	const start = vi.spyOn(engine, 'start');
+	engine.start();
+	await engine.request({ action: 'configure', config: { tokenBudget: 2000 } });
+	expect(start).toHaveBeenCalledTimes(2);
+	engine.stop();
+});
+
 it('does not report an empty eligible bank as successful recall when the local qualifier is unavailable', async () => {
 	const engine = await fixture();
 	engine.database.quarantine('choice', 'owner', 'Synthetic exclusion');

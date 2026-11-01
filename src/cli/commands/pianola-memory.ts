@@ -61,6 +61,7 @@ interface MemoryCliOptions {
 	dollars?: string;
 	exclude?: string[];
 	consentHosted?: boolean;
+	ongoing?: boolean;
 	kind?: MemoryKind;
 	json?: boolean;
 	out?: string;
@@ -111,6 +112,7 @@ export async function pianolaMemory(action: string, words: string[], options: Me
 			if (options.tokens) config.tokenBudget = Number(options.tokens);
 			if (options.dollars) config.dollarBudget = Number(options.dollars);
 			if (options.consentHosted) config.hostedConsent = true;
+			if (options.ongoing !== undefined) config.ongoing = options.ongoing;
 			if (options.exclude) config.exclusions = options.exclude.map((p) => path.resolve(p));
 			if (options.root) {
 				if (!options.provider) throw new Error('--root requires --provider');
