@@ -4,6 +4,12 @@ import type { Session } from '../../../types';
 import type { FileTreeChanges } from '../../../utils/fileExplorer';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
+import { useEventListener } from '../../../hooks/utils/useEventListener';
+import {
+	isBridgeTransportReady,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../../shared/bridgeError';
 
 interface UseAutoRefreshArgs {
 	sessionId: string;
@@ -64,6 +70,7 @@ export function useAutoRefresh({
 
 	// Handle refresh with animation and flash notification
 	const handleRefresh = useCallback(async () => {
+		if (!isBridgeTransportReady()) return;
 		setIsRefreshing(true);
 
 		try {
@@ -76,11 +83,47 @@ export function useAutoRefresh({
 						: `Detected ${changes.totalChanges} change${changes.totalChanges === 1 ? '' : 's'}`;
 				onShowFlash(message);
 			}
+		} catch (error) {
+			if (!isExpectedBridgeError(error)) {
+				logger.error('[FileExplorer] Refresh failed:', undefined, error);
+				captureException(error, { extra: { sessionId, operation: 'fileExplorer.refresh' } });
+				onShowFlash?.('File refresh failed');
+			}
 		} finally {
 			// Keep spinner visible for at least 500ms for visual feedback
 			setTimeout(() => setIsRefreshing(false), 500);
 		}
 	}, [refreshFileTree, sessionId, onShowFlash]);
+
+	/** Refresh the latest session once, sharing the timer/reconnect overlap guard. */
+	const autoRefresh = useCallback(async () => {
+		// Skip if a previous auto-refresh is still in flight
+		if (autoRefreshInFlightRef.current || !isBridgeTransportReady()) return;
+		autoRefreshInFlightRef.current = true;
+
+		// Brief spin animation so user can see auto-refresh is active
+		setIsRefreshing(true);
+		try {
+			await refreshFileTreeRef.current(sessionIdRef.current);
+		} catch (error) {
+			if (isExpectedBridgeError(error)) return;
+			logger.error('[FileExplorer] Auto-refresh failed:', undefined, error);
+			captureException(error, {
+				extra: {
+					sessionId: sessionIdRef.current,
+					operation: 'fileExplorer.autoRefresh',
+				},
+			});
+		} finally {
+			autoRefreshSpinTimeoutRef.current = setTimeout(() => {
+				setIsRefreshing(false);
+				autoRefreshInFlightRef.current = false;
+			}, 500);
+		}
+	}, []);
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => void autoRefresh(), {
+		enabled: autoRefreshInterval > 0,
+	});
 
 	// Auto-refresh timer - uses refs to avoid resetting timer when callbacks change
 	useEffect(() => {
@@ -90,30 +133,10 @@ export function useAutoRefresh({
 		}
 
 		if (autoRefreshInterval > 0) {
-			autoRefreshTimerRef.current = setInterval(async () => {
-				// Skip if a previous auto-refresh is still in flight
-				if (autoRefreshInFlightRef.current) return;
-				autoRefreshInFlightRef.current = true;
-
-				// Brief spin animation so user can see auto-refresh is active
-				setIsRefreshing(true);
-				try {
-					await refreshFileTreeRef.current(sessionIdRef.current);
-				} catch (error) {
-					logger.error('[FileExplorer] Auto-refresh failed:', undefined, error);
-					captureException(error, {
-						extra: {
-							sessionId: sessionIdRef.current,
-							operation: 'fileExplorer.autoRefresh',
-						},
-					});
-				} finally {
-					autoRefreshSpinTimeoutRef.current = setTimeout(() => {
-						setIsRefreshing(false);
-						autoRefreshInFlightRef.current = false;
-					}, 500);
-				}
-			}, autoRefreshInterval * 1000);
+			autoRefreshTimerRef.current = setInterval(
+				() => void autoRefresh(),
+				autoRefreshInterval * 1000
+			);
 		}
 
 		return () => {
@@ -127,7 +150,7 @@ export function useAutoRefresh({
 			}
 			autoRefreshInFlightRef.current = false;
 		};
-	}, [autoRefreshInterval]);
+	}, [autoRefreshInterval, autoRefresh]);
 
 	// Hover handlers for refresh button overlay
 	const handleRefreshMouseEnter = useCallback(() => {

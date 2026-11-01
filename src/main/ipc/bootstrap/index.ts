@@ -214,7 +214,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
-	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	// Cue bundles - export / import pipelines and agents (Export Agent and Import Agent modals)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,
 		getMainWindow: deps.getMainWindow,
@@ -375,6 +375,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		registerPianolaHandlers({
 			settingsStore: deps.settingsStore,
 			supervisor: pianolaSupervisor,
+			getAppWindows: () => deps.windowRegistry.getAppWindows().map((entry) => entry.browserWindow),
+			getWebServer: deps.getWebServer,
 		});
 	}
 

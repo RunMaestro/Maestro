@@ -2,11 +2,12 @@
  * Where the CLI looks for Lite's control discovery file. The desktop writes it
  * under `app.getPath('userData')/Lite`; a process without Electron has to reach
  * the same directory through `resolveUserDataDir()`, the one shared resolver.
- * The lowercase `~/.config/maestro` fallback this replaced never matched a
- * packaged Linux install, which writes `~/.config/Maestro`.
+ * Linux defaults to lowercase, while an existing capitalized directory that
+ * holds desktop state remains discoverable through the canonical resolver.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { resolveLiteDataDirectory } from '../../shared/lite-control';
@@ -45,13 +46,32 @@ describe('resolveLiteDataDirectory', () => {
 		expect(resolveLiteDataDirectory(undefined, base)).toBe(path.join(base, 'Lite'));
 	});
 
-	it.runIf(os.platform() === 'linux')(
-		'lands on the installed `Maestro` spelling on Linux, not lowercase `maestro`',
-		() => {
-			const xdg = path.join(os.tmpdir(), 'xdg-config');
+	describe.runIf(os.platform() === 'linux')('Linux data directory spelling', () => {
+		let xdg: string;
+
+		beforeEach(() => {
+			xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lite-xdg-'));
 			process.env.XDG_CONFIG_HOME = xdg;
 			process.env.NODE_ENV = 'test';
-			expect(resolveLiteDataDirectory()).toBe(path.join(xdg, 'Maestro', 'Lite'));
-		}
-	);
+		});
+
+		afterEach(() => {
+			fs.rmSync(xdg, { recursive: true, force: true });
+		});
+
+		it('uses the lowercase Linux default when no existing installation is present', () => {
+			expect(resolveLiteDataDirectory()).toBe(path.join(xdg, 'maestro', 'Lite'));
+		});
+
+		it('finds capitalized desktop state beside an empty lowercase directory', () => {
+			fs.mkdirSync(path.join(xdg, 'maestro'));
+			fs.mkdirSync(path.join(xdg, 'Maestro'), { recursive: true });
+			fs.writeFileSync(path.join(xdg, 'Maestro', 'maestro-window-state.json'), '{}');
+			const resolved = resolveLiteDataDirectory();
+			expect(path.basename(resolved)).toBe('Lite');
+			expect(fs.realpathSync.native(path.dirname(resolved))).toBe(
+				fs.realpathSync.native(path.join(xdg, 'Maestro'))
+			);
+		});
+	});
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { registerSessionCallbacks } from '../../../../main/web-server/callbacks/sessionCallbacks';
 import { trackHeadlessAgentActivity } from '../../../../main/utils/headless-agent-activity';
 import type { WebServer } from '../../../../main/web-server/WebServer';
+import type { DesktopSessionsSnapshot } from '../../../../shared/desktopTabs';
 
 vi.mock('../../../../shared/cli-activity', () => ({
 	getSessionIdsBusyWithCli: () => new Set(),
@@ -38,7 +39,8 @@ describe('live agent status with headless work', () => {
 				({ get: (id: string) => (desktop.has(id) ? {} : undefined) }) as never,
 		});
 		const read = () => callbacks.setGetSessionsCallback() as Array<{ state: string }>;
-		const readTabs = () => callbacks.setListDesktopSessionsCallback() as Array<{ state: string }>;
+		const readTabs = () =>
+			(callbacks.setListDesktopSessionsCallback() as DesktopSessionsSnapshot).sessions;
 		expect(read().map((s) => s.state)).toEqual(['idle', 'idle']);
 		const first = trackHeadlessAgentActivity('target');
 		const second = trackHeadlessAgentActivity('target');

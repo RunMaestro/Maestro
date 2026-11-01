@@ -20,6 +20,11 @@
 import type {} from '../web/utils/config';
 
 import { captureException } from './sentry-shim';
+import {
+	BridgeTransportError,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../shared/bridgeError';
 // Also a side-effect import: the module declares `window.__MAESTRO_CONFIG__`
 // once for every bundle that reads it. See the note in that file about the two
 // rival shapes this replaced.
@@ -73,6 +78,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'memory:orphans',
 	'pianola:supervisor-list',
 	'feedback:drafts:list',
+	'feedback:gh-login-command',
 	'feedback:issues:list',
 	'feedback:search-issues',
 	'parquet:open',
@@ -123,8 +129,9 @@ function showSubmissionNotice(message: string): void {
 function setConnectionState(
 	state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 ): void {
+	if ((window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ === state) return;
 	(window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ = state;
-	window.dispatchEvent(new CustomEvent('maestro:bridge-state', { detail: { state } }));
+	window.dispatchEvent(new CustomEvent(WEB_BRIDGE_STATE_EVENT, { detail: { state } }));
 }
 
 type Listener = (event: { senderFrame: null }, ...args: unknown[]) => unknown;
@@ -169,6 +176,7 @@ interface PendingInvoke {
 	reject: (reason: unknown) => void;
 	channel: string;
 	timer: ReturnType<typeof setTimeout>;
+	recoveryController?: AbortController;
 }
 
 interface BridgeConfig {
@@ -226,6 +234,7 @@ class BridgeClient {
 	private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 	private recoveryEvents: Array<{ channel: string; args: unknown[] }> = [];
 	private recoveryEventBytes = 0;
+	private recoveryWarnings = new Map<string, number>();
 	// True once any connection has been established, so a later open is known
 	// to be a RE-connect. Mobile browsers suspend the socket on every app switch
 	// and screen lock, which makes reconnecting the common case.
@@ -287,7 +296,7 @@ class BridgeClient {
 			BRIDGE_RECONNECT_MAX_MS,
 			BRIDGE_RECONNECT_BASE_MS * 2 ** this.reconnectAttempt
 		);
-		const delay = immediate ? 0 : Math.floor(Math.random() * (ceiling + 1));
+		const delay = immediate ? 0 : Math.max(250, Math.floor(Math.random() * (ceiling + 1)));
 		if (!immediate) this.reconnectAttempt++;
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = undefined;
@@ -307,6 +316,7 @@ class BridgeClient {
 		this.uncertainPersistence = false;
 		this.connected = true;
 		this.reconnectAttempt = 0;
+		this.recoveryWarnings.clear();
 		setConnectionState('connected');
 		this.resolveReady();
 		if (!reconciled) window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
@@ -444,7 +454,14 @@ class BridgeClient {
 				: reason + ' before response to ' + pending.channel;
 			if (submission) showSubmissionNotice(message);
 			if (isPersistenceChannel(pending.channel)) this.uncertainPersistence = true;
-			pending.reject(new Error('bridge disconnected: ' + message));
+			pending.reject(
+				new BridgeTransportError(
+					'bridge disconnected: ' + message,
+					submission ? 'BRIDGE_SUBMISSION_UNCERTAIN' : 'BRIDGE_DISCONNECTED',
+					submission ? 'unknown' : 'read-only',
+					pending.channel
+				)
+			);
 		}
 		this.pending.clear();
 	}
@@ -457,6 +474,7 @@ class BridgeClient {
 		this.connected = false;
 		this.resumePending = false;
 		this.recoveryController?.abort();
+		this.recoveryController = undefined;
 		this.recoveryEvents = [];
 		this.recoveryEventBytes = 0;
 		clearTimeout(this.recoveryTimer);
@@ -524,6 +542,7 @@ class BridgeClient {
 		this.recoveryEvents = [];
 		this.recoveryEventBytes = 0;
 		const controller = new AbortController();
+		const socket = this.ws;
 		this.recoveryController = controller;
 		const work: Promise<void>[] = [];
 		window.dispatchEvent(
@@ -539,28 +558,85 @@ class BridgeClient {
 		const interrupted = Promise.withResolvers<void>();
 		controller.signal.addEventListener(
 			'abort',
-			() => interrupted.reject(new Error('Host state restoration timed out')),
+			() =>
+				interrupted.reject(
+					new BridgeTransportError(
+						'Host state restoration timed out',
+						'BRIDGE_RECOVERY_PENDING',
+						'read-only'
+					)
+				),
 			{ once: true }
 		);
 		void (async () => {
+			let recovered = false;
 			try {
-				if (!work.length) throw new Error('Host state restoration is not mounted yet');
-				await Promise.race([Promise.all(work), interrupted.promise]);
+				// Observe cancellation even when no participant has mounted yet:
+				// cleanup aborts this attempt and must not create an unhandled rejection.
+				await Promise.race([
+					work.length
+						? Promise.all(work)
+						: Promise.reject(
+								new BridgeTransportError(
+									'Host state restoration is not mounted yet',
+									'BRIDGE_RECOVERY_PENDING',
+									'read-only'
+								)
+							),
+					interrupted.promise,
+				]);
 				while (!controller.signal.aborted && this.recoveryEvents.length) {
 					const event = this.recoveryEvents.shift()!;
 					await Promise.race([this.dispatchEvent(event.channel, event.args), interrupted.promise]);
 				}
-				if (!controller.signal.aborted) {
+				if (
+					!controller.signal.aborted &&
+					this.ws === socket &&
+					this.recoveryController === controller
+				) {
 					this.recoveryEventBytes = 0;
 					this.markReady(true);
+					recovered = true;
 				}
 			} catch (error) {
-				if (!controller.signal.aborted)
-					console.warn('[bridge] In-place host recovery failed; retrying', error);
+				if (this.ws === socket && this.recoveryController === controller) {
+					const key = error instanceof Error ? error.message : String(error);
+					const previous = this.recoveryWarnings.get(key);
+					if (previous === undefined || Date.now() - previous >= 30_000) {
+						if (this.recoveryWarnings.size >= 20) this.recoveryWarnings.clear();
+						this.recoveryWarnings.set(key, Date.now());
+						console.warn(
+							'[bridge] In-place host recovery failed; retrying',
+							isExpectedBridgeError(error) ? key : error
+						);
+					}
+				}
 			} finally {
 				clearTimeout(deadline);
-				if (this.recoveryController === controller) this.recoveryController = undefined;
-				if (this.invalidState && this.ws?.readyState === WebSocket.OPEN) {
+				if (!recovered) controller.abort();
+				// Reads from an abandoned attempt must not outlive its budget or be
+				// mistaken for the next snapshot when their late replies arrive.
+				for (const [requestId, pending] of this.pending) {
+					if (recovered || pending.recoveryController !== controller) continue;
+					this.pending.delete(requestId);
+					clearTimeout(pending.timer);
+					pending.reject(
+						new BridgeTransportError(
+							'Host state restoration attempt ended',
+							'BRIDGE_RECOVERY_PENDING',
+							'read-only',
+							pending.channel
+						)
+					);
+				}
+				const current = this.recoveryController === controller;
+				if (current) this.recoveryController = undefined;
+				if (
+					current &&
+					this.invalidState &&
+					this.ws === socket &&
+					socket.readyState === WebSocket.OPEN
+				) {
 					const ceiling = Math.min(
 						BRIDGE_RECONNECT_MAX_MS,
 						BRIDGE_RECONNECT_BASE_MS * 2 ** this.reconnectAttempt
@@ -568,7 +644,8 @@ class BridgeClient {
 					this.reconnectAttempt++;
 					this.recoveryTimer = setTimeout(
 						() => this.recoverState(),
-						Math.floor(Math.random() * (ceiling + 1))
+						BRIDGE_RECONNECT_BASE_MS +
+							Math.floor(Math.random() * (ceiling - BRIDGE_RECONNECT_BASE_MS + 1))
 					);
 				}
 			}
@@ -581,18 +658,22 @@ class BridgeClient {
 		args: unknown[]
 	): void {
 		if (this.invalidState) return;
+		const socket = this.ws;
 		try {
 			const result = listener(event, ...args);
 			if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
-				void Promise.resolve(result).catch((error) => this.listenerFailed(channel, error));
+				void Promise.resolve(result).catch((error) => {
+					if (this.ws === socket) this.listenerFailed(channel, error);
+				});
 			}
 		} catch (error) {
-			this.listenerFailed(channel, error);
+			if (this.ws === socket) this.listenerFailed(channel, error);
 		}
 	}
 
 	private listenerFailed(channel: string, error: unknown): void {
 		this.invalidateState('failed to apply host event ' + channel);
+		if (isExpectedBridgeError(error)) return;
 		console.error(`[bridge] listener for ${channel} failed`, error);
 		captureException(error, { extra: { component: 'BridgeClient', action: 'listener', channel } });
 	}
@@ -661,8 +742,11 @@ class BridgeClient {
 	async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
 		const submission = isSubmissionChannel(channel);
 		if (submission && this.invalidState) {
-			throw new Error(
-				'Not submitted: restoring authoritative host state. Your current work is retained.'
+			throw new BridgeTransportError(
+				'Not submitted: restoring authoritative host state. Your current work is retained.',
+				'BRIDGE_RESTORING',
+				'not-sent',
+				channel
 			);
 		}
 		if (
@@ -672,12 +756,25 @@ class BridgeClient {
 				this.resumePending ||
 				(!this.connected && !this.invalidState))
 		) {
-			throw new Error('Not submitted: reconnecting to the host. Your current work is retained.');
+			throw new BridgeTransportError(
+				'Not submitted: reconnecting to the host. Your current work is retained.',
+				'BRIDGE_RECONNECTING',
+				'not-sent',
+				channel
+			);
 		}
 		if (!this.connected && !this.invalidState) {
 			await new Promise<void>((resolve, reject) => {
 				const timer = setTimeout(
-					() => reject(new Error('Bridge connection timed out; request was not submitted')),
+					() =>
+						reject(
+							new BridgeTransportError(
+								'Bridge connection timed out; request was not submitted',
+								'BRIDGE_TIMEOUT',
+								'not-sent',
+								channel
+							)
+						),
 					BRIDGE_READ_TIMEOUT_MS
 				);
 				this.ready.then(() => {
@@ -692,7 +789,12 @@ class BridgeClient {
 			this.ws.readyState !== WebSocket.OPEN ||
 			this.resumePending
 		) {
-			throw new Error('bridge disconnected: request was not submitted');
+			throw new BridgeTransportError(
+				'bridge disconnected: request was not submitted',
+				'BRIDGE_DISCONNECTED',
+				'not-sent',
+				channel
+			);
 		}
 		const requestId = this.nextRequestId++;
 		return new Promise((resolve, reject) => {
@@ -705,13 +807,26 @@ class BridgeClient {
 						' timed out before acknowledgement. Check host state before submitting again; it was not automatically retried.'
 					: 'Bridge request timed out: ' + channel;
 				if (submission) showSubmissionNotice(message);
-				reject(new Error(message));
+				reject(
+					new BridgeTransportError(
+						message,
+						submission ? 'BRIDGE_SUBMISSION_UNCERTAIN' : 'BRIDGE_TIMEOUT',
+						submission ? 'unknown' : 'read-only',
+						channel
+					)
+				);
 				if (isPersistenceChannel(channel)) {
 					this.uncertainPersistence = true;
 					this.invalidateState('persistence acknowledgement timed out');
 				}
 			}, requestTimeoutMs(channel));
-			this.pending.set(requestId, { resolve, reject, channel, timer });
+			this.pending.set(requestId, {
+				resolve,
+				reject,
+				channel,
+				timer,
+				recoveryController: this.invalidState ? this.recoveryController : undefined,
+			});
 			try {
 				this.ws!.send(JSON.stringify({ type: 'bridge.invoke', requestId, channel, args }));
 			} catch (error) {
@@ -724,9 +839,26 @@ class BridgeClient {
 							'. Check host state before submitting again.'
 					);
 				if (isPersistenceChannel(channel)) this.uncertainPersistence = true;
-				reject(error);
+				reject(
+					new BridgeTransportError(
+						error instanceof Error ? error.message : String(error),
+						submission ? 'BRIDGE_SUBMISSION_UNCERTAIN' : 'BRIDGE_DISCONNECTED',
+						submission ? 'unknown' : 'not-sent',
+						channel
+					)
+				);
+				if (isPersistenceChannel(channel)) this.invalidateState('persistence send failed');
 			}
 		});
+	}
+
+	canLogToHost(): boolean {
+		return (
+			this.connected &&
+			!this.invalidState &&
+			!this.resumePending &&
+			this.ws?.readyState === WebSocket.OPEN
+		);
 	}
 
 	on(channel: string, listener: Listener): void {
@@ -769,13 +901,37 @@ class BridgeClient {
 
 const bridge = new BridgeClient({ wsUrl: getWsUrl() });
 
+// Keep a bounded local diagnostic history while the host logger is unavailable.
+// Debug/info stay out of the console; real warnings retain their original level.
+const localDiagnostics = new Map<string, { count: number; lastPrinted?: number }>();
+/** Deduplicate outage diagnostics locally without making another bridge logging request. */
+function recordLocalDiagnostic(args: unknown[]): void {
+	const [level, message, context, data] = args;
+	const key = `${String(level)}:${String(context ?? '')}:${String(message)}:${data instanceof Error ? data.message : ''}`;
+	let record = localDiagnostics.get(key);
+	if (!record) {
+		if (localDiagnostics.size >= 100)
+			localDiagnostics.delete(localDiagnostics.keys().next().value!);
+		record = { count: 0 };
+		localDiagnostics.set(key, record);
+	}
+	record.count++;
+	if (level !== 'warn' && level !== 'error') return;
+	if (args.some(isExpectedBridgeError)) return;
+	if (record.lastPrinted !== undefined && Date.now() - record.lastPrinted < 30_000) return;
+	record.lastPrinted = Date.now();
+	console[level]('[bridge:local]', message, context, data);
+}
+
 export const ipcRenderer = {
 	invoke: (channel: string, ...args: unknown[]) => {
 		if (channel === 'logger:log') {
-			// Error reporting must not reject into the global error reporter during
-			// a disconnect. Keep the diagnostic locally; do not queue or replay it.
-			return bridge.invoke(channel, ...args).catch((error: unknown) => {
-				console.warn('[bridge] Host logger unavailable; recorded locally:', ...args, error);
+			if (!bridge.canLogToHost() || args.some(isExpectedBridgeError)) {
+				recordLocalDiagnostic(args);
+				return Promise.resolve();
+			}
+			return bridge.invoke(channel, ...args).catch(() => {
+				recordLocalDiagnostic(args);
 			});
 		}
 		if (channel === 'dialog:selectFolder')
@@ -793,6 +949,7 @@ export const ipcRenderer = {
 		// handler throws. Log it so the failure is debuggable - don't rethrow,
 		// callers don't expect a Promise here.
 		void bridge.invoke(channel, ...args).catch((err) => {
+			if (isExpectedBridgeError(err)) return;
 			console.error(`[bridge] send(${channel}) failed`, err);
 		});
 	},

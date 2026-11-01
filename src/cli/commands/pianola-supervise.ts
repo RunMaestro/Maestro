@@ -21,6 +21,7 @@ import {
 import { generateUUID } from '../../shared/uuid';
 import { ensurePianolaEnabled } from './pianola';
 import { failCommand } from '../services/session-command';
+import { validatePianolaSupervisedTarget } from '../../shared/pianola/storage';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -42,12 +43,57 @@ export interface PianolaSuperviseCommonOptions {
 	json?: boolean;
 }
 
+export interface PianolaSuperviseScopeOptions {
+	id?: string;
+	manager: string;
+	label: string;
+	agents?: string;
+	groups?: string;
+	exclude?: string;
+	json?: boolean;
+}
+
 /** Parse a positive-integer seconds/count flag; returns undefined when absent or invalid. */
 function parsePositiveInt(raw: string | undefined, min: number): number | undefined {
 	if (raw === undefined) return undefined;
 	const match = raw.trim().match(/^(\d+)s?$/i);
 	if (!match) return undefined;
 	return Math.max(min, parseInt(match[1], 10));
+}
+
+/** Create or replace an identity-based selection, retaining its pause state on edit. */
+export function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): void {
+	ensurePianolaEnabled(options.json);
+	const existing = options.id
+		? readPianolaSupervisorTargets().find((target) => target.id === options.id)
+		: undefined;
+	if (options.id && (!existing || existing.kind !== 'watch-scope')) {
+		failCommand('No watch scope with that id', options.json);
+	}
+	const ids = (value?: string): string[] =>
+		(value ?? '')
+			.split(',')
+			.map((id) => id.trim())
+			.filter(Boolean);
+	const target = validatePianolaSupervisedTarget({
+		...existing,
+		id: existing?.id ?? generateUUID(),
+		kind: 'watch-scope',
+		enabled: existing?.enabled ?? false,
+		createdAt: existing?.createdAt ?? Date.now(),
+		managerAgentId: options.manager,
+		selection: {
+			label: options.label,
+			mode: 'agents-and-groups',
+			agentIds: ids(options.agents),
+			groupIds: ids(options.groups),
+			excludedAgentIds: ids(options.exclude),
+		},
+	});
+	if (!target) failCommand('Invalid scope selection or manager', options.json);
+	upsertPianolaSupervisorTarget(target);
+	if (options.json) console.log(JSON.stringify({ success: true, target }));
+	else console.log(`Saved watch scope ${target.id} (${target.enabled ? 'enabled' : 'paused'}).`);
 }
 
 /** Register (or refresh) a supervised tab watcher. */
@@ -131,6 +177,9 @@ export function pianolaSuperviseOrchestrate(
 
 /** Describe one target's spawn args in a human-readable form. */
 function describeTarget(target: PianolaSupervisedTarget): string {
+	if (target.kind === 'watch-scope') {
+		return `watch scope ${target.selection?.label ?? '?'} (manager ${target.managerAgentId ?? '?'}, interval ${target.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS}s)`;
+	}
 	if (target.kind === 'watch') {
 		return `watch tab ${target.tabId} (agent ${target.agentId}, interval ${
 			target.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS

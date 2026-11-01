@@ -174,7 +174,6 @@ import type {
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 	GetSessionHistoryOptions,
-	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
@@ -490,7 +489,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		consultChain?: ConsultChain,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		requireDeliveryReceipt?: boolean
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -502,7 +502,8 @@ export class CallbackRegistry {
 			images,
 			background,
 			consultChain,
-			mentionRouting
+			mentionRouting,
+			...(requireDeliveryReceipt ? [true] : [])
 		);
 	}
 
@@ -948,6 +949,7 @@ export class CallbackRegistry {
 			theme: 'dracula',
 			fontSize: 14,
 			enterToSendAI: false,
+			relayArchiveHours: 24,
 			defaultSaveToHistory: true,
 			defaultShowThinking: 'off',
 			autoScroll: true,
@@ -1317,8 +1319,8 @@ export class CallbackRegistry {
 		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
 	}
 
-	listDesktopSessions(): DesktopSessionEntry[] {
-		return this.callbacks.listDesktopSessions?.() ?? [];
+	listDesktopSessions(): ReturnType<ListDesktopSessionsCallback> | null {
+		return this.callbacks.listDesktopSessions?.() ?? null;
 	}
 
 	getSessionHistory(

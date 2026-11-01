@@ -24,6 +24,7 @@ import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
 	newRemotePidFilePath,
@@ -36,7 +37,16 @@ import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/wind
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
-import { INTERACTIVE_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
+import {
+	INTERACTIVE_STOP_GRACE_MS,
+	stopProcess,
+} from '../../../shared/maestro-lib/control/termination';
+import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+} from '../../../shared/plugins/headless-agent-timeouts';
 
 // The log line each Windows shell promotion writes (see windowsShellReason).
 const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
@@ -54,6 +64,7 @@ export class ChildProcessSpawner {
 	private stdoutHandler: StdoutHandler;
 	private stderrHandler: StderrHandler;
 	private exitHandler: ExitHandler;
+	private readonly supervisions = new Map<string, () => void>();
 
 	constructor(
 		private processes: Map<string, ManagedProcess>,
@@ -616,13 +627,87 @@ export class ChildProcessSpawner {
 			// which stops working the moment the successor finishes and deletes its
 			// own entry - at which point a predecessor still draining would look
 			// current again. See process-manager/generation.ts.
+			this.supervisions.get(sessionId)?.();
 			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 			this.processes.set(sessionId, managedProcess);
 
 			// The run layer settles once the streams have ended, so every line the
 			// process wrote has been read by then. A process that never started is
 			// reported once, as an error, rather than as an error and then a close.
-			void turn.done.then((exit) => {
+			let forceCompletion!: () => void;
+			const forced = new Promise<undefined>((resolve) => {
+				forceCompletion = () => resolve(undefined);
+			});
+			// Codex exec is one process per turn. Bound startup and semantic silence
+			// without an absolute ceiling on healthy desktop turns. Other
+			// providers and interactive terminal shells keep their own lifecycle.
+			let supervisionFailed = false;
+			let supervisionFailure: string | undefined;
+			const supervision =
+				toolType === 'codex' && (isBatchMode || stdinText !== undefined)
+					? superviseAgentProcess(childProcess, {
+							startupMs: CODEX_STARTUP_TIMEOUT_MS,
+							idle: HEADLESS_IDLE_PROFILE,
+							onStop: (reason) => {
+								supervisionFailed = true;
+								if (isSuperseded()) return;
+								if (sshRemotePidFile)
+									signalRemoteAgent(
+										{
+											sshCommand: command,
+											sshArgs: finalArgs,
+											pidFile: sshRemotePidFile,
+											sessionId,
+										},
+										'terminate'
+									);
+								// Record failure now, but let termination drain its last bytes.
+								// Suppress generic exit classification without suppressing text.
+								supervisionFailure = reason;
+								managedProcess.errorEmitted = true;
+							},
+							onForcedStop: forceCompletion,
+						})
+					: undefined;
+			// The existing channel includes whole lines, error envelopes and final
+			// unterminated lines. Generation and identity keep a predecessor from
+			// consuming a replacement's events under the same session id.
+			const onParsedEvent = (sid: string, event: ParsedEvent): void => {
+				if (sid === sessionId && !isSuperseded() && this.processes.get(sid) === managedProcess)
+					supervision?.observe(event);
+			};
+			const disposeSupervision = (): void => {
+				this.emitter.off('parsed-event', onParsedEvent);
+				supervision?.dispose();
+				if (this.supervisions.get(sessionId) === supersedeSupervision)
+					this.supervisions.delete(sessionId);
+			};
+			const supersedeSupervision = (): void => {
+				// Disposal cancels the supervisor's shared stop ladder. Finish an
+				// already-failed predecessor first so SIGTERM resistance cannot leave
+				// an unowned writer behind when a replacement takes this session.
+				if (supervisionFailed)
+					stopProcess(
+						{ child: childProcess },
+						{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
+					);
+				disposeSupervision();
+				forceCompletion();
+			};
+			if (supervision) {
+				this.emitter.on('parsed-event', onParsedEvent);
+				this.supervisions.set(sessionId, supersedeSupervision);
+			}
+			void Promise.race([turn.done, forced]).then((completed) => {
+				disposeSupervision();
+				const exit = completed
+					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
+					: {
+							exitCode: 1,
+							signal: null,
+							spawnError: undefined,
+							stdinError: undefined,
+						};
 				if (isSuperseded()) {
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
@@ -659,6 +744,35 @@ export class ChildProcessSpawner {
 				// `signal` is what tells a kill from a clean exit once `code || 0` has
 				// turned the killed process's null code into 0. `stdinError` says the
 				// prompt never fully reached the agent.
+				// ExitHandler parses the final unterminated line and flushes data
+				// before exit. Publish our host failure first among exit observers,
+				// after that drain, so late output cannot hide or overtake the error.
+				const onSupervisedExit = (sid: string): void => {
+					if (sid !== sessionId || isSuperseded()) return;
+					this.emitter.off('exit', onSupervisedExit);
+					if (!supervisionFailure || managedProcess.interrupted) return;
+					try {
+						emitAgentErrorAfterOutput(
+							this.emitter,
+							this.bufferManager,
+							sessionId,
+							managedProcess,
+							{
+								type: 'agent_crashed',
+								source: 'host-supervision',
+								message: supervisionFailure,
+								recoverable: true,
+								agentId: toolType,
+								sessionId,
+								timestamp: Date.now(),
+							},
+							{ flushStreamedText: true }
+						);
+					} catch (error) {
+						void captureException(error);
+					}
+				};
+				if (supervisionFailure) this.emitter.prependListener('exit', onSupervisedExit);
 				return this.exitHandler
 					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
@@ -676,32 +790,35 @@ export class ChildProcessSpawner {
 							this.processes.delete(sessionId);
 							this.emitter.emit('exit', sessionId, exit.exitCode || 0);
 						}
-					});
+					})
+					.finally(() => this.emitter.off('exit', onSupervisedExit));
 			});
 
 			// The run layer settles on `close`, which waits on every holder of the
 			// stdio pipes, and an SSH ControlMaster or a stray grandchild can hold
 			// them long after the child itself is dead. Without this, a stopped SSH
 			// turn left its entry behind and the tab's queue hot-looped against the
-			// spawn refusal.
-			armStdioCloseWatchdog(childProcess, {
-				onForceClose: () => {
-					logger.warn(
-						'[ProcessManager] stdio still open after exit, forcing close',
-						'ProcessManager',
-						{ sessionId, pid: childProcess.pid }
-					);
-					// For SSH the open stdio usually means the remote agent is still
-					// running behind a ControlMaster. Settling the turn while it keeps
-					// working would put a second writer on the session next turn.
-					if (sshRemotePidFile) {
-						signalRemoteAgent(
-							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
-							'terminate'
+			// spawn refusal. Supervised Codex turns already use the shared exit-drain
+			// watchdog and remote termination callback above.
+			if (!supervision)
+				armStdioCloseWatchdog(childProcess, {
+					onForceClose: () => {
+						logger.warn(
+							'[ProcessManager] stdio still open after exit, forcing close',
+							'ProcessManager',
+							{ sessionId, pid: childProcess.pid }
 						);
-					}
-				},
-			});
+						// For SSH the open stdio usually means the remote agent is still
+						// running behind a ControlMaster. Settling the turn while it keeps
+						// working would put a second writer on the session next turn.
+						if (sshRemotePidFile) {
+							signalRemoteAgent(
+								{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+								'terminate'
+							);
+						}
+					},
+				});
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {

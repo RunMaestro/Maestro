@@ -1,3 +1,4 @@
+import { acquireProviderSessionWriter } from '../utils/provider-session-writer';
 /** One host-owned, headless provider turn, shared by plugin send and CLI send. */
 import type { SessionInfo } from '../../shared/types';
 import type { AgentResult, SpawnAgentOptions } from '../../cli/services/agent-spawner';
@@ -86,7 +87,7 @@ export interface PluginHeadlessRunnerDeps {
 export function createPluginHeadlessAgentRunner(
 	deps: PluginHeadlessRunnerDeps
 ): HeadlessAgentRunner {
-	return async (
+	const run: HeadlessAgentRunner = async (
 		agentId,
 		prompt,
 		providerSessionId,
@@ -95,6 +96,7 @@ export function createPluginHeadlessAgentRunner(
 		onProgress,
 		receiptToolId,
 		requirePluginTools = false,
+		_writerLeaseHeld,
 		turn
 	) => {
 		// Detection and prompt preparation consume the same host ceiling as spawn;
@@ -134,6 +136,7 @@ export function createPluginHeadlessAgentRunner(
 		) {
 			return {
 				success: false,
+				executionStarted: false,
 				response: null,
 				sessionId: null,
 				error: receiptToolId
@@ -189,6 +192,7 @@ export function createPluginHeadlessAgentRunner(
 			if (!prepared || isStopped()) {
 				return {
 					success: false,
+					executionStarted: false,
 					response: null,
 					sessionId: null,
 					error: signal?.aborted
@@ -202,6 +206,7 @@ export function createPluginHeadlessAgentRunner(
 				if (attachment) throw new MediaError('MediaUnavailable');
 				return {
 					success: false,
+					executionStarted: false,
 					response: null,
 					sessionId: null,
 					error: `Agent CLI unavailable: ${agent.toolType}`,
@@ -223,6 +228,7 @@ export function createPluginHeadlessAgentRunner(
 			if (signal?.aborted || remainingMs === 0) {
 				return {
 					success: false,
+					executionStarted: false,
 					response: null,
 					sessionId: null,
 					error: signal?.aborted
@@ -241,6 +247,7 @@ export function createPluginHeadlessAgentRunner(
 			if (signal?.aborted || Date.now() >= deadlineAt) {
 				return {
 					success: false,
+					executionStarted: false,
 					response: null,
 					sessionId: null,
 					error: signal?.aborted
@@ -362,6 +369,35 @@ export function createPluginHeadlessAgentRunner(
 					});
 				}
 			}
+		}
+	};
+	return async (...args) => {
+		const [agentId, , providerSessionId, signal] = args;
+		if (!providerSessionId || args[8]) return run(...args);
+		const agent = deps.getAgent(agentId);
+		if (!agent) return run(...args);
+		let release: () => void;
+		try {
+			release = await acquireProviderSessionWriter(
+				agent.toolType,
+				`${agentId}-headless-${providerSessionId}`,
+				providerSessionId,
+				signal
+			);
+		} catch (error) {
+			if (!signal?.aborted) throw error;
+			return {
+				success: false,
+				executionStarted: false,
+				response: null,
+				sessionId: null,
+				error: 'Agent run cancelled',
+			};
+		}
+		try {
+			return await run(...args);
+		} finally {
+			release();
 		}
 	};
 }

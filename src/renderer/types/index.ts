@@ -852,6 +852,7 @@ export interface OnboardingStats {
 export interface AITab {
 	/** Transient native translation progress, shown in the existing busy pill. */
 	translatingFrom?: ToolType;
+	relayConversation?: import('../../shared/relayConversation').RelayConversationState;
 	/** Durable conversation provenance, independent of whether a turn is running. */
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)

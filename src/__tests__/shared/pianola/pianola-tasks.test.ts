@@ -108,6 +108,46 @@ describe('validatePlan', () => {
 		expect(t?.agentType).toBeUndefined();
 	});
 
+	it('round-trips acceptance and physical run bindings through recovery validation', () => {
+		const { plan: result, errors } = validatePlan(
+			rawPlan([
+				rawTask({
+					id: 'a',
+					runId: 'acceptance',
+					executionRunId: 'fix-execution',
+					fixAttempts: 2,
+					requiredChecks: ['build', 'acceptance'],
+					completionCursor: 'reply:42',
+					holdReason: 'acceptance',
+				}),
+			])
+		);
+		expect(errors).toEqual([]);
+		expect(result?.tasks[0]).toMatchObject({
+			runId: 'acceptance',
+			executionRunId: 'fix-execution',
+			fixAttempts: 2,
+			requiredChecks: ['build', 'acceptance'],
+			completionCursor: 'reply:42',
+			holdReason: 'acceptance',
+		});
+	});
+
+	it.each([
+		{ requiredChecks: [''] },
+		{ requiredChecks: [42] },
+		{ runId: 42 },
+		{ executionRunId: {} },
+		{ fixAttempts: -1 },
+		{ fixAttempts: 0.5 },
+		{ holdReason: 'unexpected' },
+		{ holdReason: 42 },
+	])('rejects malformed acceptance/runtime fields %j', (patch) => {
+		const { plan: result, errors } = validatePlan(rawPlan([rawTask({ id: 'a', ...patch })]));
+		expect(result).toBeNull();
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
 	it('rejects an unknown dependency and reports it', () => {
 		const { plan: result, errors } = validatePlan(
 			rawPlan([rawTask({ id: 'a', dependsOn: ['ghost'] })])

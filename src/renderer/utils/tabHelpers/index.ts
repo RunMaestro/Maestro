@@ -102,7 +102,21 @@ export function revealAiTab(session: Session, tabId: string): Session {
 	if (!tab || !isAiTabHidden(tab)) return session;
 	return {
 		...session,
-		aiTabs: session.aiTabs.map((t) => (t.id === tabId ? { ...t, hidden: false } : t)),
+		aiTabs: session.aiTabs.map((t) =>
+			t.id === tabId
+				? {
+						...t,
+						hidden: false,
+						...(t.relayConversation && {
+							relayConversation: {
+								...t.relayConversation,
+								archivedAt: undefined,
+								lastActivityAt: Date.now(),
+							},
+						}),
+					}
+				: t
+		),
 	};
 }
 

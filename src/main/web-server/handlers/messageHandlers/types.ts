@@ -39,7 +39,6 @@ import type {
 	NotifyCenterFlashParams,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
-	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
@@ -154,7 +153,8 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		consultChain?: ConsultChain,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		requireDeliveryReceipt?: boolean
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -462,9 +462,9 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
-	/** Same function as the Cue modal's Bundles tab. */
+	/** Same function as the Export Agent and Import Agent modals. */
 	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
-	/** Same function as the Cue modal's Bundles tab; agents land in the running app. */
+	/** Same function as the Export Agent and Import Agent modals; agents land in the running app. */
 	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
@@ -507,7 +507,7 @@ export interface MessageHandlerCallbacks {
 	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
 	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
 	 *  can address tabs by id without owning a persistent channel. */
-	listDesktopSessions: () => DesktopSessionEntry[];
+	listDesktopSessions: () => ReturnType<import('../../types').ListDesktopSessionsCallback> | null;
 	/** Read-only conversation history fetch used by `maestro-cli session show
 	 *  <tabId>`. Filters (`sinceMs`, `tail`) live alongside the read so we don't
 	 *  ship the full transcript over the wire on every poll. */

@@ -212,7 +212,11 @@ const DECISION_LIMIT = 50;
  * Live dashboard data. Subscribes to the session store and polls the Pianola
  * decision log. `refresh` forces an immediate refetch.
  */
-export function usePianolaDashboardData(): { data: DashboardData; refresh: () => void } {
+export function usePianolaDashboardData(): {
+	data: DashboardData;
+	decisions: PianolaDecisionRecord[];
+	refresh: () => void;
+} {
 	const sessions = useSessionStore((s) => s.sessions);
 	const [decisions, setDecisions] = useState<PianolaDecisionRecord[]>([]);
 	const [nonce, setNonce] = useState(0);
@@ -238,5 +242,5 @@ export function usePianolaDashboardData(): { data: DashboardData; refresh: () =>
 	}, [nonce]);
 
 	const data = useMemo(() => deriveDashboard(sessions, decisions), [sessions, decisions]);
-	return { data, refresh: () => setNonce((n) => n + 1) };
+	return { data, decisions, refresh: () => setNonce((n) => n + 1) };
 }

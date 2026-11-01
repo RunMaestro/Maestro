@@ -2,7 +2,7 @@
  * @file bundle-app-route.test.ts
  * @description With the desktop app running and no --data-dir,
  * `maestro-cli bundle export|import` go through the app (the same service as
- * the Cue modal's Bundles tab) instead of the disk. The bridge is mocked; the
+ * the Export Agent and Import Agent modals) instead of the disk. The bridge is mocked; the
  * service itself is covered in cue-bundle-service.test.ts.
  */
 

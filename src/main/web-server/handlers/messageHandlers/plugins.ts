@@ -164,11 +164,10 @@ export async function handlePluginsSendAgent(
 				undefined,
 				requiredToolId as string | undefined,
 			] as const;
-			// `turn` sits after `requirePluginTools` in the runner's signature, so
-			// it carries the flag with it. With no turn settings the call keeps the
-			// arity it had.
+			// CLI sends acquire their own writer lease. Turn settings follow that
+			// host-only flag, so a model override must not bypass writer ownership.
 			const reply = turn
-				? await run(...args, requirePluginTools === true, turn)
+				? await run(...args, requirePluginTools === true, undefined, turn)
 				: requirePluginTools === true
 					? await run(...args, true)
 					: await run(...args);

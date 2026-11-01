@@ -228,6 +228,7 @@ describe('media tools boundary', () => {
 						undefined,
 						undefined,
 						false,
+						false,
 						{ originalAttachment: lease }
 					)
 			);

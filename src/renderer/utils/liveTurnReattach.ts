@@ -33,6 +33,7 @@ export interface LiveAiTurn {
 	/** The AI tab the turn was spawned on. */
 	tabId: string;
 	/** OS pid of the agent process. */
+	/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 	pid: number;
 	/** When main started the process, for the elapsed-time pill. */
 	startTime?: number;
@@ -109,6 +110,16 @@ export function applyLiveAiTurns(
 
 	const bySession = new Map<string, LiveAiTurn[]>();
 	for (const turn of turns) {
+		if (turn.pid === 0) {
+			// Host Relay has no process:exit event. A delayed query must not
+			// resurrect a turn whose newer lifecycle metadata already settled.
+			const session = sessions.find((candidate) => candidate.id === turn.sessionId);
+			const tab = [...(session?.aiTabs ?? []), ...(session?.orphanedThinkingTabs ?? [])].find(
+				(candidate) => candidate.id === turn.tabId
+			);
+			const status = tab?.relayConversation?.status;
+			if (status !== 'queued' && status !== 'running') continue;
+		}
 		const existing = bySession.get(turn.sessionId);
 		if (existing) existing.push(turn);
 		else bySession.set(turn.sessionId, [turn]);

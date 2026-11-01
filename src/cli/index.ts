@@ -345,7 +345,14 @@ import {
 	computerHistoryStatus,
 } from './commands/computer-history';
 import { setVerbosity } from './output/verbosity';
-import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
+import { pianolaWatchScope } from './commands/pianola-scope-watch';
+import {
+	pianolaWatch,
+	pianolaRules,
+	pianolaAddRule,
+	pianolaLog,
+	pianolaResolveDecision,
+} from './commands/pianola';
 import { pianolaLearn } from './commands/pianola-learn';
 import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
 import {
@@ -356,6 +363,7 @@ import {
 } from './commands/pianola-orchestrate';
 import {
 	pianolaSuperviseWatch,
+	pianolaSuperviseScope,
 	pianolaSuperviseOrchestrate,
 	pianolaSuperviseList,
 	pianolaSuperviseRemove,
@@ -1816,7 +1824,7 @@ cueEngine
 
 // Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
 // import one. With the app running (and no --data-dir), export and import go
-// through it, the same as the Cue modal's Bundles tab; otherwise they read and
+// through it, the same as the Export Agent and Import Agent modals; otherwise they read and
 // write the data directory directly.
 const bundle = program
 	.command('bundle')
@@ -3307,6 +3315,23 @@ const pianola = encoreCommand(program, 'pianola', 'pianola', encoreFlags).descri
 );
 
 pianola
+	.command('resolve <decision-id>')
+	.description('Resolve a persisted manager handoff after recipient and pending-ask revalidation')
+	.option('--answer <text>', 'Answer the requesting agent exactly once')
+	.option('--escalation <text>', 'Ask the human to decide, with a concrete recommendation')
+	.option('--background', 'Preserve the active agent and tab')
+	.option('--json', 'Output as JSON')
+	.action((decisionId, options) => pianolaResolveDecision(decisionId, options));
+
+pianola
+	.command('watch-scope <scope-id>')
+	.description('Run one registered agent/group selection under the native supervisor')
+	.option('--once', 'Run one bounded scope cycle and exit')
+	.option('--dry-run', 'Classify and record without sending answers')
+	.option('--json', 'Output cycle status as JSON')
+	.action((scopeId, options) => pianolaWatchScope(scopeId, options));
+
+pianola
 	.command('watch <tab-id>')
 	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
@@ -3429,6 +3454,18 @@ const pianolaSupervise = pianola
 	.description(
 		'Register desktop-supervised watchers and orchestrations (survive crashes/restarts)'
 	);
+
+pianolaSupervise
+	.command('scope')
+	.description('Create or replace an agent/group watch selection (new selections start paused)')
+	.requiredOption('--manager <agent-id>', 'Manager agent id')
+	.requiredOption('--label <label>', 'Selection label')
+	.option('--id <scope-id>', 'Replace an existing selection')
+	.option('--agents <ids>', 'Comma-separated agent IDs')
+	.option('--groups <ids>', 'Comma-separated group IDs')
+	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')
+	.option('--json', 'Output as JSON')
+	.action((options) => pianolaSuperviseScope(options));
 
 pianolaSupervise
 	.command('watch <tabId>')

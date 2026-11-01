@@ -142,6 +142,8 @@ export interface SendMenuModel {
 	steerProvider: Session['toolType'];
 	/** The active tab is the one mid-turn (as opposed to another tab of the agent). */
 	activeTabWorking: boolean;
+	/** Any tab of the agent is mid-turn. False only when a right-click opened the menu on an idle agent. */
+	agentWorking: boolean;
 }
 
 /**
@@ -206,5 +208,6 @@ export function buildSendMenuModel(
 		steerSupport,
 		steerProvider,
 		activeTabWorking,
+		agentWorking: isAgentWorking(session),
 	};
 }

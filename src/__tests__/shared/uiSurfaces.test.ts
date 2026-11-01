@@ -163,9 +163,9 @@ describe('resolveUiSurfaceTab', () => {
 		expect(surfaceTabIds(settings)).not.toContain('local-models');
 	});
 
-	it('reaches the Cue Readiness tab (`maestro-cli open cue --tab readiness`)', () => {
-		expect(resolveUiSurfaceTab(cue, 'readiness')?.id).toBe('readiness');
-		expect(resolveUiSurfaceTab(cue, 'Readiness')?.label).toBe('Readiness');
+	it('no longer has the Bundles or Readiness tabs', () => {
+		expect(resolveUiSurfaceTab(cue, 'bundles')).toBeNull();
+		expect(resolveUiSurfaceTab(cue, 'readiness')).toBeNull();
 	});
 
 	it('returns null for a tab the surface does not have', () => {

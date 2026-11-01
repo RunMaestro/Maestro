@@ -105,6 +105,7 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 		expect(r.done).toBe(false);
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
 		// Iteration 2: A completes (busy -> idle); B becomes ready and dispatches.
 		deps = makeDeps({ runStates: { A: 'idle' }, messages: { A: [msg('assistant', 'A done.')] } });
 		r = await runOrchestratorIteration(state, deps, { concurrencyLimit: 5 });
@@ -115,6 +116,7 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 		expect(statusOf(r.state, 'C')).toBe('pending');
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
 		// Iteration 3: B completes; C dispatches.
 		deps = makeDeps({ runStates: { B: 'idle' }, messages: { B: [msg('assistant', 'B done.')] } });
 		r = await runOrchestratorIteration(state, deps, { concurrencyLimit: 5 });
@@ -124,6 +126,7 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 		expect(r.done).toBe(false);
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
 		// Iteration 4: C completes; plan is done.
 		deps = makeDeps({ runStates: { C: 'idle' }, messages: { C: [msg('assistant', 'C done.')] } });
 		r = await runOrchestratorIteration(state, deps, { concurrencyLimit: 5 });
@@ -169,6 +172,7 @@ describe('runOrchestratorIteration - concurrency', () => {
 		expect(r.dispatchedTaskIds).toHaveLength(2);
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 2 })).state;
 		// Iteration 2: A completes, freeing a slot; C dispatches; B keeps running.
 		const deps = makeDeps({
 			runStates: { A: 'idle', B: 'busy' },
@@ -301,13 +305,17 @@ describe('runOrchestratorIteration - agent and dispatch failures', () => {
 });
 
 describe('runOrchestratorIteration - persistence and progress', () => {
-	it('calls persist once per iteration with the updated plan', async () => {
+	it('persists the claim and confirmed receipt before the final plan', async () => {
 		const p = plan([task({ id: 'A' }), task({ id: 'B', dependsOn: ['A'] })]);
 		const deps = makeDeps();
 		const r = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
 			concurrencyLimit: 5,
 		});
-		expect(deps.persist).toHaveBeenCalledTimes(1);
+		expect(deps.persist).toHaveBeenCalledTimes(3);
+		expect(vi.mocked(deps.persist).mock.calls[0][0].tasks[0]).toMatchObject({
+			status: 'running',
+			agentId: 'agent-A',
+		});
 		// persist receives the final plan for this iteration (A now running).
 		expect(deps.persist).toHaveBeenCalledWith(r.state.plan);
 		expect(statusOf(r.state, 'A')).toBe('running');
@@ -339,17 +347,16 @@ describe('runOrchestratorIteration - prevStates carry-across', () => {
 		const p = plan([task({ id: 'A' })]);
 		let state = initialOrchestratorState(p);
 
-		// Iteration 1: A dispatched. It is seeded 'connecting' (its just-spun-up
-		// state) so the next poll has a working state to compare against.
+		// Dispatch records delivery without inventing a process state.
 		let r = await runOrchestratorIteration(state, makeDeps({ runStates: { A: 'busy' } }), {
 			concurrencyLimit: 5,
 		});
-		expect(r.state.prevStates.A).toBe('connecting');
+		expect(r.state.prevStates.A).toBeUndefined();
 		expect(statusOf(r.state, 'A')).toBe('running');
 		state = r.state;
 
-		// Iteration 2: A now idle. The carried prev state ('connecting') makes this a
-		// working->idle transition, so the task is detected done.
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
+		// A real busy observation followed by idle can settle the legacy adapter.
 		r = await runOrchestratorIteration(
 			state,
 			makeDeps({ runStates: { A: 'idle' }, messages: { A: [msg('assistant', 'finished')] } }),

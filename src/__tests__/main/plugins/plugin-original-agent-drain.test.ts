@@ -145,6 +145,7 @@ describe('original audio through the production spawner and supervisor', () => {
 							undefined,
 							undefined,
 							false,
+							false,
 							{ originalAttachment: lease }
 						)
 				)

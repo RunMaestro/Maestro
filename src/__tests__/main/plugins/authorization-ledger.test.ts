@@ -1,3 +1,4 @@
+import { fakeAnchor } from '../../helpers/mockAnchor';
 /**
  * @file authorization-ledger.test.ts
  * @description Security tests for the sealed authorization ledger - the plugin
@@ -45,18 +46,6 @@ function fakeSeal(available = true): SealProvider {
 
 /** In-memory anchor backed by an external holder - simulates the OS credential
  * vault, which is NOT rolled back when the ledger file is restored. */
-function fakeAnchor(holder: { value: Anchor | null }, available = true): AnchorStore {
-	return {
-		available: () => available,
-		read: () => holder.value,
-		write: (a) => {
-			holder.value = { ...a };
-		},
-		clear: () => {
-			holder.value = null;
-		},
-	};
-}
 
 it('createKeyringAnchor degrades unavailable native keyring to session-only', () => {
 	const missing = createKeyringAnchor('com.maestro.test', 'freshness', () => null);

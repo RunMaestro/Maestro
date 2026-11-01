@@ -46,6 +46,11 @@ interface DataviewRowsResultBase {
 	 */
 	warnings: string[];
 	idMeaning: DataviewIdMeaning;
+	/**
+	 * How many rows the query produced, set only when that is more than `DATAVIEW_MAX_RESULT_ROWS`: the
+	 * result then holds the first `DATAVIEW_MAX_RESULT_ROWS` of them (top-level tasks for a `TASK` query).
+	 */
+	total?: number;
 }
 
 export interface DataviewTableResult<V = DataviewWireValue> extends DataviewRowsResultBase {

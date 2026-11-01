@@ -1,3 +1,11 @@
+import { nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
+vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
+import { fakeAnchor } from '../../helpers/mockAnchor';
+import {
+	RelayConversations,
+	cancelRelayConversationTurn,
+} from '../../../main/plugins/relay-conversations';
+import { createMockSession } from '../../helpers/mockSession';
 /**
  * @file plugin-host-handlers.test.ts
  * @description Host handlers for the new verbs: settings.set namespace + secret
@@ -1483,6 +1491,9 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			success: true,
 			response: `answer:${prompt}`,
 			sessionId: sessionId ?? 'provider-relay',
+			executionStarted: false,
+			usageStats: { internal: true },
+			toolReceipts: [{ internal: 'receipt' }],
 		}));
 		const h = buildHostCallHandlers(
 			makeDeps({
@@ -1515,7 +1526,9 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			sessionId: 'provider-relay',
 			error: undefined,
 		});
-		await h['agents.send']!('other.plugin', { agentId: 'a', prompt: 'ordinary plugin' });
+		expect(
+			await h['agents.send']!('other.plugin', { agentId: 'a', prompt: 'ordinary plugin' })
+		).toEqual({ success: true, response: 'answer:ordinary plugin', sessionId: 'provider-relay' });
 		expect(sendAgent).toHaveBeenLastCalledWith(
 			'a',
 			'ordinary plugin',
@@ -2990,6 +3003,102 @@ describe('host media configuration', () => {
 	});
 });
 
+describe('Relay desktop transport authorization', () => {
+	it('keeps exact-agent ownership and identity gates on restore, send, replay and completion', async () => {
+		let agent: any = createMockSession({ id: 'a', aiTabs: [], unifiedTabOrder: [] });
+		let consent = true;
+		let signer = RELAY_PUBLISHER_KEY;
+		const providerSessions = new PluginAgentSessionBindings(path.join(kvBase, 'owned'));
+		const sendAgent = vi.fn(async () => ({
+			success: true,
+			response: 'answer',
+			sessionId: 'provider',
+		}));
+		const recordRelayTurn = vi.fn(async () => {});
+		const relayConversations = new RelayConversations({
+			baseDir: path.join(kvBase, 'conversations'),
+			receiptAnchor: fakeAnchor({ value: null }),
+			getAgent: () => agent,
+			updateAgent: (_id, update) => {
+				agent = update(agent);
+			},
+			run: sendAgent,
+			loadTranscript: async () => [
+				{ id: 'past', timestamp: 1, source: 'user', text: 'past prompt' },
+			],
+		});
+		const handlers = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [{ capability: 'agents:dispatch', scope: 'a', grantedAt: 1 }]),
+				providerSessions,
+				sendAgent,
+				relayConversations,
+				recordRelayTurn,
+				dispatchUnattendedAllowed: () => consent,
+				getPluginSignature: () => ({ status: 'trusted', signerKey: signer }),
+			})
+		);
+		const restore = () =>
+			handlers['agents.restoreConversation']!('sh.maestro.relay', {
+				agentId: 'a',
+				conversationId: 'thread',
+				sessionId: 'provider',
+			});
+		await expect(restore()).rejects.toThrow(/not owned/);
+		providerSessions.remember('sh.maestro.relay', 'a', 'provider');
+		await expect(restore()).resolves.toMatchObject({ success: true, conversationId: 'thread' });
+		expect(sendAgent).not.toHaveBeenCalled();
+		expect(agent.aiTabs[0].logs[0].text).toBe('past prompt');
+		const params = {
+			agentId: 'a',
+			prompt: 'hello',
+			opts: { conversationId: 'thread', messageId: 'message', sessionId: 'provider' },
+		};
+		expect(await handlers['agents.send']!('sh.maestro.relay', params)).toMatchObject({
+			success: true,
+			conversationId: 'thread',
+			tabId: agent.aiTabs[0].id,
+		});
+		await expect(handlers['agents.send']!('sh.maestro.relay', params)).resolves.toMatchObject({
+			replayed: true,
+		});
+		expect(sendAgent).toHaveBeenCalledTimes(1);
+		expect(recordRelayTurn).not.toHaveBeenCalled();
+		expect(agent.aiTabs[0].logs.filter((log: any) => log.source === 'stdout')).toHaveLength(1);
+		await expect(handlers['agents.send']!('other.plugin', params)).rejects.toThrow(/unavailable/);
+		await expect(
+			handlers['agents.send']!('sh.maestro.relay', {
+				...params,
+				opts: { conversationId: 'thread' },
+			})
+		).rejects.toThrow(/together/);
+		const complete = () =>
+			handlers['agents.completeConversation']!('sh.maestro.relay', {
+				agentId: 'a',
+				conversationId: 'thread',
+				messageId: 'message',
+			});
+		consent = false;
+		await expect(restore()).rejects.toThrow(/authorization/);
+		await expect(complete()).rejects.toThrow(/authorization/);
+		await expect(handlers['agents.send']!('sh.maestro.relay', params)).rejects.toThrow(
+			/unattended/
+		);
+		consent = true;
+		signer = 'different-publisher';
+		await expect(restore()).rejects.toThrow(/authorization/);
+		await expect(complete()).rejects.toThrow(/authorization/);
+		signer = RELAY_PUBLISHER_KEY;
+		await expect(complete()).resolves.toEqual({ success: true });
+		await expect(
+			handlers['agents.restoreConversation']!('sh.maestro.relay', {
+				agentId: 'other',
+				conversationId: 'thread',
+				sessionId: 'provider',
+			})
+		).rejects.toThrow();
+	});
+});
 describe('agents.send original audio gate', () => {
 	const ref = {
 		jobId: '00000000-0000-0000-0000-000000000001',
@@ -3176,3 +3285,105 @@ it.each([true, false])(
 		}
 	}
 );
+
+describe('original audio in durable Relay conversations', () => {
+	it.each(['replay', 'stop', 'revocation'])(
+		'preserves bounded execution and publication across %s',
+		async (phase) => {
+			let agent: any = createMockSession({ id: 'a', aiTabs: [], unifiedTabOrder: [] });
+			let allowed = true;
+			let publish: (() => void) | undefined;
+			const ref = {
+				jobId: '00000000-0000-0000-0000-000000000001',
+				audioId: '00000000-0000-0000-0000-000000000002',
+			};
+			const sendAgent = vi.fn<NonNullable<HostHandlerDeps['sendAgent']>>(async (...args) => {
+				expect(args[8]).toBe(true);
+				expect(args[9]?.originalAttachment).toBeDefined();
+				if (phase === 'stop') {
+					expect(cancelRelayConversationTurn(`a-ai-${agent.aiTabs[0].id}`)).toBe(true);
+					expect(args[3]?.aborted).toBe(true);
+					return { success: false, response: null, sessionId: null };
+				}
+				return {
+					success: true,
+					response: 'answer',
+					sessionId: 'provider',
+					originalAttachments: [{ bytes: 7, filename: 'original.ogg', sha256: 'a'.repeat(64) }],
+				};
+			});
+			const relayConversations = new RelayConversations({
+				baseDir: path.join(kvBase, 'conversation-audio'),
+				receiptAnchor: fakeAnchor({ value: null }),
+				getAgent: () => agent,
+				updateAgent: (_id, update) => {
+					agent = update(agent);
+				},
+				run: sendAgent,
+			});
+			const deps = makeDeps({
+				sendAgent,
+				relayConversations,
+				dispatchUnattendedAllowed: () => true,
+				serviceAllowed: () => allowed,
+			});
+			const handlers = buildHostCallHandlers(deps);
+			const forward = vi
+				.spyOn(PluginMediaTools.prototype, 'forwardOriginal')
+				.mockImplementation(async (_id, _ref, authorize, run) => {
+					const result = await run({
+						signal: new AbortController().signal,
+						check: authorize,
+						waitFor: async (value) => value,
+						prepare: vi.fn(),
+						handoff: vi.fn(),
+					});
+					if (phase === 'revocation') allowed = false;
+					return result;
+				});
+			try {
+				const params = {
+					agentId: 'a',
+					prompt: 'hello',
+					opts: { conversationId: 'thread', messageId: 'message', originalAttachments: [ref] },
+				};
+				const request = () =>
+					handlers['agents.send']!('sh.maestro.relay', params, {
+						onProgress: () => {},
+						setResponseGuard: (guard) => {
+							publish = guard;
+						},
+					});
+				if (phase === 'stop' || phase === 'revocation') {
+					await expect(request()).rejects.toThrow(/Media/);
+					expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'provider')).toBe(false);
+					expect(agent.aiTabs[0].logs.some((log: any) => log.text === 'answer')).toBe(false);
+					return;
+				}
+				const result = await request();
+				expect(result).toMatchObject({
+					success: true,
+					conversationId: 'thread',
+					tabId: agent.aiTabs[0].id,
+					originalAttachments: [{ bytes: 7 }],
+				});
+				expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'provider')).toBe(false);
+				publish!();
+				expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'provider')).toBe(true);
+				await expect(request()).resolves.toMatchObject({ ...result, replayed: true });
+				expect(sendAgent).toHaveBeenCalledTimes(1);
+				expect(forward).toHaveBeenCalledTimes(1);
+				params.opts.originalAttachments = [
+					{ ...ref, audioId: '00000000-0000-0000-0000-000000000003' },
+				];
+				await expect(request()).rejects.toThrow(/different content/);
+				expect(forward).toHaveBeenCalledTimes(1);
+				allowed = false;
+				expect(publish).toThrow(/MediaDenied/);
+				await expect(request()).rejects.toThrow(/MediaDenied/);
+			} finally {
+				forward.mockRestore();
+			}
+		}
+	);
+});

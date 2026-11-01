@@ -11,7 +11,7 @@
  * - Applies theme colors correctly
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import React from 'react';
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
@@ -311,6 +311,14 @@ function printedDayLabels(container: HTMLElement): string[] {
 }
 
 describe('ActivityHeatmap day labels', () => {
+	// The grid is built from today, not from the data. Pin the clock mid-month
+	// so the 30-day window always crosses a month boundary: on the last day of
+	// a 31-day month it starts on the 2nd and holds no boundary at all.
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2024, 11, 15, 12, 0, 0));
+	});
+
 	afterEach(() => {
 		vi.mocked(useElementWidth).mockReturnValue(0);
 		vi.useRealTimers();

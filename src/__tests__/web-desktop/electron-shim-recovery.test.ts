@@ -87,6 +87,187 @@ async function aliveFor(socket: Socket, milliseconds: number) {
 }
 
 describe('bounded bridge requests and failed application recovery', () => {
+	it('retries recovery before its owner is mounted without an unhandled abort rejection', async () => {
+		await import('../../web-desktop/electron-shim');
+		vi.spyOn(Math, 'random').mockReturnValue(0);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		first.close();
+		await vi.advanceTimersByTimeAsync(1000);
+		const second = Socket.instances.at(-1)!;
+		second.open();
+		await vi.advanceTimersByTimeAsync(0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('reconnecting');
+		// Mount the real recovery participant after the failed initial attempt.
+		duringRecovery(async () => {});
+		await aliveFor(second, 1001);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+	});
+
+	it('types unsent reconnect requests separately from uncertain submitted mutations', async () => {
+		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		const submitted = ipcRenderer.invoke('process:spawn', {});
+		const uncertain = expect(submitted).rejects.toMatchObject({
+			name: 'BridgeTransportError',
+			code: 'BRIDGE_SUBMISSION_UNCERTAIN',
+			submission: 'unknown',
+		});
+		first.close();
+		await uncertain;
+		await expect(ipcRenderer.invoke('sessions:getBootstrap')).rejects.toMatchObject({
+			name: 'BridgeTransportError',
+			code: 'BRIDGE_RECONNECTING',
+			submission: 'not-sent',
+		});
+	});
+
+	it('keeps offline debug local and deduplicates real warnings at their original level', async () => {
+		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
+		const { BridgeTransportError } = await import('../../shared/bridgeError');
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		first.close();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		for (let i = 0; i < 50; i++) {
+			await ipcRenderer.invoke('logger:log', 'debug', 'refresh tick', 'Files');
+			await ipcRenderer.invoke(
+				'logger:log',
+				'warn',
+				'read paused',
+				'Files',
+				new BridgeTransportError('restoring', 'BRIDGE_RESTORING')
+			);
+			await ipcRenderer.invoke('logger:log', 'error', 'real filesystem failure', 'Files');
+		}
+		expect(warn).not.toHaveBeenCalled();
+		expect(error).toHaveBeenCalledTimes(1);
+		expect(error.mock.calls[0]).toContain('real filesystem failure');
+		expect(first.sent.filter((packet) => packet.channel === 'logger:log')).toEqual([]);
+	});
+
+	it('does not spin or repeatedly warn for the same recoverable restoration failure', async () => {
+		await import('../../web-desktop/electron-shim');
+		const { BridgeTransportError } = await import('../../shared/bridgeError');
+		vi.spyOn(Math, 'random').mockReturnValue(0);
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		let attempts = 0;
+		duringRecovery(async () => {
+			attempts++;
+			throw new BridgeTransportError(
+				'owner snapshot unavailable',
+				'BRIDGE_RECOVERY_PENDING',
+				'read-only'
+			);
+		});
+		first.close();
+		await vi.advanceTimersByTimeAsync(1000);
+		const second = Socket.instances.at(-1)!;
+		second.open();
+		await aliveFor(second, 5000);
+		expect(attempts).toBeLessThanOrEqual(6);
+		expect(warn.mock.calls.filter((args) => String(args[0]).includes('In-place'))).toHaveLength(1);
+	});
+
+	it('cancels reads from an expired recovery attempt before starting its retry', async () => {
+		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
+		vi.spyOn(Math, 'random').mockReturnValue(0);
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		let pendingRead!: Promise<unknown>;
+		let attempts = 0;
+		duringRecovery(async () => {
+			if (++attempts === 1) {
+				// Long read proves cancellation is tied to the recovery budget, not its own timeout.
+				pendingRead = ipcRenderer.invoke('fs:directorySize', '/repo');
+				await pendingRead;
+			}
+		});
+		first.close();
+		await vi.advanceTimersByTimeAsync(1000);
+		const second = Socket.instances.at(-1)!;
+		second.open();
+		const rejected = expect(pendingRead).rejects.toMatchObject({ code: 'BRIDGE_RECOVERY_PENDING' });
+		await aliveFor(second, 31001);
+		await rejected;
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+	});
+
+	it('starts a fresh recovery before an old controller settles and ignores its stale work', async () => {
+		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
+		vi.spyOn(Math, 'random').mockReturnValue(0);
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		const finish: Array<() => void> = [];
+		duringRecovery(() => new Promise<void>((resolve) => finish.push(resolve)));
+		first.close();
+		await vi.advanceTimersByTimeAsync(1000);
+		const second = Socket.instances.at(-1)!;
+		second.open();
+		expect(finish).toHaveLength(1);
+		second.close();
+		// Deliberately do not flush promise reactions: the retired controller's
+		// finally block has not run when the new socket receives its handshake.
+		vi.advanceTimersByTime(1000);
+		const third = Socket.instances.at(-1)!;
+		third.open();
+		expect(finish).toHaveLength(2);
+		finish[0]();
+		await vi.advanceTimersByTimeAsync(0);
+		await expect(ipcRenderer.invoke('process:spawn', {})).rejects.toMatchObject({
+			code: 'BRIDGE_RESTORING',
+		});
+		finish[1]();
+		await vi.advanceTimersByTimeAsync(0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+		await aliveFor(third, 3000);
+		expect(finish).toHaveLength(2);
+		expect(Socket.instances).toHaveLength(3);
+	});
+
+	it('allows recovery reads while fencing mutations and preserves optional reads after success', async () => {
+		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
+		const first = Socket.instances.at(-1)!;
+		first.open();
+		let optional!: Promise<unknown>;
+		duringRecovery(async () => {
+			await Promise.all(
+				[
+					'sessions:getBootstrap',
+					'groups:getAll',
+					'settings:getAll',
+					'logger:getLogLevel',
+					'web:getAutoRunStates',
+				].map((channel) => ipcRenderer.invoke(channel))
+			);
+			optional = ipcRenderer.invoke('groupChat:list');
+		});
+		first.close();
+		await vi.advanceTimersByTimeAsync(1000);
+		const second = Socket.instances.at(-1)!;
+		second.open();
+		await expect(ipcRenderer.invoke('sessions:setMany', [])).rejects.toMatchObject({
+			code: 'BRIDGE_RESTORING',
+		});
+		for (const packet of second.sent.filter((p) => p.type === 'bridge.invoke'))
+			second.frame({ type: 'bridge.response', requestId: packet.requestId, ok: true, result: [] });
+		await vi.advanceTimersByTimeAsync(0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+		const packet = second.sent.find((p) => p.channel === 'groupChat:list')!;
+		second.frame({
+			type: 'bridge.response',
+			requestId: packet.requestId,
+			ok: true,
+			result: ['chat'],
+		});
+		await expect(optional).resolves.toEqual(['chat']);
+	});
+
 	it('recovers a missed replay without remounting the active workflow or replaying its action', async () => {
 		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
 		const first = Socket.instances.at(-1)!;

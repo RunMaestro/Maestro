@@ -482,6 +482,7 @@ interface MaestroAPI {
 			Array<{
 				sessionId: string;
 				toolType: string;
+				/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 				pid: number;
 				cwd: string;
 				isTerminal: boolean;
@@ -4919,8 +4920,6 @@ interface MaestroAPI {
 		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;
 		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
 		getEventCount: () => Promise<number>;
-		/** Can this data directory run Cue unattended? Same report as `maestro-cli cue engine check`. */
-		checkReadiness: () => Promise<import('../shared/cue/readiness').CueReadinessReport>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
 		/**
@@ -5011,7 +5010,14 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		resolveDecision: (
+			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
+		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		confirmDesktopOwner: () => Promise<void>;
+		reviewSuggestion: (
+			review: import('../shared/pianola/storage').PianolaSuggestionReview
+		) => Promise<{ rules: PianolaRule[]; suggestions: PianolaSuggestionsFile }>;
 		applySuggestion: (payload: {
 			rule?: PianolaRule;
 			profile?: { text: string; projectPath?: string };

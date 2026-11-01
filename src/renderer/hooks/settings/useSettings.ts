@@ -93,6 +93,8 @@ export interface UseSettingsReturn {
 
 	// Pianola auto-watch
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
+	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Host media tools
@@ -150,6 +152,8 @@ export interface UseSettingsReturn {
 	setEnterToSendAI: (value: boolean) => void;
 	enterToSendAIExpanded: boolean;
 	setEnterToSendAIExpanded: (value: boolean) => void;
+	relayArchiveHours: number;
+	setRelayArchiveHours: (value: number) => void;
 	defaultSaveToHistory: boolean;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	synopsisDebounceSeconds: number;

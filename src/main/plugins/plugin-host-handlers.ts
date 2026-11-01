@@ -1,3 +1,4 @@
+import type { RelayConversations, RelaySendOptions } from './relay-conversations';
 import { PLUGIN_PRIMITIVE_METHODS, type PluginPrimitives } from './plugin-primitives';
 import { PluginAuthorityError } from './plugin-authority';
 /**
@@ -337,6 +338,7 @@ export interface HostHandlerDeps {
 	) => Promise<string | null>;
 	/** Host-only persistent ownership ledger for resumable provider sessions. */
 	providerSessions?: PluginAgentSessionBindings;
+	relayConversations?: RelayConversations;
 	/** Host-owned persistence for a turn from the authenticated Relay plugin. */
 	recordRelayTurn?: (
 		agentId: string,
@@ -1559,22 +1561,37 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				throw new Error('agents.send: opts must be an object');
 			}
 			const opts = p.opts === undefined ? {} : asObject(p.opts);
-			assertClosedSchema('agents.send opts', opts, { sessionId: true, originalAttachments: true });
-			const originals = opts.originalAttachments;
+			assertClosedSchema('agents.send opts', opts, {
+				sessionId: true,
+				originalAttachments: true,
+				conversationId: true,
+				messageId: true,
+			});
+			const hasConversation = opts.conversationId !== undefined || opts.messageId !== undefined;
+			if (hasConversation && (!isOpaqueId(opts.conversationId) || !isOpaqueId(opts.messageId)))
+				throw new Error(
+					'agents.send: conversationId and messageId must be supplied together (1-256 characters)'
+				);
+			const originalInput = opts.originalAttachments;
 			if (
-				originals !== undefined &&
-				(!Array.isArray(originals) ||
-					originals.length !== 1 ||
-					!originals[0] ||
-					typeof originals[0] !== 'object' ||
-					Array.isArray(originals[0]) ||
-					Object.keys(originals[0]).length !== 2 ||
+				originalInput !== undefined &&
+				(!Array.isArray(originalInput) ||
+					originalInput.length !== 1 ||
+					!originalInput[0] ||
+					typeof originalInput[0] !== 'object' ||
+					Array.isArray(originalInput[0]) ||
+					Object.keys(originalInput[0]).length !== 2 ||
 					!['jobId', 'audioId'].every(
 						(key) =>
-							typeof originals[0][key] === 'string' && /^[a-f0-9-]{36}$/.test(originals[0][key])
+							typeof originalInput[0][key] === 'string' &&
+							/^[a-f0-9-]{36}$/.test(originalInput[0][key])
 					))
 			)
 				throw new MediaError('MediaInvalid');
+			const originals =
+				originalInput === undefined
+					? undefined
+					: originalInput.map((ref) => ({ jobId: ref.jobId, audioId: ref.audioId }));
 			const agentId = p.agentId;
 			const prompt = p.prompt;
 			if (
@@ -1610,6 +1627,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				pluginId,
 				deps.getPluginSignature?.(pluginId)
 			);
+			if (hasConversation && (!relayConversation || !deps.relayConversations))
+				throw new Error('Relay conversation transport unavailable for this caller');
 			if (!relayConversation) assertLowOrMediumRisk(prompt);
 			const authorizeOriginal = (): void => {
 				try {
@@ -1678,20 +1697,13 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							context?.onProgress(event);
 						};
 						const invoke = async (
-							attachment?: import('./plugin-media-tools').OriginalAttachmentLease
+							attachment: import('./plugin-media-tools').OriginalAttachmentLease | undefined,
+							runnerArgs: Parameters<typeof sendAgent>
 						) => {
-							const args: Parameters<typeof sendAgent> = [
-								agentId,
-								prompt,
-								opts.sessionId as string | undefined,
-								controller.signal,
-								pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
-								onProgress,
-							];
-							if (attachment) args[8] = { originalAttachment: attachment };
-							const { success, response, sessionId, error, originalAttachments } = await sendAgent(
-								...args
-							);
+							const args = [...runnerArgs] as Parameters<typeof sendAgent>;
+							if (attachment) args[9] = { originalAttachment: attachment };
+							const result = await sendAgent(...args);
+							const { success, response, sessionId, error, originalAttachments } = result;
 							attachment?.check();
 							if (attachment && !success)
 								throw new MediaError(
@@ -1720,10 +1732,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							) {
 								throw new Error('Relay conversation identity was revoked');
 							}
-							if (success && sessionId && !attachment) {
+							if (success && sessionId && !attachment && !hasConversation) {
 								providerSessions.remember(pluginId, agentId, sessionId);
 							}
-							if (pluginId === RELAY_PLUGIN_ID) {
+							if (pluginId === RELAY_PLUGIN_ID && !hasConversation) {
 								try {
 									await deps.recordRelayTurn?.(
 										agentId,
@@ -1743,6 +1755,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 								}
 							}
 							return {
+								...result,
 								success,
 								response,
 								sessionId,
@@ -1750,42 +1763,180 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 								...(originalAttachments ? { originalAttachments } : {}),
 							};
 						};
-						if (originals !== undefined) {
-							const result = await mediaTools.forwardOriginal(
-								pluginId,
-								originals[0],
-								authorizeOriginal,
-								async (lease) => {
-									const abort = () => controller.abort(lease.signal.reason);
-									lease.signal.addEventListener('abort', abort, { once: true });
-									try {
-										lease.check();
-										return await invoke(lease);
-									} finally {
-										lease.signal.removeEventListener('abort', abort);
+						const execute: typeof sendAgent = async (...runnerArgs) => {
+							if (originals !== undefined) {
+								const result = await mediaTools.forwardOriginal(
+									pluginId,
+									originals[0],
+									authorizeOriginal,
+									async (lease) => {
+										const abort = () => controller.abort(lease.signal.reason);
+										lease.signal.addEventListener('abort', abort, { once: true });
+										try {
+											lease.check();
+											return await invoke(lease, runnerArgs);
+										} finally {
+											lease.signal.removeEventListener('abort', abort);
+										}
 									}
-								}
-							);
-							// Cleanup and history recording may await. Original resume authority
-							// is minted only once both have drained under current consent.
+								);
+								// Cleanup and history recording may await. Original resume authority
+								// is minted only once both have drained under current consent.
+								authorizeOriginal();
+								if (controller.signal.aborted) throw new MediaError('MediaCancelled');
+								return result;
+							}
+							return await invoke(undefined, runnerArgs);
+						};
+						const authorize = () => {
+							assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+							assertTrustedActVerb(deps, pluginId);
+							if (
+								!deps.dispatchUnattendedAllowed?.(pluginId, agentId) ||
+								!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
+							)
+								throw new Error('Relay conversation authorization revoked');
+							if (originals !== undefined) authorizeOriginal();
+						};
+						const result = hasConversation
+							? await deps.relayConversations!.send(
+									agentId,
+									prompt,
+									{
+										...opts,
+										...(originals ? { originalAttachments: originals } : {}),
+									} as unknown as RelaySendOptions,
+									controller.signal,
+									onProgress,
+									authorize,
+									execute
+								)
+							: await execute(
+									agentId,
+									prompt,
+									opts.sessionId as string | undefined,
+									controller.signal,
+									pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
+									onProgress
+								);
+						if (hasConversation) authorize();
+						if (controller.signal.aborted)
+							return {
+								success: false,
+								response: null,
+								sessionId: null,
+								error: 'Agent run timed out or was cancelled',
+							};
+						if (originals !== undefined) {
 							authorizeOriginal();
-							if (controller.signal.aborted) throw new MediaError('MediaCancelled');
 							if (result.success && result.sessionId) {
 								const sessionId = result.sessionId;
 								commitOriginalOwnership = () =>
 									providerSessions.remember(pluginId, agentId, sessionId);
-								// Direct host callers have no later RPC publication boundary.
 								if (!context?.setResponseGuard) commitOriginalOwnership();
 							}
-							return result;
+						} else if (hasConversation && result.success && result.sessionId) {
+							providerSessions.remember(pluginId, agentId, result.sessionId);
 						}
-						return await invoke();
+						return {
+							success: result.success,
+							response: result.response,
+							sessionId: result.sessionId,
+							...(result.error ? { error: result.error } : {}),
+							...(result.originalAttachments
+								? { originalAttachments: result.originalAttachments }
+								: {}),
+							...(hasConversation
+								? {
+										conversationId: 'conversationId' in result ? result.conversationId : undefined,
+										tabId: 'tabId' in result ? result.tabId : undefined,
+										...('replayed' in result && result.replayed ? { replayed: true } : {}),
+									}
+								: {}),
+						};
 					} finally {
 						runs.delete(controller);
 						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {
 							activeRuns.delete(pluginId);
 						}
 					}
+				}
+			);
+		};
+	}
+	if (deps.relayConversations) {
+		handlers['agents.restoreConversation'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.restoreConversation', p, {
+				agentId: true,
+				conversationId: true,
+				sessionId: true,
+			});
+			if (!isOpaqueId(p.agentId) || !isOpaqueId(p.conversationId) || !isOpaqueId(p.sessionId))
+				throw new Error('Invalid Relay conversation restore identity');
+			const authorize = () => {
+				assertBrokerAllowed(deps, pluginId, 'agents.restoreConversation', p);
+				assertTrustedActVerb(deps, pluginId);
+				if (
+					!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)) ||
+					!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
+				)
+					throw new Error('Relay conversation authorization required');
+				deps.providerSessions?.assertOwned(pluginId, p.agentId as string, p.sessionId as string);
+				if (!deps.providerSessions) throw new Error('Provider ownership unavailable');
+			};
+			authorize();
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${p.agentId}`,
+				async () => {
+					authorize();
+					const restored = await deps.relayConversations!.restore(
+						p.agentId as string,
+						p.conversationId as string,
+						p.sessionId as string,
+						authorize
+					);
+					authorize();
+					return restored;
+				}
+			);
+		};
+		handlers['agents.completeConversation'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.completeConversation', p, {
+				agentId: true,
+				conversationId: true,
+				messageId: true,
+			});
+			if (!isOpaqueId(p.agentId) || !isOpaqueId(p.conversationId) || !isOpaqueId(p.messageId))
+				throw new Error('Invalid Relay conversation completion identity');
+			const authorize = () => {
+				assertBrokerAllowed(deps, pluginId, 'agents.completeConversation', p);
+				assertTrustedActVerb(deps, pluginId);
+				if (
+					!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)) ||
+					!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
+				)
+					throw new Error('Relay conversation authorization required');
+			};
+			authorize();
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${p.agentId}`,
+				async () => {
+					await deps.relayConversations!.complete(
+						p.agentId as string,
+						p.conversationId as string,
+						p.messageId as string,
+						authorize
+					);
+					authorize();
+					return { success: true };
 				}
 			);
 		};
@@ -2233,4 +2384,8 @@ export function purgePluginData(
 	deps.settingsDeleteNamespace(`plugins.${pluginId}.`);
 	deps.eventBus.clear(pluginId);
 	deps.hostViews?.purge(pluginId);
+}
+
+function isOpaqueId(value: unknown): value is string {
+	return typeof value === 'string' && /^[^\x00-\x1f\x7f]{1,256}$/.test(value);
 }

@@ -3,15 +3,18 @@ import { createPortal } from 'react-dom';
 import { X, Music, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PianolaRule } from '../../../shared/pianola/types';
+import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
 import type {
 	PianolaDecisionRecord,
 	PianolaSuggestionsFile,
+	PianolaSuggestionReview,
 } from '../../../shared/pianola/storage';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { RuleEditor } from './RuleEditor';
 import { DecisionsView } from './DecisionsView';
 import { RulesView } from './RulesView';
@@ -59,15 +62,24 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 	// a corrupt hand-edited file is not silently overwritten with an empty list.
 	const [rulesMalformed, setRulesMalformed] = useState(false);
 	const [suggestions, setSuggestions] = useState<PianolaSuggestionsFile | null>(null);
+	const [ownerState, setOwnerState] = useState<
+		'loading' | 'available' | 'confirmed' | 'restricted'
+	>('loading');
 
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [rulesResult, loadedDecisions, loadedSuggestions] = await Promise.all([
+			const [rulesResult, loadedDecisions, loadedSuggestions, identity] = await Promise.all([
 				window.maestro.pianola.getRules(),
 				window.maestro.pianola.getDecisions(500),
 				window.maestro.pianola.getSuggestions(),
+				isWebDesktop()
+					? Promise.resolve(null)
+					: window.maestro.settings.get('pianolaLearningIdentity'),
 			]);
+			if (!isWebDesktop()) {
+				setOwnerState(readPianolaOwnerIdentity(identity).state);
+			}
 			setRules(rulesResult.rules);
 			setRulesMalformed(rulesResult.malformed);
 			setDecisions(loadedDecisions);
@@ -81,6 +93,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 				});
 			}
 		} catch (error) {
+			setOwnerState('loading');
 			logger.error('[Pianola] Failed to load', undefined, error);
 			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
 			notifyToast({
@@ -153,20 +166,26 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 		[rules, persistRules]
 	);
 
-	const handleApproveRule = useCallback(async (rule: PianolaRule) => {
-		try {
-			const res = await window.maestro.pianola.applySuggestion({ rule });
-			setRules(res.rules);
-			setSuggestions((prev) =>
-				prev ? { ...prev, proposals: prev.proposals.filter((p) => p.id !== rule.id) } : prev
-			);
-			notifyToast({ color: 'green', title: 'Pianola', message: 'Rule added from suggestion.' });
-		} catch (error) {
-			logger.error('[Pianola] Failed to apply suggestion', undefined, error);
-			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
-			notifyToast({ color: 'red', title: 'Pianola', message: 'Could not apply suggestion.' });
-		}
-	}, []);
+	const handleReviewSuggestion = useCallback(
+		async (review: PianolaSuggestionReview) => {
+			try {
+				const result = await window.maestro.pianola.reviewSuggestion(review);
+				setRules(result.rules);
+				setSuggestions(result.suggestions);
+				notifyToast({ color: 'green', title: 'Pianola', message: 'Suggestion review saved.' });
+			} catch (error) {
+				logger.error('[Pianola] Failed to review suggestion', undefined, error);
+				if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
+				notifyToast({
+					color: 'red',
+					title: 'Pianola',
+					message: 'Review failed or evidence changed. Refresh and review again.',
+				});
+				void load();
+			}
+		},
+		[load]
+	);
 
 	const handleApplyProfile = useCallback(async (text: string) => {
 		try {
@@ -311,13 +330,26 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 						/>
 					)}
 					{tab === 'suggestions' && (
-						<SuggestionsView
-							theme={theme}
-							suggestions={suggestions}
-							loading={loading}
-							onApproveRule={handleApproveRule}
-							onApplyProfile={handleApplyProfile}
-						/>
+						<>
+							{!isWebDesktop() && ownerState !== 'loading' && (
+								<div className="px-5 py-3 text-sm" style={{ color: theme.colors.textMain }}>
+									{ownerState === 'confirmed'
+										? 'Desktop owner confirmed.'
+										: ownerState === 'restricted'
+											? 'Desktop owner setup is restricted.'
+											: 'Explicit decisions in this desktop can be used as owner learning evidence.'}
+								</div>
+							)}
+							<SuggestionsView
+								theme={theme}
+								suggestions={suggestions}
+								loading={loading}
+								rules={rules}
+								onReview={handleReviewSuggestion}
+								onClose={onClose}
+								onApplyProfile={handleApplyProfile}
+							/>
+						</>
 					)}
 				</div>
 

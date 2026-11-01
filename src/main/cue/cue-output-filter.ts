@@ -1,8 +1,11 @@
-import type { CueSubscription } from './cue-types';
+import type { AgentCompletionData, CueSubscription } from './cue-types';
 
 export const SOURCE_OUTPUT_MAX_CHARS = 5000;
 
-export interface FanInSourceCompletion {
+export interface FanInSourceCompletion extends Pick<
+	AgentCompletionData,
+	'sourceProcessId' | 'sourceTabId'
+> {
 	sessionId: string;
 	sessionName: string;
 	output: string;
@@ -14,6 +17,11 @@ export interface FilteredOutputs {
 	outputCompletions: FanInSourceCompletion[];
 	perSourceOutputs: Record<string, string>;
 	forwardedOutputs: Record<string, string>;
+	/** Known desktop identities, keyed by the base agent used for fan-in counting. */
+	perSourceCompletions: Record<
+		string,
+		Pick<AgentCompletionData, 'sourceProcessId' | 'sourceTabId'>
+	>;
 }
 
 /**
@@ -58,7 +66,18 @@ export function buildFilteredOutputs(
 		}
 	}
 
-	return { outputCompletions, perSourceOutputs, forwardedOutputs };
+	// Output inclusion controls stdout, not which worker satisfied a source.
+	const perSourceCompletions: FilteredOutputs['perSourceCompletions'] = {};
+	for (const c of completions) {
+		if (c.sourceProcessId || c.sourceTabId) {
+			perSourceCompletions[c.sessionId] = {
+				...(c.sourceProcessId ? { sourceProcessId: c.sourceProcessId } : {}),
+				...(c.sourceTabId ? { sourceTabId: c.sourceTabId } : {}),
+			};
+		}
+	}
+
+	return { outputCompletions, perSourceOutputs, forwardedOutputs, perSourceCompletions };
 }
 
 /**

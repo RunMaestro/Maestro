@@ -4,7 +4,10 @@ import { spawn, type ChildProcess } from 'child_process';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import * as termination from '../../../shared/maestro-lib/control/termination';
 import { createOutputParser } from '../../../shared/maestro-lib/parsers/parser-factory';
-import { superviseAgentProcess } from '../../../cli/services/agent-process-supervisor';
+import {
+	superviseAgentProcess,
+	assertHeadlessIdleProfile,
+} from '../../../cli/services/agent-process-supervisor';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
 afterEach(() => {
@@ -66,17 +69,72 @@ describe('headless process supervision', () => {
 		await supervision.processExited;
 		supervision.dispose();
 	});
-	it('keeps new normalized model work alive beyond the old one-hour deadline', async () => {
+	it('validates an optional lifetime independently of the idle profile', () => {
+		const idle = { warnMs: 100, idleMs: 200, toolMs: 300 };
+		expect(() => assertHeadlessIdleProfile(idle)).not.toThrow();
+		for (const timeout of [0, -1, NaN, Infinity]) {
+			expect(() => assertHeadlessIdleProfile(idle, timeout)).toThrow(
+				'Invalid headless idle profile'
+			);
+			expect(() => assertHeadlessIdleProfile(undefined, timeout)).toThrow(
+				'Invalid headless idle profile'
+			);
+		}
+		expect(() => assertHeadlessIdleProfile(idle, 100)).not.toThrow();
+	});
+
+	it.each(['startup', 'idle', 'tool'] as const)(
+		'retains %s stall protection without a lifetime',
+		async (kind) => {
+			vi.useFakeTimers();
+			const child = Object.assign(new EventEmitter(), {
+				kill: vi.fn(),
+				exitCode: null,
+				signalCode: null,
+			}) as unknown as ChildProcess;
+			const onStop = vi.fn();
+			const supervision = superviseAgentProcess(child, {
+				startupMs: 100,
+				idle: { warnMs: 150, idleMs: 200, toolMs: 300 },
+				onStop,
+				onForcedStop: vi.fn(),
+			});
+			try {
+				if (kind === 'idle') supervision.observe({ type: 'text', text: 'started', raw: {} });
+				if (kind === 'tool')
+					supervision.observe({
+						type: 'tool_use',
+						toolCallId: 'tool',
+						toolState: { status: 'running' },
+						raw: {},
+					});
+				await vi.advanceTimersByTimeAsync(kind === 'startup' ? 100 : kind === 'idle' ? 200 : 300);
+				expect(onStop).toHaveBeenCalledExactlyOnceWith(
+					expect.stringContaining(
+						kind === 'startup'
+							? 'Startup or authentication'
+							: kind === 'idle'
+								? 'semantic inactivity'
+								: 'tool or wait budget'
+					)
+				);
+			} finally {
+				supervision.dispose();
+			}
+		}
+	);
+
+	it('keeps new normalized model work alive beyond the old implicit lifetime', async () => {
 		vi.useFakeTimers();
 		const onStop = vi.fn();
 		const supervision = superviseAgentProcess({} as ChildProcess, {
-			timeoutMs: 6 * 60 * 60_000,
+			startupMs: 120_000,
 			idle: { warnMs: 10 * 60_000, idleMs: 20 * 60_000, toolMs: 60 * 60_000 },
 			onStop,
 			onForcedStop: vi.fn(),
 		});
 		try {
-			for (let step = 0; step < 14; step++) {
+			for (let step = 0; step < 74; step++) {
 				supervision.observe({ type: 'text', text: `new work ${step}`, raw: {} });
 				await vi.advanceTimersByTimeAsync(5 * 60_000);
 			}

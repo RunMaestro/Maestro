@@ -18,11 +18,11 @@ The agent's provider, model, effort, context window, working directory, environm
 
 **Import an agent.** Right-click a group and choose **Import Agent...**, right under **New Agent in Group...** (or **Import Agent** in the command palette, which uses the active agent's group). New agents land in that group.
 
-**Export a pipeline.** Open **Maestro Cue** and go to the **Bundles** tab. Pick a pipeline, choose which Claude Code assets to include, then **Export…**.
+**Export a pipeline.** From the command line: `maestro-cli bundle export --pipeline <name>` (see below).
 
 A pipeline or agent whose exported cue.yaml breaks a config rule `bundle validate` checks (a missing field, a name with `:`, a heartbeat under a minute, a `command.mode: cli` subscription) is not exported: the dialog lists every problem, with its workspace and subscription, and no file is written.
 
-**Import** works the same from the Import Agent dialog and the Bundles tab:
+**Import.** The Import Agent dialog imports any bundle, an agent or a pipeline:
 
 1. **Choose Bundle…** The dialog shows what the bundle holds (agents, Claude Code assets, tools it needs) and checks it. A bundle that fails the check says why and goes no further.
 2. Pick a folder for each workspace. This is usually a clone of the project; the dialog shows the git remote the bundle came from. An exact copy fills in the folders it came from.
@@ -58,7 +58,7 @@ maestro-cli bundle export --agent "Reviewer" --exact --output reviewer.maestro-b
 maestro-cli bundle import reviewer.maestro-bundle.zip --group <group-id>
 ```
 
-While Maestro is running, `bundle export` and `bundle import` go through the app and do exactly what the Export Agent and Import Agent dialogs and the Bundles tab do. With the app closed, or with `--data-dir`, they work on the data directory directly, which is how a server is provisioned. See the [CLI reference](./cli-reference) for every flag.
+While Maestro is running, `bundle export` and `bundle import` go through the app and do exactly what the Export Agent and Import Agent dialogs do. With the app closed, or with `--data-dir`, they work on the data directory directly, which is how a server is provisioned. See the [CLI reference](./cli-reference) for every flag.
 
 ## Agents that share a workspace
 

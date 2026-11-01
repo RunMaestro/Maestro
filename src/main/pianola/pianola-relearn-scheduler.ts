@@ -30,6 +30,8 @@ export interface PianolaRelearnSchedulerDeps {
 	runJob: () => Promise<void>;
 	/** Cadence in ms; defaults to 6h. */
 	intervalMs?: number;
+	/** Subscribe to durable native human settlements; removed when stopped. */
+	onHumanDecisionSettled?: (listener: () => void) => () => void;
 }
 
 export class PianolaRelearnScheduler {
@@ -39,12 +41,19 @@ export class PianolaRelearnScheduler {
 	 * finally so a slow mine can never overlap the next cadence fire.
 	 */
 	private inFlight = false;
+	private pendingEvidence = false;
+	private unsubscribe: (() => void) | undefined;
 
 	constructor(private readonly deps: PianolaRelearnSchedulerDeps) {}
 
 	/** Start the cadence. Idempotent. Self-gates per tick on the Encore flag. */
 	start(): void {
 		if (this.timer) return;
+		this.unsubscribe = this.deps.onHumanDecisionSettled?.(() => {
+			if (!this.deps.isEnabled()) return;
+			if (this.inFlight) this.pendingEvidence = true;
+			else this.tick();
+		});
 		const intervalMs = this.deps.intervalMs ?? DEFAULT_INTERVAL_MS;
 		this.timer = setInterval(() => this.tick(), intervalMs);
 		// Unref so the cadence never keeps the process alive on its own.
@@ -53,6 +62,9 @@ export class PianolaRelearnScheduler {
 
 	/** Stop the cadence. Idempotent. */
 	stop(): void {
+		this.unsubscribe?.();
+		this.unsubscribe = undefined;
+		this.pendingEvidence = false;
 		if (this.timer) {
 			clearInterval(this.timer);
 			this.timer = null;
@@ -78,6 +90,10 @@ export class PianolaRelearnScheduler {
 			})
 			.finally(() => {
 				this.inFlight = false;
+				if (this.pendingEvidence) {
+					this.pendingEvidence = false;
+					if (this.timer) this.tick();
+				}
 			});
 	}
 }
