@@ -1,7 +1,7 @@
+import { createScratchDir } from '../../shared/maestro-lib/run/fakeAgent';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import { BoardStorageFacade } from '../../../main/board/board-storage';
@@ -15,7 +15,7 @@ afterEach(() => {
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 it('discovers asynchronously outside transactions and preserves filesystem errors', async () => {
-	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-async-')));
+	dir = createScratchDir('maestro-board-source-async', { canonical: true }).dir;
 	const root = path.join(dir, 'root');
 	fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
 	fs.writeFileSync(path.join(root, '.maestro/board.yaml'), '{"boards":[]}');
@@ -57,7 +57,7 @@ it('discovers asynchronously outside transactions and preserves filesystem error
 	}
 });
 it('cold-discovers registered repositories and legacy input, retains closed sources, and edits roles centrally', async () => {
-	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-host-')));
+	dir = createScratchDir('maestro-board-source-host', { canonical: true }).dir;
 	const roots = ['a', 'b'].map((name) => {
 		const root = path.join(dir, name);
 		fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
@@ -106,7 +106,7 @@ it('cold-discovers registered repositories and legacy input, retains closed sour
 });
 
 it('never treats an SSH session directory as a local migration source', async () => {
-	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-remote-')));
+	dir = createScratchDir('maestro-board-source-remote', { canonical: true }).dir;
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	try {
 		const storage = new BoardStorageFacade(db);
@@ -126,7 +126,11 @@ it('never treats an SSH session directory as a local migration source', async ()
 });
 
 it('completes repository discovery when the first collection was created before the first catalog read', async () => {
-	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-bootstrap-')));
+	dir = createScratchDir('maestro-board-source-bootstrap', { canonical: true }).dir;
+	// Windows os.tmpdir() can contain RUNNER~1. Both host paths must hash the
+	// identical physical spelling before creating or discovering any source.
+	expect(dir).toBe(fs.realpathSync(dir));
+	expect(dir).toBe(await fs.promises.realpath(dir));
 	execFileSync('git', ['init', '--quiet', dir]);
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	try {
@@ -140,6 +144,10 @@ it('completes repository discovery when the first collection was created before 
 			set: { name: 'First' },
 		});
 		await discoverBoardSources(storage, [{ id: 'creator', dir }]);
+		expect(storage.sourceKeys(dir)).toEqual([sourceKey]);
+		expect(await storage.prepareQuery({ projectRoot: dir })).toEqual({ projectRoot: dir });
+		expect((await storage.queryAsync({ projectRoot: dir })).sources).toMatchObject([{ sourceKey }]);
+		expect(storage.query().sources).toHaveLength(1);
 		expect(storage.captureCatalog().repositories).toEqual([
 			{ id: `source:${sourceKey}`, workingDirectory: dir, validated: true },
 		]);
@@ -152,7 +160,7 @@ it('completes repository discovery when the first collection was created before 
 });
 
 it('explicitly revalidates unresolved imported sources without rewriting original bytes, blockers, holds or runs', async () => {
-	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-source-repair-')));
+	dir = createScratchDir('maestro-board-source-repair', { canonical: true }).dir;
 	const db = openBoardDb(path.join(dir, 'board.sqlite'));
 	try {
 		const storage = new BoardStorageFacade(db);

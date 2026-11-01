@@ -1,3 +1,4 @@
+import { createScratchDir } from '../../shared/maestro-lib/run/fakeAgent';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../../shared/board/types';
 import { BoardRuntime } from '../../../main/board/board-runtime';
 import { configureBoardRuntimeHost } from '../../../main/board/board-runtime-host';
@@ -20,7 +21,6 @@ import { decomposeBoardCard, createBoardRunService } from '../../../main/board/b
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'node:os';
 import { execFileSync } from 'child_process';
 import { substituteTemplateVariables } from '../../../shared/templateVariables';
 
@@ -190,7 +190,7 @@ describe('maestro-cli board', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		runTasks = [];
-		projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-cli-')));
+		projectRoot = createScratchDir('maestro-board-cli', { canonical: true }).dir;
 		db = openBoardDb(path.join(projectRoot, 'board.sqlite'));
 		const plan = planBoardMigration({
 			source: { location: { kind: 'local' }, path: projectRoot },

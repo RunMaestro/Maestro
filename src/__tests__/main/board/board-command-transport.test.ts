@@ -1,3 +1,4 @@
+import { createScratchDir } from '../../shared/maestro-lib/run/fakeAgent';
 import { registerBoardHandlers } from '../../../main/ipc/handlers/board';
 const ipcHandlers = vi.hoisted(() => new Map<string, (...args: any[]) => any>());
 vi.mock('electron', () => ({
@@ -22,7 +23,6 @@ import type { CardSpawnResult } from '../../../main/board/board-dispatcher';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import WebSocket from 'ws';
 import { buildSync } from 'esbuild';
 import { execFile } from 'node:child_process';
@@ -144,7 +144,7 @@ const raw = (fields: Record<string, unknown>) =>
 	);
 
 beforeEach(async () => {
-	dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-transport-')));
+	dir = createScratchDir('maestro-board-transport', { canonical: true }).dir;
 	roots = [path.join(dir, 'one'), path.join(dir, 'two')];
 	db = openBoardDb(path.join(dir, 'board.sqlite'));
 	namespaces = roots.map((root, i) => {
@@ -218,6 +218,40 @@ afterEach(async () => {
 });
 
 describe('Board through native runtime/WebSocket and real SQLite', () => {
+	it('keeps migrated physical source identities through the host and a real CLI child', async () => {
+		for (const [index, root] of roots.entries()) {
+			expect(await fs.promises.realpath(root)).toBe(root);
+			const selected = target(index);
+			expect(namespaces[index]).toBe(`legacy:${selected.sourceKey}`);
+			expect(
+				facade.query().sources.find((source) => source.sourceKey === selected.sourceKey)
+			).toEqual({
+				sourceKey: selected.sourceKey,
+				projectRef: { sourceKey: selected.sourceKey },
+				location: { location: { kind: 'local' }, path: root },
+			});
+			expect(await send({ action: 'query', query: { projectRoot: root } })).toMatchObject({
+				ok: true,
+				value: { collections: [{ sourceKey: selected.sourceKey }] },
+			});
+			const shown = await cli(
+				'show',
+				'b',
+				'--project-root',
+				root,
+				'--source',
+				selected.sourceKey,
+				'--collection',
+				selected.collectionKey,
+				'--json'
+			);
+			expect(shown.code, JSON.stringify(shown.value)).toBe(0);
+			expect(shown.value).toMatchObject({
+				storage: { sourceKey: selected.sourceKey, collectionKey: selected.collectionKey },
+			});
+		}
+	});
+
 	it('uses central sources, current host register and explicit colliding legacy identities', async () => {
 		const catalog = await send({ action: 'catalog' });
 		expect(catalog).toMatchObject({
