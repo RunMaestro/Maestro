@@ -1039,7 +1039,8 @@ export class MemoryEngine {
 			case 'status':
 				return { config, progress: this.database.progress(this.running, this.phase, this.error) };
 			case 'configure': {
-				const resumeAfterSave = this.running || this.timer !== null;
+				const resumeAfterSave =
+					(this.running || this.timer !== null) && !(this.database.get<boolean>('paused') ?? true);
 				await this.drain();
 				this.models.invalidateQueryCache();
 				const next = { ...config, ...request.config, userId: config.userId };

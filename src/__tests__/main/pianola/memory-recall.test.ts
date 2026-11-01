@@ -85,6 +85,17 @@ it('restores the active scheduler after a successful configuration save', async 
 	engine.stop();
 });
 
+it('preserves an explicit pause when configuration is saved', async () => {
+	const engine = await fixture();
+	engine.start();
+	engine.pause('user');
+	const start = vi.spyOn(engine, 'start');
+	await engine.request({ action: 'configure', config: { tokenBudget: 2000 } });
+	expect(start).not.toHaveBeenCalled();
+	expect(engine.database.get<boolean>('paused')).toBe(true);
+	engine.stop();
+});
+
 it('does not report an empty eligible bank as successful recall when the local qualifier is unavailable', async () => {
 	const engine = await fixture();
 	engine.database.quarantine('choice', 'owner', 'Synthetic exclusion');
