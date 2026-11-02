@@ -20,6 +20,26 @@ export function isPackedPluginArchivePath(sourcePath: string): boolean {
 	return lower.endsWith('.tgz') || lower.endsWith('.tar.gz');
 }
 
+/** Resolve the native file picker input; folder callers keep using the same path. */
+export function resolvePluginSourcePath(sourcePath: string): string {
+	const resolved = path.resolve(sourcePath);
+	const info = fs.lstatSync(resolved);
+	if (info.isSymbolicLink())
+		throw new Error('plugin source contains symlinks, which are not allowed');
+	if (info.isDirectory()) return resolved;
+	if (!info.isFile())
+		throw new Error('plugin source must be a directory, plugin.json or plugin archive');
+	if (isPackedPluginArchivePath(resolved)) return resolved;
+	if (path.basename(resolved) !== 'plugin.json') {
+		throw new Error('Select plugin.json inside the plugin folder, or a .tgz/.tar.gz archive');
+	}
+	const directory = path.dirname(resolved);
+	if (fs.lstatSync(directory).isSymbolicLink()) {
+		throw new Error('plugin source contains symlinks, which are not allowed');
+	}
+	return directory;
+}
+
 /**
  * Collect plugin-relative POSIX file paths to pack. Uses the same shared
  * exclusion policy as signing/verification. `signature.json` is included: the
@@ -142,10 +162,27 @@ export function extractPluginArchive(
 		const unpacked = zlib.gunzipSync(fs.readFileSync(resolvedArchive), {
 			maxOutputLength: MAX_PACKED_PLUGIN_ARCHIVE_BYTES + TAR_END_BYTES,
 		});
+		if (unpacked.length < TAR_END_BYTES || unpacked.length % TAR_BLOCK_BYTES !== 0) {
+			throw new Error('packed plugin archive is truncated');
+		}
+		let sawEnd = false;
 		let offset = 0;
 		while (offset + TAR_BLOCK_BYTES <= unpacked.length) {
 			const header = unpacked.subarray(offset, offset + TAR_BLOCK_BYTES);
-			if (isZeroBlock(header)) break;
+			if (isZeroBlock(header)) {
+				if (offset + TAR_END_BYTES > unpacked.length || !isZeroBlock(unpacked.subarray(offset))) {
+					throw new Error('packed plugin archive has an invalid end marker');
+				}
+				sawEnd = true;
+				break;
+			}
+			const checksum = parseTarOctal(header, 148, 8);
+			const actualChecksum = header.reduce(
+				(sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte),
+				0
+			);
+			if (checksum !== actualChecksum)
+				throw new Error('packed plugin archive has an invalid tar checksum');
 			const entryName = parseTarString(header, 0, 100);
 			const entryPrefix = parseTarString(header, 345, 155);
 			const entryPath = entryPrefix ? `${entryPrefix}/${entryName}` : entryName;
@@ -153,7 +190,11 @@ export function extractPluginArchive(
 			const typeFlag = parseTarString(header, 156, 1) || '0';
 			const contentStart = offset + TAR_BLOCK_BYTES;
 			const contentEnd = contentStart + size;
-			if (contentEnd > unpacked.length) throw new Error('packed plugin archive is truncated');
+			const nextOffset = contentStart + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+			if (nextOffset > unpacked.length) throw new Error('packed plugin archive is truncated');
+			if (!isZeroBlock(unpacked.subarray(contentEnd, nextOffset))) {
+				throw new Error('packed plugin archive has invalid entry padding');
+			}
 
 			if (typeFlag === '1' || typeFlag === '2') {
 				throw new Error('packed plugin archive link entries are not allowed');
@@ -175,8 +216,9 @@ export function extractPluginArchive(
 			} else {
 				throw new Error(`packed plugin archive entry type "${typeFlag}" is not supported`);
 			}
-			offset = contentStart + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+			offset = nextOffset;
 		}
+		if (!sawEnd) throw new Error('packed plugin archive is truncated');
 		return {
 			root: resolveExtractedPluginRoot(stagingDir),
 			cleanup: () => fs.rmSync(stagingDir, { recursive: true, force: true }),

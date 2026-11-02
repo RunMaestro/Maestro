@@ -2374,6 +2374,10 @@ interface MaestroAPI {
 	};
 	dialog: {
 		selectFolder: () => Promise<string | null>;
+		selectFile: (options: {
+			filters?: Array<{ name: string; extensions: string[] }>;
+			title?: string;
+		}) => Promise<string | null>;
 		saveFile: (options: {
 			defaultPath?: string;
 			filters?: Array<{ name: string; extensions: string[] }>;
@@ -4976,8 +4980,8 @@ interface MaestroAPI {
 			flag: FirstPartyEncoreFlag,
 			enabled: boolean
 		) => Promise<FirstPartyBridgeState>;
-		install: (sourceDir: string) => Promise<PluginInstallResult>;
-		update: (sourceDir: string) => Promise<PluginListSnapshot>;
+		install: (sourcePath: string) => Promise<PluginInstallResult>;
+		update: (sourcePath: string, expectedId?: string) => Promise<PluginListSnapshot>;
 		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
 		contributions: () => Promise<PluginContributions>;
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;

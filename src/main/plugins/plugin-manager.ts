@@ -67,6 +67,7 @@ import {
 } from './agent-flow-retirement';
 import {
 	extractPluginArchive,
+	resolvePluginSourcePath,
 	isPackedPluginArchivePath,
 	type ExtractedPluginArchive,
 } from '../../shared/plugins/plugin-archive';
@@ -718,19 +719,19 @@ export class PluginManager {
 	}
 
 	/**
-	 * Install a plugin from a source directory or a packed .tgz/.tar.gz archive.
+	 * Install a plugin from a source directory, its plugin.json, or a .tgz/.tar.gz archive.
 	 * Archives are extracted into temporary staging outside installed plugins,
 	 * reject traversal/link entries before writing, then use the same directory
 	 * install path so manifest validation and symlink checks stay centralized.
 	 */
 	async install(sourcePath: string): Promise<InstallResult> {
 		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
-		const resolvedSource = path.resolve(sourcePath);
-		if (!isPackedPluginArchivePath(resolvedSource)) {
-			return this.installDirectory(resolvedSource);
-		}
 		let extracted: ExtractedPluginArchive | null = null;
 		try {
+			const resolvedSource = resolvePluginSourcePath(sourcePath);
+			if (!isPackedPluginArchivePath(resolvedSource)) {
+				return await this.installDirectory(resolvedSource);
+			}
 			extracted = extractPluginArchive(resolvedSource);
 			return await this.installDirectory(extracted.root);
 		} catch (error) {
@@ -741,7 +742,7 @@ export class PluginManager {
 	}
 
 	/**
-	 * Update an already-installed plugin in place from a new source directory.
+	 * Update an already-installed plugin from a directory, plugin.json or .tgz/.tar.gz.
 	 *
 	 * This is NOT install: the manifest id MUST already be installed. Updating an
 	 * id that is not installed REJECTS (callers use install() for a first-time
@@ -759,13 +760,26 @@ export class PluginManager {
 	 * mid-swap the old dir is restored, so a partial update can never leave the
 	 * plugin half-replaced.
 	 *
-	 * Trust is NOT carried forward: the persisted enable toggle survives (we never
-	 * touch the state file, so an enabled plugin stays enabled), but refresh()
-	 * re-validates the manifest and re-verifies the signature from the NEW bytes,
-	 * so a new (possibly unsigned or tampered) version never inherits the old
-	 * version's trust.
+	 * The staged manifest/API/signature are checked before the old bytes move.
+	 * A trusted installation requires the same trusted publisher on its update.
+	 * refresh() verifies the new identity again and applies the existing consent
+	 * policy; settings, grants and plugin data are never purged by update.
 	 */
-	async update(sourceDir: string): Promise<PluginRegistry> {
+	async update(sourcePath: string, expectedId?: string): Promise<PluginRegistry> {
+		if (!this.deps.isEnabled()) throw new Error('plugins feature is disabled');
+		const resolvedSource = resolvePluginSourcePath(sourcePath);
+		let extracted: ExtractedPluginArchive | null = null;
+		try {
+			if (isPackedPluginArchivePath(resolvedSource)) {
+				extracted = extractPluginArchive(resolvedSource);
+			}
+			return await this.updateDirectory(extracted?.root ?? resolvedSource, expectedId);
+		} finally {
+			extracted?.cleanup();
+		}
+	}
+
+	private async updateDirectory(sourceDir: string, expectedId?: string): Promise<PluginRegistry> {
 		if (!this.deps.isEnabled()) throw new Error('plugins feature is disabled');
 		const rawManifest = this.readManifest(sourceDir);
 		const { manifest, errors } = validatePluginManifest(rawManifest);
@@ -773,6 +787,9 @@ export class PluginManager {
 			throw new Error(`invalid plugin.json: ${errors.join('; ')}`);
 		}
 		const id = manifest.id;
+		if (expectedId !== undefined && id !== expectedId) {
+			throw new Error(`plugin id "${id}" does not match selected plugin "${expectedId}"`);
+		}
 		if (!isSafePluginFolderName(id)) {
 			throw new Error(`plugin id "${id}" is not a safe folder name`);
 		}
@@ -808,23 +825,65 @@ export class PluginManager {
 			const staging = fs.mkdtempSync(path.join(dir, `.update-${id}-`));
 			const staged = path.join(staging, id);
 			const backup = path.join(staging, `${id}.old`);
+			let swapped = false;
 			try {
 				// dereference:false keeps the copy faithful; we already rejected symlinks.
 				fs.cpSync(sourceDir, staged, { recursive: true });
+				// Validate the exact staged bytes before stopping or moving the working copy.
+				const candidate = buildRecord({
+					source: staged,
+					folderName: id,
+					rawManifest: this.readManifest(staged),
+					enabled: false,
+					hostVersion: HOST_API_VERSION,
+				});
+				if (candidate.loadStatus !== 'ok') {
+					throw new Error(`invalid update: ${candidate.errors.join('; ')}`);
+				}
+				if (canonicalJson(candidate.manifest) !== canonicalJson(manifest)) {
+					throw new Error('plugin manifest changed while staging update');
+				}
+				const keys = this.deps.trustedKeys?.() ?? [];
+				const nextSignature = (await scanPluginFiles(staged, keys)).signature;
+				const oldSignature = (await scanPluginFiles(dest, keys)).signature;
+				if (
+					nextSignature.status === 'invalid' ||
+					(oldSignature.status === 'trusted' &&
+						(nextSignature.status !== 'trusted' ||
+							nextSignature.signerKey !== oldSignature.signerKey))
+				) {
+					throw new Error('update signature is invalid or does not preserve the trusted publisher');
+				}
 				// Stop the running sandbox before swapping files (mirrors uninstall's stop
 				// path); refresh() below restarts it if the new version is still runnable.
 				await this.stopAndDrain(id);
 				// Move the old dir aside, then move the new one into place. If the second
 				// rename fails, restore the old dir so we never leave a partial state.
-				fs.renameSync(dest, backup);
 				try {
-					fs.renameSync(staged, dest);
-				} catch (swapError) {
-					fs.renameSync(backup, dest);
-					throw swapError;
+					fs.renameSync(dest, backup);
+					try {
+						fs.renameSync(staged, dest);
+						swapped = true;
+					} catch (swapError) {
+						try {
+							fs.renameSync(backup, dest);
+						} catch (restoreError) {
+							throw new Error(
+								`update failed; original plugin retained at ${backup}: ${String(restoreError)}`
+							);
+						}
+						throw swapError;
+					}
+				} catch (updateError) {
+					// The old copy still owns dest after a failed backup or successful rollback.
+					// Reconcile it so a recoverable filesystem failure does not leave it stopped.
+					if (!fs.existsSync(backup) && fs.existsSync(dest)) await this.refresh();
+					throw updateError;
 				}
 			} finally {
-				fs.rmSync(staging, { recursive: true, force: true });
+				if (swapped || !fs.existsSync(backup)) {
+					fs.rmSync(staging, { recursive: true, force: true });
+				}
 			}
 			// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
 			// signature trust from scratch. The enable toggle survives because we never
