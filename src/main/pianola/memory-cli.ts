@@ -93,7 +93,8 @@ const BUILDERS: Record<MemoryCliProvider, Builder> = {
 				'--skip-git-repo-check',
 				'--ephemeral',
 				'--ignore-rules',
-				'--ignore-user-config',
+				'-c',
+				'mcp_servers={}',
 				...modelArgs(config, '-m'),
 			],
 			combinedPrompt(input)
@@ -289,7 +290,7 @@ function parseWithSharedParser(
 		const usage = {
 			inputTokens:
 				event.usage.inputTokens +
-				(event.usage.cacheReadTokens ?? 0) +
+				(provider === 'codex' ? 0 : (event.usage.cacheReadTokens ?? 0)) +
 				(event.usage.cacheCreationTokens ?? 0),
 			outputTokens: event.usage.outputTokens,
 		};

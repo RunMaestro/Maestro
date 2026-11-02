@@ -96,6 +96,20 @@ it.each(['claude-code', 'omp'] as const)(
 	}
 );
 
+it('passes Maestro account environments while preserving native Codex configuration', async () => {
+	const models = new MemoryModels('unused-cli-env-cache', () => ({
+		CODEX_HOME: 'D:\\codex-account',
+	}));
+	const cli = vi.fn().mockResolvedValue(OUTPUT_FIXTURES.codex!);
+	await models.extract({ ...config, cliProvider: 'codex' }, input, 'job', vi.fn(), undefined, {
+		cli,
+	} as unknown as MemoryTransportScope);
+	const [invocation] = cli.mock.calls[0];
+	expect(invocation.env).toMatchObject({ CODEX_HOME: 'D:\\codex-account' });
+	expect(invocation.args).toContain('mcp_servers={}');
+	expect(invocation.args).not.toContain('--ignore-user-config');
+});
+
 it('uses the detected executable and configured model instead of renderer-supplied paths', () => {
 	const resolved = resolveMemoryCliConfig(
 		{ ...config, cliPath: 'C:\\untrusted\\fake.exe', model: '' },
@@ -121,6 +135,20 @@ it('auto-fills CLI defaults and requires consent for a newly selected account', 
 	});
 });
 
+const SAFETY_CONTRACTS: Record<MemoryCliProvider, string[]> = {
+	'claude-code': ['--tools', '--safe-mode'],
+	codex: ['read-only', '--ephemeral'],
+	antigravity: ['--sandbox'],
+	'qwen3-coder': ['--approval-mode', 'plan'],
+	hermes: ['--query-file', '--toolsets'],
+	pi: ['--no-tools'],
+	omp: ['--no-tools'],
+	opencode: ['--agent', 'plan'],
+	'factory-droid': ['exec'],
+	'copilot-cli': ['--deny-tool=write,shell,memory,github', '--no-ask-user'],
+	grok: ['--permission-mode', 'plan', '--deny', 'Bash(*)'],
+};
+
 it.each(MEMORY_CLI_PROVIDER_IDS)(
 	'builds a non-destructive %s extraction invocation',
 	(provider) => {
@@ -133,14 +161,23 @@ it.each(MEMORY_CLI_PROVIDER_IDS)(
 		expect(result.args.join(' ')).not.toMatch(
 			/dangerously|skip-permissions-unsafe|--allow-all(?:\s|$)|--yolo(?:\s|$)/
 		);
+		for (const required of SAFETY_CONTRACTS[provider]) expect(result.args).toContain(required);
+		if (provider === 'opencode')
+			expect(result.env?.OPENCODE_CONFIG_CONTENT).toContain('"question":false');
 	}
 );
 
 const OUTPUT_FIXTURES: Partial<Record<MemoryCliProvider, string>> = {
-	codex: JSON.stringify({
-		type: 'item.completed',
-		item: { type: 'agent_message', text: '{"memories":[]}' },
-	}),
+	codex: [
+		JSON.stringify({
+			type: 'item.completed',
+			item: { type: 'agent_message', text: '{"memories":[]}' },
+		}),
+		JSON.stringify({
+			type: 'turn.completed',
+			usage: { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 4 },
+		}),
+	].join('\n'),
 	antigravity: JSON.stringify({
 		event: 'result',
 		result: { response: '{"memories":[]}', usage: { input_tokens: 10, output_tokens: 4 } },
@@ -189,6 +226,11 @@ it.each(Object.entries(OUTPUT_FIXTURES))('parses %s extraction output', (provide
 	expect(result.content).toBe('{"memories":[]}');
 	expect(result.inputTokens).toBeGreaterThan(0);
 	expect(result.outputTokens).toBeGreaterThan(0);
+});
+
+it('does not add Codex cached input tokens twice', () => {
+	const result = parseMemoryCliOutput('codex', OUTPUT_FIXTURES.codex!, input);
+	expect(result.inputTokens).toBe(1000);
 });
 
 it('recognizes quoted Windows command shims', () => {

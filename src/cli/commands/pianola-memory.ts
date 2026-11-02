@@ -85,8 +85,13 @@ export async function pianolaMemory(action: string, words: string[], options: Me
 			if (options.mode) config.mode = options.mode;
 			if (options.cliProvider) config.cliProvider = options.cliProvider;
 			if ((options.mode ?? state.config.mode) === 'cli') {
-				if (!(options.cliProvider ?? state.config.cliProvider))
-					throw new Error('--mode cli requires --cli-provider');
+				const cliProvider = options.cliProvider ?? state.config.cliProvider;
+				if (!cliProvider) throw new Error('--mode cli requires --cli-provider');
+				const preset = memoryProviderPreset(cliProvider);
+				config.cliProvider = cliProvider;
+				config.inputPrice = preset.inputPrice;
+				config.outputPrice = preset.outputPrice;
+				if (options.mode || options.cliProvider) config.model = preset.model;
 			}
 			if (options.hostedProvider) {
 				const preset = memoryProviderPreset(options.hostedProvider);

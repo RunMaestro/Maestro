@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { threadId } from 'node:worker_threads';
 import { execFileNoThrow, needsWindowsShell } from '../utils/execFile';
 import { isWindows } from '../../shared/platformDetection';
+import { isBlankEnvValue } from '../../shared/agentEnvironment';
 import { escapeCmdArgs } from '../../shared/maestro-lib/launch/windows-shell-escape';
 import {
 	cmdShellArgsRefusal,
@@ -665,7 +666,10 @@ export class MemoryTransport {
 	}
 }
 
-function prepareCliLaunch(invocation: MemoryCliInvocation): { command: string; args: string[] } {
+export function prepareMemoryCliLaunch(invocation: MemoryCliInvocation): {
+	command: string;
+	args: string[];
+} {
 	if (!isWindows() || !needsWindowsShell(invocation.command))
 		return { command: invocation.command, args: invocation.args };
 	const refusal = cmdShellArgsRefusal(invocation.args, new Set(invocation.promptArgs ?? []));
@@ -674,6 +678,15 @@ function prepareCliLaunch(invocation: MemoryCliInvocation): { command: string; a
 		command: quoteCommandForCmdShell(invocation.command),
 		args: escapeCmdArgs(invocation.args),
 	};
+}
+
+function memoryCliEnvironment(overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	for (const [key, value] of Object.entries(overrides ?? {})) {
+		if (isBlankEnvValue(value)) delete env[key];
+		else env[key] = value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
+	}
+	return env;
 }
 
 /** Mandatory owned I/O seam; errors never contain provider/private body text. */
@@ -692,16 +705,16 @@ export class MemoryTransportScope {
 		operation: string
 	): Promise<string> {
 		if (this.open || this.ended) throw new Error('Transport scope is not available');
-		const launch = prepareCliLaunch(invocation);
-		const request = this.controller.startRequest(this.id, operation, this.authority);
-		this.open = true;
-		let workspace: string | undefined;
+		const launch = prepareMemoryCliLaunch(invocation);
+		const workspace = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'maestro-memory-cli-'));
+		let request: string | undefined;
 		try {
-			workspace = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'maestro-memory-cli-'));
+			request = this.controller.startRequest(this.id, operation, this.authority);
+			this.open = true;
 			const result = await execFileNoThrow(launch.command, launch.args, workspace, {
 				input: invocation.input,
 				timeout: timeoutMs,
-				env: { ...process.env, ...invocation.env },
+				env: memoryCliEnvironment(invocation.env),
 			});
 			if (typeof result.exitCode !== 'number')
 				throw new MemoryTransportError(
@@ -710,8 +723,8 @@ export class MemoryTransportScope {
 					invocation.contentType,
 					'unproven-close'
 				);
-			this.controller.response(this.id, request, result.exitCode, invocation.contentType);
-			this.controller.terminal(this.id, request, 'process-exit');
+			this.controller.response(this.id, request!, result.exitCode, invocation.contentType);
+			this.controller.terminal(this.id, request!, 'process-exit');
 			this.open = false;
 			if (result.exitCode !== 0)
 				throw new MemoryTransportError(
@@ -723,7 +736,7 @@ export class MemoryTransportScope {
 			return result.stdout;
 		} catch (error) {
 			if (this.open) {
-				this.controller.unknown(this.id, request);
+				this.controller.unknown(this.id, request!);
 				this.open = false;
 				this.uncertain = true;
 			}

@@ -394,47 +394,63 @@ async function execFileWithInput(
 		let stdout = '';
 		let stderr = '';
 		let killed = false;
-
-		// spawn() doesn't support timeout natively, so implement it manually
+		let settled = false;
+		let stdinError: NodeJS.ErrnoException | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		const settle = (result: ExecResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(result);
+		};
+		const timeoutResult = (): ExecResult => ({
+			stdout,
+			stderr: `${stderr}\nETIMEDOUT: process timed out after ${timeout}ms`,
+			exitCode: 'ETIMEDOUT',
+		});
+
 		if (timeout && timeout > 0) {
 			timer = setTimeout(() => {
 				killed = true;
-				child.kill();
+				if (child.pid) killProcessTreeNow(child.pid, { label: `exec:${command}` });
+				else child.kill();
 			}, timeout);
 		}
 
 		child.stdout?.on('data', (data) => {
 			stdout += data.toString();
 		});
-
 		child.stderr?.on('data', (data) => {
 			stderr += data.toString();
 		});
-
+		// A cancelled run resolves on exit, not close: a descendant that inherited
+		// the pipes must not hold the operation open after the tree is terminated.
+		child.on('exit', () => {
+			if (killed) settle(timeoutResult());
+		});
 		child.on('close', (code) => {
-			if (timer) clearTimeout(timer);
-			resolve({
-				stdout,
-				stderr: killed ? `${stderr}\nETIMEDOUT: process timed out after ${timeout}ms` : stderr,
-				exitCode: killed ? 'ETIMEDOUT' : (code ?? 1),
-			});
+			settle(
+				killed
+					? timeoutResult()
+					: {
+							stdout,
+							stderr: stdinError ? `${stderr}${stderr ? '\n' : ''}${stdinError.message}` : stderr,
+							exitCode: stdinError?.code ?? code ?? 1,
+						}
+			);
 		});
-
-		child.on('error', (err) => {
-			if (timer) clearTimeout(timer);
-			resolve({
-				stdout: '',
-				stderr: err.message,
-				exitCode: 1,
-			});
+		child.on('error', (err: NodeJS.ErrnoException) => {
+			settle({ stdout, stderr: stderr || err.message, exitCode: err.code ?? 1 });
 		});
-
-		// Write input to stdin and close it
-		if (child.stdin) {
-			child.stdin.write(input);
-			child.stdin.end();
-		}
+		// stdin emits its own errors when a CLI exits before the prompt is written.
+		// Without a listener, EPIPE is an uncaught exception in the host process.
+		child.stdin?.on('error', (error) => {
+			stdinError ??= error;
+		});
+		child.stdin?.write(input, (error) => {
+			if (error) stdinError ??= error;
+		});
+		child.stdin?.end();
 	});
 }
 

@@ -335,7 +335,9 @@ export function MemoryView({ theme }: { theme: Theme }) {
 										if (!e.target.checked && recallMode === 'infer') setRecallMode('current');
 									}}
 								/>
-								Optional model review (slow, unqualified)
+								{state.config.qualification?.provider === 'hosted'
+									? 'Optional hosted model review (sends question and candidate assertions)'
+									: 'Optional model review (slow, unqualified)'}
 							</label>
 							<label className="flex gap-2">
 								<input

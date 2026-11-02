@@ -206,3 +206,25 @@ describe('memory rerank configuration', () => {
 		expect(call.args[0].query.qualify).toBeUndefined();
 	});
 });
+
+describe('memory CLI provider configuration', () => {
+	it('applies CLI model and zero-price defaults instead of stale API values', async () => {
+		const previousInput = baseConfig.inputPrice;
+		const previousOutput = baseConfig.outputPrice;
+		baseConfig.inputPrice = 0.75;
+		baseConfig.outputPrice = 4.5;
+		try {
+			await pianolaMemory('configure', [], { mode: 'cli', cliProvider: 'codex' });
+			expect(sentConfigure()).toMatchObject({
+				mode: 'cli',
+				cliProvider: 'codex',
+				model: '',
+				inputPrice: 0,
+				outputPrice: 0,
+			});
+		} finally {
+			baseConfig.inputPrice = previousInput;
+			baseConfig.outputPrice = previousOutput;
+		}
+	});
+});

@@ -15,7 +15,7 @@ import { PianolaSupervisor } from './pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola-relearn-scheduler';
 import { runRelearnJob } from './pianola-relearn';
 import { initializePianolaMemory } from './memory-host';
-import { discoverMemoryCliProviders } from './memory-provider-discovery';
+import { discoverMemoryCliProviders, readMemoryCliEnvironments } from './memory-provider-discovery';
 import type { AgentDetector } from '../agents/detector';
 import type { PianolaMemoryHost } from './memory-host';
 import { isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
@@ -164,7 +164,8 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 		relearnScheduler,
 		memoryHost: initializePianolaMemory(
 			() => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
-			() => discoverMemoryCliProviders(deps.agentDetector, deps.agentConfigsStore)
+			() => discoverMemoryCliProviders(deps.agentDetector, deps.agentConfigsStore),
+			() => readMemoryCliEnvironments(deps.agentConfigsStore)
 		),
 	};
 }

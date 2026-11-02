@@ -562,6 +562,22 @@ it('requires the current runtime to own its claim and isolates unexpected sent p
 	expect(() => f.db.set('pendingExtraction', null)).toThrow('immutable');
 });
 
+it('does not fabricate API charges for CLI extraction', async () => {
+	const f = await fixture(1);
+	const config = {
+		...f.db.config(),
+		mode: 'cli' as const,
+		cliProvider: 'codex' as const,
+		cliPath: 'C:\\tools\\codex.cmd',
+		inputPrice: 100,
+		outputPrice: 100,
+	};
+	f.db.reserve('cli-zero-price', 100, 50, config);
+	expect(f.db.totals().reservedDollars).toBe(0);
+	f.db.settle('cli-zero-price', 100, 50, config);
+	expect(f.db.totals().dollars).toBe(0);
+});
+
 it('records a completed CLI process as terminal transport evidence', async () => {
 	const f = await fixture(1);
 	const item = stage(f.db, f.runtime, 'cli-complete')!;
@@ -631,6 +647,31 @@ it.skipIf(process.platform !== 'win32')(
 		item.scope.finish();
 	}
 );
+
+it('does not launch after authority is revoked during workspace creation', async () => {
+	const f = await fixture(1);
+	let permitted = true;
+	const item = stage(f.db, f.runtime, 'cli-admission-race', 'extract', () => permitted)!;
+	const realMkdtemp = fs.mkdtemp;
+	let finishWorkspace!: () => void;
+	const created = vi.spyOn(fs, 'mkdtemp').mockImplementation(
+		(...args: Parameters<typeof fs.mkdtemp>) =>
+			new Promise((resolve) => {
+				finishWorkspace = () => resolve(realMkdtemp(...args));
+			}) as ReturnType<typeof fs.mkdtemp>
+	);
+	const outcome = item.scope.cli(
+		{ command: 'C:\\tools\\claude.exe', args: [], input: '{}', contentType: 'application/json' },
+		1000,
+		'cli-extract'
+	);
+	await vi.waitFor(() => expect(created).toHaveBeenCalled());
+	permitted = false;
+	finishWorkspace();
+	await expect(outcome).rejects.toThrow('unproven-close');
+	expect(execFileNoThrow).not.toHaveBeenCalled();
+	release(f.db, item);
+});
 
 it('keeps a timed-out CLI submission uncertain instead of releasing it for replay', async () => {
 	const f = await fixture(1);

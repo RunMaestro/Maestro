@@ -5,11 +5,14 @@ import crypto from 'node:crypto';
 import type { SessionMessage } from '../agents/session-storage';
 import type {
 	ContextualMemory,
+	MemoryCliProviderInfo,
 	MemoryConfig,
 	MemoryEvidence,
 	MemoryRequest,
 	MemorySource,
 } from '../../shared/pianola/memory';
+import type { MemoryCliEnvironments } from './memory-provider-discovery';
+import { resolveMemoryCliConfig } from './memory-provider-discovery';
 import {
 	buildMemoryPacket,
 	isUsableMemoryEvidence,
@@ -34,6 +37,8 @@ import { MemoryDatabase, MEMORY_SPACE } from './memory-database';
 import { MemoryModels, EXTRACTION_VERSION, ExtractionOutputError } from './memory-models';
 import { redactSecrets } from '../../shared/agent-run/redact';
 import type { MemoryTransportScope } from './memory-transport';
+import { prepareMemoryCliLaunch } from './memory-transport';
+import { memoryCliInvocation } from './memory-cli';
 import {
 	shortlistMemoryCandidates,
 	rankRelevantMemoryCandidates,
@@ -70,6 +75,10 @@ interface PendingExtraction {
 	verificationBatchId?: string;
 	verified?: ExtractionResult;
 }
+interface MemoryEngineCliOptions {
+	cliProviders?: () => MemoryCliProviderInfo[];
+	cliEnvironments?: () => MemoryCliEnvironments;
+}
 export class MemoryEngine {
 	readonly database: MemoryDatabase;
 	readonly models: MemoryModels;
@@ -83,6 +92,7 @@ export class MemoryEngine {
 	private policyKey = '';
 	private gating = false;
 	private visibilityWork: Promise<void> = Promise.resolve();
+	private readonly cliProviders: () => MemoryCliProviderInfo[];
 	private prepareVisibility(config?: MemoryConfig): Promise<void> {
 		const work = this.visibilityWork.then(async () => {
 			const current = config ?? this.database.config();
@@ -99,10 +109,15 @@ export class MemoryEngine {
 	}
 	constructor(
 		readonly directory: string,
-		private readonly platformEnabled: () => boolean = () => true
+		private readonly platformEnabled: () => boolean = () => true,
+		options: MemoryEngineCliOptions = {}
 	) {
+		this.cliProviders = options.cliProviders ?? (() => []);
 		this.database = new MemoryDatabase(path.join(directory, 'pianola-memory.sqlite'));
-		this.models = new MemoryModels(path.join(directory, 'pianola-models'));
+		this.models = new MemoryModels(
+			path.join(directory, 'pianola-models'),
+			(provider) => options.cliEnvironments?.()[provider] ?? {}
+		);
 		const config = this.database.config();
 		// The qualification gate follows the stored configuration from the start, so a
 		// worker that never receives a configure request still uses the chosen model.
@@ -487,6 +502,8 @@ export class MemoryEngine {
 			!this.database.get<boolean>('paused') &&
 			this.enabledSource(job.source, this.database.config()) &&
 			this.eligibleJob(job);
+		// Deterministic CLI/Windows refusals happen before the durable sent checkpoint.
+		if (job.config.mode === 'cli') prepareMemoryCliLaunch(memoryCliInvocation(job.config, input));
 		// Permit, budget, rate and sent checkpoint commit together before provider I/O.
 		while (true) {
 			const ready = this.database.db
@@ -1049,7 +1066,14 @@ export class MemoryEngine {
 					(this.running || this.timer !== null) && !(this.database.get<boolean>('paused') ?? true);
 				await this.drain();
 				this.models.invalidateQueryCache();
-				const next = { ...config, ...request.config, userId: config.userId };
+				let next = { ...config, ...request.config, userId: config.userId };
+				if (next.mode === 'cli') {
+					const newProvider = config.mode !== 'cli' || next.cliProvider !== config.cliProvider;
+					next = resolveMemoryCliConfig(
+						{ ...next, model: newProvider ? '' : next.model },
+						this.cliProviders()
+					);
+				}
 				if (!sameProcessingProvider(next, config) && request.config.hostedConsent !== true)
 					next.hostedConsent = false;
 				this.validateConfig(next);

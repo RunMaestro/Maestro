@@ -37,6 +37,8 @@ const POWERSHELL_SPECIAL_CHARS = /[ &|<>^%!()"\n\r#?*`$@{}[\]';,]/;
  * @returns The escaped argument safe for cmd.exe
  */
 export function escapeCmdArg(arg: string): string {
+	// cmd.exe drops an unquoted empty element; preserve it as an actual empty argument.
+	if (arg.length === 0) return '""';
 	// If no special characters and not too long, return as-is
 	if (!CMD_SPECIAL_CHARS.test(arg) && arg.length <= 100) {
 		return arg;

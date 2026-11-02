@@ -6,7 +6,8 @@ import type {
 	MemoryRequest,
 	MemoryState,
 } from '../../shared/pianola/memory';
-import { memoryApiCredentialPresence, resolveMemoryCliConfig } from './memory-provider-discovery';
+import type { MemoryCliEnvironments } from './memory-provider-discovery';
+import { memoryApiCredentialPresence } from './memory-provider-discovery';
 import { getActingUser } from '../web-server/auth/acting-user';
 import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 import { defaultHistoryRoots } from '../storage/historical-inventory';
@@ -21,7 +22,8 @@ export class PianolaMemoryHost {
 	private pending = new Map<number, PendingMemoryRequest>();
 	constructor(
 		private readonly enabled: () => boolean,
-		private readonly discoverCliProviders: () => Promise<MemoryCliProviderInfo[]> = async () => []
+		private readonly discoverCliProviders: () => Promise<MemoryCliProviderInfo[]> = async () => [],
+		private readonly cliEnvironments: () => MemoryCliEnvironments = () => ({})
 	) {}
 	reconcile() {
 		this.worker?.postMessage({ featureEnabled: this.enabled() });
@@ -29,7 +31,11 @@ export class PianolaMemoryHost {
 	private connect() {
 		if (this.worker) return this.worker;
 		const worker = new Worker(path.join(__dirname, 'memory-worker.js'), {
-			workerData: { directory: app.getPath('userData'), featureEnabled: this.enabled() },
+			workerData: {
+				directory: app.getPath('userData'),
+				featureEnabled: this.enabled(),
+				cliEnvironments: this.cliEnvironments(),
+			},
 		});
 		worker.on('message', (message: { id: number; result?: unknown; error?: string }) => {
 			const pending = this.pending.get(message.id);
@@ -58,13 +64,15 @@ export class PianolaMemoryHost {
 		// The desktop owns this bank. Authenticated browser accounts cannot read or change another person's history.
 		if (getActingUser()) throw new Error('This memory bank is private to the desktop owner');
 		if (!this.enabled()) throw new Error('PianolaDisabled');
-		if (request.action === 'configure' && request.config.mode === 'cli') {
-			request = {
-				...request,
-				config: resolveMemoryCliConfig(request.config, await this.discoverCliProviders()),
-			};
-		}
-		const result = await this.send(request);
+		const result = await this.send(
+			request,
+			request.action === 'configure'
+				? {
+						memoryCliProviders: await this.discoverCliProviders(),
+						memoryCliEnvironments: this.cliEnvironments(),
+					}
+				: undefined
+		);
 		if (request.action === 'status') {
 			const state = result as MemoryState;
 			const discovery = {
@@ -111,7 +119,13 @@ export class PianolaMemoryHost {
 		}
 		return result;
 	}
-	private send(request: MemoryRequest) {
+	private send(
+		request: MemoryRequest,
+		cli?: {
+			memoryCliProviders: MemoryCliProviderInfo[];
+			memoryCliEnvironments: MemoryCliEnvironments;
+		}
+	) {
 		const worker = this.connect();
 		const id = ++this.sequence;
 		return new Promise<unknown>((resolve, reject) => {
@@ -120,7 +134,7 @@ export class PianolaMemoryHost {
 				reject(new Error('Memory operation timed out; inspect processing status before retrying'));
 			}, 300000);
 			this.pending.set(id, { resolve, reject, timer });
-			worker.postMessage({ id, request });
+			worker.postMessage({ id, request, ...cli });
 		});
 	}
 	async stop() {
@@ -141,9 +155,10 @@ export class PianolaMemoryHost {
 let host: PianolaMemoryHost | null = null;
 export function initializePianolaMemory(
 	enabled: () => boolean,
-	discoverCliProviders?: () => Promise<MemoryCliProviderInfo[]>
+	discoverCliProviders?: () => Promise<MemoryCliProviderInfo[]>,
+	cliEnvironments?: () => MemoryCliEnvironments
 ) {
-	host = new PianolaMemoryHost(enabled, discoverCliProviders);
+	host = new PianolaMemoryHost(enabled, discoverCliProviders, cliEnvironments);
 	return host;
 }
 export function getPianolaMemory() {

@@ -5,6 +5,7 @@ import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 import { Agent } from 'undici';
 import type {
 	ContextualMemory,
+	MemoryCliProvider,
 	MemoryConfig,
 	MemoryQualificationConfig,
 	MemoryRerankConfig,
@@ -145,7 +146,12 @@ export class MemoryModels {
 	private readonly judging = new Map<string, Promise<unknown>>();
 	private judgmentGeneration = 0;
 	private localDispatcher: Agent | null = null;
-	constructor(cacheDir: string) {
+	constructor(
+		cacheDir: string,
+		private readonly cliEnvironment: (
+			provider: MemoryCliProvider
+		) => Record<string, string> = () => ({})
+	) {
 		env.cacheDir = cacheDir;
 		env.allowLocalModels = true;
 	}
@@ -521,11 +527,12 @@ export class MemoryModels {
 		} else if (config.mode === 'cli') {
 			if (!config.hostedConsent)
 				throw new Error('CLI transcript processing requires explicit consent');
-			const stdout = await transport.cli(
-				memoryCliInvocation(config, input),
-				LOCAL_EXTRACTION_TIMEOUT_MS,
-				'cli-extract'
-			);
+			const invocation = memoryCliInvocation(config, input);
+			invocation.env = {
+				...this.cliEnvironment(config.cliProvider!),
+				...invocation.env,
+			};
+			const stdout = await transport.cli(invocation, LOCAL_EXTRACTION_TIMEOUT_MS, 'cli-extract');
 			const cli = parseMemoryCliOutput(config.cliProvider, stdout, input);
 			content = cli.content;
 			inputTokens = cli.inputTokens;

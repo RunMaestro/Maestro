@@ -167,5 +167,40 @@ describe('Pianola memory setup', () => {
 		expect(screen.queryByRole('option', { name: 'Oh My Pi CLI' })).not.toBeInTheDocument();
 		fireEvent.click(screen.getByText('Advanced settings'));
 		expect(screen.getByRole('textbox', { name: 'Extraction model' })).toHaveValue('sonnet');
+		expect(screen.getByRole('spinbutton', { name: 'Lifetime dollar cap (USD)' })).toHaveValue(0);
+		fireEvent.change(picker, { target: { value: 'openai' } });
+		expect(screen.queryByText(/Detected: sonnet/)).not.toBeInTheDocument();
+	});
+
+	it('discloses hosted qualification independently of local extraction', async () => {
+		vi.mocked(window.maestro.pianola.memory).mockImplementation(async (request) => {
+			if (request.action === 'status')
+				return {
+					config: {
+						...config,
+						qualification: {
+							provider: 'hosted' as const,
+							model: 'qwen3.6',
+							endpoint: 'https://api.example.test',
+						},
+					},
+					progress,
+				};
+			if (request.action === 'sources' || request.action === 'list') return [];
+			throw new Error('Unexpected memory request');
+		});
+		render(<MemoryView theme={mockTheme} />);
+		fireEvent.click(await screen.findByText('Advanced settings'));
+		expect(
+			screen.getByText(/Hosted qualification sends the question and candidate assertions/)
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Memory bank' }));
+		const query = await screen.findByPlaceholderText('Recall a preference, fact, or decision…');
+		fireEvent.change(query, { target: { value: 'storage decision' } });
+		expect(
+			screen.getByRole('checkbox', {
+				name: 'Optional hosted model review (sends question and candidate assertions)',
+			})
+		).toBeInTheDocument();
 	});
 });

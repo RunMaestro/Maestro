@@ -1,11 +1,34 @@
 import type { AgentDetector } from '../agents/detector';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import { resolveAgentEnvVars } from '../../shared/maestro-lib/launch/env';
 import type { getAgentConfigsStore } from '../stores';
 import {
 	MEMORY_CLI_PROVIDER_IDS,
+	type MemoryCliProvider,
 	type MemoryCliProviderInfo,
 	type MemoryConfig,
 } from '../../shared/pianola/memory';
+
+export type MemoryCliEnvironments = Partial<Record<MemoryCliProvider, Record<string, string>>>;
+
+export function readMemoryCliEnvironments(
+	store: ReturnType<typeof getAgentConfigsStore>
+): MemoryCliEnvironments {
+	const configs = store.get('configs', {});
+	const environments: MemoryCliEnvironments = {};
+	for (const id of MEMORY_CLI_PROVIDER_IDS) {
+		const definition = getAgentDefinition(id);
+		if (!definition) continue;
+		const env = resolveAgentEnvVars({
+			defaultEnvVars: definition.defaultEnvVars,
+			batchModeEnvVars: definition.batchModeEnvVars,
+			agentCustomEnvVars: configs[id]?.customEnvVars,
+			readOnlyEnvOverrides: definition.readOnlyEnvOverrides,
+		});
+		if (env) environments[id] = env;
+	}
+	return environments;
+}
 
 export async function discoverMemoryCliProviders(
 	detector: AgentDetector,
@@ -38,6 +61,8 @@ export function resolveMemoryCliConfig<T extends Partial<MemoryConfig>>(
 		...config,
 		cliPath: provider.path,
 		model: config.model?.trim() || provider.model,
+		inputPrice: 0,
+		outputPrice: 0,
 	};
 }
 

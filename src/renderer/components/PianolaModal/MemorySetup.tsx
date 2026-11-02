@@ -116,7 +116,7 @@ export function MemorySetup({
 						<span className="block text-xs" style={{ color: theme.colors.textDim }}>
 							{provider.description}
 						</span>
-						{selectedCli && (
+						{cli && selectedCli && (
 							<span
 								className="block truncate text-xs"
 								style={{ color: theme.colors.textDim }}
@@ -164,7 +164,7 @@ export function MemorySetup({
 									value={config.dollarBudget}
 									onChange={(e) => onChange({ ...config, dollarBudget: Number(e.target.value) })}
 								/>
-								<span style={{ color: theme.colors.textDim }}>0 = no limit</span>
+								<span style={{ color: theme.colors.textDim }}>0 blocks additional spend</span>
 							</label>
 						)}
 					</div>
@@ -305,6 +305,21 @@ export function MemorySetup({
 									onChange={(e) => onChange({ ...config, tokenBudget: Number(e.target.value) })}
 								/>
 							</label>
+							{!api && (
+								<label>
+									Lifetime dollar cap (USD)
+									<input
+										aria-label="Lifetime dollar cap (USD)"
+										type="number"
+										min="0"
+										step="1"
+										className={input}
+										style={style}
+										value={config.dollarBudget}
+										onChange={(e) => onChange({ ...config, dollarBudget: Number(e.target.value) })}
+									/>
+								</label>
+							)}
 							{api && (
 								<>
 									<label>
@@ -402,6 +417,11 @@ export function MemorySetup({
 								/>
 							</label>
 						</div>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							{config.qualification?.provider === 'hosted'
+								? 'Hosted qualification sends the question and candidate assertions to the configured API and requires its environment credential.'
+								: 'Local qualification keeps the question and candidate assertions on this device.'}
+						</p>
 					</section>
 
 					<section className="space-y-3">
