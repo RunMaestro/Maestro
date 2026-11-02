@@ -23,6 +23,12 @@ export function resolveShellPath(shell: string): string {
 			return 'pwsh.exe';
 		} else if (shellName === 'cmd' && !shell.includes('\\')) {
 			return 'cmd.exe';
+		} else if (shellName === 'wsl' && !shell.includes('\\')) {
+			// Settings offers 'wsl' and 'bash' on Windows (shellDetector), but node-pty
+			// does not apply PATHEXT: a bare 'wsl' fails with "File not found: ".
+			return 'wsl.exe';
+		} else if (shellName === 'bash' && !shell.includes('\\')) {
+			return 'bash.exe';
 		}
 		return shell;
 	}
