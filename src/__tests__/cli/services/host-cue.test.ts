@@ -366,6 +366,91 @@ describe('what the engine learns after it started', () => {
 		expect(engine.removeSession).toHaveBeenCalledWith('a1');
 	});
 
+	it('logs a rejected async refresh and keeps the host running', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		try {
+			const fake = fakeRuntime([agentRecord('a1', '/one')]);
+			const { all, engine } = deps({
+				engine: fakeEngine({
+					refreshSession: vi.fn(async () => {
+						throw new Error('transient read failure');
+					}),
+				}),
+				readLock: () => lock(PID),
+			});
+			const cue = await startHostCue({ ...PATHS, runtime: fake.runtime }, all);
+			fake.bus.emit({ type: 'agent.added', agent: agentRecord('a2', '/two') });
+			await vi.waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith(
+					expect.stringContaining('[CUE] Failed to refresh session a2: transient read failure')
+				);
+			});
+			expect(cue.state()).toEqual({ state: 'running' });
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+
+	it('leaves a removed agent removed when removal arrives during a pending refresh', async () => {
+		let finishRefresh!: () => void;
+		const refreshPromise = new Promise<void>((resolve) => {
+			finishRefresh = resolve;
+		});
+		const fake = fakeRuntime([agentRecord('a1', '/one')]);
+		const { all, engine } = deps({
+			engine: fakeEngine({
+				refreshSession: vi.fn(() => refreshPromise),
+			}),
+			readLock: () => lock(PID),
+		});
+		await startHostCue({ ...PATHS, runtime: fake.runtime }, all);
+
+		fake.bus.emit({ type: 'agent.added', agent: agentRecord('a2', '/two') });
+		expect(engine.refreshSession).toHaveBeenCalledWith('a2', '/two');
+
+		// Removal arrives while refreshSession is still in flight
+		fake.bus.emit({ type: 'agent.removed', agentId: 'a2' });
+		expect(engine.removeSession).toHaveBeenCalledWith('a2');
+		expect(engine.removeSession).toHaveBeenCalledTimes(1);
+
+		// Resolve the in-flight refresh; safeRemoveSession runs on completion so a2 is not resurrected
+		finishRefresh();
+		await vi.waitFor(() => {
+			expect(engine.removeSession).toHaveBeenCalledTimes(2);
+		});
+		expect(engine.removeSession).toHaveBeenLastCalledWith('a2');
+	});
+
+	it('applies the latest directory when an update arrives during a pending refresh', async () => {
+		let finishFirst!: () => void;
+		const firstPromise = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
+		const fake = fakeRuntime([agentRecord('a1', '/one')]);
+		const { all, engine } = deps({
+			engine: fakeEngine({
+				refreshSession: vi.fn().mockReturnValueOnce(firstPromise).mockResolvedValueOnce(undefined),
+			}),
+			readLock: () => lock(PID),
+		});
+		await startHostCue({ ...PATHS, runtime: fake.runtime }, all);
+
+		fake.bus.emit({ type: 'agent.updated', agent: agentRecord('a1', '/two') });
+		expect(engine.refreshSession).toHaveBeenCalledWith('a1', '/two');
+		expect(engine.refreshSession).toHaveBeenCalledTimes(1);
+
+		// Second update arrives while /two is in flight; should not call refreshSession concurrently
+		fake.bus.emit({ type: 'agent.updated', agent: agentRecord('a1', '/three') });
+		expect(engine.refreshSession).toHaveBeenCalledTimes(1);
+
+		// Complete first refresh; serialized queue proceeds to /three
+		finishFirst();
+		await vi.waitFor(() => {
+			expect(engine.refreshSession).toHaveBeenCalledTimes(2);
+		});
+		expect(engine.refreshSession).toHaveBeenLastCalledWith('a1', '/three');
+	});
+
 	it('stops listening once Cue is stopped', async () => {
 		const { bus, engine, cue } = await running([]);
 		await cue.stop();

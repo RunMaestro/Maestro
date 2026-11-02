@@ -265,19 +265,75 @@ function projectRootOf(agent: AgentRecord): string | undefined {
  * now points at another directory, which is where its `cue.yaml` is read from. The agents the
  * engine read at its own start are listed first, to have something to compare the first update
  * against.
+ *
+ * `CueEngine.refreshSession` is async: refreshes on the same agent are serialized, rejections are
+ * caught and logged without taking down the host, and a removal that arrives while a refresh is in
+ * flight ensures the agent stays removed after the in-flight refresh completes.
  */
 async function followAgents(runtime: HostCueRuntime, engine: HostCueEngine): Promise<Unsubscribe> {
 	/** Each agent's project root as the engine last saw it; '' for an agent with none. */
 	const known = new Map<string, string>();
+	const generations = new Map<string, number>();
+	const pendingRefreshes = new Map<string, Promise<void>>();
+	let closed = false;
+
 	const rootKey = (agent: AgentRecord): string => projectRootOf(agent) ?? '';
-	const refresh = (agent: AgentRecord): void => {
-		known.set(agent.id, rootKey(agent));
-		const projectRoot = projectRootOf(agent);
-		if (projectRoot) engine.refreshSession(agent.id, projectRoot);
-		else engine.removeSession(agent.id);
+
+	const safeRemoveSession = (agentId: string): void => {
+		try {
+			engine.removeSession(agentId);
+		} catch (error) {
+			consoleCueLog('error', `[CUE] Failed to remove session ${agentId}: ${errorText(error)}`);
+		}
 	};
+
+	const runRefresh = (agentId: string, projectRoot: string, gen: number): void => {
+		let callResult: void | Promise<void>;
+		try {
+			callResult = engine.refreshSession(agentId, projectRoot);
+		} catch (error) {
+			callResult = Promise.reject(error);
+		}
+		const promise = Promise.resolve(callResult)
+			.catch((error: unknown) => {
+				consoleCueLog('error', `[CUE] Failed to refresh session ${agentId}: ${errorText(error)}`);
+			})
+			.then(() => {
+				if (closed) return;
+				if (generations.get(agentId) !== gen) {
+					const currentRoot = known.get(agentId);
+					if (currentRoot === undefined || currentRoot === '') {
+						safeRemoveSession(agentId);
+					} else if (currentRoot !== projectRoot) {
+						runRefresh(agentId, currentRoot, generations.get(agentId)!);
+					}
+				}
+			})
+			.finally(() => {
+				if (pendingRefreshes.get(agentId) === promise) {
+					pendingRefreshes.delete(agentId);
+				}
+			});
+		pendingRefreshes.set(agentId, promise);
+	};
+
+	const refresh = (agent: AgentRecord): void => {
+		const targetRoot = projectRootOf(agent);
+		known.set(agent.id, rootKey(agent));
+		const gen = (generations.get(agent.id) ?? 0) + 1;
+		generations.set(agent.id, gen);
+		if (!targetRoot) {
+			safeRemoveSession(agent.id);
+			return;
+		}
+		if (!pendingRefreshes.has(agent.id)) {
+			runRefresh(agent.id, targetRoot, gen);
+		}
+	};
+
 	const unsubscribe = runtime.events.subscribe(
 		(event) => {
+			if (closed) return;
 			if (event.type === 'agent.added') {
 				refresh(event.agent);
 			} else if (event.type === 'agent.updated') {
@@ -286,7 +342,8 @@ async function followAgents(runtime: HostCueRuntime, engine: HostCueEngine): Pro
 				else if (before !== rootKey(event.agent)) refresh(event.agent);
 			} else if (event.type === 'agent.removed') {
 				known.delete(event.agentId);
-				engine.removeSession(event.agentId);
+				generations.set(event.agentId, (generations.get(event.agentId) ?? 0) + 1);
+				safeRemoveSession(event.agentId);
 			}
 		},
 		{ types: ['agent.added', 'agent.updated', 'agent.removed'] }
@@ -298,7 +355,10 @@ async function followAgents(runtime: HostCueRuntime, engine: HostCueEngine): Pro
 			if (!known.has(agent.id)) known.set(agent.id, rootKey(agent));
 		}
 	}
-	return unsubscribe;
+	return () => {
+		closed = true;
+		unsubscribe();
+	};
 }
 
 // ---------------------------------------------------------------------------
