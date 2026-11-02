@@ -21,6 +21,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import generation from '../../../fixtures/whisper-base-generation-config.json';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+
+const modelRoot = path.join(os.tmpdir(), 'maestro-whisper-engine-models');
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
 	...(await importOriginal<typeof import('node:fs/promises')>()),
@@ -28,7 +32,7 @@ vi.mock('node:fs/promises', async (importOriginal) => ({
 }));
 vi.mock('../../../../main/local-models/model-store', () => ({
 	isInstalled: vi.fn(async () => true),
-	modelFilePath: (id: string, relative: string) => `/models/${id}/${relative}`,
+	modelFilePath: (id: string, relative: string) => path.join(modelRoot, id, relative),
 }));
 
 import { resolveInstalledSpeechToTextModel } from '../../../../main/local-models/stt/engines';
@@ -335,8 +339,8 @@ describe('WhisperEngine', () => {
 				expect(fake.calls[0].inputIds).toEqual(prompt);
 				expect(fake.calls.map((call) => call.useCache)).toEqual([false, true, true]);
 				expect(create.mock.calls.map((call) => call[0])).toEqual([
-					`/models/${modelId}/onnx/encoder_model.onnx`,
-					`/models/${modelId}/onnx/decoder_model_merged_q4.onnx`,
+					path.join(modelRoot, modelId, 'onnx', 'encoder_model.onnx'),
+					path.join(modelRoot, modelId, 'onnx', 'decoder_model_merged_q4.onnx'),
 				]);
 			} finally {
 				await engine.unload();
