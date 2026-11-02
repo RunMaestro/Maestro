@@ -354,7 +354,11 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 
 				await refreshAutoRunData();
 			});
-		})();
+		})().catch((error) => {
+			// The bridge can lose the acknowledgement after the host accepted
+			// this request. Report the failure without retrying the mutation.
+			console.warn('[AutoRun] Failed to watch folder', error);
+		});
 
 		// Cleanup: stop watching when folder changes or unmount
 		return () => {
@@ -363,7 +367,9 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 				clearTimeout(remotePollTimeout);
 				remotePollTimeout = null;
 			}
-			window.maestro.autorun.unwatchFolder(folderPath);
+			void window.maestro.autorun.unwatchFolder(folderPath).catch((error) => {
+				console.warn('[AutoRun] Failed to unwatch folder', error);
+			});
 			unsubscribe();
 		};
 		// Intentionally NOT depending on autoRunSelectedFile - the watcher reads

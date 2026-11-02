@@ -792,6 +792,25 @@ describe('useAutoRunDocumentLoader', () => {
 	// ========================================================================
 
 	describe('file watching', () => {
+		it.each(['watch', 'unwatch'])(
+			'handles a rejected %s without an unhandled promise or retry',
+			async (operation) => {
+				const error = new Error('bridge disconnected: Submission uncertainty');
+				const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+				(operation === 'watch' ? mockWatchFolder : mockUnwatchFolder).mockRejectedValue(error);
+				const session = createMockSession({ id: 'session-1', autoRunFolderPath: '/docs' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { unmount } = renderHook(() => useAutoRunDocumentLoader());
+				await act(async () => {});
+				unmount();
+				await act(async () => {});
+				expect(warning).toHaveBeenCalledWith(`[AutoRun] Failed to ${operation} folder`, error);
+				expect(mockWatchFolder).toHaveBeenCalledTimes(1);
+				expect(mockUnwatchFolder).toHaveBeenCalledTimes(1);
+				if (operation === 'watch') expect(mockOnFileChanged).not.toHaveBeenCalled();
+			}
+		);
+
 		it('calls watchFolder when session has autoRunFolderPath', async () => {
 			const session = createMockSession({
 				id: 'session-1',
