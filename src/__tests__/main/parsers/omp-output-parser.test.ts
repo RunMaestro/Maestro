@@ -54,6 +54,7 @@ describe('OmpOutputParser', () => {
 		const usageEvent = events.find((event) => event.type === 'usage');
 
 		expect(usageEvent).toBeDefined();
+		expect(usageEvent!.usageEventId).toBe('msg_01CoMSHtJYk8HJTJPP1KC9Ua');
 		const usage = parser.extractUsage(usageEvent!);
 		expect(usage).not.toBeNull();
 		expect(usage!.inputTokens).toBe(2);

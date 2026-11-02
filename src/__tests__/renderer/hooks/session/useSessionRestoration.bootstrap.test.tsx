@@ -11,6 +11,7 @@ import {
 import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 import { WindowProvider } from '../../../../renderer/contexts/WindowContext';
 import { useSessionRestoration } from '../../../../renderer/hooks/session/useSessionRestoration';
+import { gitService } from '../../../../renderer/services/git';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../../renderer/stores/groupChatStore';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -170,6 +171,30 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe('browser git metadata through real bootstrap IPC', () => {
+	it('restores host git metadata without scanning every agent', async () => {
+		const metadata = {
+			isGitRepo: true,
+			gitBranches: ['main', 'host-branch'],
+			gitTags: ['v1.0'],
+			gitRefsCacheTime: 1234,
+		};
+		stored = stored.map((session) => ({ ...session, ...metadata }));
+		renderHook(() => useSessionRestoration(), {
+			wrapper: ({ children }) => createElement(WindowProvider, { children }),
+		});
+		await waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		expect(bootstrapResponses).toHaveLength(1);
+		for (const session of stored) {
+			expect(bootstrapResponses[0].find((item) => item.id === session.id)).toMatchObject(metadata);
+			expect(
+				useSessionStore.getState().sessions.find((item) => item.id === session.id)
+			).toMatchObject(metadata);
+		}
+		expect(gitService.isRepo).not.toHaveBeenCalled();
+	});
+});
 
 describe('browser input-request title through real bootstrap IPC', () => {
 	it('counts already-waiting background agents on open and reload without a host event', async () => {

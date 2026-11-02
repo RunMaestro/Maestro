@@ -10,12 +10,19 @@ import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPe
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { createMockSession } from '../../../helpers/mockSession';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { recordJourney } from '../../../../renderer/services/userJourney';
 
 // Default to desktop (Electron) behavior; individual tests flip this to true to
 // exercise the web-desktop browser bundle branch.
 vi.mock('../../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: vi.fn(() => false),
 	isElectronDesktop: vi.fn(() => true),
+}));
+
+vi.mock('../../../../renderer/services/userJourney', () => ({
+	recordJourney: vi.fn(),
 }));
 
 const mockTab: BrowserTab = {
@@ -1355,5 +1362,139 @@ describe('BrowserTabView', () => {
 				expect(getWebview().getAttribute('src')).toBe(DEFAULT_BROWSER_TAB_URL);
 			}
 		);
+	});
+
+	describe('User Journey recording', () => {
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] });
+		});
+
+		async function mountOwnedTab(tab: BrowserTab = mockTab) {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'agent-1', browserTabs: [tab] })],
+			});
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={tab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => tab.url);
+			webview.getTitle = vi.fn(() => tab.url);
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 1);
+			webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+			return { webview, ref };
+		}
+
+		async function fire(
+			webview: MockWebview,
+			type: string,
+			fields: { url?: string; isMainFrame?: boolean } = {}
+		) {
+			await act(async () => {
+				webview.dispatchEvent(Object.assign(new Event(type), fields));
+			});
+		}
+
+		it('skips the initial load and records a later navigation without its query string', async () => {
+			const { webview } = await mountOwnedTab();
+
+			await fire(webview, 'did-navigate', { url: 'https://example.com' });
+			await fire(webview, 'did-stop-loading');
+			expect(recordJourney).not.toHaveBeenCalled();
+
+			webview.getTitle = vi.fn(() => 'Docs');
+			await fire(webview, 'did-navigate', { url: 'https://example.com/docs?token=abc' });
+
+			expect(recordJourney).toHaveBeenCalledTimes(1);
+			expect(recordJourney).toHaveBeenCalledWith('agent-1', {
+				kind: 'browser.navigate',
+				target: 'https://example.com/docs',
+				tabId: 'browser-1',
+				title: 'Docs',
+			});
+		});
+
+		it('treats a failed initial load as finished so the next commit is recorded', async () => {
+			const { webview } = await mountOwnedTab();
+
+			await fire(webview, 'did-stop-loading');
+			await fire(webview, 'did-navigate', { url: 'https://example.com/next' });
+
+			expect(recordJourney).toHaveBeenCalledWith(
+				'agent-1',
+				expect.objectContaining({ kind: 'browser.navigate', target: 'https://example.com/next' })
+			);
+		});
+
+		it('records in-page route changes but not duplicates, fragment-only changes, or subframes', async () => {
+			const { webview } = await mountOwnedTab();
+			await fire(webview, 'did-navigate', { url: 'https://example.com' });
+			await fire(webview, 'did-stop-loading');
+
+			// The page has not set a title yet, so Chromium reports the URL.
+			webview.getTitle = vi.fn(() => 'https://example.com/app/route');
+			await fire(webview, 'did-navigate-in-page', {
+				url: 'https://example.com/app/route',
+				isMainFrame: true,
+			});
+			await fire(webview, 'did-navigate-in-page', {
+				url: 'https://example.com/app/route#details',
+				isMainFrame: true,
+			});
+			await fire(webview, 'did-navigate', { url: 'https://example.com/app/route?x=1' });
+			await fire(webview, 'did-navigate-in-page', {
+				url: 'https://ads.example.net/frame',
+				isMainFrame: false,
+			});
+
+			expect(recordJourney).toHaveBeenCalledTimes(1);
+			expect(recordJourney).toHaveBeenCalledWith('agent-1', {
+				kind: 'browser.navigate',
+				target: 'https://example.com/app/route',
+				tabId: 'browser-1',
+			});
+		});
+
+		it('never records about:blank', async () => {
+			const { webview } = await mountOwnedTab({ ...mockTab, url: DEFAULT_BROWSER_TAB_URL });
+
+			await fire(webview, 'did-navigate', { url: DEFAULT_BROWSER_TAB_URL });
+			expect(recordJourney).not.toHaveBeenCalled();
+
+			await fire(webview, 'did-navigate', { url: 'https://example.com/typed' });
+			expect(recordJourney).toHaveBeenCalledWith(
+				'agent-1',
+				expect.objectContaining({ target: 'https://example.com/typed' })
+			);
+		});
+
+		it('does not record a navigation an agent drove through the imperative handle', async () => {
+			const { webview, ref } = await mountOwnedTab();
+			await fire(webview, 'did-navigate', { url: 'https://example.com' });
+			await fire(webview, 'did-stop-loading');
+
+			act(() => {
+				ref.current!.navigate('https://agent.example.com/page');
+			});
+			await fire(webview, 'did-navigate', { url: 'https://agent.example.com/page' });
+			await fire(webview, 'did-stop-loading');
+			expect(recordJourney).not.toHaveBeenCalled();
+
+			await fire(webview, 'did-navigate', { url: 'https://example.com/user-click' });
+			expect(recordJourney).toHaveBeenCalledTimes(1);
+		});
+
+		it('records nothing for a private (ephemeral) tab', async () => {
+			const { webview } = await mountOwnedTab({ ...mockTab, ephemeral: true });
+			await fire(webview, 'did-navigate', { url: 'https://example.com' });
+			await fire(webview, 'did-stop-loading');
+			await fire(webview, 'did-navigate', { url: 'https://example.com/private' });
+
+			expect(recordJourney).not.toHaveBeenCalled();
+		});
 	});
 });

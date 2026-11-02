@@ -5,9 +5,13 @@
  * reads/writes the Maestro user-data dir with tab-indented JSON. All read /
  * validate / atomic-write / compaction logic is shared with the CLI store so the
  * two can never drift; only the data dir and JSON formatting differ here.
+ * Locked writes use the async store APIs so contention with CLI writers yields
+ * to the Electron event loop instead of blocking desktop IPC.
  */
 
 import { app } from 'electron';
+import { settledDecisionPairs } from '../../shared/pianola/transcript-mining';
+import type { PianolaDecisionRecord } from '../../shared/pianola/storage';
 import * as path from 'path';
 import type {
 	RulesLoadResult,
@@ -15,6 +19,7 @@ import type {
 	PianolaSupervisedTarget,
 } from '../../shared/pianola/storage';
 import { createPianolaFsStore } from '../../shared/pianola/fs-store';
+import { canonicalJson } from '../../shared/canonicalJson';
 
 export type { RulesLoadResult, PianolaPlan, PianolaSupervisedTarget };
 
@@ -33,12 +38,57 @@ const store = createPianolaFsStore({
 export const readRulesResult = store.readRulesResult;
 export const readRules = store.readRules;
 export const writeRules = store.writeRules;
-export const appendDecision = store.appendDecision;
+const humanDecisionListeners = new Set<() => void>();
+
+/** Native settled-decision event. The durable log remains the restart/replay authority. */
+export function onHumanDecisionSettled(listener: () => void): () => void {
+	humanDecisionListeners.add(listener);
+	return () => {
+		humanDecisionListeners.delete(listener);
+	};
+}
+
+export function appendDecision(record: PianolaDecisionRecord): void {
+	const candidate = settledDecisionPairs([record])[0];
+	const alreadySettled =
+		candidate &&
+		settledDecisionPairs(store.readDecisions(), { snapshots: true }).some(
+			(pair) =>
+				((pair.evidence!.agentId === candidate.evidence!.agentId &&
+					pair.evidence!.tabId === candidate.evidence!.tabId &&
+					pair.evidence!.questionMessageId === candidate.evidence!.questionMessageId) ||
+					(pair.evidence!.actorId === candidate.evidence!.actorId &&
+						pair.evidence!.answerMessageId === candidate.evidence!.answerMessageId)) &&
+				canonicalJson([pair.evidence, pair.classification]) ===
+					canonicalJson([candidate.evidence, candidate.classification])
+		);
+	store.appendDecision(record);
+	if (candidate && !alreadySettled) {
+		for (const listener of humanDecisionListeners) listener();
+	}
+}
 export const readDecisions = store.readDecisions;
 export const readPlans = store.readPlans;
 export const writePlans = store.writePlans;
 export const getPlan = store.getPlan;
 export const upsertPlan = store.upsertPlan;
+export const writePlansAsync = store.writePlansAsync;
+export const updatePlansAsync = store.updatePlansAsync;
+export const upsertPlanAsync = store.upsertPlanAsync;
+export const withPlanLock = store.withPlanLock;
+export const readPrograms = store.readPrograms;
+export const writePrograms = store.writePrograms;
+export const upsertProgram = store.upsertProgram;
+export const writeProgramsAsync = store.writeProgramsAsync;
+export const updateProgramsAsync = store.updateProgramsAsync;
+export const upsertProgramAsync = store.upsertProgramAsync;
+export const withProgramLoopLock = store.withProgramLoopLock;
+export const readAsks = store.readAsks;
+export const writeAsksAsync = store.writeAsksAsync;
+export const updateAsksAsync = store.updateAsksAsync;
+export const readProgramLoopMemo = store.readProgramLoopMemo;
+export const writeProgramLoopMemoAsync = store.writeProgramLoopMemoAsync;
+export const updateProgramLoopMemoAsync = store.updateProgramLoopMemoAsync;
 export const readSuggestions = store.readSuggestions;
 export const writeSuggestions = store.writeSuggestions;
 export const readProfiles = store.readProfiles;
@@ -48,5 +98,13 @@ export const setProfile = store.setProfile;
 export const supervisorFilePath = store.supervisorFilePath;
 export const readSupervisorTargets = store.readSupervisorTargets;
 export const writeSupervisorTargets = store.writeSupervisorTargets;
+export const updateSupervisorTargets = store.updateSupervisorTargets;
 export const upsertSupervisorTarget = store.upsertSupervisorTarget;
 export const removeSupervisorTarget = store.removeSupervisorTarget;
+
+export const readScopeCheckpoint = store.readScopeCheckpoint;
+export const writeScopeCheckpoint = store.writeScopeCheckpoint;
+export const writeSupervisorTargetsAsync = store.writeSupervisorTargetsAsync;
+export const updateSupervisorTargetsAsync = store.updateSupervisorTargetsAsync;
+export const upsertSupervisorTargetAsync = store.upsertSupervisorTargetAsync;
+export const removeSupervisorTargetAsync = store.removeSupervisorTargetAsync;

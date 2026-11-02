@@ -14,6 +14,7 @@ import {
 } from '../../../../shared/maestro-lib/turns/context';
 import { assembleTurn } from '../../../../shared/maestro-lib/turns/assemble';
 import { historyFilePath } from '../../../../shared/maestro-lib/store/read-history';
+import { journeyFilePath } from '../../../../shared/maestro-lib/store/read-journey';
 import { makeAgent, makeTab } from './fixtures';
 
 let dir: string;
@@ -189,6 +190,19 @@ describe('loadTurnContext', () => {
 		if (!without.ok || !withFile.ok) throw new Error('expected contexts');
 		expect(without.context.historyFilePath).toBeUndefined();
 		expect(withFile.context.historyFilePath).toBe(historyFilePath(paths.historyDir, 'agent-1'));
+	});
+
+	it('names the journey file for a local agent only', async () => {
+		const result = await load();
+		if (!result.ok) throw new Error(result.message);
+		expect(result.context.journeyFilePath).toBe(journeyFilePath(dir, 'agent-1'));
+
+		const ssh = await load(
+			makeAgent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			{ probeBinary: found('/never') }
+		);
+		if (!ssh.ok) throw new Error(ssh.message);
+		expect(ssh.context.journeyFilePath).toBeUndefined();
 	});
 
 	it('states the data dir, the CLI script and the clock it was given', async () => {

@@ -1,6 +1,6 @@
 /** Host media boundary: no STT routing, arbitrary argv, file reads, or raw binary RPC. */
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import * as os from 'node:os';
@@ -17,6 +17,11 @@ import {
 	type MediaProbe,
 	type MediaToolStatus,
 } from '../../shared/plugins/media-tools';
+import type {
+	OriginalAttachmentRef,
+	OriginalAttachmentReceipt,
+} from '../../shared/plugins/media-tools';
+import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 import type { EgressGuard } from './net-egress-guard';
 
 type Tool = 'ffprobe' | 'ffmpeg' | 'whisper-cli';
@@ -37,6 +42,14 @@ export interface MediaServiceLease {
 	call(method: 'probe' | 'decode' | 'run', audioId: string): Promise<unknown>;
 	close(): Promise<void>;
 }
+/** Host-only callbacks: no path or executable can be supplied by a plugin. */
+export interface OriginalAttachmentLease {
+	prepare(cwd: string): Promise<{ path: string; receipt: OriginalAttachmentReceipt }>;
+	handoff(): void;
+	check(): void;
+	waitFor<T>(lookup: Promise<T>): Promise<T>;
+	signal: AbortSignal;
+}
 interface Job {
 	id: string;
 	pluginId: string;
@@ -44,6 +57,8 @@ interface Job {
 	watchdog: IdleWatchdog;
 	recheck: ReturnType<typeof setInterval>;
 	dir?: string;
+	stagedDir?: string;
+	originalLease?: { authorize: () => void };
 	audio: Map<string, Audio>;
 	operation?: Promise<unknown>;
 	closing?: Promise<void>;
@@ -56,7 +71,7 @@ interface Job {
 }
 
 /** Codes are the ONLY diagnostic surface: never pass through errors containing inputs. */
-class MediaError extends Error {
+export class MediaError extends Error {
 	constructor(readonly code: MediaErrorCode) {
 		super(code);
 	}
@@ -194,7 +209,7 @@ export class PluginMediaTools {
 			}
 			if (!job || job.pluginId !== pluginId || job.controller.signal.aborted)
 				throw new MediaError('MediaInvalid');
-			if (job.operation || job.serviceLease) throw new MediaError('MediaBusy');
+			if (job.operation || job.serviceLease || job.originalLease) throw new MediaError('MediaBusy');
 			const operation = this.execute(job, method, p);
 			job.operation = operation;
 			try {
@@ -249,7 +264,7 @@ export class PluginMediaTools {
 			}),
 			recheck: setInterval(() => {
 				try {
-					this.authorize(pluginId, { audit: false });
+					this.check(job, { audit: false });
 				} catch {
 					void this.close(job, 'MediaDenied').catch(() => {});
 				}
@@ -261,10 +276,11 @@ export class PluginMediaTools {
 	}
 
 	/** Reject aborted or newly unauthorized jobs before starting I/O or returning a result. */
-	private check(job: Job): void {
+	private check(job: Job, options?: { audit?: boolean }): void {
 		if (job.controller.signal.aborted) throw job.controller.signal.reason;
-		this.authorize(job.pluginId);
+		this.authorize(job.pluginId, options);
 		job.serviceLease?.authorize();
+		job.originalLease?.authorize();
 	}
 
 	/** Only the host service broker can mint this lease, after BOTH parties' consent. */
@@ -280,7 +296,8 @@ export class PluginMediaTools {
 		const job = this.jobs.get(jobId);
 		if (!job || job.pluginId !== owner || !job.audio.has(audioId) || job.controller.signal.aborted)
 			throw new MediaError('MediaInvalid');
-		if (job.operation || job.serviceLease || job.ran) throw new MediaError('MediaBusy');
+		if (job.operation || job.serviceLease || job.originalLease || job.ran)
+			throw new MediaError('MediaBusy');
 		// Capture only the approved run fields; owner handles never become run options.
 		const { model, language } = options;
 		const aliases = new Map<string, string>([[randomUUID(), audioId]]);
@@ -361,6 +378,105 @@ export class PluginMediaTools {
 		};
 	}
 
+	/** Consume an own completed original once. close drains the inner operation, never its wrapper. */
+	async forwardOriginal<T>(
+		pluginId: string,
+		ref: OriginalAttachmentRef,
+		authorize: () => void,
+		run: (lease: OriginalAttachmentLease) => Promise<T>
+	): Promise<T> {
+		this.authorize(pluginId);
+		authorize();
+		const job = this.jobs.get(ref.jobId);
+		const audio = job?.audio.get(ref.audioId);
+		if (
+			!job ||
+			job.pluginId !== pluginId ||
+			!audio ||
+			audio.kind !== 'ogg' ||
+			job.controller.signal.aborted
+		)
+			throw new MediaError('MediaInvalid');
+		if (job.operation || job.serviceLease || job.originalLease) throw new MediaError('MediaBusy');
+		job.originalLease = { authorize };
+		let prepared = false;
+		let handedOff = false;
+		const operation = Promise.resolve().then(() =>
+			run({
+				signal: job.controller.signal,
+				check: () => this.check(job),
+				waitFor: (lookup) => this.awaitLookup(job, lookup),
+				prepare: async (cwd) => {
+					this.check(job);
+					if (prepared || !path.isAbsolute(cwd)) throw new MediaError('MediaInvalid');
+					prepared = true;
+					const runtime = await this.awaitLookup(
+						job,
+						(this.deps.resolveRuntime ?? resolveMediaRuntime)()
+					);
+					await this.probe(job, audio, runtime);
+					this.check(job);
+					const original = await fs.readFile(audio.file);
+					if (!original.length || original.length > MEDIA_LIMITS.maxDownloadBytes)
+						throw new MediaError('MediaTooLarge');
+					if (original.subarray(0, 4).toString('ascii') !== 'OggS')
+						throw new MediaError('MediaInvalid');
+					this.check(job);
+					job.stagedDir = await fs.mkdtemp(path.join(cwd, '.maestro-audio-'));
+					await fs.chmod(job.stagedDir, 0o700);
+					await fs.writeFile(path.join(job.stagedDir, '.gitignore'), '*\n', {
+						flag: 'wx',
+						mode: 0o600,
+					});
+					this.check(job);
+					const filename = `${randomUUID()}.ogg`;
+					const file = path.join(job.stagedDir, filename);
+					await fs.writeFile(file, original, { flag: 'wx', mode: 0o600 });
+					const snapshot = await fs.readFile(file);
+					if (!snapshot.equals(original)) throw new MediaError('MediaProcessFailed');
+					this.check(job);
+					return {
+						path: file,
+						receipt: {
+							filename,
+							bytes: snapshot.length,
+							sha256: createHash('sha256').update(snapshot).digest('hex'),
+						},
+					};
+				},
+				handoff: () => {
+					this.check(job);
+					if (!prepared || handedOff) throw new MediaError('MediaInvalid');
+					handedOff = true;
+					job.watchdog.disarm();
+					job.expiresAt = Date.now() + HEADLESS_RUN_COMPLETION_TIMEOUT_MS;
+					job.watchdog = createIdleWatchdog({
+						idleMs: HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+						maxMs: HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+						onIdle: () => {
+							void this.close(job, 'MediaTimeout').catch(() => {});
+						},
+					});
+				},
+			})
+		);
+		job.operation = operation;
+		try {
+			const result = await operation;
+			this.check(job);
+			return result;
+		} catch (error) {
+			const failure = job.controller.signal.aborted ? job.controller.signal.reason : error;
+			const code = failure instanceof MediaError ? failure.code : 'MediaProcessFailed';
+			throw new MediaError(
+				code === 'MediaTooLong' || code === 'MediaOutputTooLarge' ? 'MediaInvalid' : code
+			);
+		} finally {
+			job.operation = undefined;
+			await this.close(job, 'MediaCancelled');
+		}
+	}
+
 	/** No paths and no provider-selected runtime; caller is reauthorized by the service host. */
 	serviceStatus(): Promise<MediaToolStatus> {
 		return this.status();
@@ -377,6 +493,13 @@ export class PluginMediaTools {
 		job.controller.abort(new MediaError(code));
 		job.closing = (async () => {
 			await job.operation?.catch(() => {});
+			if (job.stagedDir)
+				await fs.rm(job.stagedDir, {
+					recursive: true,
+					force: true,
+					maxRetries: 3,
+					retryDelay: 100,
+				});
 			if (job.dir)
 				await fs.rm(job.dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 			job.audio.clear();

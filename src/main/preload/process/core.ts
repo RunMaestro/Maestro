@@ -63,6 +63,7 @@ export interface RunCommandConfig {
 export interface ActiveProcess {
 	sessionId: string;
 	toolType: string;
+	/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 	pid: number;
 	cwd: string;
 	isTerminal: boolean;

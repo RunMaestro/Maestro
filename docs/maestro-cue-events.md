@@ -295,8 +295,14 @@ Fires when another Maestro agent finishes a task. This is the foundation for age
 
 - **Single source** (string): Fires immediately when the named agent completes
 - **Multiple sources** (list): Waits for **all** named agents to complete before firing (fan-in). See [Fan-In](./maestro-cue-advanced#fan-in)
-- The source agent's output is captured and available via `{{CUE_SOURCE_OUTPUT}}` (truncated to 5,000 characters)
-- Matches agent names as shown in the Left Bar
+- Cue-owned runs provide the source agent's output via `{{CUE_SOURCE_OUTPUT}}` (truncated to 5,000 characters). External desktop turns, including `dispatch --new-tab`, report the process outcome without stdout or Cue subscription provenance.
+- Matches agent IDs or names as shown in the Left Bar. A desktop AI-tab process is matched to its base agent; a single-source event also carries `sourceProcessId` and `sourceTabId` for correlation and filters. Legacy desktop processes without an explicit tab do not invent a tab ID.
+
+A `source_sub` condition requires a completion from that Cue subscription. External Dispatch completions have no `triggeredBy`, so they do not satisfy `source_sub`. Cue's own run-completion path retains the subscription name, output and run lineage. The plugin bus event also named `agent.completed` is a separate channel.
+
+For a single-source subscription, `filter: { sourceTabId: '<worker-tab-id>' }` limits it to one explicit worker tab. Fan-in tracks one arrival per source agent; two tabs belonging to the same agent do not satisfy two sources. Complete and partial fan-in events retain known desktop identities in `perSourceCompletions`, keyed by base agent ID, with each entry carrying `sourceProcessId` and the explicit `sourceTabId` when available. If another tab of the same agent completes before the join fires, that agent's latest arrival replaces the earlier one.
+
+Desktop fan-in progress is held in memory and is lost on desktop restart. Only the standalone engine persists partial fan-in progress; its existing storage schema has no desktop process/tab fields, so restored sources have no invented desktop identities. This is a technical execution outcome, not acceptance of the worker's deliverable. Use an acceptance check before releasing dependent work. A Dispatch `--notify-on-complete` callback is a separate explicit return channel and currently does not survive a desktop restart.
 
 **Example - single source:**
 

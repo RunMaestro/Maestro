@@ -2,8 +2,9 @@
  * Tests for MediaPlayerWidget, the media player's desktop-window body. This
  * window is the authority: it owns the one media element, shows and hides its
  * window from the store, dismisses on its X, applies commands the primary
- * window forwards, hydrates the persisted queue, and sizes its window to the
- * media until the user resizes it.
+ * window forwards, hydrates the persisted queue, sizes its window to the
+ * media until the user resizes it, and borrows room past the card while a
+ * queue or history list is open.
  */
 import { useEffect } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -69,7 +70,10 @@ let api: {
 	onCommand: ReturnType<typeof vi.fn>;
 	getBounds: ReturnType<typeof vi.fn>;
 	setBounds: ReturnType<typeof vi.fn>;
+	setOverflow: ReturnType<typeof vi.fn>;
 };
+/** What main grants the next time the widget asks for list room. */
+let grant: { above: number; below: number };
 let commandHandler: ((command: unknown) => void) | null;
 
 function resetStore() {
@@ -114,7 +118,11 @@ beforeEach(() => {
 			bounds = { ...bounds, ...next };
 			return Promise.resolve({ ...bounds });
 		}),
+		setOverflow: vi.fn((_id: string, need: { above: number; below: number }) =>
+			Promise.resolve(need.above === 0 && need.below === 0 ? need : grant)
+		),
 	};
+	grant = { above: 0, below: 0 };
 	bounds = { x: 100, y: 100, width: 420, height: 96 };
 	maestro.floatingWidgets = api;
 	localStorage.removeItem(MEDIA_WINDOW_BASELINE_STORAGE_KEY);
@@ -271,6 +279,64 @@ describe('MediaPlayerWidget', () => {
 					'media-player',
 					mediaWindowSizeFor({ kind: 'video', aspect: 1, transportHeight: null })
 				)
+			);
+		});
+	});
+
+	describe('list room', () => {
+		const frame = () => screen.getByTestId('floating-widget-frame');
+
+		function loadWithHistory() {
+			useMediaPlaybackStore.setState({
+				items: [podcast],
+				activeItemId: podcast.id,
+				history: [movie],
+			});
+		}
+
+		it('borrows room below the card while a list is open and gives it back on close', async () => {
+			grant = { above: 0, below: 240 };
+			loadWithHistory();
+			renderWidget();
+			expect(api.setOverflow).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Recently played' }));
+			await waitFor(() => expect(frame().style.bottom).toBe('240px'));
+			expect(frame().style.top).toBe('0px');
+			expect(api.setOverflow).toHaveBeenCalledWith(
+				'media-player',
+				expect.objectContaining({ above: expect.any(Number), below: expect.any(Number) })
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Recently played' }));
+			await waitFor(() => expect(frame().style.bottom).toBe('0px'));
+			expect(api.setOverflow).toHaveBeenLastCalledWith('media-player', {
+				above: 0,
+				below: 0,
+			});
+		});
+
+		it('keeps the card in place with room borrowed above it', async () => {
+			grant = { above: 300, below: 0 };
+			loadWithHistory();
+			renderWidget();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Recently played' }));
+			await waitFor(() => expect(frame().style.top).toBe('300px'));
+			expect(frame().style.bottom).toBe('0px');
+			expect(screen.getByTestId('media-history-menu')).toBeInTheDocument();
+		});
+
+		it('gives the room back when the window is dismissed with a list open', async () => {
+			grant = { above: 0, below: 240 };
+			loadWithHistory();
+			renderWidget();
+			fireEvent.click(screen.getByRole('button', { name: 'Recently played' }));
+			await waitFor(() => expect(frame().style.bottom).toBe('240px'));
+
+			act(() => useMediaPlaybackStore.getState().dismiss());
+			await waitFor(() =>
+				expect(api.setOverflow).toHaveBeenLastCalledWith('media-player', { above: 0, below: 0 })
 			);
 		});
 	});

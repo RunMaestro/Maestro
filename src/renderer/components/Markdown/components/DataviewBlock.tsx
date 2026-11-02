@@ -33,6 +33,8 @@ import React, { useCallback, useMemo } from 'react';
 import type { Theme } from '../../../types';
 import {
 	DataviewSettings,
+	countTaskGroupRows,
+	dataviewTruncationNote,
 	isTaskGroup,
 	reviveDataviewResult,
 	type DataviewQueryResponse,
@@ -157,15 +159,6 @@ function DataviewErrorCallout({ theme, message }: { theme: Theme; message: strin
 	);
 }
 
-/** Leaf rows of a task grouping (tasks, not groups). */
-function countTasks(groups: unknown[]): number {
-	return groups.reduce<number>(
-		(total, entry) =>
-			total + (isTaskGroup<Literal>(entry) ? countTasks(entry.rows as unknown[]) : 1),
-		0
-	);
-}
-
 function DataviewResultView({
 	data,
 	theme,
@@ -191,6 +184,7 @@ function DataviewResultView({
 					theme={theme}
 					count={result.rows.length}
 					type="table"
+					total={result.total}
 					warnings={result.warnings}
 				>
 					<table>
@@ -221,6 +215,7 @@ function DataviewResultView({
 					theme={theme}
 					count={result.items.length}
 					type="list"
+					total={result.total}
 					warnings={result.warnings}
 				>
 					<ul className="dataview dataview-ul">
@@ -236,8 +231,9 @@ function DataviewResultView({
 			return (
 				<ResultFrame
 					theme={theme}
-					count={countTasks(result.groups as unknown[])}
+					count={countTaskGroupRows(result.groups as unknown[])}
 					type="task"
+					total={result.total}
 					warnings={result.warnings}
 				>
 					<TaskGroups groups={result.groups as unknown[]} theme={theme} data={data} doc={doc} />
@@ -246,21 +242,27 @@ function DataviewResultView({
 	}
 }
 
-/** Results with Dataview's empty-result notice, the result count, and any skipped-row warnings. */
+/**
+ * Results with Dataview's empty-result notice, the result count, a note when the result was cut at
+ * `DATAVIEW_MAX_RESULT_ROWS` (`total`), and any skipped-row warnings.
+ */
 function ResultFrame({
 	theme,
 	count,
 	type,
+	total,
 	warnings,
 	children,
 }: {
 	theme: Theme;
 	count: number;
 	type: 'table' | 'list' | 'task';
+	total?: number;
 	warnings: string[];
 	children: React.ReactNode;
 }) {
 	const dim: React.CSSProperties = { color: theme.colors.textDim, fontSize: '0.8em' };
+	const truncationNote = dataviewTruncationNote({ total }, count);
 	return (
 		<>
 			{count === 0 ? (
@@ -272,10 +274,16 @@ function ResultFrame({
 			) : (
 				<>
 					{children}
-					{DataviewSettings.showResultCount && (
-						<div data-dataview-count="" style={dim}>
-							{count} {count === 1 ? 'result' : 'results'}
+					{truncationNote ? (
+						<div data-dataview-truncated="" style={dim}>
+							{truncationNote}
 						</div>
+					) : (
+						DataviewSettings.showResultCount && (
+							<div data-dataview-count="" style={dim}>
+								{count} {count === 1 ? 'result' : 'results'}
+							</div>
+						)
 					)}
 				</>
 			)}
@@ -312,7 +320,7 @@ function TaskGroups({
 							<div style={{ fontWeight: 600, marginTop: '0.5em' }}>
 								<DataviewValue value={entry.key} />{' '}
 								<span style={{ color: theme.colors.textDim, fontSize: '0.8em', fontWeight: 400 }}>
-									{countTasks(rows)}
+									{countTaskGroupRows(rows)}
 								</span>
 							</div>
 							<TaskGroups groups={rows} theme={theme} data={data} doc={doc} />

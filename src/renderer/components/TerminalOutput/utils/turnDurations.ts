@@ -57,6 +57,7 @@ export function computeTurnDurations(logs: LogEntry[]): Map<string, number> {
 		} else if (
 			log.source === 'tool' ||
 			log.source === 'thinking' ||
+			log.source === 'stderr' ||
 			log.source === 'error' ||
 			isSelfContainedCard(log)
 		) {

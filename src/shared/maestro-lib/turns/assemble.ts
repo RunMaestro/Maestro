@@ -116,6 +116,8 @@ export interface TurnContext {
 	gitBranch?: string;
 	/** The agent's history file when it exists. Ignored for SSH. */
 	historyFilePath?: string;
+	/** The agent's User Journey file. Ignored for SSH. */
+	journeyFilePath?: string;
 	/** The `maestro-cli.js` script agents should call (PA6). */
 	maestroCliPath?: string;
 	/**

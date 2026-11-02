@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
+import {
+	loadJourneyFilePath,
+	prepareMaestroSystemPrompt,
+} from '../../../renderer/utils/spawnHelpers';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -40,6 +43,9 @@ describe('prepareMaestroSystemPrompt', () => {
 			},
 			history: {
 				getFilePath: vi.fn().mockResolvedValue('/mock/history/path.jsonl'),
+			},
+			journey: {
+				getPath: vi.fn().mockResolvedValue('/mock/journey/session-1.jsonl'),
 			},
 		};
 	});
@@ -115,6 +121,11 @@ describe('prepareMaestroSystemPrompt', () => {
 			session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
 		});
 		expect((window as any).maestro.history.getFilePath).not.toHaveBeenCalled();
+	});
+
+	it('reads the journey path for non-SSH sessions', async () => {
+		await prepareMaestroSystemPrompt({ session: baseSession });
+		expect((window as any).maestro.journey.getPath).toHaveBeenCalledWith('session-1');
 	});
 
 	it('handles history file path errors gracefully', async () => {
@@ -278,5 +289,30 @@ describe('prepareMaestroSystemPrompt', () => {
 			expect(result).toBe('BASE');
 			prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
 		});
+	});
+});
+
+describe('loadJourneyFilePath', () => {
+	beforeEach(() => {
+		(window as any).maestro = {
+			...(window as any).maestro,
+			journey: { getPath: vi.fn().mockResolvedValue('/mock/journey/a1.jsonl') },
+		};
+	});
+
+	it('returns the path for a local agent', async () => {
+		await expect(loadJourneyFilePath('a1', false)).resolves.toBe('/mock/journey/a1.jsonl');
+	});
+
+	it('skips the local-only path for an SSH agent', async () => {
+		await expect(loadJourneyFilePath('a1', true)).resolves.toBeUndefined();
+		expect((window as any).maestro.journey.getPath).not.toHaveBeenCalled();
+	});
+
+	it('reads a failed lookup or a missing bridge as no path', async () => {
+		(window as any).maestro.journey.getPath.mockRejectedValueOnce(new Error('no path'));
+		await expect(loadJourneyFilePath('a1', false)).resolves.toBeUndefined();
+		(window as any).maestro = { ...(window as any).maestro, journey: undefined };
+		await expect(loadJourneyFilePath('a1', false)).resolves.toBeUndefined();
 	});
 });

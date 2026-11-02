@@ -64,6 +64,7 @@ import {
 	isPidAlive,
 	type CliServerInfo,
 } from '../discovery';
+import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../plugins/headless-agent-timeouts';
 import { CLI_SECRET_HEADER } from '../../../webLogin';
 
 const RUNNING_SERVER: CliServerInfo = {
@@ -98,10 +99,47 @@ describe('BridgeConnection', () => {
 		vi.useFakeTimers();
 		mockWsUrl = undefined;
 		mockWsOptions = undefined;
+		vi.stubEnv('MAESTRO_CLI_HOST', undefined);
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.unstubAllEnvs();
+	});
+
+	it('holds a headless reply past sixty-one minutes but polls cannot extend the six-hour authority', async () => {
+		const client = await createConnectedClient();
+		try {
+			const reply = client.sendCommand(
+				{ type: 'plugins_send_agent' },
+				'plugins_send_agent_result',
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS
+			);
+			const { requestId } = lastSentPayload();
+			await vi.advanceTimersByTimeAsync(61 * 60_000);
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({ type: 'plugins_send_agent_result', requestId, success: true })
+			);
+			expect(await reply).toMatchObject({ success: true });
+			const pending = client.sendCommand(
+				{ type: 'plugins_send_agent' },
+				'plugins_send_agent_result',
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS
+			);
+			const rejected = expect(pending).rejects.toBeInstanceOf(CommandTimeoutError);
+			for (let n = 0; n < 6; n++) {
+				await vi.advanceTimersByTimeAsync(60 * 60_000);
+				mockWsInstance.emit(
+					'message',
+					JSON.stringify({ type: 'bridge.event', channel: 'poll', args: [] })
+				);
+			}
+			await vi.advanceTimersByTimeAsync(60_000);
+			await rejected;
+		} finally {
+			client.disconnect();
+		}
 	});
 
 	describe('connect()', () => {
@@ -150,6 +188,72 @@ describe('BridgeConnection', () => {
 
 			// Verify connection was established (mockWsInstance is set)
 			expect(mockWsInstance).toBeDefined();
+		});
+
+		it.each([
+			['maestro.local', 'maestro.local:3000'],
+			['192.0.2.1', '192.0.2.1:3000'],
+			['maestro.local:4444', 'maestro.local:4444'],
+			['[::1]', '[::1]:3000'],
+			['::1', '[::1]:3000'],
+		])('uses remote host %s and skips only its local PID probe', async (host, authority) => {
+			vi.stubEnv('MAESTRO_CLI_HOST', host);
+			vi.mocked(readCliServerInfo).mockReturnValue(RUNNING_SERVER);
+			vi.mocked(isCliServerRunning).mockReturnValue(false);
+
+			const client = new BridgeConnection();
+			const promise = client.connect();
+			mockWsInstance.emit('open');
+			await promise;
+
+			expect(mockWsUrl).toBe(`ws://${authority}/test-token/ws`);
+			expect(isCliServerRunning).not.toHaveBeenCalled();
+			client.disconnect();
+		});
+
+		it.each([
+			'bad host',
+			'user:pass@host',
+			'host/path',
+			'host?query',
+			'host#fragment',
+			'ws://host',
+			'host:99999',
+			'host\\path',
+			'h!ost',
+			'-host',
+			'host:',
+			'[::1]:',
+		])('rejects invalid host %s without exposing credentials', async (host) => {
+			vi.stubEnv('MAESTRO_CLI_HOST', host);
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				...RUNNING_SERVER,
+				token: 'PRIVATE_TOKEN',
+				cliSecret: 'PRIVATE_SECRET',
+			});
+
+			const error = await new BridgeConnection().connect().catch((e: unknown) => e);
+
+			expect((error as Error).message).toBe(
+				'Invalid MAESTRO_CLI_HOST: expected a hostname or IP address, optionally with a port'
+			);
+			expect(String(error)).not.toContain('PRIVATE_TOKEN');
+			expect(String(error)).not.toContain('PRIVATE_SECRET');
+			expect(mockWsUrl).toBeUndefined();
+		});
+
+		it.each(['', '   '])('keeps the loopback URL for empty host %s', async (host) => {
+			vi.stubEnv('MAESTRO_CLI_HOST', host);
+			mockRunningServer();
+
+			const client = new BridgeConnection();
+			const promise = client.connect();
+			mockWsInstance.emit('open');
+			await promise;
+
+			expect(mockWsUrl).toBe('ws://127.0.0.1:3000/test-token/ws');
+			expect(isCliServerRunning).toHaveBeenCalledOnce();
+			client.disconnect();
 		});
 
 		it('dials 127.0.0.1 with the URL token, never localhost', async () => {

@@ -222,6 +222,15 @@ describe('buildAgentSystemPrompt', () => {
 		);
 	});
 
+	it('fills the journey path, and leaves it out for SSH', () => {
+		const context = {
+			prompts: { maestroSystem: '[{{AGENT_JOURNEY_PATH}}]' },
+			journeyFilePath: '/j/a-1.jsonl',
+		};
+		expect(buildAgentSystemPrompt(agent, undefined, context)).toBe('[/j/a-1.jsonl]');
+		expect(buildAgentSystemPrompt(ssh, undefined, context)).toBe('[]');
+	});
+
 	it('leaves out what is read from this machine for an SSH agent', () => {
 		const out = buildAgentSystemPrompt(ssh, undefined, {
 			prompts: {

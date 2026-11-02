@@ -17,6 +17,39 @@ function exceptionEvent(type: string, value: string) {
 }
 
 describe('shouldDropSentryEvent', () => {
+	it('drops expected host reconnect events from direct SDK callers', () => {
+		expect(
+			shouldDropSentryEvent(
+				exceptionEvent(
+					'Error',
+					'Not submitted: restoring authoritative host state. Your current work is retained.'
+				)
+			)
+		).toBe(true);
+		expect(
+			shouldDropSentryEvent({
+				message: 'Not submitted: reconnecting to the host. Your current work is retained.',
+			})
+		).toBe(true);
+	});
+
+	it('retains uncertain submissions and unexpected host failures', () => {
+		expect(
+			shouldDropSentryEvent(
+				exceptionEvent(
+					'Error',
+					'Submission uncertainty: connection lost before acknowledgement of process:spawn'
+				)
+			)
+		).toBe(false);
+		expect(
+			shouldDropSentryEvent(exceptionEvent('Error', 'Bridge request timed out: process:spawn'))
+		).toBe(false);
+		expect(shouldDropSentryEvent(exceptionEvent('Error', 'Invalid host snapshot payload'))).toBe(
+			false
+		);
+	});
+
 	describe('OS / filesystem environment', () => {
 		it('drops ENOSPC out-of-disk errors', () => {
 			expect(

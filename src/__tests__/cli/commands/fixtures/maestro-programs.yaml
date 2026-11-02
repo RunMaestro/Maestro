@@ -1,0 +1,14 @@
+programs:
+  - id: ai-ventures
+    title: AI Ventures
+    root: /home/dev/ai-ventures
+    remoteId: wsl-dev
+    charter: { maxConcurrent: 2, maxAttempts: 3, validationRequired: true }
+    roles:
+      lead:
+        name: AI Ventures Lead
+        agentType: omp
+        model: openai-codex/gpt-5.6-sol
+        instructions: >-
+          Project Lead for AI Ventures. Own the roadmap, hand off one bounded outcome at a time as a plan
+          under this program, and direct engineer, qa, and marketing on it.

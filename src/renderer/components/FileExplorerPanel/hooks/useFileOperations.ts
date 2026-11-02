@@ -10,6 +10,7 @@ import {
 	countNodesInTree,
 } from '../../../utils/fileExplorer';
 import { captureException } from '../../../utils/sentry';
+import { recordJourney } from '../../../services/userJourney';
 import type { RenameModalState, DeleteModalState, NewFileModalState } from '../types';
 
 interface UseFileOperationsArgs {
@@ -105,6 +106,11 @@ export function useFileOperations({
 			);
 			const newPath = `${parentDir}/${newName}`;
 			await window.maestro.fs.rename(renameModal.absolutePath, newPath, sshRemoteId);
+			recordJourney(session.id, {
+				kind: 'file.rename',
+				target: newPath,
+				fromPath: renameModal.absolutePath,
+			});
 
 			const oldPath = renameModal.path;
 			const pathParts = oldPath.split('/');
@@ -189,6 +195,7 @@ export function useFileOperations({
 			} else {
 				await window.maestro.fs.writeFile(absolutePath, '', sshRemoteId);
 			}
+			recordJourney(session.id, { kind: 'file.create', target: absolutePath });
 			await refreshFileTree(session.id);
 			expandFolder(newFileModal.parentFolderPath);
 			setNewFileModal(null);
@@ -248,6 +255,7 @@ export function useFileOperations({
 		setIsDeleting(true);
 		try {
 			await window.maestro.fs.delete(deleteModal.absolutePath, { sshRemoteId });
+			recordJourney(session.id, { kind: 'file.delete', target: deleteModal.absolutePath });
 
 			setSessions((prev) =>
 				prev.map((s) => {

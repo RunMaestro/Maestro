@@ -14,18 +14,28 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { reconcileSuggestionEvidence } from './pianola-synthesis';
+import { settledDecisionPairs } from './transcript-mining';
+import { createHash } from 'crypto';
+import { assertSerializedJsonIsSafe } from '../jsonUtils';
 import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
 	PIANOLA_PLANS_FILENAME,
+	PIANOLA_PROGRAMS_FILENAME,
+	PIANOLA_ASKS_FILENAME,
 	PIANOLA_SUPERVISOR_FILENAME,
+	PIANOLA_PROGRAM_LOOP_FILENAME,
 	PIANOLA_PROFILES_FILENAME,
 	PIANOLA_SUGGESTIONS_FILENAME,
 	PIANOLA_DECISIONS_MAX_RECORDS,
 	PIANOLA_DECISIONS_COMPACT_BYTES,
+	PIANOLA_DECISION_RECORD_MAX_BYTES,
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	validatePianolaPlansFile,
+	validatePianolaProgramsFile,
+	validatePianolaAsksFile,
 	validatePianolaSupervisorFile,
 	validatePianolaSuggestionsFile,
 	validatePianolaProfiles,
@@ -41,7 +51,22 @@ import {
 } from './storage';
 import { appendDecisionLine, compactDecisionLog } from './decision-log';
 import type { PianolaRule } from './types';
+import {
+	validatePianolaScopeCheckpoint,
+	type PianolaScopeCheckpoint,
+} from './pianola-scope-checkpoint';
+import { isPianolaScopeId } from './pianola-scope';
+import { canonicalJson } from '../canonicalJson';
+import type { PianolaProgram, PianolaAsk } from './pianola-programs';
+import {
+	validateProgramLoopMemo,
+	type ProgramLoopMemo,
+	type ProgramLoopMemoEntry,
+} from './pianola-program-loop';
 
+const ASKS_LOCK_TIMEOUT_MS = 5_000;
+const ASKS_LOCK_STALE_MS = 30_000;
+const lockWait = new Int32Array(new SharedArrayBuffer(4));
 export interface PianolaFsStoreConfig {
 	/** Resolve the data dir (Electron userData for main, config dir for CLI). Re-read per op. */
 	resolveDir: () => string;
@@ -62,6 +87,38 @@ export interface PianolaFsStore {
 	writePlans(plans: PianolaPlan[]): PianolaPlan[];
 	getPlan(planId: string): PianolaPlan | null;
 	upsertPlan(plan: PianolaPlan): PianolaPlan[];
+	updatePlans(update: (plans: PianolaPlan[]) => PianolaPlan[]): PianolaPlan[];
+	writePlansAsync(plans: PianolaPlan[]): Promise<PianolaPlan[]>;
+	updatePlansAsync(update: (plans: PianolaPlan[]) => PianolaPlan[]): Promise<PianolaPlan[]>;
+	upsertPlanAsync(plan: PianolaPlan): Promise<PianolaPlan[]>;
+	readPrograms(): PianolaProgram[];
+	writePrograms(programs: PianolaProgram[]): PianolaProgram[];
+	upsertProgram(program: PianolaProgram): PianolaProgram[];
+	updatePrograms(update: (programs: PianolaProgram[]) => PianolaProgram[]): PianolaProgram[];
+	writeProgramsAsync(programs: PianolaProgram[]): Promise<PianolaProgram[]>;
+	updateProgramsAsync(
+		update: (programs: PianolaProgram[]) => PianolaProgram[]
+	): Promise<PianolaProgram[]>;
+	upsertProgramAsync(program: PianolaProgram): Promise<PianolaProgram[]>;
+	/** Hold exclusive ownership across the complete asynchronous loop tick. */
+	withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T>;
+	/** Serialize revisions with the complete orchestrator tick for this plan. */
+	withPlanLock<T>(
+		planId: string,
+		operation: () => Promise<T>,
+		options?: { waitForTurn?: boolean }
+	): Promise<T>;
+	readAsks(): PianolaAsk[];
+	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
+	updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[];
+	/** Desktop variants yield between lock attempts; sync variants are for the CLI. */
+	writeAsksAsync(asks: PianolaAsk[]): Promise<PianolaAsk[]>;
+	updateAsksAsync(update: (asks: PianolaAsk[]) => PianolaAsk[]): Promise<PianolaAsk[]>;
+	readProgramLoopMemo(): ProgramLoopMemo;
+	writeProgramLoopMemo(memo: ProgramLoopMemo): void;
+	updateProgramLoopMemo(programId: string, entry: ProgramLoopMemoEntry): void;
+	writeProgramLoopMemoAsync(memo: ProgramLoopMemo): Promise<void>;
+	updateProgramLoopMemoAsync(programId: string, entry: ProgramLoopMemoEntry): Promise<void>;
 	readSuggestions(): PianolaSuggestionsFile;
 	writeSuggestions(file: PianolaSuggestionsFile): PianolaSuggestionsFile;
 	readProfiles(): PianolaProfiles;
@@ -73,8 +130,22 @@ export interface PianolaFsStore {
 	setProfile(entry: PianolaProfileEntry, projectPath?: string): PianolaProfiles;
 	readSupervisorTargets(): PianolaSupervisedTarget[];
 	writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[];
+	updateSupervisorTargets(
+		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
+	): PianolaSupervisedTarget[];
 	upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[];
 	removeSupervisorTarget(id: string): PianolaSupervisedTarget[];
+	/** A missing checkpoint is a first enrollment; a corrupt one throws. */
+	readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null;
+	writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void;
+	writeSupervisorTargetsAsync(
+		targets: PianolaSupervisedTarget[]
+	): Promise<PianolaSupervisedTarget[]>;
+	updateSupervisorTargetsAsync(
+		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
+	): Promise<PianolaSupervisedTarget[]>;
+	upsertSupervisorTargetAsync(target: PianolaSupervisedTarget): Promise<PianolaSupervisedTarget[]>;
+	removeSupervisorTargetAsync(id: string): Promise<PianolaSupervisedTarget[]>;
 	/** Absolute path to the supervised-target registry the desktop supervisor watches. */
 	supervisorFilePath(): string;
 }
@@ -89,10 +160,26 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		const dir = resolveDir();
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 		const target = path.join(dir, name);
-		const tmp = `${target}.tmp`;
+		const tmp =
+			target +
+			'.' +
+			process.pid +
+			'.' +
+			Date.now() +
+			'.' +
+			Math.random().toString(36).slice(2) +
+			'.tmp';
 		const body = JSON.stringify(value, null, indent);
-		fs.writeFileSync(tmp, trailingNewline ? `${body}\n` : body, 'utf-8');
-		fs.renameSync(tmp, target);
+		assertSerializedJsonIsSafe(body, target);
+		try {
+			fs.writeFileSync(tmp, trailingNewline ? body + '\n' : body, {
+				encoding: 'utf-8',
+				flag: 'wx',
+			});
+			fs.renameSync(tmp, target);
+		} finally {
+			fs.rmSync(tmp, { force: true });
+		}
 	}
 
 	/** Read + JSON.parse a file; `fallback()` covers a missing file AND unparseable JSON. */
@@ -163,10 +250,19 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	}
 
 	function appendDecision(record: PianolaDecisionRecord): void {
+		const line = `${JSON.stringify(record)}\n`;
+		// Scope audit-before-send must fail closed rather than silently dropping
+		// an oversized or unreadable lifecycle and then losing its durable claim.
+		if (
+			record.lifecycle &&
+			(!validatePianolaDecisionRecord(record) ||
+				Buffer.byteLength(line, 'utf-8') > PIANOLA_DECISION_RECORD_MAX_BYTES)
+		)
+			throw new Error('Invalid or oversized Pianola decision lifecycle');
 		const dir = resolveDir();
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 		const file = path.join(dir, PIANOLA_DECISIONS_FILENAME);
-		appendDecisionLine(file, `${JSON.stringify(record)}\n`);
+		appendDecisionLine(file, line);
 		compactDecisionLog(file, PIANOLA_DECISIONS_MAX_RECORDS, PIANOLA_DECISIONS_COMPACT_BYTES);
 	}
 
@@ -178,7 +274,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 
-	function writePlans(plans: PianolaPlan[]): PianolaPlan[] {
+	function persistPlans(plans: PianolaPlan[]): PianolaPlan[] {
 		const validated = validatePianolaPlansFile({ plans }).plans;
 		writeJsonAtomic(PIANOLA_PLANS_FILENAME, { plans: validated });
 		return validated;
@@ -188,24 +284,356 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return readPlans().find((p) => p.id === planId) ?? null;
 	}
 
-	function upsertPlan(plan: PianolaPlan): PianolaPlan[] {
-		const current = readPlans();
-		const index = current.findIndex((p) => p.id === plan.id);
-		const next = index >= 0 ? current.map((p, i) => (i === index ? plan : p)) : [...current, plan];
-		return writePlans(next);
+	function upsertPlan(value: PianolaPlan): PianolaPlan[] {
+		return updatePlans((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
 	}
-
-	function readSuggestions(): PianolaSuggestionsFile {
-		return readFileOr(
-			PIANOLA_SUGGESTIONS_FILENAME,
-			() => validatePianolaSuggestionsFile(undefined),
-			(parsed) => validatePianolaSuggestionsFile(parsed)
+	function upsertPlanAsync(value: PianolaPlan): Promise<PianolaPlan[]> {
+		return updatePlansAsync((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function writePlans(values: PianolaPlan[]): PianolaPlan[] {
+		return withFileLock(PIANOLA_PLANS_FILENAME, 'plans', () => persistPlans(values));
+	}
+	function updatePlans(update: (values: PianolaPlan[]) => PianolaPlan[]): PianolaPlan[] {
+		return withFileLock(PIANOLA_PLANS_FILENAME, 'plans', () => persistPlans(update(readPlans())));
+	}
+	function writePlansAsync(values: PianolaPlan[]): Promise<PianolaPlan[]> {
+		return withFileLockAsync(PIANOLA_PLANS_FILENAME, 'plans', () => persistPlans(values));
+	}
+	function updatePlansAsync(
+		update: (values: PianolaPlan[]) => PianolaPlan[]
+	): Promise<PianolaPlan[]> {
+		return withFileLockAsync(PIANOLA_PLANS_FILENAME, 'plans', () =>
+			persistPlans(update(readPlans()))
 		);
 	}
 
+	function readPrograms(): PianolaProgram[] {
+		return readFileOr(
+			PIANOLA_PROGRAMS_FILENAME,
+			() => [],
+			(raw) => validatePianolaProgramsFile(raw).programs
+		);
+	}
+	function persistPrograms(programs: PianolaProgram[]): PianolaProgram[] {
+		const validated = validatePianolaProgramsFile({ programs }).programs;
+		writeJsonAtomic(PIANOLA_PROGRAMS_FILENAME, { programs: validated });
+		return validated;
+	}
+	function upsertProgram(value: PianolaProgram): PianolaProgram[] {
+		return updatePrograms((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function upsertProgramAsync(value: PianolaProgram): Promise<PianolaProgram[]> {
+		return updateProgramsAsync((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function writePrograms(values: PianolaProgram[]): PianolaProgram[] {
+		return withFileLock(PIANOLA_PROGRAMS_FILENAME, 'programs', () => persistPrograms(values));
+	}
+	function updatePrograms(
+		update: (values: PianolaProgram[]) => PianolaProgram[]
+	): PianolaProgram[] {
+		return withFileLock(PIANOLA_PROGRAMS_FILENAME, 'programs', () =>
+			persistPrograms(update(readPrograms()))
+		);
+	}
+	function writeProgramsAsync(values: PianolaProgram[]): Promise<PianolaProgram[]> {
+		return withFileLockAsync(PIANOLA_PROGRAMS_FILENAME, 'programs', () => persistPrograms(values));
+	}
+	function updateProgramsAsync(
+		update: (values: PianolaProgram[]) => PianolaProgram[]
+	): Promise<PianolaProgram[]> {
+		return withFileLockAsync(PIANOLA_PROGRAMS_FILENAME, 'programs', () =>
+			persistPrograms(update(readPrograms()))
+		);
+	}
+	function readAsks(): PianolaAsk[] {
+		return readFileOr(
+			PIANOLA_ASKS_FILENAME,
+			() => [],
+			(raw) => validatePianolaAsksFile(raw).asks
+		);
+	}
+	/** Shared protocol: each yield requests a delay before the next exclusive-create attempt. */
+	function* acquireFileLock(
+		name: string,
+		label: string,
+		waitForTurn = false
+	): Generator<void, (renew?: boolean) => void> {
+		const lock = filePath(name) + '.lock';
+		fs.mkdirSync(path.dirname(lock), { recursive: true });
+		const token = process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
+		let observedMtime: number | undefined;
+		let deadline = Date.now() + (waitForTurn ? ASKS_LOCK_STALE_MS : ASKS_LOCK_TIMEOUT_MS);
+		while (true) {
+			if (!waitForTurn && Date.now() >= deadline)
+				throw new Error(`Timed out waiting for Pianola ${label} lock`);
+			try {
+				fs.writeFileSync(lock, token, { flag: 'wx' });
+				break;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			}
+			try {
+				const mtime = fs.statSync(lock).mtimeMs;
+				if (waitForTurn) {
+					if (mtime !== observedMtime) {
+						observedMtime = mtime;
+						deadline = Date.now() + ASKS_LOCK_STALE_MS;
+					}
+					if (Date.now() >= deadline)
+						throw new Error(`Timed out waiting for Pianola ${label} lock`);
+				}
+				if (Date.now() - mtime > ASKS_LOCK_STALE_MS) {
+					const observedToken = fs.readFileSync(lock, 'utf8');
+					const ownerAlive = (value: string): boolean => {
+						const owner = Number(value.split('.')[0]);
+						if (!Number.isInteger(owner) || owner <= 0) return false;
+						try {
+							process.kill(owner, 0);
+							return true;
+						} catch (error) {
+							return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+						}
+					};
+					const alive = ownerAlive(observedToken);
+					if (!alive) {
+						const stale = lock + '.' + token + '.stale';
+						fs.renameSync(lock, stale);
+						const movedToken = fs.readFileSync(stale, 'utf8');
+						if (movedToken !== observedToken || ownerAlive(movedToken)) {
+							try {
+								fs.linkSync(stale, lock);
+							} catch (error) {
+								if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+							} finally {
+								fs.rmSync(stale, { force: true });
+							}
+							yield;
+							continue;
+						}
+						fs.rmSync(stale, { force: true });
+						continue;
+					}
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+				throw error;
+			}
+			yield;
+		}
+		return (renew = false) => {
+			if (fs.readFileSync(lock, 'utf8') !== token) {
+				if (renew) throw new Error(`Lost Pianola ${label} lock ownership`);
+				return;
+			}
+			if (renew) {
+				const now = new Date();
+				fs.utimesSync(lock, now, now);
+			} else fs.rmSync(lock, { force: true });
+		};
+	}
+	function withFileLock<T>(name: string, label: string, operation: () => T): T {
+		const acquisition = acquireFileLock(name, label);
+		let attempt = acquisition.next();
+		while (!attempt.done) {
+			Atomics.wait(lockWait, 0, 0, 10);
+			attempt = acquisition.next();
+		}
+		try {
+			return operation();
+		} finally {
+			attempt.value();
+		}
+	}
+	async function withFileLockAsync<T>(
+		name: string,
+		label: string,
+		operation: () => T | Promise<T>,
+		waitForTurn = false,
+		renewWhileHeld = false
+	): Promise<T> {
+		const acquisition = acquireFileLock(name, label, waitForTurn);
+		let attempt = acquisition.next();
+		while (!attempt.done) {
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+			attempt = acquisition.next();
+		}
+		const ownership = attempt.value;
+		let renewalError: { error: unknown } | undefined;
+		const heartbeat = renewWhileHeld
+			? setInterval(() => {
+					if (renewalError) return;
+					try {
+						ownership(true);
+					} catch (error) {
+						renewalError = { error };
+					}
+				}, ASKS_LOCK_STALE_MS / 3)
+			: undefined;
+		heartbeat?.unref();
+		try {
+			const result = await operation();
+			if (renewalError) throw renewalError.error;
+			return result;
+		} finally {
+			if (heartbeat) clearInterval(heartbeat);
+			ownership();
+		}
+	}
+	function withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T> {
+		const key = createHash('sha256').update(programId).digest('hex');
+		return withFileLockAsync(`pianola-program-loop-${key}`, 'program loop', operation);
+	}
+	function withPlanLock<T>(
+		planId: string,
+		operation: () => Promise<T>,
+		options?: { waitForTurn?: boolean }
+	): Promise<T> {
+		const key = createHash('sha256').update(planId).digest('hex');
+		return withFileLockAsync(
+			`pianola-plan-${key}`,
+			'plan orchestration',
+			operation,
+			options?.waitForTurn,
+			true
+		);
+	}
+	function persistAsks(asks: PianolaAsk[]): PianolaAsk[] {
+		const validated = validatePianolaAsksFile({ asks }).asks;
+		writeJsonAtomic(PIANOLA_ASKS_FILENAME, { asks: validated });
+		return validated;
+	}
+	function writeAsks(asks: PianolaAsk[]): PianolaAsk[] {
+		return withFileLock(PIANOLA_ASKS_FILENAME, 'asks', () => persistAsks(asks));
+	}
+	function updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[] {
+		return withFileLock(PIANOLA_ASKS_FILENAME, 'asks', () => persistAsks(update(readAsks())));
+	}
+	function writeAsksAsync(asks: PianolaAsk[]): Promise<PianolaAsk[]> {
+		return withFileLockAsync(PIANOLA_ASKS_FILENAME, 'asks', () => persistAsks(asks));
+	}
+	function updateAsksAsync(update: (asks: PianolaAsk[]) => PianolaAsk[]): Promise<PianolaAsk[]> {
+		return withFileLockAsync(PIANOLA_ASKS_FILENAME, 'asks', () => persistAsks(update(readAsks())));
+	}
+	function readSuggestions(): PianolaSuggestionsFile {
+		let content: string;
+		try {
+			content = fs.readFileSync(filePath(PIANOLA_SUGGESTIONS_FILENAME), 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+				return validatePianolaSuggestionsFile(undefined);
+			throw error;
+		}
+		// Corruption must not erase persistent rejection/approval evidence.
+		const raw: unknown = JSON.parse(content);
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+			throw new Error('InvalidSuggestionFile');
+		return validatePianolaSuggestionsFile(raw);
+	}
+
 	function writeSuggestions(file: PianolaSuggestionsFile): PianolaSuggestionsFile {
-		const validated = validatePianolaSuggestionsFile(file);
-		writeJsonAtomic(PIANOLA_SUGGESTIONS_FILENAME, validated);
+		let validated = validatePianolaSuggestionsFile(file);
+		const current = readSuggestions();
+		// Re-read at the atomic write boundary: asynchronous mining must never
+		// overwrite a review that was committed while it was in flight.
+		if (current.rejections || validated.rejections) {
+			const rejections = new Map<
+				string,
+				NonNullable<PianolaSuggestionsFile['rejections']>[number]
+			>();
+			for (const item of [...(current.rejections ?? []), ...(validated.rejections ?? [])]) {
+				const key = canonicalJson([item.candidateId, item.evidenceFingerprint]);
+				const previous = rejections.get(key);
+				if (
+					previous &&
+					(previous.principal !== item.principal || previous.actorId !== item.actorId)
+				)
+					throw new Error('ConflictingSuggestionReview');
+				rejections.set(key, item);
+			}
+			validated.rejections = [...rejections.values()];
+		}
+		if (current.approvals || validated.approvals) {
+			const approvals = new Map<string, NonNullable<PianolaSuggestionsFile['approvals']>[number]>();
+			for (const item of [...(current.approvals ?? []), ...(validated.approvals ?? [])]) {
+				const key = canonicalJson([
+					item.candidate.id,
+					item.candidate.evidenceFingerprint,
+					item.approvedAt,
+				]);
+				const previous = approvals.get(key);
+				if (
+					previous &&
+					(previous.principal !== item.principal || previous.actorId !== item.actorId)
+				)
+					throw new Error('ConflictingSuggestionReview');
+				approvals.set(key, item);
+			}
+			validated.approvals = [...approvals.values()];
+		}
+		// Conflicts are durable review requests. Empty/legacy/stale writers cannot
+		// erase one or its source examples, including after log compaction.
+		if (current.conflicts || validated.conflicts) {
+			const conflicts = new Map<string, NonNullable<PianolaSuggestionsFile['conflicts']>[number]>();
+			for (const item of [...(current.conflicts ?? []), ...(validated.conflicts ?? [])]) {
+				const key = canonicalJson([item.ruleId, item.evidenceFingerprint, item.approvedAt]);
+				const previous = conflicts.get(key);
+				const evidence = new Map(
+					[...(previous?.evidence ?? []), ...item.evidence].map((source) => [
+						canonicalJson(source),
+						source,
+					])
+				);
+				conflicts.set(key, {
+					...item,
+					detectedAt: Math.min(previous?.detectedAt ?? item.detectedAt, item.detectedAt),
+					reason: previous?.reason === 'source_corrected' ? previous.reason : item.reason,
+					evidence: [...evidence.values()],
+				});
+			}
+			validated.conflicts = [...conflicts.values()];
+		}
+		if (validated.candidates) {
+			validated.candidates = validated.candidates.filter(
+				(candidate) =>
+					!validated.rejections?.some(
+						(item) =>
+							item.candidateId === candidate.id &&
+							item.evidenceFingerprint === candidate.evidenceFingerprint
+					)
+			);
+			validated.proposals = validated.candidates.map((candidate) => candidate.rule);
+		} else {
+			// Legacy writers cannot resurrect a rejected source-linked candidate.
+			validated.proposals = validated.proposals.filter(
+				(proposal) => !validated.rejections?.some((item) => item.candidateId === proposal.id)
+			);
+		}
+		// Re-read native evidence at the final write boundary. A correction or
+		// approval committed during asynchronous mining must win over old staging.
+		validated = reconcileSuggestionEvidence(
+			validated,
+			settledDecisionPairs(readDecisions(), { snapshots: true }),
+			readRulesResult().rules,
+			Date.now()
+		);
+		if (canonicalJson(validated) !== canonicalJson(current))
+			writeJsonAtomic(PIANOLA_SUGGESTIONS_FILENAME, validated);
 		return validated;
 	}
 
@@ -250,26 +678,143 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 
-	function writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
+	function persistSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
 		const validated = validatePianolaSupervisorFile({ targets }).targets;
 		writeJsonAtomic(PIANOLA_SUPERVISOR_FILENAME, { targets: validated });
 		return validated;
 	}
+	function updateSupervisorTargets(
+		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
+	): PianolaSupervisedTarget[] {
+		return withFileLock(PIANOLA_SUPERVISOR_FILENAME, 'supervisor targets', () => {
+			const current = readSupervisorTargets();
+			const next = update(current);
+			return next === current ? current : persistSupervisorTargets(next);
+		});
+	}
+	function updateSupervisorTargetsAsync(
+		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
+	): Promise<PianolaSupervisedTarget[]> {
+		return withFileLockAsync(PIANOLA_SUPERVISOR_FILENAME, 'supervisor targets', () => {
+			const current = readSupervisorTargets();
+			const next = update(current);
+			return next === current ? current : persistSupervisorTargets(next);
+		});
+	}
+	function writeSupervisorTargetsAsync(
+		targets: PianolaSupervisedTarget[]
+	): Promise<PianolaSupervisedTarget[]> {
+		return updateSupervisorTargetsAsync(() => targets);
+	}
+	function upsertSupervisorTargetAsync(
+		target: PianolaSupervisedTarget
+	): Promise<PianolaSupervisedTarget[]> {
+		return updateSupervisorTargetsAsync((current) => {
+			const index = current.findIndex((t) => t.id === target.id);
+			return index >= 0 ? current.map((t, i) => (i === index ? target : t)) : [...current, target];
+		});
+	}
+	function removeSupervisorTargetAsync(id: string): Promise<PianolaSupervisedTarget[]> {
+		return updateSupervisorTargetsAsync((current) => current.filter((target) => target.id !== id));
+	}
+	function writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
+		return updateSupervisorTargets(() => targets);
+	}
 
 	function upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[] {
-		const current = readSupervisorTargets();
-		const index = current.findIndex((t) => t.id === target.id);
-		const next =
-			index >= 0 ? current.map((t, i) => (i === index ? target : t)) : [...current, target];
-		return writeSupervisorTargets(next);
+		return updateSupervisorTargets((current) => {
+			const index = current.findIndex((t) => t.id === target.id);
+			return index >= 0 ? current.map((t, i) => (i === index ? target : t)) : [...current, target];
+		});
 	}
 
 	function removeSupervisorTarget(id: string): PianolaSupervisedTarget[] {
-		const current = readSupervisorTargets();
-		const next = current.filter((t) => t.id !== id);
-		return writeSupervisorTargets(next);
+		return updateSupervisorTargets((current) => current.filter((target) => target.id !== id));
 	}
 
+	function checkpointName(scopeId: string): string {
+		if (!isPianolaScopeId(scopeId)) throw new Error('Invalid Pianola scope ID');
+		return `maestro-pianola-scope-${scopeId}.json`;
+	}
+
+	function readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null {
+		const file = filePath(checkpointName(scopeId));
+		let content: string;
+		try {
+			if (fs.statSync(file).size > 20 * 1024 * 1024)
+				throw new Error('Pianola checkpoint too large');
+			content = fs.readFileSync(file, 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+		let raw: unknown;
+		try {
+			raw = JSON.parse(content);
+		} catch {
+			throw new Error('Invalid Pianola scope checkpoint JSON');
+		}
+		const checkpoint = validatePianolaScopeCheckpoint(raw, scopeId);
+		if (!checkpoint) throw new Error('Invalid Pianola scope checkpoint');
+		return checkpoint;
+	}
+
+	function writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void {
+		const name = checkpointName(checkpoint.scopeId);
+		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
+			throw new Error('Invalid Pianola scope checkpoint');
+		}
+		if (
+			Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf-8') + 1 >
+			20 * 1024 * 1024
+		) {
+			throw new Error('Pianola checkpoint too large');
+		}
+		writeJsonAtomic(name, checkpoint);
+	}
+
+	function readProgramLoopMemo(): ProgramLoopMemo {
+		return readFileOr(
+			PIANOLA_PROGRAM_LOOP_FILENAME,
+			() => validateProgramLoopMemo(undefined),
+			validateProgramLoopMemo
+		);
+	}
+	function writeProgramLoopMemo(memo: ProgramLoopMemo): void {
+		withFileLock(PIANOLA_PROGRAM_LOOP_FILENAME, 'program loop memo', () =>
+			writeJsonAtomic(PIANOLA_PROGRAM_LOOP_FILENAME, validateProgramLoopMemo(memo))
+		);
+	}
+	function updateProgramLoopMemo(programId: string, entry: ProgramLoopMemoEntry): void {
+		withFileLock(PIANOLA_PROGRAM_LOOP_FILENAME, 'program loop memo', () =>
+			writeJsonAtomic(
+				PIANOLA_PROGRAM_LOOP_FILENAME,
+				validateProgramLoopMemo({
+					...readProgramLoopMemo(),
+					[programId]: entry,
+				})
+			)
+		);
+	}
+	function writeProgramLoopMemoAsync(memo: ProgramLoopMemo): Promise<void> {
+		return withFileLockAsync(PIANOLA_PROGRAM_LOOP_FILENAME, 'program loop memo', () =>
+			writeJsonAtomic(PIANOLA_PROGRAM_LOOP_FILENAME, validateProgramLoopMemo(memo))
+		);
+	}
+	function updateProgramLoopMemoAsync(
+		programId: string,
+		entry: ProgramLoopMemoEntry
+	): Promise<void> {
+		return withFileLockAsync(PIANOLA_PROGRAM_LOOP_FILENAME, 'program loop memo', () =>
+			writeJsonAtomic(
+				PIANOLA_PROGRAM_LOOP_FILENAME,
+				validateProgramLoopMemo({
+					...readProgramLoopMemo(),
+					[programId]: entry,
+				})
+			)
+		);
+	}
 	return {
 		readRulesResult,
 		readRules: () => readRulesResult().rules,
@@ -284,7 +829,30 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		writePlans,
 		getPlan,
 		upsertPlan,
+		updatePlans,
+		writePlansAsync,
+		updatePlansAsync,
+		upsertPlanAsync,
+		readPrograms,
+		writePrograms,
+		upsertProgram,
+		updatePrograms,
+		writeProgramsAsync,
+		updateProgramsAsync,
+		upsertProgramAsync,
+		withProgramLoopLock,
+		withPlanLock,
+		readAsks,
+		writeAsks,
+		updateAsks,
+		writeAsksAsync,
+		updateAsksAsync,
 		readSuggestions,
+		readProgramLoopMemo,
+		writeProgramLoopMemo,
+		updateProgramLoopMemo,
+		writeProgramLoopMemoAsync,
+		updateProgramLoopMemoAsync,
 		writeSuggestions,
 		readProfiles,
 		writeProfiles,
@@ -292,8 +860,15 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		setProfile,
 		readSupervisorTargets,
 		writeSupervisorTargets,
+		updateSupervisorTargets,
 		upsertSupervisorTarget,
 		removeSupervisorTarget,
+		readScopeCheckpoint,
+		writeScopeCheckpoint,
+		writeSupervisorTargetsAsync,
+		updateSupervisorTargetsAsync,
+		upsertSupervisorTargetAsync,
+		removeSupervisorTargetAsync,
 		supervisorFilePath,
 	};
 }

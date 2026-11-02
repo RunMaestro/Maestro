@@ -5,6 +5,7 @@ import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../../../renderer/stores/mediaPlaybackStore';
 import { useUIStore } from '../../../../../renderer/stores/uiStore';
+import { recordJourney } from '../../../../../renderer/services/userJourney';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -14,8 +15,13 @@ import {
 	setupSession,
 } from './testUtils';
 
+vi.mock('../../../../../renderer/services/userJourney', () => ({
+	recordJourney: vi.fn(),
+}));
+
 describe('useFilePreviewTabHandlers', () => {
 	beforeEach(() => {
+		vi.mocked(recordJourney).mockClear();
 		resetTabHandlerStores();
 		useMediaPlaybackStore.setState({
 			items: [],
@@ -695,6 +701,188 @@ describe('useFilePreviewTabHandlers', () => {
 
 			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
 			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(2);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// User Journey recording
+	// -----------------------------------------------------------------------
+	describe('User Journey recording', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('records file.open for a new tab', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'a' });
+			});
+
+			const tab = getSession().filePreviewTabs[0];
+			expect(recordJourney).toHaveBeenCalledTimes(1);
+			expect(recordJourney).toHaveBeenCalledWith('test-session', {
+				kind: 'file.open',
+				target: '/repo/a.ts',
+				tabId: tab.id,
+			});
+			expect(tab.openedAt).toBe(tab.createdAt);
+		});
+
+		it('records file.open when an open replaces the file in the active tab', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/b.ts', name: 'b' });
+			setupSession({ filePreviewTabs: [fileTab], activeFileTabId: 'file-1' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/d.ts', name: 'd.ts', content: 'd' },
+					{ openInNewTab: false }
+				);
+			});
+
+			expect(recordJourney).toHaveBeenCalledWith('test-session', {
+				kind: 'file.open',
+				target: '/repo/d.ts',
+				tabId: 'file-1',
+			});
+			expect(getSession().filePreviewTabs[0].openedAt).toEqual(expect.any(Number));
+		});
+
+		it('records file.open when an existing tab is brought forward from another file', () => {
+			const a = createMockFileTab({ id: 'file-a', path: '/repo/a.ts' });
+			const b = createMockFileTab({ id: 'file-b', path: '/repo/b.ts' });
+			setupSession({ filePreviewTabs: [a, b], activeFileTabId: 'file-a' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/repo/b.ts', name: 'b.ts', content: 'b' });
+			});
+
+			expect(recordJourney).toHaveBeenCalledWith('test-session', {
+				kind: 'file.open',
+				target: '/repo/b.ts',
+				tabId: 'file-b',
+			});
+		});
+
+		it('does not record re-opening the file that is already the active tab', () => {
+			// The second half of a remote load and a content refresh both land here.
+			const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/a.ts' });
+			setupSession({ filePreviewTabs: [fileTab], activeFileTabId: 'file-1' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'new' });
+			});
+
+			expect(recordJourney).not.toHaveBeenCalled();
+		});
+
+		it('does not record a background open', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/a.ts', name: 'a.ts', content: 'a' },
+					{ activate: false }
+				);
+			});
+
+			expect(getSession().filePreviewTabs).toHaveLength(1);
+			expect(recordJourney).not.toHaveBeenCalled();
+		});
+
+		it('does not record media handed to the player', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: 'maestro-media://stream/tok3n/2f66696c65732f612e6d7033',
+				});
+			});
+
+			expect(useMediaPlaybackStore.getState().items).toHaveLength(1);
+			expect(recordJourney).not.toHaveBeenCalled();
+		});
+
+		it('records file.close with the dwell since the file was opened', () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(10_000);
+			const fileTab = createMockFileTab({
+				id: 'file-1',
+				path: '/repo/a.ts',
+				createdAt: 1_000,
+				openedAt: 4_000,
+			});
+			setupSession({ filePreviewTabs: [fileTab], activeFileTabId: 'file-1' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleCloseFileTab('file-1');
+			});
+
+			expect(getSession().filePreviewTabs).toHaveLength(0);
+			expect(recordJourney).toHaveBeenCalledWith('test-session', {
+				kind: 'file.close',
+				target: '/repo/a.ts',
+				tabId: 'file-1',
+				dwellMs: 6_000,
+			});
+		});
+
+		it('falls back to createdAt for a tab with no open timestamp', () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(10_000);
+			const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', createdAt: 1_000 });
+			setupSession({ filePreviewTabs: [fileTab], activeFileTabId: 'file-1' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleCloseFileTab('file-1');
+			});
+
+			expect(recordJourney).toHaveBeenCalledWith(
+				'test-session',
+				expect.objectContaining({ kind: 'file.close', dwellMs: 9_000 })
+			);
+		});
+
+		it('records file.close for an edited tab only once the user confirms', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', editContent: 'dirty' });
+			setupSession({ filePreviewTabs: [fileTab], activeFileTabId: 'file-1' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleCloseFileTab('file-1');
+			});
+			expect(recordJourney).not.toHaveBeenCalled();
+
+			act(() => {
+				useModalStore.getState().getData('confirm')?.onConfirm();
+			});
+			expect(recordJourney).toHaveBeenCalledWith(
+				'test-session',
+				expect.objectContaining({ kind: 'file.close', target: '/repo/a.ts' })
+			);
+		});
+
+		it('does not record closing an untitled tab, which has no path', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', path: '' });
+			setupSession({ filePreviewTabs: [fileTab], activeFileTabId: 'file-1' });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleCloseFileTab('file-1');
+			});
+
+			expect(getSession().filePreviewTabs).toHaveLength(0);
+			expect(recordJourney).not.toHaveBeenCalled();
 		});
 	});
 });

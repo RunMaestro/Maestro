@@ -21,13 +21,28 @@
  * The window sizes itself to what it plays (a transport strip for audio, the
  * picture plus transport for video) until the user resizes it; see
  * `mediaWindowSize.ts` for when it re-sizes and when it leaves the user's size.
+ *
+ * The queue and history lists are taller than an audio card, and a list drawn
+ * in this window can never be taller than the window. So while one is open the
+ * window borrows transparent room below the card (above it when the player sits
+ * at the bottom of the screen) and the list hangs into it; see
+ * `useMediaListOverflow`.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type RefObject,
+} from 'react';
 import { Copy, FileAudio, FileVideo, Square } from 'lucide-react';
 
 import { ActiveMediaPlayer } from '../components/MediaPlayback/ActiveMediaPlayer';
 import { copyMediaFileName } from '../components/MediaPlayback/copyMediaFileName';
+import { MEDIA_LIST_MENU_MAX_HEIGHT_PX } from '../components/MediaPlayback/MediaListMenu';
 import { useMediaListControls } from '../components/MediaPlayback/useMediaListControls';
 import { GhostIconButton } from '../components/ui/GhostIconButton';
 import { useEventListener } from '../hooks/utils/useEventListener';
@@ -39,10 +54,15 @@ import {
 import { installMediaPlaybackAuthority } from '../stores/mediaPlaybackReplica';
 import type { Theme } from '../types';
 import type { MediaKind } from '../../shared/mediaTypes';
+import {
+	NO_FLOATING_WIDGET_OVERFLOW,
+	type FloatingWidgetOverflow,
+} from '../../shared/floatingWidgets';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { captureException } from '../utils/sentry';
 import { FloatingWidgetFrame } from './FloatingWidgetFrame';
 import {
+	mediaListOverflowNeed,
 	mediaWindowBaselineAfter,
 	planMediaWindowSize,
 	sanitizeMediaWindowBaseline,
@@ -120,6 +140,66 @@ function useMediaWindowSizing(
 	}, [kind, aspect, transportHeight]);
 }
 
+/**
+ * Borrow window room for the open queue or history list, and give it back when
+ * the list closes or the window hides.
+ *
+ * The list's natural height is measured once it mounts (its `scrollHeight`,
+ * which its height cap does not shrink), capped at the menu's design height,
+ * and compared with the space beside its button inside the card. Main grows the
+ * window on whichever side has room and answers with what it granted, which
+ * goes to `onGranted`: the widget insets the card by that much so it stays put
+ * on screen, and opens the list on the granted side.
+ */
+function useMediaListOverflow({
+	open,
+	frameRef,
+	menuRef,
+	anchorRef,
+	entryCount,
+	onGranted,
+}: {
+	open: boolean;
+	frameRef: RefObject<HTMLDivElement | null>;
+	menuRef: RefObject<HTMLDivElement | null>;
+	anchorRef: RefObject<HTMLElement | null>;
+	/** Rows in the open list; a change re-measures (a removed row asks for less). */
+	entryCount: number;
+	onGranted: (granted: FloatingWidgetOverflow) => void;
+}): void {
+	const borrowed = useRef(false);
+
+	useLayoutEffect(() => {
+		const api = window.maestro?.floatingWidgets;
+		if (!api) return;
+		let need = NO_FLOATING_WIDGET_OVERFLOW;
+		if (open) {
+			const card = frameRef.current?.getBoundingClientRect();
+			const anchor = anchorRef.current?.getBoundingClientRect();
+			const menu = menuRef.current;
+			if (!card || !anchor || !menu) return;
+			// scrollHeight leaves out the border; offset minus client puts it back.
+			const natural = menu.scrollHeight + (menu.offsetHeight - menu.clientHeight);
+			need = mediaListOverflowNeed(card, anchor, Math.min(natural, MEDIA_LIST_MENU_MAX_HEIGHT_PX));
+		} else if (!borrowed.current) {
+			return;
+		}
+		let cancelled = false;
+		api
+			.setOverflow(WIDGET_ID, need)
+			.then((granted) => {
+				borrowed.current = granted.above > 0 || granted.below > 0;
+				if (!cancelled) onGranted(granted);
+			})
+			.catch((error) => {
+				captureException(error, { extra: { action: 'media-list-overflow' } });
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [open, entryCount, frameRef, menuRef, anchorRef, onGranted]);
+}
+
 interface MediaPlayerWidgetProps {
 	theme: Theme;
 }
@@ -154,13 +234,44 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 		void (visible ? api.show(WIDGET_ID) : api.hide(WIDGET_ID));
 	}, [visible]);
 
+	const frameRef = useRef<HTMLDivElement>(null);
+	const [listOverflow, setListOverflow] = useState<FloatingWidgetOverflow>(
+		NO_FLOATING_WIDGET_OVERFLOW
+	);
+	const handleListOverflow = useCallback((granted: FloatingWidgetOverflow) => {
+		setListOverflow((prev) =>
+			prev.above === granted.above && prev.below === granted.below ? prev : granted
+		);
+	}, []);
+	// Main's resize lands after its IPC reply, so the reply alone does not mean
+	// the room is there yet. The viewport height changing does, and the list
+	// re-places itself on it.
+	const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
+	useEventListener('resize', () => setViewportHeight(window.innerHeight));
+
 	const {
 		openList,
 		closeList,
 		buttons: listButtons,
 		menus: listMenus,
+		listMenuRef,
+		listAnchorRef,
+		listEntryCount,
 	} = useMediaListControls({
 		theme,
+		listPlacement: listOverflow.above > 0 ? 'above' : 'below',
+		listLayoutKey: `${listOverflow.above}:${listOverflow.below}:${viewportHeight}`,
+	});
+
+	// Main drops the borrowed room when the window hides, so a hidden window
+	// counts as no list open.
+	useMediaListOverflow({
+		open: openList !== null && visible,
+		frameRef,
+		menuRef: listMenuRef,
+		anchorRef: listAnchorRef,
+		entryCount: listEntryCount,
+		onGranted: handleListOverflow,
 	});
 
 	// Escape (and the X) close the innermost thing first: an open list, then the
@@ -179,6 +290,8 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 	return (
 		<FloatingWidgetFrame
 			theme={theme}
+			frameRef={frameRef}
+			insets={listOverflow}
 			icon={<KindIcon className="w-3.5 h-3.5" />}
 			title={active.name}
 			subtitle={active.sessionName}

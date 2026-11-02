@@ -70,6 +70,14 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
 
+For renderer outage handling, reuse `BridgeTransportError`, `isExpectedBridgeError()`,
+`isBridgeTransportReady()`, and `WEB_BRIDGE_STATE_EVENT` from
+`src/shared/bridgeError.ts`. Recovery preserves pending session intent through
+`rebasePendingSessionChanges()` in
+`src/renderer/hooks/utils/useDebouncedPersistence.ts`. Read **Bridge transport
+errors and readiness** and **Rebasing unsaved session changes during recovery** in
+[CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md) before extending either path.
+
 ### Maestro Lite
 
 `src/main/bootstrap.ts` selects `--lite` before importing the full main process.

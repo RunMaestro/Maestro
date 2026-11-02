@@ -17,16 +17,28 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import { killProcessTreeNow } from '../../main/utils/processTree';
 import { readSettingValue } from '../services/storage';
 import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
-import { readPianolaPlans, getPianolaPlan, upsertPianolaPlan } from '../services/pianola-store';
+import {
+	readPianolaPlans,
+	getPianolaPlan,
+	upsertPianolaPlan,
+	updatePianolaPlans,
+	withPianolaPlanLock,
+	readPianolaPrograms,
+} from '../services/pianola-store';
 import {
 	appendAgentRunEvent,
 	getAgentRun,
 	upsertAgentRun,
 	findActiveRunBySession,
+	readAgentRuns,
 } from '../services/agent-run-store';
 import { MaestroClient } from '../services/maestro-client';
+import { requestPianolaMemory } from './pianola-memory';
+import type { MemoryPacket } from '../../shared/pianola/memory';
 import { runDispatch } from './dispatch';
 import {
 	runOrchestratorIteration,
@@ -38,10 +50,19 @@ import {
 } from '../../shared/pianola/pianola-orchestrator';
 import {
 	validatePlan,
+	revisePlanTask,
 	planProgress,
 	type PianolaPlan,
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
+import { assertOneActivePlanPerProgram } from '../../shared/pianola/pianola-programs';
+import { generateUUID } from '../../shared/uuid';
+import {
+	checkFromVerdict,
+	translatePianolaSandboxPath,
+	validatePianolaVerdict,
+	type PianolaSandboxObservation,
+} from '../../shared/pianola/pianola-validation';
 import type { PianolaMessage, PianolaMessageRole } from '../../shared/pianola/types';
 import { selectAgentForTask, type AgentCandidate } from '../../shared/pianola/pianola-agent-select';
 import { DEFAULT_CAPABILITIES } from '../../shared/types';
@@ -50,6 +71,7 @@ import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import { tabProcessId } from '../../shared/maestro-lib/runtime/server-frames';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
@@ -58,6 +80,62 @@ const HISTORY_TAIL = 12;
 // Memoize the desktop session list for this long so the many getRunState calls
 // in one orchestration iteration reuse a single round-trip.
 const SESSION_LIST_TTL_MS = 2000;
+// Only these responses establish that the prompt did not cross the delivery boundary.
+const UNDISPATCHED_CODES = new Set([
+	'INVALID_OPTIONS',
+	'FORCE_NOT_ALLOWED',
+	'AGENT_NOT_FOUND',
+	'SESSION_NOT_FOUND',
+	'DISPATCH_REFUSED',
+	'UNSUPPORTED',
+	'MAESTRO_NOT_RUNNING',
+]);
+const SANDBOX_LAUNCH_GRACE_SECONDS = 60;
+
+class SandboxRunnerConfigurationError extends Error {}
+
+/** Resolve relative to the bundled CLI, never the caller's working directory. */
+export function resolvePianolaSandboxRunner(
+	cliDir = __dirname,
+	platform = process.platform
+): string[] {
+	const candidates = [
+		path.resolve(cliDir, 'scripts/pianola-sandbox/sandbox_runner.py'),
+		// Repository fallback for development builds without copied resources.
+		path.resolve(cliDir, '../../scripts/pianola-sandbox/sandbox_runner.py'),
+		// Unbundled source execution (src/cli/commands).
+		path.resolve(cliDir, '../../../scripts/pianola-sandbox/sandbox_runner.py'),
+	];
+	for (const candidate of candidates) {
+		try {
+			if (!fs.statSync(candidate).isFile()) continue;
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return platform === 'win32'
+				? ['wsl.exe', '--exec', 'python3', translatePianolaSandboxPath(candidate)]
+				: ['python3', candidate];
+		} catch {
+			continue;
+		}
+	}
+	throw new SandboxRunnerConfigurationError(
+		'Cannot locate sandbox_runner.py beside the CLI or in its repository; configure pianola.sandboxRunner with a readable runner argv prefix'
+	);
+}
+
+function sandboxRunnerPrefix(): string[] {
+	const configured = readSettingValue('pianola.sandboxRunner');
+	if (configured === undefined || configured === null) return resolvePianolaSandboxRunner();
+	if (
+		!Array.isArray(configured) ||
+		!configured.length ||
+		configured.some((part) => typeof part !== 'string' || !part)
+	) {
+		throw new SandboxRunnerConfigurationError(
+			'Invalid pianola.sandboxRunner: expected a non-empty argv prefix'
+		);
+	}
+	return configured as string[];
+}
 
 interface CreateSessionResult {
 	success?: boolean;
@@ -70,10 +148,13 @@ export interface DesktopSessionEntry {
 	sessionId: string;
 	agentId: string;
 	toolType: string;
-	state: 'idle' | 'busy';
+	state: 'idle' | 'busy' | 'unknown';
+	active?: boolean;
 }
 
 interface DesktopSessionsList {
+	success?: boolean;
+	error?: string;
 	sessions?: DesktopSessionEntry[];
 }
 
@@ -106,28 +187,55 @@ function pianolaEnabledNow(): boolean {
 	return isEncoreEnabled('pianola');
 }
 
-/** F8 (ISC-8.12/8.13): the reactive fix/merge loop is gated on autopilot, read
- *  fresh each iteration so revoking it stops auto-actions immediately. With it
- *  off, Pianola behaves exactly as the current supervisor (no auto-fix/merge). */
+/** Repair permission is separate from enabling Pianola. Re-read each action
+ * so revocation takes effect without restarting the orchestrator. Legacy
+ * encoreFeatures.autopilot never grants this explicit permission. */
 function autopilotEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true && flags?.autopilot === true;
+	return pianolaEnabledNow() && readSettingValue('pianolaAutoFixEnabled') === true;
 }
 
 /** Project a captured AgentRun into the engine's ledger view (F8 / ISC-8.3). */
-function ledgerForTask(planId: string, task: PianolaTask): PianolaTaskLedger | undefined {
-	const runId = resolvePianolaRunId(planId, task);
-	const run = getAgentRun(runId);
+function ledgerForTask(task: PianolaTask): PianolaTaskLedger | undefined {
+	const execution = capturedRunForTask(task);
+	const followsContinuation =
+		task.status === 'running' &&
+		task.runId === task.executionRunId &&
+		execution &&
+		execution.id !== task.executionRunId;
+	const run = followsContinuation ? execution : task.runId ? getAgentRun(task.runId) : execution;
 	if (!run) return undefined;
 	const openFindings = run.reviews.filter((r) => r.status === 'open');
 	const openCriticalOrHigh = openFindings.filter(
 		(r) => r.severity === 'critical' || r.severity === 'high'
 	).length;
 	const checks = run.checks ?? [];
-	const checksPassed = checks.length === 0 ? undefined : checks.every((c) => c.status === 'passed');
+	const required = task.requiredChecks ?? [];
+	const missing = required.some((name) => !checks.some((check) => check.name === name));
+	const checksPending =
+		missing || checks.some((check) => check.status === 'pending' || check.status === 'running');
+	const checksPassed = missing
+		? false
+		: checks.length === 0
+			? undefined
+			: checks.every((c) => c.status === 'passed');
 	return {
 		runId: run.id,
+		executionRunId: execution?.id,
+		executionFailed:
+			!!execution &&
+			(['failed', 'cancelled', 'discarded'].includes(execution.status) ||
+				!!execution.metadata?.agentError),
+		executionComplete:
+			!!execution &&
+			execution.metadata?.completedAt !== undefined &&
+			(execution.status === 'completed' ||
+				execution.status === 'needs_review' ||
+				execution.metadata?.outcome === 'completed' ||
+				execution.metadata?.outcome === 'completed-with-warning'),
+		transcriptSettled:
+			typeof execution?.metadata?.answerTail === 'string' && !!execution.metadata.answerTail.trim(),
 		checksPassed,
+		checksPending,
 		openCriticalOrHighFindings: openCriticalOrHigh,
 		openFindings: openFindings.length,
 		pullRequestUrl: run.pullRequest?.url,
@@ -157,6 +265,243 @@ function auditAgentRunAction(
 	} catch {
 		// Audit is best-effort; never break the orchestration loop on a log failure.
 	}
+}
+
+/** Single-quote one argument for a POSIX shell (`'` becomes `'\''`). */
+function quoteForPosixShell(value: string): string {
+	return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+function quoteForWindowsCommandLine(value: string): string {
+	if (!/[\s"]/.test(value)) return value;
+	return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+/** Shell-mode WSL needs POSIX quotes without Node adding a second Windows quoting layer. */
+export function sandboxLaunchOptions(
+	launcher: string,
+	args: readonly string[],
+	prefix: readonly string[] = []
+): { args: string[]; windowsVerbatimArguments: boolean } {
+	const crossesWsl = /(^|[\\/])wsl(\.exe)?$/i.test(launcher);
+	if (!crossesWsl) return { args: [...prefix, ...args], windowsVerbatimArguments: false };
+	const separator = prefix.indexOf('--');
+	const options = separator >= 0 ? prefix.slice(0, separator) : prefix;
+	const directExec = options.some(
+		(value, index) =>
+			value === '--exec' ||
+			value === '-e' ||
+			(value === '--shell-type' && options[index + 1] === 'none')
+	);
+	if (directExec) return { args: [...prefix, ...args], windowsVerbatimArguments: false };
+	return {
+		args:
+			separator >= 0
+				? [
+						...prefix.slice(0, separator + 1).map(quoteForWindowsCommandLine),
+						...prefix.slice(separator + 1).map(quoteForPosixShell),
+						...args.map(quoteForPosixShell),
+					]
+				: [...prefix.map(quoteForWindowsCommandLine), ...args.map(quoteForPosixShell)],
+		windowsVerbatimArguments: true,
+	};
+}
+
+async function runSandbox(
+	task: PianolaTask,
+	trustedRoot: string
+): Promise<PianolaSandboxObservation> {
+	const spec = task.validation!;
+	const prefix = sandboxRunnerPrefix();
+	const runnerArgs = [
+		'--workspace',
+		translatePianolaSandboxPath(spec.target),
+		'--trusted-root',
+		translatePianolaSandboxPath(trustedRoot),
+		'--timeout',
+		String(spec.timeoutSeconds ?? 120),
+		// Leads name artifacts relative to the root; the runner wants absolute sandbox paths.
+		...(spec.artifacts ?? []).flatMap((artifact) => [
+			'--artifact',
+			translatePianolaSandboxPath(
+				/^[a-zA-Z]:[\\/]|^\//.test(artifact)
+					? artifact
+					: `${spec.target.replace(/[\\/]+$/, '')}/${artifact}`
+			),
+		]),
+		'--',
+		...spec.command,
+	];
+	const launch = sandboxLaunchOptions(prefix[0], runnerArgs, prefix.slice(1));
+	return new Promise((resolve) => {
+		const child = spawn(prefix[0], launch.args, {
+			windowsHide: true,
+			windowsVerbatimArguments: launch.windowsVerbatimArguments,
+		});
+		let stdout = '';
+		let stderr = '';
+		const wallSeconds = (spec.timeoutSeconds ?? 120) + SANDBOX_LAUNCH_GRACE_SECONDS;
+		let settled = false;
+		const finish = (observation: PianolaSandboxObservation): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(observation);
+		};
+		const timer = setTimeout(() => {
+			if (child.pid) killProcessTreeNow(child.pid, { label: 'Pianola sandbox launcher' });
+			finish({
+				observed: false,
+				returncode: null,
+				stdout,
+				stderr,
+				timedOut: true,
+				error: `Sandbox launcher exceeded wall-clock ceiling of ${wallSeconds}s (validation timeout plus launch grace)`,
+			});
+		}, wallSeconds * 1000);
+		child.stdout.on('data', (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on('data', (chunk: Buffer) => {
+			stderr += chunk.toString();
+		});
+		child.on('error', (error) =>
+			finish({
+				observed: false,
+				returncode: null,
+				stdout: '',
+				stderr,
+				timedOut: false,
+				error: error.message,
+			})
+		);
+		child.on('close', (code) => {
+			if (settled) return;
+			try {
+				if (!stdout.trim()) {
+					// The runner never printed an observation: wsl.exe or python refused to start.
+					throw new Error(`runner exited ${code ?? 'null'} with no output`);
+				}
+				const observation = JSON.parse(stdout.trim()) as PianolaSandboxObservation;
+				if (
+					typeof observation.observed !== 'boolean' ||
+					typeof observation.stderr !== 'string' ||
+					typeof observation.timedOut !== 'boolean' ||
+					(observation.returncode !== null && typeof observation.returncode !== 'number')
+				)
+					throw new Error('Invalid sandbox observation');
+				finish(observation);
+			} catch (error) {
+				const detail = stderr.trim().slice(-300);
+				finish({
+					observed: false,
+					returncode: null,
+					stdout,
+					stderr,
+					timedOut: false,
+					error: `Sandbox runner returned no valid JSON observation (${error instanceof Error ? error.message : String(error)})${detail ? `: ${detail}` : ''}`,
+				});
+			}
+		});
+	});
+}
+
+async function validateTask(planId: string, task: PianolaTask) {
+	const spec = task.validation!;
+	const runId = resolvePianolaRunId(planId, task);
+	const plan = getPianolaPlan(planId);
+	const trustedRoot = plan?.programId
+		? readPianolaPrograms().find((program) => program.id === plan.programId)?.root
+		: task.cwd;
+	const startedAt = Date.now();
+	const preflight = validatePianolaVerdict(spec, {
+		observed: false,
+		returncode: null,
+		stdout: '',
+		stderr: '',
+		timedOut: false,
+		error: null,
+		...(!trustedRoot?.trim()
+			? {
+					policyViolation:
+						'Validation trusted-root policy requires a declared program root or standalone task cwd',
+				}
+			: {}),
+	});
+	const observation = preflight.verdict === 'failed' ? null : await runSandbox(task, trustedRoot!);
+	const { verdict, reason } = observation ? validatePianolaVerdict(spec, observation) : preflight;
+	const check = checkFromVerdict(verdict, reason, spec.command, startedAt, Date.now());
+	let run = getAgentRun(runId);
+	if (!run) {
+		upsertPianolaTaskRun(planId, task, taskRunStatus(task, 'running'), 'pianola.validation');
+		run = getAgentRun(runId);
+	}
+	if (!run) throw new Error('Could not create Agent Run for validation');
+	upsertAgentRun({
+		...run,
+		updatedAt: Date.now(),
+		checks: [...run.checks.filter((entry) => entry.name !== check.name), check],
+	});
+	appendAgentRunEvent({
+		id: `evt_${runId}_check_${Date.now()}`,
+		runId,
+		timestamp: Date.now(),
+		type: 'check',
+		message: reason,
+		data: { verdict, check },
+	});
+	auditAgentRunAction(runId, 'validate', {
+		verdict,
+		reason,
+		attempt: (task.validationUnknownAttempts ?? 0) + 1,
+	});
+	return { verdict, reason, check, runId };
+}
+
+export async function pianolaValidate(
+	planId: string,
+	taskId: string,
+	options: { json?: boolean }
+): Promise<void> {
+	ensurePianolaEnabled(options.json);
+	return withPianolaPlanLock(
+		planId,
+		async () => {
+			const plan = getPianolaPlan(planId);
+			const task = plan?.tasks.find((entry) => entry.id === taskId);
+			if (!task?.validation) {
+				const error = !plan
+					? 'Plan not found: ' + planId
+					: !task
+						? 'Task not found: ' + taskId
+						: 'Task has no validation spec: ' + taskId;
+				if (options.json) console.log(JSON.stringify({ success: false, error }));
+				else console.error(error);
+				process.exitCode = 1;
+				return;
+			}
+			let result;
+			try {
+				result = await validateTask(planId, task);
+			} catch (error) {
+				if (!(error instanceof SandboxRunnerConfigurationError)) throw error;
+				if (options.json)
+					console.log(
+						JSON.stringify({
+							success: false,
+							code: 'PIANOLA_SANDBOX_CONFIGURATION',
+							error: error.message,
+						})
+					);
+				else console.error(error.message);
+				process.exitCode = 1;
+				return;
+			}
+			console.log(options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+			process.exitCode = result.verdict === 'verified' ? 0 : result.verdict === 'failed' ? 2 : 3;
+		},
+		{ waitForTurn: true }
+	);
 }
 
 /** Parse `--interval` as seconds ("5" or "5s"); defaults to 5, minimum 1. */
@@ -213,7 +558,10 @@ export function resolveExistingPianolaAgentType(
 ): string | undefined {
 	if (task.agentType) return task.agentType;
 	if (!task.agentId) return undefined;
-	return sessions.find((session) => session.sessionId === task.agentId)?.toolType;
+	const matches = sessions.filter(
+		(session) => session.agentId === task.agentId || session.sessionId === task.agentId
+	);
+	return (matches.find((session) => session.active) ?? matches[0])?.toolType;
 }
 
 function campaignIdForPianolaPlan(planId: string): string {
@@ -227,14 +575,35 @@ function taskRunStatus(task: PianolaTask, fallback: AgentRunStatus): AgentRunSta
 	return fallback;
 }
 
+/** Resolve only this worker's capture, including already-terminal fast runs. Never borrow another tab's active run. */
+function capturedRunForTask(task: PianolaTask): AgentRun | undefined {
+	if (!task.agentId || !task.tabId) return undefined;
+	const processId = tabProcessId(task.agentId, task.tabId);
+	const followsLiveContinuation = task.status === 'running' || task.status === 'fixing';
+	const pinnedRunId = task.executionRunId ?? (!followsLiveContinuation ? task.runId : undefined);
+	const prior = pinnedRunId ? getAgentRun(pinnedRunId) : undefined;
+	if (
+		pinnedRunId &&
+		(!prior || prior.sessionId !== processId || (prior.tabId && prior.tabId !== task.tabId))
+	)
+		return undefined;
+	// Settled tasks retain their physical receipt. Later work in the same chat
+	// belongs to a different turn and cannot revoke this task's acceptance.
+	if (!followsLiveContinuation) return prior;
+	const newest = readAgentRuns()
+		.filter((run) => run.sessionId === processId && (!run.tabId || run.tabId === task.tabId))
+		.sort((a, b) => b.createdAt - a.createdAt)[0];
+	// A native watcher answer starts a fresh process generation on the SAME tab.
+	// Follow that continuation instead of keeping the completed question receipt.
+	if (!prior) return newest;
+	return newest &&
+		(newest.createdAt > prior.createdAt || prior.metadata?.supersededBy === newest.id)
+		? newest
+		: prior;
+}
+
 function resolvePianolaRunId(planId: string, task: PianolaTask): string {
-	// F8 (ISC-8.1/8.2): bind to the REAL captured run when one exists (the task
-	// already carries a runId, or the desktop capture recorded one for this
-	// session), so the task and its run are one record. Fall back to the
-	// deterministic projection id only for a pure-CLI task with no captured run.
-	if (task.runId) return task.runId;
-	const captured = task.agentId ? findActiveRunBySession(task.agentId) : undefined;
-	return captured?.id ?? pianolaTaskAgentRunId(planId, task.id);
+	return task.runId ?? capturedRunForTask(task)?.id ?? pianolaTaskAgentRunId(planId, task.id);
 }
 
 function upsertPianolaTaskRun(
@@ -261,14 +630,21 @@ function upsertPianolaTaskRun(
 		createdAt: existing?.createdAt ?? now,
 		updatedAt: now,
 		provider: existing?.provider ?? task.agentType ?? 'unknown',
-		status,
+		status:
+			existing &&
+			(['failed', 'cancelled', 'discarded'].includes(existing.status) ||
+				(existing.metadata?.completedAt !== undefined && status === 'running'))
+				? existing.status
+				: status,
 		agentId: task.agentId,
 		agentName: task.title,
-		sessionId: task.agentId,
-		tabId: task.tabId,
+		sessionId: existing?.sessionId ?? task.agentId,
+		tabId: existing?.tabId ?? task.tabId,
 		cwd: task.cwd,
 		prompt: task.prompt,
 		source: campaignIdForPianolaPlan(planId),
+		checks: eventType === 'pianola.dispatched' ? [] : (existing?.checks ?? []),
+		reviews: eventType === 'pianola.dispatched' ? [] : (existing?.reviews ?? []),
 		metadata: {
 			...(existing?.metadata ?? {}),
 			pianola: {
@@ -284,7 +660,7 @@ function upsertPianolaTaskRun(
 		runId,
 		timestamp: now,
 		type: eventType,
-		status,
+		status: run.status,
 		message: task.title,
 		data: { planId, taskId: task.id },
 	});
@@ -298,7 +674,8 @@ function recordPianolaAgentRunProgress(
 	const tasksById = new Map(plan.tasks.map((task) => [task.id, task]));
 	for (const taskId of result.dispatchedTaskIds) {
 		const task = tasksById.get(taskId);
-		if (task) upsertPianolaTaskRun(plan.id, task, 'running', 'pianola.dispatched');
+		if (task && capturedRunForTask(task))
+			upsertPianolaTaskRun(plan.id, task, 'running', 'pianola.dispatched');
 	}
 	for (const taskId of result.completedTaskIds) {
 		const task = tasksById.get(taskId);
@@ -309,13 +686,19 @@ function recordPianolaAgentRunProgress(
 		const task = tasksById.get(taskId);
 		if (task) upsertPianolaTaskRun(plan.id, task, taskRunStatus(task, 'failed'), 'pianola.failed');
 	}
-	// F5/F8 (ISC-5.8): mirror engine-side needs_review routing onto the run
-	// ledger through the guarded producer. The guard only fires when the run
-	// really carries >=1 open finding (a checks-only needs_review task leaves
-	// the run untouched, per the anti-signal), and it is idempotent for a run
-	// already parked in needs_review - so calling it every tick is safe.
+	// Mirror this plan's acceptance decision onto its selected run. The generic
+	// review producer still requires findings and protects terminal records. The
+	// controller's typed acceptance holds use a distinct audited Pianola event
+	// for both late findings and check evidence.
 	for (const task of plan.tasks) {
-		if (task.status === 'needs_review' && task.runId) signals.markNeedsReview(task.runId);
+		if (task.status === 'needs_review' && task.runId) {
+			const ledger = ledgerForTask(task);
+			if (task.holdReason === 'acceptance' || ledger?.checksPassed === false) {
+				const run = getAgentRun(task.runId);
+				if (run && run.status !== 'needs_review')
+					upsertPianolaTaskRun(plan.id, task, 'needs_review', 'pianola.acceptance_pending');
+			} else signals.markNeedsReview(task.runId);
+		}
 	}
 }
 
@@ -382,11 +765,95 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 		return;
 	}
 
-	upsertPianolaPlan(plan);
+	try {
+		updatePianolaPlans((existingPlans) => {
+			// Started plans are history: reject replacements inside the same transaction.
+			const started = existingPlans.find(
+				(p) => p.id === plan.id && p.tasks.some((task) => task.status !== 'pending')
+			);
+			if (started)
+				throw new Error(
+					`Plan "${plan.id}" has already started (${started.title}); save the new plan under a new id`
+				);
+			assertOneActivePlanPerProgram(plan, existingPlans);
+			return existingPlans.some((p) => p.id === plan.id)
+				? existingPlans.map((p) => (p.id === plan.id ? plan : p))
+				: [...existingPlans, plan];
+		});
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error));
+	}
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, planId: plan.id, taskCount: plan.tasks.length }));
 	} else {
 		console.log(`Saved Pianola plan ${plan.id} (${plan.tasks.length} task(s)).`);
+	}
+}
+
+/** Apply a founder correction without replacing started-plan history or its oracle. */
+export async function pianolaPlanRevise(
+	planId: string,
+	taskId: string,
+	options: { prompt: string; json?: boolean }
+): Promise<void> {
+	ensurePianolaEnabled(options.json);
+	try {
+		await withPianolaPlanLock(
+			planId,
+			async () => {
+				updatePianolaPlans((plans) => {
+					const plan = plans.find((entry) => entry.id === planId);
+					if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
+					const revised = revisePlanTask(plan, taskId, options.prompt, generateUUID());
+					assertOneActivePlanPerProgram(revised, plans);
+					return plans.map((entry) => (entry.id === planId ? revised : entry));
+				});
+			},
+			{ waitForTurn: true }
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
+		else console.error(message);
+		process.exitCode = 1;
+		return;
+	}
+	if (options.json)
+		console.log(JSON.stringify({ success: true, planId, taskId, status: 'pending' }));
+	else console.log(`Revised Pianola task ${planId}/${taskId}; awaiting supervised dispatch.`);
+}
+
+/** Skip a failed task through the same main-process handler used by the dashboard. */
+export async function pianolaPlanSkip(
+	planId: string,
+	taskId: string,
+	options: { json?: boolean }
+): Promise<void> {
+	ensurePianolaEnabled(options.json);
+	const client = new MaestroClient();
+	try {
+		await client.connect();
+		const response = await client.sendCommand<{
+			ok: boolean;
+			result?: PianolaPlan;
+			error?: string;
+		}>(
+			{ type: 'bridge.invoke', channel: 'pianola:skip-plan-task', args: [planId, taskId] },
+			'bridge.response',
+			300000
+		);
+		if (!response.ok) throw new Error(response.error ?? 'Skip task failed');
+		if (!response.result) throw new Error('Skip task returned no plan');
+		if (options.json)
+			console.log(JSON.stringify({ success: true, planId, taskId, status: 'skipped' }));
+		else console.log(`Skipped Pianola task ${planId}/${taskId}; dependents remain blocked.`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
+		else console.error(message);
+		process.exitCode = 1;
+	} finally {
+		client.disconnect();
 	}
 }
 
@@ -472,6 +939,34 @@ export async function pianolaOrchestrate(
 		process.exit(1);
 		return;
 	}
+	const program = plan.programId
+		? readPianolaPrograms().find((entry) => entry.id === plan.programId)
+		: undefined;
+	const programPausedNow = (): boolean =>
+		!!plan.programId &&
+		readPianolaPrograms().find((entry) => entry.id === plan.programId)?.status === 'paused';
+	if (program?.status === 'paused') {
+		console.log('[orchestrator] Program paused; stopping.');
+		return;
+	}
+	if (program?.charter.validationRequired !== false && plan.tasks.some((task) => task.validation)) {
+		try {
+			sandboxRunnerPrefix();
+		} catch (error) {
+			if (!(error instanceof SandboxRunnerConfigurationError)) throw error;
+			if (options.json)
+				console.log(
+					JSON.stringify({
+						success: false,
+						code: 'PIANOLA_SANDBOX_CONFIGURATION',
+						error: error.message,
+					})
+				);
+			else console.error(error.message);
+			process.exitCode = 1;
+			return;
+		}
+	}
 
 	const intervalMs = parseIntervalSeconds(options.interval) * 1000;
 	const concurrencyLimit = parseConcurrency(options.concurrency);
@@ -507,7 +1002,9 @@ export async function pianolaOrchestrate(
 			{ type: 'list_desktop_sessions' },
 			'desktop_sessions_list'
 		);
-		const entries = result.sessions ?? [];
+		if (result.success === false || !Array.isArray(result.sessions))
+			throw new Error(result.error ?? 'Desktop session snapshot unavailable');
+		const entries = result.sessions;
 		sessionsCache = { at: now, entries };
 		return entries;
 	};
@@ -515,15 +1012,17 @@ export async function pianolaOrchestrate(
 	// Short-lived per-tab transcript cache so getRunState (awaiting-input check)
 	// and getRecentMessages share one get_session_history round-trip per tick.
 	const historyCache = new Map<string, { at: number; messages: PianolaMessage[] }>();
-	const getHistory = async (tabId: string): Promise<PianolaMessage[]> => {
+	const getHistory = async (tabId: string, fresh = false): Promise<PianolaMessage[]> => {
 		const now = Date.now();
 		const cached = historyCache.get(tabId);
-		if (cached && now - cached.at < SESSION_LIST_TTL_MS) return cached.messages;
+		if (!fresh && cached && now - cached.at < SESSION_LIST_TTL_MS) return cached.messages;
 		const result = await client.sendCommand<SessionHistoryResult>(
 			{ type: 'get_session_history', tabId, tail: HISTORY_TAIL },
 			'session_history_result'
 		);
-		const messages = (result.messages ?? []).map(
+		if (result.success === false || !Array.isArray(result.messages))
+			throw new Error(result.error ?? 'Worker transcript unavailable');
+		const messages = result.messages.map(
 			(m): PianolaMessage => ({
 				id: m.id,
 				role: m.role,
@@ -534,6 +1033,28 @@ export async function pianolaOrchestrate(
 		);
 		historyCache.set(tabId, { at: now, messages });
 		return messages;
+	};
+
+	const getTaskMessages = async (task: PianolaTask, fresh = false): Promise<PianolaMessage[]> => {
+		const run = capturedRunForTask(task);
+		const finalText = run?.metadata?.answerTail;
+		if (
+			run &&
+			typeof finalText === 'string' &&
+			finalText.trim() &&
+			run.metadata?.completedAt !== undefined
+		) {
+			return [
+				{
+					id: `capture:${run.id}`,
+					role: 'assistant',
+					source: 'ai',
+					content: finalText,
+					timestamp: new Date(Number(run.metadata.completedAt)).toISOString(),
+				},
+			];
+		}
+		return task.tabId ? getHistory(task.tabId, fresh) : [];
 	};
 
 	const signals = new AgentRunSignals({
@@ -548,46 +1069,60 @@ export async function pianolaOrchestrate(
 
 	const deps: OrchestratorDeps = {
 		getRunState: async (task) => {
-			if (!task.tabId) return 'idle';
+			if (!task.tabId || !task.agentId) return 'unknown';
 			const entries = await listDesktopSessions();
-			const entry = entries.find((e) => e.tabId === task.tabId);
-			if (!entry) return 'idle';
-			if (entry.state === 'busy') {
-				if (task.agentId) signals.markWorking(task.agentId);
-				return 'busy';
-			}
-			// The desktop collapses waiting_input to idle, so before treating idle as
-			// a completion signal, check whether the agent is actually awaiting the
-			// user. If so report waiting_input - the detector then keeps the task
-			// running instead of marking it done and launching dependents on an
-			// unanswered question.
-			const messages = await getHistory(task.tabId);
+			const entry = entries.find((e) => e.tabId === task.tabId && e.agentId === task.agentId);
+			if (!entry) return 'unknown';
+			const run = capturedRunForTask(task);
+			if (
+				run &&
+				(run.status === 'failed' ||
+					run.status === 'cancelled' ||
+					run.status === 'discarded' ||
+					run.metadata?.agentError)
+			)
+				return 'error';
+			if (entry.state === 'busy') return 'busy';
+			if (entry.state !== 'idle') return 'unknown';
+			const messages = await getTaskMessages(task);
 			const classification = classifyMessages(enrichWithAwaitingInput(messages));
-			if (classification.kind !== 'none') {
-				// F5/F8 (ISC-5.2/5.7): reflect the awaiting-input signal on the run.
-				if (task.agentId) signals.markWaiting(task.agentId);
-				return 'waiting_input';
-			}
-			return 'idle';
+			if (classification.kind !== 'none') return 'waiting_input';
+			// Idle is also a queued/unstarted dispatch. Only its own terminal capture
+			// can prove that this worker ran, including runs between two polls.
+			if (
+				!run ||
+				(run.status !== 'completed' && run.status !== 'needs_review') ||
+				run.metadata?.completedAt === undefined
+			)
+				return 'connecting';
+			if (!messages.some((message) => message.role === 'assistant' || message.role === 'error'))
+				return 'connecting';
+			return 'completed';
 		},
-		getRecentMessages: async (task) => {
+		getRecentMessages: async (task, options) => {
 			if (!task.tabId) return [];
-			return getHistory(task.tabId);
+			return getTaskMessages(task, options?.fresh);
 		},
 		ensureAgent: async (task) => {
+			if (programPausedNow()) return { error: 'program paused' };
 			if (task.agentId) {
 				let agentType = task.agentType;
-				if (!agentType) {
-					try {
-						agentType = resolveExistingPianolaAgentType(task, await listDesktopSessions());
-					} catch {
-						// Preserve the pre-existing short-circuit behavior if the live session
-						// list is temporarily unavailable; the next tick can enrich it.
-					}
+				let tabId = task.tabId;
+				try {
+					const sessions = await listDesktopSessions();
+					const matching = sessions.filter((entry) => entry.agentId === task.agentId);
+					const target = tabId
+						? sessions.find((entry) => entry.tabId === tabId)
+						: (matching.find((entry) => entry.active) ?? matching[0]);
+					tabId ??= target?.tabId;
+					agentType ??= target?.toolType ?? resolveExistingPianolaAgentType(task, sessions);
+				} catch {
+					// Retain the binding on transient discovery failure; dispatch requires a known tab.
 				}
 				return {
 					agentId: task.agentId,
 					...(agentType ? { agentType } : {}),
+					...(tabId ? { tabId } : {}),
 				};
 			}
 			// Capability/load-aware selection: pick a ready, least-loaded tool type
@@ -648,11 +1183,58 @@ export async function pianolaOrchestrate(
 			if (!result.success || !result.sessionId) {
 				return { error: result.error ?? 'create_session did not return a sessionId' };
 			}
-			return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
+			sessionsCache = null;
+			try {
+				const sessions = await listDesktopSessions();
+				const matching = sessions.filter((entry) => entry.agentId === result.sessionId);
+				const target = matching.find((entry) => entry.active) ?? matching[0];
+				return {
+					agentId: result.sessionId,
+					agentType: toolType || 'claude-code',
+					tabId: target?.tabId,
+				};
+			} catch {
+				// Preserve the newly created agent so a discovery timeout cannot orphan it.
+				return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
+			}
 		},
 		dispatch: async (task, agentId) => {
-			const res = await runDispatch(agentId, task.prompt, {});
-			return { success: !!res.success, tabId: res.sessionId ?? undefined, error: res.error };
+			if (programPausedNow()) return { success: false, error: 'program paused' };
+			let context = '';
+			try {
+				const packet = await requestPianolaMemory<MemoryPacket>({
+					action: 'recall',
+					query: { query: task.prompt.slice(0, 16000), projectPath: task.cwd || process.cwd() },
+				});
+				context = packet.context ?? '';
+			} catch (error) {
+				console.error(
+					`[orchestrator] memory recall skipped: ${error instanceof Error ? error.message : String(error)}`
+				);
+			}
+			const prompt = context ? `${task.prompt}\n\n${context}` : task.prompt;
+			if (programPausedNow()) return { success: false, error: 'program paused' };
+			const currentPlan = getPianolaPlan(plan.id) ?? plan;
+			const currentLimit = plan.programId
+				? (readPianolaPrograms().find((entry) => entry.id === plan.programId)?.charter
+						.maxConcurrent ?? concurrencyLimit)
+				: concurrencyLimit;
+			const activeCount = currentPlan.tasks.filter(
+				(entry) => entry.id !== task.id && (entry.status === 'running' || entry.status === 'fixing')
+			).length;
+			if (activeCount >= currentLimit)
+				return { success: false, error: 'program concurrency limit reached' };
+			const res = await runDispatch(agentId, prompt, { newTab: true, background: true });
+			// Dispatch success is delivery, not a run receipt. Never retry a delivered
+			// but unaddressable prompt: that could duplicate work. The engine parks it.
+			const tabId = res.tabId ?? res.sessionId ?? undefined;
+			if (res.success && tabId) historyCache.delete(tabId);
+			return {
+				success: !!res.success,
+				tabId,
+				error: res.error,
+				deliveryUncertain: !res.success && !UNDISPATCHED_CODES.has(res.code ?? ''),
+			};
 		},
 		persist: (p) => {
 			upsertPianolaPlan(p);
@@ -666,13 +1248,26 @@ export async function pianolaOrchestrate(
 			}
 		},
 		reactiveEnabled: () => autopilotEnabledNow(),
-		getRunLedger: async (task) => ledgerForTask(plan.id, task),
+		getProgramCharter: (programId) =>
+			readPianolaPrograms().find((entry) => entry.id === programId)?.charter,
+		getRunLedger: async (task) => ledgerForTask(task),
+		validate: async (task) => {
+			const program = plan.programId
+				? readPianolaPrograms().find((entry) => entry.id === plan.programId)
+				: undefined;
+			if (program?.charter.validationRequired === false)
+				return { verdict: 'verified', reason: 'Validation not required by program charter' };
+			const { verdict, reason } = await validateTask(plan.id, task);
+			return { verdict, reason };
+		},
 		dispatchFix: async (task, ledger) => {
-			// Gated + audited: only auto-fix when autopilot is on this iteration.
-			if (!autopilotEnabledNow()) return { success: false, error: 'autopilot off' };
-			const fixPrompt = `The previous run left ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Address them, then stop.`;
+			// Gated + audited: only auto-fix with explicit repair permission.
+			if (!autopilotEnabledNow())
+				return { success: false, error: 'Pianola automatic repairs are disabled' };
+			const fixPrompt = `The acceptance ledger is AgentRun ${ledger.runId ?? '(unavailable)'}. It has ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Required checks: ${(task.requiredChecks ?? []).join(', ') || '(existing ledger checks)'}. Address them and record evidence on that exact acceptance run, then stop.`;
 			const agentId = task.agentId;
 			if (!agentId) return { success: false, error: 'no agent bound' };
+			if (programPausedNow()) return { success: false, error: 'program paused' };
 			auditAgentRunAction(ledger.runId, 'auto-fix', {
 				taskId: task.id,
 				openFindings: ledger.openFindings ?? 0,
@@ -680,7 +1275,17 @@ export async function pianolaOrchestrate(
 				attempt: (task.fixAttempts ?? 0) + 1,
 			});
 			try {
-				const res = await runDispatch(agentId, fixPrompt, {});
+				if (task.tabId) historyCache.delete(task.tabId);
+				if (programPausedNow()) return { success: false, error: 'program paused' };
+				const res = await runDispatch(agentId, fixPrompt, { newTab: true, background: true });
+				const tabId = res.tabId ?? res.sessionId;
+				if (tabId) historyCache.delete(tabId);
+				const uncertain = !res.success && !UNDISPATCHED_CODES.has(res.code ?? '');
+				if ((res.success || uncertain) && !tabId)
+					return {
+						success: true,
+						error: 'repair dispatch missing confirmed tab identity; reconcile manually',
+					};
 				// F5/F8 (ISC-5.9): a REAL dispatch just happened - reflect it on the run
 				// through the guarded producer. The dispatch object is the evidence; on
 				// a failed dispatch nothing is written (the task also stays needs_review).
@@ -690,17 +1295,27 @@ export async function pianolaOrchestrate(
 						reason: `auto-fix attempt ${(task.fixAttempts ?? 0) + 1}`,
 					});
 				}
-				return { success: !!res.success, error: res.error };
+				return {
+					success: !!res.success,
+					tabId: tabId ?? undefined,
+					error: res.error,
+					deliveryUncertain: uncertain,
+				};
 			} catch (error) {
-				return { success: false, error: String(error) };
+				// The transport may have lost a response after delivery. Park the claim
+				// without an identity instead of automatically repeating the repair.
+				return { success: true, error: `repair delivery outcome unknown: ${String(error)}` };
 			}
 		},
 		requestMerge: async (task, ledger) => {
-			// Gated + risk-rated + audited (ISC-8.9/8.10/8.14): never auto-merge when
-			// autopilot is off, only when the run is fully green (checks passed AND
+			// Repair permission does not authorize a merge. This adapter only records
+			// a skipped outcome for eligible runs; no merge executor is available.
+			// Eligibility still requires a fully green run (checks passed AND
 			// zero open findings of ANY severity), and never when the merge action
 			// rates high-risk (high-risk-always-escalates).
-			if (!autopilotEnabledNow()) return { merged: false, error: 'autopilot off' };
+			if (!autopilotEnabledNow())
+				return { merged: false, error: 'Pianola automatic repairs are disabled' };
+			if (programPausedNow()) return { merged: false, error: 'program paused' };
 			if (ledger.checksPassed !== true || (ledger.openFindings ?? 0) > 0) {
 				return { merged: false, error: 'not green (needs passing checks + zero open findings)' };
 			}
@@ -750,16 +1365,39 @@ export async function pianolaOrchestrate(
 				console.error('[orchestrator] Pianola disabled in Settings; stopping.');
 				break;
 			}
+			if (programPausedNow()) {
+				console.log('[orchestrator] Program paused; stopping.');
+				break;
+			}
 
 			let result: OrchestratorIterationResult;
 			try {
-				result = await runOrchestratorIteration(state, deps, { concurrencyLimit });
+				result = await withPianolaPlanLock(planId, async () => {
+					const saved = getPianolaPlan(planId);
+					if (!saved) throw new Error(`No Pianola plan with id "${planId}".`);
+					return runOrchestratorIteration({ ...state, plan: saved }, deps, { concurrencyLimit });
+				});
 			} catch (error) {
+				if (error instanceof SandboxRunnerConfigurationError) {
+					if (options.json)
+						console.log(
+							JSON.stringify({
+								success: false,
+								code: 'PIANOLA_SANDBOX_CONFIGURATION',
+								error: error.message,
+							})
+						);
+					else console.error(error.message);
+					process.exitCode = 1;
+					break;
+				}
 				// A transient failure (e.g. a WS sendCommand timeout) must not tear down
 				// the whole run. Mirror the watcher: log and keep orchestrating - the next
 				// tick re-polls and re-dispatches from the persisted plan.
 				const message = error instanceof Error ? error.message : String(error);
 				console.error(`[orchestrator] iteration error: ${message}`);
+				const persisted = getPianolaPlan(plan.id);
+				if (persisted) state = initialOrchestratorState(persisted);
 				if (once || stopped) break;
 				await sleep(intervalMs);
 				continue;

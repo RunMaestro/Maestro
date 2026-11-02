@@ -99,6 +99,7 @@ import {
 	routeModeratorResponse,
 	routeAgentResponse,
 	spawnModeratorSynthesis,
+	respawnParticipantWithRecovery,
 	getGroupChatReadOnlyState,
 	clearPendingParticipants,
 	setGetSessionsCallback,
@@ -172,6 +173,9 @@ describe('group-chat-router', () => {
 				binaryName: 'claude',
 				command: 'claude',
 				args: ['--print', '--verbose', '--output-format', 'stream-json'],
+				fullAccessArgs: ['--dangerously-skip-permissions'],
+				readOnlyArgs: ['--permission-mode', 'plan'],
+				readOnlyCliEnforced: true,
 				available: true,
 				path: '/usr/local/bin/claude',
 				capabilities: {},
@@ -1538,6 +1542,10 @@ describe('group-chat-router', () => {
 			);
 			expect(participantSpawnCall).toBeDefined();
 			expect(participantSpawnCall?.[0].readOnlyMode).toBe(true);
+			expect(participantSpawnCall?.[0].args).toEqual(
+				expect.arrayContaining(['--permission-mode', 'plan'])
+			);
+			expect(participantSpawnCall?.[0].args).not.toContain('--dangerously-skip-permissions');
 		});
 
 		it('participants spawn with readOnlyMode: false when readOnly is not set', async () => {
@@ -1556,12 +1564,56 @@ describe('group-chat-router', () => {
 				// no readOnly flag = false
 			);
 
-			// Participant should be spawned with readOnlyMode: false
+			// Participant should be spawned with readOnlyMode: false and full-access args
 			const participantSpawnCall = mockProcessManager.spawn.mock.calls.find((call) =>
 				call[0].sessionId?.includes('participant')
 			);
 			expect(participantSpawnCall).toBeDefined();
 			expect(participantSpawnCall?.[0].readOnlyMode).toBe(false);
+			expect(participantSpawnCall?.[0].args).toContain('--dangerously-skip-permissions');
+			expect(participantSpawnCall?.[0].args).not.toContain('plan');
+		});
+
+		it('respawnParticipantWithRecovery propagates full-access and read-only permission args', async () => {
+			const chat = await createTestChatWithModerator('Participant Recovery Permission Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			mockProcessManager.spawn.mockClear();
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const writableRecoverySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0].sessionId?.includes('recovery')
+			);
+			expect(writableRecoverySpawn).toBeDefined();
+			expect(writableRecoverySpawn?.[0].readOnlyMode).toBe(false);
+			expect(writableRecoverySpawn?.[0].args).toContain('--dangerously-skip-permissions');
+			expect(writableRecoverySpawn?.[0].args).not.toContain('plan');
+
+			// Switch the group chat to read-only and verify recovery honors it
+			await routeUserMessage(chat.id, 'Inspect only', mockProcessManager, mockAgentDetector, true);
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const readOnlyRecoverySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0].sessionId?.includes('recovery')
+			);
+			expect(readOnlyRecoverySpawn).toBeDefined();
+			expect(readOnlyRecoverySpawn?.[0].readOnlyMode).toBe(true);
+			expect(readOnlyRecoverySpawn?.[0].args).toEqual(
+				expect.arrayContaining(['--permission-mode', 'plan'])
+			);
+			expect(readOnlyRecoverySpawn?.[0].args).not.toContain('--dangerously-skip-permissions');
 		});
 
 		it('auto-added participants are only started once for a moderator handoff', async () => {

@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createMockNativeDecisionPair } from '../../helpers/pianola';
 import {
 	parseClaudeTranscriptLine,
 	parseCodexTranscriptLine,
@@ -221,22 +222,10 @@ describe('extractDecisionPairs', () => {
 
 describe('aggregateDecisionPairs', () => {
 	function pair(risk: 'low' | 'medium' | 'high', polarity: DecisionPair['polarity']): DecisionPair {
-		return {
-			agent: 'claude-code',
-			sessionId: 's',
-			classification: {
-				kind: 'question',
-				risk,
-				topic: 't',
-				confidence: 'high',
-				evidence: { messageId: null, reason: 'test', structured: true },
-			},
-			ask: 'ask?',
-			reply: 'r',
-			polarity,
-			askedAt: 't1',
-			repliedAt: 't2',
-		};
+		const value = createMockNativeDecisionPair(++seq);
+		value.classification.risk = risk;
+		value.polarity = polarity;
+		return value;
 	}
 	it('rolls up risk counts, polarity counts, and the risk x polarity cross-tab', () => {
 		const pairs: DecisionPair[] = [

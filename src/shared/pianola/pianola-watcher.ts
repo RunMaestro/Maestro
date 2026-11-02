@@ -97,6 +97,7 @@ export interface WatchTarget {
 	tabId: string;
 	agentId: string;
 	projectPath?: string;
+	groupId?: string | null;
 }
 
 /**
@@ -107,11 +108,15 @@ export interface WatchTarget {
 export interface PianolaJudgmentRequest {
 	target: WatchTarget;
 	classification: PianolaClassification;
-	profile: PianolaProfileEntry;
+	profile: PianolaProfileEntry | null;
+	/** Scoped advisory memories; evidence only, never authorization. */
+	context?: string;
 	/** The agent's awaiting-input prompt text, when extractable. */
 	promptText?: string;
 	/** Discrete options the agent offered, if any. */
 	options?: string[];
+	/** Complete current turn, including earlier intent and tool context. */
+	turnContext?: readonly PianolaMessage[];
 }
 
 /** Injected side effects. */
@@ -133,6 +138,8 @@ export interface WatchDeps {
 	 * plain CLI watch with no Pianola agent to hand off to).
 	 */
 	resolveProfile?: (projectPath?: string) => PianolaProfileEntry | null;
+	/** Resolve scoped advisory memory for the uncovered ask. */
+	resolveContext?: (query: string, projectPath?: string) => string | null | Promise<string | null>;
 	/** Hand an uncovered, non-high-risk ask to Pianola to judge against the profile. */
 	requestJudgment?: (
 		request: PianolaJudgmentRequest
@@ -197,6 +204,10 @@ export function rehydrateWatchState(
 	if (!lastRecord || !lastMid) {
 		return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff: null };
 	}
+	// Scope lifecycles own their pending actor, delivery uncertainty and receipt
+	// reconciliation. Never replay one through the legacy heuristic handoff path.
+	if (lastRecord.lifecycle)
+		return { lastHandledMessageId: lastMid, pendingRetry: null, pendingHandoff: null };
 	// A successfully-delivered handoff (escalate decision, not dispatched, no
 	// error) means we were awaiting Pianola's reply when we stopped. Restore the
 	// pending-handoff so the timeout resumes rather than re-handing-off, and keep
@@ -335,7 +346,11 @@ export async function runWatchIteration(
 	target: WatchTarget,
 	state: WatchState,
 	deps: WatchDeps,
-	options: { dryRun: boolean }
+	options: {
+		dryRun: boolean;
+		/** Enrollment eligibility must not remove messages needed for risk context. */
+		canActOnMessage?: (messageId: string) => boolean;
+	}
 ): Promise<{ state: WatchState; result: IterationResult }> {
 	const enriched = enrichWithAwaitingInput(messages);
 	const classification = classifyMessages(enriched);
@@ -389,6 +404,18 @@ export async function runWatchIteration(
 	}
 
 	const messageId = classification.evidence.messageId;
+	if (options.canActOnMessage && (!messageId || !options.canActOnMessage(messageId))) {
+		const result: IterationResult = {
+			classification,
+			decision: null,
+			record: null,
+			acted: false,
+			dispatched: false,
+			skipped: 'prompt precedes enrollment baseline',
+		};
+		deps.log(describe(result));
+		return { state, result };
+	}
 	if (messageId && messageId === state.lastHandledMessageId) {
 		const result: IterationResult = {
 			classification,
@@ -406,6 +433,8 @@ export async function runWatchIteration(
 	const decision = decide(classification, rules, {
 		projectPath: target.projectPath,
 		tabId: target.tabId,
+		agentId: target.agentId,
+		groupId: target.groupId,
 	});
 
 	// Thought-based handoff. When the rules did not cover this ask (the policy fell
@@ -419,7 +448,7 @@ export async function runWatchIteration(
 		uncoveredEscalation &&
 		classification.risk !== 'high' &&
 		!options.dryRun &&
-		!!deps.resolveProfile &&
+		(!!deps.resolveProfile || !!deps.resolveContext) &&
 		!!deps.requestJudgment;
 
 	// A handoff already in flight for THIS prompt: do not re-hand-off. Wait for
@@ -490,12 +519,26 @@ export async function runWatchIteration(
 	// Fresh handoff: rules did not cover this ask, it is not high risk, a profile
 	// exists, and Pianola is reachable. Hand the decision to Pianola to judge.
 	if (handoffEligible) {
-		const profile = deps.resolveProfile!(target.projectPath);
-		if (profile) {
+		const profile = deps.resolveProfile?.(target.projectPath) ?? null;
+		const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
+		const question = relevant?.awaitingInput?.prompt ?? relevant?.content;
+		let context: string | null = null;
+		if (question?.trim() && deps.resolveContext) {
+			try {
+				context = await deps.resolveContext(question, target.projectPath);
+			} catch (error) {
+				deps.log(
+					`memory recall failed; continuing without advisory context: ${error instanceof Error ? error.message : String(error)}`
+				);
+			}
+		}
+		if (profile || context) {
 			const handoffDecision: PianolaDecision = {
 				action: 'escalate',
 				matchedRuleId: null,
-				reason: 'handed off to Pianola for profile-based judgment',
+				reason: profile
+					? 'handed off to Pianola for profile-based judgment'
+					: 'handed off to Pianola for memory-based judgment',
 			};
 			// Audit the intent BEFORE the side effect, mirroring the auto-answer path,
 			// so a handoff is never sent without an audit trail. Intent and outcome
@@ -508,13 +551,16 @@ export async function runWatchIteration(
 			});
 			deps.recordDecision(intent); // throws here => no handoff
 
-			const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
 			const res = await deps.requestJudgment!({
 				target,
 				classification,
 				profile,
+				context: context ?? undefined,
 				promptText: relevant?.awaitingInput?.prompt ?? relevant?.content,
 				options: relevant?.awaitingInput?.options,
+				turnContext: messages.slice(
+					messages.map((message) => message.role).lastIndexOf('user') + 1
+				),
 			});
 
 			if (res.success) {

@@ -684,6 +684,10 @@ export class PluginSandboxHost {
 		if (typeof msg.id !== 'number' || !isHostMethod(msg.method)) return;
 		const request = msg as unknown as HostRequest;
 
+		const originalSend =
+			request.method === 'agents.send' &&
+			(request.params as { opts?: { originalAttachments?: unknown } } | undefined)?.opts
+				?.originalAttachments !== undefined;
 		/** Sanitize media/service failures to public codes and send the matching request id; tolerate child exit. */
 		const respond = (res: Omit<HostResponse, 'id'>): void => {
 			if (PLUGIN_PRIMITIVE_METHODS.includes(request.method) && !res.ok) {
@@ -703,7 +707,7 @@ export class PluginSandboxHost {
 					errorCode: code,
 				};
 			}
-			if (request.method.startsWith('media.') && !res.ok) {
+			if ((request.method.startsWith('media.') || originalSend) && !res.ok) {
 				const code = (MEDIA_ERROR_CODES as readonly string[]).includes(res.error ?? '')
 					? res.error!
 					: /permission denied/.test(res.error ?? '')
@@ -904,6 +908,16 @@ export class PluginSandboxHost {
 					responseGuard = guard;
 				},
 			});
+			if (originalSend) {
+				if (
+					record.stopping ||
+					this.running.get(pluginId) !== record ||
+					!this.deps.broker.authorize(pluginId, method, request.params, { audit: false }).allowed
+				) {
+					throw new Error('MediaDenied');
+				}
+				responseGuard?.();
+			}
 			if (PLUGIN_PRIMITIVE_METHODS.includes(method) && method !== 'net.tlsClose') {
 				if (
 					record.stopping ||

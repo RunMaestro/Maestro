@@ -4,6 +4,7 @@ import type { BatchDocumentEntry, Theme } from '../../../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { canDisableReset } from '../utils/documentCounts';
 import { TaskCountBadge } from './TaskCountBadge';
+import { StartTruncatedText } from '../../ui/StartTruncatedText';
 
 interface DocumentRowProps {
 	theme: Theme;
@@ -120,17 +121,13 @@ export function DocumentRow({
 					}}
 				/>
 
-				<span
-					className={`flex-1 text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap ${doc.isMissing ? 'line-through' : ''}`}
-					style={{
-						color: doc.isMissing ? theme.colors.error : theme.colors.textMain,
-						direction: 'rtl',
-						textAlign: 'left',
-					}}
+				<StartTruncatedText
+					className={`flex-1 text-sm font-medium ${doc.isMissing ? 'line-through' : ''}`}
+					style={{ color: doc.isMissing ? theme.colors.error : theme.colors.textMain }}
 					title={`${doc.filename}.md`}
 				>
-					<bdi>{doc.filename}.md</bdi>
-				</span>
+					{doc.filename}.md
+				</StartTruncatedText>
 
 				{doc.isMissing && (
 					<span

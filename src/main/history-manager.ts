@@ -430,7 +430,9 @@ export class HistoryManager {
 		sessionId: string,
 		projectPath: string,
 		entry: HistoryEntry,
-		maxEntries?: number
+		maxEntries?: number,
+		/** Host-owned live authority for an optional brokered write, checked after queue/preflight waits. */
+		beforeWrite?: () => void
 	): Promise<void> {
 		const filePath = this.getSessionFilePath(sessionId);
 		const limit = this.resolveMaxEntries(maxEntries);
@@ -438,10 +440,12 @@ export class HistoryManager {
 		// Serialize per session so an append can't interleave with a rotation
 		// (the one remaining read-modify-write on this path).
 		await this.writeQueue.enqueue(sessionId, async () => {
+			beforeWrite?.();
 			// A session still on the legacy format must be converted before its
 			// first append, or the appended line would be tacked onto a JSON
 			// object and make the file unreadable.
 			await this.ensureJsonlFile(sessionId);
+			beforeWrite?.();
 
 			// The file-level projectPath of the old format is gone, so each line
 			// must carry its own - `getEntriesByProjectPath` filters on it.
@@ -460,6 +464,8 @@ export class HistoryManager {
 				captureException(error, { operation: 'history:write', sessionId });
 				return;
 			}
+
+			beforeWrite?.();
 
 			await this.maybeRotate(sessionId, limit);
 		});

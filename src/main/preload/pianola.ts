@@ -7,6 +7,7 @@
  * 'PianolaDisabled', which callers treat as "feature off".
  */
 
+import type { MemoryRequest } from '../../shared/pianola/memory';
 import { ipcRenderer } from 'electron';
 import type { PianolaRule } from '../../shared/pianola/types';
 import type {
@@ -14,14 +15,26 @@ import type {
 	RulesLoadResult,
 	PianolaSupervisedTarget,
 	PianolaSuggestionsFile,
+	PianolaSuggestionReview,
+	PianolaPlan,
 } from '../../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../ipc/handlers/pianola';
+import type { PianolaDecisionResolution } from '../../shared/pianola/pianola-decision-lifecycle';
+import type { PianolaScopeDeliveryResult } from '../../shared/pianola/pianola-scope-cycle';
+import type {
+	PianolaProgram,
+	PianolaAsk,
+	PianolaAskStatus,
+	PianolaBrief,
+} from '../../shared/pianola/pianola-programs';
 
 /**
  * Creates the Pianola API object for contextBridge exposure.
  */
 export function createPianolaApi() {
 	return {
+		memory: (request: MemoryRequest): Promise<unknown> =>
+			ipcRenderer.invoke('pianola:memory', request),
 		/**
 		 * Read auto-answer rules. Returns { rules, malformed }: `malformed` is true
 		 * when the rules file exists but is unparseable, so the UI can warn instead
@@ -39,10 +52,39 @@ export function createPianolaApi() {
 		 */
 		getDecisions: (limit?: number): Promise<PianolaDecisionRecord[]> =>
 			ipcRenderer.invoke('pianola:get-decisions', limit),
+		getPrograms: (): Promise<PianolaProgram[]> => ipcRenderer.invoke('pianola:get-programs'),
+		superviseProgram: (programId: string): Promise<void> =>
+			ipcRenderer.invoke('pianola:supervise-program', programId),
+		setProgramStatus: (programId: string, status: 'active' | 'paused'): Promise<void> =>
+			ipcRenderer.invoke('pianola:set-program-status', programId, status),
+		getAsks: (status?: PianolaAskStatus): Promise<PianolaAsk[]> =>
+			ipcRenderer.invoke('pianola:get-asks', status),
+		resolveAsk: (id: string, option: string, note?: string): Promise<PianolaAsk> =>
+			ipcRenderer.invoke('pianola:resolve-ask', id, option, note),
+		dismissAsk: (id: string): Promise<PianolaAsk> => ipcRenderer.invoke('pianola:dismiss-ask', id),
+		getBrief: (): Promise<PianolaBrief> => ipcRenderer.invoke('pianola:get-brief'),
+		revisePlanTask: (planId: string, taskId: string, prompt?: string): Promise<PianolaPlan> =>
+			ipcRenderer.invoke('pianola:revise-plan-task', planId, taskId, prompt),
+		skipPlanTask: (planId: string, taskId: string): Promise<PianolaPlan> =>
+			ipcRenderer.invoke('pianola:skip-plan-task', planId, taskId),
 
-		/** Read the staged learning suggestions (rule proposals + profile draft). */
+		/** An explicit human answer, guarded against stale asks and duplicate delivery. */
+		resolveDecision: (resolution: PianolaDecisionResolution): Promise<PianolaScopeDeliveryResult> =>
+			ipcRenderer.invoke('pianola:resolve-decision', resolution),
+
+		/** Read revalidated proposals, accepted provenance and durable rule conflicts. */
 		getSuggestions: (): Promise<PianolaSuggestionsFile> =>
 			ipcRenderer.invoke('pianola:get-suggestions'),
+
+		confirmDesktopOwner: (): Promise<void> => ipcRenderer.invoke('pianola:confirm-desktop-owner'),
+
+		/** Explicit owner accept/edit/reject with optimistic source-evidence validation. */
+		reviewSuggestion: (
+			review: PianolaSuggestionReview
+		): Promise<{
+			rules: PianolaRule[];
+			suggestions: PianolaSuggestionsFile;
+		}> => ipcRenderer.invoke('pianola:review-suggestion', review),
 
 		/** Approve a suggestion: persist a rule and/or a profile draft. Returns updated rules. */
 		applySuggestion: (payload: {

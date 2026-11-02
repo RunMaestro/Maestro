@@ -531,7 +531,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		socket.emit('open');
 		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
 		const next = reconnect(socket);
-		const localLog = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const localLog = vi.spyOn(console, 'error').mockImplementation(() => {});
 		try {
 			await expect(
 				ipcRenderer.invoke('logger:log', 'error', 'Disconnected diagnostic', 'OfflineSmoke')

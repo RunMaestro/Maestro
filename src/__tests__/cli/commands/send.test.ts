@@ -306,7 +306,7 @@ describe('send command', () => {
 				requirePluginTools: true,
 			}),
 			'plugins_send_agent_result',
-			61 * 60_000
+			361 * 60_000
 		);
 		expect(spawnAgent).not.toHaveBeenCalled();
 		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({

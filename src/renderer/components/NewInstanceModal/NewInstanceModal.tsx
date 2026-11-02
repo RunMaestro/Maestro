@@ -1031,6 +1031,17 @@ export function NewInstanceModal({
 							[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
 						}));
 					}}
+					onEnvVarsReplace={(agentId, vars) => {
+						setCustomAgentEnvVars((prev) => {
+							const newVars = { ...prev };
+							if (Object.keys(vars).length > 0) {
+								newVars[agentId] = vars;
+							} else {
+								delete newVars[agentId];
+							}
+							return newVars;
+						});
+					}}
 					onConfigChange={(agentId, key, value) => {
 						setAgentConfigs((prev) => ({
 							...prev,

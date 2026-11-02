@@ -10,21 +10,28 @@
  * (Step 3) share one source of truth. Nothing here auto-applies; the caller (a
  * staging write, or a user clicking approve) decides what to persist.
  *
- * Safety: proposals are ONLY ever for low-risk decisions and only when the user
- * answered consistently and often. High- and medium-risk asks never become an
- * auto_answer suggestion - high risk always escalates at decide() time, and
- * medium is left for the user to judge. Every proposal carries a narrowing
- * predicate (kinds + maxRisk) and answer text, so it passes validatePianolaRule.
+ * Safety: only a closed set of concrete local inspection questions is mapped.
+ * Every candidate retains the full question, exact answer and native scope,
+ * remains disabled and requires explicit acceptance. Unknown semantics and
+ * conflicting evidence yield no candidate. Full-turn risk guards still apply.
  */
 
-import type { PianolaRule, PianolaSignalKind } from './types';
+import type { PianolaRule } from './types';
+import { learnableDecisionAction } from './pianola-policy';
+import { canonicalJson } from '../canonicalJson';
 import type { DecisionAggregates, DecisionPair } from './transcript-mining';
-import { aggregateDecisionPairs } from './transcript-mining';
+import { aggregateDecisionPairs, confirmedHumanDecisionPairs } from './transcript-mining';
+import {
+	pianolaCandidateEvidenceFingerprint,
+	type PianolaSuggestionCandidate,
+	type PianolaSuggestionsFile,
+	type PianolaLearnedRuleConflict,
+} from './storage';
 
-/** Minimum observed decisions in a (kind) cluster before it can become a rule. */
-export const SUGGESTION_MIN_SAMPLES = 5;
-/** Minimum affirmative fraction in a cluster before proposing an auto_answer. */
-export const SUGGESTION_MIN_AFFIRM_RATIO = 0.8;
+/** Configurable heuristic; never an authorization threshold. */
+export const SUGGESTION_MIN_SAMPLES = 3;
+/** Retained export for legacy consumers; every matching sample must agree. */
+export const SUGGESTION_MIN_AFFIRM_RATIO = 1;
 
 /** A before/after view of the decision-profile markdown. */
 export interface ProfileDiff {
@@ -42,64 +49,21 @@ export interface SynthesisInput {
 	existingProfile?: string;
 	/** Epoch ms stamped onto proposals; injected for deterministic tests. */
 	now?: number;
+	minSamples?: number;
+	/** Group pooling must be explicitly requested; default is individual agent. */
+	learningScope?: 'agent' | 'group';
 }
 
 export interface SynthesisResult {
 	/** Hard-rule proposals, each valid per validatePianolaRule. Never auto-applied. */
 	proposals: PianolaRule[];
+	/** Source-linked candidates for Suggestions; no live policy mutation. */
+	candidates: PianolaSuggestionCandidate[];
+
 	/** Proposed profile draft vs the current one. */
 	profileDiff: ProfileDiff;
 	/** The aggregates the synthesis reasoned over (for the UI summary). */
 	aggregates: DecisionAggregates;
-}
-
-// Kinds we will ever propose an auto_answer for. Only 'question': a blanket
-// "Yes, go ahead." is nonsensical for a 'blocked' ask, and limiting to questions
-// keeps the auto-proposed rule's blast radius small. High/medium risk never gets
-// here, and decide() still escalates any high-risk prompt regardless of the rule.
-const RULEABLE_KINDS: readonly PianolaSignalKind[] = ['question'];
-
-/** Count affirmative vs total low-risk pairs for one signal kind. */
-function lowRiskKindStats(
-	pairs: readonly DecisionPair[],
-	kind: PianolaSignalKind
-): { total: number; affirmative: number } {
-	let total = 0;
-	let affirmative = 0;
-	for (const pair of pairs) {
-		if (pair.classification.risk !== 'low') continue;
-		if (pair.classification.kind !== kind) continue;
-		total += 1;
-		if (pair.polarity === 'affirmative') affirmative += 1;
-	}
-	return { total, affirmative };
-}
-
-/**
- * True when an enabled auto_answer rule already covers this kind at low risk.
- * A rule with NO maxRisk has no upper bound, so it already covers low risk too -
- * treat undefined as covering, otherwise we re-propose a duplicate the user has.
- */
-function ruleAlreadyCovers(rules: readonly PianolaRule[], kind: PianolaSignalKind): boolean {
-	return rules.some(
-		(r) => r.enabled && r.action === 'auto_answer' && (r.match.kinds?.includes(kind) ?? false)
-	);
-}
-
-/** Build a deterministic low-risk auto_answer proposal for one signal kind. */
-function proposalForKind(kind: PianolaSignalKind, total: number, now: number): PianolaRule {
-	return {
-		id: `suggested-low-${kind}`,
-		enabled: true,
-		scope: 'global',
-		match: { kinds: [kind], maxRisk: 'low' },
-		action: 'auto_answer',
-		answer: 'Yes, go ahead.',
-		priority: 100,
-		createdAt: now,
-		updatedAt: now,
-		description: `Auto-approve low-risk ${kind} prompts (you approved ${total} of these). Review before enabling.`,
-	};
 }
 
 /** Render a short, deterministic decision-profile draft from the aggregates. */
@@ -122,7 +86,7 @@ function renderProfile(aggregates: DecisionAggregates): string {
 		'',
 		'Guidance for Pianola:',
 		'- High-risk asks ALWAYS escalate to me, regardless of any rule.',
-		'- For low-risk asks I approve the large majority; auto-answering those is usually safe.',
+		'- Counts describe history only; they grant no permission. Require an explicitly accepted exact scoped rule.',
 		'- For medium-risk asks, prefer to ask me unless a specific rule clearly applies.',
 		'',
 	].join('\n');
@@ -134,20 +98,234 @@ function renderProfile(aggregates: DecisionAggregates): string {
  */
 export function synthesizeSuggestions(input: SynthesisInput): SynthesisResult {
 	const now = input.now ?? Date.now();
-	const aggregates = aggregateDecisionPairs(input.pairs);
+	const pairs = confirmedHumanDecisionPairs(input.pairs);
+	const aggregates = aggregateDecisionPairs(pairs);
 
-	const proposals: PianolaRule[] = [];
-	for (const kind of RULEABLE_KINDS) {
-		if (ruleAlreadyCovers(input.existingRules, kind)) continue;
-		const { total, affirmative } = lowRiskKindStats(input.pairs, kind);
-		if (total < SUGGESTION_MIN_SAMPLES) continue;
-		if (affirmative / total < SUGGESTION_MIN_AFFIRM_RATIO) continue;
-		proposals.push(proposalForKind(kind, total, now));
+	const candidates: SynthesisResult['candidates'] = [];
+	const threshold = input.minSamples ?? SUGGESTION_MIN_SAMPLES;
+	if (!Number.isSafeInteger(threshold) || threshold < 1)
+		throw new Error('Invalid learning sample threshold');
+	const clusters = new Map<string, DecisionPair[]>();
+	for (const pair of pairs) {
+		const evidence = pair.evidence!;
+		const action = learnableDecisionAction(evidence.question);
+		if (!action) continue;
+		const scope = input.learningScope ?? 'agent';
+		const scopeId = scope === 'agent' ? evidence.agentId : evidence.groupId;
+		if (!scopeId) continue;
+		const key = canonicalJson([scope, scopeId, evidence.groupId, action, evidence.question]);
+		const cluster = clusters.get(key) ?? [];
+		cluster.push(pair);
+		clusters.set(key, cluster);
 	}
+	for (const [key, cluster] of clusters) {
+		const first = cluster[0];
+		// Include all matching responses in the veto, including negative/other/high-risk
+		// and changed answers. A correction cannot be outvoted by old yes counts.
+		if (
+			cluster.length < threshold ||
+			cluster.some(
+				(pair) =>
+					pair.conflictingEvidence ||
+					(pair.evidence!.action !== null &&
+						pair.evidence!.action !== learnableDecisionAction(pair.ask)) ||
+					(pair.evidence!.conditions !== null &&
+						canonicalJson(pair.evidence!.conditions) !== canonicalJson([pair.ask])) ||
+					pair.polarity !== 'affirmative' ||
+					pair.reply !== first.reply ||
+					pair.classification.risk !== 'low' ||
+					pair.classification.kind !== 'question' ||
+					pair.classification.confidence === 'low'
+			)
+		)
+			continue;
+		const evidence = first.evidence!;
+		const scope = input.learningScope ?? 'agent';
+		const scopeId = scope === 'agent' ? evidence.agentId : evidence.groupId!;
+		if (
+			input.existingRules.some(
+				(rule) =>
+					rule.id === `suggested:${key}` ||
+					(rule.scope === scope &&
+						rule.scopeId === scopeId &&
+						rule.match.exactQuestion === evidence.question &&
+						rule.match.groupId === evidence.groupId &&
+						rule.answer === first.reply)
+			)
+		)
+			continue;
+		const rule: PianolaRule = {
+			id: `suggested:${key}`,
+			enabled: false,
+			scope,
+			scopeId,
+			match: {
+				kinds: ['question'],
+				maxRisk: 'low',
+				exactQuestion: evidence.question,
+				groupId: evidence.groupId,
+			},
+			action: 'auto_answer',
+			answer: first.reply,
+			priority: 100,
+			createdAt: now,
+			updatedAt: now,
+			description: `${cluster.length} independent owner decisions for this exact action and condition; explicit acceptance required.`,
+		};
+		const candidate = {
+			id: rule.id,
+			rule,
+			action: learnableDecisionAction(evidence.question)!,
+			conditions: [evidence.question],
+			exclusions: [
+				'medium/high risk',
+				'low confidence',
+				'different question',
+				'outside native scope/group',
+			],
+			evidence: cluster.map((pair) => pair.evidence!),
+			sampleCount: cluster.length,
+		};
+		candidates.push({
+			...candidate,
+			evidenceFingerprint: pianolaCandidateEvidenceFingerprint(candidate),
+		});
+	}
+	const proposals = candidates.map((candidate) => candidate.rule);
 
 	const before = input.existingProfile ?? '';
 	const after = renderProfile(aggregates);
 	const profileDiff: ProfileDiff = { before, after, changed: after.length > 0 && after !== before };
 
-	return { proposals, profileDiff, aggregates };
+	return { proposals, candidates, profileDiff, aggregates };
+}
+
+/**
+ * Revalidate staged/accepted evidence without changing rules or approval receipts.
+ * Pass native snapshots so a correction under an existing ask retains its actual
+ * source example. The folded corpus still supplies the independent sample count.
+ */
+export function reconcileSuggestionEvidence(
+	file: PianolaSuggestionsFile,
+	snapshots: readonly DecisionPair[],
+	rules: readonly PianolaRule[],
+	now: number
+): PianolaSuggestionsFile {
+	const pairs = confirmedHumanDecisionPairs(snapshots);
+	const fresh = new Map<string, PianolaSuggestionCandidate>();
+	for (const scope of ['agent', 'group'] as const) {
+		if (!file.candidates?.some((candidate) => candidate.rule.scope === scope)) continue;
+		for (const candidate of synthesizeSuggestions({
+			pairs,
+			existingRules: rules,
+			learningScope: scope,
+			// Revalidation cannot create a proposal; the original threshold and
+			// current configured threshold remain enforced by synthesis/review.
+			minSamples: 1,
+			now,
+		}).candidates)
+			fresh.set(candidate.id, candidate);
+	}
+	const conflicts = (file.conflicts ?? []).map((item) => ({
+		...item,
+		evidence: [...item.evidence],
+	}));
+	// Validate each snapshot individually, preserving later corrections that
+	// counting deliberately folds into a single vetoed sample.
+	const sources = snapshots.flatMap((pair) => confirmedHumanDecisionPairs([pair]));
+	for (const approval of file.approvals ?? []) {
+		const { candidate, rule, approvedAt } = approval;
+		// A pre-activation receipt (or a subsequently replaced policy) alone
+		// cannot establish an active learned rule. Retain any earlier conflict.
+		if (
+			!rules.some(
+				(live) =>
+					live.id === rule.id &&
+					canonicalJson([live.scope, live.scopeId, live.match, live.action, live.answer]) ===
+						canonicalJson([rule.scope, rule.scopeId, rule.match, rule.action, rule.answer])
+			)
+		)
+			continue;
+		let conflict = conflicts.find(
+			(item) =>
+				item.ruleId === rule.id &&
+				item.evidenceFingerprint === candidate.evidenceFingerprint &&
+				item.approvedAt === approvedAt
+		);
+		for (const pair of sources) {
+			const evidence = pair.evidence!;
+			const original = candidate.evidence.find(
+				(source) =>
+					(source.agentId === evidence.agentId &&
+						source.tabId === evidence.tabId &&
+						source.questionMessageId === evidence.questionMessageId) ||
+					(source.actorId === evidence.actorId &&
+						source.answerMessageId === evidence.answerMessageId)
+			);
+			let reason: PianolaLearnedRuleConflict['reason'];
+			if (original) {
+				if (
+					canonicalJson(original) === canonicalJson(evidence) &&
+					!pair.conflictingEvidence &&
+					pair.classification.kind === 'question' &&
+					pair.classification.risk === 'low' &&
+					pair.classification.confidence !== 'low'
+				)
+					continue;
+				reason = 'source_corrected';
+			} else {
+				if (
+					Date.parse(evidence.answeredAt) < approvedAt ||
+					evidence.question !== rule.match.exactQuestion ||
+					evidence.groupId !== rule.match.groupId ||
+					(rule.scope === 'agent' ? evidence.agentId : evidence.groupId) !== rule.scopeId ||
+					(evidence.action !== null && evidence.action !== candidate.action) ||
+					(evidence.conditions !== null &&
+						canonicalJson(evidence.conditions) !== canonicalJson(candidate.conditions))
+				)
+					continue;
+				if (
+					evidence.answer === rule.answer &&
+					pair.classification.kind === 'question' &&
+					pair.classification.risk === 'low' &&
+					pair.classification.confidence !== 'low' &&
+					!pair.conflictingEvidence
+				)
+					continue;
+				reason = 'contradictory_decision';
+			}
+			if (!conflict) {
+				conflict = {
+					ruleId: rule.id,
+					evidenceFingerprint: candidate.evidenceFingerprint,
+					approvedAt,
+					detectedAt: now,
+					reason,
+					status: 'needs_review',
+					nextActor: 'human',
+					nextAction:
+						'Owner: review the accepted examples and later evidence, then explicitly edit or disable the rule in Rules. Live policy remains unchanged.',
+					evidence: [],
+				};
+				conflicts.push(conflict);
+			}
+			if (reason === 'source_corrected') conflict.reason = reason;
+			if (!conflict.evidence.some((source) => canonicalJson(source) === canonicalJson(evidence)))
+				conflict.evidence.push(evidence);
+		}
+	}
+	const candidates = file.candidates?.filter(
+		(candidate) =>
+			fresh.get(candidate.id)?.evidenceFingerprint === candidate.evidenceFingerprint &&
+			!file.rejections?.some(
+				(item) =>
+					item.candidateId === candidate.id &&
+					item.evidenceFingerprint === candidate.evidenceFingerprint
+			)
+	);
+	return {
+		...file,
+		...(candidates ? { candidates, proposals: candidates.map((candidate) => candidate.rule) } : {}),
+		conflicts,
+	};
 }

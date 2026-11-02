@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
@@ -11,11 +11,12 @@ async function processMarkdown(
 	fileTree: FileNode[],
 	cwd: string,
 	projectRoot?: string,
-	homeDir?: string
+	homeDir?: string,
+	pathExists?: (absolutePath: string) => boolean | undefined
 ): Promise<string> {
 	const result = await unified()
 		.use(remarkParse)
-		.use(remarkFileLinks, { fileTree, cwd, projectRoot, homeDir })
+		.use(remarkFileLinks, { fileTree, cwd, projectRoot, homeDir, pathExists })
 		.use(remarkStringify)
 		.process(content);
 	return String(result);
@@ -511,6 +512,90 @@ describe('remarkFileLinks', () => {
 			);
 			expect(result).toContain('[/other/place/report.md](file:///other/place/report.md)');
 			expect(result).not.toContain('file:///handoff');
+		});
+
+		// A slash command in prose followed, much later, by a URL ending in a
+		// file name read as one path whose root directory was the whole sentence.
+		it('does not link a slash command that runs into a URL ending in a file name', async () => {
+			const result = await processMarkdown(
+				"let's modify the /maestro-build command so that we upload it to example.com/dropbox/maestro.zip then offer it",
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+			expect(result).not.toContain('maestro-build command](');
+		});
+
+		it('still links spaces below the root directory', async () => {
+			const result = await processMarkdown(
+				'Synced to /Volumes/My Drive/notes/plan.md today.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('(<file:///Volumes/My Drive/notes/plan.md>)');
+		});
+
+		describe('with a pathExists check', () => {
+			const spaced = 'Synced to /Volumes/My Drive/notes/plan.md today.';
+
+			it('links a path with whitespace once it is known to exist', async () => {
+				const pathExists = vi.fn(() => true);
+				const result = await processMarkdown(
+					spaced,
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					pathExists
+				);
+				expect(pathExists).toHaveBeenCalledWith('/Volumes/My Drive/notes/plan.md');
+				expect(result).toContain('(<file:///Volumes/My Drive/notes/plan.md>)');
+			});
+
+			it.each([
+				['missing', false],
+				['still being checked', undefined],
+			])('leaves a path with whitespace as text while it is %s', async (_label, answer) => {
+				const result = await processMarkdown(
+					spaced,
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					() => answer
+				);
+				expect(result).not.toContain('file://');
+			});
+
+			it('trusts the file tree for a path with whitespace inside the project', async () => {
+				const pathExists = vi.fn(() => false);
+				const result = await processMarkdown(
+					'See /Users/pedram/Project/Notes/Meeting Notes.md for details.',
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					pathExists
+				);
+				expect(pathExists).not.toHaveBeenCalled();
+				expect(result).toContain('(<maestro-file://Notes/Meeting Notes.md>)');
+			});
+
+			it('does not check a path without whitespace', async () => {
+				const pathExists = vi.fn(() => false);
+				const result = await processMarkdown(
+					'Backup at /other/place/archive.tar.gz is ready.',
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					pathExists
+				);
+				expect(pathExists).not.toHaveBeenCalled();
+				expect(result).toContain('(file:///other/place/archive.tar.gz)');
+			});
 		});
 
 		// Chinese and Japanese put no space between words, so a path written

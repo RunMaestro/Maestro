@@ -56,7 +56,7 @@ describe('resolveMaestroPaths', () => {
 			isPackaged: true,
 			isDevelopment: false,
 		});
-		const expectedUserData = path.join(tempDir, '.config', 'Maestro');
+		const expectedUserData = path.join(tempDir, '.config', 'maestro');
 
 		expect(paths).toEqual({
 			userDataDir: expectedUserData,

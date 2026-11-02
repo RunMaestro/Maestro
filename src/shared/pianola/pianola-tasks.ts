@@ -25,6 +25,12 @@ export type PianolaTaskStatus =
 	| 'failed'
 	| 'blocked'
 	| 'skipped';
+export interface PianolaTaskValidation {
+	command: string[];
+	target: string;
+	artifacts?: string[];
+	timeoutSeconds?: number;
+}
 
 /** One unit of work in a plan, with its dependency edges and runtime binding. */
 export interface PianolaTask {
@@ -44,17 +50,36 @@ export interface PianolaTask {
 	tabId?: string;
 	/** Failure detail, populated when status is 'failed'. */
 	error?: string;
+	/** Machine-readable controller hold; error remains human-readable detail only. */
+	holdReason?: 'acceptance' | 'delivery_uncertain';
 	/** The captured AgentRun id this task is bound to (F8 / ISC-8.1), so the task
 	 *  and its real run are one record, not a duplicate projection. */
 	runId?: string;
+	/** Physical process receipt for the current worker; fixes keep runId as the acceptance ledger. */
+	executionRunId?: string;
 	/** Count of bounded auto-fix attempts (F8 / ISC-8.8). Escalates when capped. */
 	fixAttempts?: number;
+	/** Named AgentRun checks required before dependents may start. Omit for legacy execution-only tasks. */
+	requiredChecks?: string[];
+	/** Stable transcript observation after confirmed process completion. */
+	completionCursor?: string;
+	/** Transcript length when the current run (dispatch or fix) was sent, so a run that
+	 *  finishes between two polls is still recognised by the reply that follows it. */
+	dispatchedMessageCount?: number;
+	/** Id of the last transcript message captured on the target tab BEFORE the
+	 * current dispatch or fix; `null` when that transcript was empty. Id boundaries
+	 * remain valid when a capped history tail would hide a length offset. */
+	dispatchedMessageId?: string | null;
+	validation?: PianolaTaskValidation;
+	/** Consecutive infrastructure-unknown verdicts for the current completed run. */
+	validationUnknownAttempts?: number;
 }
 
 /** A full plan: an ordered set of tasks forming a DAG. */
 export interface PianolaPlan {
 	id: string;
 	title: string;
+	programId?: string;
 	/** Epoch ms the plan was created. */
 	createdAt: number;
 	tasks: PianolaTask[];
@@ -73,7 +98,16 @@ const TASK_STATUSES: readonly PianolaTaskStatus[] = [
 
 const TERMINAL_STATUSES: readonly PianolaTaskStatus[] = ['done', 'failed', 'skipped'];
 
-const OPTIONAL_STRING_FIELDS = ['agentId', 'agentType', 'cwd', 'tabId', 'error'] as const;
+const OPTIONAL_STRING_FIELDS = [
+	'agentId',
+	'agentType',
+	'cwd',
+	'tabId',
+	'error',
+	'runId',
+	'executionRunId',
+	'completionCursor',
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -181,7 +215,71 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 			ok = false;
 		}
 	}
+	if (raw.validation !== undefined) {
+		const v = raw.validation;
+		if (
+			!isRecord(v) ||
+			!isStringArray(v.command) ||
+			!v.command.length ||
+			v.command.some((arg) => !arg) ||
+			typeof v.target !== 'string' ||
+			!v.target.trim() ||
+			(v.artifacts !== undefined && !isStringArray(v.artifacts)) ||
+			(v.timeoutSeconds !== undefined &&
+				(typeof v.timeoutSeconds !== 'number' ||
+					!Number.isFinite(v.timeoutSeconds) ||
+					v.timeoutSeconds <= 0))
+		) {
+			errors.push('Task ' + label + ' has invalid validation (command and target required).');
+			ok = false;
+		}
+	}
+	if (
+		raw.validationUnknownAttempts !== undefined &&
+		(!Number.isInteger(raw.validationUnknownAttempts) ||
+			(raw.validationUnknownAttempts as number) < 0)
+	) {
+		errors.push('Task ' + label + ' has invalid validationUnknownAttempts.');
+		ok = false;
+	}
+	if (
+		raw.fixAttempts !== undefined &&
+		(!Number.isInteger(raw.fixAttempts) || (raw.fixAttempts as number) < 0)
+	) {
+		errors.push('Task ' + label + ' has invalid fixAttempts.');
+		ok = false;
+	}
+	if (
+		raw.dispatchedMessageId !== undefined &&
+		raw.dispatchedMessageId !== null &&
+		typeof raw.dispatchedMessageId !== 'string'
+	) {
+		errors.push('Task ' + label + ' has invalid dispatchedMessageId.');
+		ok = false;
+	}
 
+	if (
+		raw.requiredChecks !== undefined &&
+		(!isStringArray(raw.requiredChecks) || raw.requiredChecks.some((name) => !name.trim()))
+	) {
+		errors.push(`Task ${label} requiredChecks must be an array of non-empty strings.`);
+		ok = false;
+	}
+	if (
+		raw.fixAttempts !== undefined &&
+		(!Number.isInteger(raw.fixAttempts) || (raw.fixAttempts as number) < 0)
+	) {
+		errors.push(`Task ${label} fixAttempts must be a non-negative integer.`);
+		ok = false;
+	}
+	if (
+		raw.holdReason !== undefined &&
+		raw.holdReason !== 'acceptance' &&
+		raw.holdReason !== 'delivery_uncertain'
+	) {
+		errors.push(`Task ${label} holdReason must be acceptance or delivery_uncertain.`);
+		ok = false;
+	}
 	if (!ok) return null;
 
 	const task: PianolaTask = {
@@ -194,6 +292,19 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 	for (const field of OPTIONAL_STRING_FIELDS) {
 		if (typeof raw[field] === 'string') task[field] = raw[field] as string;
 	}
+	if (isStringArray(raw.requiredChecks)) task.requiredChecks = [...raw.requiredChecks];
+	if (raw.validation !== undefined)
+		task.validation = raw.validation as unknown as PianolaTaskValidation;
+	if (raw.validationUnknownAttempts !== undefined)
+		task.validationUnknownAttempts = raw.validationUnknownAttempts as number;
+	if (typeof raw.runId === 'string') task.runId = raw.runId;
+	if (Number.isInteger(raw.fixAttempts)) task.fixAttempts = raw.fixAttempts as number;
+	if (Number.isInteger(raw.dispatchedMessageCount))
+		task.dispatchedMessageCount = raw.dispatchedMessageCount as number;
+	if (raw.holdReason === 'acceptance' || raw.holdReason === 'delivery_uncertain')
+		task.holdReason = raw.holdReason;
+	if (raw.dispatchedMessageId === null || typeof raw.dispatchedMessageId === 'string')
+		task.dispatchedMessageId = raw.dispatchedMessageId;
 	return task;
 }
 
@@ -217,6 +328,9 @@ export function validatePlan(raw: unknown): { plan: PianolaPlan | null; errors: 
 	}
 	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) {
 		errors.push('Plan createdAt must be a finite number.');
+	}
+	if (raw.programId !== undefined && (typeof raw.programId !== 'string' || !raw.programId)) {
+		errors.push('Plan programId must be a non-empty string when provided.');
 	}
 	if (!Array.isArray(raw.tasks)) {
 		errors.push('Plan tasks must be an array.');
@@ -257,6 +371,7 @@ export function validatePlan(raw: unknown): { plan: PianolaPlan | null; errors: 
 	const plan: PianolaPlan = {
 		id: raw.id as string,
 		title: raw.title as string,
+		...(raw.programId !== undefined ? { programId: raw.programId as string } : {}),
 		createdAt: raw.createdAt as number,
 		tasks,
 	};
@@ -287,23 +402,98 @@ export function markTaskStatus(
 	taskId: string,
 	status: PianolaTaskStatus,
 	patch?: Partial<
-		Pick<PianolaTask, 'tabId' | 'agentId' | 'agentType' | 'error' | 'runId' | 'fixAttempts'>
+		Pick<
+			PianolaTask,
+			| 'tabId'
+			| 'agentId'
+			| 'agentType'
+			| 'error'
+			| 'runId'
+			| 'executionRunId'
+			| 'fixAttempts'
+			| 'completionCursor'
+			| 'holdReason'
+			| 'fixAttempts'
+			| 'dispatchedMessageCount'
+			| 'dispatchedMessageId'
+			| 'validationUnknownAttempts'
+		>
 	>
 ): PianolaPlan {
 	const tasks = plan.tasks.map((task) => {
 		if (task.id !== taskId) return task;
 		const next: PianolaTask = { ...task, status };
 		if (patch) {
-			if (patch.tabId !== undefined) next.tabId = patch.tabId;
+			if ('tabId' in patch) next.tabId = patch.tabId;
 			if (patch.agentId !== undefined) next.agentId = patch.agentId;
 			if (patch.agentType !== undefined) next.agentType = patch.agentType;
-			if (patch.error !== undefined) next.error = patch.error;
-			if (patch.runId !== undefined) next.runId = patch.runId;
+			if ('error' in patch) next.error = patch.error;
+			if ('holdReason' in patch) next.holdReason = patch.holdReason;
+			if ('runId' in patch) next.runId = patch.runId;
+			if ('executionRunId' in patch) next.executionRunId = patch.executionRunId;
 			if (patch.fixAttempts !== undefined) next.fixAttempts = patch.fixAttempts;
+			if (patch.completionCursor !== undefined) next.completionCursor = patch.completionCursor;
+			if (patch.validationUnknownAttempts !== undefined)
+				next.validationUnknownAttempts = patch.validationUnknownAttempts;
+			if (patch.dispatchedMessageCount !== undefined)
+				next.dispatchedMessageCount = patch.dispatchedMessageCount;
+			if (patch.dispatchedMessageId !== undefined)
+				next.dispatchedMessageId = patch.dispatchedMessageId;
 		}
 		return next;
 	});
 	return { ...plan, tasks };
+}
+
+/** Requeue reviewed work while preserving its oracle, role agent, and completed dependencies. */
+export function revisePlanTask(
+	plan: PianolaPlan,
+	taskId: string,
+	prompt: string,
+	attemptId?: string
+): PianolaPlan {
+	if (!prompt.trim()) throw new Error('A revised task requires a non-empty prompt.');
+	const task = plan.tasks.find((entry) => entry.id === taskId);
+	if (!task) throw new Error(`No task with id "${taskId}" in plan "${plan.id}".`);
+	if (task.status !== 'needs_review' && task.status !== 'failed')
+		throw new Error(`Task "${taskId}" must be awaiting review or failed before revision.`);
+	const revised: PianolaTask = {
+		...task,
+		prompt,
+		status: 'pending',
+		...(attemptId !== undefined ? { runId: attemptId } : {}),
+	};
+	delete revised.tabId;
+	if (attemptId === undefined) delete revised.runId;
+	delete revised.error;
+	delete revised.fixAttempts;
+	delete revised.validationUnknownAttempts;
+	delete revised.dispatchedMessageCount;
+	delete revised.dispatchedMessageId;
+	const byId = new Map(plan.tasks.map((entry) => [entry.id, entry]));
+	byId.set(taskId, revised);
+	const reopened = new Set([taskId]);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const original of plan.tasks) {
+			const entry = byId.get(original.id)!;
+			if (entry.status !== 'blocked' || !entry.dependsOn.some((id) => reopened.has(id))) continue;
+			if (
+				entry.dependsOn.some((id) => {
+					const status = byId.get(id)?.status;
+					return status === 'failed' || status === 'skipped' || status === 'blocked';
+				})
+			)
+				continue;
+			const next: PianolaTask = { ...entry, status: 'pending' };
+			delete next.error;
+			byId.set(entry.id, next);
+			reopened.add(entry.id);
+			changed = true;
+		}
+	}
+	return { ...plan, tasks: plan.tasks.map((entry) => byId.get(entry.id)!) };
 }
 
 /**

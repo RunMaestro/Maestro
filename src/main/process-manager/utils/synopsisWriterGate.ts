@@ -23,18 +23,36 @@ export interface SynopsisWriterGateResult {
 	elapsedMs: number;
 }
 
-function waitForExit(registry: ProcessRegistry, sessionId: string, ms: number): Promise<boolean> {
-	return new Promise((resolve) => {
+function waitForExit(
+	registry: ProcessRegistry,
+	sessionId: string,
+	ms: number,
+	signal?: AbortSignal
+): Promise<boolean> {
+	return new Promise((resolve, reject) => {
+		const onAbort = () => {
+			cleanup();
+			reject(signal?.reason ?? new Error('Agent run cancelled'));
+		};
 		const onExit = (exitedId: string) => {
 			if (exitedId === sessionId) settle(true);
 		};
 		const timer = setTimeout(() => settle(false), ms);
-		function settle(exited: boolean) {
+		function cleanup() {
 			clearTimeout(timer);
 			registry.off('exit', onExit);
+			signal?.removeEventListener('abort', onAbort);
+		}
+		function settle(exited: boolean) {
+			cleanup();
 			resolve(exited);
 		}
 		registry.on('exit', onExit);
+		signal?.addEventListener('abort', onAbort, { once: true });
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
 		// Subscribe first, then check: an exit between the scan and the
 		// subscription would otherwise be missed and cost the full wait.
 		if (!registry.get(sessionId)) settle(true);
@@ -57,8 +75,9 @@ function waitForExit(registry: ProcessRegistry, sessionId: string, ms: number): 
 export async function awaitSynopsisWriters(
 	registry: ProcessRegistry,
 	agentSessionId: string,
-	opts: { waitMs?: number; killGraceMs?: number } = {}
+	opts: { waitMs?: number; killGraceMs?: number; signal?: AbortSignal } = {}
 ): Promise<SynopsisWriterGateResult> {
+	opts.signal?.throwIfAborted();
 	const startedAt = Date.now();
 	const writers = registry
 		.getAll()
@@ -71,10 +90,11 @@ export async function awaitSynopsisWriters(
 	const killed: string[] = [];
 	await Promise.all(
 		writers.map(async (sessionId) => {
-			if (await waitForExit(registry, sessionId, waitMs)) return;
+			if (await waitForExit(registry, sessionId, waitMs, opts.signal)) return;
+			opts.signal?.throwIfAborted();
 			killed.push(sessionId);
 			registry.kill(sessionId);
-			await waitForExit(registry, sessionId, killGraceMs);
+			await waitForExit(registry, sessionId, killGraceMs, opts.signal);
 		})
 	);
 	return { waitedFor: writers, killed, elapsedMs: Date.now() - startedAt };

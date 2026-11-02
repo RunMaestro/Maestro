@@ -29,6 +29,8 @@ import { isWindows } from '../platformDetection';
 export interface PianolaPolicyContext {
 	projectPath?: string;
 	tabId?: string;
+	agentId?: string;
+	groupId?: string | null;
 }
 
 /**
@@ -47,11 +49,16 @@ function normalizeScopeId(value: string | undefined): string {
 
 /** True if a rule's scope applies in the given context. */
 export function ruleAppliesToScope(rule: PianolaRule, ctx: PianolaPolicyContext): boolean {
+	if (rule.match.groupId !== undefined && rule.match.groupId !== ctx.groupId) return false;
 	switch (rule.scope) {
 		case 'global':
 			return true;
 		case 'project':
 			return !!rule.scopeId && normalizeScopeId(rule.scopeId) === normalizeScopeId(ctx.projectPath);
+		case 'agent':
+			return !!rule.scopeId && rule.scopeId === ctx.agentId;
+		case 'group':
+			return !!rule.scopeId && rule.scopeId === ctx.groupId;
 		case 'tab':
 			return !!rule.scopeId && normalizeScopeId(rule.scopeId) === normalizeScopeId(ctx.tabId);
 		default:
@@ -66,6 +73,7 @@ export function ruleAppliesToScope(rule: PianolaRule, ctx: PianolaPolicyContext)
  */
 export function matchHasNarrowingPredicate(match: PianolaRule['match']): boolean {
 	return (
+		!!match.exactQuestion ||
 		!!match.maxRisk ||
 		(!!match.kinds && match.kinds.length > 0) ||
 		(!!match.topicIncludes && match.topicIncludes.length > 0)
@@ -83,6 +91,8 @@ export function ruleMatchesClassification(
 	classification: PianolaClassification
 ): boolean {
 	const { match } = rule;
+	if (match.exactQuestion !== undefined && classification.questionText !== match.exactQuestion)
+		return false;
 
 	if (match.maxRisk && !riskAtMost(classification.risk, match.maxRisk)) {
 		return false;
@@ -188,4 +198,15 @@ export function decide(
 		matchedRuleId: rule.id,
 		reason: 'matched auto-answer rule',
 	};
+}
+
+/** Conservative semantic mapping. Unknown wording/commands require human judgment.
+ * Conditions retain the entire question byte-for-byte; no synonym inference.
+ */
+export function learnableDecisionAction(question: string): string | null {
+	const match =
+		/^(?:May I|Can I|Should I) run `(git status|git diff --stat|git log -5 --oneline)`\?$/.exec(
+			question
+		);
+	return match ? `inspect:${match[1]}` : null;
 }

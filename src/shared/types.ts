@@ -785,6 +785,9 @@ export interface AgentError {
 	/** The category of error */
 	type: AgentErrorType;
 
+	/** Set only when the host supervisor terminates the turn; overrides a successful process exit. */
+	source?: 'host-supervision';
+
 	/** Human-readable error message for display */
 	message: string;
 
@@ -994,6 +997,13 @@ export interface SshRemoteConfig {
 	 * somewhere else to paste back.
 	 */
 	sshOptionsDisabled?: Record<string, string>;
+
+	/**
+	 * Host path at which this remote's filesystem root is also visible locally
+	 * (`\\wsl.localhost\Ubuntu` for a WSL distro, an SMB or sshfs mount). Lets
+	 * host-side readers such as Cue open an agent's remote project root.
+	 */
+	hostMountRoot?: string;
 
 	/** Enable this remote configuration */
 	enabled: boolean;

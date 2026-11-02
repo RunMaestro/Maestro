@@ -2,9 +2,7 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as os from 'os';
-import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -18,12 +16,18 @@ import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder
 import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
-import { saveImageToTempFile, buildImagePromptPrefix, cleanupTempFiles } from '../utils/imageUtils';
+import {
+	saveImageToTempFile,
+	savePromptToTempFile,
+	buildImagePromptPrefix,
+	cleanupTempFiles,
+} from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
 	newRemotePidFilePath,
@@ -36,7 +40,16 @@ import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/wind
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
-import { INTERACTIVE_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
+import {
+	INTERACTIVE_STOP_GRACE_MS,
+	stopProcess,
+} from '../../../shared/maestro-lib/control/termination';
+import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+} from '../../../shared/plugins/headless-agent-timeouts';
 
 // The log line each Windows shell promotion writes (see windowsShellReason).
 const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
@@ -46,6 +59,9 @@ const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
 	'shebang-script': '[ProcessManager] Auto-enabling shell for Windows to execute shell script',
 };
 
+/** Prompts longer than this go through a file on Windows; well under PowerShell's ~32K argv cap. */
+const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
+
 /**
  * Handles spawning of child processes (non-PTY).
  * Used for AI agents in batch mode and interactive mode.
@@ -54,6 +70,7 @@ export class ChildProcessSpawner {
 	private stdoutHandler: StdoutHandler;
 	private stderrHandler: StderrHandler;
 	private exitHandler: ExitHandler;
+	private readonly supervisions = new Map<string, () => void>();
 
 	constructor(
 		private processes: Map<string, ManagedProcess>,
@@ -91,6 +108,7 @@ export class ChildProcessSpawner {
 			imageArgs,
 			imagePromptBuilder,
 			promptArgs,
+			promptFileArgs,
 			contextWindow,
 			ompModelCatalogKey,
 			customEnvVars,
@@ -129,6 +147,31 @@ export class ChildProcessSpawner {
 		// inside bash -c), skip the appending paths below and treat it as already-added.
 		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
+		const deliverPromptFile = promptFileArgs ?? getAgentDefinition(toolType)?.promptFileArgs;
+		const appendPromptArgs = (text: string): void => {
+			// File-backed delivery avoids Windows' argv limit, including image turns.
+			const promptFilePath =
+				isWindows() && deliverPromptFile && text.length > PROMPT_FILE_THRESHOLD_CHARS
+					? savePromptToTempFile(text)
+					: null;
+			if (promptFilePath && deliverPromptFile) {
+				tempFiles.push(promptFilePath);
+				finalArgs = [...finalArgs, ...deliverPromptFile(promptFilePath)];
+				logger.info(
+					'[ProcessManager] Delivering long prompt through a temp file',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						promptLength: text.length,
+					}
+				);
+			} else {
+				finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, text)];
+			}
+			promptAddedToArgs = true;
+		};
+
 		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 			// For agents that support stream-json input (like Claude Code)
 			// Always add --input-format stream-json when sending images via stdin.
@@ -163,11 +206,7 @@ export class ChildProcessSpawner {
 					: buildImagePromptPrefix(tempFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
-					finalArgs = [
-						...finalArgs,
-						...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
-					];
-					promptAddedToArgs = true;
+					appendPromptArgs(effectivePrompt);
 				}
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
 					sessionId,
@@ -185,8 +224,7 @@ export class ChildProcessSpawner {
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
-					finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-					promptAddedToArgs = true;
+					appendPromptArgs(prompt);
 				}
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
 					sessionId,
@@ -196,11 +234,8 @@ export class ChildProcessSpawner {
 				});
 			}
 		} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
-			// Regular batch mode - prompt as CLI arg
-			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
-			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-			promptAddedToArgs = true;
+			finalArgs = args;
+			appendPromptArgs(prompt);
 		} else {
 			finalArgs = args;
 		}
@@ -246,29 +281,6 @@ export class ChildProcessSpawner {
 		});
 
 		try {
-			// OMP expands @file attachments, including on resume. Keep its full prompt
-			// out of the Windows command line without assuming stdin support.
-			const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
-			if (
-				isWindows() &&
-				effectivePrompt &&
-				promptAddedToArgs &&
-				promptFileArgs &&
-				!config.sshStdinScript &&
-				!config.promptAlreadyInArgs
-			) {
-				const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
-				tempFiles.push(promptFile);
-				fs.writeFileSync(promptFile, effectivePrompt, {
-					encoding: 'utf8',
-					mode: 0o600,
-					flag: 'wx',
-				});
-				// `--` makes OMP treat @file as a literal message, not an attachment.
-				const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
-				finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
-			}
-
 			// Build environment
 			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
@@ -616,14 +628,89 @@ export class ChildProcessSpawner {
 			// which stops working the moment the successor finishes and deletes its
 			// own entry - at which point a predecessor still draining would look
 			// current again. See process-manager/generation.ts.
+			this.supervisions.get(sessionId)?.();
 			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 			this.processes.set(sessionId, managedProcess);
 
 			// The run layer settles once the streams have ended, so every line the
 			// process wrote has been read by then. A process that never started is
 			// reported once, as an error, rather than as an error and then a close.
-			void turn.done.then((exit) => {
+			let forceCompletion!: () => void;
+			const forced = new Promise<undefined>((resolve) => {
+				forceCompletion = () => resolve(undefined);
+			});
+			// Codex exec is one process per turn. Bound startup and semantic silence
+			// without an absolute ceiling on healthy desktop turns. Other
+			// providers and interactive terminal shells keep their own lifecycle.
+			let supervisionFailed = false;
+			let supervisionFailure: string | undefined;
+			const supervision =
+				toolType === 'codex' && (isBatchMode || stdinText !== undefined)
+					? superviseAgentProcess(childProcess, {
+							startupMs: CODEX_STARTUP_TIMEOUT_MS,
+							idle: HEADLESS_IDLE_PROFILE,
+							onStop: (reason) => {
+								supervisionFailed = true;
+								if (isSuperseded()) return;
+								if (sshRemotePidFile)
+									signalRemoteAgent(
+										{
+											sshCommand: command,
+											sshArgs: finalArgs,
+											pidFile: sshRemotePidFile,
+											sessionId,
+										},
+										'terminate'
+									);
+								// Record failure now, but let termination drain its last bytes.
+								// Suppress generic exit classification without suppressing text.
+								supervisionFailure = reason;
+								managedProcess.errorEmitted = true;
+							},
+							onForcedStop: forceCompletion,
+						})
+					: undefined;
+			// The existing channel includes whole lines, error envelopes and final
+			// unterminated lines. Generation and identity keep a predecessor from
+			// consuming a replacement's events under the same session id.
+			const onParsedEvent = (sid: string, event: ParsedEvent): void => {
+				if (sid === sessionId && !isSuperseded() && this.processes.get(sid) === managedProcess)
+					supervision?.observe(event);
+			};
+			const disposeSupervision = (): void => {
+				this.emitter.off('parsed-event', onParsedEvent);
+				supervision?.dispose();
+				if (this.supervisions.get(sessionId) === supersedeSupervision)
+					this.supervisions.delete(sessionId);
+			};
+			const supersedeSupervision = (): void => {
+				// Disposal cancels the supervisor's shared stop ladder. Finish an
+				// already-failed predecessor first so SIGTERM resistance cannot leave
+				// an unowned writer behind when a replacement takes this session.
+				if (supervisionFailed)
+					stopProcess(
+						{ child: childProcess },
+						{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
+					);
+				disposeSupervision();
+				forceCompletion();
+			};
+			if (supervision) {
+				this.emitter.on('parsed-event', onParsedEvent);
+				this.supervisions.set(sessionId, supersedeSupervision);
+			}
+			void Promise.race([turn.done, forced]).then((completed) => {
+				disposeSupervision();
+				const exit = completed
+					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
+					: {
+							exitCode: 1,
+							signal: null,
+							spawnError: undefined,
+							stdinError: undefined,
+						};
 				if (isSuperseded()) {
+					// Release only this generation's files, never the current map entry's.
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
 						pid: childProcess.pid,
@@ -631,6 +718,7 @@ export class ChildProcessSpawner {
 						error: exit.spawnError ? String(exit.spawnError) : undefined,
 					});
 					cleanupTempFiles(managedProcess.tempFiles ?? []);
+					managedProcess.tempFiles = undefined;
 					return;
 				}
 				if (exit.spawnError) {
@@ -659,6 +747,35 @@ export class ChildProcessSpawner {
 				// `signal` is what tells a kill from a clean exit once `code || 0` has
 				// turned the killed process's null code into 0. `stdinError` says the
 				// prompt never fully reached the agent.
+				// ExitHandler parses the final unterminated line and flushes data
+				// before exit. Publish our host failure first among exit observers,
+				// after that drain, so late output cannot hide or overtake the error.
+				const onSupervisedExit = (sid: string): void => {
+					if (sid !== sessionId || isSuperseded()) return;
+					this.emitter.off('exit', onSupervisedExit);
+					if (!supervisionFailure || managedProcess.interrupted) return;
+					try {
+						emitAgentErrorAfterOutput(
+							this.emitter,
+							this.bufferManager,
+							sessionId,
+							managedProcess,
+							{
+								type: 'agent_crashed',
+								source: 'host-supervision',
+								message: supervisionFailure,
+								recoverable: true,
+								agentId: toolType,
+								sessionId,
+								timestamp: Date.now(),
+							},
+							{ flushStreamedText: true }
+						);
+					} catch (error) {
+						void captureException(error);
+					}
+				};
+				if (supervisionFailure) this.emitter.prependListener('exit', onSupervisedExit);
 				return this.exitHandler
 					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
@@ -676,40 +793,43 @@ export class ChildProcessSpawner {
 							this.processes.delete(sessionId);
 							this.emitter.emit('exit', sessionId, exit.exitCode || 0);
 						}
-					});
+					})
+					.finally(() => this.emitter.off('exit', onSupervisedExit));
 			});
 
 			// The run layer settles on `close`, which waits on every holder of the
 			// stdio pipes, and an SSH ControlMaster or a stray grandchild can hold
 			// them long after the child itself is dead. Without this, a stopped SSH
 			// turn left its entry behind and the tab's queue hot-looped against the
-			// spawn refusal.
-			armStdioCloseWatchdog(childProcess, {
-				onForceClose: () => {
-					logger.warn(
-						'[ProcessManager] stdio still open after exit, forcing close',
-						'ProcessManager',
-						{ sessionId, pid: childProcess.pid }
-					);
-					// For SSH the open stdio usually means the remote agent is still
-					// running behind a ControlMaster. Settling the turn while it keeps
-					// working would put a second writer on the session next turn.
-					if (sshRemotePidFile) {
-						signalRemoteAgent(
-							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
-							'terminate'
+			// spawn refusal. Supervised Codex turns already use the shared exit-drain
+			// watchdog and remote termination callback above.
+			if (!supervision)
+				armStdioCloseWatchdog(childProcess, {
+					onForceClose: () => {
+						logger.warn(
+							'[ProcessManager] stdio still open after exit, forcing close',
+							'ProcessManager',
+							{ sessionId, pid: childProcess.pid }
 						);
-					}
-				},
-			});
+						// For SSH the open stdio usually means the remote agent is still
+						// running behind a ControlMaster. Settling the turn while it keeps
+						// working would put a second writer on the session next turn.
+						if (sshRemotePidFile) {
+							signalRemoteAgent(
+								{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+								'terminate'
+							);
+						}
+					},
+				});
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
+			cleanupTempFiles(tempFiles);
 			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});
-			cleanupTempFiles(tempFiles);
 			return {
 				pid: -1,
 				success: false,

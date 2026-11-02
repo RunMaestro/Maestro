@@ -286,11 +286,6 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// Best-effort - null just falls back to the directory name downstream.
 	const identity = await readClaudeAccountIdentity(configDirKey);
 
-	// The sample worked, so forget whatever was last wrong with this config dir.
-	// Without this a dir that breaks, recovers, then breaks again the same way
-	// would stay silent until the re-report interval elapsed.
-	clearFailureHistory(configDirKey);
-
 	return {
 		sampledAt: new Date().toISOString(),
 		configDirKey,
@@ -431,11 +426,14 @@ function classifySpawnError(err: unknown): string {
 }
 
 /**
- * Last reported failure signature per config dir, plus when it was reported.
+ * When each failure signature was last reported, per config dir. Every
+ * signature keeps its own clock: a dir that alternates between two failures
+ * (seen in the field as `exit: 1` and `exit: 143` on the same account) would
+ * otherwise look "new" on every flip and report on every tick.
  * Module-level because the sampler is a set of free functions sharing one
  * process; `resetFailureReportingForTests` clears it between cases.
  */
-const lastReportedFailure = new Map<string, { signature: string; reportedAt: number }>();
+const lastReportedFailure = new Map<string, Map<string, number>>();
 
 /**
  * Re-report a failure that has not changed only this often. Long enough that a
@@ -454,29 +452,28 @@ export const FAILURE_REREPORT_INTERVAL_MS = 6 * 60 * 60 * 1000;
  * distinct (stage, reason) signature per config dir, re-report an unchanged one
  * every `FAILURE_REREPORT_INTERVAL_MS`, and suppress the rest.
  *
+ * A successful sample does NOT reset the clock. It used to, and an account that
+ * flaps (fail, succeed, fail) then reported on every failing tick. The interval
+ * already bounds how long a recurring failure stays quiet, so nothing is hidden
+ * for longer than `FAILURE_REREPORT_INTERVAL_MS`.
+ *
  * Note what this deliberately does NOT do: it makes no claim that any exit code
  * is expected. Every distinct failure a user hits still reaches Sentry, and a
  * regression that hits many installs still shows up as many events, one per
  * install, instead of being buried under one install's repeats.
  */
 function shouldReportFailure(configDirKey: string, signature: string, now: number): boolean {
-	const previous = lastReportedFailure.get(configDirKey);
-	if (previous && previous.signature === signature) {
-		if (now - previous.reportedAt < FAILURE_REREPORT_INTERVAL_MS) {
-			return false;
-		}
+	let reported = lastReportedFailure.get(configDirKey);
+	if (!reported) {
+		reported = new Map();
+		lastReportedFailure.set(configDirKey, reported);
 	}
-	lastReportedFailure.set(configDirKey, { signature, reportedAt: now });
+	const reportedAt = reported.get(signature);
+	if (reportedAt !== undefined && now - reportedAt < FAILURE_REREPORT_INTERVAL_MS) {
+		return false;
+	}
+	reported.set(signature, now);
 	return true;
-}
-
-/**
- * Forget a config dir's failure history after a successful sample, so a
- * flapping account reports again the next time it breaks rather than staying
- * silent for the rest of the process's life.
- */
-function clearFailureHistory(configDirKey: string): void {
-	lastReportedFailure.delete(configDirKey);
 }
 
 /** Test-only: drop all remembered failure signatures. */

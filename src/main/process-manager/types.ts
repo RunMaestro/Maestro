@@ -47,6 +47,7 @@ export interface ProcessConfig {
 	imageArgs?: (imagePath: string) => string[];
 	imagePromptBuilder?: (imagePaths: string[]) => string;
 	promptArgs?: (prompt: string) => string[];
+	promptFileArgs?: (promptFilePath: string) => string[];
 	contextWindow?: number;
 	customEnvVars?: Record<string, string>;
 	noPromptSeparator?: boolean;
@@ -236,6 +237,8 @@ export interface CommandResult {
 export interface TurnSettlement {
 	outcome: TurnOutcome;
 	answerCaptured: boolean;
+	/** Bounded, redacted final assistant text for consumers racing renderer persistence. */
+	answerTail?: string;
 }
 
 /**

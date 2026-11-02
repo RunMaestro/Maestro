@@ -299,6 +299,28 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-pianola-auto-fix',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Automatic repairs',
+		description:
+			'Pianola supervision and bounded automatic repairs. Merge requires separate approval and is unavailable automatically.',
+		keywords: [
+			'pianola',
+			'autopilot',
+			'repair',
+			'automatic repairs',
+			'current mode disabled allow up to three repair attempts for orchestrated tasks that need review',
+			'repair workers can change files within their existing access',
+			'enabling including its autopilot cli alias does not change this permission',
+			'merging requires separate approval automatic merge is unavailable',
+			'supervision',
+			'merge',
+			'approval',
+		],
+		requiresEncore: 'pianola',
+	},
+	{
 		id: 'encore-concerto',
 		tab: 'encore',
 		tabLabel: 'Plugins',

@@ -9,6 +9,7 @@ import {
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	Link,
+	dataviewTruncationNote,
 	toWireValue,
 	type DataviewChangeEvent,
 	type DataviewResult,
@@ -141,6 +142,19 @@ describe('DataviewBlock', () => {
 		expect(container.querySelectorAll('tbody tr')[0].children[2].textContent).toBe('-');
 		expect(container.querySelectorAll('tbody tr')[0].querySelectorAll('li')).toHaveLength(2);
 		expect(container.querySelector('[data-dataview-count]')?.textContent).toBe('2 results');
+	});
+
+	it('says a result was cut at the row cap in place of the result count', async () => {
+		respond({ ...listOf(['People/A.md', 'People/B.md']), total: 4321 } as DataviewResult);
+		const { container } = renderBlock('LIST FROM "People"');
+
+		await waitFor(() =>
+			expect(container.querySelector('[data-dataview-truncated]')).not.toBeNull()
+		);
+		expect(container.querySelector('[data-dataview-truncated]')?.textContent).toBe(
+			dataviewTruncationNote({ total: 4321 }, 2)
+		);
+		expect(container.querySelector('[data-dataview-count]')).toBeNull();
 	});
 
 	it('opens a link through the surface with its absolute path', async () => {

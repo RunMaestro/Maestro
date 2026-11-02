@@ -248,6 +248,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
@@ -466,6 +467,7 @@ interface MaestroAPI {
 			Array<{
 				sessionId: string;
 				toolType: string;
+				/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 				pid: number;
 				cwd: string;
 				isTerminal: boolean;
@@ -4621,6 +4623,10 @@ interface MaestroAPI {
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
 	};
 
+	// User Journey API (per-agent log of user actions inside Maestro). Record
+	// through recordJourney() in src/renderer/services/userJourney.ts.
+	journey: JourneyApi;
+
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: {
 		suggest: (config: {
@@ -4822,8 +4828,6 @@ interface MaestroAPI {
 		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;
 		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
 		getEventCount: () => Promise<number>;
-		/** Can this data directory run Cue unattended? Same report as `maestro-cli cue engine check`. */
-		checkReadiness: () => Promise<import('../shared/cue/readiness').CueReadinessReport>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
 		/**
@@ -4861,13 +4865,14 @@ interface MaestroAPI {
 			projectRoot: string,
 			name: string
 		) => Promise<{ removed: boolean; reason?: string }>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
+		readYaml: (projectRoot: string, sessionId?: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,
 			content: string,
-			promptFiles?: Record<string, string>
+			promptFiles?: Record<string, string>,
+			sessionId?: string
 		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		deleteYaml: (projectRoot: string, sessionId?: string) => Promise<boolean>;
 		renamePipeline: (
 			oldName: string,
 			newName: string
@@ -4911,10 +4916,43 @@ interface MaestroAPI {
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
+		memory: (request: import('../shared/pianola/memory').MemoryRequest) => Promise<unknown>;
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		resolveDecision: (
+			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
+		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
+		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		superviseProgram: (programId: string) => Promise<void>;
+		setProgramStatus: (
+			programId: string,
+			status: import('../shared/pianola/pianola-programs').PianolaProgramStatus
+		) => Promise<void>;
+		getAsks: (
+			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;
+		resolveAsk: (
+			id: string,
+			option: string,
+			note?: string
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		dismissAsk: (id: string) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		getBrief: () => Promise<import('../shared/pianola/pianola-programs').PianolaBrief>;
+		revisePlanTask: (
+			planId: string,
+			taskId: string,
+			prompt?: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
+		skipPlanTask: (
+			planId: string,
+			taskId: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		confirmDesktopOwner: () => Promise<void>;
+		reviewSuggestion: (
+			review: import('../shared/pianola/storage').PianolaSuggestionReview
+		) => Promise<{ rules: PianolaRule[]; suggestions: PianolaSuggestionsFile }>;
 		applySuggestion: (payload: {
 			rule?: PianolaRule;
 			profile?: { text: string; projectPath?: string };

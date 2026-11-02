@@ -46,6 +46,7 @@ import { registerPairingRoutes } from '../lite/pairing/routes';
 
 import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
 import { logger } from '../utils/logger';
+import { resolvePianolaDecision } from '../pianola/pianola-decisions';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import { getLocalIpAddress } from '../utils/networkUtils';
 import {
@@ -579,6 +580,15 @@ export class WebServer {
 
 	setExecuteCommandCallback(callback: ExecuteCommandCallback): void {
 		this.callbackRegistry.setExecuteCommandCallback(callback);
+	}
+
+	/** Explicit renderer action, sharing native admission with manager answers. */
+	resolvePianolaHumanDecision(payload: unknown, actorId: string, principal?: 'owner') {
+		return resolvePianolaDecision(this.callbackRegistry, payload, {
+			kind: 'human',
+			actorId,
+			principal,
+		});
 	}
 
 	setInterruptSessionCallback(callback: InterruptSessionCallback): void {
@@ -1318,7 +1328,8 @@ export class WebServer {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				requireDeliveryReceipt?: boolean
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1328,7 +1339,8 @@ export class WebServer {
 					force,
 					images,
 					background,
-					mentionRouting
+					mentionRouting,
+					...(requireDeliveryReceipt ? [true] : [])
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1570,7 +1582,7 @@ export class WebServer {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
 			},
-			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// Bundles: the same service the Export Agent and Import Agent modals call, with
 			// the app context its IPC handlers own (live agents, renderer hand-off).
 			exportCueBundle: async (request) => {
 				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');

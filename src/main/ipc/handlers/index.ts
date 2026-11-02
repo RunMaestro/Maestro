@@ -86,6 +86,7 @@ import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
 import { registerTabsHandlers } from './tabs';
+import { registerJourneyHandlers } from './journey';
 import { registerContextTimelineHandlers } from './context-timeline';
 import { registerAgentRunHandlers } from './agent-run';
 import {
@@ -178,6 +179,7 @@ export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
 export { registerTabsHandlers };
+export { registerJourneyHandlers };
 export { registerContextTimelineHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };
@@ -404,7 +406,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
-	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	// Cue bundles - export / import pipelines and agents (Export Agent and Import Agent modals)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,
 		getMainWindow: deps.getMainWindow,

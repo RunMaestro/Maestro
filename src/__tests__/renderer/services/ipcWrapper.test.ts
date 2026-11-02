@@ -23,6 +23,31 @@ describe('ipcWrapper', () => {
 	});
 
 	describe('createIpcMethod', () => {
+		it('returns read defaults during reconnect without logging an application error', async () => {
+			const error = new Error(
+				'Not submitted: reconnecting to the host. Your current work is retained.'
+			);
+			const result = await createIpcMethod({
+				call: () => Promise.reject(error),
+				errorContext: 'Background read',
+				defaultValue: [],
+			});
+			expect(result).toEqual([]);
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+		});
+
+		it('preserves expected write rejection without logging it or replaying the write', async () => {
+			const error = new Error(
+				'Not submitted: restoring authoritative host state. Your current work is retained.'
+			);
+			const call = vi.fn().mockRejectedValue(error);
+			await expect(createIpcMethod({ call, errorContext: 'Write', rethrow: true })).rejects.toBe(
+				error
+			);
+			expect(call).toHaveBeenCalledOnce();
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+		});
+
 		describe('with defaultValue (swallow errors)', () => {
 			it('should return the result on success', async () => {
 				const result = await createIpcMethod({

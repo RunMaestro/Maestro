@@ -119,6 +119,8 @@ export interface ConsultObserver {
 /** A finished process. The text is read lazily so a parser that throws lands in the service's handling. */
 export interface ConsultEnd {
 	exitCode: number | null;
+	/** A host-supervised failure, even if a signalled launcher reports code zero. */
+	error?: string;
 	readText(): string;
 }
 
@@ -388,11 +390,11 @@ export function createConsultService() {
 			onSessionId: (agentSessionId) => {
 				if (agentSessionId) capturedAgentSessionId = agentSessionId;
 			},
-			onEnd: ({ exitCode, readText }) => {
+			onEnd: ({ exitCode, readText, error }) => {
 				if (settled) return;
 				settled = true;
 				release();
-				const code = exitCode ?? -1;
+				const code = (error && exitCode === 0 ? 1 : exitCode) ?? -1;
 				try {
 					const text = readText().trim();
 					// Only forward a captured provider session id on a SUCCESSFUL consult, so the
@@ -412,7 +414,7 @@ export function createConsultService() {
 							baseChunk({
 								chunk: text,
 								done: true,
-								error: consultExitError(target, code, text),
+								error: error || consultExitError(target, code, text),
 							})
 						);
 					} else if (text) {

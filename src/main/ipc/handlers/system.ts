@@ -34,7 +34,8 @@ import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
-import { isLinux } from '../../../shared/platformDetection';
+import { INSTALL_DIR_SYNC_PATH_ERROR, isInsideInstallDir } from '../../../shared/syncPath';
+import { isLinux, isMacOS } from '../../../shared/platformDetection';
 
 /**
  * `shell.openPath` that always settles.
@@ -68,6 +69,19 @@ export interface SystemHandlerDependencies {
 	app: App;
 	settingsStore: Store<MaestroSettings>;
 	bootstrapStore?: Store<BootstrapSettings>;
+}
+
+/**
+ * The directory an update replaces: the folder holding the executable, or on
+ * macOS the `.app` bundle around it (the updater swaps the whole bundle).
+ */
+function getInstallDir(app: App): string {
+	const exeDir = path.dirname(app.getPath('exe'));
+	if (isMacOS()) {
+		const bundle = /^(.*?\.app)(?:\/|$)/.exec(exeDir);
+		if (bundle) return bundle[1];
+	}
+	return exeDir;
 }
 
 /**
@@ -685,6 +699,11 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	ipcMain.handle('sync:setCustomPath', async (_event, newPath: string | null) => {
 		if (!deps.bootstrapStore) {
 			return { success: false, error: 'Bootstrap store not available' };
+		}
+
+		if (newPath && isInsideInstallDir(newPath, getInstallDir(app))) {
+			logger.warn(`Rejected Storage Location inside the install directory: ${newPath}`, 'Sync');
+			return { success: false, error: INSTALL_DIR_SYNC_PATH_ERROR };
 		}
 
 		const defaultPath = app.getPath('userData');

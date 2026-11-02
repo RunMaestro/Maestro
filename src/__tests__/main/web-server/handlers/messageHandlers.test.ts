@@ -5133,11 +5133,31 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.requestId).toBe('req-1');
 		});
 
-		it('returns an empty list when the callback is unconfigured rather than echoing', () => {
-			// Unknown-type echo would confuse the CLI's request/response pairing
-			// (`MaestroClient` matches by responseType). Returning the empty
-			// success shape keeps the wire contract intact even when the desktop
-			// hasn't wired up the callback yet - older builds on a newer CLI.
+		it('preserves the versioned native owner census and its original host capture time', () => {
+			const snapshot = {
+				supervisionVersion: 1,
+				complete: true,
+				capturedAt: 123,
+				owners: [
+					{
+						id: 'tabless',
+						cwd: '/project',
+						parentSessionId: null,
+						isPianola: false,
+						remote: false,
+					},
+				],
+				sessions: [],
+			};
+			(callbacks.listDesktopSessions as any).mockReturnValue(snapshot);
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-scope' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({ ...snapshot, success: true, requestId: 'req-scope' });
+		});
+
+		it('fails closed when the callback is unconfigured rather than retiring membership', () => {
+			// Preserve request/response pairing, but never treat missing metadata
+			// as evidence that every previously supervised tab has closed.
 			callbacks.listDesktopSessions = undefined;
 			handler.setCallbacks(callbacks);
 
@@ -5145,8 +5165,30 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('desktop_sessions_list');
-			expect(response.success).toBe(true);
-			expect(response.sessions).toEqual([]);
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Desktop sessions not configured');
+			expect(response.requestId).toBe('req-1');
+			expect(response.sessions).toBeUndefined();
+			expect(response.capturedAt).toBeUndefined();
+		});
+
+		it('returns a timestamped empty snapshot when the configured callback has no tabs', () => {
+			callbacks.listDesktopSessions = vi.fn().mockReturnValue([]);
+			handler.setCallbacks(callbacks);
+			const before = Date.now();
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-empty' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'desktop_sessions_list',
+				success: true,
+				sessions: [],
+				requestId: 'req-empty',
+				capturedAt: expect.any(Number),
+			});
+			expect(response.capturedAt).toBeGreaterThanOrEqual(before);
+			expect(response.capturedAt).toBeLessThanOrEqual(Date.now());
 		});
 	});
 

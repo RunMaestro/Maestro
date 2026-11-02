@@ -1,9 +1,13 @@
 // @vitest-environment node
 import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import * as termination from '../../../shared/maestro-lib/control/termination';
-import { superviseAgentProcess } from '../../../cli/services/agent-process-supervisor';
+import { createOutputParser } from '../../../shared/maestro-lib/parsers/parser-factory';
+import {
+	superviseAgentProcess,
+	assertHeadlessIdleProfile,
+} from '../../../cli/services/agent-process-supervisor';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
 afterEach(() => {
@@ -12,6 +16,134 @@ afterEach(() => {
 });
 
 describe('headless process supervision', () => {
+	it('does not confuse a failed kill with process exit, and observes a late exit after forced stop', async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), {
+			pid: undefined as number | undefined,
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+			stdout: { destroy: vi.fn() },
+			stderr: { destroy: vi.fn() },
+		});
+		const controller = new AbortController();
+		const onForcedStop = vi.fn();
+		const supervision = superviseAgentProcess(child as unknown as ChildProcess, {
+			signal: controller.signal,
+			onStop: vi.fn(),
+			onForcedStop,
+		});
+		let exited = false;
+		void supervision.processExited.then(() => {
+			exited = true;
+		});
+		controller.abort();
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(onForcedStop).toHaveBeenCalledOnce();
+		expect(child.stdout.destroy).toHaveBeenCalledOnce();
+		expect(child.stderr.destroy).toHaveBeenCalledOnce();
+		expect(vi.getTimerCount()).toBe(0);
+		expect(exited).toBe(false);
+		child.pid = 123;
+		child.emit('error', new Error('synthetic kill failure'));
+		await Promise.resolve();
+		expect(exited).toBe(false);
+		child.emit('exit', null, 'SIGKILL');
+		await supervision.processExited;
+		expect(exited).toBe(true);
+		supervision.dispose();
+		expect(child.listenerCount('error')).toBe(0);
+	});
+
+	it('confirms a failed spawn without waiting for an exit from a process that never existed', async () => {
+		const child = Object.assign(new EventEmitter(), {
+			pid: undefined,
+			exitCode: null,
+			signalCode: null,
+		});
+		const supervision = superviseAgentProcess(child as unknown as ChildProcess, {
+			onStop: vi.fn(),
+			onForcedStop: vi.fn(),
+		});
+		child.emit('error', new Error('synthetic ENOENT'));
+		await supervision.processExited;
+		supervision.dispose();
+	});
+	it('validates an optional lifetime independently of the idle profile', () => {
+		const idle = { warnMs: 100, idleMs: 200, toolMs: 300 };
+		expect(() => assertHeadlessIdleProfile(idle)).not.toThrow();
+		for (const timeout of [0, -1, NaN, Infinity]) {
+			expect(() => assertHeadlessIdleProfile(idle, timeout)).toThrow(
+				'Invalid headless idle profile'
+			);
+			expect(() => assertHeadlessIdleProfile(undefined, timeout)).toThrow(
+				'Invalid headless idle profile'
+			);
+		}
+		expect(() => assertHeadlessIdleProfile(idle, 100)).not.toThrow();
+	});
+
+	it.each(['startup', 'idle', 'tool'] as const)(
+		'retains %s stall protection without a lifetime',
+		async (kind) => {
+			vi.useFakeTimers();
+			const child = Object.assign(new EventEmitter(), {
+				kill: vi.fn(),
+				exitCode: null,
+				signalCode: null,
+			}) as unknown as ChildProcess;
+			const onStop = vi.fn();
+			const supervision = superviseAgentProcess(child, {
+				startupMs: 100,
+				idle: { warnMs: 150, idleMs: 200, toolMs: 300 },
+				onStop,
+				onForcedStop: vi.fn(),
+			});
+			try {
+				if (kind === 'idle') supervision.observe({ type: 'text', text: 'started', raw: {} });
+				if (kind === 'tool')
+					supervision.observe({
+						type: 'tool_use',
+						toolCallId: 'tool',
+						toolState: { status: 'running' },
+						raw: {},
+					});
+				await vi.advanceTimersByTimeAsync(kind === 'startup' ? 100 : kind === 'idle' ? 200 : 300);
+				expect(onStop).toHaveBeenCalledExactlyOnceWith(
+					expect.stringContaining(
+						kind === 'startup'
+							? 'Startup or authentication'
+							: kind === 'idle'
+								? 'semantic inactivity'
+								: 'tool or wait budget'
+					)
+				);
+			} finally {
+				supervision.dispose();
+			}
+		}
+	);
+
+	it('keeps new normalized model work alive beyond the old implicit lifetime', async () => {
+		vi.useFakeTimers();
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess({} as ChildProcess, {
+			startupMs: 120_000,
+			idle: { warnMs: 10 * 60_000, idleMs: 20 * 60_000, toolMs: 60 * 60_000 },
+			onStop,
+			onForcedStop: vi.fn(),
+		});
+		try {
+			for (let step = 0; step < 74; step++) {
+				supervision.observe({ type: 'text', text: `new work ${step}`, raw: {} });
+				await vi.advanceTimersByTimeAsync(5 * 60_000);
+			}
+			expect(onStop).not.toHaveBeenCalled();
+		} finally {
+			supervision.dispose();
+		}
+	});
+
 	it.each(['startup', 'lifetime', 'abort'] as const)(
 		'terminates %s and releases the caller even when close never arrives',
 		async (cause) => {
@@ -36,9 +168,9 @@ describe('headless process supervision', () => {
 			if (cause === 'abort') controller.abort();
 			else await vi.advanceTimersByTimeAsync(cause === 'startup' ? 120_000 : 3_600_000);
 			expect(onStop).toHaveBeenCalledTimes(1);
-			expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+			expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 			expect(onForcedStop).not.toHaveBeenCalled();
-			await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
+			await vi.advanceTimersByTimeAsync(5_000 + HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 			expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
 			expect(onForcedStop).toHaveBeenCalledTimes(1);
 			expect(child.stdout?.destroy).toHaveBeenCalled();
@@ -64,10 +196,10 @@ describe('headless process supervision', () => {
 		controller.abort();
 		expect(stop).toHaveBeenCalledWith(
 			{ child },
-			{ from: 'terminate', graceMs: 0, immediate: true, label: 'headless agent' }
+			{ from: 'terminate', graceMs: 5_000, label: 'headless agent' }
 		);
-		expect(onStop).toHaveBeenCalledWith('Agent run timed out or was cancelled');
-		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		expect(onStop).toHaveBeenCalledWith('Agent run cancelled');
+		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 		supervision.dispose();
 		expect(vi.getTimerCount()).toBe(0);
 	});
@@ -85,12 +217,12 @@ describe('headless process supervision', () => {
 			onForcedStop: vi.fn(),
 		});
 		await vi.advanceTimersByTimeAsync(100);
-		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 		// The caller disposes on close, including a repeated cleanup.
 		supervision.dispose();
 		supervision.dispose();
-		expect(child.kill).toHaveBeenCalledTimes(2);
-		expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
+		expect(child.kill).toHaveBeenCalledTimes(1);
+		expect(child.kill).toHaveBeenLastCalledWith('SIGTERM');
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
@@ -140,7 +272,7 @@ describe('headless process supervision', () => {
 				if (cause === 'abort') controller.abort();
 				else await vi.advanceTimersByTimeAsync(100);
 				expect(child.exitCode).toBeNull();
-				await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
+				await vi.advanceTimersByTimeAsync(5_000 + HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 				vi.useRealTimers();
 				expect(await closed).toEqual({ code: null, signal: 'SIGKILL' });
 			} finally {
@@ -151,4 +283,358 @@ describe('headless process supervision', () => {
 			}
 		}
 	);
+});
+
+describe('semantic inactivity policy', () => {
+	let child: ChildProcess;
+	let supervision: ReturnType<typeof superviseAgentProcess>;
+	let onStop: ReturnType<typeof vi.fn>;
+	let onStatus: ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		vi.useFakeTimers();
+		child = Object.assign(new EventEmitter(), {
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+			stdout: { destroy: vi.fn() },
+			stderr: { destroy: vi.fn() },
+		}) as unknown as ChildProcess;
+		onStop = vi.fn();
+		onStatus = vi.fn();
+		supervision = superviseAgentProcess(child, {
+			timeoutMs: 21_600_000,
+			idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+			onStop,
+			onStatus,
+			onForcedStop: vi.fn(),
+		});
+	});
+	afterEach(() => supervision.dispose());
+
+	it('treats the first cumulative usage snapshot as a baseline, not fresh work', async () => {
+		await vi.advanceTimersByTimeAsync(19 * 60_000);
+		supervision.observe({ type: 'usage', usage: { inputTokens: 100, outputTokens: 20 }, raw: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('preserves an ID-less tool deadline across delayed model events without poll renewal', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'delayed model event', raw: {} });
+		await vi.advanceTimersByTimeAsync(20 * 60_000);
+		expect(onStop).not.toHaveBeenCalled();
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		await vi.advanceTimersByTimeAsync(35 * 60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('keeps the anonymous deadline when model work renews a simultaneous correlated tool', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'new model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(25 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		// The identified handoff ends at minute 50. Only the anonymous allowance
+		// may keep this quiet run alive until its original minute-60 deadline.
+		await vi.advanceTimersByTimeAsync(30 * 60_000 - 1);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('tool or wait budget'));
+	});
+
+	it.each(['anonymous', 'correlated'] as const)(
+		'keeps separate tool start deadlines when %s starts first',
+		async (first) => {
+			const anonymous = { type: 'tool_use' as const, toolState: { status: 'running' }, raw: {} };
+			const correlated = { ...anonymous, toolCallId: 'build' };
+			supervision.observe(first === 'anonymous' ? anonymous : correlated);
+			await vi.advanceTimersByTimeAsync(10 * 60_000);
+			supervision.observe(first === 'anonymous' ? correlated : anonymous);
+			await vi.advanceTimersByTimeAsync(20 * 60_000);
+			supervision.observe({
+				type: 'tool_use',
+				toolCallId: 'build',
+				toolState: { status: 'completed' },
+				raw: {},
+			});
+			await vi.advanceTimersByTimeAsync((first === 'anonymous' ? 30 : 40) * 60_000 - 1);
+			expect(onStop).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(onStop).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('lets a valid correlated allowance outlive an expired anonymous allowance', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'new model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(55 * 60_000);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('keeps fresh model work alive on its own idle budget after both tool allowances end', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'first model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(25 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(25 * 60_000);
+		supervision.observe({ type: 'text', text: 'fresh model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(20 * 60_000 - 1);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('signals before publishing a timeout status', async () => {
+		await vi.advanceTimersByTimeAsync(1_200_000);
+		const signalOrder = vi.mocked(child.kill).mock.invocationCallOrder[0];
+		const stoppedOrder = onStatus.mock.invocationCallOrder.at(-1)!;
+		expect(signalOrder).toBeLessThan(stoppedOrder);
+	});
+
+	it.each(['opencode', 'codex'] as const)(
+		'gives real %s ID-less tools a finite allowance',
+		async (provider) => {
+			const parser = createOutputParser(provider)!;
+			const raw =
+				provider === 'opencode'
+					? { type: 'tool_use', part: { tool: 'bash', state: { status: 'running' } } }
+					: { type: 'item.completed', item: { type: 'tool_call', tool: 'shell', args: {} } };
+			const event = parser.parseJsonLine(JSON.stringify(raw))!;
+			expect(event.type).toBe('tool_use');
+			expect(event.toolCallId).toBeUndefined();
+			supervision.observe(event);
+			await vi.advanceTimersByTimeAsync(1_200_000);
+			expect(onStop).not.toHaveBeenCalled();
+			supervision.observe(event);
+			await vi.advanceTimersByTimeAsync(2_400_000);
+			expect(onStop).toHaveBeenCalledOnce();
+		}
+	);
+
+	it.each(['copilot-cli', 'omp'] as const)(
+		'counts distinct %s model steps with equal or smaller usage but ignores replays',
+		async (provider) => {
+			supervision.dispose();
+			supervision = superviseAgentProcess(child, {
+				timeoutMs: 21_600_000,
+				usageReporting: 'per-step',
+				idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+				onStop,
+				onStatus,
+				onForcedStop: vi.fn(),
+			});
+			const parser = createOutputParser(provider)!;
+			let lastEvent;
+			for (let n = 0; n < 14; n++) {
+				lastEvent = parser.parseJsonLine(
+					JSON.stringify({
+						...(provider === 'omp'
+							? {
+									type: 'message_end',
+									message: {
+										role: 'assistant',
+										responseId: `step-${n}`,
+										usage: { input: 20, output: 20 - n },
+									},
+								}
+							: {
+									type: 'assistant.message',
+									id: `step-${n}`,
+									data: { content: '', outputTokens: 10 },
+								}),
+					})
+				)!;
+				supervision.observe(lastEvent);
+				await vi.advanceTimersByTimeAsync(300_000);
+			}
+			expect(onStop).not.toHaveBeenCalled();
+			for (let n = 0; n < 4; n++) {
+				supervision.observe(lastEvent!);
+				await vi.advanceTimersByTimeAsync(300_000);
+			}
+			expect(onStop).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('bounds provider exit with inherited stdio instead of waiting for the idle budget', async () => {
+		supervision.observe({ type: 'text', text: 'initial work', raw: {} });
+		child.emit('exit', 1, null);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(onStop).toHaveBeenCalledExactlyOnceWith(
+			expect.stringContaining('exited without closing')
+		);
+		expect(child.stdout?.destroy).toHaveBeenCalled();
+	});
+
+	it('warns once at ten minutes and stops at twenty; warning does not renew', async () => {
+		await vi.advanceTimersByTimeAsync(600_000);
+		expect(onStatus).toHaveBeenCalledTimes(1);
+		expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining('Warning:'));
+		await vi.advanceTimersByTimeAsync(599_999);
+		expect(onStop).not.toHaveBeenCalled();
+		expect(onStatus).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledWith(expect.stringContaining('semantic inactivity'));
+		// Timeout requests graceful termination, then the shared ladder escalates.
+		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+		expect(child.kill).not.toHaveBeenCalledWith('SIGKILL');
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+	});
+
+	it('recovers on new private reasoning then warns again without exposing content', async () => {
+		await vi.advanceTimersByTimeAsync(600_000);
+		supervision.observe({ type: 'text', isReasoning: true, text: 'PRIVATE_REASONING', raw: {} });
+		expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining('recovered'));
+		await vi.advanceTimersByTimeAsync(600_000);
+		expect(onStatus).toHaveBeenCalledTimes(3);
+		expect(onStatus.mock.calls.flat().join()).not.toContain('PRIVATE_REASONING');
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(600_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('ignores duplicate/replayed text, unchanged or declining usage, retry and noise', async () => {
+		const event = { type: 'text' as const, text: 'same', raw: {} };
+		supervision.observe(event);
+		supervision.observe({ type: 'usage', usage: { inputTokens: 20, outputTokens: 5 }, raw: {} });
+		for (let n = 0; n < 4; n++) {
+			await vi.advanceTimersByTimeAsync(300_000);
+			supervision.observe(event);
+			supervision.observe({ type: 'usage', usage: { inputTokens: 20, outputTokens: 4 }, raw: {} });
+			supervision.observe({ type: 'text', text: `retry ${n}`, isRetryNotice: true, raw: {} });
+			supervision.observe({ type: 'system', text: `typing ${n}`, raw: {} });
+			supervision.observe({ type: 'text', text: `stdout ${n}`, raw: 'not parsed' });
+		}
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('accepts increasing token counts and caps active work at six hours', async () => {
+		for (let n = 1; n <= 72; n++) {
+			supervision.observe({ type: 'usage', usage: { inputTokens: 20, outputTokens: n }, raw: {} });
+			await vi.advanceTimersByTimeAsync(300_000);
+		}
+		expect(onStop).toHaveBeenCalledExactlyOnceWith(
+			expect.stringContaining('absolute runtime ceiling')
+		);
+	});
+
+	it.each(['shell', 'functions.wait', 'functions.request_user_input'])(
+		'protects a quiet %s within a finite allowance and ignores repeated polls',
+		async (toolName) => {
+			supervision.observe({
+				type: 'tool_use',
+				toolName,
+				toolCallId: 'one',
+				toolState: { status: 'running', input: 'PRIVATE_TOOL' },
+				raw: {},
+			});
+			await vi.advanceTimersByTimeAsync(1_200_000);
+			expect(onStop).not.toHaveBeenCalled();
+			for (let n = 0; n < 8; n++) {
+				supervision.observe({
+					type: 'tool_use',
+					toolCallId: `poll-${n}`,
+					toolState: { status: 'running' },
+					raw: {},
+				});
+				await vi.advanceTimersByTimeAsync(300_000);
+			}
+			expect(onStop).toHaveBeenCalledExactlyOnceWith(
+				expect.stringContaining('tool or wait budget')
+			);
+			expect(onStatus.mock.calls.flat().join()).not.toContain('PRIVATE_TOOL');
+		}
+	);
+
+	it('allows a correlated long tool completion to hand back to the model', async () => {
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(30 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(onStop).not.toHaveBeenCalled();
+		supervision.observe({ type: 'text', text: 'build verified', raw: {} });
+		await vi.advanceTimersByTimeAsync(10 * 60_000);
+		expect(onStop).not.toHaveBeenCalled();
+	});
+
+	it('ignores orphan completions and children without an open registered parent', async () => {
+		await vi.advanceTimersByTimeAsync(19 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'unknown',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		supervision.observe({ type: 'text', text: 'orphan', parentToolUseId: 'unknown', raw: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('accepts new work from a correlated child but not after its parent closes', async () => {
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'parent',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(30 * 60_000);
+		supervision.observe({ type: 'text', text: 'child work', parentToolUseId: 'parent', raw: {} });
+		expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining('recovered'));
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'parent',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(19 * 60_000);
+		supervision.observe({ type: 'text', text: 'late child', parentToolUseId: 'parent', raw: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
 });

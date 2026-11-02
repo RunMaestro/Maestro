@@ -51,13 +51,20 @@ export interface RemarkFileLinksOptions {
 	projectRoot?: string;
 	/** User's home directory (e.g. /Users/pedram) - used to expand ~/... paths */
 	homeDir?: string;
+	/**
+	 * Whether an absolute path exists: `true`, `false`, or `undefined` while
+	 * unknown. Consulted only for a path with whitespace in it, whose extent the
+	 * pattern had to guess (see ABSOLUTE_PATH_PATTERN); such a path links only
+	 * on `true`. Without it, every match links, as before.
+	 */
+	pathExists?: (absolutePath: string) => boolean | undefined;
 }
 
 /**
  * The remark plugin
  */
 export function remarkFileLinks(options: RemarkFileLinksOptions) {
-	const { fileTree, indices, cwd, projectRoot, homeDir } = options;
+	const { fileTree, indices, cwd, projectRoot, homeDir, pathExists } = options;
 
 	// Resolve indices: prefer pre-built (caller memoized), build from fileTree
 	// as a fallback, or use empty indices when neither is provided.
@@ -207,6 +214,21 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 
 					// Convert to relative path
 					const relativePath = toRelativePath(absolutePath);
+
+					// A space-free path's extent is unambiguous. One with whitespace
+					// is the pattern's best guess at where a path ends, and the same
+					// text could be prose that runs into a file name, so it links only
+					// once the file is known to exist: from the file tree when it is
+					// in the project, otherwise from the filesystem.
+					if (
+						pathExists &&
+						/\s/.test(absolutePath) &&
+						!(relativePath && allPaths.has(relativePath)) &&
+						pathExists(absolutePath) !== true
+					) {
+						continue;
+					}
+
 					// For absolute paths within projectRoot, always create a link even if not in file tree
 					// The file click handler will attempt to open the file from disk
 					if (relativePath) {

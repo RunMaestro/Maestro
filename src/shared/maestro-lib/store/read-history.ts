@@ -22,6 +22,7 @@
  */
 
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 
 import {
@@ -228,4 +229,142 @@ export function readHistory(
 		format: 'legacy-json',
 		...pageHistoryEntries(sorted, options, 0),
 	};
+}
+
+/** Bytes read per step when `readRecentHistory` walks a file back from its end. */
+const RECENT_CHUNK_BYTES = 256 * 1024;
+
+/** Most bytes `readRecentHistory` reads; a window that reaches further keeps what it found. */
+const RECENT_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * How far file order may trail timestamp order. An entry is appended when its
+ * turn finishes, so an entry older than the window can sit after one inside
+ * it; the walk reads this far past the window before it stops.
+ */
+const RECENT_ORDER_SLACK_MS = 60 * 60 * 1000;
+
+export interface RecentHistoryOptions {
+	/** Only entries at or after this time (epoch ms). */
+	sinceMs: number;
+	/** Only entries at or before this time (epoch ms). */
+	untilMs?: number;
+	/** Only the newest N entries in the window. */
+	limit?: number;
+}
+
+/**
+ * An agent's entries inside a time window, OLDEST first, read from the end of
+ * the JSONL file backward so a recent window costs a few chunks rather than
+ * the whole file (busy agents carry several MB of history). A legacy
+ * single-object file is read whole. Never throws: an unreadable file reads as
+ * no entries.
+ */
+export async function readRecentHistory(
+	paths: Pick<MaestroPaths, 'historyDir'>,
+	agentId: string,
+	options: RecentHistoryOptions
+): Promise<HistoryEntry[]> {
+	const { sinceMs, untilMs, limit } = options;
+	const inWindow = (entry: HistoryEntry) =>
+		entry.timestamp >= sinceMs && (untilMs === undefined || entry.timestamp <= untilMs);
+	const finish = (entries: HistoryEntry[]) => {
+		const sorted = entries.filter(inWindow).sort((a, b) => a.timestamp - b.timestamp);
+		return limit !== undefined ? sorted.slice(-Math.max(0, limit)) : sorted;
+	};
+
+	let handle: fsp.FileHandle;
+	try {
+		handle = await fsp.open(historyFilePath(paths.historyDir, agentId), 'r');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return [];
+		const legacy = readHistory(paths, agentId, { limit: Number.MAX_SAFE_INTEGER });
+		return legacy.status === 'ok' ? finish(legacy.entries) : [];
+	}
+
+	try {
+		const { size } = await handle.stat();
+		const entries: HistoryEntry[] = [];
+		let start = size;
+		// Bytes before the first complete line read so far: a partial line.
+		let carry: Buffer = Buffer.alloc(0);
+		while (start > 0 && size - start < RECENT_MAX_BYTES) {
+			const next = Math.max(0, start - RECENT_CHUNK_BYTES);
+			const chunk = Buffer.alloc(start - next);
+			await handle.read(chunk, 0, chunk.length, next);
+			start = next;
+			const buffer = Buffer.concat([chunk, carry]);
+			const firstBreak = start > 0 ? buffer.indexOf(0x0a) : -1;
+			if (start > 0 && firstBreak === -1) {
+				carry = buffer;
+				continue;
+			}
+			const lines = buffer.subarray(firstBreak + 1).toString('utf-8');
+			carry = buffer.subarray(0, firstBreak + 1);
+			const parsed = normalizeHistoryEntries(
+				parseHistoryJsonl(start === 0 ? stripJsonBom(lines) : lines).entries
+			);
+			entries.unshift(...parsed);
+
+			// Stop once the chunk reaches past the window (or past the newest
+			// `limit` entries in it) by more than the order slack.
+			const matched = entries.filter(inWindow).map((e) => e.timestamp);
+			let floor = sinceMs;
+			if (limit !== undefined && matched.length >= limit) {
+				floor = Math.max(floor, matched.sort((a, b) => b - a)[Math.max(0, limit - 1)]);
+			}
+			const oldestInChunk = Math.min(...parsed.map((e) => e.timestamp));
+			if (parsed.length > 0 && oldestInChunk < floor - RECENT_ORDER_SLACK_MS) break;
+		}
+		return finish(entries);
+	} catch {
+		return [];
+	} finally {
+		await handle.close().catch(() => undefined);
+	}
+}
+
+/** A history entry found by id, with the agent whose file holds it. */
+export interface FoundHistoryEntry {
+	agentId: string;
+	entry: HistoryEntry;
+}
+
+/**
+ * The entries whose id starts with `idPrefix`, across `agentIds`. A JSONL file
+ * is parsed only when its raw text contains the prefix, and then only the
+ * lines that do, so looking up one entry across every agent costs a read, not
+ * a parse, per file. A legacy single-object file is read whole. Never throws:
+ * an unreadable file holds no matches.
+ */
+export async function findHistoryEntries(
+	paths: Pick<MaestroPaths, 'historyDir'>,
+	agentIds: readonly string[],
+	idPrefix: string
+): Promise<FoundHistoryEntry[]> {
+	const found: FoundHistoryEntry[] = [];
+	if (!idPrefix) return found;
+	for (const agentId of agentIds) {
+		let raw: string;
+		try {
+			raw = await fsp.readFile(historyFilePath(paths.historyDir, agentId), 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') continue;
+			const legacy = readHistory(paths, agentId, { limit: Number.MAX_SAFE_INTEGER });
+			if (legacy.status !== 'ok') continue;
+			for (const entry of legacy.entries) {
+				if (entry.id.startsWith(idPrefix)) found.push({ agentId, entry });
+			}
+			continue;
+		}
+		if (!raw.includes(idPrefix)) continue;
+		const lines = raw
+			.split('\n')
+			.filter((line) => line.includes(idPrefix))
+			.join('\n');
+		for (const entry of normalizeHistoryEntries(parseHistoryJsonl(stripJsonBom(lines)).entries)) {
+			if (entry.id.startsWith(idPrefix)) found.push({ agentId, entry });
+		}
+	}
+	return found;
 }

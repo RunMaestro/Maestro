@@ -8,15 +8,20 @@
  * `no-drag`, or the OS would swallow its clicks. The OS resizes the window,
  * so there is no in-card resize grip.
  *
+ * While the widget borrows room past the card (see `FloatingWidgetOverflow`),
+ * `insets` keeps the card where it was on screen and leaves the borrowed strip
+ * transparent for whatever the widget draws there.
+ *
  * Two ways out: the X in the strip, and Escape anywhere in the window. A
  * nested surface that already used the Escape (a popover closing) marks it
  * `defaultPrevented`, and the frame leaves it alone.
  */
 
 import { useCallback } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ReactNode, Ref } from 'react';
 import { X } from 'lucide-react';
 import type { Theme } from '../types';
+import type { FloatingWidgetOverflow } from '../../shared/floatingWidgets';
 import { GhostIconButton } from '../components/ui/GhostIconButton';
 import { useEventListener } from '../hooks/utils/useEventListener';
 
@@ -36,6 +41,10 @@ export interface FloatingWidgetFrameProps {
 	/** Accessible label and tooltip for the close button. */
 	closeLabel: string;
 	children: ReactNode;
+	/** Room the window borrowed above and below the card; the card stays out of it. */
+	insets?: FloatingWidgetOverflow;
+	/** The card element, for a widget that measures against it. */
+	frameRef?: Ref<HTMLDivElement>;
 }
 
 export function FloatingWidgetFrame({
@@ -47,6 +56,8 @@ export function FloatingWidgetFrame({
 	onClose,
 	closeLabel,
 	children,
+	insets,
+	frameRef,
 }: FloatingWidgetFrameProps) {
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
@@ -61,9 +72,15 @@ export function FloatingWidgetFrame({
 
 	return (
 		<div
+			ref={frameRef}
 			data-testid="floating-widget-frame"
-			className="fixed inset-0 flex flex-col rounded-lg border overflow-hidden select-none"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			className="fixed inset-x-0 flex flex-col rounded-lg border overflow-hidden select-none"
+			style={{
+				top: insets?.above ?? 0,
+				bottom: insets?.below ?? 0,
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+			}}
 		>
 			<div
 				data-testid="floating-widget-title-strip"

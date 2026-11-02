@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
-import { parseCliBool, isInheritValue, resolveCliPath } from '../../../cli/utils/parse';
+import {
+	parseCliBool,
+	parseCliTimestamp,
+	isInheritValue,
+	resolveCliPath,
+} from '../../../cli/utils/parse';
 
 describe('parseCliBool', () => {
 	it('accepts the whole true vocabulary', () => {
@@ -48,5 +53,22 @@ describe('resolveCliPath', () => {
 		expect(resolveCliPath('~/out')).toBe(path.join(os.homedir(), 'out'));
 		expect(resolveCliPath(' rel/out ')).toBe(path.resolve(process.cwd(), 'rel/out'));
 		expect(resolveCliPath('/abs/out')).toBe(path.resolve('/abs/out'));
+	});
+});
+
+describe('parseCliTimestamp', () => {
+	it('parses ISO-8601', () => {
+		expect(parseCliTimestamp('2026-04-28T10:00:00Z')).toBe(Date.parse('2026-04-28T10:00:00Z'));
+	});
+
+	it('tells epoch seconds from epoch ms by magnitude', () => {
+		expect(parseCliTimestamp('1777370400000')).toBe(1777370400000);
+		expect(parseCliTimestamp(' 1777370400 ')).toBe(1777370400000);
+	});
+
+	it('returns null for empty or unparseable input', () => {
+		expect(parseCliTimestamp('')).toBeNull();
+		expect(parseCliTimestamp('   ')).toBeNull();
+		expect(parseCliTimestamp('not a date')).toBeNull();
 	});
 });

@@ -7,7 +7,12 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 }));
 
-import { resolveSyncDir, isValidSyncPath, BOOTSTRAP_STORE_FILE } from '../../shared/syncPath';
+import {
+	resolveSyncDir,
+	isValidSyncPath,
+	isInsideInstallDir,
+	BOOTSTRAP_STORE_FILE,
+} from '../../shared/syncPath';
 
 const USER_DATA = '/Users/test/Library/Application Support/maestro';
 const SYNC_DIR = '/Users/test/iCloud/Maestro';
@@ -127,6 +132,29 @@ describe('shared/syncPath', () => {
 			const sensitive = process.platform === 'win32' ? 'C:\\Windows\\maestro' : '/etc/maestro';
 
 			expect(isValidSyncPath(sensitive)).toBe(false);
+		});
+	});
+
+	describe('isInsideInstallDir', () => {
+		const INSTALL_DIR = path.resolve('/apps/Maestro');
+
+		it('flags the install directory itself and anything under it', () => {
+			expect(isInsideInstallDir(INSTALL_DIR, INSTALL_DIR)).toBe(true);
+			expect(isInsideInstallDir(path.join(INSTALL_DIR, 'storage'), INSTALL_DIR)).toBe(true);
+			expect(isInsideInstallDir(path.join(INSTALL_DIR, 'a', 'b'), INSTALL_DIR)).toBe(true);
+		});
+
+		it('allows a sibling whose name starts with the install directory name', () => {
+			expect(isInsideInstallDir(path.resolve('/apps/Maestro-Data'), INSTALL_DIR)).toBe(false);
+		});
+
+		it('allows the parent and unrelated folders', () => {
+			expect(isInsideInstallDir(path.resolve('/apps'), INSTALL_DIR)).toBe(false);
+			expect(isInsideInstallDir(SYNC_DIR, INSTALL_DIR)).toBe(false);
+		});
+
+		it.runIf(process.platform === 'win32')('ignores case on Windows', () => {
+			expect(isInsideInstallDir('d:\\apps\\maestro\\storage', 'D:\\Apps\\Maestro')).toBe(true);
 		});
 	});
 });

@@ -623,6 +623,21 @@ describe('handleBridgeInvoke denied channels', () => {
 		}
 	});
 
+	it('lets a browser record and read its User Journey', async () => {
+		for (const channel of ['journey:append', 'journey:read', 'journey:path']) {
+			const handler = vi.fn(async () => 'ok');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel, args: ['agent-1'] },
+				send
+			);
+			expect(handler).toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(true);
+		}
+	});
+
 	it('refuses windows:setPanelState (a browser has no window of its own to persist)', async () => {
 		const handler = vi.fn();
 		invokeHandlers.set('windows:setPanelState', handler);
@@ -924,5 +939,42 @@ describe('Dataview over the bridge', () => {
 	it('refuses browser writes to the DataviewJS settings', () => {
 		expect(isRemoteSettingWritable('dataviewJsEnabled')).toBe(false);
 		expect(isRemoteSettingWritable('dataviewJsTrustedRoots')).toBe(false);
+	});
+});
+
+describe('Pianola memory over the bridge', () => {
+	it('allows CLI memory requests to reach the desktop IPC handler', async () => {
+		const status = { config: { enabled: false }, progress: {} };
+		const handler = vi.fn(async () => status);
+		invokeHandlers.set('pianola:memory', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 22,
+				channel: 'pianola:memory',
+				args: [{ action: 'status' }],
+			},
+			send
+		);
+		expect(handler).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: status });
+	});
+
+	it('allows the portfolio read and recovery channels', () => {
+		for (const channel of [
+			'pianola:get-programs',
+			'pianola:get-asks',
+			'pianola:get-brief',
+			'pianola:supervise-program',
+			'pianola:set-program-status',
+			'pianola:resolve-ask',
+			'pianola:dismiss-ask',
+			'pianola:revise-plan-task',
+			'pianola:skip-plan-task',
+		]) {
+			expect(isRemoteMethodAllowed(channel)).toBe(true);
+		}
 	});
 });

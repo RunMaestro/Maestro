@@ -2171,6 +2171,12 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					prompt: participantPrompt,
 					cwd,
 					readOnlyMode: readOnly ?? false,
+					// Group Chat participant turns run unattended in batch mode (no
+					// interactive permission relay), so non-read-only delegations must
+					// explicitly request 'full' access; otherwise buildAgentArgs selects
+					// its 'standard' branch and omits fullAccessArgs (e.g. Claude Code's
+					// --dangerously-skip-permissions).
+					permissionMode: readOnly ? 'readonly' : 'full',
 					agentSessionId: participant.agentSessionId,
 				});
 				const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
@@ -2818,6 +2824,7 @@ Review the agent responses above. Either:
 			prompt: fullPrompt,
 			cwd,
 			readOnlyMode: readOnly ?? false,
+			permissionMode: readOnly ? 'readonly' : 'full',
 			// No agentSessionId - we're starting fresh after session recovery
 		});
 

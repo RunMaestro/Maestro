@@ -47,6 +47,53 @@ describe('CodexOutputParser', () => {
 			});
 		});
 
+		describe('item.completed events - nonfatal error items', () => {
+			it.each([
+				'`reasoning` is ignored. Use `model_reasoning_effort` instead.',
+				'Under-development features enabled: experimental_feature.',
+				'Authentication failed in an optional integration.',
+			])('surfaces a warning without failing the turn: %s', (message) => {
+				const raw = {
+					type: 'item.completed',
+					item: { id: 'notice_1', type: 'error', message },
+				};
+				const event = parser.parseJsonObject(raw);
+
+				expect(event).toEqual({ type: 'warning', text: `Codex warning: ${message}`, raw });
+				expect(parser.parseJsonLine(JSON.stringify(raw))).toEqual(event);
+				expect(parser.detectErrorFromParsed(raw)).toBeNull();
+				expect(parser.detectErrorFromLine(JSON.stringify(raw))).toBeNull();
+				expect(parser.isResultMessage(event!)).toBe(false);
+			});
+
+			it.each([undefined, null, '', '   ', 42, {}, []])(
+				'keeps malformed warning messages out of answer parsing: %j',
+				(message) => {
+					const raw = { type: 'item.completed', item: { type: 'error', message } };
+					expect(parser.parseJsonObject(raw)).toEqual({
+						type: 'warning',
+						text: 'Codex warning',
+						raw,
+					});
+					expect(parser.detectErrorFromParsed(raw)).toBeNull();
+				}
+			);
+
+			it('waits for completion rather than showing the same notice twice', () => {
+				const item = { id: 'notice_1', type: 'error', message: 'Configuration notice' };
+				expect(parser.parseJsonObject({ type: 'item.started', item })?.type).toBe('system');
+				expect(parser.parseJsonObject({ type: 'item.completed', item })?.type).toBe('warning');
+			});
+
+			it('preserves unknown completed item types as system events', () => {
+				const raw = {
+					type: 'item.completed',
+					item: { type: 'future_notice', message: 'Unknown notice' },
+				};
+				expect(parser.parseJsonObject(raw)).toEqual({ type: 'system', raw });
+			});
+		});
+
 		describe('item.completed events - reasoning', () => {
 			it('should parse reasoning items as partial text', () => {
 				const line = JSON.stringify({

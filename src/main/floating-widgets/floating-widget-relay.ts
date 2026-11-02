@@ -18,6 +18,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import {
 	FLOATING_WIDGET_SPECS,
 	isFloatingWidgetId,
+	sanitizeFloatingWidgetOverflow,
 	type FloatingWidgetBounds,
 	type FloatingWidgetId,
 } from '../../shared/floatingWidgets';
@@ -208,6 +209,9 @@ export function createFloatingWidgetRelay(deps: FloatingWidgetRelayDeps): Floati
 			}
 			return controller.setBounds(bounds as FloatingWidgetBounds);
 		});
+		ipcMain.handle('floatingWidgets:setOverflow', (_event, id: unknown, need: unknown) =>
+			controllerFor(id).setOverflow(sanitizeFloatingWidgetOverflow(need))
+		);
 		ipcMain.handle(
 			'floatingWidgets:getState',
 			(_event, id: unknown) => latestState.get(requireFloatingWidgetId(id)) ?? null

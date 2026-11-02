@@ -1,4 +1,62 @@
-# Relay host contract (Host API 1.25.0)
+# Relay host contract (Host API 1.31.0)
+
+## Desktop conversation continuity (1.31.0)
+
+This source implements the merged API1.29 generic-platform contract (PR1881),
+API1.30 bounded original audio (PR1883), and API1.31 desktop continuity. The
+original-audio implementation is included here so the advertised API version
+corresponds to implemented methods. Original audio does not depend on the
+unmerged Dictation API allocation; STT orchestration remains plugin-owned.
+Installed migration, OS-keyring durability, compatible rollback and live
+provider acceptance still require separate release qualification.
+No installer or live archive activation is part of this change.
+
+The trusted, pinned Relay may call `agents.send(agentId, prompt, { conversationId,
+messageId, sessionId?, onProgress?, originalAttachments? })`. `conversationId` is its persistent real
+transport thread identity; `messageId` is the incoming transport message identity.
+Both are opaque strings of 1–256 characters and must be supplied together.
+`agentId` names the Maestro agent, `sessionId` remains the opaque provider session,
+and the returned `tabId` names the real desktop tab. None is an outbound grant.
+
+The host owns the persistent conversation→tab/provider mapping and execution
+receipts, separate from plugin-writable storage. Each conversation has one real
+background tab with user/assistant text, durable Relay origin, and queued/running/
+idle/error state. It does not change navigation. Desktop and Relay turns share a
+host writer reservation through process close; the renderer's normal queue still
+decides desktop ordering. A duplicate message returns the saved result with
+`replayed: true`; the plugin **must not send another transport response**. An
+interrupted receipt fails closed, because tools may already have run. A changed
+prompt or original-audio reference under the same message identity is rejected.
+An identical audio replay returns its saved staging receipt without opening or
+consuming the original recording again. Current export consent is checked even
+for replay; a receipt remains staging evidence, not proof that audio was inspected. No automatic retry is safe.
+
+At activation, Relay can register its explicitly stored real thread bindings with
+`agents.restoreConversation(agentId, { conversationId, sessionId })`. The host
+requires existing private provider ownership, the pinned Relay signer, exact-agent
+grant and unattended consent. This reads the provider transcript and creates a
+background tab without a provider turn. Existing archived tabs and deliberate
+manual closes stay closed. Generic automation, consults and ambiguous old
+provider bindings are never materialized by this API. Without the new identity
+options, `agents.send` retains its existing headless behavior.
+
+`agents.completeConversation(agentId, { conversationId, messageId })` records an
+**explicit task completion** only for the latest successfully finished message,
+with no pending Relay/desktop work or newer desktop input. An idle provider is
+not completion evidence. A later message clears completion and reveals the same
+tab. Relay must only invoke this method from a verified task completion source
+(for example an authorized user's explicit `/done`), never from assistant prose.
+
+Settings → General → Relay conversation archive controls the inactivity period
+(`relayArchiveHours`, default 24, 0 disables). The owning desktop hides a tab only
+after explicit task completion and inactivity, protecting running/queued work,
+bookmarks, stars, saved selection, unread messages, drafts and tiled tabs. Hiding
+retains the tab, transcript and provider history; History/Resume reveals it again.
+An app restart marks interrupted work as an error rather than completed. No
+existing desktop or automation tab is eligible without explicit Relay mapping.
+
+Tests are synthetic source-level acceptance. They do not establish live Discord,
+installed-host/plugin compatibility, or authorization for production activation.
 
 This is the Maestro host half of the Relay Discord integration. The Discord gateway, token UI, channel ownership, per-thread session mapping, and Pianola exceptions belong to the Relay plugin, not the host. The host never receives the bot token as a setting or agent environment variable.
 
@@ -42,12 +100,17 @@ correlation ID; no global event subscription or `events:subscribe` grant is
 needed. Events stop on completion, cancellation, timeout, plugin stop, or grant
 revocation. The result remains the only authoritative final response.
 
-The current host emits `activity` when the headless run starts. Codex's explicit
+The host emits `activity` when the headless run starts and for inactivity
+warnings, recovery and stop reasons. Codex's explicit
 commentary phase emits `commentary`; Claude and JSON-line providers emit tool
 lifecycle events when their stream exposes them. Providers with no usable stream
 still complete normally and may emit only the initial `activity` event.
 
-With no `sessionId`, the host starts a fresh headless provider session. With one, it passes that opaque provider session ID to the provider's resume path. `sessionId` in the result is a **provider session ID**, not a desktop tab ID or Maestro agent ID. The plugin stores one ID per Discord thread and only saves a new ID after `success: true`. A failed run has `response: null`, may carry a provider ID for diagnostics, and must not be posted as a successful answer. The host runs different threads independently. Host API 1.25.0 / SDK 0.19.0 extend rc's 1.24.0 / 0.18.0 contracts; the media job API, independent Settings cards, and service broker remain available. The `agents:dispatch` ActionGuard limits one plugin to two concurrent high-risk actions; additional calls fail clearly and may be queued by the plugin. The provider process has a 60-minute timeout. Run-token and MCP proof-file lifetimes, and the desktop-backed CLI send reply wait, are 61 minutes (the run budget plus one minute for completion). Codex must emit structured model activity (text/reasoning, a tool event, or usage) within 120 seconds of spawn; init/turn-start messages and unstructured stdout/stderr do not disable this startup deadline. A startup failure returns `success: false`, `response: null`, and an error describing a possible auth/keyring block and how to retry after repairing login. The host does not inspect credentials or change the configured credential store. Timeout/cancellation force-kills the local process tree through the shared ownership-aware Stop ladder and releases the caller after at most a five-second wait even if `close` never arrives. After model activity the full 60-minute run budget remains in effect. SSH teardown terminates the local SSH process tree; remote process cleanup still depends on the remote transport. Do not automatically retry a run that may have performed tool work. These deadlines share the constants in `src/shared/plugins/headless-agent-timeouts.ts`; completed or cancelled runs revoke their proof immediately. Disabling, crashing, or uninstalling the plugin aborts its outstanding `agents.send` processes.
+With no `sessionId`, the host starts a fresh headless provider session. With one, it passes that opaque provider session ID to the provider's resume path. `sessionId` in the result is a **provider session ID**, not a desktop tab ID or Maestro agent ID. The plugin stores one ID per Discord thread and only saves a new ID after `success: true`. A failed run has `response: null`, may carry a provider ID for diagnostics, and must not be posted as a successful answer. The host runs different threads independently. Host API 1.25.0 / SDK 0.19.0 extend rc's 1.24.0 / 0.18.0 contracts; the media job API, independent Settings cards, and service broker remain available. The `agents:dispatch` ActionGuard limits one plugin to two concurrent high-risk actions; additional calls fail clearly and may be queued by the plugin. Headless preparation, provider execution and effort fallback share one absolute six-hour ceiling. Pending binary detection, system-prompt preparation and internal launch preparation settle on cancellation or expiry; delayed continuations cannot start a provider. Run-token and MCP proof-file lifetimes use the remaining ceiling plus one minute for cleanup, capped at six hours and one minute. The desktop-backed CLI send reply wait uses the same completion ceiling.
+
+Only new normalized model text/reasoning or identified, increasing provider usage renews the semantic budget: warn after ten minutes and stop after twenty minutes without new model progress. Correlated tools have a bounded sixty-minute allowance that new model progress may renew; anonymous tools keep their original fixed allowance independently. Tool completion hands control back within the remaining bounded allowance. Replayed events, transport notices and raw stdout/stderr do not renew these budgets. Codex must emit structured model activity or a running tool within 120 seconds of spawn; init/turn-start messages do not disable this startup deadline. A startup failure returns `success: false`, `response: null`, and an error describing a possible auth/keyring block and how to retry after repairing login. The host does not inspect credentials or change the configured credential store.
+
+Timeout/cancellation uses the shared ownership-aware Stop ladder: terminate gracefully, then kill the local process tree after the background grace period. Settlement is bounded by that grace period plus the five-second forced-close wait even if `close` never arrives. SSH teardown terminates the local SSH process tree; remote process cleanup still depends on the remote transport. Do not automatically retry a run that may have performed tool work. These deadlines share the constants in `src/shared/plugins/headless-agent-timeouts.ts`; settled runs revoke their proof immediately. Disabling, crashing, or uninstalling the plugin aborts its outstanding `agents.send` processes.
 
 The host also records successful provider session IDs in a private persistent binding store under `<userData>/plugin-agent-sessions/`. A resume is allowed only for the same plugin and Maestro agent that received the ID; knowing another agent's provider ID is insufficient. The 10,000 most recently used bindings per plugin survive a desktop restart. Older bindings are evicted as new sessions arrive and then fail closed on resume; bindings are deleted when the plugin is uninstalled. Refreshing an already-owned binding is best effort: a storage error does not hide a completed provider answer, but the binding keeps its previous recency.
 

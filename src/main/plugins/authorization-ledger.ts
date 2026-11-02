@@ -45,7 +45,11 @@ import { canonicalJson } from '../../shared/canonicalJson';
 import { yieldToEventLoop } from '../utils/concurrency';
 import type { PluginEventReceiptRow } from './plugin-cue-events';
 import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
-import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
+import {
+	isAllowlistScoped,
+	isValidAllowlistMember,
+	parseAllowlistScope,
+} from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
 import { PLUGIN_ID_PATTERN } from '../../shared/plugins/plugin-manifest';
@@ -402,6 +406,18 @@ export class AuthorizationStore {
 					? { legacy: parsed.legacy }
 					: {}),
 		};
+		// Read-time effective migration only: preserve bytes/anchor until the next
+		// authorized mutation. Legacy scope membership never proves separate consent.
+		for (const entry of Object.values(this.ledger.entries)) {
+			entry.caps = entry.caps.flatMap((grant) => {
+				if (grant.capability !== 'media:tools' || grant.originalAudioExport === true)
+					return [grant];
+				const members = parseAllowlistScope(grant.scope)?.filter(
+					(member) => member !== 'discord-original-audio'
+				);
+				return members?.length ? [{ ...grant, scope: members.join(',') }] : [];
+			});
+		}
 		this.storageMode = 'persistent';
 		// Loading never rewrites prior state. A fresh authoritative user action persists schema3.
 	}

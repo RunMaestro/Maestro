@@ -12,11 +12,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const captureMessage = vi.fn().mockResolvedValue(undefined);
+const setScopeContext = vi.fn().mockResolvedValue(undefined);
 const warn = vi.fn();
 const info = vi.fn();
 
 vi.mock('../../../main/utils/sentry', () => ({
 	captureMessage: (...args: unknown[]) => captureMessage(...args),
+	setScopeContext: (...args: unknown[]) => setScopeContext(...args),
 }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -28,7 +30,13 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 import v8 from 'v8';
-import { HEAP_DANGER_FRACTION, sampleHeap, withHeapGuard } from '../../../main/utils/heap-guard';
+import {
+	HEAP_DANGER_FRACTION,
+	sampleHeap,
+	startCrashContextSampling,
+	stopCrashContextSampling,
+	withHeapGuard,
+} from '../../../main/utils/heap-guard';
 
 /** Pretend the heap sits at `fraction` of a 4 GB ceiling. */
 function fakeHeapAt(fraction: number) {
@@ -188,5 +196,34 @@ describe('withHeapGuard', () => {
 		await tick();
 		await tick();
 		expect(captureMessage.mock.calls.length).toBe(afterWork);
+	});
+});
+
+describe('crash context for a native OOM report', () => {
+	afterEach(() => {
+		stopCrashContextSampling();
+		vi.restoreAllMocks();
+		setScopeContext.mockClear();
+	});
+
+	it('tags the scope with the heap, and nothing else, as soon as it starts', () => {
+		fakeHeapAt(0.5);
+		startCrashContextSampling();
+
+		expect(setScopeContext).toHaveBeenCalledTimes(1);
+		const [tags, name, context] = setScopeContext.mock.calls[0];
+		// Agent and Auto Run counts are written on change (setSentryScopeTags), so a
+		// sampled copy here would be a second, staler source for the same facts.
+		expect(tags).toEqual({ 'main.heapMB': '2048' });
+		expect(name).toBe('mainRuntime');
+		expect(context).toMatchObject({ heapUsedMB: 2048, heapLimitMB: 4096 });
+		expect(context).not.toHaveProperty('agents');
+	});
+
+	it('starts one sampler no matter how often it is asked to', () => {
+		fakeHeapAt(0.1);
+		startCrashContextSampling();
+		startCrashContextSampling();
+		expect(setScopeContext).toHaveBeenCalledTimes(1);
 	});
 });

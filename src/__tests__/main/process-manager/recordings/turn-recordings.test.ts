@@ -161,7 +161,9 @@ describe('turn recordings', () => {
 		expect(events.data.join('')).toContain('Here is the answer.');
 		expect(events.agentErrors).toEqual([]);
 		expect(events.exits).toEqual([0]);
-		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
+		expect(events.settlements).toEqual([
+			{ outcome: 'completed', answerCaptured: true, answerTail: 'Here is the answer.' },
+		]);
 	});
 
 	it('resumed: a process pre-seeded with agentSessionId confirms continuity with the same id', async () => {
@@ -178,7 +180,9 @@ describe('turn recordings', () => {
 		// conversation-identity concept, not a usage-accumulator one.
 		expect(events.usages).toHaveLength(1);
 		expect(events.usages[0].inputTokens).toBe(500);
-		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
+		expect(events.settlements).toEqual([
+			{ outcome: 'completed', answerCaptured: true, answerTail: 'Continuing where we left off.' },
+		]);
 	});
 
 	it('interrupted: no agent-error fires, and the partial answer still flushes at exit', async () => {
@@ -196,7 +200,9 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-chunked-1']);
 		expect(events.data.join('')).toContain('Here is the chunked answer.');
 		expect(events.agentErrors).toEqual([]);
-		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
+		expect(events.settlements).toEqual([
+			{ outcome: 'completed', answerCaptured: true, answerTail: 'Here is the chunked answer.' },
+		]);
 	});
 
 	it('interleaved: text and tool_use events interleave without corrupting the final answer', async () => {
@@ -205,7 +211,9 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-interleaved-1']);
 		expect(events.data.join('')).toContain('Done - final answer.');
 		expect(events.agentErrors).toEqual([]);
-		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
+		expect(events.settlements).toEqual([
+			{ outcome: 'completed', answerCaptured: true, answerTail: 'Done - final answer.' },
+		]);
 	});
 
 	it("cut-stream: a result with no trailing newline is recovered by ExitHandler's exit-time flush", async () => {
@@ -214,7 +222,13 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-cutstream-1']);
 		expect(events.data.join('')).toContain('Answer that arrived with no trailing newline.');
 		expect(events.agentErrors).toEqual([]);
-		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
+		expect(events.settlements).toEqual([
+			{
+				outcome: 'completed',
+				answerCaptured: true,
+				answerTail: 'Answer that arrived with no trailing newline.',
+			},
+		]);
 	});
 
 	it('classified-exit-with-answer: a specific exit classification outranks a captured answer', async () => {
@@ -267,7 +281,13 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-new-after-rotation']);
 		expect(events.agentErrors).toEqual([]);
 		expect(events.data.join('')).toContain('Answer under the rotated session.');
-		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
+		expect(events.settlements).toEqual([
+			{
+				outcome: 'completed',
+				answerCaptured: true,
+				answerTail: 'Answer under the rotated session.',
+			},
+		]);
 	});
 
 	it('stop-vs-crash: identical rate-limit stderr is suppressed when interrupted and surfaced when not', async () => {
@@ -478,7 +498,11 @@ describe('documented-format turns (providers with no captured turn yet)', () => 
 			expect(events.data.join('')).toBe(DOCUMENTED_ANSWER);
 			expect(events.agentErrors).toEqual([]);
 			expect(events.exits).toEqual([0]);
-			expect(events.settlements[0]).toEqual({ outcome: 'completed', answerCaptured: true });
+			expect(events.settlements[0]).toEqual({
+				outcome: 'completed',
+				answerCaptured: true,
+				answerTail: DOCUMENTED_ANSWER,
+			});
 		}
 	);
 

@@ -535,6 +535,8 @@ A row that cannot run right now is dimmed and says why in one line. Force Send w
 
 When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
 
+Right-click **Send** to open the menu at any time, even when the agent is idle, the input is empty, or the setting is off. With nothing running, the first row reads **Send** instead of **Queue**, since the message starts at once.
+
 Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." --held` queues a message held, and `maestro-cli queue hold <item-id> --agent <id>` / `queue resume <item-id> --agent <id>` hold or release a queued card. `queue list` shows which items are held.
 
 ### Execution Queue view
@@ -747,7 +749,7 @@ The command interpreter can be focused for a clean, terminal-only experience whe
 
 ## Command Terminal
 
-Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Switch between them with `Cmd+J` / `Ctrl+J`. Open a new terminal tab with `Ctrl+Shift+` + `` ` ``; close, rename, and reorder it just like an AI tab. Right-click (or hover) a terminal tab to open its action menu.
+Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Open a new terminal tab with `Cmd+J` / `Ctrl+J` (or `Ctrl+Shift+` + `` ` ``); close, rename, and reorder it just like an AI tab. Jump to the nearest terminal tab with `Opt+Cmd+J` / `Alt+Ctrl+J`. To switch the current tab between AI and shell in place, run **Switch AI/Shell Mode** from Quick Actions (`Cmd+K` / `Ctrl+K`). It has no key of its own. Right-click (or hover) a terminal tab to open its action menu.
 
 ### Startup Command
 

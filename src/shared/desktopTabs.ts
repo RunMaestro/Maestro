@@ -43,4 +43,54 @@ export interface DesktopTabEntry {
 	effort: string | null;
 	/** Per-tab send-key override, or null to inherit the `enterToSendAI` setting. */
 	enterToSend: boolean | null;
+	/** Metadata for consumers that need to resolve project ownership and a baseline.
+	 * Optional so clients can detect an older desktop and fail closed. */
+	supervision?: {
+		cwd: string;
+		parentSessionId: string | null;
+		groupId?: string | null;
+		/** Parent chain from the same snapshot, including parents without open tabs. */
+		ancestors: Array<{
+			id: string;
+			cwd: string;
+			parentSessionId: string | null;
+			groupId?: string | null;
+			isPianola: boolean;
+			remote: boolean;
+		}>;
+		/** False for a missing, cyclic, or excessively deep parent chain. */
+		lineageComplete: boolean;
+		isPianola: boolean;
+		remote: boolean;
+		/** One pause signal only; other forms of parked work need separate checks. */
+		errorPaused: boolean;
+		/** Scope-only safety state. Absent on desktops predating scoped watches. */
+		paused?: boolean;
+		/** Live process/CLI evidence, independent of the persisted display state. */
+		busy?: boolean;
+		consult: boolean;
+		ephemeral: boolean;
+		/** False when the persisted tab has no available transcript snapshot. */
+		cursorAvailable: boolean;
+		cursor: { id: string; count: number; textLength: number } | null;
+	};
+}
+
+/** Complete local owner census, including owners with no open AI tabs. */
+export interface DesktopAgentEntry {
+	id: string;
+	cwd: string;
+	parentSessionId: string | null;
+	groupId?: string | null;
+	isPianola: boolean;
+	remote: boolean;
+}
+
+/** Versioned supervision contract; legacy tab-list callers still consume sessions. */
+export interface DesktopSessionsSnapshot {
+	supervisionVersion: 1;
+	complete: boolean;
+	capturedAt: number;
+	owners: DesktopAgentEntry[];
+	sessions: DesktopTabEntry[];
 }

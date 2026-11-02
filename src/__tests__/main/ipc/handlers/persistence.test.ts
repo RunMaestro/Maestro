@@ -83,6 +83,13 @@ vi.mock('../../../../main/stores/groups-backup', () => ({
 	backupGroupsBeforeWipe: backupGroupsBeforeWipeMock,
 }));
 
+const { deleteJourneyMock } = vi.hoisted(() => ({
+	deleteJourneyMock: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../../../main/user-journey-manager', () => ({
+	deleteJourney: deleteJourneyMock,
+}));
+
 // Mock the themes module
 vi.mock('../../../../main/themes', () => ({
 	getThemeById: vi.fn().mockReturnValue({
@@ -2108,6 +2115,17 @@ describe('persistence IPC handlers', () => {
 			await handler!({} as any, [], ['s1']);
 
 			expect(mockWebServer.broadcastSessionRemoved).toHaveBeenCalledWith('s1');
+		});
+
+		it("deletes a removed agent's User Journey, and only for ids that existed", async () => {
+			deleteJourneyMock.mockClear();
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, id: 's1' }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['s1', 'nonexistent']);
+
+			expect(deleteJourneyMock).toHaveBeenCalledTimes(1);
+			expect(deleteJourneyMock).toHaveBeenCalledWith('s1');
 		});
 
 		it('does not broadcast removals for ids that did not exist', async () => {

@@ -30,6 +30,7 @@ interface AgentConfigurationViewProps {
 	onEnvVarValueChange: (key: string, value: string) => void;
 	onEnvVarRemove: (key: string) => void;
 	onEnvVarAdd: () => void;
+	onEnvVarsReplace: (vars: Record<string, string>) => void;
 	onEnvVarsBlur: () => void;
 	agentConfig: Record<string, any>;
 	onConfigChange: (key: string, value: any) => void;
@@ -75,6 +76,7 @@ export function AgentConfigurationView({
 	onEnvVarValueChange,
 	onEnvVarRemove,
 	onEnvVarAdd,
+	onEnvVarsReplace,
 	onEnvVarsBlur,
 	agentConfig,
 	onConfigChange,
@@ -161,6 +163,7 @@ export function AgentConfigurationView({
 						onEnvVarValueChange={onEnvVarValueChange}
 						onEnvVarRemove={onEnvVarRemove}
 						onEnvVarAdd={onEnvVarAdd}
+						onEnvVarsReplace={onEnvVarsReplace}
 						onEnvVarsBlur={onEnvVarsBlur}
 						agentConfig={agentConfig}
 						onConfigChange={onConfigChange}

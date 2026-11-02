@@ -123,3 +123,10 @@ expectTypeOf<PluginConsumer>().toEqualTypeOf<SourceConsumer>();
 expectTypeOf<PluginReceipt>().toEqualTypeOf<SourceReceipt>();
 expectTypeOf<PluginJson>().toEqualTypeOf<SourceJson>();
 expectTypeOf<PluginPrimitiveErrorCode>().toEqualTypeOf<SourceErrorCode>();
+import type { OriginalAttachmentRef, OriginalAttachmentReceipt } from '../index';
+import type {
+	OriginalAttachmentRef as SrcOriginalAttachmentRef,
+	OriginalAttachmentReceipt as SrcOriginalAttachmentReceipt,
+} from '../../../../src/shared/plugins/media-tools';
+expectTypeOf<OriginalAttachmentRef>().toEqualTypeOf<SrcOriginalAttachmentRef>();
+expectTypeOf<OriginalAttachmentReceipt>().toEqualTypeOf<SrcOriginalAttachmentReceipt>();

@@ -196,6 +196,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				crashReportingEnabled={settings.crashReportingEnabled}
 				setCrashReportingEnabled={settings.setCrashReportingEnabled}
+				userJourneyEnabled={settings.userJourneyEnabled}
+				setUserJourneyEnabled={settings.setUserJourneyEnabled}
 			/>
 			<BrowserSection
 				theme={theme}

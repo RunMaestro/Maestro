@@ -160,17 +160,6 @@ function labelSnapshotFromFeed(ev: RawLabelEvent): GitHubLabelEventSnapshot {
 	};
 }
 
-/**
- * Render a comment list into the `{{CUE_NEW_COMMENTS}}` template variable.
- * Returns an empty string when there are no new comments so the prompt
- * substitution leaves a clean gap rather than emitting "no comments" filler.
- * Exported for the template context builder.
- */
-export function formatNewCommentsForTemplate(comments: GitHubComment[]): string {
-	if (comments.length === 0) return '';
-	return comments.map((c) => `[@${c.author} at ${c.createdAt}]\n${c.body}`).join('\n\n---\n\n');
-}
-
 /** Max backoff for GitHub rate-limit recovery. One hour is the standard
  * window for primary rate limits on personal tokens; secondary limits expire
  * sooner but we don't get reliable signals to distinguish them. */

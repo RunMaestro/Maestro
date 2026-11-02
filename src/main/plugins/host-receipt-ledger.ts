@@ -416,6 +416,19 @@ export class HostReceiptLedger {
 						response: null,
 						sessionId: parsed.result.sessionId ?? null,
 						...(parsed.result.error ? { error: String(parsed.result.error).slice(0, 2000) } : {}),
+						// Exactly one host-generated receipt, retained within the bounded outcome reservation.
+						...(Array.isArray(parsed.result.originalAttachments) &&
+						parsed.result.originalAttachments.length === 1
+							? {
+									originalAttachments: parsed.result.originalAttachments.map(
+										(receipt: { filename: string; bytes: number; sha256: string }) => ({
+											filename: String(receipt.filename).slice(0, 255),
+											bytes: receipt.bytes,
+											sha256: String(receipt.sha256).slice(0, 64),
+										})
+									),
+								}
+							: {}),
 						...(parsed.result.tabId ? { tabId: parsed.result.tabId } : {}),
 						...(parsed.result.conversationId
 							? { conversationId: parsed.result.conversationId }

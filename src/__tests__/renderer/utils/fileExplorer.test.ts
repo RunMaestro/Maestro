@@ -493,6 +493,19 @@ describe('fileExplorer utils', () => {
 			expect(result[0].children![0].children![0].name).toBe('App.tsx');
 		});
 
+		it('propagates a disconnected child read without logging or publishing an incomplete tree', async () => {
+			const error = new Error(
+				'Not submitted: reconnecting to the host. Your current work is retained.'
+			);
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([{ name: 'src', isDirectory: true, isFile: false }])
+				.mockRejectedValueOnce(error);
+			const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+			await expect(loadFileTree('/project', 5, 0, SSH)).rejects.toBe(error);
+			expect(spy).not.toHaveBeenCalled();
+			spy.mockRestore();
+		});
+
 		it('propagates errors from readDir', async () => {
 			vi.mocked(window.maestro.fs.readDir).mockRejectedValue(new Error('Permission denied'));
 
@@ -784,6 +797,23 @@ describe('fileExplorer utils', () => {
 			// The shared test setup mounts a real `window.maestro` mock; we just
 			// need to attach a controllable `listTreeRemote` mock for these tests.
 			window.maestro.fs.listTreeRemote = vi.fn();
+		});
+
+		it('stops phased SSH scans as soon as the transport disconnects', async () => {
+			const error = new Error(
+				'Not submitted: restoring authoritative host state. Your current work is retained.'
+			);
+			vi.mocked(window.maestro.fs.listTreeRemote).mockRejectedValueOnce(error);
+			await expect(
+				loadFileTreeRemoteBatched('/project', {
+					maxDepth: 5,
+					maxEntries: 1000,
+					ignorePatterns: [],
+					honorGitignore: false,
+					sshRemoteId: 'remote-1',
+				})
+			).rejects.toBe(error);
+			expect(window.maestro.fs.listTreeRemote).toHaveBeenCalledOnce();
 		});
 
 		it('issues separate find calls for .maestro (unlimited) and the rest of the tree (capped)', async () => {

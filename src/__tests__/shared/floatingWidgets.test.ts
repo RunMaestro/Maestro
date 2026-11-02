@@ -12,6 +12,9 @@ import {
 	isFloatingWidgetId,
 	isMediaPlayerWidgetCommand,
 	isThroughputGaugeWidgetCommand,
+	NO_FLOATING_WIDGET_OVERFLOW,
+	planFloatingWidgetOverflow,
+	sanitizeFloatingWidgetOverflow,
 } from '../../shared/floatingWidgets';
 
 describe('isFloatingWidgetId', () => {
@@ -157,6 +160,59 @@ describe('isMediaPlayerWidgetCommand', () => {
 	it('refuses values that are not command objects', () => {
 		for (const value of [undefined, null, 'dismiss', 0, true, {}, [], [{ type: 'action' }]]) {
 			expect(isMediaPlayerWidgetCommand(value)).toBe(false);
+		}
+	});
+});
+
+describe('planFloatingWidgetOverflow', () => {
+	it('borrows nothing when the content already fits below', () => {
+		expect(
+			planFloatingWidgetOverflow({ above: 300, below: 0 }, { above: 500, below: 500 })
+		).toEqual(NO_FLOATING_WIDGET_OVERFLOW);
+	});
+
+	it('grows below when the need fits there', () => {
+		expect(
+			planFloatingWidgetOverflow({ above: 330, below: 280 }, { above: 500, below: 400 })
+		).toEqual({ above: 0, below: 280 });
+	});
+
+	it('grows above when there is no room below (the default bottom-right spot)', () => {
+		expect(
+			planFloatingWidgetOverflow({ above: 330, below: 280 }, { above: 800, below: 24 })
+		).toEqual({ above: 330, below: 0 });
+	});
+
+	it('takes the roomier side as far as it goes when neither fits', () => {
+		expect(
+			planFloatingWidgetOverflow({ above: 330, below: 280 }, { above: 120, below: 200 })
+		).toEqual({ above: 0, below: 200 });
+		expect(
+			planFloatingWidgetOverflow({ above: 330, below: 280 }, { above: 250, below: 100 })
+		).toEqual({ above: 250, below: 0 });
+	});
+
+	it('rounds a need up and room down, and never grows into negative room', () => {
+		expect(
+			planFloatingWidgetOverflow({ above: 10.2, below: 10.2 }, { above: -5, below: 100.9 })
+		).toEqual({ above: 0, below: 11 });
+		expect(planFloatingWidgetOverflow({ above: 50, below: 50 }, { above: -5, below: -5 })).toEqual(
+			NO_FLOATING_WIDGET_OVERFLOW
+		);
+	});
+});
+
+describe('sanitizeFloatingWidgetOverflow', () => {
+	it('keeps finite, positive sides', () => {
+		expect(sanitizeFloatingWidgetOverflow({ above: 12, below: 0 })).toEqual({
+			above: 12,
+			below: 0,
+		});
+	});
+
+	it('reads anything damaged as no overflow', () => {
+		for (const value of [undefined, null, 'x', 3, { above: -1, below: Number.NaN }, {}]) {
+			expect(sanitizeFloatingWidgetOverflow(value)).toEqual(NO_FLOATING_WIDGET_OVERFLOW);
 		}
 	});
 });

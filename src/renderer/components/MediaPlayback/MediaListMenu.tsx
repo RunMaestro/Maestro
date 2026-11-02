@@ -10,8 +10,12 @@ import { formatMediaTime, type MediaItem } from '../../utils/mediaItems';
 import type { Theme } from '../../types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
-/** Design height for the menu, matching the former `max-h-80` utility. */
-const MEDIA_LIST_MENU_MAX_HEIGHT_PX = 320;
+/**
+ * Design height for the menu, matching the former `max-h-80` utility: about
+ * seven rows before it scrolls. The media widget window grows to make room for
+ * this much (see `useMediaListOverflow`).
+ */
+export const MEDIA_LIST_MENU_MAX_HEIGHT_PX = 320;
 
 interface MediaListMenuProps {
 	/** The title bar button this list hangs off. */
@@ -34,6 +38,10 @@ interface MediaListMenuProps {
 	onClose: () => void;
 	testId: string;
 	theme: Theme;
+	/** Which side of the button the list opens on. Defaults to below. */
+	placement?: 'below' | 'above';
+	/** Change it to re-place the list after the space around it moved (a window resize). */
+	layoutKey?: unknown;
 }
 
 /**
@@ -63,9 +71,13 @@ export const MediaListMenu = memo(function MediaListMenu({
 	onClose,
 	testId,
 	theme,
+	placement = 'below',
+	layoutKey,
 }: MediaListMenuProps) {
 	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(menuRef, anchorRef, {
 		align: 'end',
+		placement,
+		contentKey: layoutKey,
 	});
 
 	// Take the caret while the list is up, so Escape reaches this menu rather

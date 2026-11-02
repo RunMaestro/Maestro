@@ -36,6 +36,16 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { RemoteBrowserTabView } from './RemoteBrowserTabView';
 import { useSessionStore } from '../../stores/sessionStore';
 import { createHostBrowserPageView } from '../../utils/browserPageView';
+import { sanitizeJourneyUrl } from '../../../shared/userJourney';
+import { recordJourney } from '../../services/userJourney';
+
+/** The agent whose tab bar holds this browser tab, if any. */
+function findBrowserTabOwnerId(tabId: string): string | undefined {
+	return useSessionStore
+		.getState()
+		.sessions.find((candidate) => candidate.browserTabs?.some((browser) => browser.id === tabId))
+		?.id;
+}
 
 type ElectronWebviewElement = HTMLElement & {
 	src: string;
@@ -254,6 +264,10 @@ const NativeBrowserTabView = React.memo(
 		// mid-commit and crashes the renderer (MAESTRO-QX/QY/QZ).
 		const initialSrcRef = useRef(toWebviewSrc(tab.url));
 		const isAddressFocusedRef = useRef(false);
+		// User Journey: true while the next main-frame commit is a load the user did
+		// not ask for (the tab loading its own URL, or an agent's `navigate()`), so
+		// it is not recorded as a `browser.navigate`.
+		const skipJourneyCommitRef = useRef(false);
 		// Track whether the user explicitly clicked into the webview host area.
 		// Used to distinguish intentional focus (user click) from programmatic
 		// focus-stealing (page autofocus, window.focus(), etc.).
@@ -284,14 +298,10 @@ const NativeBrowserTabView = React.memo(
 		useLayoutEffect(() => {
 			if (!tab.remotePage) return;
 			const host = hostRef.current;
-			const session = useSessionStore
-				.getState()
-				.sessions.find((candidate) =>
-					candidate.browserTabs?.some((browser) => browser.id === tab.id)
-				);
-			if (!host || !session) return;
+			const sessionId = findBrowserTabOwnerId(tab.id);
+			if (!host || !sessionId) return;
 			const page = createHostBrowserPageView(
-				{ sessionId: session.id, tabId: tab.id },
+				{ sessionId, tabId: tab.id },
 				initialSrcRef.current,
 				theme.colors.bgMain
 			);
@@ -384,6 +394,7 @@ const NativeBrowserTabView = React.memo(
 						// The old page stays loaded until the new src reaches dom-ready;
 						// mark not-ready so a follow-up read/waitFor extracts the NEW page.
 						isDomReadyRef.current = false;
+						skipJourneyCommitRef.current = true;
 						webview.src = result.url;
 					}
 					return result.url;
@@ -522,6 +533,44 @@ const NativeBrowserTabView = React.memo(
 				onUpdateTabRef.current(latestTabRef.current.id, updates);
 			};
 
+			// User Journey: the first main-frame commit after these listeners attach
+			// is the tab loading its own URL, either a new tab (`browser.open`
+			// already recorded it, under the URL before any redirect) or a remount
+			// reloading it. Neither is the user navigating, so it is skipped. The
+			// last target is kept so a duplicate event or a fragment-only change
+			// records nothing.
+			skipJourneyCommitRef.current = latestTabRef.current.url !== DEFAULT_BROWSER_TAB_URL;
+			let lastJourneyTarget = sanitizeJourneyUrl(latestTabRef.current.url);
+			const recordNavigation = (url: string, isCommit: boolean) => {
+				const target = sanitizeJourneyUrl(url);
+				if (skipJourneyCommitRef.current && isCommit) {
+					skipJourneyCommitRef.current = false;
+					lastJourneyTarget = target;
+					return;
+				}
+				if (target === DEFAULT_BROWSER_TAB_URL || target === lastJourneyTarget) return;
+				lastJourneyTarget = target;
+				const { id: tabId, ephemeral } = latestTabRef.current;
+				const agentId = findBrowserTabOwnerId(tabId);
+				// A private (ephemeral) tab leaves no journey.
+				if (!agentId || ephemeral) return;
+				// At commit Chromium reports the URL as the title until the page sets
+				// one. getTitle throws on a guest that never reached dom-ready; the
+				// entry is then recorded without a title.
+				let title: string | undefined;
+				try {
+					title = webview.getTitle?.();
+				} catch {
+					title = undefined;
+				}
+				recordJourney(agentId, {
+					kind: 'browser.navigate',
+					target,
+					tabId,
+					...(title && title !== url ? { title } : {}),
+				});
+			};
+
 			const readWebviewState = (): Partial<BrowserTab> | null => {
 				if (!isDomReadyRef.current) return null;
 
@@ -555,6 +604,9 @@ const NativeBrowserTabView = React.memo(
 				// every main-frame nav; if dom-ready does not fire again before
 				// stop-loading, readWebviewState would bail and leave the spinner stuck.
 				isDomReadyRef.current = true;
+				// The skipped load ended, committed or not; whatever commits next is
+				// the user's navigation.
+				skipJourneyCommitRef.current = false;
 				syncWebviewLayout(webview);
 				updateNavigationState();
 			};
@@ -573,6 +625,9 @@ const NativeBrowserTabView = React.memo(
 					title: getBrowserTabTitle(nextUrl, latestTabRef.current.title),
 				});
 				updateNavigationState();
+				if ((event as Event & { isMainFrame?: boolean }).isMainFrame !== false) {
+					recordNavigation(nextUrl, event.type === 'did-navigate');
+				}
 			};
 			const handleNavigationStart = (event: Event) => {
 				if ((event as Event & { isMainFrame?: boolean }).isMainFrame === false) return;

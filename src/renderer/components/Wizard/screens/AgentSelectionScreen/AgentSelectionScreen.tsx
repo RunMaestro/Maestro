@@ -306,6 +306,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					onEnvVarValueChange={configPanel.handleEnvVarValueChange}
 					onEnvVarRemove={configPanel.handleEnvVarRemove}
 					onEnvVarAdd={configPanel.handleEnvVarAdd}
+					onEnvVarsReplace={configPanel.handleEnvVarsReplace}
 					onEnvVarsBlur={() => {}}
 					agentConfig={configPanel.agentConfig}
 					onConfigChange={configPanel.handleConfigChange}
