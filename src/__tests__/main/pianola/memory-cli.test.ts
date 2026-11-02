@@ -1,10 +1,17 @@
 // @vitest-environment node
 import { expect, it, vi } from 'vitest';
 import { MemoryModels } from '../../../main/pianola/memory-models';
+import { memoryCliInvocation, parseMemoryCliOutput } from '../../../main/pianola/memory-cli';
 import { resolveMemoryCliConfig } from '../../../main/pianola/memory-provider-discovery';
 import { withMemoryProvider } from '../../../shared/pianola/memory-providers';
-import type { MemoryConfig, MemoryCliProviderInfo } from '../../../shared/pianola/memory';
+import type {
+	MemoryCliProvider,
+	MemoryConfig,
+	MemoryCliProviderInfo,
+} from '../../../shared/pianola/memory';
+import { MEMORY_CLI_PROVIDER_IDS } from '../../../shared/pianola/memory';
 import type { MemoryTransportScope } from '../../../main/pianola/memory-transport';
+import { needsWindowsShell } from '../../../shared/maestro-lib/launch/exec-file';
 
 const cliProviders: MemoryCliProviderInfo[] = [
 	{ id: 'claude-code', name: 'Claude Code', path: 'C:\\tools\\claude.exe', model: 'sonnet' },
@@ -81,7 +88,7 @@ it.each(['claude-code', 'omp'] as const)(
 		});
 		const [invocation, timeout, operation] = cli.mock.calls[0];
 		expect(invocation.command).toBe(current.cliPath);
-		expect(invocation.input).toBe(input.user);
+		expect(invocation.input).toContain(input.user);
 		expect(timeout).toBe(600000);
 		expect(operation).toBe('cli-extract');
 		expect(invocation.args).toContain(provider === 'claude-code' ? '--tools' : '--no-tools');
@@ -112,4 +119,79 @@ it('auto-fills CLI defaults and requires consent for a newly selected account', 
 		model: 'sonnet',
 		hostedConsent: false,
 	});
+});
+
+it.each(MEMORY_CLI_PROVIDER_IDS)(
+	'builds a non-destructive %s extraction invocation',
+	(provider) => {
+		const result = memoryCliInvocation(
+			{ ...config, cliProvider: provider, model: 'test-model' },
+			input
+		);
+		expect(result.command).toBe(config.cliPath);
+		expect(result.args.join(' ')).toContain('test-model');
+		expect(result.args.join(' ')).not.toMatch(
+			/dangerously|skip-permissions-unsafe|--allow-all(?:\s|$)|--yolo(?:\s|$)/
+		);
+	}
+);
+
+const OUTPUT_FIXTURES: Partial<Record<MemoryCliProvider, string>> = {
+	codex: JSON.stringify({
+		type: 'item.completed',
+		item: { type: 'agent_message', text: '{"memories":[]}' },
+	}),
+	antigravity: JSON.stringify({
+		event: 'result',
+		result: { response: '{"memories":[]}', usage: { input_tokens: 10, output_tokens: 4 } },
+	}),
+	'qwen3-coder': JSON.stringify({
+		type: 'result',
+		is_error: false,
+		result: '{"memories":[]}',
+		usage: { input_tokens: 10, output_tokens: 4 },
+	}),
+	hermes: '{"memories":[]}',
+	pi: JSON.stringify({
+		type: 'agent_end',
+		messages: [
+			{
+				role: 'assistant',
+				content: [{ type: 'text', text: '{"memories":[]}' }],
+				usage: { input: 10, output: 4 },
+			},
+		],
+	}),
+	opencode: [
+		JSON.stringify({ type: 'text', part: { type: 'text', text: '{"memories":[]}' } }),
+		JSON.stringify({
+			type: 'step_finish',
+			part: { id: 'step-1', tokens: { input: 10, output: 4 } },
+		}),
+	].join('\n'),
+	'factory-droid': JSON.stringify({
+		type: 'completion',
+		finalText: '{"memories":[]}',
+		usage: { input_tokens: 10, output_tokens: 4 },
+	}),
+	'copilot-cli': JSON.stringify({
+		type: 'assistant.message',
+		data: { content: '{"memories":[]}', outputTokens: 4 },
+	}),
+	grok: [
+		JSON.stringify({ type: 'text', data: '{"memories":[]}' }),
+		JSON.stringify({ type: 'end', stop_reason: 'end_turn' }),
+	].join('\n'),
+};
+
+it.each(Object.entries(OUTPUT_FIXTURES))('parses %s extraction output', (provider, output) => {
+	const result = parseMemoryCliOutput(provider as MemoryCliProvider, output, input);
+	expect(result.content).toBe('{"memories":[]}');
+	expect(result.inputTokens).toBeGreaterThan(0);
+	expect(result.outputTokens).toBeGreaterThan(0);
+});
+
+it('recognizes quoted Windows command shims', () => {
+	expect(needsWindowsShell('"C:\\Program Files\\Codex\\codex.cmd"')).toBe(true);
+	expect(needsWindowsShell('"C:\\Program Files\\Claude\\claude.exe"')).toBe(false);
 });

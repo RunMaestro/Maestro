@@ -14,6 +14,7 @@ import {
 	buildMemoryPacket,
 	isUsableMemoryEvidence,
 	normalizeMemoryConversation,
+	MEMORY_CLI_PROVIDER_IDS,
 } from '../../shared/pianola/memory';
 import { PIANOLA_PROFILES_FILENAME, validatePianolaProfiles } from '../../shared/pianola/storage';
 import {
@@ -153,7 +154,7 @@ export class MemoryEngine {
 			typeof config.ongoing !== 'boolean' ||
 			typeof config.hostedConsent !== 'boolean' ||
 			!['local', 'cli', 'hosted', 'batch'].includes(config.mode) ||
-			(config.cliProvider !== undefined && !['claude-code', 'omp'].includes(config.cliProvider)) ||
+			(config.cliProvider !== undefined && !MEMORY_CLI_PROVIDER_IDS.includes(config.cliProvider)) ||
 			(config.mode === 'cli' &&
 				(!config.cliProvider || !config.cliPath || !path.isAbsolute(config.cliPath))) ||
 			(config.hostedProvider !== undefined && !['openai', 'nan'].includes(config.hostedProvider)) ||

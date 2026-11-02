@@ -1,8 +1,16 @@
 import type Database from 'better-sqlite3';
 import crypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import fs from 'node:fs';
 import { threadId } from 'node:worker_threads';
-import { execFileNoThrow } from '../utils/execFile';
+import { execFileNoThrow, needsWindowsShell } from '../utils/execFile';
+import { isWindows } from '../../shared/platformDetection';
+import { escapeCmdArgs } from '../../shared/maestro-lib/launch/windows-shell-escape';
+import {
+	cmdShellArgsRefusal,
+	quoteCommandForCmdShell,
+} from '../../shared/maestro-lib/launch/windows-command';
 import type { MemoryCliInvocation } from './memory-cli';
 import type {
 	MemoryTransportActivation,
@@ -657,6 +665,17 @@ export class MemoryTransport {
 	}
 }
 
+function prepareCliLaunch(invocation: MemoryCliInvocation): { command: string; args: string[] } {
+	if (!isWindows() || !needsWindowsShell(invocation.command))
+		return { command: invocation.command, args: invocation.args };
+	const refusal = cmdShellArgsRefusal(invocation.args, new Set(invocation.promptArgs ?? []));
+	if (refusal) throw new Error(refusal);
+	return {
+		command: quoteCommandForCmdShell(invocation.command),
+		args: escapeCmdArgs(invocation.args),
+	};
+}
+
 /** Mandatory owned I/O seam; errors never contain provider/private body text. */
 export class MemoryTransportScope {
 	private open = false;
@@ -673,12 +692,16 @@ export class MemoryTransportScope {
 		operation: string
 	): Promise<string> {
 		if (this.open || this.ended) throw new Error('Transport scope is not available');
+		const launch = prepareCliLaunch(invocation);
 		const request = this.controller.startRequest(this.id, operation, this.authority);
 		this.open = true;
+		let workspace: string | undefined;
 		try {
-			const result = await execFileNoThrow(invocation.command, invocation.args, undefined, {
+			workspace = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'maestro-memory-cli-'));
+			const result = await execFileNoThrow(launch.command, launch.args, workspace, {
 				input: invocation.input,
 				timeout: timeoutMs,
+				env: { ...process.env, ...invocation.env },
 			});
 			if (typeof result.exitCode !== 'number')
 				throw new MemoryTransportError(
@@ -706,6 +729,9 @@ export class MemoryTransportScope {
 			}
 			if (error instanceof MemoryTransportError) throw error;
 			throw new MemoryTransportError('cli-failed', null, invocation.contentType, 'unproven-close');
+		} finally {
+			if (workspace)
+				await fs.promises.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
 		}
 	}
 	async json(

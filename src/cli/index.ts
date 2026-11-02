@@ -2913,7 +2913,7 @@ pianola
 	.option('--root <path>', 'Custom account/data root')
 	.option('--mine', 'Explicitly attribute selected pools to your human-authored history')
 	.option('--mode <mode>', 'local, cli, hosted, or batch')
-	.option('--cli-provider <id>', 'Installed extraction CLI: claude-code or omp')
+	.option('--cli-provider <id>', 'Installed Maestro CLI to use for extraction')
 	.option('--hosted-provider <id>', 'Hosted extraction provider: openai or nan')
 	.option('--model <model>', 'Extraction model')
 	.option('--endpoint <url>', 'Loopback local extraction endpoint')

@@ -1,4 +1,6 @@
-import type { MemoryConfig } from '../../shared/pianola/memory';
+import type { MemoryCliProvider, MemoryConfig } from '../../shared/pianola/memory';
+import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
+import { extractConcatenatedJsonObjects } from '../process-manager/handlers/StdoutHandler';
 
 export interface MemoryCliInput {
 	system: string;
@@ -12,7 +14,10 @@ export interface MemoryCliInvocation {
 	command: string;
 	args: string[];
 	input: string;
-	contentType: 'application/json' | 'application/jsonl';
+	contentType: 'application/json' | 'application/jsonl' | 'text/plain';
+	env?: Record<string, string>;
+	/** Prompt values that must remain intact when a Windows cmd shim is unavoidable. */
+	promptArgs?: string[];
 }
 
 export interface MemoryCliResult {
@@ -20,6 +25,8 @@ export interface MemoryCliResult {
 	inputTokens: number;
 	outputTokens: number;
 }
+
+type Builder = (config: MemoryConfig, input: MemoryCliInput) => MemoryCliInvocation;
 
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -29,16 +36,35 @@ function number(value: unknown, fallback: number): number {
 	return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-export function memoryCliInvocation(
-	config: MemoryConfig,
-	input: MemoryCliInput
-): MemoryCliInvocation {
-	if (config.mode !== 'cli' || !config.cliPath) throw new Error('Memory CLI is not configured');
+function schemaInstructions(input: MemoryCliInput): string {
+	return `${input.system}\n\nReturn JSON matching this JSON Schema:\n${JSON.stringify(input.schema)}`;
+}
+
+function combinedPrompt(input: MemoryCliInput): string {
+	return `${schemaInstructions(input)}\n\n${input.user}`;
+}
+
+function modelArgs(config: MemoryConfig, flag: string): string[] {
 	const model = config.model.trim();
-	if (config.cliProvider === 'claude-code') {
-		return {
-			command: config.cliPath,
-			args: [
+	return model ? [flag, model] : [];
+}
+
+function invocation(
+	config: MemoryConfig,
+	args: string[],
+	input: string,
+	contentType: MemoryCliInvocation['contentType'] = 'application/jsonl',
+	env?: Record<string, string>
+): MemoryCliInvocation {
+	if (!config.cliPath) throw new Error('Memory CLI is not configured');
+	return { command: config.cliPath, args, input, contentType, ...(env ? { env } : {}) };
+}
+
+const BUILDERS: Record<MemoryCliProvider, Builder> = {
+	'claude-code': (config, input) =>
+		invocation(
+			config,
+			[
 				'--print',
 				'--output-format',
 				'json',
@@ -50,18 +76,78 @@ export function memoryCliInvocation(
 				'none',
 				'--no-session-persistence',
 				'--safe-mode',
-				'--system-prompt',
-				input.system,
-				...(model ? ['--model', model] : []),
+				...modelArgs(config, '--model'),
 			],
-			input: input.user,
-			contentType: 'application/json',
-		};
-	}
-	if (config.cliProvider === 'omp') {
+			`${input.system}\n\n${input.user}`,
+			'application/json',
+			{ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' }
+		),
+	codex: (config, input) =>
+		invocation(
+			config,
+			[
+				'exec',
+				'--json',
+				'--sandbox',
+				'read-only',
+				'--skip-git-repo-check',
+				'--ephemeral',
+				'--ignore-rules',
+				'--ignore-user-config',
+				...modelArgs(config, '-m'),
+			],
+			combinedPrompt(input)
+		),
+	antigravity: (config, input) => {
+		const prompt = combinedPrompt(input);
 		return {
-			command: config.cliPath,
-			args: [
+			...invocation(
+				config,
+				[
+					'--output-format',
+					'stream-json',
+					'--sandbox',
+					...modelArgs(config, '--model'),
+					'-p',
+					prompt,
+				],
+				''
+			),
+			promptArgs: [prompt],
+		};
+	},
+	'qwen3-coder': (config, input) =>
+		invocation(
+			config,
+			['--output-format', 'stream-json', '--approval-mode', 'plan', ...modelArgs(config, '-m')],
+			combinedPrompt(input)
+		),
+	hermes: (config, input) =>
+		invocation(
+			config,
+			[
+				'chat',
+				'--query-file',
+				'-',
+				'--ignore-rules',
+				'--toolsets',
+				'',
+				'-Q',
+				...modelArgs(config, '-m'),
+			],
+			combinedPrompt(input),
+			'text/plain'
+		),
+	pi: (config, input) =>
+		invocation(
+			config,
+			['-p', '--mode=json', '--no-tools', ...modelArgs(config, '--model')],
+			combinedPrompt(input)
+		),
+	omp: (config, input) =>
+		invocation(
+			config,
+			[
 				'--print',
 				'--mode=json',
 				'--no-session',
@@ -70,15 +156,154 @@ export function memoryCliInvocation(
 				'--no-skills',
 				'--no-rules',
 				'--no-context-files',
-				'--system-prompt',
-				`${input.system}\n\nReturn JSON matching this JSON Schema:\n${JSON.stringify(input.schema)}`,
-				...(model ? [`--model=${model}`] : []),
+				...(config.model.trim() ? [`--model=${config.model.trim()}`] : []),
 			],
-			input: input.user,
-			contentType: 'application/jsonl',
-		};
+			combinedPrompt(input)
+		),
+	opencode: (config, input) =>
+		invocation(
+			config,
+			['run', '--format', 'json', '--agent', 'plan', ...modelArgs(config, '--model')],
+			combinedPrompt(input),
+			'application/jsonl',
+			{
+				OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+			}
+		),
+	'factory-droid': (config, input) =>
+		invocation(
+			config,
+			['exec', '-o', 'stream-json', ...modelArgs(config, '-m')],
+			combinedPrompt(input)
+		),
+	'copilot-cli': (config, input) =>
+		invocation(
+			config,
+			[
+				'--output-format',
+				'json',
+				'--allow-tool=read,url',
+				'--deny-tool=write,shell,memory,github',
+				'--no-ask-user',
+				...modelArgs(config, '--model'),
+			],
+			combinedPrompt(input)
+		),
+	grok: (config, input) =>
+		invocation(
+			config,
+			[
+				'--output-format',
+				'streaming-json',
+				'--permission-mode',
+				'plan',
+				'--deny',
+				'Bash(*)',
+				...modelArgs(config, '-m'),
+			],
+			combinedPrompt(input)
+		),
+};
+
+export function memoryCliInvocation(
+	config: MemoryConfig,
+	input: MemoryCliInput
+): MemoryCliInvocation {
+	if (config.mode !== 'cli' || !config.cliProvider) throw new Error('Memory CLI is not configured');
+	return BUILDERS[config.cliProvider](config, input);
+}
+
+function parseClaude(stdout: string, input: MemoryCliInput): MemoryCliResult {
+	const envelope: unknown = JSON.parse(stdout);
+	if (!record(envelope) || envelope.is_error === true)
+		throw new Error('Claude Code CLI extraction failed');
+	const content =
+		envelope.structured_output !== undefined
+			? JSON.stringify(envelope.structured_output)
+			: envelope.result;
+	if (typeof content !== 'string') throw new Error('Claude Code CLI returned no extraction');
+	const usage = record(envelope.usage) ? envelope.usage : {};
+	return {
+		content,
+		inputTokens:
+			number(usage.input_tokens, 0) +
+				number(usage.cache_creation_input_tokens, 0) +
+				number(usage.cache_read_input_tokens, 0) || input.tokens,
+		outputTokens: number(usage.output_tokens, input.output),
+	};
+}
+
+function parseOmp(stdout: string, input: MemoryCliInput): MemoryCliResult {
+	let content: string | undefined;
+	let usage: Record<string, unknown> = {};
+	for (const line of stdout.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		let event: unknown;
+		try {
+			event = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (!record(event) || event.type !== 'message_end' || !record(event.message)) continue;
+		const message = event.message;
+		if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+		const text = message.content
+			.map((part) => (record(part) && typeof part.text === 'string' ? part.text : ''))
+			.join('');
+		if (!text.trim()) continue;
+		content = text;
+		usage = record(message.usage) ? message.usage : {};
 	}
-	throw new Error('Unsupported memory CLI provider');
+	if (!content) throw new Error('Oh My Pi CLI returned no extraction');
+	return {
+		content,
+		inputTokens:
+			number(usage.input, 0) + number(usage.cacheRead, 0) + number(usage.cacheWrite, 0) ||
+			input.tokens,
+		outputTokens: number(usage.output, input.output),
+	};
+}
+
+function parseWithSharedParser(
+	provider: MemoryCliProvider,
+	stdout: string,
+	input: MemoryCliInput
+): MemoryCliResult {
+	const parser = createOutputParser(provider);
+	if (!parser) throw new Error('Unsupported memory CLI provider');
+	const lines =
+		provider === 'copilot-cli'
+			? extractConcatenatedJsonObjects(stdout).messages
+			: stdout.split(/\r?\n/).filter((line) => line.trim());
+	let content: string | undefined;
+	let streamed = '';
+	let lastUsage = { inputTokens: 0, outputTokens: 0 };
+	const stepUsage = new Map<string, { inputTokens: number; outputTokens: number }>();
+	for (const line of lines) {
+		const event = parser.parseJsonLine(line);
+		if (!event) continue;
+		if (event.type === 'error') throw new Error(provider + ' CLI extraction failed');
+		if (event.type === 'text' && !event.isReasoning) streamed += event.text ?? '';
+		if (event.type === 'result' && event.text?.trim()) content = event.text;
+		if (!event.usage) continue;
+		const usage = {
+			inputTokens:
+				event.usage.inputTokens +
+				(event.usage.cacheReadTokens ?? 0) +
+				(event.usage.cacheCreationTokens ?? 0),
+			outputTokens: event.usage.outputTokens,
+		};
+		if (event.usageEventId) stepUsage.set(event.usageEventId, usage);
+		else lastUsage = usage;
+	}
+	if (!content && streamed.trim()) content = streamed;
+	if (!content) throw new Error(provider + ' CLI returned no extraction');
+	const usage = stepUsage.size ? [...stepUsage.values()] : [lastUsage];
+	return {
+		content,
+		inputTokens: usage.reduce((total, item) => total + item.inputTokens, 0) || input.tokens,
+		outputTokens: usage.reduce((total, item) => total + item.outputTokens, 0) || input.output,
+	};
 }
 
 export function parseMemoryCliOutput(
@@ -86,54 +311,13 @@ export function parseMemoryCliOutput(
 	stdout: string,
 	input: MemoryCliInput
 ): MemoryCliResult {
-	if (provider === 'claude-code') {
-		const envelope: unknown = JSON.parse(stdout);
-		if (!record(envelope) || envelope.is_error === true)
-			throw new Error('Claude Code CLI extraction failed');
-		const content =
-			envelope.structured_output !== undefined
-				? JSON.stringify(envelope.structured_output)
-				: envelope.result;
-		if (typeof content !== 'string') throw new Error('Claude Code CLI returned no extraction');
-		const usage = record(envelope.usage) ? envelope.usage : {};
-		return {
-			content,
-			inputTokens:
-				number(usage.input_tokens, 0) +
-					number(usage.cache_creation_input_tokens, 0) +
-					number(usage.cache_read_input_tokens, 0) || input.tokens,
-			outputTokens: number(usage.output_tokens, input.output),
-		};
+	if (provider === 'claude-code') return parseClaude(stdout, input);
+	if (provider === 'omp') return parseOmp(stdout, input);
+	if (provider === 'hermes') {
+		const content = stdout.trim();
+		if (!content) throw new Error('Hermes CLI returned no extraction');
+		return { content, inputTokens: input.tokens, outputTokens: input.output };
 	}
-	if (provider === 'omp') {
-		let content: string | undefined;
-		let usage: Record<string, unknown> = {};
-		for (const line of stdout.split(/\r?\n/)) {
-			if (!line.trim()) continue;
-			let event: unknown;
-			try {
-				event = JSON.parse(line);
-			} catch {
-				continue;
-			}
-			if (!record(event) || event.type !== 'message_end' || !record(event.message)) continue;
-			const message = event.message;
-			if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
-			const text = message.content
-				.map((part) => (record(part) && typeof part.text === 'string' ? part.text : ''))
-				.join('');
-			if (!text.trim()) continue;
-			content = text;
-			usage = record(message.usage) ? message.usage : {};
-		}
-		if (!content) throw new Error('Oh My Pi CLI returned no extraction');
-		return {
-			content,
-			inputTokens:
-				number(usage.input, 0) + number(usage.cacheRead, 0) + number(usage.cacheWrite, 0) ||
-				input.tokens,
-			outputTokens: number(usage.output, input.output),
-		};
-	}
-	throw new Error('Unsupported memory CLI provider');
+	if (!provider) throw new Error('Memory CLI is not configured');
+	return parseWithSharedParser(provider, stdout, input);
 }

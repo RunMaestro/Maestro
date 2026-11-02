@@ -9,7 +9,11 @@ import { MemoryTransportScope } from '../../../main/pianola/memory-transport';
 import { execFileNoThrow } from '../../../shared/maestro-lib/launch/exec-file';
 import type { MemoryTransportActivation } from '../../../shared/pianola/memory';
 
-vi.mock('../../../shared/maestro-lib/launch/exec-file', () => ({ execFileNoThrow: vi.fn() }));
+vi.mock('../../../shared/maestro-lib/launch/exec-file', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../shared/maestro-lib/launch/exec-file')>();
+	return { ...actual, execFileNoThrow: vi.fn() };
+});
 
 const databases: MemoryDatabase[] = [];
 const directories: string[] = [];
@@ -21,6 +25,7 @@ const proof = {
 afterEach(async () => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+	vi.mocked(execFileNoThrow).mockClear();
 	for (const db of databases.splice(0)) if (db.db.open) db.close();
 	await Promise.all(
 		directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true }))
@@ -573,8 +578,59 @@ it('records a completed CLI process as terminal transport evidence', async () =>
 			.prepare('SELECT state,status,terminal FROM memory_transport_requests WHERE operation=?')
 			.get('cli-extract')
 	).toEqual({ state: 'ended', status: 0, terminal: 'process-exit' });
+	const [, , workspace] = vi.mocked(execFileNoThrow).mock.calls[0];
+	expect(workspace).toMatch(/maestro-memory-cli-/);
+	await expect(fs.stat(workspace!)).rejects.toThrow();
 	release(f.db, item);
 });
+
+it.skipIf(process.platform !== 'win32')(
+	'quotes a Windows shim and escapes fixed arguments without touching stdin',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-windows-shim')!;
+		vi.mocked(execFileNoThrow).mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 0 });
+		await item.scope.cli(
+			{
+				command: 'C:\\Program Files\\Codex\\codex.cmd',
+				args: ['--flag', 'fixed value'],
+				input: '{"memories":[]}',
+				contentType: 'application/jsonl',
+			},
+			1000,
+			'cli-extract'
+		);
+		const [command, args, , options] = vi.mocked(execFileNoThrow).mock.calls[0];
+		expect(command).toBe('"C:\\Program Files\\Codex\\codex.cmd"');
+		expect(args).toEqual(['--flag', '"fixed value"']);
+		expect(options).toMatchObject({ input: '{"memories":[]}' });
+		release(f.db, item);
+	}
+);
+
+it.skipIf(process.platform !== 'win32')(
+	'refuses prompt argv that cmd.exe cannot preserve',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-unsafe-argv')!;
+		const prompt = 'first line\nsecond line';
+		await expect(
+			item.scope.cli(
+				{
+					command: 'C:\\tools\\agy.cmd',
+					args: ['-p', prompt],
+					promptArgs: [prompt],
+					input: '',
+					contentType: 'application/jsonl',
+				},
+				1000,
+				'cli-extract'
+			)
+		).rejects.toThrow('line break');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		item.scope.finish();
+	}
+);
 
 it('keeps a timed-out CLI submission uncertain instead of releasing it for replay', async () => {
 	const f = await fixture(1);

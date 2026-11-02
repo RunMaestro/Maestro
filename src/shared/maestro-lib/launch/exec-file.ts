@@ -46,14 +46,18 @@ export interface ExecResult {
  */
 export function needsWindowsShell(command: string): boolean {
 	const lowerCommand = command.toLowerCase();
+	const commandForDetection =
+		lowerCommand.startsWith('"') && lowerCommand.endsWith('"')
+			? lowerCommand.slice(1, -1)
+			: lowerCommand;
 
 	// Batch files always need shell
-	if (lowerCommand.endsWith('.cmd') || lowerCommand.endsWith('.bat')) {
+	if (commandForDetection.endsWith('.cmd') || commandForDetection.endsWith('.bat')) {
 		return true;
 	}
 
 	// Known executables don't need shell
-	if (lowerCommand.endsWith('.exe') || lowerCommand.endsWith('.com')) {
+	if (commandForDetection.endsWith('.exe') || commandForDetection.endsWith('.com')) {
 		return false;
 	}
 
@@ -74,13 +78,13 @@ export function needsWindowsShell(command: string): boolean {
 		'pip',
 		'pip3',
 	]);
-	const commandBaseName = lowerCommand.split(/[\\/]/).pop() || lowerCommand;
+	const commandBaseName = commandForDetection.split(/[\\/]/).pop() || commandForDetection;
 	if (knownExeCommands.has(commandBaseName)) {
 		return false;
 	}
 
 	// Other commands without extension still need shell for PATHEXT resolution
-	const hasExtension = path.extname(command).length > 0;
+	const hasExtension = path.extname(commandForDetection).length > 0;
 	return !hasExtension;
 }
 

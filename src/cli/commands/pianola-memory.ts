@@ -86,7 +86,7 @@ export async function pianolaMemory(action: string, words: string[], options: Me
 			if (options.cliProvider) config.cliProvider = options.cliProvider;
 			if ((options.mode ?? state.config.mode) === 'cli') {
 				if (!(options.cliProvider ?? state.config.cliProvider))
-					throw new Error('--mode cli requires --cli-provider claude-code or omp');
+					throw new Error('--mode cli requires --cli-provider');
 			}
 			if (options.hostedProvider) {
 				const preset = memoryProviderPreset(options.hostedProvider);

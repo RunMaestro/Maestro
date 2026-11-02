@@ -1,6 +1,11 @@
-import type { MemoryCliProviderInfo, MemoryConfig } from './memory';
+import {
+	MEMORY_CLI_PROVIDER_IDS,
+	type MemoryCliProvider,
+	type MemoryCliProviderInfo,
+	type MemoryConfig,
+} from './memory';
 
-export type MemoryProviderId = 'local' | 'claude-code' | 'omp' | 'openai' | 'nan' | 'openai-batch';
+export type MemoryProviderId = 'local' | 'openai' | 'nan' | 'openai-batch' | MemoryCliProvider;
 
 export interface MemoryProviderPreset {
 	id: MemoryProviderId;
@@ -15,6 +20,32 @@ export interface MemoryProviderPreset {
 	credentialEnv: readonly string[];
 }
 
+const cliPreset = (id: MemoryCliProvider, label: string): MemoryProviderPreset => ({
+	id,
+	label: `${label} CLI`,
+	description: `Use your existing ${label} installation and account.`,
+	mode: 'cli',
+	cliProvider: id,
+	model: '',
+	inputPrice: 0,
+	outputPrice: 0,
+	credentialEnv: [],
+});
+
+const CLI_LABELS: Record<MemoryCliProvider, string> = {
+	'claude-code': 'Claude Code',
+	codex: 'Codex',
+	antigravity: 'Antigravity',
+	'qwen3-coder': 'Qwen3 Coder',
+	hermes: 'Hermes',
+	pi: 'Pi',
+	omp: 'Oh My Pi',
+	opencode: 'OpenCode',
+	'factory-droid': 'Factory Droid',
+	'copilot-cli': 'Copilot',
+	grok: 'Grok',
+};
+
 export const MEMORY_PROVIDER_PRESETS: readonly MemoryProviderPreset[] = [
 	{
 		id: 'local',
@@ -26,28 +57,7 @@ export const MEMORY_PROVIDER_PRESETS: readonly MemoryProviderPreset[] = [
 		outputPrice: 0,
 		credentialEnv: [],
 	},
-	{
-		id: 'claude-code',
-		label: 'Claude Code CLI',
-		description: 'Use your existing Claude Code installation and account.',
-		mode: 'cli',
-		cliProvider: 'claude-code',
-		model: '',
-		inputPrice: 0,
-		outputPrice: 0,
-		credentialEnv: [],
-	},
-	{
-		id: 'omp',
-		label: 'Oh My Pi CLI',
-		description: 'Use your existing Oh My Pi installation and configured account.',
-		mode: 'cli',
-		cliProvider: 'omp',
-		model: '',
-		inputPrice: 0,
-		outputPrice: 0,
-		credentialEnv: [],
-	},
+	...MEMORY_CLI_PROVIDER_IDS.map((id) => cliPreset(id, CLI_LABELS[id])),
 	{
 		id: 'openai',
 		label: 'OpenAI',

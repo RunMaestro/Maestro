@@ -1,15 +1,11 @@
 import type { AgentDetector } from '../agents/detector';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import type { getAgentConfigsStore } from '../stores';
-import type {
-	MemoryCliProvider,
-	MemoryCliProviderInfo,
-	MemoryConfig,
+import {
+	MEMORY_CLI_PROVIDER_IDS,
+	type MemoryCliProviderInfo,
+	type MemoryConfig,
 } from '../../shared/pianola/memory';
-
-const CLI_PROVIDERS: readonly { id: MemoryCliProvider; name: string }[] = [
-	{ id: 'claude-code', name: 'Claude Code' },
-	{ id: 'omp', name: 'Oh My Pi' },
-];
 
 export async function discoverMemoryCliProviders(
 	detector: AgentDetector,
@@ -17,13 +13,13 @@ export async function discoverMemoryCliProviders(
 ): Promise<MemoryCliProviderInfo[]> {
 	const configs = store.get('configs', {});
 	const providers: MemoryCliProviderInfo[] = [];
-	for (const candidate of CLI_PROVIDERS) {
-		const agent = await detector.getAgent(candidate.id);
+	for (const id of MEMORY_CLI_PROVIDER_IDS) {
+		const agent = await detector.getAgent(id);
 		if (!agent?.available || !agent.path) continue;
-		const configuredModel = configs[candidate.id]?.model;
+		const configuredModel = configs[id]?.model;
 		providers.push({
-			id: candidate.id,
-			name: candidate.name,
+			id,
+			name: getAgentDefinition(id)?.name ?? id,
 			path: agent.path,
 			model: typeof configuredModel === 'string' ? configuredModel.trim() : '',
 		});

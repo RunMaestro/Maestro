@@ -76,7 +76,20 @@ export interface MemoryRoot {
 	authorship: 'human' | 'unknown' | 'automated';
 	enabled: boolean;
 }
-export type MemoryCliProvider = 'claude-code' | 'omp';
+export const MEMORY_CLI_PROVIDER_IDS = [
+	'claude-code',
+	'codex',
+	'antigravity',
+	'qwen3-coder',
+	'hermes',
+	'pi',
+	'omp',
+	'opencode',
+	'factory-droid',
+	'copilot-cli',
+	'grok',
+] as const;
+export type MemoryCliProvider = (typeof MEMORY_CLI_PROVIDER_IDS)[number];
 export interface MemoryCliProviderInfo {
 	id: MemoryCliProvider;
 	name: string;
