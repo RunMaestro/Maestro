@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryView } from '../../../renderer/components/PianolaModal/MemoryView';
 import { mockTheme } from '../../helpers/mockTheme';
-import type { MemoryConfig, MemoryPacket, MemoryRequest } from '../../../shared/pianola/memory';
+import type {
+	MemoryConfig,
+	MemoryPacket,
+	MemoryRequest,
+	MemoryState,
+} from '../../../shared/pianola/memory';
 
 const config: MemoryConfig = {
 	enabled: true,
@@ -18,6 +23,23 @@ const config: MemoryConfig = {
 	tokenBudget: 1000,
 	dollarBudget: 0,
 	ongoing: false,
+};
+const progress: MemoryState['progress'] = {
+	running: false,
+	paused: false,
+	phase: 'idle',
+	sources: 0,
+	completed: 0,
+	failed: 0,
+	excluded: 0,
+	pending: 0,
+	memories: 0,
+	inputTokens: 0,
+	outputTokens: 0,
+	reservedTokens: 0,
+	dollars: 0,
+	error: null,
+	embeddingSpace: 'synthetic',
 };
 const packet: MemoryPacket = {
 	assessment: { mode: 'advisory-evidence', answerability: 'unassessed' },
@@ -41,33 +63,13 @@ describe('Pianola memory recall controls', () => {
 		const requests: MemoryRequest[] = [];
 		vi.mocked(window.maestro.pianola.memory).mockImplementation(async (request) => {
 			requests.push(request);
-			if (request.action === 'status')
-				return {
-					config,
-					progress: {
-						running: false,
-						paused: false,
-						phase: 'idle',
-						sources: 0,
-						completed: 0,
-						failed: 0,
-						excluded: 0,
-						pending: 0,
-						memories: 0,
-						inputTokens: 0,
-						outputTokens: 0,
-						reservedTokens: 0,
-						dollars: 0,
-						error: null,
-						embeddingSpace: 'synthetic',
-					},
-				};
+			if (request.action === 'status') return { config, progress };
 			if (request.action === 'sources' || request.action === 'list') return [];
 			if (request.action === 'recall') return packet;
 			throw new Error('Unexpected memory request');
 		});
 		render(<MemoryView theme={mockTheme} />);
-		expect(await screen.findByText('Recall reranking')).toBeInTheDocument();
+		await screen.findByRole('button', { name: 'Memory bank' });
 		fireEvent.click(screen.getByRole('button', { name: 'Memory bank' }));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled());
 		fireEvent.change(screen.getByPlaceholderText('Recall a preference, fact, or decision…'), {
@@ -83,5 +85,56 @@ describe('Pianola memory recall controls', () => {
 			action: 'recall',
 			query: { query: 'storage decision', rerank: true, qualify: false },
 		});
+	});
+});
+
+describe('Pianola memory setup', () => {
+	it('keeps tuning advanced and starts learning with one consented action', async () => {
+		const requests: MemoryRequest[] = [];
+		let current = config;
+		vi.mocked(window.maestro.pianola.memory).mockImplementation(async (request) => {
+			requests.push(request);
+			if (request.action === 'status') return { config: current, progress };
+			if (request.action === 'sources') return [];
+			if (request.action === 'configure') {
+				current = { ...current, ...request.config };
+				return { config: current, progress };
+			}
+			if (request.action === 'discover') return [];
+			if (request.action === 'start') return { config: current, progress };
+			throw new Error('Unexpected memory request');
+		});
+		render(<MemoryView theme={mockTheme} />);
+		await screen.findByRole('combobox', { name: 'Processing provider' });
+		expect(screen.getByText('Advanced settings').closest('details')).not.toHaveAttribute('open');
+		expect(
+			screen.queryByRole('button', { name: 'Discover selected history' })
+		).not.toBeInTheDocument();
+
+		fireEvent.change(screen.getByRole('combobox', { name: 'Processing provider' }), {
+			target: { value: 'openai' },
+		});
+		expect(screen.getByRole('button', { name: 'Save & start learning' })).toBeDisabled();
+		fireEvent.click(screen.getByText('Advanced settings'));
+		expect(screen.getByRole('textbox', { name: 'Extraction model' })).toHaveValue('gpt-5.4-mini');
+		fireEvent.click(screen.getByRole('checkbox', { name: /Allow OpenAI to process/ }));
+		fireEvent.click(screen.getByRole('button', { name: 'Save & start learning' }));
+
+		await waitFor(() => expect(requests.map((request) => request.action)).toContain('start'));
+		const configure = requests.find((request) => request.action === 'configure');
+		expect(configure).toMatchObject({
+			action: 'configure',
+			config: {
+				mode: 'hosted',
+				hostedProvider: 'openai',
+				hostedConsent: true,
+				model: 'gpt-5.4-mini',
+			},
+		});
+		expect(
+			requests
+				.map((request) => request.action)
+				.filter((action) => ['configure', 'discover', 'start'].includes(action))
+		).toEqual(['configure', 'discover', 'start']);
 	});
 });

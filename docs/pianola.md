@@ -48,7 +48,7 @@ Pianola can read your own past CLI transcripts and propose rules and a decision 
 
 ### Memory
 
-The **Memory** tab contains **Backfill & privacy**, **Memory bank**, and **Coverage & usage**. Enable memory separately, select native history roots, and explicitly attribute your human-authored pools. Unattributed roots stay out of learning. Inspect the original evidence, support label, scope, and current/proposed/contested/superseded status before relying on a claim.
+The **Memory** tab contains **Setup**, **Memory bank**, and **Activity**. Enable memory separately, choose local or hosted processing, select native history roots, and explicitly attribute your human-authored pools. Unattributed roots stay out of learning. **Save & start learning** saves the configuration, discovers the selected history, and starts or resumes processing in one step. Provider models, endpoints, token and pricing overrides, recall tuning, and custom history paths remain available under **Advanced settings**. Inspect the original evidence, support label, scope, and current/proposed/contested/superseded status before relying on a claim.
 
 Memory retains preferences, project knowledge, decisions and rejected alternatives, episodes, commitments, and broader context. It uses a desktop-owned SQLite bank with lexical search and a pinned local semantic embedding model. The manager, watchers, and dispatched tasks receive bounded, relevant context, not the whole bank.
 

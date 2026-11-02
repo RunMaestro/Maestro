@@ -5,7 +5,6 @@ import type {
 	ContextualMemory,
 	MemoryConfig,
 	MemoryPacket,
-	MemoryQualificationConfig,
 	MemoryRecallIntent,
 	MemoryRequest,
 	MemorySource,
@@ -15,6 +14,7 @@ import { Pager } from '../ui/Pager';
 import { usePagination } from '../../hooks/ui/usePagination';
 import { FilterInput } from '../ui/FilterInput';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
+import { MemorySetup } from './MemorySetup';
 
 export function MemoryView({ theme }: { theme: Theme }) {
 	const [state, setState] = useState<MemoryState | null>(null);
@@ -25,8 +25,6 @@ export function MemoryView({ theme }: { theme: Theme }) {
 	const [query, setQuery] = useState('');
 	const [project, setProject] = useState('');
 	const [text, setText] = useState('');
-	const [rootPath, setRootPath] = useState('');
-	const [provider, setProvider] = useState('claude-code');
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [confirmForget, setConfirmForget] = useState(false);
@@ -156,17 +154,13 @@ export function MemoryView({ theme }: { theme: Theme }) {
 							if (s === 'knowledge') void run(search);
 						}}
 					>
-						{s === 'setup'
-							? 'Backfill & privacy'
-							: s === 'knowledge'
-								? 'Memory bank'
-								: 'Coverage & usage'}
+						{s === 'setup' ? 'Setup' : s === 'knowledge' ? 'Memory bank' : 'Activity'}
 					</button>
 				))}
 			</div>
 			<p className="text-xs" style={{ color: theme.colors.textDim }}>
-				Memory is advisory context, not permission. Inspect provenance and unresolved claims before
-				relying on them. Native transcripts and external backups are not deleted by forgetting.
+				Memory provides advisory context, never permission. Forgetting does not delete original
+				transcripts or external backups.
 			</p>
 			{error && (
 				<div
@@ -178,489 +172,36 @@ export function MemoryView({ theme }: { theme: Theme }) {
 				</div>
 			)}
 			{section === 'setup' && (
-				<div className="space-y-4">
-					<label className="flex gap-2 items-center">
-						<input
-							type="checkbox"
-							checked={draft.enabled}
-							onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-						/>
-						Enable Pianola memory
-					</label>
-					<div className="grid grid-cols-2 gap-3">
-						<label>
-							Processing mode
-							<select
-								className={input}
-								style={style}
-								value={draft.mode}
-								onChange={(e) =>
-									setDraft({
-										...draft,
-										mode: e.target.value as MemoryConfig['mode'],
-										hostedProvider: e.target.value === 'batch' ? 'openai' : draft.hostedProvider,
-										hostedConsent:
-											e.target.value === 'batch' && draft.hostedProvider === 'nan'
-												? false
-												: draft.hostedConsent,
-										inputPrice:
-											e.target.value === 'batch' && draft.hostedProvider === 'nan'
-												? 0.75
-												: draft.inputPrice,
-										outputPrice:
-											e.target.value === 'batch' && draft.hostedProvider === 'nan'
-												? 4.5
-												: draft.outputPrice,
-										model:
-											e.target.value === 'local'
-												? 'qwen3:8b'
-												: e.target.value === 'hosted' && draft.hostedProvider === 'nan'
-													? 'qwen3.6'
-													: 'gpt-5.4-mini',
-									})
-								}
-							>
-								<option value="local">Local Ollama endpoint</option>
-								<option value="hosted">Hosted API (OpenAI or NaN)</option>
-								<option value="batch">Historical OpenAI Batch (up to 24h)</option>
-							</select>
-						</label>
-						{draft.mode === 'hosted' && (
-							<label>
-								Hosted provider
-								<select
-									className={input}
-									style={style}
-									value={draft.hostedProvider ?? 'openai'}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											hostedProvider: e.target.value as MemoryConfig['hostedProvider'],
-											model: e.target.value === 'nan' ? 'qwen3.6' : 'gpt-5.4-mini',
-											inputPrice: e.target.value === 'nan' ? 0 : 0.75,
-											outputPrice: e.target.value === 'nan' ? 0 : 4.5,
-											hostedConsent: false,
-										})
-									}
-								>
-									<option value="openai">OpenAI</option>
-									<option value="nan">NaN (qwen3.6, unmetered)</option>
-								</select>
-							</label>
-						)}
-						<label>
-							Extraction model
-							<input
-								className={input}
-								style={style}
-								value={draft.model}
-								onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-							/>
-						</label>
-						{draft.mode === 'local' && (
-							<label className="col-span-2">
-								Local endpoint
-								<input
-									className={input}
-									style={style}
-									value={draft.endpoint}
-									onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-								/>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
-									Requires a running local Ollama model. Embeddings run locally; the pinned model
-									downloads once.
-								</span>
-							</label>
-						)}
-						<label>
-							Total token cap
-							<input
-								type="number"
-								min="0"
-								className={input}
-								style={style}
-								value={draft.tokenBudget}
-								onChange={(e) => setDraft({ ...draft, tokenBudget: Number(e.target.value) })}
-							/>
-						</label>
-						<label>
-							Total dollar cap
-							<input
-								type="number"
-								min="0"
-								step="0.1"
-								className={input}
-								style={style}
-								value={draft.dollarBudget}
-								onChange={(e) => setDraft({ ...draft, dollarBudget: Number(e.target.value) })}
-							/>
-						</label>
-					</div>
-					<div className="space-y-2">
-						<h3 className="text-sm font-medium">Recall qualification</h3>
-						<p className="text-xs" style={{ color: theme.colors.textDim }}>
-							Qualification decides whether a recalled assertion actually answers the question. It
-							is separate from extraction, so it can use a different model.
-						</p>
-						<div className="grid grid-cols-2 gap-2">
-							<label>
-								Qualification provider
-								<select
-									className={input}
-									style={style}
-									value={draft.qualification?.provider ?? 'local'}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											qualification: {
-												provider: e.target.value as MemoryQualificationConfig['provider'],
-												model: draft.qualification?.model ?? 'qwen3:8b',
-												endpoint: draft.qualification?.endpoint ?? 'http://127.0.0.1:11434',
-											},
-										})
-									}
-								>
-									<option value="local">Local (loopback Ollama)</option>
-									<option value="hosted">Hosted (remote API)</option>
-								</select>
-							</label>
-							<label>
-								Qualification model
-								<input
-									className={input}
-									style={style}
-									value={draft.qualification?.model ?? 'qwen3:8b'}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											qualification: {
-												provider: draft.qualification?.provider ?? 'local',
-												model: e.target.value,
-												endpoint: draft.qualification?.endpoint ?? 'http://127.0.0.1:11434',
-											},
-										})
-									}
-								/>
-								{draft.qualification?.provider === 'hosted' && (
-									<span className="text-xs" style={{ color: theme.colors.textDim }}>
-										On a hosted provider, glm5.3-flash matched qwen3.6’s result on 62 of 62
-										questions and answered 66% faster.
-									</span>
-								)}
-							</label>
-							<label className="col-span-2">
-								Qualification endpoint
-								<input
-									className={input}
-									style={style}
-									value={draft.qualification?.endpoint ?? 'http://127.0.0.1:11434'}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											qualification: {
-												provider: draft.qualification?.provider ?? 'local',
-												model: draft.qualification?.model ?? 'qwen3:8b',
-												endpoint: e.target.value,
-											},
-										})
-									}
-								/>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
-									{draft.qualification?.provider === 'hosted'
-										? 'A hosted qualification sends the question and the candidate assertions to this API. It requires NAN_API_KEY in Maestro’s environment.'
-										: 'A local qualification requires a loopback endpoint running the named model.'}
-								</span>
-							</label>
-						</div>
-					</div>
-					<div className="space-y-2">
-						<h3 className="text-sm font-medium">Recall reranking</h3>
-						<p className="text-xs" style={{ color: theme.colors.textDim }}>
-							The hosted reranker orders the existing shortlist. It is used only when you select
-							rerank for a search, and it never changes evidence eligibility or answerability.
-						</p>
-						<div className="grid grid-cols-2 gap-2">
-							<label>
-								Reranker model
-								<input
-									className={input}
-									style={style}
-									value={draft.rerank?.model ?? 'rerank'}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											rerank: {
-												...draft.rerank,
-												provider: 'hosted',
-												model: e.target.value,
-												endpoint: draft.rerank?.endpoint ?? 'https://api.nan.builders',
-											},
-										})
-									}
-								/>
-							</label>
-							<label>
-								Reranker endpoint
-								<input
-									className={input}
-									style={style}
-									value={draft.rerank?.endpoint ?? 'https://api.nan.builders'}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											rerank: {
-												...draft.rerank,
-												provider: 'hosted',
-												model: draft.rerank?.model ?? 'rerank',
-												endpoint: e.target.value,
-											},
-										})
-									}
-								/>
-							</label>
-						</div>
-						<p className="text-xs" style={{ color: theme.colors.textDim }}>
-							A reranked search sends its question and shortlisted assertion text to this API. It
-							uses NAN_API_KEY or NAN_BUILDERS_API_KEY from Maestro's environment, never the bank.
-							Local recall remains available without reranking.
-						</p>
-					</div>
-					{draft.mode !== 'local' && (
-						<div className="space-y-2">
-							<label className="flex gap-2">
-								<input
-									type="checkbox"
-									checked={draft.hostedConsent}
-									onChange={(e) => setDraft({ ...draft, hostedConsent: e.target.checked })}
-								/>
-								I consent to sending selected, minimized transcript excerpts to{' '}
-								{draft.hostedProvider === 'nan' ? 'NaN' : 'OpenAI'}. Requires{' '}
-								{draft.hostedProvider === 'nan'
-									? 'NAN_API_KEY or NAN_BUILDERS_API_KEY'
-									: 'OPENAI_API_KEY'}{' '}
-								in Maestro's environment.
-							</label>
-							<p className="text-xs" style={{ color: theme.colors.textDim }}>
-								Secret filtering is not a privacy guarantee. Submitted hosted requests cannot be
-								unsent. Token and cost reservations survive restarts.
-								{draft.hostedProvider === 'nan' &&
-									' NaN processing is serial, capped at 60 requests and 1.5M tokens per minute.'}
-							</p>
-							<div className="grid grid-cols-2 gap-2">
-								<label>
-									Input $ / million tokens
-									<input
-										type="number"
-										min="0"
-										step="0.01"
-										className={input}
-										style={style}
-										value={draft.inputPrice}
-										onChange={(e) => setDraft({ ...draft, inputPrice: Number(e.target.value) })}
-									/>
-								</label>
-								<label>
-									Output $ / million tokens
-									<input
-										type="number"
-										min="0"
-										step="0.01"
-										className={input}
-										style={style}
-										value={draft.outputPrice}
-										onChange={(e) => setDraft({ ...draft, outputPrice: Number(e.target.value) })}
-									/>
-								</label>
-							</div>
-						</div>
-					)}
-					<h3 className="font-semibold">Historical accounts</h3>
-					<p className="text-xs" style={{ color: theme.colors.textDim }}>
-						Select pools explicitly and declare ownership. Accounts are not people. Unknown
-						authorship remains unverified; automated history cannot establish preferences.
-					</p>
-					{draft.roots.map((root, i) => (
-						<div
-							key={root.provider + root.path}
-							className="border rounded p-2 space-y-2"
-							style={{ borderColor: theme.colors.border }}
-						>
-							<label className="flex items-center gap-2">
-								<input
-									type="checkbox"
-									checked={root.enabled}
-									onChange={(e) =>
-										setDraft({
-											...draft,
-											roots: draft.roots.map((r, n) =>
-												n === i ? { ...r, enabled: e.target.checked } : r
-											),
-										})
-									}
-								/>
-								<span>{root.provider}</span>
-								<span className="font-mono text-xs break-all">{root.path}</span>
-							</label>
-							<select
-								aria-label={'Ownership of ' + root.path}
-								className={input}
-								style={style}
-								value={root.userId === draft.userId ? root.authorship : 'unassigned'}
-								onChange={(e) =>
-									setDraft({
-										...draft,
-										roots: draft.roots.map((r, n) =>
-											n === i
-												? {
-														...r,
-														userId: e.target.value === 'unassigned' ? null : draft.userId,
-														authorship:
-															e.target.value === 'human'
-																? 'human'
-																: e.target.value === 'automated'
-																	? 'automated'
-																	: 'unknown',
-													}
-												: r
-										),
-									})
-								}
-							>
-								<option value="unassigned">Not attributed to me</option>
-								<option value="human">My human-authored history</option>
-								<option value="unknown">My pool; authorship uncertain</option>
-								<option value="automated">Automated / delegated history</option>
-							</select>
-						</div>
-					))}
-					<div className="flex gap-2">
-						<select
-							aria-label="Custom root provider"
-							style={style}
-							value={provider}
-							onChange={(e) => setProvider(e.target.value)}
-						>
-							{[
-								'claude-code',
-								'codex',
-								'opencode',
-								'factory-droid',
-								'copilot-cli',
-								'omp',
-								'grok',
-							].map((p) => (
-								<option key={p}>{p}</option>
-							))}
-						</select>
-						<input
-							aria-label="Custom account root"
-							className={input}
-							style={style}
-							value={rootPath}
-							onChange={(e) => setRootPath(e.target.value)}
-							placeholder="Absolute account/data root"
-						/>
-						<button
-							className={button}
-							style={style}
-							disabled={!rootPath}
-							onClick={() => {
-								setDraft({
-									...draft,
-									roots: [
-										...draft.roots,
-										{
-											provider,
-											path: rootPath,
-											userId: null,
-											authorship: 'unknown',
-											enabled: false,
-										},
-									],
-								});
-								setRootPath('');
-							}}
-						>
-							Add root
-						</button>
-					</div>
-					<label className="block">
-						Excluded roots, projects, or files (absolute path per line)
-						<textarea
-							className={input}
-							style={style}
-							rows={3}
-							value={draft.exclusions.join('\n')}
-							onChange={(e) =>
-								setDraft({ ...draft, exclusions: e.target.value.split('\n').filter(Boolean) })
-							}
-						/>
-					</label>
-					<label className="flex gap-2">
-						<input
-							type="checkbox"
-							checked={draft.ongoing}
-							onChange={(e) => setDraft({ ...draft, ongoing: e.target.checked })}
-						/>
-						Continue incremental learning from selected histories
-					</label>
-					<div className="flex flex-wrap gap-2">
-						<button
-							className={button}
-							style={style}
-							disabled={busy}
-							onClick={() =>
-								void run(async () => {
-									setMemories([]);
-									setSelected(null);
-									setText('');
-									const next = await request<MemoryState>({ action: 'configure', config: draft });
-									setDraft(next.config);
-								})
-							}
-						>
-							Save configuration
-						</button>
-						<button
-							className={button}
-							style={style}
-							disabled={busy || !state.config.enabled}
-							onClick={() =>
-								void run(async () => {
-									await request({ action: 'discover' });
-									setSection('coverage');
-								})
-							}
-						>
-							Discover selected history
-						</button>
-						<button
-							className={button}
-							style={style}
-							disabled={busy || !state.config.enabled}
-							onClick={() =>
-								void run(async () => {
-									await request({ action: 'start' });
-									setSection('coverage');
-								})
-							}
-						>
-							Start / resume backfill
-						</button>
-						<button
-							className={button}
-							style={style}
-							disabled={busy}
-							onClick={() =>
-								void run(async () => {
-									await request({ action: 'pause' });
-								})
-							}
-						>
-							Pause
-						</button>
-					</div>
-				</div>
+				<MemorySetup
+					theme={theme}
+					config={draft}
+					progress={state.progress}
+					busy={busy}
+					onChange={setDraft}
+					onSave={() =>
+						void run(async () => {
+							const next = await request<MemoryState>({ action: 'configure', config: draft });
+							setDraft(next.config);
+						})
+					}
+					onStart={() =>
+						void run(async () => {
+							setMemories([]);
+							setSelected(null);
+							setText('');
+							const next = await request<MemoryState>({ action: 'configure', config: draft });
+							setDraft(next.config);
+							await request({ action: 'discover' });
+							await request({ action: 'start' });
+							setSection('coverage');
+						})
+					}
+					onPause={() =>
+						void run(async () => {
+							await request({ action: 'pause' });
+						})
+					}
+				/>
 			)}
 			{section === 'coverage' && (
 				<div className="space-y-3">
