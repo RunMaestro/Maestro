@@ -545,7 +545,7 @@ export function registerPersistenceHandlers(
 				}
 				if (toolOutputCount > 0) {
 					logger.info(
-						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+						`Compacted ${toolOutputCount} oversized tool call(s) or transcript tail(s) in maestro-sessions.json`,
 						'Sessions'
 					);
 				}

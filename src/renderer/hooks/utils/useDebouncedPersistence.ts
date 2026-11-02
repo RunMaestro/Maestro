@@ -505,6 +505,38 @@ export function useDebouncedPersistence(
 		const recoveryGeneration = recoveryGenerationRef.current;
 		const current = sessionsRef.current;
 		const peerBaselines = peerBaselinesRef.current;
+		// A peer save that lands while this write is in flight is not in `current`,
+		// so its baseline must outlive this write.
+		const peerBaselinesAtStart = new Map(peerBaselines);
+		const releaseSavedPeerBaselines = (saved: Session[], savedFrom: Session[]) => {
+			const savedById = new Map(saved.map((session) => [session.id, session]));
+			const fromById = new Map(savedFrom.map((session) => [session.id, session]));
+			for (const session of current) {
+				const retained = peerBaselines.get(session.id);
+				if (retained === peerBaselinesAtStart.get(session.id)) {
+					peerBaselines.delete(session.id);
+					continue;
+				}
+				// That peer save was folded into the baseline from before this write.
+				// Apply what this write saved on top of it, as the host did, or an edit
+				// that undoes this one diffs as unchanged and is never written.
+				const savedSession = savedById.get(session.id);
+				const savedBaseline = fromById.get(session.id);
+				if (retained && savedSession && savedBaseline)
+					peerBaselines.set(
+						session.id,
+						structuredClone(
+							mergeSessionPersistenceChanges(
+								savedSession,
+								retained,
+								savedBaseline,
+								isWebDesktop(),
+								false
+							)
+						)
+					);
+			}
+		};
 		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
 			const ids = new Set(toPersist.map((session) => session.id));
 			const byId = new Map(
@@ -522,23 +554,21 @@ export function useDebouncedPersistence(
 			const tombstones = mountedSessionsRef.current
 				? diffSessions(mountedSessionsRef.current, current).tombstones
 				: [];
+			const startupBaselines = observedBaselines(mountedSessionsRef.current, current);
 			const ok =
 				tombstones.length > 0
 					? await window.maestro.sessions.setMany(
 							sessionsForPersistence,
 							tombstones,
-							observedBaselines(mountedSessionsRef.current, current)
+							startupBaselines
 						)
-					: await window.maestro.sessions.setAll(
-							sessionsForPersistence,
-							observedBaselines(mountedSessionsRef.current, current)
-						);
+					: await window.maestro.sessions.setAll(sessionsForPersistence, startupBaselines);
 			if (recoveryGeneration !== recoveryGenerationRef.current) return;
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
 			previouslyPersistedRef.current = current;
-			for (const session of current) peerBaselines.delete(session.id);
+			releaseSavedPeerBaselines(sessionsForPersistence, startupBaselines);
 			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
@@ -559,7 +589,7 @@ export function useDebouncedPersistence(
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
 		previouslyPersistedRef.current = current;
-		for (const session of current) peerBaselines.delete(session.id);
+		releaseSavedPeerBaselines(dirtyForPersistence, baselines);
 		startupBaselineNeedsFullFlushRef.current = false;
 	}, []);
 
@@ -752,6 +782,24 @@ export function useDebouncedPersistence(
 				) {
 					peerBaselinesRef.current.set(session.id, structuredClone(session));
 				}
+			}
+			// A peer's save is durable, so fold it into this client's baseline as the
+			// live merge folds it into the agent. Otherwise a change the peer made
+			// that this client later undoes diffs as "unchanged" and the store keeps
+			// it: a message queued on a phone and run here stayed queued on disk,
+			// showed as queued on every client, and ran again after a restart.
+			const peerBefore = new Map((payload.baselines ?? []).map((s) => [s.id, s]));
+			for (const update of payload.updated ?? []) {
+				const before = peerBefore.get(update.id);
+				const persisted = previouslyPersistedRef.current?.find((s) => s.id === update.id);
+				const base =
+					peerBaselinesRef.current.get(update.id) ??
+					(persisted && prepareSessionForPersistence(persisted));
+				if (!before || !base) continue;
+				peerBaselinesRef.current.set(
+					update.id,
+					structuredClone(mergeSessionPersistenceChanges(update, base, before, true, true))
+				);
 			}
 			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
 		});
