@@ -1,4 +1,7 @@
-vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
+vi.mock('../../../main/plugins/plugin-scan', async () => {
+	const actual = await import('../../helpers/pluginScan');
+	return { scanPluginFiles: vi.fn(actual.scanPluginFiles) };
+});
 /**
  * @file plugin-manager-hot-reload.test.ts
  * @description Refresh-driven plugin hot reload. Editing a runnable plugin's
@@ -37,6 +40,7 @@ import { pluginsDir } from '../../../main/plugins/plugin-store-main';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 import { TRANSCRIPTION_CONTRACT } from '../../../shared/plugins/services';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
+import { scanPluginFiles } from '../../../main/plugins/plugin-scan';
 
 // FC1 Option-B gate: code only RUNS with a trusted signature, so every fixture
 // write is followed by a re-sign with this test key (stale signature = invalid
@@ -121,6 +125,113 @@ afterEach(() => {
 });
 
 describe('PluginManager hot reload reconciliation', () => {
+	it.each([
+		'unchanged',
+		'queued-rejection',
+		'draining',
+		'disabled',
+		'changed',
+		'invalid',
+		'dependency-loss',
+	])(
+		'keeps only a valid unchanged sandbox alive during update validation: %s',
+		async (condition) => {
+			const sandbox = makeSandbox();
+			const onChange = vi.fn();
+			let available = true;
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				onChange,
+				trustedKeys: () => [keys.publicKeyB64],
+				serviceAvailable: () => available,
+			});
+			writeCodePlugin('demo', { requires: [mandatoryRequirement] });
+			await enableRunnablePlugin(manager, sandbox);
+			const installed = manager.getRegistry().records.find((record) => record.id === 'demo')!;
+			expect(() => manager.assertToolRecordCurrent(installed)).not.toThrow();
+			const drained = Promise.withResolvers<void>();
+			let drain: Promise<void> | undefined;
+			if (condition === 'draining') {
+				const stop = sandbox.stop;
+				sandbox.stop = vi.fn((id) => drained.promise.then(() => stop(id)));
+			}
+			const source = path.join(workDir, 'replacement');
+			fs.cpSync(path.join(pluginsDir(), 'demo'), source, { recursive: true });
+			const manifestPath = path.join(source, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '1.0.1' }));
+			signPluginDir(source, keys);
+			fs.writeFileSync(path.join(source, 'main.js'), 'tampered replacement');
+			const scanned = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const actual = await import('../../helpers/pluginScan');
+			vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+				if (path.basename(path.dirname(dir)).startsWith('.update-')) {
+					scanned.resolve();
+					await release.promise;
+				}
+				return actual.scanPluginFiles(dir, trustedKeys);
+			});
+			onChange.mockClear();
+			manager.startWatching();
+			const update = manager.update(source, 'demo');
+			const queued = condition === 'queued-rejection' ? manager.update(source, 'demo') : null;
+			const rejected = Promise.all([
+				expect(update).rejects.toThrow(/signature/),
+				...(queued ? [expect(queued).rejects.toThrow(/signature/)] : []),
+			]);
+			try {
+				await scanned.promise;
+				expect(() => manager.assertToolRecordCurrent(installed)).toThrow(
+					expect.objectContaining({ code: 'PLUGIN_DENIED' })
+				);
+				// The service reconciler must also retain the unchanged working child.
+				manager.reconcileServiceDependencies();
+				expect(sandbox.stop).not.toHaveBeenCalled();
+				if (condition === 'draining') {
+					drain = manager.stopAndDrain('demo');
+					expect(sandbox.isRunning('demo')).toBe(true);
+				} else if (condition === 'disabled') {
+					await manager.setEnabled('demo', false);
+					onChange.mockClear();
+				} else if (condition === 'changed') {
+					writeCodePlugin('demo', { version: '2.0.0', requires: [mandatoryRequirement] });
+				} else if (condition === 'invalid') {
+					fs.writeFileSync(path.join(pluginsDir(), 'demo', 'main.js'), 'tampered installed bytes');
+				} else if (condition === 'dependency-loss') {
+					available = false;
+					manager.reconcileServiceDependencies();
+				}
+				// Real fs.watch observes staging creation; wait for its normal 150 ms refresh.
+				await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3000 });
+				if (condition === 'unchanged' || condition === 'queued-rejection') {
+					expect(sandbox.stop).not.toHaveBeenCalled();
+					expect(sandbox.isRunning('demo')).toBe(true);
+				} else if (condition === 'draining') {
+					// Real sandbox controllers remain "running" until exit: no retention after stop.
+					expect(vi.mocked(sandbox.stop).mock.calls.length).toBeGreaterThan(1);
+				} else {
+					expect(sandbox.stop).toHaveBeenCalledWith('demo');
+					expect(sandbox.isRunning('demo')).toBe(false);
+				}
+				expect(sandbox.start).not.toHaveBeenCalled();
+			} finally {
+				drained.resolve();
+				await drain;
+				release.resolve();
+				await rejected;
+				manager.stopWatching();
+				vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+			}
+			if (condition === 'unchanged' || condition === 'queued-rejection') {
+				expect(sandbox.stop).not.toHaveBeenCalled();
+				expect(sandbox.start).not.toHaveBeenCalled();
+			}
+			expect(fs.readdirSync(pluginsDir())).toEqual(['demo']);
+		}
+	);
+
 	it('refreshes a manifest edit and restarts the still-runnable sandbox', async () => {
 		const sandbox = makeSandbox();
 		const onChange = vi.fn();

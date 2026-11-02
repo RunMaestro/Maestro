@@ -68,7 +68,6 @@ import {
 import {
 	extractPluginArchive,
 	resolvePluginSourcePath,
-	isPackedPluginArchivePath,
 	type ExtractedPluginArchive,
 } from '../../shared/plugins/plugin-archive';
 import {
@@ -169,6 +168,7 @@ export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
 	private readonly mutationQueue = createKeyedWriteQueue();
 	private readonly pendingMutations = new Map<string, number>();
+	private readonly validatingUpdates = new Map<string, string>();
 	private readonly pendingReloads = new Map<string, symbol>();
 	private readonly waitingForServiceDependencies = new Set<string>();
 	private pluginFingerprints = new Map<string, string>();
@@ -470,8 +470,17 @@ export class PluginManager {
 	 */
 	private isRunnable(record: PluginRecord, requireAvailableServices = true): boolean {
 		return (
-			this.deps.isEnabled() &&
 			!this.pendingMutations.has(record.id) &&
+			this.meetsExecutionRequirements(record, requireAvailableServices)
+		);
+	}
+
+	private meetsExecutionRequirements(
+		record: PluginRecord,
+		requireAvailableServices = true
+	): boolean {
+		return (
+			this.deps.isEnabled() &&
 			record.enabled &&
 			record.loadStatus === 'ok' &&
 			!!record.manifest &&
@@ -485,6 +494,24 @@ export class PluginManager {
 		);
 	}
 
+	/** Retain only the unchanged, already-running child during update validation.
+	 * New starts and tool authority still use isRunnable's mutation barrier. */
+	private canRemainRunningDuringUpdate(
+		record: PluginRecord,
+		fingerprint = this.pluginFingerprints.get(record.id)
+	): boolean {
+		const installed = this.validatingUpdates.get(record.id);
+		return (
+			installed !== undefined &&
+			installed === fingerprint &&
+			installed === this.pluginFingerprints.get(record.id) &&
+			!this.pendingReloads.has(record.id) &&
+			!this.waitingForServiceDependencies.has(record.id) &&
+			this.deps.sandbox?.isRunning(record.id) === true &&
+			this.meetsExecutionRequirements(record)
+		);
+	}
+
 	/** Resume consumers held for missing services; crashes remain owned by their supervisor. */
 	reconcileServiceDependencies(): void {
 		if (!this.deps.isEnabled()) return;
@@ -495,10 +522,12 @@ export class PluginManager {
 				this.waitingForServiceDependencies.delete(record.id);
 				continue;
 			}
+			if (this.canRemainRunningDuringUpdate(record)) continue;
 			if (!this.isRunnable(record)) {
 				if (!this.isRunnable(record, false)) this.waitingForServiceDependencies.delete(record.id);
 				else if (sandbox.isRunning(record.id)) this.waitingForServiceDependencies.add(record.id);
 				if (sandbox.isRunning(record.id)) {
+					this.validatingUpdates.delete(record.id);
 					// Provider registration can race both child exit and resource cleanup.
 					// Re-read the current registry and availability only after a successful drain.
 					void Promise.resolve(sandbox.stop(record.id)).then(
@@ -546,6 +575,10 @@ export class PluginManager {
 		const shouldRun = new Set<string>();
 		for (const record of this.registry.records) {
 			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
+			if (this.canRemainRunningDuringUpdate(record, nextFingerprints.get(record.id))) {
+				shouldRun.add(record.id);
+				continue;
+			}
 			if (!this.isRunnable(record) || !record.manifest?.entry) {
 				// Explicit discovery/toggles also remember initially blocked consumers.
 				if (this.isRunnable(record, false)) this.waitingForServiceDependencies.add(record.id);
@@ -593,8 +626,10 @@ export class PluginManager {
 		// Stop anything running that should no longer run (disabled, uninstalled,
 		// or now-invalid), using the sandbox's own view of what is alive.
 		for (const id of sandbox.runningIds()) {
-			if (!shouldRun.has(id) && (onlyPluginId === undefined || onlyPluginId === id))
+			if (!shouldRun.has(id) && (onlyPluginId === undefined || onlyPluginId === id)) {
+				this.validatingUpdates.delete(id);
 				sandbox.stop(id);
+			}
 		}
 	}
 
@@ -729,7 +764,7 @@ export class PluginManager {
 		let extracted: ExtractedPluginArchive | null = null;
 		try {
 			const resolvedSource = resolvePluginSourcePath(sourcePath);
-			if (!isPackedPluginArchivePath(resolvedSource)) {
+			if (fs.lstatSync(resolvedSource).isDirectory()) {
 				return await this.installDirectory(resolvedSource);
 			}
 			extracted = extractPluginArchive(resolvedSource);
@@ -770,7 +805,7 @@ export class PluginManager {
 		const resolvedSource = resolvePluginSourcePath(sourcePath);
 		let extracted: ExtractedPluginArchive | null = null;
 		try {
-			if (isPackedPluginArchivePath(resolvedSource)) {
+			if (fs.lstatSync(resolvedSource).isFile()) {
 				extracted = extractPluginArchive(resolvedSource);
 			}
 			return await this.updateDirectory(extracted?.root ?? resolvedSource, expectedId);
@@ -826,6 +861,18 @@ export class PluginManager {
 			const staged = path.join(staging, id);
 			const backup = path.join(staging, `${id}.old`);
 			let swapped = false;
+			const installedRecord = getRecord(this.registry, id);
+			const installedFingerprint = this.pluginFingerprints.get(id);
+			if (
+				installedRecord &&
+				installedFingerprint &&
+				!this.pendingReloads.has(id) &&
+				!this.waitingForServiceDependencies.has(id) &&
+				this.deps.sandbox?.isRunning(id) &&
+				this.meetsExecutionRequirements(installedRecord)
+			) {
+				this.validatingUpdates.set(id, installedFingerprint);
+			}
 			try {
 				// dereference:false keeps the copy faithful; we already rejected symlinks.
 				fs.cpSync(sourceDir, staged, { recursive: true });
@@ -856,6 +903,7 @@ export class PluginManager {
 				}
 				// Stop the running sandbox before swapping files (mirrors uninstall's stop
 				// path); refresh() below restarts it if the new version is still runnable.
+				this.validatingUpdates.delete(id);
 				await this.stopAndDrain(id);
 				// Move the old dir aside, then move the new one into place. If the second
 				// rename fails, restore the old dir so we never leave a partial state.
@@ -881,6 +929,7 @@ export class PluginManager {
 					throw updateError;
 				}
 			} finally {
+				this.validatingUpdates.delete(id);
 				if (swapped || !fs.existsSync(backup)) {
 					fs.rmSync(staging, { recursive: true, force: true });
 				}
@@ -972,19 +1021,23 @@ export class PluginManager {
 		} finally {
 			const remaining = (this.pendingMutations.get(id) ?? 1) - 1;
 			if (remaining > 0) this.pendingMutations.set(id, remaining);
-			else this.pendingMutations.delete(id);
-			this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, id);
-			this.reconcileServiceDependencies();
+			else {
+				this.pendingMutations.delete(id);
+				this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, id);
+				this.reconcileServiceDependencies();
+			}
 		}
 	}
 
 	/** Host mutation barrier: stop invalidates immediately; await confirms exit and media cleanup. */
 	async stopAndDrain(id: string): Promise<void> {
+		this.validatingUpdates.delete(id);
 		await this.deps.sandbox?.stop(id);
 	}
 
 	/** Stop all sandboxes (app shutdown / feature disable). */
 	stopAllSandboxes(): void {
+		this.validatingUpdates.clear();
 		this.pendingReloads.clear();
 		this.waitingForServiceDependencies.clear();
 		// Invalidate before stop callbacks, including a reentrant stop/restart.

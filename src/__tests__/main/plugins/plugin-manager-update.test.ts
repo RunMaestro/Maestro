@@ -91,6 +91,35 @@ afterEach(() => {
 });
 
 describe('PluginManager.update', () => {
+	it.each(
+		['tgz', 'tar.gz'].flatMap((extension) =>
+			[false, true].flatMap((manifest) =>
+				['install', 'update'].map((operation) => ({ extension, manifest, operation }))
+			)
+		)
+	)(
+		'uses $operation for an unpacked .$extension folder (selected manifest: $manifest)',
+		async ({ extension, manifest, operation }) => {
+			const manager = makeManager();
+			if (operation === 'update') {
+				const original = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+				expect((await manager.install(original)).success).toBe(true);
+			}
+			const source = writeSource(path.join(workDir, `release.${extension}`), {
+				version: '2.0.0',
+			});
+			const selected = manifest ? path.join(source, 'plugin.json') : source;
+			if (operation === 'install') {
+				expect((await manager.install(selected)).success).toBe(true);
+			} else {
+				await manager.update(selected, PLUGIN_ID);
+			}
+			expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.manifest?.version).toBe(
+				'2.0.0'
+			);
+		}
+	);
+
 	it('installs and updates through a selected plugin.json with normal folder validation', async () => {
 		const manager = makeManager();
 		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });

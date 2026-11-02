@@ -289,7 +289,7 @@ describe('useExtensions.updatePlugin', () => {
 
 		expect(update).toHaveBeenCalledExactlyOnceWith('/local/demo-v2.tgz', record.id);
 		expect(window.maestro.dialog.selectFile).toHaveBeenCalledWith({
-			title: 'Update Demo Plugin — archive or plugin.json',
+			title: 'Update Demo Plugin: archive or plugin.json',
 			filters: [{ name: 'Plugin archives or plugin.json', extensions: ['tgz', 'tar.gz', 'json'] }],
 		});
 		expect(window.maestro.fs.readFile).not.toHaveBeenCalled();

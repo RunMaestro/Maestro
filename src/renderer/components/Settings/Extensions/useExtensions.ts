@@ -228,7 +228,7 @@ export function useExtensions(): UseExtensionsResult {
 	const installPlugin = useCallback(
 		async (fromFolder = false) => {
 			const sourcePath = await selectPluginSource(
-				'Install plugin — archive or plugin.json',
+				'Install plugin: archive or plugin.json',
 				fromFolder
 			);
 			if (!sourcePath) return;
@@ -267,7 +267,7 @@ export function useExtensions(): UseExtensionsResult {
 			setBusyId(record.id);
 			try {
 				const sourcePath = await selectPluginSource(
-					`Update ${record.manifest?.name ?? record.id} — archive or plugin.json`
+					`Update ${record.manifest?.name ?? record.id}: archive or plugin.json`
 				);
 				if (!sourcePath) return;
 				// The host validates the source manifest, version, signature, and

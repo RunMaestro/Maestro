@@ -147,7 +147,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	const handleInstall = useCallback(
 		async (fromFolder = false) => {
 			const sourcePath = await selectPluginSource(
-				'Install plugin — archive or plugin.json',
+				'Install plugin: archive or plugin.json',
 				fromFolder
 			);
 			if (!sourcePath) return;
