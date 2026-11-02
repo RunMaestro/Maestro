@@ -12,7 +12,29 @@ import type { CueEvent, CueSubscription } from './cue-types';
 import type { CueEventType } from '../../shared/cue/contracts';
 import type { TemplateContext } from '../../shared/templateVariables';
 import { sanitizeVarName } from '../../shared/cue-pipeline-types';
-import { formatNewCommentsForTemplate, type GitHubComment } from './cue-github-poller';
+import type { GitHubComment } from './cue-github-poller';
+import { remoteVisiblePath, type HostMountedRemote } from '../../shared/hostVisibleProjectRoot';
+
+/** Keep host I/O payloads separate from paths delivered to the SSH executor. */
+export function projectCueEventPaths(event: CueEvent, remote: HostMountedRemote): CueEvent {
+	if (!remote.hostMountRoot || (event.type !== 'task.pending' && event.type !== 'file.changed')) {
+		return event;
+	}
+	return {
+		...event,
+		payload: {
+			...event.payload,
+			path: remoteVisiblePath(String(event.payload.path ?? ''), remote),
+			directory: remoteVisiblePath(String(event.payload.directory ?? ''), remote),
+		},
+	};
+}
+
+/** Render new comments without importing the SQLite-backed poller into the CLI graph. */
+function formatNewCommentsForTemplate(comments: GitHubComment[]): string {
+	if (comments.length === 0) return '';
+	return comments.map((c) => `[@${c.author} at ${c.createdAt}]\n${c.body}`).join('\n\n---\n\n');
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

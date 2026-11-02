@@ -419,7 +419,9 @@ describe('CueEngine.drain', () => {
 						if (failure === 'removed-source')
 							configsByProject.set('/p/a', { subscriptions: [], settings });
 						else configsByProject.delete('/p/a');
-						engine.refreshSession(alpha.id, '/p/a');
+						const refreshed = engine.refreshSession(alpha.id, '/p/a');
+						await vi.advanceTimersByTimeAsync(500);
+						await refreshed;
 					}
 					retry();
 					expect(queueRows()).toEqual([]);
