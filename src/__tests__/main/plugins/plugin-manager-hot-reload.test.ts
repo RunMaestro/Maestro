@@ -189,38 +189,53 @@ describe('PluginManager hot reload reconciliation', () => {
 		}
 	);
 
-	it('rejects a queued install whose source manifest changes before ownership', async () => {
-		const sandbox = makeSandbox();
-		const manager = new PluginManager({
-			isEnabled: () => true,
-			sandbox,
-			trustedKeys: () => [keys.publicKeyB64],
-		});
-		writeCodePlugin('demo');
-		await enableRunnablePlugin(manager, sandbox);
-		const source = path.join(workDir, 'replacement');
-		fs.cpSync(path.join(pluginsDir(), 'demo'), source, { recursive: true });
-		const manifestPath = path.join(source, 'plugin.json');
-		const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-		fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
-		signPluginDir(source, keys);
-		const drained = Promise.withResolvers<void>();
-		const stop = sandbox.stop;
-		sandbox.stop = vi.fn((id) => drained.promise.then(() => stop(id)));
-		const uninstall = manager.uninstall('demo');
-		await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('demo'));
-		const install = manager.install(source);
-		fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, id: 'other', version: '2.0.0' }));
-		signPluginDir(source, keys);
-		drained.resolve();
-		expect(await uninstall).toEqual({ success: true });
-		expect(await install).toMatchObject({
-			success: false,
-			error: expect.stringContaining('manifest changed'),
-		});
-		expect(fs.existsSync(path.join(pluginsDir(), 'demo'))).toBe(false);
-		expect(manager.getRegistry().records).toEqual([]);
-	});
+	it.each(['manifest', 'root-symlink'])(
+		'rejects a queued install whose source changes before ownership: %s',
+		async (change) => {
+			const sandbox = makeSandbox();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			writeCodePlugin('demo');
+			await enableRunnablePlugin(manager, sandbox);
+			const source = path.join(workDir, 'replacement');
+			fs.cpSync(path.join(pluginsDir(), 'demo'), source, { recursive: true });
+			const manifestPath = path.join(source, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+			signPluginDir(source, keys);
+			const drained = Promise.withResolvers<void>();
+			const stop = sandbox.stop;
+			sandbox.stop = vi.fn((id) => drained.promise.then(() => stop(id)));
+			const uninstall = manager.uninstall('demo');
+			await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('demo'));
+			const install = manager.install(source);
+			if (change === 'manifest') {
+				fs.writeFileSync(
+					manifestPath,
+					JSON.stringify({ ...manifest, id: 'other', version: '2.0.0' })
+				);
+				signPluginDir(source, keys);
+			} else {
+				const linked = path.join(workDir, 'linked-source');
+				fs.renameSync(source, linked);
+				// Directory junctions avoid elevated symlink privileges on Windows.
+				fs.symlinkSync(path.resolve(linked), source, 'junction');
+			}
+			drained.resolve();
+			expect(await uninstall).toEqual({ success: true });
+			const result = await install;
+			expect(fs.existsSync(path.join(pluginsDir(), 'demo'))).toBe(false);
+			expect(result).toMatchObject({
+				success: false,
+				error: expect.stringContaining(change === 'manifest' ? 'manifest changed' : 'directory'),
+			});
+			expect(manager.getRegistry().records).toEqual([]);
+			expect(readPluginState().plugins.demo).toBeUndefined();
+		}
+	);
 
 	it('rejects an in-flight install acceptance after sandbox shutdown', async () => {
 		const sandbox = makeSandbox();

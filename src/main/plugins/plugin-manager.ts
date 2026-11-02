@@ -867,6 +867,13 @@ export class PluginManager {
 			if (fs.existsSync(dest)) {
 				return { success: false, error: `plugin "${manifest.id}" is already installed` };
 			}
+			const sourceRoot = fs.lstatSync(sourceDir);
+			if (sourceRoot.isSymbolicLink() || !sourceRoot.isDirectory()) {
+				return {
+					success: false,
+					error: 'plugin source must be an ordinary directory without symlinks',
+				};
+			}
 			const queuedManifest = validatePluginManifest(this.readManifest(sourceDir)).manifest;
 			if (!queuedManifest || canonicalJson(queuedManifest) !== canonicalJson(manifest)) {
 				return { success: false, error: 'plugin manifest changed while waiting to install' };
