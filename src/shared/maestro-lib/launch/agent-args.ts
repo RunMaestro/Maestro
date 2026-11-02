@@ -63,6 +63,8 @@ export type AgentConfigResolution = {
 	customArgsSource: 'session' | 'agent' | 'none';
 	customEnvSource: 'session' | 'agent' | 'none';
 	modelSource: 'session' | 'agent' | 'default';
+	modelId?: string;
+	effort?: string;
 };
 
 /** Parse a space-separated custom args string into an array, respecting quoted segments. */
@@ -207,7 +209,10 @@ export function buildAgentArgs(
 		// when in read-only mode. Batch mode args grant write/approval permissions
 		// that conflict with read-only intent, regardless of whether the agent has
 		// CLI-enforced read-only mode or prompt-only enforcement.
-		if (!isReadOnly) {
+		if (
+			!isReadOnly &&
+			!(options.permissionMode === 'standard' && agent.skipBatchModeArgsInStandardMode)
+		) {
 			finalArgs = [...finalArgs, ...agent.batchModeArgs];
 		}
 	}
@@ -348,6 +353,8 @@ export function applyAgentConfigOverrides(
 	let finalArgs = [...baseArgs];
 	const agentConfigValues = overrides.agentConfigValues ?? {};
 	let modelSource: AgentConfigResolution['modelSource'] = 'default';
+	let modelId: string | undefined;
+	let effort: string | undefined;
 
 	// Flags that read-only mode pins (e.g. OpenCode's `--agent plan`). Config
 	// options and custom args repeating one of these are dropped below so the
@@ -389,6 +396,14 @@ export function applyAgentConfigOverrides(
 					agentConfigValues[option.key] !== undefined
 						? agentConfigValues[option.key]
 						: option.default;
+			}
+			if (option.key === 'model' && typeof value === 'string' && value) modelId = value;
+			if (
+				(option.key === 'effort' || option.key === 'reasoningEffort') &&
+				typeof value === 'string' &&
+				value
+			) {
+				effort = value;
 			}
 
 			// Type assertion needed because AgentConfigOption is a discriminated union
@@ -461,6 +476,8 @@ export function applyAgentConfigOverrides(
 		customArgsSource,
 		customEnvSource: hasEnvVars ? customEnvSource : 'none',
 		modelSource,
+		modelId,
+		effort,
 	};
 }
 

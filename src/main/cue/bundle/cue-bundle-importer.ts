@@ -1100,6 +1100,7 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			retryOnTokenExhaustion: settings.retryOnTokenExhaustion,
 			codexAutoResetOnExhaustion: settings.codexAutoResetOnExhaustion,
 			codexTransport: settings.codexTransport,
+			harnessControlMode: settings.harnessControlMode,
 			fileTreeAutoRefreshInterval: settings.fileTreeAutoRefreshInterval,
 			documentGraphLayout: settings.documentGraphLayout,
 			customEnvVars,

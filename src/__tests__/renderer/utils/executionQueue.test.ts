@@ -866,6 +866,41 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(session, item).blockedReason).toBe('not-claude');
 	});
 
+	it('offers steering only for native adapters with an in-turn channel', () => {
+		for (const toolType of ['claude-code', 'copilot-cli', 'hermes', 'pi', 'omp'] as const) {
+			const session = steerableSession({
+				toolType,
+				harnessControlMode: 'native',
+				claudeInteractive: undefined,
+			});
+			expect(getSteerEligibility(session, item).canSteer, toolType).toBe(true);
+		}
+		const acpSession = steerableSession({
+			toolType: 'qwen3-coder',
+			harnessControlMode: 'native',
+			claudeInteractive: undefined,
+		});
+		expect(getSteerEligibility(acpSession, item).blockedReason).toBe('not-claude');
+	});
+
+	it('allows native steering after Claude publishes API transport mode', () => {
+		const session = steerableSession({
+			harnessControlMode: 'native',
+			claudeInteractive: { mode: 'api', modeReason: 'auto' },
+		});
+		expect(getSteerEligibility(session, { ...item, text: '/clear' }).canSteer).toBe(true);
+	});
+
+	it('keeps the TUI prefix guard when native startup resolves to interactive fallback', () => {
+		const session = steerableSession({
+			harnessControlMode: 'native',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		});
+		expect(getSteerEligibility(session, { ...item, text: '/clear' }).blockedReason).toBe(
+			'tui-command-prefix'
+		);
+	});
+
 	it('allows a Codex agent on the app-server transport', () => {
 		// `turn/steer` reaches a running app-server turn; the Claude token-mode check
 		// does not apply to Codex at all.

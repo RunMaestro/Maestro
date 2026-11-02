@@ -76,6 +76,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1616,6 +1617,8 @@ export interface Session {
 	// Absent means 'exec'. Experimental. Always read it through
 	// `resolveCodexTransport` in shared/codexTransport, never directly.
 	codexTransport?: CodexTransport;
+	/** Optional native protocol control mode. Absent means the current transport. */
+	harnessControlMode?: HarnessControlMode;
 	/**
 	 * Parked agent-level overrides (the per-session fields above that belong to
 	 * one provider: path, args, env, model, effort, context window, token

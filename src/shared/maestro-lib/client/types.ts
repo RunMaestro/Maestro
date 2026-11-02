@@ -18,6 +18,7 @@ import type { LogEntryRecord } from '../store/transcript';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
+import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
@@ -219,6 +220,8 @@ export interface AgentPatch {
 	maestroPPath?: string | null;
 	/** Codex only. `exec` is the default and is stored as an unset field, as is `null`. */
 	codexTransport?: CodexTransport | null;
+	/** Optional native protocol mode. `current` and `null` are stored as unset. */
+	harnessControlMode?: HarnessControlMode | null;
 }
 
 export type AgentPatchField = keyof AgentPatch;

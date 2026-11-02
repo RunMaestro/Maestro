@@ -1,6 +1,7 @@
 import type { AdditionalDirectory } from '../../../../shared/types';
 import type { CodexTransport } from '../../../../shared/codexTransport';
 
+import type { HarnessControlMode } from '../../../../shared/maestro-lib/providers/native-control';
 /**
  * IPC payload for `process:spawn`.
  * Supports agent-specific argument builders for batch mode, JSON output,
@@ -57,6 +58,8 @@ export interface SpawnProcessConfig {
 	// the authoritative value is read from the persisted session; this is only
 	// a fallback for callers that pass it inline.
 	codexTransport?: CodexTransport;
+	// Native protocol control mode. Persisted per agent; absent means current.
+	harnessControlMode?: HarnessControlMode;
 	// maestro-p idle cap (`--max-wait`) for a TUI turn. Unset keeps maestro-p's
 	// 300s default. Auto Run raises it to its own inactivity budget, or a long
 	// silent tool call (a test suite) is killed long before Auto Run would.

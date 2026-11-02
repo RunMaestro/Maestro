@@ -122,6 +122,9 @@ export function handleCreateSession(
 	if (message.codexTransport === 'app-server' || message.codexTransport === 'exec') {
 		config.codexTransport = message.codexTransport;
 	}
+	if (message.harnessControlMode === 'native' || message.harnessControlMode === 'current') {
+		config.harnessControlMode = message.harnessControlMode;
+	}
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks
