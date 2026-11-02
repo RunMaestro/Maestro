@@ -36,7 +36,13 @@ import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
 import type { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { logger } from '../../../main/utils/logger';
 import { captureException } from '../../../main/utils/sentry';
-import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import {
+	pluginsDir,
+	readPluginState,
+	setPluginEnabled,
+} from '../../../main/plugins/plugin-store-main';
+import { SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
+import { PLUGIN_GRANTS_FILENAME } from '../../../shared/plugins/storage';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 import { TRANSCRIPTION_CONTRACT } from '../../../shared/plugins/services';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
@@ -125,6 +131,57 @@ afterEach(() => {
 });
 
 describe('PluginManager hot reload reconciliation', () => {
+	it.each(['uninstall', 'failed-purge', 'toggle'])(
+		'does not overwrite fresh state when a trusted scan finishes after %s',
+		async (operation) => {
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			writeCodePlugin('demo');
+			const source = path.join(pluginsDir(), 'demo');
+			fs.rmSync(path.join(source, SIGNATURE_FILENAME));
+			await manager.refresh();
+			expect(readPluginState().plugins.demo?.trustedPublisher).toBeUndefined();
+			signPluginDir(source, keys);
+			const scanned = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const actual = await import('../../helpers/pluginScan');
+			vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+				const result = await actual.scanPluginFiles(dir, trustedKeys);
+				if (dir === source && result.signature.status === 'trusted') {
+					scanned.resolve();
+					await release.promise;
+				}
+				return result;
+			});
+			const refresh = manager.refresh();
+			try {
+				await scanned.promise;
+				if (operation === 'uninstall') await manager.uninstall('demo');
+				else if (operation === 'failed-purge') {
+					// The enabled-state removal succeeds, then reading the grants file fails.
+					fs.mkdirSync(path.join(workDir, 'userData', PLUGIN_GRANTS_FILENAME));
+					await expect(manager.uninstall('demo')).rejects.toThrow();
+				} else setPluginEnabled('demo', true);
+			} finally {
+				release.resolve();
+				await refresh;
+				vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+			}
+			if (operation !== 'toggle') {
+				expect(readPluginState().plugins.demo).toBeUndefined();
+				if (operation === 'uninstall') expect(manager.getRegistry().records).toEqual([]);
+				expect(fs.existsSync(source)).toBe(false);
+			} else {
+				expect(readPluginState().plugins.demo).toEqual({
+					enabled: true,
+					trustedPublisher: keys.publicKeyB64,
+				});
+			}
+		}
+	);
+
 	it.each([
 		'unchanged',
 		'queued-rejection',

@@ -28,7 +28,11 @@ vi.mock('electron', () => ({
 }));
 
 import { PluginManager, type PluginSandboxLifecycle } from '../../../main/plugins/plugin-manager';
-import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import {
+	pluginsDir,
+	readPluginState,
+	writePluginState,
+} from '../../../main/plugins/plugin-store-main';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
 import { SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
@@ -127,6 +131,89 @@ afterEach(() => {
 });
 
 describe('signed update publisher continuity and runtime recovery', () => {
+	it.each(
+		['refresh', 'restart'].flatMap((roundTrip) =>
+			['missing', 'invalid', 'untrusted', 'conflicting'].flatMap((live) =>
+				['unsigned', 'different', 'recorded'].map((candidate) => ({ roundTrip, live, candidate }))
+			)
+		)
+	)(
+		'preserves publisher across $roundTrip with live=$live and candidate=$candidate',
+		async ({ roundTrip, live, candidate }) => {
+			const deps = {
+				isEnabled: () => true,
+				trustedKeys: () =>
+					live === 'untrusted'
+						? [trustedSigner.publicKeyB64]
+						: [trustedSigner.publicKeyB64, strangerSigner.publicKeyB64],
+			};
+			let manager = new PluginManager(deps);
+			const id = 'durable.publisher';
+			const installed = writeCodePlugin(id);
+			signPluginDir(installed, trustedSigner);
+			await manager.refresh();
+			const replacement = path.join(workDir, 'replacement');
+			fs.cpSync(installed, replacement, { recursive: true });
+			const manifestPath = path.join(replacement, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+			if (candidate === 'unsigned') {
+				fs.rmSync(path.join(replacement, SIGNATURE_FILENAME));
+			} else {
+				signPluginDir(replacement, candidate === 'recorded' ? trustedSigner : strangerSigner);
+			}
+			const archive = path.join(workDir, 'replacement.tgz');
+			await packPluginArchive(replacement, archive);
+			if (live === 'missing') fs.rmSync(path.join(installed, SIGNATURE_FILENAME));
+			else if (live === 'invalid')
+				fs.writeFileSync(path.join(installed, SIGNATURE_FILENAME), '{broken');
+			else signPluginDir(installed, strangerSigner);
+			await manager.refresh();
+			if (roundTrip === 'restart') {
+				manager = new PluginManager(deps);
+				await manager.refresh();
+			}
+			if (candidate === 'recorded' && (live === 'missing' || live === 'invalid')) {
+				const registry = await manager.update(archive, id);
+				expect(registry.records.find((record) => record.id === id)).toMatchObject({
+					manifest: { version: '2.0.0' },
+					signature: { status: 'trusted', signerKey: trustedSigner.publicKeyB64 },
+				});
+			} else {
+				const stop = vi.spyOn(manager, 'stopAndDrain');
+				await expect(manager.update(archive, id)).rejects.toThrow(/signature|publisher/);
+				expect(stop).not.toHaveBeenCalled();
+				expect(
+					JSON.parse(fs.readFileSync(path.join(installed, 'plugin.json'), 'utf8')).version
+				).toBe('1.0.0');
+			}
+		}
+	);
+
+	it.each([trustedSigner, strangerSigner])(
+		'anchors a legacy entry to its recorded publisher before rejecting a live conflict',
+		async (candidateSigner) => {
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [trustedSigner.publicKeyB64, strangerSigner.publicKeyB64],
+			});
+			const id = 'legacy.publisher';
+			const installed = writeCodePlugin(id);
+			signPluginDir(installed, trustedSigner);
+			await manager.refresh();
+			writePluginState({ plugins: { [id]: { enabled: false } } });
+			const replacement = path.join(workDir, 'replacement');
+			fs.cpSync(installed, replacement, { recursive: true });
+			const manifestPath = path.join(replacement, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+			signPluginDir(replacement, candidateSigner);
+			signPluginDir(installed, strangerSigner);
+			await expect(manager.update(replacement, id)).rejects.toThrow(/publisher|signature/);
+			expect(readPluginState().plugins[id]?.trustedPublisher).toBe(trustedSigner.publicKeyB64);
+		}
+	);
+
 	it.each([
 		{ live: 'missing', candidate: 'unsigned', recorded: true, accept: false },
 		{ live: 'missing', candidate: 'different', recorded: true, accept: false },

@@ -48,6 +48,7 @@ import { createAgentRegistry, type AgentRegistry } from '../../shared/plugins/ag
 import {
 	pluginsDir,
 	readPluginState,
+	rememberPluginPublisher,
 	setPluginEnabled,
 	forgetPlugin,
 	forgetGrants,
@@ -58,6 +59,7 @@ import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { scanPluginFiles } from './plugin-scan';
+import type { SignatureCheck } from '../../shared/plugins/signing';
 import type { AuthIdentity } from './authorization-ledger';
 import type { AuthorizationStore } from './authorization-ledger';
 import {
@@ -167,6 +169,7 @@ export interface InstallResult {
 export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
 	private readonly mutationQueue = createKeyedWriteQueue();
+	private mutationGeneration = 0;
 	private readonly pendingMutations = new Map<string, number>();
 	private readonly validatingUpdates = new Map<string, string>();
 	private readonly pendingReloads = new Map<string, symbol>();
@@ -303,6 +306,7 @@ export class PluginManager {
 	/** A completed hot reload must not restart unrelated crashed sandboxes. */
 	private async refreshRegistry(onlyPluginId?: string): Promise<PluginRegistry> {
 		const before = this.registry;
+		const mutationGeneration = this.mutationGeneration;
 		if (!this.deps.isEnabled()) {
 			this.registry = emptyRegistry();
 			this.pluginFingerprints.clear();
@@ -347,6 +351,11 @@ export class PluginManager {
 		const nextFingerprints =
 			onlyPluginId === undefined ? new Map<string, string>() : new Map(this.pluginFingerprints);
 		if (onlyPluginId !== undefined) nextFingerprints.delete(onlyPluginId);
+		const observedPublishers: Array<{
+			id: string;
+			signature: SignatureCheck;
+			enabledDefault: boolean;
+		}> = [];
 		for (const folder of folders) {
 			const source = path.join(dir, folder);
 			const rawManifest = this.readManifest(source);
@@ -389,6 +398,13 @@ export class PluginManager {
 			} catch {
 				// Verification failure is non-fatal for listing; leave signature unset.
 			}
+			if (signed.manifest && signed.id === folder && signed.signature?.status === 'trusted') {
+				observedPublishers.push({
+					id: signed.id,
+					signature: signed.signature,
+					enabledDefault: tier === 0,
+				});
+			}
 			// Refresh-time LEDGER authorization gate: a code plugin eligible to be
 			// active (enabled, loadable, tier>=1, has entry) is force-DISABLED when the
 			// injected gate rejects it (consented identity no longer matches the bytes
@@ -414,10 +430,15 @@ export class PluginManager {
 
 		if (
 			this.registry !== before ||
+			this.mutationGeneration !== mutationGeneration ||
 			!this.deps.isEnabled() ||
 			canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
 		)
 			return this.registry;
+		// A stale scan must not recreate state after an uninstall or a newer discovery.
+		for (const observation of observedPublishers) {
+			rememberPluginPublisher(observation.id, observation.signature, observation.enabledDefault);
+		}
 		this.registry = next;
 		this.reconcileSandboxes(previousFingerprints, nextFingerprints, onlyPluginId);
 		this.pluginFingerprints = nextFingerprints;
@@ -854,6 +875,21 @@ export class PluginManager {
 			if (containsSymlink(sourceDir)) {
 				throw new Error('plugin source contains symlinks, which are not allowed');
 			}
+			const registryRecord = getRecord(this.registry, id);
+			const installedRecord =
+				registryRecord && path.resolve(registryRecord.source) === path.resolve(dest)
+					? registryRecord
+					: undefined;
+			const recordedSignature = installedRecord?.signature;
+			const recordedTrusted = recordedSignature?.status === 'trusted';
+			const recordedSigner = recordedTrusted ? recordedSignature.signerKey : undefined;
+			// A legacy state file must remember the already-authenticated registry identity
+			// before a conflicting live scan gets an opportunity to seed another publisher.
+			const durablePublisher = recordedSignature
+				? rememberPluginPublisher(id, recordedSignature, installed.tier === 0).plugins[id]
+						?.trustedPublisher
+				: readPluginState().plugins[id]?.trustedPublisher;
+			const installedFingerprint = this.pluginFingerprints.get(id);
 			// Stage the new tree on the SAME filesystem (inside the plugins dir) so the
 			// rename into place is a real atomic move everywhere.
 			fs.mkdirSync(dir, { recursive: true });
@@ -861,11 +897,6 @@ export class PluginManager {
 			const staged = path.join(staging, id);
 			const backup = path.join(staging, `${id}.old`);
 			let swapped = false;
-			const installedRecord = getRecord(this.registry, id);
-			const recordedSignature = installedRecord?.signature;
-			const recordedTrusted = recordedSignature?.status === 'trusted';
-			const recordedSigner = recordedTrusted ? recordedSignature.signerKey : undefined;
-			const installedFingerprint = this.pluginFingerprints.get(id);
 			if (
 				installedRecord &&
 				installedFingerprint &&
@@ -896,17 +927,30 @@ export class PluginManager {
 				const keys = this.deps.trustedKeys?.() ?? [];
 				const nextSignature = (await scanPluginFiles(staged, keys)).signature;
 				const oldSignature = (await scanPluginFiles(dest, keys)).signature;
+				const currentPublisher = rememberPluginPublisher(id, oldSignature, installed.tier === 0)
+					.plugins[id]?.trustedPublisher;
+				const storedPublishers = [durablePublisher, currentPublisher];
 				if (
 					nextSignature.status === 'invalid' ||
+					storedPublishers.some(
+						(publisher) =>
+							publisher !== undefined &&
+							(publisher === null ||
+								nextSignature.status !== 'trusted' ||
+								nextSignature.signerKey !== publisher)
+					) ||
 					// Damaged live bytes cannot erase the last authenticated publisher.
 					(recordedTrusted &&
 						(!recordedSigner ||
 							nextSignature.status !== 'trusted' ||
 							nextSignature.signerKey !== recordedSigner)) ||
-					(oldSignature.status === 'invalid' && !recordedTrusted) ||
-					(recordedTrusted &&
-						oldSignature.status === 'untrusted' &&
-						oldSignature.signerKey !== recordedSigner) ||
+					(oldSignature.status === 'invalid' &&
+						!recordedTrusted &&
+						!storedPublishers.some((publisher) => typeof publisher === 'string')) ||
+					(oldSignature.status === 'untrusted' &&
+						[recordedSigner, ...storedPublishers].some(
+							(publisher) => typeof publisher === 'string' && oldSignature.signerKey !== publisher
+						)) ||
 					(oldSignature.status === 'trusted' &&
 						(nextSignature.status !== 'trusted' ||
 							nextSignature.signerKey !== oldSignature.signerKey))
@@ -1027,6 +1071,7 @@ export class PluginManager {
 
 	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */
 	private async mutatePlugin<T>(id: string, operation: () => Promise<T>): Promise<T> {
+		this.mutationGeneration++;
 		this.pendingMutations.set(id, (this.pendingMutations.get(id) ?? 0) + 1);
 		try {
 			return await this.mutationQueue.enqueue(id, operation);

@@ -32,7 +32,12 @@ vi.mock('electron', () => ({
 
 import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
 import { PluginManager } from '../../../main/plugins/plugin-manager';
-import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import {
+	pluginsDir,
+	readPluginState,
+	writePluginState,
+} from '../../../main/plugins/plugin-store-main';
+import { PLUGIN_STATE_FILENAME } from '../../../shared/plugins/storage';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
@@ -91,6 +96,149 @@ afterEach(() => {
 });
 
 describe('PluginManager.update', () => {
+	it('does not anchor a different alias tree from the cached registry', async () => {
+		const keys = makeSigningKeys();
+		const aliasKeys = makeSigningKeys();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64, aliasKeys.publicKeyB64],
+		});
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		expect((await manager.install(old)).success).toBe(true);
+		const canonical = path.join(pluginsDir(), PLUGIN_ID);
+		const held = path.join(workDir, 'held');
+		fs.renameSync(canonical, held);
+		const alias = writeSource(path.join(pluginsDir(), 'alias'), { version: '1.0.0' });
+		signPluginDir(alias, aliasKeys);
+		await manager.refresh();
+		expect(manager.getRegistry().records.find((record) => record.id === PLUGIN_ID)?.source).toBe(
+			alias
+		);
+		expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBeUndefined();
+		fs.renameSync(held, canonical);
+		const next = writeSource(path.join(workDir, 'next'), { version: '2.0.0' });
+		signPluginDir(next, keys);
+		await manager.update(next, PLUGIN_ID);
+		expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBe(keys.publicKeyB64);
+		expect(JSON.parse(fs.readFileSync(path.join(canonical, 'plugin.json'), 'utf8')).version).toBe(
+			'2.0.0'
+		);
+	});
+
+	it.each([0, 1] as const)(
+		'persists the first tier-%s installed publisher until explicit uninstall',
+		async (tier) => {
+			const keys = makeSigningKeys();
+			const nextKeys = makeSigningKeys();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64, nextKeys.publicKeyB64],
+			});
+			const source = writeSource(
+				path.join(workDir, 'source'),
+				{ version: '1.0.0', tier },
+				{
+					'main.js': 'original',
+				}
+			);
+			signPluginDir(source, keys);
+			expect((await manager.install(source)).success).toBe(true);
+			expect(readPluginState().plugins[PLUGIN_ID]).toEqual({
+				enabled: tier === 0,
+				trustedPublisher: keys.publicKeyB64,
+			});
+			await manager.setEnabled(PLUGIN_ID, true);
+			await manager.setEnabled(PLUGIN_ID, false);
+			expect(readPluginState().plugins[PLUGIN_ID]).toEqual({
+				enabled: false,
+				trustedPublisher: keys.publicKeyB64,
+			});
+			await manager.refresh();
+			await manager.uninstall(PLUGIN_ID);
+			expect(readPluginState().plugins[PLUGIN_ID]).toBeUndefined();
+			signPluginDir(source, nextKeys);
+			expect((await manager.install(source)).success).toBe(true);
+			expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBe(nextKeys.publicKeyB64);
+		}
+	);
+
+	it.each(['unsigned', 'untrusted', 'invalid'])(
+		'does not bootstrap a publisher from %s installed bytes',
+		async (status) => {
+			const keys = makeSigningKeys();
+			const other = makeSigningKeys();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			const source = writeSource(
+				path.join(workDir, 'source'),
+				{ version: '1.0.0' },
+				{
+					'marker.txt': 'original',
+				}
+			);
+			if (status !== 'unsigned') signPluginDir(source, status === 'untrusted' ? other : keys);
+			if (status === 'invalid') fs.writeFileSync(path.join(source, 'marker.txt'), 'tampered');
+			expect((await manager.install(source)).success).toBe(true);
+			await manager.refresh();
+			expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBeUndefined();
+		}
+	);
+
+	it('keeps a malformed-present publisher blocked instead of seeding from discovery', async () => {
+		const keys = makeSigningKeys();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		signPluginDir(old, keys);
+		expect((await manager.install(old)).success).toBe(true);
+		writePluginState({ plugins: { [PLUGIN_ID]: { enabled: false, trustedPublisher: 42 } } });
+		await manager.refresh();
+		const source = writeSource(path.join(workDir, 'next'), { version: '2.0.0' });
+		signPluginDir(source, keys);
+		const stop = vi.spyOn(manager, 'stopAndDrain');
+		await expect(manager.update(source, PLUGIN_ID)).rejects.toThrow(/publisher|signature/);
+		expect(stop).not.toHaveBeenCalled();
+		expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBeNull();
+	});
+
+	it('fails before stop when recording an installed publisher cannot be committed', async () => {
+		const keys = makeSigningKeys();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		signPluginDir(old, keys);
+		expect((await manager.install(old)).success).toBe(true);
+		writePluginState({ plugins: { [PLUGIN_ID]: { enabled: false } } }); // Legacy entry.
+		const source = writeSource(path.join(workDir, 'next'), { version: '2.0.0' });
+		signPluginDir(source, keys);
+		const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+		vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+			if (String(to) === path.join(workDir, 'userData', PLUGIN_STATE_FILENAME)) {
+				throw new Error('synthetic publisher persistence failure');
+			}
+			return rename(from, to);
+		});
+		const stop = vi.spyOn(manager, 'stopAndDrain');
+		try {
+			await expect(manager.update(source, PLUGIN_ID)).rejects.toThrow(
+				'publisher persistence failure'
+			);
+		} finally {
+			vi.mocked(fs.renameSync).mockImplementation(rename);
+		}
+		expect(stop).not.toHaveBeenCalled();
+		expect(
+			manager.getRegistry().records.find((record) => record.id === PLUGIN_ID)?.manifest?.version
+		).toBe('1.0.0');
+		expect(fs.readdirSync(pluginsDir())).toEqual([PLUGIN_ID]);
+	});
+
 	it.each(
 		['tgz', 'tar.gz'].flatMap((extension) =>
 			[false, true].flatMap((manifest) =>
