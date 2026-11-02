@@ -8,6 +8,8 @@ import {
 	extractToolSnapshots,
 	extractPatchAdditions,
 	extractPatchPath,
+	isTtsrConfigPath,
+	isTtsrConfigWriteCommand,
 } from '../../../main/ttsr/ttsr-tool-extract';
 import type { ParsedEvent } from '../../../main/parsers/agent-output-parser';
 
@@ -120,6 +122,7 @@ describe('TTSR config files are never matched', () => {
 		['absolute', '/repo/.maestro/rules/no-console-log.md', '/repo'],
 		['windows separators', 'C:\\repo\\.maestro\\rules\\no-console-log.md', 'C:\\repo'],
 		['the settings file', '/repo/.maestro/ttsr.yaml', '/repo'],
+		['normalized relative config', './.maestro/rules/../rules/example.md', '/repo'],
 	])('drops a write to %s', (_label, filePath, projectRoot) => {
 		const event: ParsedEvent = {
 			type: 'tool_use',
@@ -142,6 +145,14 @@ describe('TTSR config files are never matched', () => {
 		['an absolute nested rules dir', '/repo/fixtures/.maestro/rules/example.md', '/repo'],
 		["another project's rules dir", '/other-repo/.maestro/rules/example.md', '/repo'],
 		['an absolute path with no known root', '/repo/.maestro/rules/example.md', undefined],
+		['relative config traversal to source', '.maestro/rules/../../src/a.ts', '/repo'],
+		['absolute config traversal to source', '/repo/.maestro/rules/../../src/a.ts', '/repo'],
+		[
+			'windows config traversal to source',
+			'C:\\repo\\.maestro\\rules\\..\\..\\src\\a.ts',
+			'C:\\repo',
+		],
+		['ambiguous Windows dot segment', '.maestro/rules/.. /../src/a.ts', '/repo'],
 	])('still matches a write to %s', (_label, filePath, projectRoot) => {
 		const event: ParsedEvent = {
 			type: 'tool_use',
@@ -167,8 +178,6 @@ describe('TTSR config files are never matched', () => {
 		['append into the settings file', "echo 'enabled: true' >> .maestro/ttsr.yaml"],
 		['tee into a rule file', "echo 'git push --force' | tee -a .maestro/rules/no-force-push.md"],
 		['copy over a rule file', 'cp /tmp/no-force-push.md .maestro/rules/no-force-push.md'],
-		['in-place edit of a rule file', "sed -i 's/foo/git push --force/' .maestro/rules/x.md"],
-		['windows separators', 'cat > .maestro\\rules\\no-force-push.md'],
 	])('drops a shell command that writes TTSR config (%s)', (_label, command) => {
 		const event: ParsedEvent = {
 			type: 'tool_use',
@@ -295,5 +304,128 @@ describe('patch helpers', () => {
 	it('reads the path from a unified diff header when no apply_patch header exists', () => {
 		expect(extractPatchPath('--- a/src/x.ts\n+++ b/src/x.ts\n@@\n+a')).toBe('src/x.ts');
 		expect(extractPatchPath('no headers here')).toBeUndefined();
+	});
+});
+
+describe('config authoring cannot hide other shell work', () => {
+	it.each([
+		'echo violation > fixtures/.maestro/rules/x.md',
+		'echo violation > /other/.maestro/rules/x.md',
+		'echo violation > .maestro/rules/../../src/a.ts',
+		'echo violation > .maestro/ttsr.yaml.backup',
+		'touch fixtures/.maestro/rules/x.md',
+		'cp src/a.ts fixtures/.maestro/rules/x.md',
+		'touch .maestro/rules/x.md src/a.ts',
+		'echo violation > .maestro/rules/x.md > src/a.ts',
+		'echo violation | tee src/a.ts > .maestro/rules/x.md',
+		'echo violation > .maestro/rules/x.md | tee src/a.ts',
+		'echo violation > ".maestro/rules/"../../src.ts',
+		'touch ".maestro/rules/"../../src.ts',
+		"cat src/secret.txt '> .maestro/rules/x.md '",
+		"cat src/secret.txt '|tee .maestro/rules/x.md'",
+		'touch .maestro/rules/x.md; git push --force',
+		'touch .maestro/rules/x.md && git push --force',
+		'touch .maestro/rules/x.md\ngit push --force',
+		'echo "$(git push --force)" > .maestro/rules/x.md',
+		'git push --force > .maestro/rules/x.md',
+		"cat > .maestro/rules/x.md <<'EOF'\nrule\nEOF\ngit push --force\nEOF",
+		"sed -i 'e git push --force' .maestro/rules/x.md",
+	])('retains %s for matching', (command) => {
+		expect(
+			extractToolSnapshots({
+				type: 'tool_use',
+				toolName: 'Bash',
+				toolState: { input: { command } },
+			})
+		).toHaveLength(1);
+	});
+	it('keeps quoted shell separators inside a literal isolated write', () => {
+		expect(
+			extractToolSnapshots({
+				type: 'tool_use',
+				toolName: 'Bash',
+				toolState: {
+					input: { command: "echo 'condition: a; b | c' > .maestro/rules/x.md" },
+				},
+			})
+		).toEqual([]);
+	});
+});
+
+describe('conservative command and root boundaries', () => {
+	it.each([
+		['/repo/.maestro/rules/x.md', '/repo-other'],
+		['C:repo/.maestro/rules/x.md', 'C:repo'],
+		['C:/repo/.maestro/rules/x.md', 'D:/repo'],
+		['C:/repo/.maestro/rules/x.md', 'C:repo'],
+		['//server/share/.maestro/rules/x.md', undefined],
+		['/repo/.maestro/rules/../../../../src/a.ts', '/repo'],
+		['.maestro/rules/.../x.md', '/repo'],
+		['.maestro/rules/.. /x.md', '/repo'],
+	])('does not exempt uncertain/outside path %s under %s', (file, root) => {
+		expect(isTtsrConfigPath(file, root)).toBe(false);
+	});
+	it.each([
+		["cat > '/repo/.maestro/rules/rule with spaces.md'", '/repo'],
+		['cat > C:/repo/.maestro/rules/x.md', 'C:/repo'],
+		['cat > /.maestro/rules/x.md', '/'],
+		['cat > .maestro/rules/x.md 2> .maestro/rules/y.md', '/repo'],
+		["touch '.maestro/rules/a b.md' .maestro/ttsr.yaml", '/repo'],
+		[
+			"printf '%s' 'rule; body | literal $(text)' | tee -a .maestro/rules/x.md .maestro/rules/y.md",
+			'/repo',
+		],
+	])('exempts an isolated config write: %s', (command, root) => {
+		expect(isTtsrConfigWriteCommand(command, root)).toBe(true);
+	});
+	it.each([
+		'echo \\"; touch src/a.ts; echo \\" > .maestro/rules/x.md',
+		'cat > .maestro\\rules\\x.md',
+		'echo \u0000 > .maestro/rules/x.md',
+		'echo-dangerous > .maestro/rules/x.md',
+		'cat/script > .maestro/rules/x.md',
+		'printf.exe > .maestro/rules/x.md',
+		'echo-dangerous | tee .maestro/rules/x.md',
+		'echo violation > .maestro/rules/x.md # ignored redirect',
+		'printf -v SECRET value > .maestro/rules/x.md',
+		"printf '-v' SECRET value > .maestro/rules/x.md",
+		'printf "-v" SECRET value > .maestro/rules/x.md',
+		'printf > .maestro/rules/x.md -v SECRET value',
+		'printf 2> .maestro/rules/x.md "-v" SECRET value',
+		'printf "-v" SECRET value | tee .maestro/rules/x.md',
+		'\recho > .maestro/rules/x.md',
+		'echo\r > .maestro/rules/x.md',
+		"cat > .maestro/rules/x.md <<'EOF'\nbody\0\nEOF",
+		'echo\u00a0danger > .maestro/rules/x.md',
+		'\u00a0echo > .maestro/rules/x.md',
+		'echo\u2028danger > .maestro/rules/x.md',
+		'touch .maestro/rules/*.md',
+		'cat > .maestro/rules/x.md 2> src/a.ts',
+		'echo violation > .maestro/rules/x.md | tee src/a.ts',
+		'echo violation | tee src/a.ts > .maestro/rules/x.md',
+		'echo violation | tee .maestro/rules/x.md src/a.ts',
+		'cp .maestro/rules/x.md src/a.ts',
+		'cp -t src .maestro/rules/x.md',
+		'mv .maestro/rules/x.md src/a.ts',
+		'ln -s src/a.ts .maestro/rules/x.md',
+		'cat > /repo-other/.maestro/rules/x.md',
+		'cat > C:repo/.maestro/rules/x.md',
+		'cat > .maestro/rules/x.md < src/a.ts',
+		'echo $(touch src/a.ts) > .maestro/rules/x.md',
+		'echo `touch src/a.ts` > .maestro/rules/x.md',
+		'cat > .maestro/rules/x.md <<EOF\n$(touch src/a.ts)\nEOF',
+		"cat > .maestro/rules/x.md <<'EOF'\nbody\nEOF\necho violation > src/a.ts",
+	])('retains ambiguous or additional work: %s', (command) => {
+		expect(isTtsrConfigWriteCommand(command, '/repo')).toBe(false);
+	});
+	it('preserves project identity through the real snapshot add owner', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolName: 'Bash',
+			toolState: { input: { command: 'echo violation > /repo/.maestro/rules/x.md' } },
+		};
+		expect(extractToolSnapshots(event, '/repo')).toEqual([]);
+		expect(extractToolSnapshots(event, '/other')).toHaveLength(1);
+		expect(extractToolSnapshots(event)).toHaveLength(1);
 	});
 });

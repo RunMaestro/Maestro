@@ -16,7 +16,9 @@
  * `shell` (codex), or `bash` (opencode) with the command in the tool input.
  */
 
+import { posix } from 'path';
 import { TTSR_CONFIG_PATH, TTSR_RULES_DIR } from '../../shared/maestro-paths';
+import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 
 /**
@@ -41,33 +43,28 @@ import type { ParsedEvent } from '../parsers/agent-output-parser';
  */
 export function isTtsrConfigPath(filePath: string | undefined, projectRoot?: string): boolean {
 	if (!filePath) return false;
-	const normalized = filePath.replace(/\\/g, '/');
-	if (normalized.startsWith(`${TTSR_RULES_DIR}/`) || normalized === TTSR_CONFIG_PATH) return true;
-	if (!projectRoot) return false;
-	const rootPosix = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+	let relative = filePath.replace(/\\/g, '/');
+	if (posix.isAbsolute(relative) || /^[A-Za-z]:/.test(relative)) {
+		if (!projectRoot) return false;
+		const rootPath = projectRoot.replace(/\\/g, '/');
+		// Drive-relative roots cannot authorize absolute targets. Unknown Windows
+		// namespaces remain visible rather than guessing their current drive/share.
+		if (!posix.isAbsolute(rootPath) && !/^[A-Za-z]:\//.test(rootPath)) return false;
+		if (rootPath.startsWith('//') || relative.startsWith('//')) return false;
+		if (normalizeRootRelativePath(rootPath.replace(/^(?:[A-Za-z]:)?\//, '')) === null) return false;
+		const root = posix.normalize(rootPath).replace(/\/+$/, '');
+		if (!relative.startsWith(`${root}/`)) return false;
+		relative = relative.slice(root.length + 1);
+	}
+	const normalized = normalizeRootRelativePath(relative);
 	return (
-		normalized.startsWith(`${rootPosix}/${TTSR_RULES_DIR}/`) ||
-		normalized === `${rootPosix}/${TTSR_CONFIG_PATH}`
+		normalized !== null &&
+		(normalized.startsWith(`${TTSR_RULES_DIR}/`) || normalized === TTSR_CONFIG_PATH)
 	);
 }
 
-/** Either TTSR config location, as an alternation safe to embed in a regex. */
-const TTSR_PATH_PATTERN = `(?:${TTSR_RULES_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/|${TTSR_CONFIG_PATH.replace(
-	/[.*+?^${}()|[\]\\]/g,
-	'\\$&'
-)})`;
-
 /** `> path`, `>> path`, `2> path`, quoted or not - the heredoc case included. */
-const TTSR_CONFIG_REDIRECT = new RegExp(`>>?\\s*['"]?[^\\s'"|;&]*${TTSR_PATH_PATTERN}`);
-
-/**
- * A write verb naming the path in the same command segment. Bounded by `|;&` so
- * `grep foo .maestro/rules/*.md | tee out.txt` is not read as a write to the
- * rules dir.
- */
-const TTSR_CONFIG_WRITE_VERB = new RegExp(
-	`\\b(?:tee|cp|mv|touch|mkdir|rsync|install|dd|truncate|ln|sed\\s+-i\\S*|perl\\s+-i\\S*)\\b[^|;&]*${TTSR_PATH_PATTERN}`
-);
+const TTSR_CONFIG_REDIRECT = />>?\s*(?:"([^"]+)"|'([^']+)'|([^\s'"|;&<>]+))(?=$|[\s|;&<>])/g;
 
 /**
  * Whether a shell command clearly writes to TTSR's own configuration.
@@ -80,18 +77,98 @@ const TTSR_CONFIG_WRITE_VERB = new RegExp(
  * `src/prompts/ttsr-rule-authoring.md`), so that is the common case, not a
  * corner one.
  *
- * Deliberately conservative: only a redirection or a write verb targeting the
- * path suppresses. A command that merely reads the rules dir (`grep -r
+ * Deliberately conservative: only isolated literal writes whose destinations
+ * all belong to this project's config qualify. Unsupported shell/interpreter
+ * syntax stays matchable; only quoted heredocs can hide literal rule bodies. A command that merely reads the rules dir (`grep -r
  * '--force' .maestro/rules`) still matches, because reading is not authoring and
  * suppressing it would open a hole an agent could hide real work behind.
  */
-export function isTtsrConfigWriteCommand(command: string): boolean {
+export function isTtsrConfigWriteCommand(command: string, projectRoot?: string): boolean {
 	const normalized = command.replace(/\\/g, '/');
 	// Cheap prefilter: the overwhelming majority of commands mention neither path.
 	if (!normalized.includes(`${TTSR_RULES_DIR}/`) && !normalized.includes(TTSR_CONFIG_PATH)) {
 		return false;
 	}
-	return TTSR_CONFIG_REDIRECT.test(normalized) || TTSR_CONFIG_WRITE_VERB.test(normalized);
+	// Exempt only isolated writes. A config path in one segment cannot hide
+	// a real command in another, a substitution, or an interpreter's script.
+	// JavaScript whitespace includes characters that shells keep inside words.
+	if (/[^\S \t\n]|\0/u.test(command)) return false;
+	let candidate = command.trim();
+	const lines = candidate.split('\n');
+	if (lines.length > 1) {
+		const heredoc = /<<(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*$/.exec(lines[0]);
+		if (!heredoc) return false;
+		const end = lines.findIndex((line, index) => index > 0 && line === heredoc[2]);
+		if (end < 0 || lines.slice(end + 1).some((line) => line.trim())) return false;
+		candidate = lines[0].slice(0, heredoc.index).trim();
+	}
+	// Backslash escaping differs across shells and can change quote boundaries.
+	// Keep those commands matchable; structured file paths still accept both separators.
+	if (/[\\\x00-\x08\x0b-\x1f\x7f]/.test(candidate)) return false;
+	// Quoted separators are data; substitutions in double quotes still execute.
+	let unsafe = false;
+	const quotes: Array<{ start: number; end: number }> = [];
+	const syntax = candidate.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, (quoted, start: number) => {
+		const end = start + quoted.length;
+		quotes.push({ start, end });
+		// Adjacent fragments form one shell word. Classify complete literals only.
+		if (
+			(start > 0 && !/[\s|<>]/.test(candidate[start - 1])) ||
+			(end < candidate.length && !/[\s|<>]/.test(candidate[end]))
+		)
+			unsafe = true;
+		if (quoted.startsWith('"') && /[$`]/.test(quoted)) unsafe = true;
+		return 'literal';
+	});
+	if (unsafe || /[;&\n\r$`(){}'"<>#*?\[\]~^!]/.test(syntax.replace(/>>?/g, ''))) return false;
+	if (
+		syntax.includes('|') &&
+		!/^(?:echo|printf)(?=[\s|]|$)[^|]*\|\s*tee(?=\s|$)[^|]*$/.test(syntax)
+	)
+		return false;
+	if (!/^(?:echo|printf|cat|cp|mv|touch|mkdir|ln|tee)(?=[\s>|]|$)/.test(syntax)) return false;
+	const pipe = [...candidate.matchAll(/\|/g)].find(
+		(match) => !quotes.some(({ start, end }) => match.index >= start && match.index < end)
+	);
+	const tokens = [...candidate.matchAll(/"([^"]*)"|'([^']*)'|([^\s'"|;&<>]+)/g)].map((match) => ({
+		start: match.index,
+		value: match[1] ?? match[2] ?? match[3],
+	}));
+	// Options can be quoted or follow redirects. Retain all leading-dash printf
+	// operands rather than confusing variable assignment with literal output.
+	if (
+		tokens[0]?.value === 'printf' &&
+		tokens
+			.slice(1)
+			.some(({ start, value }) => (!pipe || start < pipe.index) && value.startsWith('-'))
+	)
+		return false;
+	const redirects = [...candidate.matchAll(TTSR_CONFIG_REDIRECT)].filter(
+		(match) => !quotes.some(({ start, end }) => match.index >= start && match.index < end)
+	);
+	if (redirects.length > 0) {
+		// A pipeline can write through tee as well as its redirects. Keep it
+		// matchable rather than treating redirect targets as its only writes.
+		if (syntax.includes('|')) return false;
+		return (
+			/^(?:echo|printf|cat)(?=[\s>]|$)/.test(syntax) &&
+			redirects.every((match) => isTtsrConfigPath(match[1] ?? match[2] ?? match[3], projectRoot))
+		);
+	}
+	// Only simple literal operands qualify. Ambiguous shell spellings remain
+	// matchable; an authoring exemption must not hide another write or move.
+	const words = tokens.filter(({ start }) => !pipe || start > pipe.index).map(({ value }) => value);
+	const verb = words.shift();
+	if (verb === 'tee' && words[0] === '-a') words.shift();
+	if (verb === 'cp' && words.length === 2) {
+		return !words[0].startsWith('-') && isTtsrConfigPath(words[1], projectRoot);
+	}
+	if ((verb === 'mv' || verb === 'ln') && words.length !== 2) return false;
+	return (
+		['tee', 'touch', 'mkdir', 'mv', 'ln'].includes(verb ?? '') &&
+		words.length > 0 &&
+		words.every((word) => isTtsrConfigPath(word, projectRoot))
+	);
 }
 
 /** One in-flight tool action observed on the stream. */
@@ -305,7 +382,8 @@ export function extractToolSnapshots(event: ParsedEvent, projectRoot?: string): 
 	const add = (snapshot: TtsrToolSnapshot | null): void => {
 		if (!snapshot) return;
 		if (isTtsrConfigPath(snapshot.filePath, projectRoot)) return;
-		if (snapshot.source === 'tool:bash' && isTtsrConfigWriteCommand(snapshot.content)) return;
+		if (snapshot.source === 'tool:bash' && isTtsrConfigWriteCommand(snapshot.content, projectRoot))
+			return;
 		snapshots.push(snapshot);
 	};
 
