@@ -534,6 +534,10 @@ Notifications are sent when:
 
 Maestro can prevent your computer from sleeping while AI agents are actively working, ensuring long-running tasks complete without interruption.
 
+<Note>
+Sleep prevention stops idle sleep, the sleep that comes after a period without input. It does not override a closed laptop lid: on a MacBook, closing the lid, choosing Sleep from the Apple menu, or a low battery still puts the Mac to sleep and pauses running agents. On a MacBook on AC power, `caffeinate -s` keeps it running with the lid closed (display off) while that command runs; it has no effect on battery.
+</Note>
+
 **To enable:**
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **General** tab
@@ -562,11 +566,11 @@ On macOS, a lit display is how the OS decides someone is at the machine, and it 
 
 ### Platform Support
 
-| Platform    | Support Level                 | Notes                                                                                                       |
-| ----------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **macOS**   | Full support                  | Equivalent to running `caffeinate`. Check Activity Monitor → View → Columns → "Preventing Sleep" to verify. |
-| **Windows** | Full support                  | Uses `SetThreadExecutionState`. Verify with `powercfg /requests` in admin CMD.                              |
-| **Linux**   | Varies by desktop environment | Works on GNOME, KDE, XFCE via D-Bus. See notes below.                                                       |
+| Platform    | Support Level                 | Notes                                                                                                                                                  |
+| ----------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **macOS**   | Full support                  | Equivalent to running `caffeinate -i` (idle sleep; a closed lid still sleeps). Check Activity Monitor → View → Columns → "Preventing Sleep" to verify. |
+| **Windows** | Full support                  | Uses `SetThreadExecutionState`. Verify with `powercfg /requests` in admin CMD.                                                                         |
+| **Linux**   | Varies by desktop environment | Works on GNOME, KDE, XFCE via D-Bus. See notes below.                                                                                                  |
 
 ### Linux Desktop Environment Notes
 
