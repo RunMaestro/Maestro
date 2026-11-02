@@ -1894,6 +1894,28 @@ describe('General edge cases - additional', () => {
 			expect(e.preventDefault).toHaveBeenCalled();
 		});
 
+		it.each(['Escape', 'Backspace'])(
+			'does NOT exit on composing %s when the line is empty',
+			(key) => {
+				for (const ime of [
+					{ nativeEvent: { isComposing: true } as any, keyCode: 229 },
+					{ nativeEvent: { isComposing: false } as any, keyCode: 229 },
+				]) {
+					setActiveSession({ inputMode: 'ai' });
+					const deps = commandModeDeps({ inputValue: '' });
+					const { result } = renderHook(() => useInputKeyDown(deps));
+					const e = createKeyEvent(key, ime as any);
+
+					act(() => {
+						result.current.handleInputKeyDown(e);
+					});
+
+					expect(deps.setCommandMode).not.toHaveBeenCalled();
+					expect(e.preventDefault).not.toHaveBeenCalled();
+				}
+			}
+		);
+
 		it.each(['Escape', 'Backspace'])('does NOT exit on %s with a half-typed command', (key) => {
 			setActiveSession({ inputMode: 'ai' });
 			const deps = commandModeDeps({ inputValue: 'git pu' });

@@ -4,7 +4,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { escapeMdxProse } from '../../../cli/commands/reference';
+import { Command } from 'commander';
+import { argSignature, escapeMdxProse } from '../../../cli/commands/reference';
+
+describe('argSignature', () => {
+	it('preserves variadic argument markers', () => {
+		const command = new Command('send').argument('[message...]');
+		expect(argSignature(command)).toBe('[message...]');
+	});
+});
 
 describe('escapeMdxProse', () => {
 	it('escapes a bare placeholder that MDX would read as an unclosed tag', () => {

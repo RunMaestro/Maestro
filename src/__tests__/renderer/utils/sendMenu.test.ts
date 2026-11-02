@@ -128,6 +128,17 @@ describe('buildSendMenuModel', () => {
 		expect(rowFor(session, 'hold').enabled).toBe(true);
 	});
 
+	it('reports whether any tab works, for a right-click on an idle agent', () => {
+		const opts = { forcedParallelEnabled: true };
+		const draft = { text: 'hi', imageCount: 0 };
+		expect(buildSendMenuModel(workingSession(), draft, opts).agentWorking).toBe(true);
+		const idle = workingSession({ state: 'idle', aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(buildSendMenuModel(idle, draft, opts)).toMatchObject({
+			agentWorking: false,
+			activeTabWorking: false,
+		});
+	});
+
 	it('offers Force Send, not Steer, when only another tab is working', () => {
 		const session = workingSession({
 			aiTabs: [

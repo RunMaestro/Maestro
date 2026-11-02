@@ -4828,8 +4828,6 @@ interface MaestroAPI {
 		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;
 		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
 		getEventCount: () => Promise<number>;
-		/** Can this data directory run Cue unattended? Same report as `maestro-cli cue engine check`. */
-		checkReadiness: () => Promise<import('../shared/cue/readiness').CueReadinessReport>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
 		/**
@@ -4867,13 +4865,14 @@ interface MaestroAPI {
 			projectRoot: string,
 			name: string
 		) => Promise<{ removed: boolean; reason?: string }>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
+		readYaml: (projectRoot: string, sessionId?: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,
 			content: string,
-			promptFiles?: Record<string, string>
+			promptFiles?: Record<string, string>,
+			sessionId?: string
 		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		deleteYaml: (projectRoot: string, sessionId?: string) => Promise<boolean>;
 		renamePipeline: (
 			oldName: string,
 			newName: string
@@ -4917,12 +4916,38 @@ interface MaestroAPI {
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
+		memory: (request: import('../shared/pianola/memory').MemoryRequest) => Promise<unknown>;
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
 		resolveDecision: (
 			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
 		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
+		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		superviseProgram: (programId: string) => Promise<void>;
+		setProgramStatus: (
+			programId: string,
+			status: import('../shared/pianola/pianola-programs').PianolaProgramStatus
+		) => Promise<void>;
+		getAsks: (
+			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;
+		resolveAsk: (
+			id: string,
+			option: string,
+			note?: string
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		dismissAsk: (id: string) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		getBrief: () => Promise<import('../shared/pianola/pianola-programs').PianolaBrief>;
+		revisePlanTask: (
+			planId: string,
+			taskId: string,
+			prompt?: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
+		skipPlanTask: (
+			planId: string,
+			taskId: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
 		confirmDesktopOwner: () => Promise<void>;
 		reviewSuggestion: (

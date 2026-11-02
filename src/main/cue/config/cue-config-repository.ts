@@ -352,9 +352,13 @@ export function watchCueConfigFile(
 		warn(`[CUE] Config health check failed for ${projectRoot}: ${lastReadError}`);
 	}
 
+	// fs.watch does not work on network roots (UNC shares, WSL's 9P mount: EISDIR on
+	// watch); chokidar's documented answer for those is polling.
+	const networkRoot = /^\\\\|^\/\//.test(projectRoot);
 	const watcher = chokidar.watch([canonicalPath, legacyPath, promptsGlob], {
 		persistent: true,
 		ignoreInitial: true,
+		...(networkRoot ? { usePolling: true, interval: 2000 } : {}),
 	});
 
 	// Swallow chokidar errors (EISDIR on WSL network paths, ENOENT races, permission

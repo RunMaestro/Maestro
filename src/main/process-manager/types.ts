@@ -47,6 +47,7 @@ export interface ProcessConfig {
 	imageArgs?: (imagePath: string) => string[];
 	imagePromptBuilder?: (imagePaths: string[]) => string;
 	promptArgs?: (prompt: string) => string[];
+	promptFileArgs?: (promptFilePath: string) => string[];
 	contextWindow?: number;
 	customEnvVars?: Record<string, string>;
 	noPromptSeparator?: boolean;

@@ -271,6 +271,28 @@ describe('agentSessions IPC handlers', () => {
 			expect(result).toEqual(mockResult);
 		});
 
+		it('drops native ingestion options supplied by a renderer', async () => {
+			const mockStorage = {
+				agentId: 'claude-code',
+				readSessionMessages: vi.fn().mockResolvedValue({ messages: [], total: 0, hasMore: false }),
+			};
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+			await handlers.get('agentSessions:read')!({}, 'claude-code', '/test', 'session-1', {
+				offset: 4,
+				limit: 8,
+				filePath: '/untrusted.jsonl',
+				content: 'untrusted',
+			});
+			expect(mockStorage.readSessionMessages).toHaveBeenCalledWith(
+				'/test',
+				'session-1',
+				{ offset: 4, limit: 8 },
+				undefined
+			);
+		});
+
 		it('should return empty result when no storage available', async () => {
 			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(null);
 

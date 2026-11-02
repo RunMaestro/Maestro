@@ -127,7 +127,7 @@ export function ShortcutKeys({
 										</span>
 									))}
 								<kbd
-									className={`inline-flex items-center justify-center font-sans font-semibold leading-none ${capSize}`}
+									className={`inline-flex shrink-0 items-center justify-center font-sans font-semibold leading-none ${capSize}`}
 									style={{
 										color: ink,
 										backgroundColor: `${ink}1a`,

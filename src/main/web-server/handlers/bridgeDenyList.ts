@@ -29,7 +29,7 @@ const METHODS: Record<string, string> = {
 	coworking: 'getInstallStatus removeSession',
 	'cross-agent': 'cancel send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
-	cue: 'cancelScheduledTask checkReadiness createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
+	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
 	cueBackup: 'create delete getDiffStatus inspect list readFile readLive restoreAll restoreFile',
 	// DQL only (DV-14). DataviewJS reads and the trust list stay desktop and CLI only.
 	dataview: 'query queryInline rebuild status',
@@ -37,7 +37,7 @@ const METHODS: Record<string, string> = {
 		'generateSynopsis getGraphData getOffsetForTimestamp getRichOverviewStats getUnifiedHistory',
 	documentGraph: 'unwatchFolder watchFolder',
 	feedback:
-		'check-gh-auth compose-prompt drafts:delete drafts:list drafts:save get-conversation-prompt issues:delete issues:list issues:refresh-states search-issues submit submit-conversation subscribe-issue',
+		'check-gh-auth compose-prompt drafts:delete drafts:list drafts:save get-conversation-prompt gh-login-command issues:delete issues:list issues:refresh-states list-accounts remember-account search-issues submit submit-conversation subscribe-issue',
 	fonts: 'detect',
 	fs: 'cancelReadFile compressFolder copyPath countItems delete deleteMany directoryInfo directorySize downloadRemoteFile fetchImageAsBase64 homeDir listTreeRemote mkdir readDir readDirTree readFile rename stat writeFile writeImageFile',
 	git: 'branch branches cancelCommand checkGhCli checkoutBranch commitAll commitCount createGist createPR diff getDefaultBranch getRepoRoot graph info init isRepo listWorktrees log numstat remote removeWorktree runCommand scanWorktreeDirectory show showFile status switch tags unwatchWorktreeDirectory watchWorktreeDirectory worktreeCheckout worktreeInfo worktreeRunSetup worktreeSetup',
@@ -61,7 +61,7 @@ const METHODS: Record<string, string> = {
 	parquet: 'close export open query',
 	permission: 'respond',
 	pianola:
-		'apply-suggestion get-decisions get-rules get-suggestions resolve-decision review-suggestion save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
+		'apply-suggestion dismiss-ask get-asks get-brief get-decisions get-programs get-rules get-suggestions memory resolve-ask resolve-decision review-suggestion revise-plan-task save-rules set-program-status skip-plan-task supervise-program supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
