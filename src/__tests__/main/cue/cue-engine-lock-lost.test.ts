@@ -174,13 +174,13 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 	const engines: CueEngine[] = [];
 
 	/** An engine whose runs never finish, so its one slot stays taken. */
-	function startEngine(onLockLost?: () => void): CueEngine {
+	async function startEngine(onLockLost?: () => void): Promise<CueEngine> {
 		const deps = createMockDeps({
 			onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
 			onLockLost,
 		});
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 		engines.push(engine);
 		return engine;
 	}
@@ -220,9 +220,10 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 	it.each([
 		['the engine stops itself', false],
 		['onLockLost first stops the runs in flight, as maestro-cli host does', true],
-	])('leaves the new holder its queued rows and drops only its own: %s', (_, stopsRuns) => {
+	])('leaves the new holder its queued rows and drops only its own: %s', async (_, stopsRuns) => {
 		// The old holder: one run in the slot, one queued (persisted).
-		const old: CueEngine = startEngine(stopsRuns ? () => old.stopAll() : undefined);
+		let old!: CueEngine;
+		old = await startEngine(stopsRuns ? () => old.stopAll() : undefined);
 		expect(old.triggerSubscription('first')).toBe(true);
 		expect(old.triggerSubscription('second')).toBe(true);
 		expect(queueTable.size).toBe(1);
@@ -231,7 +232,7 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 		// restores the old holder's row as its own work, and it queues more.
 		vi.advanceTimersByTime(10_000);
 		const beforeTakeover = new Set(queueTable.keys());
-		const holder = startEngine();
+		const holder = await startEngine();
 		expect(rowsOf(beforeTakeover)).toEqual([]);
 		expect(holder.triggerSubscription('first')).toBe(true);
 		const holderRows = new Set(queueTable.keys());
@@ -254,7 +255,7 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 		expect(holder.getQueueStatus().get('session-1')).toBe(holderRows.size);
 	});
 
-	it('leaves the new holder queue rows and receipts alone when old holder loses lock', () => {
+	it('leaves the new holder queue rows and receipts alone when old holder loses lock', async () => {
 		let emit: ((event: CueEvent) => number | void) | undefined;
 		configurePluginCueHost({
 			register(ctx) {
@@ -281,14 +282,14 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 		});
 
 		// 1. Old engine starts, takes slot with first, queues second
-		const old = startEngine();
+		const old = await startEngine();
 		expect(old.triggerSubscription('first')).toBe(true);
 		expect(old.triggerSubscription('second')).toBe(true);
 		expect(queueTable.size).toBe(1);
 
 		// 2. New holder takes over lock
 		vi.advanceTimersByTime(10_000);
-		const holder = startEngine();
+		const holder = await startEngine();
 		// Holder takes its own slot with first
 		expect(holder.triggerSubscription('first')).toBe(true);
 		// Holder queues second

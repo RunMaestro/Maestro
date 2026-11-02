@@ -54,7 +54,7 @@ import { startCueTriggerInbox } from './cue-trigger-inbox';
 
 /** The part of `CueEngine` the host drives. */
 export interface HostCueEngine {
-	start(reason: 'system-boot'): void;
+	start(reason: 'system-boot'): void | Promise<void>;
 	/** Clears every timer, watcher, and queue, the persisted queue included. Ends no run: `stopAll()` does that. */
 	stop(): void;
 	/**
@@ -70,7 +70,7 @@ export interface HostCueEngine {
 	/** Empty the queue and stop every run in flight, each through the engine's own per-run stop. */
 	stopAll(): void;
 	/** Re-read one agent's `cue.yaml` from `projectRoot` and rebuild its subscriptions. */
-	refreshSession(sessionId: string, projectRoot: string): void;
+	refreshSession(sessionId: string, projectRoot: string): void | Promise<void>;
 	removeSession(sessionId: string): void;
 	/** The activity log: runs in flight and the window restored from cue.db, oldest first. */
 	getActivityLog(): CueRunResult[];
@@ -585,7 +585,7 @@ export async function startHostCue(
 				},
 			});
 			if (runtime) unfollowAgents = await followAgents(runtime, engine);
-			engine.start('system-boot');
+			await engine.start('system-boot');
 			starting = false;
 			const after = deps.readLock(host.userDataDir);
 			if (!after || !ownsLock(after)) {
