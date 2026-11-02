@@ -23,12 +23,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ipcMain } from 'electron';
+import { ipcMain, ipcRenderer } from 'electron';
+
+const { invokeHandlers } = vi.hoisted(() => ({
+	invokeHandlers: new Map<string, (event: unknown, ...args: unknown[]) => Promise<unknown>>(),
+}));
 
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
+		_invokeHandlers: invokeHandlers,
 	},
+	ipcRenderer: { invoke: vi.fn() },
 }));
 
 vi.mock('../../../../main/utils/logger', () => ({
@@ -51,6 +57,8 @@ import {
 } from '../../../../main/ipc/handlers/cross-agent';
 import { startCrossAgentRequest } from '../../../../main/cross-agent/cross-agent-router';
 import { readConsultBudgetStatus } from '../../../../main/peer-consults/consult-budget';
+import { createCrossAgentApi } from '../../../../main/preload/crossAgent';
+import { handleBridgeInvoke } from '../../../../main/web-server/handlers/bridgeHandlers';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -81,6 +89,7 @@ function registerAndGetHandler(
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	invokeHandlers.clear();
 	settings = {};
 });
 
@@ -270,6 +279,40 @@ describe('cross-agent:consultBudget', () => {
 		vi.mocked(readConsultBudgetStatus).mockReturnValue(undefined);
 
 		expect(await consultBudget({}, { consultChain: { chainId: 'chain-a', depth: 1 } })).toBeNull();
+	});
+
+	it.each([
+		{ consultChain: undefined, limit: 25, unreadable: false },
+		{ consultChain: { chainId: 'chain-a', depth: 2 }, limit: 25, unreadable: false },
+		{ consultChain: undefined, limit: 0, unreadable: false },
+		{ consultChain: { chainId: 'chain-a', depth: 2 }, limit: 25, unreadable: true },
+	])('serves the same budget through the desktop handler and web preload: %j', async (testCase) => {
+		settings.maxConsultationsPerTurn = testCase.limit;
+		if (testCase.unreadable) vi.mocked(readConsultBudgetStatus).mockReturnValue(undefined);
+		const desktopResult = await consultBudget({}, { consultChain: testCase.consultChain });
+		invokeHandlers.set('cross-agent:consultBudget', consultBudget);
+		const send = vi.fn();
+		vi.mocked(ipcRenderer.invoke).mockImplementation(async (channel, ...args) => {
+			await handleBridgeInvoke(
+				{ id: 'web-budget-reader', socket: {} as WebSocket, connectedAt: 0 },
+				{ type: 'bridge.invoke', requestId: 'budget', channel, args },
+				send
+			);
+			const response = send.mock.calls.at(-1)![1];
+			if (!response.ok) throw new Error(response.error);
+			return response.result;
+		});
+
+		await expect(createCrossAgentApi().consultBudget(testCase.consultChain)).resolves.toEqual(
+			desktopResult
+		);
+		expect(send).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+			type: 'bridge.response',
+			requestId: 'budget',
+			ok: true,
+			result: desktopResult,
+		});
+		expect(startCrossAgentRequest).not.toHaveBeenCalled();
 	});
 });
 
