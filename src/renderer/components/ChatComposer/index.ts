@@ -1,3 +1,4 @@
+export { ChatComposer, type ChatComposerProps, type MentionRoster } from './ChatComposer';
 export {
 	ComposerSendColumn,
 	type ComposerSendColumnProps,
