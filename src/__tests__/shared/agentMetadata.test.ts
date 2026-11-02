@@ -12,7 +12,6 @@ import {
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
-	resolveEffectiveTabPermissionMode,
 	hasStandardApprovalChannel,
 	formatAgentLoginCommand,
 	loginShellSyntaxFor,
@@ -387,27 +386,6 @@ describe('agentMetadata', () => {
 			expect(hasStandardApprovalChannel({ ...server, hasPrompt: false })).toBe(false);
 			expect(hasStandardApprovalChannel({ ...server, hasImages: true })).toBe(false);
 			expect(hasStandardApprovalChannel({ ...server, sshEnabled: true })).toBe(false);
-		});
-
-		it('normalizes stale Standard to Full only when its channel is unavailable', () => {
-			expect(
-				resolveEffectiveTabPermissionMode(
-					{ permissionMode: 'standard' },
-					{ toolType: 'opencode', opencodeServer: true, hasImages: true }
-				)
-			).toBe('full');
-			expect(
-				resolveEffectiveTabPermissionMode(
-					{ permissionMode: 'standard' },
-					{ toolType: 'opencode', opencodeServer: true }
-				)
-			).toBe('standard');
-			expect(
-				resolveEffectiveTabPermissionMode(
-					{ permissionMode: 'readonly' },
-					{ toolType: 'qwen3-coder' }
-				)
-			).toBe('readonly');
 		});
 	});
 });

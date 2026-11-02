@@ -32,8 +32,7 @@ import type {
 	AgentCapabilitiesSnapshotMap,
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
-import { resolveEffectiveTabPermissionMode } from '../../shared/agentMetadata';
-import { useSettingsStore } from './settingsStore';
+import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
@@ -518,16 +517,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				item.readOnlyMode === true ||
 				targetTab.readOnlyMode === true ||
 				targetTab.permissionMode === 'readonly';
-			const effectivePermissionMode = isReadOnly
-				? 'readonly'
-				: resolveEffectiveTabPermissionMode(targetTab, {
-						toolType: session.toolType,
-						harnessControlMode: session.harnessControlMode,
-						codexTransport: session.codexTransport,
-						opencodeServer: useSettingsStore.getState().encoreFeatures.opencodeServer === true,
-						sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
-						hasImages: (item.images?.length ?? 0) > 0,
-					});
+			const effectivePermissionMode = isReadOnly ? 'readonly' : resolveTabPermissionMode(targetTab);
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
 			const spawnArgs = isReadOnly

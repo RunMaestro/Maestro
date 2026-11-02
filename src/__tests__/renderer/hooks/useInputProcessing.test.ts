@@ -2674,39 +2674,31 @@ describe('useInputProcessing', () => {
 			expect(spawnCall.permissionMode).toBe('standard');
 		});
 
-		it('sends Full Access when OpenCode image routing cannot use Standard', async () => {
-			const previous = useSettingsStore.getState().encoreFeatures;
-			useSettingsStore.setState({
-				encoreFeatures: { ...previous, opencodeServer: true },
+		it('preserves Standard on image turns so main can refuse without escalating', async () => {
+			const standardTab = createMockTab({
+				permissionMode: 'standard',
+				agentSessionId: 'opencode-session',
 			});
-			try {
-				const standardTab = createMockTab({
-					permissionMode: 'standard',
-					agentSessionId: 'opencode-session',
-				});
-				const session = createMockSession({
-					toolType: 'opencode',
-					aiTabs: [standardTab],
-					activeTabId: standardTab.id,
-				});
-				const deps = createDeps({
-					activeSession: session,
-					sessionsRef: { current: [session] },
-					inputValue: 'describe this image',
-					stagedImages: ['data:image/png;base64,abc'],
-				});
-				const { result } = renderHook(() => useInputProcessing(deps));
+			const session = createMockSession({
+				toolType: 'opencode',
+				aiTabs: [standardTab],
+				activeTabId: standardTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'describe this image',
+				stagedImages: ['data:image/png;base64,abc'],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
 
-				await act(async () => {
-					await result.current.processInput();
-				});
+			await act(async () => {
+				await result.current.processInput();
+			});
 
-				const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
-				expect(spawnCall.permissionMode).toBe('full');
-				expect(spawnCall.images).toEqual(['data:image/png;base64,abc']);
-			} finally {
-				useSettingsStore.setState({ encoreFeatures: previous });
-			}
+			const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('standard');
+			expect(spawnCall.images).toEqual(['data:image/png;base64,abc']);
 		});
 
 		it('does not append read-only suffix when in normal write mode', async () => {

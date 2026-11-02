@@ -157,15 +157,6 @@ export function hasStandardApprovalChannel(context: StandardApprovalChannelConte
 	return false;
 }
 
-/** Keep outgoing mode consistent with the mode the composer can actually offer. */
-export function resolveEffectiveTabPermissionMode(
-	tab: Parameters<typeof resolveTabPermissionMode>[0],
-	context: StandardApprovalChannelContext
-): 'full' | 'standard' | 'readonly' {
-	const mode = resolveTabPermissionMode(tab);
-	return mode === 'standard' && !hasStandardApprovalChannel(context) ? 'full' : mode;
-}
-
 /**
  * Agents currently in beta/experimental status.
  * Used to render "(Beta)" badges throughout the UI.
