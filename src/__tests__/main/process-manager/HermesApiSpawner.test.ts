@@ -43,6 +43,16 @@ class FakeHermesAgent extends EventEmitter {
 	stderr = new PassThrough();
 	stdin: Writable;
 	clarifyAnswers: Record<string, unknown> | undefined;
+	written: Array<Record<string, unknown>> = [];
+	holdCreate = false;
+	private heldCreate?: Record<string, unknown>;
+
+	releaseCreate(): void {
+		if (!this.heldCreate) return;
+		const request = this.heldCreate;
+		this.heldCreate = undefined;
+		this.send({ jsonrpc: '2.0', id: request.id, result: { session_id: 'hermes-session' } });
+	}
 
 	constructor(
 		private readonly clarify = false,
@@ -76,9 +86,14 @@ class FakeHermesAgent extends EventEmitter {
 	}
 
 	private handle(record: Record<string, unknown>): void {
+		this.written.push(record);
 		if (record.method === 'session.create') {
 			if (this.failCreate) {
 				this.send({ jsonrpc: '2.0', id: record.id, error: { code: -32603, message: 'boom' } });
+				return;
+			}
+			if (this.holdCreate) {
+				this.heldCreate = record;
 				return;
 			}
 			this.send({ jsonrpc: '2.0', id: record.id, result: { session_id: 'hermes-session' } });
@@ -193,6 +208,24 @@ describe('HermesApiSpawner', () => {
 		expect(h.fallbackToCli).toHaveBeenCalledWith(
 			expect.objectContaining({ command: '/opt/hermes/bin/hermes', args: ['--yolo'] })
 		);
+	});
+
+	it('does not submit a prompt when session setup completes after Stop', async () => {
+		const agent = new FakeHermesAgent();
+		agent.holdCreate = true;
+		const h = harness(agent);
+		h.spawner.spawn(h.config);
+		const managed = h.processes.get('maestro-hermes')!;
+		await vi.waitFor(() =>
+			expect(agent.written.some((record) => record.method === 'session.create')).toBe(true)
+		);
+
+		await managed.harnessControl!.interrupt();
+		agent.releaseCreate();
+
+		await expect(h.exited).resolves.toBe(0);
+		expect(agent.written.some((record) => record.method === 'prompt.submit')).toBe(false);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
 	});
 
 	it('does not restart a cancelled startup through the current transport', async () => {

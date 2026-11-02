@@ -80,6 +80,7 @@ import {
 	type ClaudeSpawnEnvLayers,
 } from '../../../agents/claudeSpawnCore';
 import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
+import { hasStandardApprovalChannel } from '../../../../shared/agentMetadata';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
@@ -744,16 +745,16 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
-	const hasStandardApprovalChannel =
-		harnessControlMode === 'native' ||
-		config.toolType === 'claude-code' ||
-		(config.toolType === 'codex' && codexTransport === 'app-server') ||
-		(config.toolType === 'opencode' &&
-			encoreFeatures?.opencodeServer === true &&
-			!!config.prompt &&
-			!isSshEnabled &&
-			!(config.images && config.images.length > 0));
-	if (config.permissionMode === 'standard' && !hasStandardApprovalChannel) {
+	const standardApprovalChannel = hasStandardApprovalChannel({
+		toolType: config.toolType,
+		harnessControlMode,
+		codexTransport,
+		opencodeServer: encoreFeatures?.opencodeServer === true,
+		hasPrompt: !!config.prompt,
+		sshEnabled: isSshEnabled,
+		hasImages: (config.images?.length ?? 0) > 0,
+	});
+	if (config.permissionMode === 'standard' && !standardApprovalChannel) {
 		reportSpawnRefusal(
 			deps,
 			config.sessionId,

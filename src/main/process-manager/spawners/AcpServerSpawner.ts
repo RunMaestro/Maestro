@@ -242,6 +242,7 @@ class AcpTurn {
 			},
 			clientInfo: { name: 'maestro', version: this.ctx.clientVersion },
 		});
+		if (this.finishIfCancelled()) return;
 		if (initialized.protocolVersion !== 1) {
 			throw new Error(
 				`ACP agent selected unsupported protocol version ${initialized.protocolVersion}`
@@ -268,6 +269,7 @@ class AcpTurn {
 		) as {
 			sessionId?: string;
 		};
+		if (this.finishIfCancelled()) return;
 		this.providerSessionId = session?.sessionId ?? config.agentSessionId;
 		if (!this.providerSessionId) throw new Error('ACP session did not return a session id');
 		this.forwardLine(
@@ -277,6 +279,7 @@ class AcpTurn {
 				agentInfo: initialized.agentInfo,
 			})
 		);
+		if (this.finishIfCancelled()) return;
 		this.promptSent = true;
 		const result: PromptResponse = await this.connection.agent.request(
 			acp.methods.agent.session.prompt,
@@ -325,6 +328,13 @@ class AcpTurn {
 	private forwardLine(line: string): void {
 		if (this.isSuperseded()) return;
 		this.ctx.stdoutHandler.handleData(this.config.sessionId, line + '\n');
+	}
+
+	private finishIfCancelled(): boolean {
+		if (!this.cancelled) return false;
+		this.finish(0);
+		this.turn.child.stdin?.end();
+		return true;
 	}
 
 	private async interrupt(): Promise<void> {

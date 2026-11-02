@@ -44,6 +44,17 @@ class FakeRpcAgent extends EventEmitter {
 	written: RpcRecord[] = [];
 	stdinEnded = false;
 	failPrompt = false;
+	pi = false;
+	pendingAfterAgentEnd = false;
+	holdGetState = false;
+	private heldGetState?: RpcRecord;
+
+	releaseGetState(): void {
+		if (!this.heldGetState) return;
+		const request = this.heldGetState;
+		this.heldGetState = undefined;
+		this.respond(request, { sessionId: 'omp-session', isStreaming: false });
+	}
 
 	constructor(
 		private readonly dialog = false,
@@ -91,7 +102,15 @@ class FakeRpcAgent extends EventEmitter {
 		this.written.push(request);
 		switch (request.type) {
 			case 'get_state':
-				this.respond(request, { sessionId: 'omp-session', isStreaming: false });
+				if (this.holdGetState) {
+					this.heldGetState = request;
+					return;
+				}
+				this.respond(request, {
+					sessionId: 'omp-session',
+					isStreaming: false,
+					pendingMessageCount: this.pendingAfterAgentEnd ? 1 : 0,
+				});
 				return;
 			case 'prompt':
 				this.respond(request, { disposition: 'started' });
@@ -105,6 +124,11 @@ class FakeRpcAgent extends EventEmitter {
 						id: 'dialog-1',
 						method: 'confirm',
 						title: 'Allow dangerous command?',
+					});
+				} else if (this.pi) {
+					this.send({
+						type: 'agent_end',
+						messages: [{ role: 'assistant', content: [{ type: 'text', text: 'PI_DONE' }] }],
 					});
 				} else if (!this.waitForSteer) {
 					this.send({ type: 'session_settled' });
@@ -238,6 +262,51 @@ describe('RpcServerSpawner', () => {
 
 		await expect(h.exited).resolves.toBe(0);
 		expect(h.fallbackToCli).not.toHaveBeenCalled();
+	});
+
+	it('does not submit a prompt when setup completes after Stop', async () => {
+		const agent = new FakeRpcAgent();
+		agent.holdGetState = true;
+		const h = harness(agent);
+		h.spawner.spawn(h.config);
+		const managed = h.processes.get('maestro-omp')!;
+		await vi.waitFor(() => expect(agent.written.some((r) => r.type === 'get_state')).toBe(true));
+
+		await managed.harnessControl!.interrupt();
+		agent.releaseGetState();
+
+		await expect(h.exited).resolves.toBe(0);
+		expect(agent.written.some((record) => record.type === 'prompt')).toBe(false);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+	});
+
+	it('finishes a Pi turn after agent_end reports an idle state', async () => {
+		const agent = new FakeRpcAgent();
+		agent.pi = true;
+		const h = harness(agent);
+		h.spawner.spawn({ ...h.config, toolType: 'pi', nativeRpcProtocol: 'pi-rpc', command: 'pi' });
+
+		await expect(h.exited).resolves.toBe(0);
+		expect(agent.stdinEnded).toBe(true);
+		expect(agent.written.filter((record) => record.type === 'get_state').length).toBeGreaterThan(1);
+	});
+
+	it('keeps Pi open while agent_end reports pending work', async () => {
+		const agent = new FakeRpcAgent();
+		agent.pi = true;
+		agent.pendingAfterAgentEnd = true;
+		const h = harness(agent);
+		h.spawner.spawn({ ...h.config, toolType: 'pi', nativeRpcProtocol: 'pi-rpc', command: 'pi' });
+		await vi.waitFor(() =>
+			expect(agent.written.filter((record) => record.type === 'get_state').length).toBeGreaterThan(
+				1
+			)
+		);
+		expect(agent.stdinEnded).toBe(false);
+
+		agent.pendingAfterAgentEnd = false;
+		agent.send({ type: 'agent_end', messages: [] });
+		await expect(h.exited).resolves.toBe(0);
 	});
 
 	it('closes stdin when the provider rejects a prompt', async () => {

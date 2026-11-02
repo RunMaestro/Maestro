@@ -85,6 +85,7 @@ class RpcTurn {
 	private promptSent = false;
 	private cancelled = false;
 	private finished = false;
+	private piAgentEndPending = false;
 	private readonly pendingSteers = new Map<string, string>();
 	private readonly closed = Promise.withResolvers<void>();
 	private capabilities: HarnessControlCapabilities;
@@ -207,6 +208,7 @@ class RpcTurn {
 			const switched = (await connection.request('switch_session', {
 				sessionPath: config.agentSessionId,
 			})) as { cancelled?: boolean };
+			if (this.finishIfCancelled()) return;
 			if (switched.cancelled === true) throw new Error('Pi cancelled the session switch');
 		}
 		if (config.modelId) {
@@ -216,19 +218,23 @@ class RpcTurn {
 					provider: config.modelId.slice(0, separator),
 					modelId: config.modelId.slice(separator + 1),
 				});
+				if (this.finishIfCancelled()) return;
 			}
 		}
 		if (config.effort) {
 			await connection.request('set_thinking_level', { level: config.effort });
+			if (this.finishIfCancelled()) return;
 		}
 		const state = (await connection.request('get_state')) as {
 			sessionId?: string;
 			sessionFile?: string;
 		};
+		if (this.finishIfCancelled()) return;
 		this.providerSessionId = state.sessionFile ?? config.agentSessionId ?? state.sessionId;
 		if (this.providerSessionId) {
 			this.forwardLine(JSON.stringify({ type: 'session', id: this.providerSessionId }));
 		}
+		if (this.finishIfCancelled()) return;
 		this.promptSent = true;
 		const submission = (await connection.request('prompt', {
 			message: config.prompt ?? '',
@@ -299,15 +305,13 @@ class RpcTurn {
 				}
 			}
 		}
+		if (record.type === 'agent_end' && this.protocol === 'pi-rpc' && record.willRetry !== true) {
+			this.forwardLine(JSON.stringify(record));
+			void this.finishPiAgentEnd();
+			return;
+		}
 		if (record.type === 'agent_settled' || record.type === 'session_settled') {
-			for (const id of this.pendingSteers.keys()) {
-				this.ctx.emitter.emit('steering-verdict', this.config.sessionId, {
-					type: 'steering',
-					id,
-					verdict: 'dropped',
-				} satisfies SteeringResultFrame);
-			}
-			this.pendingSteers.clear();
+			this.dropPendingSteers();
 			this.forwardLine(JSON.stringify(record));
 			this.finish(record.aborted === true && !this.cancelled ? 1 : 0);
 			this.turn.child.stdin!.end();
@@ -322,6 +326,44 @@ class RpcTurn {
 			return;
 		}
 		this.forwardLine(JSON.stringify(record));
+	}
+
+	private dropPendingSteers(): void {
+		for (const id of this.pendingSteers.keys()) {
+			this.ctx.emitter.emit('steering-verdict', this.config.sessionId, {
+				type: 'steering',
+				id,
+				verdict: 'dropped',
+			} satisfies SteeringResultFrame);
+		}
+		this.pendingSteers.clear();
+	}
+
+	private async finishPiAgentEnd(): Promise<void> {
+		if (this.piAgentEndPending || this.finished || !this.connection) return;
+		this.piAgentEndPending = true;
+		try {
+			const state = (await this.connection.request('get_state')) as {
+				isStreaming?: boolean;
+				pendingMessageCount?: number;
+			};
+			if (this.finishIfCancelled()) return;
+			if (this.finished || this.isSuperseded()) return;
+			if (!state.isStreaming && (state.pendingMessageCount ?? 0) === 0) {
+				this.dropPendingSteers();
+				this.finish(0);
+				this.turn.child.stdin?.end();
+			}
+		} catch (error) {
+			if (this.finishIfCancelled()) return;
+			if (!this.finished) {
+				this.emitAgentError(error);
+				this.finish(1);
+				this.turn.child.stdin?.end();
+			}
+		} finally {
+			this.piAgentEndPending = false;
+		}
 	}
 
 	private messageText(content: unknown): string {
@@ -339,6 +381,13 @@ class RpcTurn {
 	private forwardLine(line: string): void {
 		if (this.isSuperseded()) return;
 		this.ctx.stdoutHandler.handleData(this.config.sessionId, line + '\n');
+	}
+
+	private finishIfCancelled(): boolean {
+		if (!this.cancelled) return false;
+		this.finish(0);
+		this.turn.child.stdin?.end();
+		return true;
 	}
 
 	private async interrupt(): Promise<void> {

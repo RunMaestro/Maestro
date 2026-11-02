@@ -832,6 +832,31 @@ describe('InputArea', () => {
 				useSettingsStore.setState({ encoreFeatures: previous });
 			}
 		});
+
+		it('skips Standard for OpenCode turns with staged images', () => {
+			const previous = useSettingsStore.getState().encoreFeatures;
+			useSettingsStore.setState({
+				encoreFeatures: { ...previous, opencodeServer: true },
+			});
+			try {
+				const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' });
+				render(
+					<InputArea
+						{...createDefaultProps({
+							session,
+							stagedImages: ['data:image/png;base64,abc'],
+						})}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle(/Full Access/));
+				const updater = mockUpdateSessionWith.mock.calls[0][1];
+				const updated = updater(session);
+				expect(updated.aiTabs[0].permissionMode).toBe('readonly');
+			} finally {
+				useSettingsStore.setState({ encoreFeatures: previous });
+			}
+		});
 	});
 
 	describe('Staged Images', () => {

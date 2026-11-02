@@ -47,6 +47,15 @@ class FakeAcpAgent extends EventEmitter {
 	stderr = new PassThrough();
 	stdin: Writable;
 	written: ClientMessage[] = [];
+	holdSession = false;
+	private heldSession?: ClientMessage;
+
+	releaseSession(): void {
+		if (!this.heldSession) return;
+		const request = this.heldSession;
+		this.heldSession = undefined;
+		this.send({ id: request.id, result: { sessionId: 'acp-session' } });
+	}
 
 	constructor(
 		private readonly permission = true,
@@ -106,6 +115,10 @@ class FakeAcpAgent extends EventEmitter {
 		if (msg.method === 'session/new' || msg.method === 'session/load') {
 			if (!Array.isArray(msg.params?.mcpServers)) {
 				throw new Error('mcpServers is required');
+			}
+			if (this.holdSession) {
+				this.heldSession = msg;
+				return;
 			}
 			this.send({ id: msg.id, result: { sessionId: 'acp-session' } });
 			return;
@@ -281,6 +294,24 @@ describe('AcpServerSpawner', () => {
 		h.spawner.spawn(h.config({ permissionMode: 'full' }));
 
 		await vi.waitFor(() => expect(fallback).toHaveBeenCalled());
+	});
+
+	it('does not submit a prompt when session setup completes after Stop', async () => {
+		const agent = new FakeAcpAgent(false);
+		agent.holdSession = true;
+		const h = harness(agent);
+		h.spawner.spawn(h.config({ permissionMode: 'full' }));
+		const managed = h.processes.get('maestro-acp')!;
+		await vi.waitFor(() =>
+			expect(agent.written.some((message) => message.method === 'session/new')).toBe(true)
+		);
+
+		await managed.harnessControl!.interrupt();
+		agent.releaseSession();
+
+		await expect(h.exited).resolves.toBe(0);
+		expect(agent.written.some((message) => message.method === 'session/prompt')).toBe(false);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
 	});
 
 	it('does not restart a cancelled startup through the current transport', async () => {

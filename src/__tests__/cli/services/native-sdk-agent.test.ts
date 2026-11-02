@@ -13,17 +13,32 @@ vi.mock('@github/copilot-sdk', () => ({
 const queryMock = vi.mocked(query);
 const rpcRequestMock = vi.hoisted(() => vi.fn());
 const rpcCloseMock = vi.hoisted(() => vi.fn());
+const rpcNotification = vi.hoisted(() => ({
+	current: (_record: Record<string, unknown>) => {},
+}));
 vi.mock('../../../shared/maestro-lib/harness/rpc/connection', () => ({
 	NdJsonConnection: class {
 		request = rpcRequestMock;
 		close = rpcCloseMock;
+		constructor(
+			_child: unknown,
+			options: { onNotification: (record: Record<string, unknown>) => void }
+		) {
+			rpcNotification.current = options.onNotification;
+		}
 	},
 }));
 vi.mock('../../../shared/maestro-lib/run/start-turn', () => ({
-	startTurn: vi.fn(() => ({
-		child: { stdin: { end: vi.fn() } },
-		done: Promise.resolve({ exitCode: 0 }),
-	})),
+	startTurn: vi.fn(() => {
+		let resolveDone!: (value: { exitCode: number }) => void;
+		const done = new Promise<{ exitCode: number }>((resolve) => {
+			resolveDone = resolve;
+		});
+		return {
+			child: { stdin: { end: vi.fn(() => resolveDone({ exitCode: 0 })) } },
+			done,
+		};
+	}),
 }));
 const readAgentConfigMock = vi.hoisted(() =>
 	vi.fn(() => ({ model: 'saved-model', effort: 'high' }))
@@ -105,6 +120,35 @@ describe('CLI native SDK ownership', () => {
 		);
 
 		expect(rpcRequestMock).toHaveBeenCalledWith('set_thinking_level', { level: 'max' });
+	});
+
+	it('finishes a CLI Pi turn when agent_end reports an idle state', async () => {
+		rpcRequestMock.mockClear();
+		rpcRequestMock.mockImplementation(async (method: string) => {
+			if (method === 'get_state') {
+				return { sessionId: 'pi-session', isStreaming: false, pendingMessageCount: 0 };
+			}
+			if (method === 'prompt') return { disposition: 'started' };
+			return {};
+		});
+		const pending = spawnNativeSdkAgent(
+			'pi',
+			process.cwd(),
+			'test',
+			undefined,
+			{ harnessControlMode: 'native', agentConfigValues: {} },
+			'pi'
+		);
+		await vi.waitFor(() =>
+			expect(rpcRequestMock).toHaveBeenCalledWith('prompt', { message: 'test' })
+		);
+
+		rpcNotification.current({
+			type: 'agent_end',
+			messages: [{ role: 'assistant', content: [{ type: 'text', text: 'PI_DONE' }] }],
+		});
+
+		await expect(pending).resolves.toMatchObject({ success: true });
 	});
 
 	it('denies a standard approval immediately when no interactive owner exists', async () => {

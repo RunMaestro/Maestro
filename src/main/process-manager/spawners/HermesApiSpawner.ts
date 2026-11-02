@@ -220,6 +220,7 @@ class HermesTurn {
 			const resumed = await this.connection.request('session.resume', {
 				session_id: config.agentSessionId,
 			});
+			if (this.finishIfCancelled()) return;
 			this.acpSessionId = config.agentSessionId;
 			this.providerSessionId =
 				resumed && typeof resumed === 'object' && 'session_id' in resumed
@@ -249,6 +250,7 @@ class HermesTurn {
 				...(config.modelId ? { model: config.modelId } : {}),
 				...(config.effort ? { reasoning_effort: config.effort } : {}),
 			});
+			if (this.finishIfCancelled()) return;
 			const sessionId =
 				created && typeof created === 'object' && 'session_id' in created
 					? created.session_id
@@ -263,6 +265,7 @@ class HermesTurn {
 					: sessionId;
 		}
 		this.forwardLine(JSON.stringify({ type: 'acp.init', sessionId: this.acpSessionId }));
+		if (this.finishIfCancelled()) return;
 		this.promptSent = true;
 		await this.connection.request('prompt.submit', {
 			session_id: this.providerSessionId,
@@ -627,6 +630,13 @@ class HermesTurn {
 	private forwardLine(line: string): void {
 		if (this.isSuperseded()) return;
 		this.ctx.stdoutHandler.handleData(this.config.sessionId, line + '\n');
+	}
+
+	private finishIfCancelled(): boolean {
+		if (!this.cancelled) return false;
+		this.finish(0);
+		this.turn.child.stdin?.end();
+		return true;
 	}
 
 	private async interrupt(): Promise<void> {

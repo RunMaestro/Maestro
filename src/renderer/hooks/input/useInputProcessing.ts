@@ -20,7 +20,8 @@ import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
-import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
+import { resolveEffectiveTabPermissionMode } from '../../../shared/agentMetadata';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
@@ -1597,7 +1598,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							freshActiveTab?.permissionMode === 'readonly';
 						const effectivePermissionMode = isReadOnly
 							? 'readonly'
-							: resolveTabPermissionMode(freshActiveTab);
+							: resolveEffectiveTabPermissionMode(freshActiveTab, {
+									toolType: freshSession.toolType,
+									harnessControlMode: freshSession.harnessControlMode,
+									codexTransport: freshSession.codexTransport,
+									opencodeServer:
+										useSettingsStore.getState().encoreFeatures.opencodeServer === true,
+									sshEnabled: freshSession.sessionSshRemoteConfig?.enabled === true,
+									hasImages: capturedImages.length > 0,
+								});
 
 						// For read-only mode, filter out any YOLO/skip-permissions flags from base args
 						// (they would override the read-only mode we're requesting)

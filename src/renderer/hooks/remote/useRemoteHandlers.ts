@@ -26,7 +26,7 @@ import {
 	settleAgentStateFromTabs,
 	settleTabThinkingState,
 } from '../../utils/tabHelpers';
-import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
+import { resolveEffectiveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
@@ -562,7 +562,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					targetTab?.readOnlyMode === true || targetTab?.permissionMode === 'readonly';
 				const effectivePermissionMode = isReadOnly
 					? 'readonly'
-					: resolveTabPermissionMode(targetTab);
+					: resolveEffectiveTabPermissionMode(targetTab, {
+							toolType: session.toolType,
+							harnessControlMode: session.harnessControlMode,
+							codexTransport: session.codexTransport,
+							opencodeServer: useSettingsStore.getState().encoreFeatures.opencodeServer === true,
+							sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
+							hasImages: (images?.length ?? 0) > 0,
+						});
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];

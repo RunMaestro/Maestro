@@ -12,6 +12,8 @@ import {
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
+	resolveEffectiveTabPermissionMode,
+	hasStandardApprovalChannel,
 	formatAgentLoginCommand,
 	loginShellSyntaxFor,
 	AGENT_DISPLAY_NAMES,
@@ -362,6 +364,50 @@ describe('agentMetadata', () => {
 		it('is not case or whitespace sensitive', () => {
 			expect(loginShellSyntaxFor('  WSL  ', true)).toBe('posix');
 			expect(loginShellSyntaxFor('CMD', true)).toBe('cmd');
+		});
+	});
+
+	describe('Standard approval channels', () => {
+		it('requires a native channel for ACP providers on their current transport', () => {
+			expect(hasStandardApprovalChannel({ toolType: 'qwen3-coder' })).toBe(false);
+			expect(
+				hasStandardApprovalChannel({ toolType: 'qwen3-coder', harnessControlMode: 'native' })
+			).toBe(true);
+		});
+
+		it('excludes image turns from Codex app-server approvals', () => {
+			const appServer = { toolType: 'codex', codexTransport: 'app-server' } as const;
+			expect(hasStandardApprovalChannel(appServer)).toBe(true);
+			expect(hasStandardApprovalChannel({ ...appServer, hasImages: true })).toBe(false);
+		});
+
+		it('matches the OpenCode server route exclusions', () => {
+			const server = { toolType: 'opencode', opencodeServer: true } as const;
+			expect(hasStandardApprovalChannel(server)).toBe(true);
+			expect(hasStandardApprovalChannel({ ...server, hasPrompt: false })).toBe(false);
+			expect(hasStandardApprovalChannel({ ...server, hasImages: true })).toBe(false);
+			expect(hasStandardApprovalChannel({ ...server, sshEnabled: true })).toBe(false);
+		});
+
+		it('normalizes stale Standard to Full only when its channel is unavailable', () => {
+			expect(
+				resolveEffectiveTabPermissionMode(
+					{ permissionMode: 'standard' },
+					{ toolType: 'opencode', opencodeServer: true, hasImages: true }
+				)
+			).toBe('full');
+			expect(
+				resolveEffectiveTabPermissionMode(
+					{ permissionMode: 'standard' },
+					{ toolType: 'opencode', opencodeServer: true }
+				)
+			).toBe('standard');
+			expect(
+				resolveEffectiveTabPermissionMode(
+					{ permissionMode: 'readonly' },
+					{ toolType: 'qwen3-coder' }
+				)
+			).toBe('readonly');
 		});
 	});
 });

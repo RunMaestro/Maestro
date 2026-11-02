@@ -807,6 +807,7 @@ async function spawnAcpNative(
 			clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
 			clientInfo: { name: 'maestro-cli', version: '1' },
 		});
+		if (options.signal?.aborted) throw new Error('Native turn interrupted');
 		if (initialized.protocolVersion !== 1) {
 			throw new Error(`ACP selected unsupported version ${initialized.protocolVersion}`);
 		}
@@ -925,6 +926,10 @@ async function spawnRpcNative(
 		negotiateV2: protocol === 'omp-rpc',
 		onNotification: (record) => {
 			captureEvent(capture, parser, record);
+			if (record.type === 'agent_end' && protocol === 'pi-rpc' && record.willRetry !== true) {
+				void finishPiAgentEnd();
+				return;
+			}
 			if (record.type === 'agent_settled' || record.type === 'session_settled') {
 				settled.resolve(record.aborted === true ? 1 : 0);
 				turn.child.stdin?.end();
@@ -942,6 +947,26 @@ async function spawnRpcNative(
 				broker
 			),
 	});
+	let piAgentEndPending = false;
+	const finishPiAgentEnd = async () => {
+		if (piAgentEndPending) return;
+		piAgentEndPending = true;
+		try {
+			const state = (await connection.request('get_state')) as {
+				isStreaming?: boolean;
+				pendingMessageCount?: number;
+			};
+			if (!state.isStreaming && (state.pendingMessageCount ?? 0) === 0) {
+				settled.resolve(0);
+				turn.child.stdin?.end();
+			}
+		} catch {
+			settled.resolve(1);
+			turn.child.stdin?.end();
+		} finally {
+			piAgentEndPending = false;
+		}
+	};
 	const abort = () => {
 		void connection.request('abort').catch(() => undefined);
 		stopProcess(

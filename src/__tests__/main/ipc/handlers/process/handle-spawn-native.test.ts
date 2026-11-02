@@ -160,6 +160,15 @@ describe('native spawn configuration', () => {
 			codexTransport: 'app-server',
 		});
 		expect(spawned.harnessControlMode).toBe('current');
+
+		const imageTurn = await spawnNativeWithResult('codex', {
+			harnessControlMode: 'current',
+			permissionMode: 'standard',
+			codexTransport: 'app-server',
+			images: ['image.png'],
+		});
+		expect(imageTurn.result.success).toBe(false);
+		expect(imageTurn.processManager.spawn).not.toHaveBeenCalled();
 	});
 
 	it('allows OpenCode Standard only when the server route carries the turn', async () => {
