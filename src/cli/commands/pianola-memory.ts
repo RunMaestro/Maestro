@@ -12,6 +12,7 @@ import type {
 	MemoryState,
 } from '../../shared/pianola/memory';
 import { validateMemoryRecallIntent } from '../../main/pianola/memory-lifecycle';
+import { memoryProviderPreset } from '../../shared/pianola/memory-providers';
 interface MemoryBridgeResponse<T> {
 	ok: boolean;
 	result: T;
@@ -82,10 +83,11 @@ export async function pianolaMemory(action: string, words: string[], options: Me
 			const config: Partial<MemoryConfig> = { enabled: true };
 			if (options.mode) config.mode = options.mode;
 			if (options.hostedProvider) {
+				const preset = memoryProviderPreset(options.hostedProvider);
 				config.hostedProvider = options.hostedProvider;
-				config.model = options.hostedProvider === 'nan' ? 'qwen3.6' : 'gpt-5.4-mini';
-				config.inputPrice = options.hostedProvider === 'nan' ? 0 : 0.75;
-				config.outputPrice = options.hostedProvider === 'nan' ? 0 : 4.5;
+				config.model = preset.model;
+				config.inputPrice = preset.inputPrice;
+				config.outputPrice = preset.outputPrice;
 			}
 			if (options.model) config.model = options.model;
 			if (options.endpoint) config.endpoint = options.endpoint;
