@@ -140,7 +140,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	enterToSend = false,
 	setEnterToSend,
 	resolveSearchKey,
-	isolateFromWindowKeys = true,
+	isolateFromWindowKeys = false,
 	onFocus,
 	onBlur,
 	mentionRoster,
