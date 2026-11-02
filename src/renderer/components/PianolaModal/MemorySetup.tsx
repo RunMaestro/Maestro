@@ -65,46 +65,45 @@ export function MemorySetup({
 	return (
 		<div className="space-y-5">
 			<section className="space-y-3">
-				<label className="flex gap-2 items-start">
-					<input
-						type="checkbox"
-						className="mt-0.5"
-						checked={config.enabled}
-						onChange={(e) => onChange({ ...config, enabled: e.target.checked })}
-					/>
-					<span>
-						<span className="block font-medium">Enable memory</span>
-						<span className="block text-xs" style={{ color: theme.colors.textDim }}>
-							Learn useful context from the history you select below.
+				<div className="flex flex-wrap items-end justify-between gap-3">
+					<label className="flex gap-2 items-start">
+						<input
+							type="checkbox"
+							className="mt-0.5"
+							checked={config.enabled}
+							onChange={(e) => onChange({ ...config, enabled: e.target.checked })}
+						/>
+						<span>
+							<span className="block font-medium">Enable memory</span>
+							<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+								Learn useful context from the history you select below.
+							</span>
 						</span>
-					</span>
-				</label>
-				<label className="block space-y-1">
-					<span className="font-medium">Processing provider</span>
-					<select
-						aria-label="Processing provider"
-						className={input}
-						style={style}
-						value={provider.id}
-						onChange={(e) =>
-							onChange(withMemoryProvider(config, e.target.value as MemoryProviderId))
-						}
-					>
-						{MEMORY_PROVIDER_PRESETS.map((preset) => (
-							<option key={preset.id} value={preset.id}>
-								{preset.label}
-							</option>
-						))}
-					</select>
-					<span className="block text-xs" style={{ color: theme.colors.textDim }}>
-						{provider.description}
-					</span>
-				</label>
+					</label>
+					<label className="w-full sm:w-80 space-y-1">
+						<span className="font-medium">Processing provider</span>
+						<select
+							aria-label="Processing provider"
+							className={input}
+							style={style}
+							value={provider.id}
+							onChange={(e) =>
+								onChange(withMemoryProvider(config, e.target.value as MemoryProviderId))
+							}
+						>
+							{MEMORY_PROVIDER_PRESETS.map((preset) => (
+								<option key={preset.id} value={preset.id}>
+									{preset.label}
+								</option>
+							))}
+						</select>
+						<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+							{provider.description}
+						</span>
+					</label>
+				</div>
 				{hosted && (
-					<div
-						className="space-y-2 rounded border p-3"
-						style={{ borderColor: theme.colors.border }}
-					>
+					<div className="space-y-2 border-l-2 pl-3" style={{ borderColor: theme.colors.border }}>
 						<label className="flex gap-2 items-start">
 							<input
 								type="checkbox"
@@ -118,21 +117,19 @@ export function MemorySetup({
 							Requires {provider.credentialEnv.join(' or ')} in Maestro's environment. Selected
 							excerpts leave this device; secret filtering is not a privacy guarantee.
 						</p>
-						<label className="block space-y-1">
+						<label className="flex flex-wrap items-center gap-2 text-xs">
 							<span>Spending limit (USD)</span>
 							<input
 								aria-label="Spending limit (USD)"
 								type="number"
 								min="0"
 								step="1"
-								className={input}
+								className="w-24 rounded border px-2 py-1 text-sm"
 								style={style}
 								value={config.dollarBudget}
 								onChange={(e) => onChange({ ...config, dollarBudget: Number(e.target.value) })}
 							/>
-							<span className="block text-xs" style={{ color: theme.colors.textDim }}>
-								Use 0 for no dollar limit.
-							</span>
+							<span style={{ color: theme.colors.textDim }}>0 = no limit</span>
 						</label>
 					</div>
 				)}
@@ -146,14 +143,17 @@ export function MemorySetup({
 						your preferences.
 					</p>
 				</div>
-				<div className="space-y-2">
+				<div
+					className="overflow-hidden rounded border"
+					style={{ borderColor: theme.colors.border }}
+				>
 					{config.roots.map((root, index) => (
 						<div
 							key={root.provider + root.path}
-							className="rounded border p-3 space-y-2"
+							className="flex flex-col gap-2 border-b px-3 py-2 last:border-b-0 sm:flex-row sm:items-center"
 							style={{ borderColor: theme.colors.border }}
 						>
-							<label className="flex items-start gap-2">
+							<label className="flex min-w-0 flex-1 items-start gap-2">
 								<input
 									type="checkbox"
 									className="mt-0.5"
@@ -165,8 +165,9 @@ export function MemorySetup({
 										{HISTORY_PROVIDERS.find(([id]) => id === root.provider)?.[1] ?? root.provider}
 									</span>
 									<span
-										className="block font-mono text-xs break-all"
+										className="block truncate font-mono text-xs"
 										style={{ color: theme.colors.textDim }}
+										title={root.path}
 									>
 										{root.path}
 									</span>
@@ -174,7 +175,7 @@ export function MemorySetup({
 							</label>
 							<select
 								aria-label={'Ownership of ' + root.path}
-								className={input}
+								className="w-full rounded border px-2 py-1 text-xs sm:w-60 sm:shrink-0"
 								style={style}
 								value={root.userId === config.userId ? root.authorship : 'unassigned'}
 								onChange={(e) =>
@@ -191,7 +192,7 @@ export function MemorySetup({
 							>
 								<option value="unassigned">Not my history</option>
 								<option value="human">My conversations</option>
-								<option value="unknown">My account; mixed or unknown authorship</option>
+								<option value="unknown">My account (mixed/unknown)</option>
 								<option value="automated">Automated or delegated history</option>
 							</select>
 						</div>
@@ -220,25 +221,6 @@ export function MemorySetup({
 					Keep learning from new activity in selected history
 				</label>
 			</section>
-
-			<div className="flex flex-wrap gap-2">
-				<button
-					className={button}
-					style={{ ...style, borderColor: theme.colors.accent }}
-					disabled={busy || !config.enabled || (hosted && !config.hostedConsent)}
-					onClick={onStart}
-				>
-					{progress.paused ? 'Save & resume learning' : 'Save & start learning'}
-				</button>
-				<button className={button} style={style} disabled={busy} onClick={onSave}>
-					Save settings
-				</button>
-				{(progress.running || progress.paused) && (
-					<button className={button} style={style} disabled={busy} onClick={onPause}>
-						Pause learning
-					</button>
-				)}
-			</div>
 
 			<details className="border-t pt-3" style={{ borderColor: theme.colors.border }}>
 				<summary className="cursor-pointer select-none text-xs font-medium">
@@ -484,6 +466,32 @@ export function MemorySetup({
 					</section>
 				</div>
 			</details>
+
+			<div
+				className="sticky bottom-0 z-10 -mx-4 -mb-4 flex flex-wrap items-center gap-2 border-t px-4 py-3"
+				style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+			>
+				<button
+					className={button}
+					style={{ ...style, borderColor: theme.colors.accent }}
+					disabled={busy || !config.enabled || (hosted && !config.hostedConsent)}
+					onClick={onStart}
+				>
+					{progress.paused ? 'Save & resume learning' : 'Save & start learning'}
+				</button>
+				<button className={button} style={style} disabled={busy} onClick={onSave}>
+					Save settings
+				</button>
+				{(progress.running || progress.paused) && (
+					<button className={button} style={style} disabled={busy} onClick={onPause}>
+						Pause learning
+					</button>
+				)}
+				<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+					{config.roots.filter((root) => root.enabled && root.userId === config.userId).length} of{' '}
+					{config.roots.length} sources eligible
+				</span>
+			</div>
 		</div>
 	);
 }
