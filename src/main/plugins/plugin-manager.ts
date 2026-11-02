@@ -862,6 +862,9 @@ export class PluginManager {
 			const backup = path.join(staging, `${id}.old`);
 			let swapped = false;
 			const installedRecord = getRecord(this.registry, id);
+			const recordedSignature = installedRecord?.signature;
+			const recordedTrusted = recordedSignature?.status === 'trusted';
+			const recordedSigner = recordedTrusted ? recordedSignature.signerKey : undefined;
 			const installedFingerprint = this.pluginFingerprints.get(id);
 			if (
 				installedRecord &&
@@ -895,6 +898,15 @@ export class PluginManager {
 				const oldSignature = (await scanPluginFiles(dest, keys)).signature;
 				if (
 					nextSignature.status === 'invalid' ||
+					// Damaged live bytes cannot erase the last authenticated publisher.
+					(recordedTrusted &&
+						(!recordedSigner ||
+							nextSignature.status !== 'trusted' ||
+							nextSignature.signerKey !== recordedSigner)) ||
+					(oldSignature.status === 'invalid' && !recordedTrusted) ||
+					(recordedTrusted &&
+						oldSignature.status === 'untrusted' &&
+						oldSignature.signerKey !== recordedSigner) ||
 					(oldSignature.status === 'trusted' &&
 						(nextSignature.status !== 'trusted' ||
 							nextSignature.signerKey !== oldSignature.signerKey))

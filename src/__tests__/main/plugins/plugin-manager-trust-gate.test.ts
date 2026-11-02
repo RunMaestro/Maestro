@@ -30,6 +30,9 @@ vi.mock('electron', () => ({
 import { PluginManager, type PluginSandboxLifecycle } from '../../../main/plugins/plugin-manager';
 import { pluginsDir } from '../../../main/plugins/plugin-store-main';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
+import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
+import { SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
+import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 
 const trustedSigner = makeSigningKeys();
 const strangerSigner = makeSigningKeys();
@@ -121,6 +124,163 @@ afterEach(() => {
 	if (prevUserData === undefined) delete process.env.MAESTRO_USER_DATA;
 	else process.env.MAESTRO_USER_DATA = prevUserData;
 	fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+describe('signed update publisher continuity and runtime recovery', () => {
+	it.each([
+		{ live: 'missing', candidate: 'unsigned', recorded: true, accept: false },
+		{ live: 'missing', candidate: 'different', recorded: true, accept: false },
+		{ live: 'missing', candidate: 'recorded', recorded: true, accept: true },
+		{ live: 'invalid', candidate: 'unsigned', recorded: true, accept: false },
+		{ live: 'invalid', candidate: 'recorded', recorded: true, accept: true },
+		{ live: 'conflicting', candidate: 'different', recorded: true, accept: false },
+		{ live: 'conflicting', candidate: 'recorded', recorded: true, accept: false },
+		{ live: 'invalid', candidate: 'recorded', recorded: false, accept: false },
+	])(
+		'uses authenticated anchors for live=$live candidate=$candidate recorded=$recorded',
+		async ({ live, candidate, recorded, accept }) => {
+			const sandbox = makeSandbox();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [trustedSigner.publicKeyB64, strangerSigner.publicKeyB64],
+			});
+			const id = 'publisher.consumer';
+			const installed = writeCodePlugin(id);
+			if (recorded) signPluginDir(installed, trustedSigner);
+			await manager.refresh();
+			if (recorded) await manager.setEnabled(id, true);
+			const replacement = path.join(workDir, 'replacement');
+			fs.cpSync(installed, replacement, { recursive: true });
+			const manifestPath = path.join(replacement, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+			fs.writeFileSync(path.join(replacement, 'main.js'), 'replacement bytes');
+			if (candidate === 'unsigned') {
+				fs.rmSync(path.join(replacement, SIGNATURE_FILENAME), { force: true });
+			} else {
+				signPluginDir(replacement, candidate === 'different' ? strangerSigner : trustedSigner);
+			}
+			const archive = path.join(workDir, 'replacement.tgz');
+			await packPluginArchive(replacement, archive);
+			if (live === 'missing') {
+				fs.rmSync(path.join(installed, SIGNATURE_FILENAME));
+			} else if (live === 'invalid') {
+				fs.writeFileSync(path.join(installed, SIGNATURE_FILENAME), '{broken signature');
+			} else {
+				signPluginDir(installed, strangerSigner);
+			}
+			const before = fs.readFileSync(path.join(installed, 'main.js'), 'utf8');
+			const stop = vi.spyOn(manager, 'stopAndDrain');
+			if (accept) {
+				const result = await manager.update(archive, id);
+				expect(result.records.find((record) => record.id === id)).toMatchObject({
+					manifest: { version: '2.0.0' },
+					signature: { status: 'trusted', signerKey: trustedSigner.publicKeyB64 },
+				});
+			} else {
+				await expect(manager.update(archive, id)).rejects.toThrow(/signature|publisher/);
+				expect(stop).not.toHaveBeenCalled();
+				expect(fs.readFileSync(path.join(installed, 'main.js'), 'utf8')).toBe(before);
+				expect(
+					JSON.parse(fs.readFileSync(path.join(installed, 'plugin.json'), 'utf8')).version
+				).toBe('1.0.0');
+			}
+		}
+	);
+
+	it.each(['backup', 'swap'])(
+		'restarts exactly the restored signed tier-1 runtime after a %s failure',
+		async (failure) => {
+			const id = 'recovery.consumer';
+			const sandbox = makeSandbox();
+			const drained = Promise.withResolvers<void>();
+			const stop = sandbox.stop;
+			sandbox.stop = vi.fn((pluginId) => drained.promise.then(() => stop(pluginId)));
+			const data = new PluginKvStore({ baseDir: path.join(workDir, 'plugin-data') });
+			const grants = [{ capability: 'storage:read' as const }];
+			const settings = new Map([[`plugins.${id}.token`, 'saved-setting']]);
+			const purgePluginData = vi.fn(() => {
+				data.purge(id);
+				grants.length = 0;
+				settings.clear();
+			});
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [trustedSigner.publicKeyB64],
+				getGrants: () => grants,
+				purgePluginData,
+			});
+			const installed = writeCodePlugin(id);
+			signPluginDir(installed, trustedSigner);
+			await manager.refresh();
+			await manager.setEnabled(id, true);
+			expect(sandbox.isRunning(id)).toBe(true);
+			data.set(id, 'token', 'saved-data');
+			const replacement = path.join(workDir, 'replacement');
+			fs.cpSync(installed, replacement, { recursive: true });
+			const manifestPath = path.join(replacement, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+			signPluginDir(replacement, trustedSigner);
+			const archive = path.join(workDir, 'replacement.tgz');
+			await packPluginArchive(replacement, archive);
+			const start = sandbox.start;
+			const startedVersions: string[] = [];
+			sandbox.start = vi.fn((pluginId, dir, entry) => {
+				const record = manager.getRegistry().records.find((item) => item.id === pluginId)!;
+				// The restored child may start only after the mutation admission barrier clears.
+				expect(() => manager.assertToolRecordCurrent(record)).not.toThrow();
+				startedVersions.push(
+					JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf8')).version
+				);
+				start(pluginId, dir, entry);
+			});
+			const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+			const renameSpy = vi
+				.mocked(fs.renameSync)
+				.mockClear()
+				.mockImplementation((from, to) => {
+					if (
+						(failure === 'backup' && String(from) === installed) ||
+						(failure === 'swap' && String(to) === installed && path.basename(String(from)) === id)
+					) {
+						throw new Error(`synthetic ${failure} failure`);
+					}
+					return rename(from, to);
+				});
+			const update = manager.update(archive, id);
+			const outcome = update.catch((error: unknown) => error);
+			try {
+				await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith(id));
+				await manager.refresh();
+				expect(sandbox.isRunning(id)).toBe(true); // The old child has not exited yet.
+				expect(sandbox.start).not.toHaveBeenCalled();
+				expect(renameSpy).not.toHaveBeenCalled();
+				drained.resolve();
+				const result = await outcome;
+				expect(result).toBeInstanceOf(Error);
+				expect(result).toMatchObject({ message: `synthetic ${failure} failure` });
+			} finally {
+				drained.resolve();
+				await outcome;
+				renameSpy.mockImplementation(rename);
+			}
+			expect(sandbox.start).toHaveBeenCalledExactlyOnceWith(id, installed, 'main.js');
+			expect(startedVersions).toEqual(['1.0.0']);
+			expect(sandbox.isRunning(id)).toBe(true);
+			expect(manager.getRegistry().records.find((record) => record.id === id)).toMatchObject({
+				manifest: { version: '1.0.0' },
+				signature: { status: 'trusted', signerKey: trustedSigner.publicKeyB64 },
+			});
+			expect(data.get(id, 'token')).toBe('saved-data');
+			expect(grants).toEqual([{ capability: 'storage:read' }]);
+			expect(settings.get(`plugins.${id}.token`)).toBe('saved-setting');
+			expect(purgePluginData).not.toHaveBeenCalled();
+			expect(fs.readdirSync(pluginsDir())).toEqual([id]);
+		}
+	);
 });
 
 describe('FC1 trusted-to-run gate', () => {
