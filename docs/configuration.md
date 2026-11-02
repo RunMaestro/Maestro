@@ -535,7 +535,7 @@ Notifications are sent when:
 Maestro can prevent your computer from sleeping while AI agents are actively working, ensuring long-running tasks complete without interruption.
 
 <Note>
-Sleep prevention stops idle sleep, the sleep that comes after a period without input. It does not override a closed laptop lid: on a MacBook, closing the lid, choosing Sleep from the Apple menu, or a low battery still puts the Mac to sleep and pauses running agents. On a MacBook on AC power, `caffeinate -s` keeps it running with the lid closed (display off) while that command runs; it has no effect on battery.
+Sleep prevention stops idle sleep, the sleep that comes after a period without input. It does not override a closed laptop lid: on a MacBook, closing the lid, choosing Sleep from the Apple menu, or a low battery still puts the Mac to sleep and pauses running agents. On a MacBook on AC power, `caffeinate -s` holds a `PreventSystemSleep` assertion, which Apple says "allows the system to reside in Dark Wake" ([docs](https://developer.apple.com/documentation/iokit/kiopmassertiontypepreventsystemsleep)): with the lid closed the display turns off and the Mac keeps running while that command runs, and `pmset -g log` shows `Entering DarkWake state due to 'Clamshell Sleep'`. On battery it has no effect; the [man page](https://github.com/apple-oss-distributions/PowerManagement/blob/main/caffeinate/caffeinate.8) says the assertion "is valid only when system is running on AC power".
 </Note>
 
 **To enable:**
