@@ -73,7 +73,7 @@ describe('ComposerSendColumn', () => {
 			fireEvent.contextMenu(send);
 
 			expect(send).not.toHaveAttribute('aria-expanded');
-			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('send-menu-popover')).not.toBeInTheDocument();
 			expect(onSend).not.toHaveBeenCalled();
 		});
 	});
@@ -90,7 +90,7 @@ describe('ComposerSendColumn', () => {
 						available,
 						shouldOpen,
 						render: (_anchor, onClose) => (
-							<button data-testid="send-menu" onClick={onClose}>
+							<button data-testid="send-menu-popover" onClick={onClose}>
 								menu
 							</button>
 						),
@@ -107,7 +107,7 @@ describe('ComposerSendColumn', () => {
 
 			fireEvent.click(send);
 
-			expect(screen.getByTestId('send-menu')).toBeInTheDocument();
+			expect(screen.getByTestId('send-menu-popover')).toBeInTheDocument();
 			expect(send).toHaveAttribute('aria-expanded', 'true');
 			expect(onSend).not.toHaveBeenCalled();
 		});
@@ -117,16 +117,16 @@ describe('ComposerSendColumn', () => {
 			fireEvent.click(send);
 			fireEvent.click(send);
 
-			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('send-menu-popover')).not.toBeInTheDocument();
 			expect(onSend).not.toHaveBeenCalled();
 		});
 
 		it('lets the menu close itself', () => {
 			const { send } = renderWithMenu(() => true);
 			fireEvent.click(send);
-			fireEvent.click(screen.getByTestId('send-menu'));
+			fireEvent.click(screen.getByTestId('send-menu-popover'));
 
-			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('send-menu-popover')).not.toBeInTheDocument();
 		});
 
 		it('sends when the surface does not want the menu', () => {
@@ -134,7 +134,7 @@ describe('ComposerSendColumn', () => {
 			fireEvent.click(send);
 
 			expect(onSend).toHaveBeenCalledTimes(1);
-			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('send-menu-popover')).not.toBeInTheDocument();
 		});
 
 		it('opens the menu on right-click even when a click would send', () => {
@@ -144,7 +144,7 @@ describe('ComposerSendColumn', () => {
 			const notPrevented = fireEvent.contextMenu(send);
 
 			expect(notPrevented).toBe(false);
-			expect(screen.getByTestId('send-menu')).toBeInTheDocument();
+			expect(screen.getByTestId('send-menu-popover')).toBeInTheDocument();
 			expect(onSend).not.toHaveBeenCalled();
 		});
 
@@ -153,7 +153,7 @@ describe('ComposerSendColumn', () => {
 			const notPrevented = fireEvent.contextMenu(send);
 
 			expect(notPrevented).toBe(true);
-			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('send-menu-popover')).not.toBeInTheDocument();
 		});
 
 		it('drops the popup attributes when the menu is unavailable (terminal mode)', () => {
