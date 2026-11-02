@@ -6,7 +6,10 @@ import crypto from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MemoryDatabase } from '../../../main/pianola/memory-database';
 import { MemoryTransportScope } from '../../../main/pianola/memory-transport';
+import { execFileNoThrow } from '../../../shared/maestro-lib/launch/exec-file';
 import type { MemoryTransportActivation } from '../../../shared/pianola/memory';
+
+vi.mock('../../../shared/maestro-lib/launch/exec-file', () => ({ execFileNoThrow: vi.fn() }));
 
 const databases: MemoryDatabase[] = [];
 const directories: string[] = [];
@@ -552,4 +555,47 @@ it('requires the current runtime to own its claim and isolates unexpected sent p
 	expect(f.db.claimQueued('cannot-replay', f.runtime)).toBeUndefined();
 	expect(f.db.get('pendingExtraction')).toEqual(pending);
 	expect(() => f.db.set('pendingExtraction', null)).toThrow('immutable');
+});
+
+it('records a completed CLI process as terminal transport evidence', async () => {
+	const f = await fixture(1);
+	const item = stage(f.db, f.runtime, 'cli-complete')!;
+	vi.mocked(execFileNoThrow).mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 0 });
+	await expect(
+		item.scope.cli(
+			{ command: 'C:\\tools\\claude.exe', args: [], input: '{}', contentType: 'application/json' },
+			1000,
+			'cli-extract'
+		)
+	).resolves.toBe('{}');
+	expect(
+		f.db.db
+			.prepare('SELECT state,status,terminal FROM memory_transport_requests WHERE operation=?')
+			.get('cli-extract')
+	).toEqual({ state: 'ended', status: 0, terminal: 'process-exit' });
+	release(f.db, item);
+});
+
+it('keeps a timed-out CLI submission uncertain instead of releasing it for replay', async () => {
+	const f = await fixture(1);
+	const item = stage(f.db, f.runtime, 'cli-timeout')!;
+	vi.mocked(execFileNoThrow).mockResolvedValue({
+		stdout: '',
+		stderr: 'ETIMEDOUT',
+		exitCode: 'ETIMEDOUT',
+	});
+	await expect(
+		item.scope.cli(
+			{ command: 'C:\\tools\\omp.exe', args: [], input: '{}', contentType: 'application/jsonl' },
+			1000,
+			'cli-extract'
+		)
+	).rejects.toThrow('unproven-close');
+	item.scope.finish();
+	expect(f.db.transport.status().activePermits).toBe(1);
+	expect(
+		f.db.db
+			.prepare('SELECT state,terminal FROM memory_transport_requests WHERE operation=?')
+			.get('cli-extract')
+	).toEqual({ state: 'unknown', terminal: 'unproven-close' });
 });

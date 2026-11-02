@@ -23,6 +23,7 @@ import { memoryDate, sameMemorySlot, validateMemoryInterval } from './memory-lif
 import { QueryEmbeddingCache } from './query-embedding-cache';
 import { LocalMemoryRelevance, MEMORY_RELEVANCE_DIGEST } from './memory-relevance';
 import { MemoryReranker } from './memory-rerank';
+import { memoryCliInvocation, parseMemoryCliOutput } from './memory-cli';
 import type { MemoryCandidate } from './memory-candidates';
 const LOCAL_EXTRACTION_TIMEOUT_MS = 600_000;
 export interface ExtractionInput {
@@ -517,6 +518,18 @@ export class MemoryModels {
 			inputTokens =
 				typeof data.prompt_eval_count === 'number' ? data.prompt_eval_count : input.tokens;
 			outputTokens = typeof data.eval_count === 'number' ? data.eval_count : input.output;
+		} else if (config.mode === 'cli') {
+			if (!config.hostedConsent)
+				throw new Error('CLI transcript processing requires explicit consent');
+			const stdout = await transport.cli(
+				memoryCliInvocation(config, input),
+				LOCAL_EXTRACTION_TIMEOUT_MS,
+				'cli-extract'
+			);
+			const cli = parseMemoryCliOutput(config.cliProvider, stdout, input);
+			content = cli.content;
+			inputTokens = cli.inputTokens;
+			outputTokens = cli.outputTokens;
 		} else {
 			if (!config.hostedConsent)
 				throw new Error('Hosted transcript processing requires explicit consent');

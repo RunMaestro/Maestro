@@ -1,7 +1,12 @@
 import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 import { app } from 'electron';
-import type { MemoryRequest, MemoryState } from '../../shared/pianola/memory';
+import type {
+	MemoryCliProviderInfo,
+	MemoryRequest,
+	MemoryState,
+} from '../../shared/pianola/memory';
+import { memoryApiCredentialPresence, resolveMemoryCliConfig } from './memory-provider-discovery';
 import { getActingUser } from '../web-server/auth/acting-user';
 import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 import { defaultHistoryRoots } from '../storage/historical-inventory';
@@ -14,7 +19,10 @@ export class PianolaMemoryHost {
 	private worker: Worker | null = null;
 	private sequence = 0;
 	private pending = new Map<number, PendingMemoryRequest>();
-	constructor(private readonly enabled: () => boolean) {}
+	constructor(
+		private readonly enabled: () => boolean,
+		private readonly discoverCliProviders: () => Promise<MemoryCliProviderInfo[]> = async () => []
+	) {}
 	reconcile() {
 		this.worker?.postMessage({ featureEnabled: this.enabled() });
 	}
@@ -50,9 +58,19 @@ export class PianolaMemoryHost {
 		// The desktop owns this bank. Authenticated browser accounts cannot read or change another person's history.
 		if (getActingUser()) throw new Error('This memory bank is private to the desktop owner');
 		if (!this.enabled()) throw new Error('PianolaDisabled');
+		if (request.action === 'configure' && request.config.mode === 'cli') {
+			request = {
+				...request,
+				config: resolveMemoryCliConfig(request.config, await this.discoverCliProviders()),
+			};
+		}
 		const result = await this.send(request);
 		if (request.action === 'status') {
 			const state = result as MemoryState;
+			const discovery = {
+				cliProviders: await this.discoverCliProviders().catch(() => []),
+				apiCredentials: memoryApiCredentialPresence(),
+			};
 			if (!state.config.roots.some((r) => r.enabled)) {
 				const roots = defaultHistoryRoots();
 				for (const provider of ['claude-code', 'codex', 'copilot-cli']) {
@@ -73,6 +91,7 @@ export class PianolaMemoryHost {
 				}
 				return {
 					...state,
+					...discovery,
 					config: {
 						...state.config,
 						roots: [
@@ -88,6 +107,7 @@ export class PianolaMemoryHost {
 					},
 				};
 			}
+			return { ...state, ...discovery };
 		}
 		return result;
 	}
@@ -119,8 +139,11 @@ export class PianolaMemoryHost {
 	}
 }
 let host: PianolaMemoryHost | null = null;
-export function initializePianolaMemory(enabled: () => boolean) {
-	host = new PianolaMemoryHost(enabled);
+export function initializePianolaMemory(
+	enabled: () => boolean,
+	discoverCliProviders?: () => Promise<MemoryCliProviderInfo[]>
+) {
+	host = new PianolaMemoryHost(enabled, discoverCliProviders);
 	return host;
 }
 export function getPianolaMemory() {

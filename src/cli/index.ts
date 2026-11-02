@@ -2912,14 +2912,12 @@ pianola
 	.option('--provider <id>', 'Historical provider for a custom root')
 	.option('--root <path>', 'Custom account/data root')
 	.option('--mine', 'Explicitly attribute selected pools to your human-authored history')
-	.option('--mode <mode>', 'local, hosted, or batch')
+	.option('--mode <mode>', 'local, cli, hosted, or batch')
+	.option('--cli-provider <id>', 'Installed extraction CLI: claude-code or omp')
 	.option('--hosted-provider <id>', 'Hosted extraction provider: openai or nan')
 	.option('--model <model>', 'Extraction model')
 	.option('--endpoint <url>', 'Loopback local extraction endpoint')
-	.option(
-		'--qualify-model <model>',
-		'Recall qualification model (default: qwen3:8b; glm5.3-flash measured equal quality at 66% less latency)'
-	)
+	.option('--qualify-model <model>', 'Recall qualification model (default: qwen3:8b)')
 	.option('--qualify-provider <id>', 'Recall qualification provider: local or hosted')
 	.option('--qualify-endpoint <url>', 'Qualification endpoint (loopback for local)')
 	.option('--rerank-model <model>', 'Hosted recall reranker model (default: rerank)')

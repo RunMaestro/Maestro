@@ -137,4 +137,35 @@ describe('Pianola memory setup', () => {
 				.filter((action) => ['configure', 'discover', 'start'].includes(action))
 		).toEqual(['configure', 'discover', 'start']);
 	});
+
+	it('auto-fills an installed CLI account without API-only controls', async () => {
+		vi.mocked(window.maestro.pianola.memory).mockImplementation(async (request) => {
+			if (request.action === 'status')
+				return {
+					config,
+					progress,
+					cliProviders: [
+						{
+							id: 'claude-code',
+							name: 'Claude Code',
+							path: 'C:\\tools\\claude.exe',
+							model: 'sonnet',
+						},
+					],
+					apiCredentials: { OPENAI_API_KEY: false },
+				};
+			if (request.action === 'sources') return [];
+			throw new Error('Unexpected memory request');
+		});
+		render(<MemoryView theme={mockTheme} />);
+		const picker = await screen.findByRole('combobox', { name: 'Processing provider' });
+		fireEvent.change(picker, { target: { value: 'claude-code' } });
+		expect(screen.getByText(/Detected: sonnet/)).toBeInTheDocument();
+		expect(
+			screen.queryByRole('spinbutton', { name: 'Spending limit (USD)' })
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: 'Oh My Pi CLI' })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByText('Advanced settings'));
+		expect(screen.getByRole('textbox', { name: 'Extraction model' })).toHaveValue('sonnet');
+	});
 });

@@ -76,12 +76,24 @@ export interface MemoryRoot {
 	authorship: 'human' | 'unknown' | 'automated';
 	enabled: boolean;
 }
+export type MemoryCliProvider = 'claude-code' | 'omp';
+export interface MemoryCliProviderInfo {
+	id: MemoryCliProvider;
+	name: string;
+	path: string;
+	/** Empty means the CLI's own configured default. */
+	model: string;
+}
 export interface MemoryConfig {
 	enabled: boolean;
 	userId: string;
 	roots: MemoryRoot[];
 	exclusions: string[];
-	mode: 'local' | 'hosted' | 'batch';
+	mode: 'local' | 'cli' | 'hosted' | 'batch';
+	/** Installed CLI used for subscription-backed extraction. */
+	cliProvider?: MemoryCliProvider;
+	/** Desktop-resolved executable; refreshed on configure, never supplied by the renderer. */
+	cliPath?: string;
 	/** Absent in older banks: OpenAI. NaN supports synchronous hosted processing only. */
 	hostedProvider?: 'openai' | 'nan';
 	endpoint: string;
@@ -220,6 +232,10 @@ export type MemoryRequest =
 export interface MemoryState {
 	config: MemoryConfig;
 	progress: MemoryProgress;
+	/** Installed CLI choices enriched by the desktop, not persisted in the bank. */
+	cliProviders?: MemoryCliProviderInfo[];
+	/** Credential presence only; secret values never leave the desktop environment. */
+	apiCredentials?: Record<string, boolean>;
 }
 
 const HOST_CONTEXT =

@@ -176,6 +176,8 @@ export function MemoryView({ theme }: { theme: Theme }) {
 					theme={theme}
 					config={draft}
 					progress={state.progress}
+					cliProviders={state.cliProviders}
+					apiCredentials={state.apiCredentials}
 					busy={busy}
 					onChange={setDraft}
 					onSave={() =>

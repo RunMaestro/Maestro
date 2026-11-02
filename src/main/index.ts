@@ -1658,6 +1658,8 @@ app
 		const pianolaLifecycle = createPianolaLifecycle({
 			settingsStore: store,
 			sessionsStore,
+			agentConfigsStore,
+			agentDetector,
 			logger,
 		});
 		pianolaSupervisor = pianolaLifecycle.supervisor;

@@ -28,6 +28,8 @@ interface MemorySetupProps {
 	theme: Theme;
 	config: MemoryConfig;
 	progress: MemoryState['progress'];
+	cliProviders?: MemoryState['cliProviders'];
+	apiCredentials?: MemoryState['apiCredentials'];
 	busy: boolean;
 	onChange: (config: MemoryConfig) => void;
 	onSave: () => void;
@@ -39,6 +41,8 @@ export function MemorySetup({
 	theme,
 	config,
 	progress,
+	cliProviders = [],
+	apiCredentials,
 	busy,
 	onChange,
 	onSave,
@@ -48,7 +52,12 @@ export function MemorySetup({
 	const [rootPath, setRootPath] = useState('');
 	const [rootProvider, setRootProvider] = useState('claude-code');
 	const provider = memoryProviderPreset(memoryProviderId(config));
-	const hosted = config.mode !== 'local';
+	const offDevice = config.mode !== 'local';
+	const api = config.mode === 'hosted' || config.mode === 'batch';
+	const cli = config.mode === 'cli';
+	const selectedCli = cliProviders.find((candidate) => candidate.id === config.cliProvider);
+	const credentialDetected = provider.credentialEnv.some((name) => apiCredentials?.[name]);
+	const credentialsMissing = api && apiCredentials !== undefined && !credentialDetected;
 	const style: CSSProperties = {
 		color: theme.colors.textMain,
 		backgroundColor: theme.colors.bgMain,
@@ -88,10 +97,17 @@ export function MemorySetup({
 							style={style}
 							value={provider.id}
 							onChange={(e) =>
-								onChange(withMemoryProvider(config, e.target.value as MemoryProviderId))
+								onChange(
+									withMemoryProvider(config, e.target.value as MemoryProviderId, cliProviders)
+								)
 							}
 						>
-							{MEMORY_PROVIDER_PRESETS.map((preset) => (
+							{MEMORY_PROVIDER_PRESETS.filter(
+								(preset) =>
+									preset.mode !== 'cli' ||
+									preset.id === provider.id ||
+									cliProviders.some((candidate) => candidate.id === preset.cliProvider)
+							).map((preset) => (
 								<option key={preset.id} value={preset.id}>
 									{preset.label}
 								</option>
@@ -100,9 +116,23 @@ export function MemorySetup({
 						<span className="block text-xs" style={{ color: theme.colors.textDim }}>
 							{provider.description}
 						</span>
+						{selectedCli && (
+							<span
+								className="block truncate text-xs"
+								style={{ color: theme.colors.textDim }}
+								title={selectedCli.path}
+							>
+								Detected: {selectedCli.model || 'CLI default model'} · {selectedCli.path}
+							</span>
+						)}
+						{cli && !selectedCli && (
+							<span className="block text-xs" style={{ color: theme.colors.error }}>
+								This CLI is no longer detected. Choose another provider or reinstall it.
+							</span>
+						)}
 					</label>
 				</div>
-				{hosted && (
+				{offDevice && (
 					<div className="space-y-2 border-l-2 pl-3" style={{ borderColor: theme.colors.border }}>
 						<label className="flex gap-2 items-start">
 							<input
@@ -114,23 +144,29 @@ export function MemorySetup({
 							<span>Allow {provider.label} to process selected transcript excerpts</span>
 						</label>
 						<p className="text-xs" style={{ color: theme.colors.textDim }}>
-							Requires {provider.credentialEnv.join(' or ')} in Maestro's environment. Selected
-							excerpts leave this device; secret filtering is not a privacy guarantee.
+							{cli
+								? 'Uses the detected CLI and its configured account. '
+								: credentialDetected
+									? 'API credential detected in Maestro’s environment. '
+									: `Requires ${provider.credentialEnv.join(' or ')} in Maestro's environment. `}
+							Selected excerpts leave this device; secret filtering is not a privacy guarantee.
 						</p>
-						<label className="flex flex-wrap items-center gap-2 text-xs">
-							<span>Spending limit (USD)</span>
-							<input
-								aria-label="Spending limit (USD)"
-								type="number"
-								min="0"
-								step="1"
-								className="w-24 rounded border px-2 py-1 text-sm"
-								style={style}
-								value={config.dollarBudget}
-								onChange={(e) => onChange({ ...config, dollarBudget: Number(e.target.value) })}
-							/>
-							<span style={{ color: theme.colors.textDim }}>0 = no limit</span>
-						</label>
+						{api && (
+							<label className="flex flex-wrap items-center gap-2 text-xs">
+								<span>Spending limit (USD)</span>
+								<input
+									aria-label="Spending limit (USD)"
+									type="number"
+									min="0"
+									step="1"
+									className="w-24 rounded border px-2 py-1 text-sm"
+									style={style}
+									value={config.dollarBudget}
+									onChange={(e) => onChange({ ...config, dollarBudget: Number(e.target.value) })}
+								/>
+								<span style={{ color: theme.colors.textDim }}>0 = no limit</span>
+							</label>
+						)}
 					</div>
 				)}
 			</section>
@@ -237,8 +273,14 @@ export function MemorySetup({
 									className={input}
 									style={style}
 									value={config.model}
+									placeholder={cli ? 'CLI default (automatic)' : undefined}
 									onChange={(e) => onChange({ ...config, model: e.target.value })}
 								/>
+								{cli && (
+									<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+										Auto-filled from CLI settings. Leave blank to use the CLI default.
+									</span>
+								)}
 							</label>
 							{config.mode === 'local' && (
 								<label>
@@ -263,7 +305,7 @@ export function MemorySetup({
 									onChange={(e) => onChange({ ...config, tokenBudget: Number(e.target.value) })}
 								/>
 							</label>
-							{hosted && (
+							{api && (
 								<>
 									<label>
 										Input $ / million tokens
@@ -474,7 +516,13 @@ export function MemorySetup({
 				<button
 					className={button}
 					style={{ ...style, borderColor: theme.colors.accent }}
-					disabled={busy || !config.enabled || (hosted && !config.hostedConsent)}
+					disabled={
+						busy ||
+						!config.enabled ||
+						(offDevice && !config.hostedConsent) ||
+						credentialsMissing ||
+						(cli && !selectedCli)
+					}
 					onClick={onStart}
 				>
 					{progress.paused ? 'Save & resume learning' : 'Save & start learning'}

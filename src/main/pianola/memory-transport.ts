@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { threadId } from 'node:worker_threads';
+import { execFileNoThrow } from '../utils/execFile';
+import type { MemoryCliInvocation } from './memory-cli';
 import type {
 	MemoryTransportActivation,
 	MemoryTransportEligibility,
@@ -665,6 +667,47 @@ export class MemoryTransportScope {
 		readonly id: string,
 		private readonly authority: () => boolean
 	) {}
+	async cli(
+		invocation: MemoryCliInvocation,
+		timeoutMs: number,
+		operation: string
+	): Promise<string> {
+		if (this.open || this.ended) throw new Error('Transport scope is not available');
+		const request = this.controller.startRequest(this.id, operation, this.authority);
+		this.open = true;
+		try {
+			const result = await execFileNoThrow(invocation.command, invocation.args, undefined, {
+				input: invocation.input,
+				timeout: timeoutMs,
+			});
+			if (typeof result.exitCode !== 'number')
+				throw new MemoryTransportError(
+					'cli-unproven-close',
+					null,
+					invocation.contentType,
+					'unproven-close'
+				);
+			this.controller.response(this.id, request, result.exitCode, invocation.contentType);
+			this.controller.terminal(this.id, request, 'process-exit');
+			this.open = false;
+			if (result.exitCode !== 0)
+				throw new MemoryTransportError(
+					'cli-exit',
+					result.exitCode,
+					invocation.contentType,
+					'process-exit'
+				);
+			return result.stdout;
+		} catch (error) {
+			if (this.open) {
+				this.controller.unknown(this.id, request);
+				this.open = false;
+				this.uncertain = true;
+			}
+			if (error instanceof MemoryTransportError) throw error;
+			throw new MemoryTransportError('cli-failed', null, invocation.contentType, 'unproven-close');
+		}
+	}
 	async json(
 		url: string,
 		init: RequestInit,

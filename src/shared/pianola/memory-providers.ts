@@ -1,12 +1,13 @@
-import type { MemoryConfig } from './memory';
+import type { MemoryCliProviderInfo, MemoryConfig } from './memory';
 
-export type MemoryProviderId = 'local' | 'openai' | 'nan' | 'openai-batch';
+export type MemoryProviderId = 'local' | 'claude-code' | 'omp' | 'openai' | 'nan' | 'openai-batch';
 
 export interface MemoryProviderPreset {
 	id: MemoryProviderId;
 	label: string;
 	description: string;
 	mode: MemoryConfig['mode'];
+	cliProvider?: MemoryConfig['cliProvider'];
 	hostedProvider?: MemoryConfig['hostedProvider'];
 	model: string;
 	inputPrice: number;
@@ -21,6 +22,28 @@ export const MEMORY_PROVIDER_PRESETS: readonly MemoryProviderPreset[] = [
 		description: 'Keep transcript processing on this device.',
 		mode: 'local',
 		model: 'qwen3:8b',
+		inputPrice: 0,
+		outputPrice: 0,
+		credentialEnv: [],
+	},
+	{
+		id: 'claude-code',
+		label: 'Claude Code CLI',
+		description: 'Use your existing Claude Code installation and account.',
+		mode: 'cli',
+		cliProvider: 'claude-code',
+		model: '',
+		inputPrice: 0,
+		outputPrice: 0,
+		credentialEnv: [],
+	},
+	{
+		id: 'omp',
+		label: 'Oh My Pi CLI',
+		description: 'Use your existing Oh My Pi installation and configured account.',
+		mode: 'cli',
+		cliProvider: 'omp',
+		model: '',
 		inputPrice: 0,
 		outputPrice: 0,
 		credentialEnv: [],
@@ -68,26 +91,42 @@ export function memoryProviderPreset(id: MemoryProviderId): MemoryProviderPreset
 }
 
 export function memoryProviderId(
-	config: Pick<MemoryConfig, 'mode' | 'hostedProvider'>
+	config: Pick<MemoryConfig, 'mode' | 'hostedProvider' | 'cliProvider'>
 ): MemoryProviderId {
 	if (config.mode === 'local') return 'local';
+	if (config.mode === 'cli') return config.cliProvider ?? 'claude-code';
 	if (config.mode === 'batch') return 'openai-batch';
 	return config.hostedProvider ?? 'openai';
 }
 
-export function withMemoryProvider(config: MemoryConfig, id: MemoryProviderId): MemoryConfig {
+export function withMemoryProvider(
+	config: MemoryConfig,
+	id: MemoryProviderId,
+	cliProviders: MemoryCliProviderInfo[] = []
+): MemoryConfig {
 	const preset = memoryProviderPreset(id);
+	const cli = cliProviders.find((provider) => provider.id === preset.cliProvider);
 	const sameHostedProvider =
 		config.mode !== 'local' &&
+		config.mode !== 'cli' &&
 		preset.hostedProvider !== undefined &&
 		(config.hostedProvider ?? 'openai') === preset.hostedProvider;
+	const sameCliProvider =
+		config.mode === 'cli' &&
+		preset.cliProvider !== undefined &&
+		config.cliProvider === preset.cliProvider;
 	return {
 		...config,
 		mode: preset.mode,
+		cliProvider: preset.cliProvider ?? config.cliProvider,
+		cliPath: preset.mode === 'cli' ? cli?.path : config.cliPath,
 		hostedProvider: preset.hostedProvider ?? config.hostedProvider,
-		model: preset.model,
+		model: cli?.model ?? preset.model,
 		inputPrice: preset.inputPrice,
 		outputPrice: preset.outputPrice,
-		hostedConsent: preset.mode === 'local' ? false : sameHostedProvider && config.hostedConsent,
+		hostedConsent:
+			preset.mode === 'local'
+				? false
+				: (sameHostedProvider || sameCliProvider) && config.hostedConsent,
 	};
 }

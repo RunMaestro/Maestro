@@ -42,6 +42,12 @@ import { validateMemoryRecallIntent, memoryIsEligible } from './memory-lifecycle
 import { resolveQualification } from './memory-relevance';
 import { resolveRerank } from './memory-rerank';
 type ExtractionResult = Extract<Awaited<ReturnType<MemoryModels['extract']>>, { pending: false }>;
+function sameProcessingProvider(a: MemoryConfig, b: MemoryConfig): boolean {
+	if (a.mode !== b.mode) return false;
+	return a.mode === 'cli'
+		? a.cliProvider === b.cliProvider
+		: (a.hostedProvider ?? 'openai') === (b.hostedProvider ?? 'openai');
+}
 const EPISODE_IDENTITY_VERSIONS = [
 	EXTRACTION_VERSION,
 	'contextual-evidence-v10-housekeeping-provenance',
@@ -146,11 +152,14 @@ export class MemoryEngine {
 			typeof config.enabled !== 'boolean' ||
 			typeof config.ongoing !== 'boolean' ||
 			typeof config.hostedConsent !== 'boolean' ||
-			!['local', 'hosted', 'batch'].includes(config.mode) ||
+			!['local', 'cli', 'hosted', 'batch'].includes(config.mode) ||
+			(config.cliProvider !== undefined && !['claude-code', 'omp'].includes(config.cliProvider)) ||
+			(config.mode === 'cli' &&
+				(!config.cliProvider || !config.cliPath || !path.isAbsolute(config.cliPath))) ||
 			(config.hostedProvider !== undefined && !['openai', 'nan'].includes(config.hostedProvider)) ||
 			(config.mode === 'batch' && config.hostedProvider === 'nan') ||
 			typeof config.model !== 'string' ||
-			!config.model.trim() ||
+			(config.mode !== 'cli' && !config.model.trim()) ||
 			typeof config.endpoint !== 'string' ||
 			typeof config.userId !== 'string' ||
 			!config.userId ||
@@ -442,9 +451,7 @@ export class MemoryEngine {
 			return null;
 		if (
 			job.config.mode !== 'local' &&
-			(!current.hostedConsent ||
-				current.mode === 'local' ||
-				(job.config.hostedProvider ?? 'openai') !== (current.hostedProvider ?? 'openai'))
+			(!current.hostedConsent || !sameProcessingProvider(job.config, current))
 		)
 			throw new Error('Hosted consent or provider changed; queued content will not be submitted');
 		const input = verification
@@ -489,9 +496,7 @@ export class MemoryEngine {
 						return false;
 					if (
 						job.config.mode !== 'local' &&
-						(!current.hostedConsent ||
-							current.mode !== job.config.mode ||
-							(current.hostedProvider ?? 'openai') !== (job.config.hostedProvider ?? 'openai'))
+						(!current.hostedConsent || !sameProcessingProvider(job.config, current))
 					)
 						throw new Error('Hosted consent or provider changed');
 					if (
@@ -1044,10 +1049,7 @@ export class MemoryEngine {
 				await this.drain();
 				this.models.invalidateQueryCache();
 				const next = { ...config, ...request.config, userId: config.userId };
-				if (
-					(next.hostedProvider ?? 'openai') !== (config.hostedProvider ?? 'openai') &&
-					request.config.hostedConsent !== true
-				)
+				if (!sameProcessingProvider(next, config) && request.config.hostedConsent !== true)
 					next.hostedConsent = false;
 				this.validateConfig(next);
 				// The qualification gate follows the configured provider and model.

@@ -48,6 +48,7 @@ interface MemoryCliOptions {
 	root?: string;
 	mine?: boolean;
 	mode?: MemoryConfig['mode'];
+	cliProvider?: MemoryConfig['cliProvider'];
 	hostedProvider?: MemoryConfig['hostedProvider'];
 	model?: string;
 	endpoint?: string;
@@ -82,6 +83,11 @@ export async function pianolaMemory(action: string, words: string[], options: Me
 			const state = await requestPianolaMemory<MemoryState>({ action: 'status' });
 			const config: Partial<MemoryConfig> = { enabled: true };
 			if (options.mode) config.mode = options.mode;
+			if (options.cliProvider) config.cliProvider = options.cliProvider;
+			if ((options.mode ?? state.config.mode) === 'cli') {
+				if (!(options.cliProvider ?? state.config.cliProvider))
+					throw new Error('--mode cli requires --cli-provider claude-code or omp');
+			}
 			if (options.hostedProvider) {
 				const preset = memoryProviderPreset(options.hostedProvider);
 				config.hostedProvider = options.hostedProvider;
