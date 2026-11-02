@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
+import type { SshRemoteConfig } from '../../../shared/types';
+import { hostVisibleProjectRoot } from '../../../shared/hostVisibleProjectRoot';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -38,8 +40,6 @@ import { ActivityLog } from './ActivityLog';
 import { PipelineListTab } from './PipelineListTab';
 import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
-import { BundlesTab } from './BundlesTab';
-import { ReadinessTab } from './ReadinessTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
 // In-memory only - last tab the user was on. Reopening the modal lands here
@@ -84,7 +84,22 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const allSessions = useLiveSessions();
 	const groups = useSessionStore((state) => state.groups);
 	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
-
+	const [hostRemotes, setHostRemotes] = useState<SshRemoteConfig[] | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		async function loadRemotes() {
+			try {
+				const remotes = await window.maestro.settings.get('sshRemotes');
+				if (!cancelled) setHostRemotes(Array.isArray(remotes) ? remotes : []);
+			} catch (error) {
+				captureException(error, { extra: { context: 'Cue host mount configuration' } });
+			}
+		}
+		void loadRemotes();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 	const sessionInfoList = useMemo(
 		() =>
 			allSessions.map((s) => ({
@@ -92,9 +107,12 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				groupId: s.groupId,
 				name: s.name,
 				toolType: s.toolType,
-				projectRoot: s.projectRoot,
+				projectRoot:
+					s.sessionSshRemoteConfig?.enabled && hostRemotes === null
+						? undefined
+						: hostVisibleProjectRoot(s, hostRemotes ?? []) || undefined,
 			})),
-		[allSessions]
+		[allSessions, hostRemotes]
 	);
 
 	// Agents that can own a scheduled task. Terminal agents are excluded: they
@@ -240,7 +258,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				`Remove Cue configuration for "${session.sessionName}"?\n\nThis will delete the cue.yaml file from this project. This cannot be undone.`,
 				async () => {
 					try {
-						await cueService.deleteYaml(session.projectRoot);
+						await cueService.deleteYaml(session.projectRoot, session.sessionId);
 					} catch (err) {
 						captureException(err, {
 							extra: { context: 'handleRemoveCue', projectRoot: session.projectRoot },
@@ -304,8 +322,6 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		'pipeline-list',
 		'activity',
 		'backup',
-		'bundles',
-		'readiness',
 	]);
 	useEffect(() => {
 		const handleTabCycle = (e: KeyboardEvent) => {
@@ -446,14 +462,6 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						) : activeTab === 'backup' ? (
 							<div className="flex-1 min-h-0 flex flex-col">
 								<BackupTab theme={theme} />
-							</div>
-						) : activeTab === 'bundles' ? (
-							<div className="flex-1 min-h-0 flex flex-col">
-								<BundlesTab theme={theme} pipelines={dashboardPipelines} onImported={handleRetry} />
-							</div>
-						) : activeTab === 'readiness' ? (
-							<div className="flex-1 min-h-0 flex flex-col">
-								<ReadinessTab theme={theme} />
 							</div>
 						) : (
 							<CuePipelineEditor

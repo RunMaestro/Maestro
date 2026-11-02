@@ -64,6 +64,18 @@ describe('ComposerSendColumn', () => {
 				backgroundColor: theme.colors.warning,
 			});
 		});
+
+		it('ignores right-click and does not open a menu', () => {
+			const onSend = vi.fn();
+			render(<ComposerSendColumn theme={theme} onSend={onSend} sendTitle="Send message" />);
+
+			const send = screen.getByTitle('Send message');
+			fireEvent.contextMenu(send);
+
+			expect(send).not.toHaveAttribute('aria-expanded');
+			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(onSend).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('with a send menu (AI chat)', () => {
@@ -122,6 +134,25 @@ describe('ComposerSendColumn', () => {
 			fireEvent.click(send);
 
 			expect(onSend).toHaveBeenCalledTimes(1);
+			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+		});
+
+		it('opens the menu on right-click even when a click would send', () => {
+			const { onSend, send } = renderWithMenu(() => false);
+			// fireEvent wraps the dispatch in act(), so the menu has rendered when
+			// it returns. It returns false when the handler prevented the default.
+			const notPrevented = fireEvent.contextMenu(send);
+
+			expect(notPrevented).toBe(false);
+			expect(screen.getByTestId('send-menu')).toBeInTheDocument();
+			expect(onSend).not.toHaveBeenCalled();
+		});
+
+		it('leaves right-click alone when the menu is unavailable (terminal mode)', () => {
+			const { send } = renderWithMenu(() => false, false);
+			const notPrevented = fireEvent.contextMenu(send);
+
+			expect(notPrevented).toBe(true);
 			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
 		});
 

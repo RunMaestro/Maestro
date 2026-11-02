@@ -203,8 +203,7 @@ describe('cue engine check', () => {
 			JSON.stringify({ sshRemotes: [{ id: 'r1', name: 'Box' }, null] })
 		);
 		await cueEngineCheck({ dataDir: tmp });
-		// The desktop's `cue:checkReadiness` builds its inputs with the same
-		// `buildCueReadinessInputs`: dormant Pianola dropped, junk remotes skipped.
+		// `buildCueReadinessInputs` drops a dormant Pianola and skips junk remotes.
 		expect(checkCueReadiness).toHaveBeenLastCalledWith({
 			sessions: [coder],
 			agentConfigs: { codex: { customPath: '/opt/codex' } },

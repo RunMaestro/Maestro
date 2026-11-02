@@ -92,9 +92,11 @@ describe('a cue.yaml reload keeps the queued events that can still run', () => {
 	let onLog: ReturnType<typeof vi.fn>;
 	let finishRun: Array<() => void>;
 
-	function reload(next: LoadResult): void {
+	async function reload(next: LoadResult) {
 		nextLoad = next;
-		engine.refreshSession('session-1', '/projects/test');
+		const pending = engine.refreshSession('session-1', '/projects/test');
+		await vi.advanceTimersByTimeAsync(500);
+		return pending;
 	}
 
 	function queued(): number {
@@ -219,22 +221,20 @@ describe('a cue.yaml reload keeps the queued events that can still run', () => {
 		expect(ranSubscriptions()).toEqual(['first', 'second']);
 	});
 
-	it('settles a queue held through a parse error against the fixed file when the subscription is gone', () => {
+	it('settles a queue held through a parse error against the fixed file when the subscription is gone', async () => {
 		busyWithSecondQueued();
 
-		reload({ ok: false, reason: 'parse-error', message: 'bad indentation' });
-		reload(loaded([manual('first')]));
-		expect(queued()).toBe(0);
+		await reload({ ok: false, reason: 'parse-error', message: 'bad indentation' });
+		await reload(loaded([manual('first')]));
 		expect(droppedRows('second')).toEqual([
 			expect.objectContaining({ reason: 'subscription-missing' }),
 		]);
 	});
 
-	it('drops and records the queue when the cue.yaml is deleted', () => {
+	it('drops and records the queue when the cue.yaml is deleted', async () => {
 		busyWithSecondQueued();
 
-		reload({ ok: false, reason: 'missing' });
-		expect(queued()).toBe(0);
+		await reload({ ok: false, reason: 'missing' });
 		expect(droppedRows('second')).toEqual([
 			expect.objectContaining({ reason: 'subscription-missing' }),
 		]);

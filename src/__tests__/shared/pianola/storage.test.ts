@@ -8,6 +8,7 @@ import {
 	validatePianolaRule,
 	validatePianolaDecisionRecord,
 	validatePianolaRules,
+	validatePianolaSupervisedTarget,
 	validatePianolaProfileEntry,
 	validatePianolaProfiles,
 	resolveProfile,
@@ -17,6 +18,17 @@ import {
 	type PianolaProfiles,
 } from '../../../shared/pianola/storage';
 
+describe('program supervisor target', () => {
+	it('requires a nonempty programId without changing existing target kinds', () => {
+		const base = { id: 'p', kind: 'program', enabled: true, createdAt: 1 };
+		expect(validatePianolaSupervisedTarget(base)).toBeNull();
+		expect(validatePianolaSupervisedTarget({ ...base, programId: '' })).toBeNull();
+		expect(validatePianolaSupervisedTarget({ ...base, programId: 'product' })).toMatchObject({
+			kind: 'program',
+			programId: 'product',
+		});
+	});
+});
 function validRaw(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		id: 'r1',

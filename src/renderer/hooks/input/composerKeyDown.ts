@@ -40,10 +40,12 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
  * Whether the key belongs to an active IME composition. `isComposing` alone
  * misses Safari, which fires the Enter that confirms a candidate after
  * `compositionend` (so `isComposing` is false) but still reports keyCode 229,
- * the value every browser gives a key the input method processed.
+ * the value every browser gives a key the input method processed. Accepts
+ * either a React synthetic KeyboardEvent or a native DOM KeyboardEvent.
  */
-export function isImeComposing(e: React.KeyboardEvent): boolean {
-	return e.nativeEvent?.isComposing === true || e.keyCode === 229;
+export function isImeComposing(e: React.KeyboardEvent | KeyboardEvent): boolean {
+	const isComposing = 'nativeEvent' in e ? e.nativeEvent?.isComposing : e.isComposing;
+	return isComposing === true || e.keyCode === 229;
 }
 
 interface WindowIsolation {
@@ -176,7 +178,9 @@ export interface ComposerSendKeyOptions extends WindowIsolation {
  * newline. Off: only Cmd/Ctrl+Enter sends. An isolated composer also stops
  * every Cmd/Ctrl+Enter, sent or not, so no window chord acts on it. An Enter
  * that confirms an IME candidate never sends. Escape blurs the composer and
- * focuses `escapeFocusTarget` when one is given.
+ * focuses `escapeFocusTarget` when one is given. Mid-composition Escape is
+ * left to the IME on every surface, stops propagating so the window handler
+ * does not blur the composer, and never calls preventDefault.
  */
 export function handleComposerSendKey(
 	e: React.KeyboardEvent,
@@ -201,11 +205,18 @@ export function handleComposerSendKey(
 		}
 		return true;
 	}
-	if (e.key === 'Escape' && escapeFocusTarget) {
-		e.preventDefault();
-		inputRef.current?.blur();
-		escapeFocusTarget.current?.focus();
-		return true;
+	if (e.key === 'Escape') {
+		if (isImeComposing(e)) {
+			yieldToIme(e, options);
+			return true;
+		}
+		if (escapeFocusTarget) {
+			e.preventDefault();
+			inputRef.current?.blur();
+			escapeFocusTarget.current?.focus();
+			return true;
+		}
+		return false;
 	}
 	return false;
 }

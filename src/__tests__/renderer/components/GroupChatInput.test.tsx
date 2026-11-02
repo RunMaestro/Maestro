@@ -408,6 +408,32 @@ describe('GroupChatInput', () => {
 			window.removeEventListener('keydown', windowEscape);
 		});
 
+		it.each(['isComposing', 'keyCode229'])(
+			'keeps a composing Escape from reaching the window handler when the dropdown is closed (%s)',
+			(shape) => {
+				const windowEscape = vi.fn();
+				window.addEventListener('keydown', windowEscape);
+
+				render(<GroupChatInput {...createDefaultProps()} />);
+
+				const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+				const eventInit =
+					shape === 'isComposing'
+						? { key: 'Escape', isComposing: true }
+						: { key: 'Escape', keyCode: 229 };
+
+				fireEvent.keyDown(textarea, eventInit);
+
+				expect(windowEscape).not.toHaveBeenCalled();
+
+				// Once composition ends, Escape still reaches the window handler
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+				expect(windowEscape).toHaveBeenCalledTimes(1);
+
+				window.removeEventListener('keydown', windowEscape);
+			}
+		);
+
 		it('claims main-area focus when the composer is focused', () => {
 			useUIStore.getState().setActiveFocus('sidebar');
 
@@ -1068,6 +1094,18 @@ describe('GroupChatInput', () => {
 			const send = screen.getByTitle('Queue message');
 			expect(send).toHaveStyle({ backgroundColor: theme.colors.warning });
 			expect(send).not.toHaveAttribute('aria-haspopup');
+		});
+
+		it('does not open a send menu on right-click', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend })} />);
+			typeInTextarea(screen.getByRole('textbox') as HTMLTextAreaElement, 'hello');
+
+			const send = screen.getByTitle('Send message');
+			fireEvent.contextMenu(send);
+
+			expect(send).not.toHaveAttribute('aria-haspopup');
+			expect(onSend).not.toHaveBeenCalled();
 		});
 	});
 

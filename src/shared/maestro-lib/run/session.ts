@@ -5,7 +5,7 @@ import { buildAgentArgs } from '../launch/agent-args';
 import { buildAgentLaunchPlan } from '../launch/launch-plan';
 import { createOutputParser } from '../parsers/parser-factory';
 import { checkBinaryExists, checkCustomPath } from '../launch/path-prober';
-import { cmdShellArgProblem, windowsShellReason } from '../launch/windows-command';
+import { cmdShellArgsRefusal, windowsShellReason } from '../launch/windows-command';
 import { isWindows } from '../../platformDetection';
 import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition } from '../providers/definitions';
@@ -74,8 +74,8 @@ export type SessionTurnPlan =
  * On Windows a binary that only starts through cmd.exe (an npm `.cmd` shim)
  * gets the shell and the desktop's escaping (`applyWindowsShellRules`), and
  * its prompt goes over stdin when the provider reads it there. An argument
- * cmd.exe cannot carry intact (`cmdShellArgProblem`) is refused rather than
- * delivered altered.
+ * cmd.exe cannot carry intact (`cmdShellArgsRefusal`) is refused rather than
+ * delivered altered, and named without quoting its value.
  */
 export async function planSessionTurn(request: SessionTurnRequest): Promise<SessionTurnPlan> {
 	const definition = getAgentDefinition(request.agentId);
@@ -176,14 +176,12 @@ export async function planSessionTurn(request: SessionTurnRequest): Promise<Sess
 
 	if (cmdShellLaunch) {
 		const promptArgs = plan.prompt.via === 'argv' ? new Set(plan.prompt.args) : new Set<string>();
-		for (const arg of plan.args) {
-			const problem = cmdShellArgProblem(arg);
-			if (!problem) continue;
-			const what = promptArgs.has(arg) ? 'the prompt' : `the argument "${arg}"`;
+		const refusal = cmdShellArgsRefusal(plan.args, promptArgs);
+		if (refusal) {
 			return {
 				ok: false,
 				reason: 'windows-shell',
-				error: `${definition.name} at ${detected.path} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
+				error: `${definition.name} at ${detected.path} only starts through cmd.exe, which ${refusal}`,
 			};
 		}
 	}

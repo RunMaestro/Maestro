@@ -628,7 +628,15 @@ export class GrokSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		const sessionDir = await this.findSessionDir(projectPath, sessionId, sshConfig);
+		if (options?.content !== undefined) {
+			return BaseSessionStorage.applyMessagePagination(
+				parseChatHistory(options.content).messages,
+				options
+			);
+		}
+		const sessionDir = options?.filePath
+			? path.dirname(options.filePath)
+			: await this.findSessionDir(projectPath, sessionId, sshConfig);
 		if (!sessionDir) {
 			logger.warn(`Grok session not found for project: ${sessionId}`, LOG_CONTEXT);
 			return { messages: [], total: 0, hasMore: false };
