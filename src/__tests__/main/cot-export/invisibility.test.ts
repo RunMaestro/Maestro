@@ -591,6 +591,7 @@ describe.each(SCENARIOS)('a turn of $label', (scenario) => {
 		mocks.userDataPath = userData;
 		previousUserData = process.env.MAESTRO_USER_DATA;
 		process.env.MAESTRO_USER_DATA = userData;
+		vi.stubEnv(COWORKING_SESSION_ID_ENV_VAR, undefined);
 
 		// One instant for all three runs. On Windows the handler names a temp
 		// file after the clock, and that name is one of the arguments.
@@ -621,6 +622,7 @@ describe.each(SCENARIOS)('a turn of $label', (scenario) => {
 		__resetCotConfigStoreForTests();
 		__resetCotWriterForTests();
 		vi.useRealTimers();
+		vi.unstubAllEnvs();
 		if (previousUserData === undefined) delete process.env.MAESTRO_USER_DATA;
 		else process.env.MAESTRO_USER_DATA = previousUserData;
 		fs.rmSync(root, { recursive: true, force: true });

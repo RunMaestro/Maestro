@@ -62,8 +62,8 @@ export interface WindowsShellRulesOptions {
  * and for a spec that already names its `shell`: that caller has prepared the
  * command line itself. So applying it twice changes nothing.
  *
- * It does not move the prompt. cmd.exe cannot carry a line break, `%` or `^`
- * in an argument (`cmdShellArgProblem()`), so a prompt bound for a shell
+ * It does not move the prompt. cmd.exe cannot carry a line break, a `%NAME%`
+ * pair or `^` in an argument (`cmdShellArgProblem()`), so a prompt bound for a shell
  * launch belongs on stdin; `planSessionTurn` arranges that.
  */
 export function applyWindowsShellRules(

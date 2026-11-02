@@ -28,10 +28,8 @@
  *
  * Gaps carry names, paths and ids, never a secret value.
  *
- * Electron-free: the CLI and the standalone engine run it under plain Node.
- * The desktop (`cue:checkReadiness`, the Cue modal's Readiness tab) runs it
- * too, over its live stores: both surfaces assemble the inputs with
- * `buildCueReadinessInputs`, so they check the same agents the same way.
+ * Electron-free: the CLI and the standalone engine run it under plain Node,
+ * and assemble the inputs with `buildCueReadinessInputs`.
  */
 
 import * as fs from 'fs';
@@ -55,8 +53,8 @@ import { isGhInstalled } from '../utils/cliDetection';
 import { GH_TOKEN_SECRET_NAMES } from './cue-gh-token';
 import type { CueReadinessGap, CueReadinessReport } from '../../shared/cue/readiness';
 
-// The report's shape and its wording live in shared, so the Cue modal's
-// Readiness tab renders them without bundling this checker.
+// The report's shape and its wording live in shared, so a surface that shows
+// them need not bundle this checker.
 export type {
 	CueReadinessGap,
 	CueReadinessGapKind,
@@ -86,10 +84,10 @@ export interface CueReadinessProbes {
 }
 
 /**
- * Where the readiness inputs come from, as raw stored values: the CLI reads
- * the data directory's store files, the desktop its live stores. The rules
- * that turn them into inputs live in `buildCueReadinessInputs`, never in a
- * caller, so `cue engine check` and the Readiness tab report the same gaps.
+ * Where the readiness inputs come from, as raw stored values (the CLI reads
+ * the data directory's store files). The rules that turn them into inputs
+ * live in `buildCueReadinessInputs`, never in a caller, so every caller
+ * reports the same gaps.
  */
 export interface CueReadinessSource {
 	/** Every stored agent (`maestro-sessions.json`), dormant ones included. */

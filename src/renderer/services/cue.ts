@@ -18,7 +18,6 @@ import type {
 	ScheduledTaskCreateInput,
 	ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
-import type { CueReadinessReport } from '../../shared/cue/readiness';
 import { createIpcMethod } from './ipcWrapper';
 
 export const cueService = {
@@ -80,15 +79,6 @@ export const cueService = {
 		});
 	},
 
-	/** Rethrows: the Readiness tab shows a failed check rather than a fake report. */
-	async checkReadiness(): Promise<CueReadinessReport> {
-		return createIpcMethod({
-			call: () => window.maestro.cue.checkReadiness(),
-			errorContext: 'Cue checkReadiness',
-			rethrow: true,
-		});
-	},
-
 	async getQueueStatus(): Promise<Record<string, number>> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.getQueueStatus(),
@@ -113,7 +103,7 @@ export const cueService = {
 		});
 	},
 
-	async readYaml(projectRoot: string): Promise<string | null> {
+	async readYaml(projectRoot: string, sessionId?: string): Promise<string | null> {
 		// rethrow (instead of swallow + null) so callers can distinguish two
 		// outcomes that the IPC handler models distinctly:
 		//   - resolves to null  → file does not exist (handler returned null)
@@ -125,7 +115,7 @@ export const cueService = {
 		// in handleSave (which is now strictly more informative - the IPC
 		// error message propagates instead of "did not persist").
 		return createIpcMethod({
-			call: () => window.maestro.cue.readYaml(projectRoot),
+			call: () => window.maestro.cue.readYaml(projectRoot, sessionId),
 			errorContext: 'Cue readYaml',
 			rethrow: true,
 		});
@@ -272,18 +262,19 @@ export const cueService = {
 	async writeYaml(
 		projectRoot: string,
 		content: string,
-		promptFiles?: Record<string, string>
+		promptFiles?: Record<string, string>,
+		sessionId?: string
 	): Promise<{ changed: boolean }> {
 		return createIpcMethod({
-			call: () => window.maestro.cue.writeYaml(projectRoot, content, promptFiles),
+			call: () => window.maestro.cue.writeYaml(projectRoot, content, promptFiles, sessionId),
 			errorContext: 'Cue writeYaml',
 			rethrow: true,
 		});
 	},
 
-	async deleteYaml(projectRoot: string): Promise<boolean> {
+	async deleteYaml(projectRoot: string, sessionId?: string): Promise<boolean> {
 		return createIpcMethod({
-			call: () => window.maestro.cue.deleteYaml(projectRoot),
+			call: () => window.maestro.cue.deleteYaml(projectRoot, sessionId),
 			errorContext: 'Cue deleteYaml',
 			rethrow: true,
 		});

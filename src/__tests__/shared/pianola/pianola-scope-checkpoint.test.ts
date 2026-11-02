@@ -206,9 +206,16 @@ describe('scope checkpoint filesystem storage', () => {
 	it('preserves the previous file if an atomic replacement cannot write its temporary file', () => {
 		const value = checkpoint();
 		store.writeScopeCheckpoint(value);
-		fs.mkdirSync(`${checkpointPath()}.tmp`);
-		expect(() => store.writeScopeCheckpoint({ ...value, status: 'suspended' })).toThrow();
-		expect(store.readScopeCheckpoint(scopeId)).toEqual(value);
+		const now = vi.spyOn(Date, 'now').mockReturnValue(123);
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+		try {
+			fs.mkdirSync(`${checkpointPath()}.${process.pid}.123.i.tmp`);
+			expect(() => store.writeScopeCheckpoint({ ...value, status: 'suspended' })).toThrow();
+			expect(store.readScopeCheckpoint(scopeId)).toEqual(value);
+		} finally {
+			now.mockRestore();
+			random.mockRestore();
+		}
 	});
 });
 
