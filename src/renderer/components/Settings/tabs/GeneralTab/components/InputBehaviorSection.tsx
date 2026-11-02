@@ -132,7 +132,8 @@ export function InputBehaviorSection({
 						: 'Clicking Send always sends at once, the same as the keyboard.'}
 				</p>
 				<p className="text-xs-plus opacity-55 mt-1">
-					Only the mouse click changes. Keyboard sends and their shortcuts work the same either way.
+					Only the mouse click changes. Keyboard sends and their shortcuts work the same either way,
+					and a right-click on Send opens the menu any time.
 				</p>
 			</div>
 

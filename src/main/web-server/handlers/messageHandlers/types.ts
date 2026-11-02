@@ -433,9 +433,9 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
-	/** Same function as the Cue modal's Bundles tab. */
+	/** Same function as the Export Agent and Import Agent modals. */
 	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
-	/** Same function as the Cue modal's Bundles tab; agents land in the running app. */
+	/** Same function as the Export Agent and Import Agent modals; agents land in the running app. */
 	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;

@@ -15,10 +15,8 @@ import {
 	GitFork,
 	Activity,
 	Archive,
-	Package,
 	AlarmClock,
 	ListChecks,
-	ShieldCheck,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { ToggleSwitchTrack } from '../ui/ToggleSwitch';
@@ -36,9 +34,7 @@ export type CueModalTab =
 	| 'pipeline'
 	| 'pipeline-list'
 	| 'activity'
-	| 'backup'
-	| 'bundles'
-	| 'readiness';
+	| 'backup';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -51,8 +47,6 @@ const TABS: ReadonlyArray<{
 	{ id: 'pipeline-list', label: 'Pipeline List', icon: ListChecks },
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
 	{ id: 'backup', label: 'Backup', icon: Archive },
-	{ id: 'bundles', label: 'Bundles', icon: Package },
-	{ id: 'readiness', label: 'Readiness', icon: ShieldCheck },
 ];
 
 export interface CueModalHeaderProps {

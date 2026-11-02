@@ -158,7 +158,10 @@ function normalizeWorkspaceMetadataKey(key: string): keyof CopilotWorkspaceMetad
 }
 
 /** Parse workspace.yaml content into typed metadata, tolerating format variations. */
-function parseWorkspaceMetadata(content: string, sessionId: string): CopilotWorkspaceMetadata {
+export function parseWorkspaceMetadata(
+	content: string,
+	sessionId: string
+): CopilotWorkspaceMetadata {
 	const metadata: CopilotWorkspaceMetadata = { id: sessionId };
 
 	for (const rawLine of content.split(/\r?\n/)) {
@@ -684,6 +687,12 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
+		if (options?.content !== undefined) {
+			return BaseSessionStorage.applyMessagePagination(
+				parseEvents(options.content).messages,
+				options
+			);
+		}
 		// Guard: verify session belongs to the requested project before returning content
 		if (!(await this.sessionMatchesProject(sessionId, _projectPath, sshConfig))) {
 			return { messages: [], total: 0, hasMore: false };

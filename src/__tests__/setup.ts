@@ -833,14 +833,6 @@ const mockMaestro = {
 		getActiveRuns: vi.fn().mockResolvedValue([]),
 		getActivityLog: vi.fn().mockResolvedValue([]),
 		getEventCount: vi.fn().mockResolvedValue(0),
-		checkReadiness: vi.fn().mockResolvedValue({
-			ready: true,
-			checkedAt: '2026-01-01T00:00:00.000Z',
-			agents: 0,
-			workspaces: 0,
-			subscriptions: 0,
-			gaps: [],
-		}),
 		enable: vi.fn().mockResolvedValue(undefined),
 		disable: vi.fn().mockResolvedValue(undefined),
 		setActive: vi.fn().mockResolvedValue(undefined),
@@ -854,9 +846,23 @@ const mockMaestro = {
 	},
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: {
+		memory: vi.fn().mockResolvedValue(undefined),
 		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),
 		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
 		getDecisions: vi.fn().mockResolvedValue([]),
+		getPrograms: vi.fn().mockResolvedValue([]),
+		getAsks: vi.fn().mockResolvedValue([]),
+		resolveAsk: vi.fn().mockResolvedValue(undefined),
+		dismissAsk: vi.fn().mockResolvedValue(undefined),
+		getBrief: vi.fn().mockResolvedValue({
+			generatedAt: '',
+			needsMe: [],
+			inFlight: [],
+			verified: [],
+			programs: [],
+		}),
+		superviseProgram: vi.fn().mockResolvedValue(undefined),
+		setProgramStatus: vi.fn().mockResolvedValue(undefined),
 		getSuggestions: vi.fn().mockResolvedValue({
 			generatedAt: 0,
 			pairCount: 0,

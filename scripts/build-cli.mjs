@@ -109,6 +109,17 @@ async function build() {
 		// Make the output executable
 		fs.chmodSync(outfile, 0o755);
 
+		// The Pianola validation runner is a Python script the CLI launches by path;
+		// ship it beside the bundle so a packaged install resolves it without the
+		// repository checkout (the CLI looks here first, then at the repo root).
+		const runnerSrc = path.join(rootDir, 'scripts/pianola-sandbox/sandbox_runner.py');
+		const runnerDest = path.join(
+			path.dirname(outfile),
+			'scripts/pianola-sandbox/sandbox_runner.py'
+		);
+		fs.mkdirSync(path.dirname(runnerDest), { recursive: true });
+		fs.copyFileSync(runnerSrc, runnerDest);
+
 		const stats = fs.statSync(outfile);
 		const sizeKB = (stats.size / 1024).toFixed(1);
 		console.log(`✓ Built ${outfile} (${sizeKB} KB)`);
