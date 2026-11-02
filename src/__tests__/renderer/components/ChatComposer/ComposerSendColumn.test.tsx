@@ -64,6 +64,18 @@ describe('ComposerSendColumn', () => {
 				backgroundColor: theme.colors.warning,
 			});
 		});
+
+		it('ignores right-click and does not open a menu', () => {
+			const onSend = vi.fn();
+			render(<ComposerSendColumn theme={theme} onSend={onSend} sendTitle="Send message" />);
+
+			const send = screen.getByTitle('Send message');
+			fireEvent.contextMenu(send);
+
+			expect(send).not.toHaveAttribute('aria-expanded');
+			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+			expect(onSend).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('with a send menu (AI chat)', () => {

@@ -1095,6 +1095,18 @@ describe('GroupChatInput', () => {
 			expect(send).toHaveStyle({ backgroundColor: theme.colors.warning });
 			expect(send).not.toHaveAttribute('aria-haspopup');
 		});
+
+		it('does not open a send menu on right-click', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend })} />);
+			typeInTextarea(screen.getByRole('textbox') as HTMLTextAreaElement, 'hello');
+
+			const send = screen.getByTitle('Send message');
+			fireEvent.contextMenu(send);
+
+			expect(send).not.toHaveAttribute('aria-haspopup');
+			expect(onSend).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('attach image', () => {
