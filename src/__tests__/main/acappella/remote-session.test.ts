@@ -18,6 +18,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RemoteSessionCoordinator } from '../../../main/acappella/transport/remote-session';
+import { FloorController } from '../../../main/acappella/audio/floor-control';
+import type { VoiceSessionState } from '../../../shared/acappella/session-state';
 import type {
 	RemoteFloor,
 	RemoteMessageSink,
@@ -29,6 +31,7 @@ import type { VoiceEvent, VoiceOrigin, VoiceScope } from '../../../shared/acappe
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 /** Every press the coordinator made, with what it was credited to. */
 let presses: Array<{ scope: VoiceScope; origin: VoiceOrigin }>;
@@ -99,6 +102,7 @@ beforeEach(() => {
 });
 
 describe('a remote utterance takes the local path', () => {
+	beforeEach(() => coordinator.handleConnected('phone'));
 	it('presses the same floor controller a hotkey presses', async () => {
 		coordinator.handleConnected('phone');
 		await coordinator.requestFloor('phone');
@@ -127,6 +131,10 @@ describe('a remote utterance takes the local path', () => {
 });
 
 describe('floor takeover', () => {
+	beforeEach(() => {
+		coordinator.handleConnected('phone');
+		coordinator.handleConnected('laptop');
+	});
 	it('gives the floor to the device that pressed last', async () => {
 		coordinator.handleConnected('phone');
 		coordinator.handleConnected('laptop');
@@ -191,6 +199,7 @@ describe('floor takeover', () => {
 });
 
 describe('interrupts from a device', () => {
+	beforeEach(() => coordinator.handleConnected('phone'));
 	it('barges in without ending the session', async () => {
 		await coordinator.requestFloor('phone');
 		coordinator.handleDeviceMessage('phone', { type: 'interrupt', kind: 'barge-in' });
@@ -222,6 +231,61 @@ describe('interrupts from a device', () => {
 });
 
 describe('connection loss', () => {
+	it('does not open a disconnected device whose press was still queued', async () => {
+		coordinator.handleConnected('phone');
+		const pressing = coordinator.requestFloor('phone');
+		coordinator.handleDisconnected('phone', 'socket closed');
+		await pressing;
+
+		expect(coordinator.floorHolder).toBeNull();
+		expect(floor.press).not.toHaveBeenCalled();
+	});
+
+	it('keeps a new holder when the displaced device disconnects behind a queued takeover', async () => {
+		coordinator.handleConnected('phone');
+		coordinator.handleConnected('laptop');
+		await coordinator.requestFloor('phone');
+
+		const takeover = coordinator.requestFloor('laptop');
+		coordinator.handleDisconnected('phone', 'socket closed');
+		await takeover;
+		await coordinator.whenSettled();
+
+		expect(coordinator.floorHolder).toBe('laptop');
+		expect(session.stopSession).not.toHaveBeenCalled();
+		expect(session.interrupt).not.toHaveBeenCalled();
+	});
+
+	it('does not press a device that disconnects while the old floor is closing', async () => {
+		coordinator.handleConnected('phone');
+		coordinator.handleConnected('laptop');
+		await coordinator.requestFloor('phone');
+
+		let finishClose!: () => void;
+		const closing = new Promise<void>((resolve) => {
+			finishClose = resolve;
+		});
+		vi.mocked(floor.close).mockImplementationOnce(async () => {
+			await closing;
+			emit({ type: 'listen-stop', reason: 'stopped' });
+		});
+		const takeover = coordinator.requestFloor('laptop');
+		try {
+			await vi.waitFor(() => expect(floor.close).toHaveBeenCalledWith('toggle'));
+			expect(coordinator.floorHolder).toBe('phone');
+			coordinator.handleDisconnected('laptop', 'socket closed');
+			finishClose();
+			await takeover;
+			await coordinator.whenSettled();
+
+			expect(floor.press).toHaveBeenCalledTimes(1);
+			expect(coordinator.floorHolder).toBeNull();
+		} finally {
+			finishClose();
+			await takeover;
+		}
+	});
+
 	it('ends the session cleanly when the holder disappears', async () => {
 		coordinator.handleConnected('phone');
 		await coordinator.requestFloor('phone');
@@ -271,6 +335,59 @@ describe('connection loss', () => {
 	});
 });
 
+it.each(['tap-to-toggle', 'hold-to-talk'] as const)(
+	'takes over the real shared floor in %s mode',
+	async (mode) => {
+		let state: VoiceSessionState = 'idle';
+		let origin: VoiceOrigin = { kind: 'local' };
+		const startSession = vi.fn(async () => {
+			state = 'listening';
+			emit({ type: 'listen-start', scope: { kind: 'conductor' }, sttProviderId: 'local', origin });
+		});
+		const sharedFloor = new FloorController({
+			mode,
+			idleTimeoutMs: 0,
+			getOrigin: () => origin,
+			session: {
+				getState: () => state,
+				startSession,
+				stopSession: async () => {
+					state = 'idle';
+					emit({ type: 'listen-stop', reason: 'stopped' });
+				},
+				interrupt: () => false,
+			},
+		});
+		coordinator.dispose();
+		coordinator = new RemoteSessionCoordinator({
+			session,
+			sink,
+			getDeviceName: (id) => id,
+			acquireFloor: (_scope, nextOrigin) => {
+				origin = nextOrigin;
+				return sharedFloor;
+			},
+		});
+		try {
+			coordinator.handleConnected('phone');
+			coordinator.handleConnected('laptop');
+			await coordinator.requestFloor('phone');
+			// Keep the first device's button held in hold mode; release in tap mode.
+			if (mode === 'tap-to-toggle') await coordinator.releaseFloor('phone');
+			await coordinator.requestFloor('laptop');
+			await coordinator.releaseFloor('phone');
+
+			expect(startSession).toHaveBeenCalledTimes(2);
+			expect(sharedFloor.isFloorOpen).toBe(true);
+			expect(coordinator.floorHolder).toBe('laptop');
+			expect(origin).toMatchObject({ kind: 'remote', deviceId: 'laptop' });
+		} finally {
+			await sharedFloor.dispose();
+			coordinator.dispose();
+		}
+	}
+);
+
 describe('event fan-out', () => {
 	it('forwards the session stream to connected devices', () => {
 		coordinator.handleConnected('phone');
@@ -306,4 +423,21 @@ describe('event fan-out', () => {
 			expect.objectContaining({ holder: 'phone', isSelf: false })
 		);
 	});
+});
+
+it('retains the remote owner when restarting emits the old stop before the new start', async () => {
+	coordinator.handleConnected('phone');
+	vi.mocked(floor.press).mockImplementation(async () => {
+		emit({ type: 'listen-stop', reason: 'error' });
+		emit({
+			type: 'listen-start',
+			scope: { kind: 'conductor' },
+			sttProviderId: 'local',
+			origin: { kind: 'remote', deviceId: 'phone', deviceName: 'Phone' },
+		});
+	});
+	await coordinator.requestFloor('phone');
+	expect(coordinator.floorHolder).toBe('phone');
+	coordinator.handleDeviceMessage('phone', { type: 'interrupt', kind: 'barge-in' });
+	expect(session.interrupt).toHaveBeenCalledWith('client-button');
 });

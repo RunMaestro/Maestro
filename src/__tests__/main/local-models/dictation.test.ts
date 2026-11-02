@@ -332,6 +332,21 @@ describe('stopDictation', () => {
 });
 
 describe('cancelDictation', () => {
+	it('cancels while microphone stop is releasing the clip, before transcription starts', async () => {
+		const clip = deferred<DictationClip>();
+		const { microphone } = fakeMicrophone();
+		microphone.stop.mockReturnValueOnce(clip.promise);
+		registerDictationMicrophone(microphone);
+		await startDictation('window:1');
+
+		const stopping = stopDictation('window:1');
+		await cancelDictation('window:1');
+		clip.resolve(CLIP);
+
+		await expect(stopping).resolves.toEqual({ status: 'cancelled' });
+		expect(router.runSpeechToTextTask).not.toHaveBeenCalled();
+	});
+
 	it('discards a recording without transcribing it', async () => {
 		const { microphone } = fakeMicrophone();
 		registerDictationMicrophone(microphone);

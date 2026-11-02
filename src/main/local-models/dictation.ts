@@ -289,13 +289,14 @@ export async function stopDictation(ownerId: string): Promise<DictationResult> {
 	}
 
 	active = null;
-	const clip = await dictation.microphone.stop();
-
 	const abort = new AbortController();
 	const inFlight = transcribing.get(ownerId) ?? new Set<AbortController>();
 	inFlight.add(abort);
 	transcribing.set(ownerId, inFlight);
 	try {
+		// Own cancellation while the microphone is still releasing the clip.
+		const clip = await dictation.microphone.stop();
+		if (abort.signal.aborted) return { status: 'cancelled' };
 		const result = await transcribeClip(clip.audio, clip.sampleRate, { signal: abort.signal });
 		return toDictationResult(result, clip);
 	} finally {

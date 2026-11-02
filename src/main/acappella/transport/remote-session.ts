@@ -161,6 +161,8 @@ export class RemoteSessionCoordinator {
 			return;
 		}
 		void this.enqueue(async () => {
+			// A queued takeover may have completed since the disconnect arrived.
+			if (this.holder !== deviceId) return;
 			logger.info(`Remote floor lost: ${reason}`, LOG_CONTEXT);
 			this.holder = null;
 			// Cancel speech first, then close the session. In that order because the
@@ -209,9 +211,9 @@ export class RemoteSessionCoordinator {
 	 */
 	requestFloor(deviceId: string, scope?: VoiceScope): Promise<void> {
 		return this.enqueue(async () => {
+			if (!this.connected.has(deviceId)) return;
 			if (this.holder === deviceId) return;
 			const previous = this.holder;
-			this.holder = deviceId;
 
 			if (previous && previous !== 'local') {
 				this.options.sink.send(previous, {
@@ -228,6 +230,11 @@ export class RemoteSessionCoordinator {
 				deviceName: this.name(deviceId),
 			};
 			const floor = this.options.acquireFloor(scope ?? { kind: 'conductor' }, origin);
+			// A takeover is a new session, not a second tap on the old microphone.
+			// Reset the shared controller's held/toggle state before pressing again.
+			if (previous) await floor.close('toggle');
+			if (!this.connected.has(deviceId)) return;
+			this.holder = deviceId;
 			// `press()` on the shared controller: the session it opens is a normal
 			// session in every respect, which is the point.
 			await floor.press('remote-device');
@@ -294,12 +301,13 @@ export class RemoteSessionCoordinator {
 				this.publishFloorState();
 			}
 		}
-		if (event.type === 'listen-start' && event.origin?.kind === 'local') {
-			// A local wake or hotkey opened the floor without going through this
-			// coordinator. Reflecting it keeps the phones honest rather than leaving
-			// them showing a floor that moved without telling them.
-			if (this.holder !== 'local') {
-				this.holder = 'local';
+		if (event.type === 'listen-start' && event.origin) {
+			// The current session owns the floor. A restart emits the old session's
+			// stop before this start, so restore remote ownership as well as local.
+			const holder = event.origin.kind === 'local' ? 'local' : event.origin.deviceId;
+			if (this.holder !== holder) {
+				this.holder = holder;
+				this.options.onFloorChange?.(holder);
 				this.publishFloorState();
 			}
 		}
