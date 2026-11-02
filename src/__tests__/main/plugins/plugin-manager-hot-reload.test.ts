@@ -131,6 +131,448 @@ afterEach(() => {
 });
 
 describe('PluginManager hot reload reconciliation', () => {
+	it.each(['queued-uninstall', 'discovery'])(
+		'keeps install acceptance safe while overlapping %s',
+		async (overlap) => {
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			writeCodePlugin('demo');
+			const destination = path.join(pluginsDir(), 'demo');
+			const source = path.join(workDir, 'source');
+			fs.renameSync(destination, source);
+			const scanned = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const actual = await import('../../helpers/pluginScan');
+			let held = false;
+			vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+				const result = await actual.scanPluginFiles(dir, trustedKeys);
+				if (dir === destination && !held) {
+					held = true;
+					scanned.resolve();
+					await release.promise;
+				}
+				return result;
+			});
+			const install = manager.install(source);
+			let uninstall: ReturnType<PluginManager['uninstall']> | undefined;
+			try {
+				await scanned.promise;
+				if (overlap === 'queued-uninstall') uninstall = manager.uninstall('demo');
+				else await manager.refresh();
+				release.resolve();
+				const result = await install;
+				if (uninstall) {
+					expect(result).toMatchObject({ success: true, record: { id: 'demo' } });
+					expect(await uninstall).toEqual({ success: true });
+					expect(fs.existsSync(destination)).toBe(false);
+					expect(manager.getRegistry().records).toEqual([]);
+					expect(readPluginState().plugins.demo).toBeUndefined();
+				} else {
+					expect(result).toMatchObject({
+						success: false,
+						error: expect.stringContaining('superseded'),
+					});
+					expect(manager.getRegistry().records).toEqual([]);
+					expect(fs.existsSync(destination)).toBe(true);
+					expect(readPluginState().plugins.demo?.trustedPublisher).toBe(keys.publicKeyB64);
+					await manager.refresh();
+					expect(manager.getRegistry().records[0].id).toBe('demo');
+				}
+			} finally {
+				release.resolve();
+				await install;
+				await uninstall;
+				vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+			}
+		}
+	);
+
+	it('rejects a queued install whose source manifest changes before ownership', async () => {
+		const sandbox = makeSandbox();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			sandbox,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		await enableRunnablePlugin(manager, sandbox);
+		const source = path.join(workDir, 'replacement');
+		fs.cpSync(path.join(pluginsDir(), 'demo'), source, { recursive: true });
+		const manifestPath = path.join(source, 'plugin.json');
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+		fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+		signPluginDir(source, keys);
+		const drained = Promise.withResolvers<void>();
+		const stop = sandbox.stop;
+		sandbox.stop = vi.fn((id) => drained.promise.then(() => stop(id)));
+		const uninstall = manager.uninstall('demo');
+		await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('demo'));
+		const install = manager.install(source);
+		fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, id: 'other', version: '2.0.0' }));
+		signPluginDir(source, keys);
+		drained.resolve();
+		expect(await uninstall).toEqual({ success: true });
+		expect(await install).toMatchObject({
+			success: false,
+			error: expect.stringContaining('manifest changed'),
+		});
+		expect(fs.existsSync(path.join(pluginsDir(), 'demo'))).toBe(false);
+		expect(manager.getRegistry().records).toEqual([]);
+	});
+
+	it('rejects an in-flight install acceptance after sandbox shutdown', async () => {
+		const sandbox = makeSandbox();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			sandbox,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		const destination = path.join(pluginsDir(), 'demo');
+		const source = path.join(workDir, 'source');
+		fs.renameSync(destination, source);
+		const scanned = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const actual = await import('../../helpers/pluginScan');
+		vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+			const result = await actual.scanPluginFiles(dir, trustedKeys);
+			if (dir === destination) {
+				scanned.resolve();
+				await release.promise;
+			}
+			return result;
+		});
+		const install = manager.install(source);
+		try {
+			await scanned.promise;
+			manager.stopAllSandboxes();
+			release.resolve();
+			expect(await install).toMatchObject({
+				success: false,
+				error: expect.stringContaining('superseded'),
+			});
+			expect(manager.getRegistry().records).toEqual([]);
+			expect(readPluginState().plugins.demo).toBeUndefined();
+			expect(sandbox.start).not.toHaveBeenCalled();
+		} finally {
+			release.resolve();
+			await install;
+			vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+		}
+	});
+
+	it('coalesces concurrent full discovery requests into one trailing scan', async () => {
+		const onChange = vi.fn();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			onChange,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		await manager.refresh();
+		onChange.mockClear();
+		const scanned = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const actual = await import('../../helpers/pluginScan');
+		let scans = 0;
+		vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+			const result = await actual.scanPluginFiles(dir, trustedKeys);
+			if (dir === path.join(pluginsDir(), 'demo') && ++scans === 1) {
+				scanned.resolve();
+				await release.promise;
+			}
+			return result;
+		});
+		const first = manager.refresh();
+		try {
+			await scanned.promise;
+			const second = manager.refresh();
+			const third = manager.refresh();
+			writeCodePlugin('demo', { version: '1.0.1' });
+			release.resolve();
+			await Promise.all([first, second, third]);
+			await vi.waitFor(() =>
+				expect(manager.getRegistry().records[0].manifest?.version).toBe('1.0.1')
+			);
+			expect(scans).toBe(2);
+			expect(onChange).toHaveBeenCalledTimes(2);
+		} finally {
+			release.resolve();
+			await first;
+			manager.stopAllSandboxes();
+			vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+		}
+	});
+
+	it.each(
+		['watching', 'sandboxes'].flatMap((stop) =>
+			['in-flight', 'waiting'].map((phase) => ({ stop, phase }))
+		)
+	)(
+		'cancels $phase watcher discovery when stopping $stop before publisher learning',
+		async ({ stop, phase }) => {
+			const sandbox = makeSandbox();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			writeCodePlugin('demo');
+			writeCodePlugin('other');
+			const source = path.join(pluginsDir(), 'demo');
+			fs.rmSync(path.join(source, SIGNATURE_FILENAME));
+			await manager.refresh();
+			await manager.setEnabled('other', true);
+			vi.mocked(sandbox.start).mockClear();
+			const scanned = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const otherScanned = Promise.withResolvers<void>();
+			const drained = Promise.withResolvers<void>();
+			const actualStop = sandbox.stop;
+			sandbox.stop = vi.fn((id) =>
+				id === 'other'
+					? drained.promise.then(() => {
+							throw new Error('synthetic drain failure');
+						})
+					: actualStop(id)
+			);
+			const actual = await import('../../helpers/pluginScan');
+			let held = false;
+			let scans = 0;
+			vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+				const result = await actual.scanPluginFiles(dir, trustedKeys);
+				scans++;
+				if (!held && dir === source) {
+					held = true;
+					scanned.resolve();
+					await release.promise;
+				}
+				if (dir === path.join(pluginsDir(), 'other')) otherScanned.resolve();
+				return result;
+			});
+			manager.startWatching(30);
+			let uninstall: Promise<unknown> | undefined;
+			try {
+				signPluginDir(source, keys);
+				await scanned.promise;
+				if (phase === 'waiting') {
+					uninstall = manager.uninstall('other').catch((error: unknown) => error);
+					await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('other'));
+					release.resolve();
+					await otherScanned.promise;
+					await new Promise<void>((resolve) => setImmediate(resolve));
+				}
+				if (stop === 'watching') manager.stopWatching();
+				else manager.stopAllSandboxes();
+				release.resolve();
+				drained.resolve();
+				await uninstall;
+				await otherScanned.promise;
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				expect(scans).toBe(2);
+				expect(readPluginState().plugins.demo).toBeUndefined();
+				expect(
+					manager.getRegistry().records.find((record) => record.id === 'demo')?.signature?.status
+				).toBe('unsigned');
+				expect(sandbox.start).not.toHaveBeenCalled();
+				// Canceling background work does not disable a subsequent explicit discovery.
+				await manager.refresh();
+				expect(readPluginState().plugins.demo?.trustedPublisher).toBe(keys.publicKeyB64);
+			} finally {
+				release.resolve();
+				drained.resolve();
+				await uninstall;
+				manager.stopWatching();
+				manager.stopAllSandboxes();
+				vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+			}
+		}
+	);
+
+	it('keeps a newer manual discovery when a canceled watcher scan finishes', async () => {
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		const source = path.join(pluginsDir(), 'demo');
+		fs.rmSync(path.join(source, SIGNATURE_FILENAME));
+		await manager.refresh();
+		const oldScanned = Promise.withResolvers<void>();
+		const releaseOld = Promise.withResolvers<void>();
+		const newScanned = Promise.withResolvers<void>();
+		const releaseNew = Promise.withResolvers<void>();
+		const actual = await import('../../helpers/pluginScan');
+		let scans = 0;
+		vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+			const result = await actual.scanPluginFiles(dir, trustedKeys);
+			if (dir === source && ++scans === 1) {
+				oldScanned.resolve();
+				await releaseOld.promise;
+			} else if (dir === source && scans === 2) {
+				newScanned.resolve();
+				await releaseNew.promise;
+			}
+			return result;
+		});
+		manager.startWatching(30);
+		let manual: Promise<unknown> | undefined;
+		try {
+			signPluginDir(source, keys);
+			await oldScanned.promise;
+			manager.stopWatching();
+			manual = manager.refresh();
+			await newScanned.promise;
+			releaseOld.resolve();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(readPluginState().plugins.demo).toBeUndefined();
+			releaseNew.resolve();
+			await manual;
+			expect(manager.getRegistry().records[0].signature?.status).toBe('trusted');
+			expect(readPluginState().plugins.demo?.trustedPublisher).toBe(keys.publicKeyB64);
+		} finally {
+			releaseOld.resolve();
+			releaseNew.resolve();
+			await manual;
+			manager.stopWatching();
+			manager.stopAllSandboxes();
+			vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+		}
+	});
+
+	it('accepts a freshly installed target while an unrelated uninstall is draining', async () => {
+		const sandbox = makeSandbox();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			sandbox,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		const destination = path.join(pluginsDir(), 'demo');
+		const source = path.join(workDir, 'source');
+		fs.renameSync(destination, source);
+		writeCodePlugin('other');
+		await manager.refresh();
+		await manager.setEnabled('other', true);
+		const scanned = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const drained = Promise.withResolvers<void>();
+		const stop = sandbox.stop;
+		sandbox.stop = vi.fn((id) =>
+			id === 'other' ? drained.promise.then(() => stop(id)) : stop(id)
+		);
+		const actual = await import('../../helpers/pluginScan');
+		vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+			const result = await actual.scanPluginFiles(dir, trustedKeys);
+			if (dir === destination) {
+				scanned.resolve();
+				await release.promise;
+			}
+			return result;
+		});
+		const install = manager.install(source);
+		let uninstall: ReturnType<PluginManager['uninstall']> | undefined;
+		try {
+			await scanned.promise;
+			uninstall = manager.uninstall('other');
+			await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('other'));
+			release.resolve();
+			const result = await install;
+			expect(result).toMatchObject({
+				success: true,
+				record: {
+					id: 'demo',
+					source: destination,
+					signature: { status: 'trusted' },
+					enabled: false,
+				},
+			});
+			expect(manager.getRegistry().records.find((record) => record.id === 'demo')).toBe(
+				result.record
+			);
+			expect(readPluginState().plugins.demo?.trustedPublisher).toBe(keys.publicKeyB64);
+			expect(sandbox.isRunning('other')).toBe(true);
+		} finally {
+			release.resolve();
+			drained.resolve();
+			await install;
+			await uninstall;
+			vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+		}
+	});
+
+	it('retries a superseded watcher discovery after mutation failure without another file event', async () => {
+		const sandbox = makeSandbox();
+		const onWatchError = vi.fn();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			sandbox,
+			onWatchError,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		writeCodePlugin('other');
+		await enableRunnablePlugin(manager, sandbox);
+		await manager.setEnabled('other', true);
+		vi.mocked(sandbox.start).mockClear();
+		const scanned = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const drained = Promise.withResolvers<void>();
+		const stop = sandbox.stop;
+		sandbox.stop = vi.fn((id) =>
+			id === 'other'
+				? drained.promise.then(() => {
+						throw new Error('synthetic drain failure');
+					})
+				: stop(id)
+		);
+		const actual = await import('../../helpers/pluginScan');
+		let held = false;
+		vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+			const result = await actual.scanPluginFiles(dir, trustedKeys);
+			if (!held && dir === path.join(pluginsDir(), 'demo')) {
+				held = true;
+				scanned.resolve();
+				await release.promise;
+			}
+			return result;
+		});
+		manager.startWatching(30);
+		let uninstall: Promise<unknown> | undefined;
+		try {
+			writeCodePlugin('demo', { version: '1.0.1' });
+			await scanned.promise;
+			uninstall = manager.uninstall('other').catch((error: unknown) => error);
+			await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('other'));
+			release.resolve();
+			drained.resolve();
+			expect(await uninstall).toBeInstanceOf(Error);
+			// The rejected stop performs no file writes; no later filesystem event can rescue discovery.
+			await vi.waitFor(() =>
+				expect(
+					manager.getRegistry().records.find((record) => record.id === 'demo')?.manifest?.version
+				).toBe('1.0.1')
+			);
+			await vi.waitFor(() =>
+				expect(sandbox.start).toHaveBeenCalledExactlyOnceWith(
+					'demo',
+					path.join(pluginsDir(), 'demo'),
+					'main.js'
+				)
+			);
+			expect(sandbox.isRunning('other')).toBe(true);
+			expect(onWatchError).not.toHaveBeenCalled();
+		} finally {
+			release.resolve();
+			drained.resolve();
+			await uninstall;
+			manager.stopWatching();
+			vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+		}
+	});
+
 	it.each(['draining', 'completed'])(
 		'applies a fresh post-swap admission while an unrelated uninstall is %s',
 		async (otherState) => {

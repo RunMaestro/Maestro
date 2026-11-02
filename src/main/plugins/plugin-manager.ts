@@ -176,6 +176,14 @@ export class PluginManager {
 	private readonly pendingReloads = new Map<string, symbol>();
 	private readonly waitingForServiceDependencies = new Set<string>();
 	private pluginFingerprints = new Map<string, string>();
+	private discoveryLifetime: object = {};
+	private fullDiscovery?: {
+		lifetime: object;
+		watcher?: fs.FSWatcher;
+		manual: boolean;
+		dirty: boolean;
+		promise: Promise<PluginRegistry>;
+	};
 	private watchRoot: fs.FSWatcher | null = null;
 	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
 	private watchRefreshTimer: NodeJS.Timeout | undefined;
@@ -299,16 +307,76 @@ export class PluginManager {
 	 * apply the persisted enable toggle (defaulting newly seen plugins to
 	 * enabled), and host-compatibility-check. Returns the new registry. When the
 	 * Encore flag is off this returns an empty registry without touching disk.
+	 * Concurrent callers share the current pass. A superseded pass returns the
+	 * cached registry and retains one background discovery after mutations settle.
 	 */
 	async refresh(): Promise<PluginRegistry> {
-		return (await this.refreshRegistry()) ?? this.registry;
+		return this.discover();
+	}
+
+	/** Coalesce discovery, retaining one trailing request until mutations settle.
+	 * Owners use scoped refreshRegistry directly and never wait on their own queue. */
+	private discover(watcher?: fs.FSWatcher): Promise<PluginRegistry> {
+		const pending = this.fullDiscovery;
+		if (
+			pending &&
+			pending.lifetime === this.discoveryLifetime &&
+			(pending.manual || pending.watcher === this.watchRoot)
+		) {
+			pending.manual ||= watcher === undefined;
+			pending.dirty = true;
+			return pending.promise;
+		}
+		const request = {
+			lifetime: this.discoveryLifetime,
+			watcher,
+			manual: watcher === undefined,
+			dirty: false,
+			promise: Promise.resolve(this.registry),
+		};
+		this.fullDiscovery = request;
+		const current = () =>
+			this.fullDiscovery === request &&
+			request.lifetime === this.discoveryLifetime &&
+			(request.manual || request.watcher === this.watchRoot);
+		let completed = false;
+		request.promise = this.refreshRegistry(undefined, undefined, current)
+			.then((registry) => {
+				completed = true;
+				if (!registry) request.dirty = true;
+				return registry ?? this.registry;
+			})
+			.finally(() => {
+				if (!completed || !request.dirty || !current()) {
+					if (this.fullDiscovery === request) this.fullDiscovery = undefined;
+					return;
+				}
+				// Do not await this continuation from a caller inside a mutation.
+				// One settled scan requests one follow-up, not a polling/retry timer.
+				void this.mutationQueue.idle().then(async () => {
+					if (!current()) {
+						if (this.fullDiscovery === request) this.fullDiscovery = undefined;
+						return;
+					}
+					this.fullDiscovery = undefined;
+					try {
+						await this.discover(request.manual ? undefined : request.watcher);
+					} catch (error) {
+						this.deps.onWatchError?.(error);
+					}
+				});
+			});
+		return request.promise;
 	}
 
 	/** A scoped reload owns only its source; undefined means its scan was superseded. */
 	private async refreshRegistry(
 		onlyPluginId?: string,
-		mutationSource?: string
+		mutationSource?: string,
+		isCurrent: () => boolean = () => true
 	): Promise<PluginRegistry | undefined> {
+		const discoveryLifetime = this.discoveryLifetime;
+		if (!isCurrent()) return undefined;
 		const before = this.registry;
 		const mutationLifetimes = new Map(this.mutationLifetimes);
 		const retiringAtStart = new Set(this.retiringPlugins);
@@ -435,15 +503,23 @@ export class PluginManager {
 			if (fingerprint) nextFingerprints.set(gated.id, fingerprint);
 		}
 
+		// A canonical mutation source belongs to the currently active keyed owner.
+		// Queued successors cannot invalidate that lease before they execute.
+		// Discovery replacement, enable, trust, authorization and shutdown still can.
+		const scopedDefault =
+			onlyPluginId !== undefined && (getRecord(next, onlyPluginId)?.manifest?.tier ?? 0) === 0;
 		if (
+			discoveryLifetime !== this.discoveryLifetime ||
+			!isCurrent() ||
 			(onlyPluginId === undefined
 				? this.registry !== before
 				: getRecord(this.registry, onlyPluginId) !== getRecord(before, onlyPluginId) ||
-					readPluginState().plugins[onlyPluginId]?.enabled !==
-						state.plugins[onlyPluginId]?.enabled) ||
+					(readPluginState().plugins[onlyPluginId]?.enabled ?? scopedDefault) !==
+						(state.plugins[onlyPluginId]?.enabled ?? scopedDefault)) ||
 			[...observedIds].some(
 				(id) =>
-					this.mutationLifetimes.get(id) !== mutationLifetimes.get(id) || retiringAtStart.has(id)
+					(!mutationSource && this.mutationLifetimes.get(id) !== mutationLifetimes.get(id)) ||
+					retiringAtStart.has(id)
 			) ||
 			!this.deps.isEnabled() ||
 			canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
@@ -716,11 +792,14 @@ export class PluginManager {
 	}
 
 	private scheduleWatchedRefresh(): void {
+		const watcher = this.watchRoot;
+		if (!watcher) return;
 		clearTimeout(this.watchRefreshTimer);
 		this.watchRefreshTimer = setTimeout(async () => {
 			this.watchRefreshTimer = undefined;
+			if (this.watchRoot !== watcher) return;
 			try {
-				await this.refresh();
+				await this.discover(watcher);
 			} catch (error) {
 				this.deps.onWatchError?.(error);
 			}
@@ -783,21 +862,37 @@ export class PluginManager {
 		if (!isSafePluginFolderName(manifest.id)) {
 			return { success: false, error: `plugin id "${manifest.id}" is not a safe folder name` };
 		}
-		const dest = path.join(pluginsDir(), manifest.id);
-		if (fs.existsSync(dest)) {
-			return { success: false, error: `plugin "${manifest.id}" is already installed` };
-		}
-		// Reject a source tree containing symlinks: they can point outside the
-		// plugin dir (a read/write escape) and would otherwise be copied verbatim.
-		if (containsSymlink(sourceDir)) {
-			return { success: false, error: 'plugin source contains symlinks, which are not allowed' };
-		}
-		fs.mkdirSync(pluginsDir(), { recursive: true });
-		// dereference:false keeps the copy faithful; we already rejected symlinks.
-		fs.cpSync(sourceDir, dest, { recursive: true });
-		await this.refresh();
-		const record = this.registry.records.find((r) => r.id === manifest.id);
-		return { success: true, ...(record ? { record } : {}) };
+		return this.mutatePlugin(manifest.id, async (isCurrent) => {
+			const dest = path.join(pluginsDir(), manifest.id);
+			if (fs.existsSync(dest)) {
+				return { success: false, error: `plugin "${manifest.id}" is already installed` };
+			}
+			const queuedManifest = validatePluginManifest(this.readManifest(sourceDir)).manifest;
+			if (!queuedManifest || canonicalJson(queuedManifest) !== canonicalJson(manifest)) {
+				return { success: false, error: 'plugin manifest changed while waiting to install' };
+			}
+			// Reject links when this queued operation owns the destination.
+			if (containsSymlink(sourceDir)) {
+				return { success: false, error: 'plugin source contains symlinks, which are not allowed' };
+			}
+			// A missing destination cannot retain admission from a cached older tree.
+			this.retireCachedAdmission(manifest.id);
+			try {
+				fs.mkdirSync(pluginsDir(), { recursive: true });
+				// dereference:false keeps the copy faithful; links were rejected above.
+				fs.cpSync(sourceDir, dest, { recursive: true });
+				const registry = await this.refreshRegistry(manifest.id, dest, isCurrent);
+				const record = registry && getRecord(registry, manifest.id);
+				if (!record)
+					throw new Error('installed plugin reconciliation was superseded or source disappeared');
+				return { success: true, record };
+			} catch (error) {
+				this.retireCachedAdmission(manifest.id);
+				this.syncPluginWatchers();
+				this.deps.onChange?.(this.registry);
+				throw error;
+			}
+		});
 	}
 
 	/**
@@ -875,7 +970,7 @@ export class PluginManager {
 		if (!isSafePluginFolderName(id)) {
 			throw new Error(`plugin id "${id}" is not a safe folder name`);
 		}
-		return this.mutatePlugin(id, async () => {
+		return this.mutatePlugin(id, async (isCurrent) => {
 			const dir = pluginsDir();
 			const dest = path.join(dir, id);
 			// Update is not install: the id must already be installed on disk.
@@ -1012,7 +1107,7 @@ export class PluginManager {
 					// Reconcile it so a recoverable filesystem failure does not leave it stopped.
 					if (!fs.existsSync(backup) && fs.existsSync(dest)) {
 						try {
-							const restored = await this.refreshRegistry(id, dest);
+							const restored = await this.refreshRegistry(id, dest, isCurrent);
 							if (!restored || !getRecord(restored, id)) {
 								throw new Error(
 									'restored plugin reconciliation was superseded or source disappeared'
@@ -1044,7 +1139,7 @@ export class PluginManager {
 			// signature trust from scratch. The enable toggle survives because we never
 			// touched the persisted state, so an enabled plugin stays enabled.
 			try {
-				const refreshed = await this.refreshRegistry(id, dest);
+				const refreshed = await this.refreshRegistry(id, dest, isCurrent);
 				if (!refreshed || !getRecord(refreshed, id)) {
 					throw new Error('updated plugin reconciliation was superseded or source disappeared');
 				}
@@ -1138,15 +1233,25 @@ export class PluginManager {
 	}
 
 	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */
-	private async mutatePlugin<T>(id: string, operation: () => Promise<T>): Promise<T> {
+	private async mutatePlugin<T>(
+		id: string,
+		operation: (isCurrent: () => boolean) => Promise<T>
+	): Promise<T> {
+		const lifetime = this.discoveryLifetime;
+		const isCurrent = () => lifetime === this.discoveryLifetime;
+		let active = false;
+		const ownerCurrent = () => active && isCurrent();
 		this.mutationLifetimes.set(id, (this.mutationLifetimes.get(id) ?? 0) + 1);
 		this.pendingMutations.set(id, (this.pendingMutations.get(id) ?? 0) + 1);
 		try {
 			return await this.mutationQueue.enqueue(id, async () => {
 				this.mutationLifetimes.set(id, (this.mutationLifetimes.get(id) ?? 0) + 1);
 				try {
-					return await operation();
+					if (!isCurrent()) throw new Error('plugin mutation was cancelled');
+					active = true;
+					return await operation(ownerCurrent);
 				} finally {
+					active = false;
 					// Invalidate scans begun DURING a mutation, even if cleanup failed
 					// before it could remove the cached record or persisted publisher.
 					this.mutationLifetimes.set(id, (this.mutationLifetimes.get(id) ?? 0) + 1);
@@ -1158,8 +1263,10 @@ export class PluginManager {
 			if (remaining > 0) this.pendingMutations.set(id, remaining);
 			else {
 				this.pendingMutations.delete(id);
-				this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, id);
-				this.reconcileServiceDependencies();
+				if (isCurrent()) {
+					this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, id);
+					this.reconcileServiceDependencies();
+				}
 			}
 		}
 	}
@@ -1172,6 +1279,10 @@ export class PluginManager {
 
 	/** Stop all sandboxes (app shutdown / feature disable). */
 	stopAllSandboxes(): void {
+		this.discoveryLifetime = {};
+		this.fullDiscovery = undefined;
+		clearTimeout(this.watchRefreshTimer);
+		this.watchRefreshTimer = undefined;
 		this.validatingUpdates.clear();
 		this.pendingReloads.clear();
 		this.waitingForServiceDependencies.clear();
