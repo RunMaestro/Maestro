@@ -52,8 +52,6 @@ import {
 	validatePlan,
 	revisePlanTask,
 	planProgress,
-	markTaskStatus,
-	propagateBlocked,
 	type PianolaPlan,
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
@@ -825,39 +823,38 @@ export async function pianolaPlanRevise(
 	else console.log(`Revised Pianola task ${planId}/${taskId}; awaiting supervised dispatch.`);
 }
 
-/** Skip a failed task and leave its dependents blocked rather than pretending success. */
+/** Skip a failed task through the same main-process handler used by the dashboard. */
 export async function pianolaPlanSkip(
 	planId: string,
 	taskId: string,
 	options: { json?: boolean }
 ): Promise<void> {
 	ensurePianolaEnabled(options.json);
+	const client = new MaestroClient();
 	try {
-		await withPianolaPlanLock(
-			planId,
-			async () => {
-				updatePianolaPlans((plans) => {
-					const plan = plans.find((entry) => entry.id === planId);
-					if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
-					const task = plan.tasks.find((entry) => entry.id === taskId);
-					if (!task) throw new Error(`No task with id "${taskId}" in plan "${planId}".`);
-					if (task.status !== 'failed') throw new Error('Only failed tasks can be skipped.');
-					const skipped = propagateBlocked(markTaskStatus(plan, taskId, 'skipped'));
-					return plans.map((entry) => (entry.id === planId ? skipped : entry));
-				});
-			},
-			{ waitForTurn: true }
+		await client.connect();
+		const response = await client.sendCommand<{
+			ok: boolean;
+			result?: PianolaPlan;
+			error?: string;
+		}>(
+			{ type: 'bridge.invoke', channel: 'pianola:skip-plan-task', args: [planId, taskId] },
+			'bridge.response',
+			300000
 		);
+		if (!response.ok) throw new Error(response.error ?? 'Skip task failed');
+		if (!response.result) throw new Error('Skip task returned no plan');
+		if (options.json)
+			console.log(JSON.stringify({ success: true, planId, taskId, status: 'skipped' }));
+		else console.log(`Skipped Pianola task ${planId}/${taskId}; dependents remain blocked.`);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
 		process.exitCode = 1;
-		return;
+	} finally {
+		client.disconnect();
 	}
-	if (options.json)
-		console.log(JSON.stringify({ success: true, planId, taskId, status: 'skipped' }));
-	else console.log(`Skipped Pianola task ${planId}/${taskId}; dependents remain blocked.`);
 }
 
 export interface PianolaPlanListOptions {

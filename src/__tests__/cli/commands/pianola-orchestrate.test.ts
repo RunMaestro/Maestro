@@ -1333,7 +1333,7 @@ describe('pianola plan revise', () => {
 });
 
 describe('pianola plan skip', () => {
-	it('skips a failed task and leaves its dependents blocked', async () => {
+	it('skips a failed task through the main-process handler used by the dashboard', async () => {
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: true });
 		const original: PianolaPlan = {
 			...PLAN,
@@ -1348,13 +1348,20 @@ describe('pianola plan skip', () => {
 				},
 			],
 		};
-		let saved = [original];
-		vi.mocked(updatePianolaPlans).mockImplementationOnce((update) => (saved = update(saved)));
+		const skipped: PianolaPlan = {
+			...original,
+			tasks: [
+				{ ...original.tasks[0], status: 'skipped' },
+				{ ...original.tasks[1], status: 'blocked' },
+			],
+		};
+		sendCommandMock.mockResolvedValue({ ok: true, result: skipped });
 		await pianolaPlanSkip(PLAN.id, 'failed', { json: true });
-		expect(saved[0].tasks.map((task) => task.status)).toEqual(['skipped', 'blocked']);
-		expect(withPianolaPlanLock).toHaveBeenCalledWith(PLAN.id, expect.any(Function), {
-			waitForTurn: true,
-		});
+		expect(sendCommandMock).toHaveBeenCalledWith(
+			{ type: 'bridge.invoke', channel: 'pianola:skip-plan-task', args: [PLAN.id, 'failed'] },
+			'bridge.response',
+			300000
+		);
 	});
 });
 
