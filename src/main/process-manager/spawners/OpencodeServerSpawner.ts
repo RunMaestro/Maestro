@@ -402,6 +402,16 @@ export class OpencodeServerSpawner {
 				lifecycle.finish(0);
 				return;
 			}
+			if (config.permissionMode === 'standard') {
+				this.emitAgentError(
+					managedProcess,
+					new Error(
+						`OpenCode Standard requires the native approval channel; SDK setup failed: ${String(setupErr)}`
+					)
+				);
+				lifecycle.finish(1);
+				return;
+			}
 			logger.warn(
 				'[OpencodeServerSpawner] SDK setup failed; falling back to CLI',
 				'OpencodeServer',

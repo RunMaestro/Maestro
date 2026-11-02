@@ -91,6 +91,46 @@ describe('native interaction owner authorization', () => {
 		});
 	});
 
+	it.each(['agent-a-batch-1700000000000', 'agent-a-synopsis-1700000000001'])(
+		'routes background process %s to its owning window and browser',
+		async (sessionId) => {
+			const first = windowFixture(1);
+			const second = windowFixture(2);
+			initHarnessControl(
+				{
+					getWindowForSession: (id) => (id === 'agent-a' ? first : second) as never,
+				},
+				null
+			);
+			vi.mocked(isBridgeSessionOwner).mockImplementation(
+				(clientId, id) => clientId === 'browser-a' && id === 'agent-a'
+			);
+			vi.mocked(broadcastBridgeEventToSessionSubscribers).mockReturnValue(true);
+
+			const opened = harnessInteractionBroker.open({
+				sessionId,
+				spawnGeneration: 1,
+				kind: 'permission',
+				provider: 'fixture',
+				title: 'Background request',
+				options: [{ optionId: 'allow', label: 'Allow', kind: 'allow-once' }],
+			});
+
+			expect(first.webContents.send).toHaveBeenCalledWith(
+				HARNESS_INTERACTION_REQUEST_CHANNEL,
+				opened.request
+			);
+			expect(second.webContents.send).not.toHaveBeenCalled();
+			expect(broadcastBridgeEventToSessionSubscribers).toHaveBeenCalledWith(
+				HARNESS_INTERACTION_REQUEST_CHANNEL,
+				[opened.request],
+				'agent-a'
+			);
+			expect(pendingHarnessInteractions({ webContentsId: 1 })).toHaveLength(1);
+			expect(pendingHarnessInteractions({ bridgeClientId: 'browser-a' })).toHaveLength(1);
+		}
+	);
+
 	it('delivers to and authorizes only the subscribed browser owner', async () => {
 		initHarnessControl({ getWindowForSession: () => null }, null);
 		vi.mocked(isBridgeSessionOwner).mockImplementation(

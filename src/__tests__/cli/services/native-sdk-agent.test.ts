@@ -84,6 +84,21 @@ function claudeQuery(
 describe('CLI native SDK ownership', () => {
 	beforeAll(() => initializeOutputParsers());
 
+	it('marks native preparation complete before starting the SDK turn', async () => {
+		const onProcessStarted = vi.fn();
+		queryMock.mockImplementation((params) => {
+			expect(onProcessStarted).toHaveBeenCalledExactlyOnceWith(undefined);
+			return claudeQuery(params, () => undefined);
+		});
+
+		await spawnNativeSdkAgent('claude-code', process.cwd(), 'test', undefined, {
+			harnessControlMode: 'native',
+			onProcessStarted,
+		});
+
+		expect(onProcessStarted).toHaveBeenCalledExactlyOnceWith(undefined);
+	});
+
 	it('uses saved model and effort when native options omit overrides', async () => {
 		queryMock.mockImplementation((params) => claudeQuery(params, () => undefined));
 

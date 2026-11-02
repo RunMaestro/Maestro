@@ -28,7 +28,7 @@ let dependencies: HarnessControlIntegrationDependencies | null = null;
 let initialized = false;
 
 function canonicalSessionId(sessionId: string): string {
-	return sessionId.replace(/-ai(?:-.+)?$/, '');
+	return sessionId.replace(/-(?:ai|batch|synopsis)(?:-.+)?$/, '');
 }
 
 function ownerWindow(sessionId: string): BrowserWindow | null {

@@ -59,11 +59,14 @@ function spawnHarness(client: OpencodeClient) {
 	} as never);
 	const processes = new Map<string, ManagedProcess>();
 	const emitter = new EventEmitter();
+	const errors: unknown[] = [];
+	emitter.on('agent-error', (_sessionId, error) => errors.push(error));
+	const fallbackToCli = vi.fn(() => ({ pid: 999, success: true }));
 	const spawner = new OpencodeServerSpawner(
 		processes,
 		emitter,
 		new DataBufferManager(processes, emitter),
-		vi.fn(() => ({ pid: 999, success: true }))
+		fallbackToCli
 	);
 	const config: ProcessConfig = {
 		sessionId: 'maestro-session',
@@ -74,7 +77,7 @@ function spawnHarness(client: OpencodeClient) {
 		prompt: 'run tests',
 		tabId: 'tab-a',
 	};
-	return { spawner, config, processes };
+	return { spawner, config, processes, fallbackToCli, errors };
 }
 
 function answerWindow(onRequest: (request: HarnessInteractionRequest) => void) {
@@ -101,6 +104,20 @@ describe('OpencodeServerSpawner permissions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		harnessInteractionBroker.closeAll();
+	});
+
+	it('refuses Standard instead of falling back to auto-approving CLI', async () => {
+		const { client } = clientFixture([]);
+		const { spawner, config, fallbackToCli, errors } = spawnHarness(client);
+		vi.mocked(opencodeServerManager.ensureServer).mockRejectedValue(new Error('offline'));
+
+		spawner.spawn({ ...config, permissionMode: 'standard' });
+
+		await vi.waitFor(() => expect(errors).toHaveLength(1));
+		expect(fallbackToCli).not.toHaveBeenCalled();
+		expect(errors[0]).toMatchObject({
+			message: expect.stringContaining('Standard requires the native approval channel'),
+		});
 	});
 
 	it('returns a broker selection to the native permission endpoint', async () => {

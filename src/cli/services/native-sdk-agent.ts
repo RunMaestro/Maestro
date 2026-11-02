@@ -283,6 +283,7 @@ export async function spawnNativeSdkAgent(
 			command
 		);
 		if ('error' in prepared) return spawnFailureResult(prepared.error);
+		nativeOptions.onProcessStarted?.(undefined);
 		nativeOptions = {
 			...nativeOptions,
 			customModel: prepared.modelId,
