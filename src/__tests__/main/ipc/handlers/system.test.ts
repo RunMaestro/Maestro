@@ -525,17 +525,16 @@ describe('system IPC handlers', () => {
 
 	describe('dialog:selectFile', () => {
 		it('opens an archive file picker without removing folder selection', async () => {
+			const selectedPath = path.resolve('releases', 'relay.tgz');
 			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
 				canceled: false,
-				filePaths: ['/releases/relay.tgz'],
+				filePaths: [selectedPath],
 			});
 			const options = {
 				title: 'Update Relay',
 				filters: [{ name: 'Plugin archives', extensions: ['tgz', 'tar.gz'] }],
 			};
-			expect(await handlers.get('dialog:selectFile')!({} as any, options)).toBe(
-				'/releases/relay.tgz'
-			);
+			expect(await handlers.get('dialog:selectFile')!({} as any, options)).toBe(selectedPath);
 			expect(dialog.showOpenDialog).toHaveBeenCalledWith(mockMainWindow, {
 				properties: ['openFile'],
 				...options,
@@ -544,19 +543,20 @@ describe('system IPC handlers', () => {
 		});
 
 		it('remembers a valid selected file directory and forgets a retired directory', async () => {
+			const selectedPath = path.resolve('current', 'relay.tgz');
 			vi.mocked(fsSync.existsSync).mockReturnValue(true);
 			vi.mocked(fsSync.lstatSync).mockReturnValue({ isFile: () => true } as ReturnType<
 				typeof fsSync.lstatSync
 			>);
 			vi.mocked(dialog.showOpenDialog)
-				.mockResolvedValueOnce({ canceled: false, filePaths: ['/current/relay.tgz'] })
+				.mockResolvedValueOnce({ canceled: false, filePaths: [selectedPath] })
 				.mockResolvedValue({ canceled: true, filePaths: [] });
 			const handler = handlers.get('dialog:selectFile')!;
 			await handler({}, {});
 			await handler({}, {});
 			expect(dialog.showOpenDialog).toHaveBeenLastCalledWith(
 				mockMainWindow,
-				expect.objectContaining({ defaultPath: '/current' })
+				expect.objectContaining({ defaultPath: path.dirname(selectedPath) })
 			);
 			vi.mocked(fsSync.existsSync).mockReturnValue(false);
 			await handler({}, {});
