@@ -10,6 +10,17 @@ import {
 } from '../../../../../renderer/stores/dictationStore';
 import type { DictationTarget } from '../../../../../renderer/utils/dictationTargets';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
+import { useOptionalContentFits } from '../../../../../renderer/hooks/ui/useOptionalLabelFits';
+
+vi.mock('../../../../../renderer/hooks/ui/useOptionalLabelFits', () => ({
+	useOptionalContentFits: vi.fn(() => true),
+}));
+
+vi.mock('../../../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/utils/runtimeContext')>()),
+	isWebDesktop: vi.fn(() => false),
+}));
 
 const mockUpdateSessionWith = vi.fn();
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
@@ -30,6 +41,8 @@ describe('ToolbarControls', () => {
 		restorePointer();
 		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
+		vi.mocked(isWebDesktop).mockReturnValue(false);
+		vi.mocked(useOptionalContentFits).mockReturnValue(true);
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -42,8 +55,6 @@ describe('ToolbarControls', () => {
 				canAttachImages
 				hasReadOnlyCapability
 				hasStandardCapability
-				enterToSend
-				setEnterToSend={vi.fn()}
 				setStagedImages={vi.fn()}
 				onOpenPromptComposer={vi.fn()}
 				shortcuts={{ openPromptComposer: { keys: ['Meta', 'p'], description: '' } as any }}
@@ -100,6 +111,7 @@ describe('ToolbarControls', () => {
 			{ ...session.aiTabs[0], id: session.activeTabId, tabProvider: 'codex', readOnlyMode: true },
 		];
 		renderToolbar({ session });
+		expect(screen.getByRole('button', { name: 'Read-Only' })).toBeInTheDocument();
 		expect(screen.getByText('Read-Only')).toBeInTheDocument();
 	});
 
@@ -142,41 +154,45 @@ describe('ToolbarControls', () => {
 		expect(screen.getByText('~/project/src')).toBeInTheDocument();
 	});
 
-	it('opens prompt composer and triggers file input lookup', () => {
+	it('opens prompt composer and the image file picker', () => {
 		const onOpenPromptComposer = vi.fn();
-		const click = vi.fn();
-		vi.spyOn(document, 'getElementById').mockReturnValue({ click } as any);
-		renderToolbar({ onOpenPromptComposer });
+		const { container } = renderToolbar({ onOpenPromptComposer });
+		const fileInput = container.querySelector('#image-file-input') as HTMLInputElement;
+		const click = vi.spyOn(fileInput, 'click');
 
 		fireEvent.click(screen.getByTitle(/Open Prompt Composer/));
 		fireEvent.click(screen.getByTitle('Attach Image'));
 
 		expect(onOpenPromptComposer).toHaveBeenCalled();
-		expect(document.getElementById).toHaveBeenCalledWith('image-file-input');
 		expect(click).toHaveBeenCalled();
 	});
 
-	it('toggles history, permission mode, thinking, and enter-to-send controls', () => {
+	it.each([true, false])('keeps toolbar actions available when labels fit=%s', (labelsFit) => {
+		vi.mocked(useOptionalContentFits).mockReturnValue(labelsFit);
 		const onToggleTabSaveToHistory = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
-		const setEnterToSend = vi.fn();
 		const session = createInputAreaSession();
 		renderToolbar({
 			session,
 			onToggleTabSaveToHistory,
 			onToggleTabShowThinking,
-			setEnterToSend,
 		});
 
-		fireEvent.click(screen.getByTitle(/Save to History/));
+		const history = screen.getByRole('button', { name: 'Save to History: off' });
+		const thinking = screen.getByRole('button', { name: 'Thinking: off' });
+		expect(history).toHaveAttribute('aria-pressed', 'false');
+		expect(thinking).toHaveAttribute('aria-pressed', 'false');
+		fireEvent.click(history);
 		// Permission mode starts at 'full'; clicking cycles it to 'standard'.
-		fireEvent.click(screen.getByTitle(/^Full Access/));
-		fireEvent.click(screen.getByTitle(/Show Thinking/));
-		fireEvent.click(screen.getByTitle(/Switch to/));
+		fireEvent.click(screen.getByRole('button', { name: 'Full Access' }));
+		fireEvent.click(thinking);
 
 		expect(onToggleTabSaveToHistory).toHaveBeenCalled();
 		expect(onToggleTabShowThinking).toHaveBeenCalled();
-		expect(setEnterToSend).toHaveBeenCalledWith(false);
+		expect(!!screen.queryByText('History')).toBe(labelsFit);
+		expect(!!screen.queryByText('Full Access')).toBe(labelsFit);
+		expect(!!screen.queryByText('Thinking')).toBe(labelsFit);
+		expect(screen.queryByTitle(/Switch to/)).not.toBeInTheDocument();
 
 		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
 		const updater = mockUpdateSessionWith.mock.calls[0][1];
@@ -184,6 +200,28 @@ describe('ToolbarControls', () => {
 		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
 		expect(updatedTab.permissionMode).toBe('standard');
 		expect(updatedTab.readOnlyMode).toBe(false);
+	});
+
+	it('exposes active history and sticky thinking states to assistive technology', () => {
+		renderToolbar({ tabSaveToHistory: true, tabShowThinking: 'sticky' });
+		expect(screen.getByRole('button', { name: 'Save to History: on' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+		expect(screen.getByRole('button', { name: 'Thinking: sticky' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+	});
+
+	it('keeps image attachment in the browser without a separate file upload control', () => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		renderToolbar();
+		expect(screen.getByTitle('Upload Image to Host')).toBeInTheDocument();
+		expect(screen.queryByLabelText('Upload local files to the host')).not.toBeInTheDocument();
+		expect(
+			screen.queryByLabelText('Choose local files to upload to the host')
+		).not.toBeInTheDocument();
 	});
 
 	it('hides AI-only controls in terminal mode', () => {
@@ -279,8 +317,7 @@ describe('ToolbarControls', () => {
 		});
 
 		it('renders exactly one image file input', () => {
-			// The attach button reaches it by element id, so a second copy would
-			// make the click resolve to whichever mounted first.
+			// The attach buttons reach it by ref; one input per toolbar.
 			const { container } = renderPhoneToolbar();
 			expect(container.querySelectorAll('#image-file-input')).toHaveLength(1);
 		});

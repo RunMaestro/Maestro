@@ -1,3 +1,4 @@
+import * as permissionRegistry from '../../../../main/permission-relay/registry';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSessionTranscriptSync } from '../../../../renderer/hooks/session/useSessionTranscriptSync';
@@ -14,6 +15,10 @@ import type { BrowserTab } from '../../../../shared/browserPage';
 import type { SessionTranscriptPatch } from '../../../../shared/sessionTranscript';
 import { useAgentThinkingListener } from '../../../../renderer/hooks/agent/internal/useAgentThinkingListener';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
+import { BridgeTransportError } from '../../../../shared/bridgeError';
+import { captureException } from '../../../../renderer/utils/sentry';
+
+vi.mock('../../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 
 let web = false;
 vi.mock('../../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => web }));
@@ -33,6 +38,7 @@ let request: (payload: {
 let published: SessionTranscriptPatch<LogEntry>[];
 
 beforeEach(() => {
+	vi.mocked(captureException).mockClear();
 	web = false;
 	published = [];
 	useSessionStore.setState({ sessions: [], activeSessionId: '', initialLoadComplete: true });
@@ -80,6 +86,48 @@ beforeEach(() => {
 });
 
 describe('owning host transcript identities', () => {
+	it.each([
+		{ error: new Error('Host hydration failed'), reports: true },
+		{
+			error: new BridgeTransportError('Host reconnecting', 'BRIDGE_RECONNECTING'),
+			reports: false,
+		},
+	])('reports unexpected snapshot errors only: $reports', async ({ error, reports }) => {
+		renderHook(() => useSessionTranscriptSync(() => Promise.reject(error)));
+		await act(async () => {
+			request({ sessionId: 'loading', tabId: '', requestId: 'failed-owner' });
+		});
+		if (reports) {
+			expect(captureException).toHaveBeenCalledWith(error, {
+				extra: { operation: 'useSessionTranscriptSync.answerSnapshot' },
+			});
+		} else {
+			expect(captureException).not.toHaveBeenCalled();
+		}
+	});
+
+	it('answers an owner snapshot requested before native session hydration completes', async () => {
+		let finish!: () => void;
+		const hydration = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		renderHook(() => useSessionTranscriptSync(() => hydration));
+		request({ sessionId: 'loading', tabId: '', requestId: 'early-owner', metadataOnly: true });
+		const session = createMockSession({ id: 'loading', aiTabs: [createMockAITab({ id: 'tab' })] });
+		await act(async () => {
+			useSessionStore.setState({ sessions: [session] });
+			finish();
+		});
+		expect(window.maestro.sessions.publishTranscript).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: 'loading',
+				snapshot: true,
+				tabInventory: expect.any(Array),
+			}),
+			'early-owner'
+		);
+	});
+
 	it('keeps two mirrors on the exact host OMP thinking, stdout, stderr, tool and user rows without generating their own output IDs', async () => {
 		const tab = createMockAITab({ id: 'tab', logs: [], showThinking: 'sticky' });
 		const session = createMockSession({
@@ -234,7 +282,19 @@ describe('owning host transcript identities', () => {
 			source: 'stdout',
 			text: 'Host terminal output',
 		}));
-		const session = createMockSession({ id: 'session', shellLogs, browserTabs, terminalTabs });
+		const tab = createMockAITab({
+			id: 'new-live-tab',
+			inputValue: 'private host draft',
+			stagedImages: ['private image'],
+			logs: shellLogs,
+		});
+		const session = createMockSession({
+			id: 'session',
+			aiTabs: [tab],
+			shellLogs,
+			browserTabs,
+			terminalTabs,
+		});
 		useSessionStore.setState({ sessions: [session], activeSessionId: 'session' });
 		const owner = renderHook(() => useSessionTranscriptSync(ready));
 		await act(async () => {
@@ -246,8 +306,58 @@ describe('owning host transcript identities', () => {
 		expect(snapshot.orderIds).toEqual([]);
 		expect(snapshot.runtime?.browserTabs).toEqual(browserTabs);
 		expect(snapshot.runtime?.terminalTabs).toEqual(terminalTabs);
+		expect(snapshot.tabInventory).toEqual([expect.objectContaining({ id: 'new-live-tab' })]);
+		expect(snapshot.tabInventory?.[0]).not.toHaveProperty('logs');
+		expect(snapshot.tabInventory?.[0]).not.toHaveProperty('inputValue');
+		expect(snapshot.tabInventory?.[0]).not.toHaveProperty('stagedImages');
 		expect(useSessionStore.getState().sessions[0].shellLogs).toEqual(shellLogs);
 		owner.unmount();
+	});
+
+	it('drops pre-recovery transcript work without delaying fresh host output', async () => {
+		web = true;
+		let release!: () => void;
+		const firstRead = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const loaded = vi.fn().mockReturnValueOnce(firstRead).mockResolvedValue(undefined);
+		const row = {
+			id: 'answer',
+			timestamp: 1,
+			source: 'stdout' as const,
+			text: 'canonical completed answer',
+		};
+		const session = createMockSession({
+			id: 'session',
+			aiTabs: [createMockAITab({ id: 'tab', logs: [] })],
+		});
+		useSessionStore.setState({ sessions: [session] });
+		renderHook(() => useSessionTranscriptSync(loaded));
+		const patch: SessionTranscriptPatch<LogEntry> = {
+			sessionId: 'session',
+			tabId: 'tab',
+			field: 'logs',
+			upserts: [{ ...row, text: 'stale partial answer' }],
+			removedIds: [],
+			orderIds: ['answer'],
+		};
+		const old = receive(patch);
+		await vi.waitFor(() => expect(loaded).toHaveBeenCalledTimes(1));
+		useSessionStore.setState((state) => ({
+			sessionReconciliationGeneration: (state.sessionReconciliationGeneration ?? 0) + 1,
+			sessions: [{ ...session, aiTabs: [{ ...session.aiTabs[0], logs: [row] }] }],
+		}));
+		const next = { ...row, id: 'next', text: 'new host output' };
+		try {
+			receive({ ...patch, upserts: [next], orderIds: ['answer', 'next'] });
+			await vi.waitFor(() =>
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([row, next])
+			);
+		} finally {
+			release();
+			await old;
+		}
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([row, next]);
 	});
 
 	it('marks only newly received output unread relative to this client and does not re-mark replayed or bootstrap rows', async () => {
@@ -367,5 +477,99 @@ describe('owning host transcript identities', () => {
 		]);
 		expect(current.terminalDraftInput).toBe('client draft');
 		mirror.unmount();
+	});
+});
+
+describe('real permission relay runtime producer', () => {
+	it('projects a real pending request into host runtime until the last decision resolves', async () => {
+		const first = permissionRegistry.registerSpawn({ sessionId: 'agent-ai-tab-1', tabId: 'tab-1' });
+		const second = permissionRegistry.registerSpawn({
+			sessionId: 'agent-ai-tab-2',
+			tabId: 'tab-2',
+		});
+		window.maestro.process.getPendingPermissions = vi.fn(async () =>
+			permissionRegistry.getPendingPermissionSnapshot()
+		);
+		window.maestro.process.onPendingPermissionsChanged = (handler) =>
+			permissionRegistry.subscribePendingPermissions(handler);
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'agent',
+					state: 'busy',
+					aiTabs: [
+						createMockAITab({ id: 'tab-1', state: 'busy' }),
+						createMockAITab({ id: 'tab-2', state: 'busy' }),
+					],
+				}),
+			],
+		});
+		const view = renderHook(() => useSessionTranscriptSync(ready));
+		try {
+			await act(async () => {
+				void permissionRegistry.createPending('real-first', first.token);
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			expect(published.some((patch) => patch.runtime?.state === 'waiting_input')).toBe(true);
+			act(() => useSessionStore.getState().updateSession('agent', { state: 'busy' }));
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			expect(published.filter((patch) => patch.field === 'shellLogs').at(-1)?.runtime?.state).toBe(
+				'waiting_input'
+			);
+
+			await act(async () => {
+				void permissionRegistry.createPending('real-second', second.token);
+			});
+			await act(async () => {
+				permissionRegistry.resolvePending('real-first', { behavior: 'allow' });
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			await act(async () => {
+				permissionRegistry.resolvePending('real-second', { behavior: 'deny', message: 'No' });
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('busy');
+		} finally {
+			view.unmount();
+			first.cleanup();
+			second.cleanup();
+			delete (window.maestro.process as any).getPendingPermissions;
+			delete (window.maestro.process as any).onPendingPermissionsChanged;
+		}
+	});
+	it('ignores an initial registry snapshot that arrives after a newer request', async () => {
+		const spawn = permissionRegistry.registerSpawn({ sessionId: 'agent-ai-tab-1', tabId: 'tab-1' });
+		const before = permissionRegistry.getPendingPermissionSnapshot();
+		let finish!: (snapshot: typeof before) => void;
+		window.maestro.process.getPendingPermissions = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		window.maestro.process.onPendingPermissionsChanged =
+			permissionRegistry.subscribePendingPermissions;
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'agent',
+					state: 'busy',
+					aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+				}),
+			],
+		});
+		const view = renderHook(() => useSessionTranscriptSync(ready));
+		try {
+			await act(async () => {
+				void permissionRegistry.createPending('registry-race', spawn.token);
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			await act(async () => finish(before));
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+		} finally {
+			view.unmount();
+			spawn.cleanup();
+			delete (window.maestro.process as any).getPendingPermissions;
+			delete (window.maestro.process as any).onPendingPermissionsChanged;
+		}
 	});
 });

@@ -5,6 +5,7 @@ import {
 	canSetGroupParent,
 	normalizeGroupHierarchy,
 	removeGroupAndPromoteChildren,
+	setGroupCollapsed,
 	setGroupHidden,
 	setGroupParent,
 } from '../../shared/groupHierarchy';
@@ -144,5 +145,30 @@ describe('group hierarchy', () => {
 		const groups = [group('company')];
 
 		expect(setGroupHidden(groups, 'missing', true)).toBe(groups);
+	});
+
+	it('folds and unfolds a group, leaving the others untouched', () => {
+		const groups = [group('company'), group('project')];
+
+		const folded = setGroupCollapsed(groups, 'project', true);
+		expect(folded).toEqual([group('company'), { ...group('project'), collapsed: true }]);
+		expect(folded[0]).toBe(groups[0]);
+
+		expect(setGroupCollapsed(folded, 'project', false)[1].collapsed).toBe(false);
+	});
+
+	it('folds a nested group through the same flag', () => {
+		const groups = [group('company'), group('project', 'company')];
+
+		const next = setGroupCollapsed(groups, 'project', true);
+
+		expect(next[1]).toMatchObject({ parentGroupId: 'company', collapsed: true });
+	});
+
+	it('returns the same list when collapse is a no-op', () => {
+		const groups = [{ ...group('project'), collapsed: true }];
+
+		expect(setGroupCollapsed(groups, 'project', true)).toBe(groups);
+		expect(setGroupCollapsed(groups, 'missing', false)).toBe(groups);
 	});
 });

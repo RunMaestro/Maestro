@@ -18,7 +18,7 @@ It is a **front end for the agents you already have**, not a second assistant. I
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) and go to the **Plugins** tab.
 2. Find the **A Cappella** card and enable it. A confirmation sheet lists what the feature reads before anything is switched on.
-3. Select the card to open its detail pane. The **Settings** sub-tab holds every voice panel: Voice Setup, Voice Providers, Voice Controls, Voice and Speed, Paired Devices, and Models.
+3. Select the card to open its detail pane. The **Settings** sub-tab holds Microphone, Voice setup, Voice Controls, Voice and Speed, and Paired Devices. Manage voice model files in **Settings > Models > Library > Speech**.
 
 Enabling the feature only makes those panels reachable. **Nothing is downloaded and no device is opened until you ask for it**: models arrive when you press Download, and the microphone opens at your first real session.
 
@@ -26,7 +26,17 @@ Enabling the feature only makes those panels reachable. **Nothing is downloaded 
 
 ## Where your audio goes
 
-This is the only question that really matters when you configure a voice assistant, so Maestro computes the answer from your actual selection rather than writing it into help text. The sentence at the top of **Voice Providers** and **Voice and Speed** is derived from the providers you picked, and it updates the moment you change a slot.
+The privacy statement in **Voice setup** is computed from the active providers and updates when you change them. **Voice and Speed** also shows where reply text goes for the active speech engine, including OpenAI Realtime when Cloud is selected.
+
+Choose a preset in **Voice setup**:
+
+| Preset                                                    | Providers                                                                                                        |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **On this Mac** (**On this computer** on other platforms) | Local Parakeet transcription, built-in routing, and the system voice. Clears the Voice routing model assignment. |
+| **Cloud**                                                 | OpenAI Realtime handles speech and replies in an OpenAI voice. Microphone audio goes to OpenAI.                  |
+| **Custom**                                                | Pick Transcription, Brain, and Voice independently, including ElevenLabs and VoiceStudio.                        |
+
+Cloud preserves your custom provider choices so you can return to them with Custom. Existing mixed configurations open as Custom without rewriting settings. The local preset restores the default providers; it keeps voice speed, volume, and unrelated model assignments.
 
 There are three independent slots plus one alternative pipeline shape:
 
@@ -59,17 +69,21 @@ Each slot is configured and validated on its own. A missing speech model does no
 
 **The defaults need one download and no key.** Speech recognition is Parakeet on this machine: fast, English-only, and it gets names, casing, and punctuation right. Whisper stays in the list as a smaller, less accurate alternative. Replies are spoken by the voice already built into your computer (`say` on macOS, the Windows speech API, `espeak-ng` on Linux). Routing is the built-in keyword router: it sends an utterance to the agent you named, or to the agent you are talking to, and reads the first sentences of the reply back as written. Switch the Brain to a hosted model when you want it to understand a request rather than match a name.
 
-**One OpenAI key runs a whole hosted trio.** Switching every slot to hosted picks OpenAI for all three, so you do not need a second account to hear replies. ElevenLabs stays in the Text-to-Speech list for anyone who prefers its voices.
+**One OpenAI key runs the Cloud preset.** To combine hosted transcription or routing with ElevenLabs, VoiceStudio, or another voice, choose Custom.
 
 **Realtime is a pipeline shape, not a fourth slot.** Choosing it replaces all three slots with one speech-to-speech API: the lowest latency available, in exchange for your audio going to OpenAI and the assistant speaking in that provider's voice.
 
-Hosted providers need an API key, entered in **Voice Providers**. Keys are stored per service and validated when you add them.
+Hosted providers need an API key, entered in **Voice setup** beside the provider that needs it. Keys are stored per service and validated when you add them.
+
+### Choosing a voice
+
+**Voice Output** lists the voices offered by the selected speech engine. When metadata is available, filter by gender, language, or region. Missing metadata appears as **Unknown**. Filtering leaves your current voice selected, even when it is hidden from the list. **Clear filters** restores the full list.
 
 ### VoiceStudio voices
 
 Configure VoiceStudio under **Settings > Models > Sources**. Set the local service URL, speech engine, and sampling seed, then use **Check connection** and **Save source**. The default URL is `http://127.0.0.1:3900`; only loopback addresses are accepted. Maestro connects to an existing VoiceStudio service and does not start it.
 
-Choose **VoiceStudio** as Text-to-Speech in **Voice Providers**, then select a profile in **Voice Output**. **Refresh voices** reloads the profiles. A profile name must be unique; Maestro stores the name so it survives profile exports and imports. If the service or selected profile is unavailable, the session reports the problem instead of switching voices. Source changes made during a voice session apply after it ends.
+Choose **Custom** in **Voice setup**, select **VoiceStudio** for Voice, then select a profile in **Voice Output**. **Refresh voices** reloads the profiles. A profile name must be unique; Maestro stores the name so it survives profile exports and imports. If the service or selected profile is unavailable, the session reports the problem instead of switching voices. Source changes made during a voice session apply after it ends.
 
 ### Recognition vocabulary
 
@@ -86,7 +100,7 @@ Agent names and tab titles provide recognition hints automatically. Custom vocab
 	OpenAI-compatible endpoint). Add the server in **Settings > Models > Sources**, and its models appear
 	in the **Conductor Brain** picker. Picking one assigns it to the Local Models **Voice routing**
 	task, so the picker and that task always show the same choice. Your transcripts are then sent to
-	that server, and the line at the top of Voice Providers names it. See
+	that server, and the privacy statement in Voice setup names it. See
 	[Voice routing](./local-models#voice-routing).
 </Note>
 
@@ -147,11 +161,11 @@ Both live in **Voice Controls**.
 
 ### Wake word
 
-- Default phrase: **"hey jarvis"**, the phrase a trained detector ships for. Say it and a Conductor session opens without stealing focus from whatever you are working in.
+- Default phrase: **"Hey Jarvis"**, the phrase a trained detector ships for. **Reset** restores it after an edit. Say it and a Conductor session opens without stealing focus from whatever you are working in.
 - **Detection** picks how the phrase is heard. **Trained model** (the default) is tiny and nearly free on the CPU, but it only knows phrases it has a model for: "hey jarvis" out of the box, plus any phrase you [train from your own voice](#training-your-own-wake-phrase). **Transcription** works for any phrase you type with no training: the local speech model transcribes each burst of speech and matches the phrase in the text, at the cost of keeping that model loaded (about 1 GB) while hands-free is on.
 - **Sensitivity** is a single slider. Higher fires more easily.
 - **Test** runs the detector with no session behind it, so you can tune the sensitivity by saying the phrase instead of guessing, restarting, and guessing again. A test run closes the microphone on its own after 15 seconds.
-- **Per-agent wake phrases.** Any agent can be given its own phrase, and saying it opens a session bound directly to that agent, skipping routing entirely.
+- **Per-agent wake phrases.** Use **Add agent** to choose an agent and give it a phrase. Saying it opens a session bound directly to that agent, skipping routing entirely. The remove button clears that agent's phrase.
 
 The trained-model engine needs the openWakeWord front end (2.4 MB) plus the phrase's own detector: the 1.3 MB download for "hey jarvis", or the one you trained. If either is missing, or the phrase has no detector, **Test** says exactly which instead of listening to nothing.
 
@@ -248,23 +262,22 @@ You can also start a session from the microphone under the **Send button** in th
 
 Point a session at one file and the conversation is about that file. Three ways in, all doing the same thing:
 
-- The **microphone in the File Preview toolbar**, on any file you have open. It is also the stop button while that file's session is running.
+- The **microphone in the document chat**, opened from the bottom-left chat button in the preview. Tap it to start or stop, or hold it to speak and release to send.
 - **Talk with Document** in the **Files panel** right-click menu.
 - **File: Talk with Document** in the command palette, while a file preview is the active tab.
 
-Starting a document session opens the file preview and its chat panel. You can close the panel while continuing to speak; starting another session opens it again.
+Starting a document session opens the file preview and its chat panel before recording begins. Closing the panel or leaving the preview ends its document voice session. Releasing a microphone hold sends the utterance and keeps the session.
 
-The conversation is held with the agent whose workspace the file is in. Spoken turns use the same document conversation as the preview's chat panel, creating one when needed and continuing it even if you click away to another tab. The document is handed over as the core context. The agent reads whatever else it needs and uses its tools normally.
+The conversation is held with the agent whose workspace the file is in. Spoken turns use the same document conversation as the preview's chat panel, creating one when needed. The document is handed over as the core context. The agent reads whatever else it needs and uses its tools normally.
 
-The HUD names the **file** rather than the agent while a document session is running, because what you want confirmed before speaking is which document you are talking about.
+The panel names the **file** and owns its microphone and transcript. Document sessions do not show a separate voice HUD.
 
 A document conversation is an ordinary AI tab, tagged with the file it is about, and it is the **same conversation the chat bubble types into** - see [Chatting with a document](./file-preview#chatting-with-a-document). So you can ask something out loud, type the follow-up, and read both in either place. It also survives a restart: come back to the file tomorrow and the conversation is still there.
 
 <Note>
-	The microphone hides itself when A Cappella is off, and for any file with no text in it: images
-	(SVG included), audio and video, and compiled binaries and archives. You can also hide the toolbar
-	button on its own in **Settings → Display → File Edit & Preview**; the right-click entry and the
-	palette command stay.
+	Talk with Document is offered only when A Cappella is on and the file has text to read.
+	With A Cappella off, the chat microphone uses dictation when available. Images (SVG included),
+	audio and video, compiled binaries, and archives do not offer document chat.
 </Note>
 
 ## While a session is running

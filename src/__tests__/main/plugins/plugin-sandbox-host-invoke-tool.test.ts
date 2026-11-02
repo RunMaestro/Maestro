@@ -1,3 +1,5 @@
+import { PluginToolRunIdentity } from '../../../main/plugins/plugin-tool-run-identity';
+import { PluginPrimitives } from '../../../main/plugins/plugin-primitives';
 /**
  * @file plugin-sandbox-host-invoke-tool.test.ts
  * @description The brokered request/response tool-invoke on the sandbox host:
@@ -38,7 +40,11 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
-import type { PermissionBroker } from '../../../main/plugins/permission-broker';
+import {
+	buildHostCallHandlers,
+	type HostHandlerDeps,
+} from '../../../main/plugins/plugin-host-handlers';
+import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { createSandboxRealm } from '../../../main/plugins/plugin-sandbox-entry';
 import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
 import type { PluginMediaTools } from '../../../main/plugins/plugin-media-tools';
@@ -513,6 +519,86 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			await assertion;
 		} finally {
 			vi.useRealTimers();
+		}
+	});
+});
+
+describe('generic verified SDK / VM / broker loopback', () => {
+	it('uses only host context, rejects a stale spoof and never exposes host objects', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'generic-loopback-'));
+		fs.writeFileSync(path.join(dir, 'main.js'), '// synthetic');
+		const identity = new PluginToolRunIdentity();
+		const run = identity.issue('agent-owner');
+		const broker = new PermissionBroker({
+			getGrants: () => [{ capability: 'invocations:inspect', grantedAt: 1 }],
+		});
+		let host: PluginSandboxHost;
+		const primitives = new PluginPrimitives({
+			identity,
+			state: {} as never,
+			tls: {} as never,
+			events: {} as never,
+			capture: (id) => host.capturePrimitiveLifetime(id),
+		});
+		host = new PluginSandboxHost({
+			prepareToolPluginActive: async () => {},
+			broker,
+			toolIdentity: identity,
+			assertToolPluginActive: () => {},
+			handlers: buildHostCallHandlers({ broker, primitives } as HostHandlerDeps),
+		});
+		let invocationId: string | undefined;
+		const realm = createSandboxRealm({
+			send: (json) => queueMicrotask(() => emit('message', JSON.parse(json))),
+			log: vi.fn(),
+			timerStart: vi.fn(),
+			timerClear: vi.fn(),
+		});
+		realm.init('com.example.fixture');
+		proc.postMessage.mockImplementation((message) => {
+			if (message.kind === 'invokeTool') {
+				invocationId = message.invocationId;
+				void realm
+					.invokeTool(JSON.stringify(message))
+					.then((json) =>
+						emit('message', { kind: 'toolResult', id: message.id, ...JSON.parse(json) })
+					);
+			} else if (typeof message.id === 'number') realm.deliverResponse(JSON.stringify(message));
+		});
+		try {
+			host.start('com.example.fixture', dir, 'main.js');
+			realm.runScript(
+				`module.exports={activate:function(sdk){sdk.tools.register('inspect',async function(args,ctx){try{return {frozen:Object.isFrozen(ctx),agent:ctx.callerAgentId,result:await sdk.invocations.inspect(ctx.invocationId||args.invocationId)};}catch(error){return {errorCode:error.code};}});}};`,
+				'generic-loopback'
+			);
+			await realm.activate();
+			const result = await host.invokeTool(
+				'com.example.fixture',
+				'inspect',
+				{ callerAgentId: 'forged' },
+				{ runContext: identity.resolveVerified(run) }
+			);
+			expect(result).toEqual({
+				frozen: true,
+				agent: 'agent-owner',
+				result: { callerAgentId: 'agent-owner', active: true },
+			});
+			const released = invocationId;
+			expect(() => identity.resolveInvocation('com.example.fixture', released)).toThrow();
+			expect(
+				await host.invokeTool(
+					'com.example.fixture',
+					'inspect',
+					{ invocationId: released },
+					{ callerAgentId: 'agent-owner' }
+				)
+			).toEqual({ errorCode: 'PLUGIN_DENIED' });
+		} finally {
+			identity.stop();
+			const stopped = host.stop('com.example.fixture');
+			emit('exit', 0);
+			await stopped;
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

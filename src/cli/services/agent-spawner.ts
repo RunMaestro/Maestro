@@ -1,6 +1,7 @@
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
+import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -36,7 +37,7 @@ import {
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
-import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
+import { TurnCapture, usageReportingFor } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
@@ -58,8 +59,12 @@ import {
 	applyAgentConfigOverrides,
 	buildAdditionalDirArgs,
 } from '../../shared/maestro-lib/launch/agent-args';
-import { superviseAgentProcess } from './agent-process-supervisor';
-import { CODEX_STARTUP_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
+import { superviseAgentProcess, assertHeadlessIdleProfile } from './agent-process-supervisor';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+	type HeadlessIdleProfile,
+} from '../../shared/plugins/headless-agent-timeouts';
 import {
 	buildMcpInjection,
 	mergeMcpInjectionArgs,
@@ -170,10 +175,13 @@ type SpawnOverrides = Pick<
 	| 'pluginRunProofFile'
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
+	| 'idle'
 	| 'onProgress'
 	| 'onProcessStarted'
+	| 'requireProcessExit'
 	| 'maestroPMaxWaitSeconds'
->;
+	| 'acceptWorkspaceTrust'
+> & { deadlineAt?: number };
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
 function publicToolSummary(tool: string, input: unknown): string | undefined {
@@ -188,18 +196,89 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 			name !== '.' &&
 			name !== '..' &&
 			name.length <= 80 &&
+			!redactSecrets(name).redacted &&
 			/^[\p{L}\p{N}._ -]+$/u.test(name)
 			? name
 			: undefined;
 	};
 	const targetName = (value: unknown): string | undefined =>
-		typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) ? value : undefined;
+		typeof value === 'string' &&
+		!/[\x00-\x1f\x7f]/.test(value) &&
+		/^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) &&
+		!redactSecrets(value).redacted
+			? value
+			: undefined;
+
+	// These labels cross the plugin boundary. Recognize a whole simple command,
+	// never a substring of a pipeline, script, arbitrary argument or description.
+	const readSummary = (value: unknown): string => {
+		const name = fileName(value);
+		if (name === 'SKILL.md' && typeof value === 'string' && /(?:^|[/\\])skills[/\\]/.test(value)) {
+			const skill = targetName(value.replace(/\\/g, '/').split('/').at(-2));
+			if (skill) return `Reading skill ${skill}`;
+		}
+		return name ? `Reading file ${name}` : 'Reading file';
+	};
+	const shellSummary = (value: unknown): string => {
+		const fallback = 'Running shell command';
+		if (typeof value !== 'string' || value.length > 1024 || /[\x00-\x1f\x7f]/.test(value))
+			return fallback;
+		// Only a single unquoted path or narrowly quoted glob is admitted. Shell
+		// metacharacters, additional statements and environment prefixes fail closed.
+		const read =
+			/^(?:cat|head|tail) (?<separator>-- )?(?<file>[A-Za-z0-9_./-]+)$/.exec(value) ??
+			/^sed -n '[0-9]+(?:,[0-9]+)?p' (?<file>[A-Za-z0-9_./-]+)$/.exec(value);
+		if (read) {
+			const file = read.groups?.file;
+			if (!file || (file.startsWith('-') && !read.groups?.separator)) return fallback;
+			return readSummary(file);
+		}
+		const files =
+			/^rg --files(?: -g (?:'([A-Za-z0-9_.*?/-]+)'|"([A-Za-z0-9_.*?/-]+)"|([A-Za-z0-9_.*?/-]+)))?$/.exec(
+				value
+			);
+		if (files) {
+			const glob = files[1] ?? files[2] ?? files[3];
+			const name = glob ? fileName(glob.replace(/[?*]/g, 'x')) : undefined;
+			// Check the text we publish: replacing a wildcard may remove a secret's
+			// word boundary and make the filename validation miss it.
+			return name && glob.length <= 80 && !redactSecrets(glob).redacted
+				? `Searching files for ${glob.split('/').pop()}`
+				: 'Searching files';
+		}
+		const known: Record<string, string> = {
+			'git status': 'inspect repository status',
+			'git status --short': 'inspect repository status',
+			'git diff --stat': 'inspect changed files',
+			'git diff --name-only': 'inspect changed files',
+			pwd: 'inspect the working directory',
+			'npm test': 'run tests',
+			'npm run lint': 'run lint checks',
+			'npm run build:main': 'build the main process',
+		};
+		return Object.prototype.hasOwnProperty.call(known, value)
+			? `${fallback} to ${known[value]}`
+			: fallback;
+	};
 
 	if (tool === 'functions.exec') {
 		// The wrapper's JavaScript is untrusted. Recognize only a tool identifier;
 		// never copy the code, nested arguments, or shell text into progress.
 		const code = typeof input === 'string' ? input : data?.code;
 		if (typeof code !== 'string' || code.length > 64_000) return;
+		// JSON-only single-call wrappers may reuse the same admission above. Never
+		// evaluate JavaScript or infer an action from code that merely mentions it.
+		const single = /^\s*await tools\.exec_command\((\{[\s\S]*\})\);?\s*$/.exec(code);
+		if (single) {
+			try {
+				const args: unknown = JSON.parse(single[1]);
+				if (args && typeof args === 'object' && !Array.isArray(args)) {
+					return shellSummary((args as Record<string, unknown>).cmd);
+				}
+			} catch {
+				// Non-JSON JavaScript stays generic; the wrapper is never executed here.
+			}
+		}
 		const shellCalls = (code.match(/\btools\.exec_command\s*\(/g) ?? []).length;
 		if (shellCalls) return shellCalls === 1 ? 'Running shell command' : 'Running shell commands';
 		return;
@@ -216,11 +295,10 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 			'exec_command',
 		].includes(tool)
 	) {
-		return 'Running shell command';
+		return shellSummary(data?.cmd ?? data?.command);
 	}
 	if (['Read', 'read_file', 'functions.read_file', 'fs.read'].includes(tool)) {
-		const name = fileName(data?.file_path ?? data?.path);
-		return name ? `Reading file ${name}` : 'Reading file';
+		return readSummary(data?.file_path ?? data?.path);
 	}
 	if (
 		['Write', 'Edit', 'MultiEdit', 'write_file', 'functions.apply_patch', 'fs.write'].includes(tool)
@@ -234,7 +312,26 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 		const name = targetName(data?.subagent_type ?? data?.task_name ?? data?.agentId);
 		return name ? `Dispatching to agent ${name}` : 'Dispatching to agent';
 	}
-	if (['Grep', 'Glob', 'functions.web__run'].includes(tool)) return 'Searching';
+	if (['Skill', 'skill', 'skills.read'].includes(tool)) {
+		const name = targetName(data?.skill ?? data?.name);
+		return name ? `Reading skill ${name}` : 'Reading skill';
+	}
+	if (['Grep', 'Glob'].includes(tool)) {
+		// Grep's content pattern is private; only an explicit filename glob is public.
+		const value = tool === 'Glob' ? data?.pattern : data?.glob;
+		const glob =
+			typeof value === 'string' &&
+			value.length <= 80 &&
+			!/[\x00-\x1f\x7f]/.test(value) &&
+			!redactSecrets(value).redacted &&
+			/^[A-Za-z0-9_.*?/-]+$/.test(value)
+				? value.split('/').pop()
+				: undefined;
+		return glob && glob !== '.' && glob !== '..'
+			? `Searching files for ${glob}`
+			: 'Searching files';
+	}
+	if (tool === 'functions.web__run') return 'Searching';
 	return;
 }
 
@@ -874,6 +971,7 @@ async function spawnClaudeAgent(
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
 			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		const remoteEnv = plan.envVars;
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -907,6 +1005,7 @@ async function spawnClaudeAgent(
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
 			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1081,6 +1180,9 @@ async function spawnClaudeAgent(
 		}
 	};
 
+	if (overrides.signal?.aborted) return interruptedResult();
+	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
 	const turn = startTurn(
 		{
 			command: spawnCommand,
@@ -1092,7 +1194,11 @@ async function spawnClaudeAgent(
 		{
 			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
-			onLine: processLine,
+			onLine: (line) => {
+				const event = claudeParser?.parseJsonLine(line);
+				if (event) supervision.observe(event);
+				processLine(line);
+			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
 		cliTurnOptions(undefined)
@@ -1102,7 +1208,18 @@ async function spawnClaudeAgent(
 		forcedStop = () => resolve(undefined);
 	});
 	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
+		timeoutMs:
+			overrides.deadlineAt === undefined
+				? overrides.timeoutMs
+				: Math.max(1, overrides.deadlineAt - Date.now()),
+		idle: overrides.idle,
+		usageReporting: usageReportingFor('claude-code'),
+		onStatus: (text) =>
+			emitAgentProgress(overrides.onProgress, {
+				type: 'activity',
+				text,
+				at: new Date().toISOString(),
+			}),
 		signal: overrides.signal,
 		onStop: (reason) => {
 			stopped = true;
@@ -1111,6 +1228,7 @@ async function spawnClaudeAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1423,6 +1541,9 @@ async function spawnJsonLineAgent(
 		});
 	};
 
+	if (overrides.signal?.aborted) return interruptedResult();
+	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
 	const turn = startTurn(
 		{
 			command: spawnCommand,
@@ -1440,16 +1561,12 @@ async function spawnJsonLineAgent(
 					return;
 				}
 				capture.handleEvent(event);
-				if (
-					toolType === 'codex' &&
-					!event.isRetryNotice &&
-					event.raw &&
-					typeof event.raw === 'object' &&
-					((['text', 'result'].includes(event.type) && Boolean(event.text)) ||
-						event.type === 'tool_use' ||
-						event.type === 'usage')
-				)
-					supervision.modelActivity();
+				supervision.observe(event);
+				// A nonfatal provider notice (Codex item-level `error`) goes to stderr,
+				// never into the answer or the error path.
+				if (event.type === 'warning' && event.text) {
+					console.error(event.text);
+				}
 				if (event.type === 'tool_use') {
 					const tool =
 						typeof event.toolName === 'string' &&
@@ -1521,7 +1638,18 @@ async function spawnJsonLineAgent(
 		forcedStop = () => resolve(undefined);
 	});
 	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
+		timeoutMs:
+			overrides.deadlineAt === undefined
+				? overrides.timeoutMs
+				: Math.max(1, overrides.deadlineAt - Date.now()),
+		idle: overrides.idle,
+		usageReporting: usageReportingFor(toolType),
+		onStatus: (text) =>
+			emitAgentProgress(overrides.onProgress, {
+				type: 'activity',
+				text,
+				at: new Date().toISOString(),
+			}),
 		signal: overrides.signal,
 		startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
 		onStop: (reason) => {
@@ -1531,6 +1659,7 @@ async function spawnJsonLineAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1584,11 +1713,19 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/**
+	 * Host-owned original attachments must outlive the actual child. On an
+	 * unconfirmed stop, retain this call and its caller's resources until exit,
+	 * close or a failed spawn is observed. Generic turns keep their bounded stop.
+	 */
+	requireProcessExit?: boolean;
 	/** Host-only lifecycle callback; no plugin can assert its own busy state. */
 	onProcessStarted?: (pid: number | undefined) => void;
 	pluginRunProofFile?: string;
 	mcpCliScriptPath?: string;
 	timeoutMs?: number;
+	/** Host-owned semantic inactivity policy; no public CLI flag. */
+	idle?: Readonly<HeadlessIdleProfile>;
 	onProgress?: (event: AgentSendProgressEvent) => void;
 	/** Resume an existing agent session */
 	agentSessionId?: string;
@@ -1665,6 +1802,12 @@ export interface SpawnAgentOptions {
 	 */
 	maestroPMaxWaitSeconds?: number;
 	/**
+	 * `cwd` is the agent's own working directory, so a TUI turn may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder.
+	 */
+	acceptWorkspaceTrust?: boolean;
+	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
 	 * playbook or Auto Run task apart from a `maestro send` the user typed -
@@ -1707,7 +1850,67 @@ export async function spawnAgent(
 	agentSessionId?: string,
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
-	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	// A standalone Codex caller gets the same host-owned inactivity/tool
+	// budgets as agents.send. Startup alone cannot catch a later auth/MCP stall.
+	// Preserve an absolute ceiling only when the caller explicitly supplies one.
+	if (toolType === 'codex')
+		options = {
+			...options,
+			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
+		};
+	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
+	// Effort fallback and asynchronous launch planning share one absolute ceiling.
+	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
+	const runAttempt = async (attemptOptions?: SpawnAgentOptions): Promise<AgentResult> => {
+		const signal = attemptOptions?.signal;
+		if (signal?.aborted) return interruptedResult();
+		const remainingMs = deadlineAt === undefined ? undefined : deadlineAt - Date.now();
+		if (remainingMs !== undefined && remainingMs <= 0)
+			return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
+		if (remainingMs === undefined && !signal)
+			return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, attemptOptions, deadlineAt);
+
+		// Bound preparation only. Once a child exists its supervisor owns stop and
+		// settlement, so the caller keeps authority until process cleanup finishes.
+		let stopPreparation: () => void = () => {};
+		const stopped = new Promise<AgentResult>((resolve) => {
+			stopPreparation = () =>
+				resolve(
+					signal?.aborted
+						? { ...interruptedResult(), error: 'Agent run cancelled' }
+						: spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded')
+				);
+		});
+		const timer = remainingMs === undefined ? undefined : setTimeout(stopPreparation, remainingMs);
+		timer?.unref?.();
+		const cleanupPreparation = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', stopPreparation);
+		};
+		signal?.addEventListener('abort', stopPreparation, { once: true });
+		try {
+			return await Promise.race([
+				spawnAgentOnce(
+					toolType,
+					cwd,
+					prompt,
+					agentSessionId,
+					{
+						...attemptOptions,
+						onProcessStarted: (pid) => {
+							cleanupPreparation();
+							attemptOptions?.onProcessStarted?.(pid);
+						},
+					},
+					deadlineAt
+				),
+				stopped,
+			]);
+		} finally {
+			cleanupPreparation();
+		}
+	};
+	const result = await runAttempt(options);
 	if (result.success || !options?.customEffort) return result;
 
 	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
@@ -1717,10 +1920,7 @@ export async function spawnAgent(
 	console.error(
 		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
 	);
-	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
-		...options,
-		customEffort: undefined,
-	});
+	return runAttempt({ ...options, customEffort: undefined });
 }
 
 async function spawnAgentOnce(
@@ -1728,17 +1928,21 @@ async function spawnAgentOnce(
 	cwd: string,
 	prompt: string,
 	agentSessionId?: string,
-	options?: SpawnAgentOptions
+	options?: SpawnAgentOptions,
+	deadlineAt?: number
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
+		requireProcessExit: options?.requireProcessExit,
 		signal: options?.signal,
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,
 		timeoutMs: options?.timeoutMs,
+		deadlineAt,
+		idle: options?.idle,
 		onProgress: options?.onProgress,
 		onProcessStarted: options?.onProcessStarted,
 		customModel: options?.customModel,
@@ -1756,6 +1960,7 @@ async function spawnAgentOnce(
 		querySource: options?.querySource,
 		consultChain: options?.consultChain,
 		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
+		acceptWorkspaceTrust: options?.acceptWorkspaceTrust,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

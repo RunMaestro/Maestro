@@ -459,6 +459,35 @@ describe('EncoreTab hooks', () => {
 			});
 		});
 
+		it('ignores a non-string argument such as a blur event (MAESTRO-11C)', () => {
+			const setDirectorNotesSettings = vi.fn();
+			vi.mocked(useAgentConfiguration).mockReturnValue(
+				makeAgentConfiguration({
+					customPath: '/custom/claude',
+					customArgs: '--print',
+					customEnvVars: {},
+				})
+			);
+			const { result } = renderHook(() =>
+				useDirectorNotesAgentState({
+					isOpen: true,
+					directorNotesEnabled: true,
+					directorNotesSettings,
+					setDirectorNotesSettings,
+				})
+			);
+
+			const focusEvent = new FocusEvent('blur');
+			act(() => {
+				(result.current.persistCustomConfig as (value?: unknown) => void)(focusEvent);
+			});
+
+			const saved = setDirectorNotesSettings.mock.calls[0][0];
+			expect(saved.customPath).toBe('/custom/claude');
+			// The settings write crosses IPC, so the value must survive structured cloning.
+			expect(() => structuredClone(saved)).not.toThrow();
+		});
+
 		it('wires env var and agent config callbacks to the shared configuration hook', async () => {
 			const setCustomEnvVars = vi.fn();
 			const setAgentConfig = vi.fn();

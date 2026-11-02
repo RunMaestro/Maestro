@@ -37,6 +37,19 @@ import {
 import { DEFAULT_STUN_URLS } from '../../shared/acappella/webrtc-host';
 
 describe('voiceSettingProblem', () => {
+	it.each(['local', 'cloud', 'custom'])(
+		'accepts the %s voice setup preset in saved settings',
+		(setupMode) => {
+			expect(voiceSettingProblem('setupMode', setupMode)).toBeNull();
+			expect(voiceSettingProblem('', { setupMode, pipeline: 'cascade' })).toBeNull();
+		}
+	);
+
+	it('rejects an unknown voice setup preset and leaves legacy defaults inferred', () => {
+		expect(voiceSettingProblem('setupMode', 'automatic')).toContain('one of');
+		expect(voiceSettingDefault('setupMode')).toBeUndefined();
+	});
+
 	it('validates the VoiceStudio source for CLI field, section and whole-blob writes', () => {
 		expect(
 			voiceSettingProblem('voiceStudio', {

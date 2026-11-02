@@ -87,6 +87,7 @@ import {
 	Users,
 	Waypoints,
 	ZoomIn,
+	X,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import {
@@ -133,10 +134,13 @@ import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ConfirmModal } from '../ConfirmModal';
 import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
+import { GraphToolbarButton } from '../ui/GraphToolbarButton';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { GraphLayoutMenu } from '../ui/GraphLayoutMenu';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
 import { ShortcutKeys } from '../ui/ShortcutHint';
-import { ToggleSwitch } from '../ui/ToggleSwitch';
 import {
 	DelegationEdgeEditor,
 	DelegationEdgeRefusal,
@@ -188,6 +192,8 @@ export interface DelegationGraphViewProps {
 	/** The scope the graph opens on. Every agent when absent. */
 	initialScope?: DelegationGraphScope;
 	focusRef?: RefObject<HTMLDivElement>;
+	/** When hosted by the modal, put its title and close control beside the tools. */
+	onClose?: () => void;
 }
 
 /**
@@ -294,7 +300,12 @@ function openPeersTab(sessionId: string): void {
 	if (session) openAgentSettings(session, { tab: 'peers' });
 }
 
-function DelegationGraphCanvas({ theme, initialScope, focusRef }: DelegationGraphViewProps) {
+function DelegationGraphCanvas({
+	theme,
+	initialScope,
+	focusRef,
+	onClose,
+}: DelegationGraphViewProps) {
 	const { colors } = theme;
 	const reactFlow = useReactFlow();
 	const ownContainerRef = useRef<HTMLDivElement>(null);
@@ -334,6 +345,7 @@ function DelegationGraphCanvas({ theme, initialScope, focusRef }: DelegationGrap
 	// of scope, because the user who switched it on is still the one editing.
 	const [mode, setMode] = useState<DelegationGraphMode>(DEFAULT_DELEGATION_GRAPH_MODE);
 	const isEditing = mode === 'edit';
+	const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
 	// A scope or mode switch can replace the focused canvas. Focus its
 	// replacement once, leaving later clicks on toolbar controls alone.
 	const focusContext = `${scopeKey}:${mode}`;
@@ -874,6 +886,7 @@ function DelegationGraphCanvas({ theme, initialScope, focusRef }: DelegationGrap
 				event.nativeEvent.isComposing ||
 				pendingChange ||
 				pendingEdge ||
+				layoutMenuOpen ||
 				isTextInputTarget(event.target) ||
 				(event.target instanceof HTMLElement && event.target.closest('[contenteditable="true"]'))
 			)
@@ -936,6 +949,7 @@ function DelegationGraphCanvas({ theme, initialScope, focusRef }: DelegationGrap
 		[
 			pendingChange,
 			pendingEdge,
+			layoutMenuOpen,
 			layout,
 			handleLayoutChange,
 			requestFit,
@@ -998,183 +1012,174 @@ function DelegationGraphCanvas({ theme, initialScope, focusRef }: DelegationGrap
 		>
 			{/* Toolbar */}
 			<div
-				className="flex flex-col gap-2 px-3 py-2 border-b shrink-0"
-				style={{ borderColor: colors.border, backgroundColor: colors.bgSidebar }}
+				className="relative flex flex-wrap items-center gap-2 px-6 py-4 pr-14 border-b shrink-0"
+				style={{ borderColor: colors.border, backgroundColor: colors.bgActivity }}
 			>
-				<div
-					className="flex flex-wrap items-center gap-2"
-					data-testid="delegation-graph-primary-toolbar"
-				>
-					<select
-						value={scopeKey}
-						onChange={handleScopeChange}
-						aria-label="Scope"
-						title="Which agents the graph is about"
-						data-testid="delegation-graph-scope"
-						className="px-2 py-1 rounded text-xs border cursor-pointer outline-none min-w-0 max-w-[220px]"
-						style={{
-							backgroundColor: colors.bgMain,
-							borderColor: colors.border,
-							color: colors.textMain,
-						}}
-					>
-						<option value={scopeStorageKey(ALL_SCOPE)}>All agents</option>
-						{scope.kind === 'agent' && (
-							<option value={scopeKey}>
-								Cluster:{' '}
-								{fullModel.nodes.find((node) => node.sessionId === scope.sessionId)?.name ??
-									'Removed agent'}
-							</option>
-						)}
-						{sortedGroups.map((group) => {
-							const value = scopeStorageKey({ kind: 'group', groupId: group.id });
-							return (
-								<option key={value} value={value}>
-									{delegationGroupLabel(group)}
-								</option>
-							);
-						})}
-					</select>
-					<HeaderActionButton
-						theme={theme}
-						variant="ghost"
-						onClick={() =>
-							scope.kind === 'all'
-								? selectedId && changeScope({ kind: 'agent', sessionId: selectedId })
-								: changeScope(ALL_SCOPE)
-						}
-						icon={<Users />}
-						disabled={scope.kind === 'all' && (!selectedId || !connectedIds.has(selectedId))}
-						title={
-							scope.kind === 'all'
-								? 'Show the selected agent and its connected cluster'
-								: 'Show every agent, clustered in Lobes by default'
-						}
-						testId="delegation-graph-toggle-cluster"
-					>
-						{scope.kind === 'all' ? 'Show cluster' : 'Show all agents'}
-					</HeaderActionButton>
-
-					<div className="flex items-center gap-2 shrink-0">
-						<SegmentedControl
-							value={mode}
-							onChange={handleModeChange}
-							options={MODE_OPTIONS}
-							theme={theme}
-							ariaLabel="Mode"
-							testId="delegation-graph-mode"
-						/>
-						<ShortcutKeys theme={theme} keys={['Meta', 'e']} />
+				{onClose && (
+					<div className="flex items-center gap-3 mr-auto shrink-0">
+						<Waypoints className="w-5 h-5" style={{ color: colors.accent }} />
+						<h2 className="text-lg font-semibold" style={{ color: colors.textMain }}>
+							Delegation Graph
+						</h2>
 					</div>
-					{isEditing && (
-						<DelegationAddAgentSelect
-							theme={theme}
-							sections={addableSections}
-							disabledReason={
-								!canPlace
-									? 'This group has no agent that an added agent could be connected to'
-									: addableAgents.length === 0
-										? 'Every agent is already on this graph'
-										: undefined
-							}
-							onAdd={placeAgent}
-						/>
-					)}
-				</div>
-
-				<div
-					className="flex flex-wrap items-center gap-2"
-					data-testid="delegation-graph-display-toolbar"
+				)}
+				<select
+					value={scopeKey}
+					onChange={handleScopeChange}
+					aria-label="Scope"
+					title="Which agents the graph is about"
+					data-testid="delegation-graph-scope"
+					className="px-3 py-1.5 rounded text-sm cursor-pointer outline-none min-w-0 shrink-0 max-w-[180px]"
+					style={{
+						backgroundColor: `${colors.accent}10`,
+						color: colors.textDim,
+					}}
 				>
-					<select
-						value={layout}
-						onChange={(event) => {
-							const next = event.target.value as DelegationLayoutType;
-							if (isDelegationAlgorithmLayout(next)) handleLayoutChange(next);
-						}}
-						aria-label="Layout"
-						title="Graph layout (L to cycle)"
-						data-testid="delegation-graph-layout"
-						className="px-2 py-1 rounded text-xs border cursor-pointer outline-none shrink-0"
-						style={{
-							backgroundColor: colors.bgMain,
-							borderColor: colors.border,
-							color: colors.textMain,
-						}}
-					>
-						{layout === 'manual' && (
-							<option value="manual" disabled>
-								Manual
-							</option>
-						)}
-						{DELEGATION_ALGORITHM_LAYOUTS.map((value) => (
+					<option value={scopeStorageKey(ALL_SCOPE)}>All agents</option>
+					{scope.kind === 'agent' && (
+						<option value={scopeKey}>
+							Cluster:{' '}
+							{fullModel.nodes.find((node) => node.sessionId === scope.sessionId)?.name ??
+								'Removed agent'}
+						</option>
+					)}
+					{sortedGroups.map((group) => {
+						const value = scopeStorageKey({ kind: 'group', groupId: group.id });
+						return (
 							<option key={value} value={value}>
-								{DELEGATION_LAYOUT_LABELS[value].name}
+								{delegationGroupLabel(group)}
 							</option>
-						))}
-					</select>
-					<HeaderActionButton
-						theme={theme}
-						variant="ghost"
-						onClick={scrollPans.toggle}
-						icon={scrollPans.value ? <Move /> : <ZoomIn />}
-						title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
-						testId="delegation-graph-scroll-mode"
-					>
-						Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
-					</HeaderActionButton>
+						);
+					})}
+				</select>
+				<GraphToolbarButton
+					theme={theme}
+					onClick={() =>
+						scope.kind === 'all'
+							? selectedId && changeScope({ kind: 'agent', sessionId: selectedId })
+							: changeScope(ALL_SCOPE)
+					}
+					icon={<Users />}
+					disabled={scope.kind === 'all' && (!selectedId || !connectedIds.has(selectedId))}
+					title={
+						scope.kind === 'all'
+							? 'Show the selected agent and its connected cluster'
+							: 'Show every agent, clustered in Lobes by default'
+					}
+					data-testid="delegation-graph-toggle-cluster"
+				>
+					{scope.kind === 'all' ? 'Show cluster' : 'Show all agents'}
+				</GraphToolbarButton>
 
-					<label
-						className="flex items-center gap-1.5 text-xs shrink-0 cursor-pointer"
-						style={{ color: colors.textDim }}
-					>
-						<ToggleSwitch
-							theme={theme}
-							size="sm"
-							checked={hideUnconnected.value}
-							onChange={(next) => {
-								hideUnconnected.setValue(next);
-								requestFit();
-							}}
-							ariaLabel="Hide unconnected"
-							title="Hide agents with no incoming or outgoing peer relationships"
-						/>
-						Hide unconnected
-					</label>
-
-					<HeaderActionButton
+				<div className="flex items-center gap-2 shrink-0">
+					<SegmentedControl
+						value={mode}
+						onChange={handleModeChange}
+						options={MODE_OPTIONS}
 						theme={theme}
-						variant="ghost"
-						onClick={requestFit}
-						icon={<Maximize2 />}
-						title="Fit the whole graph in view (F)"
-						disabled={isEmpty}
-						testId="delegation-graph-fit"
-					>
-						Fit
-					</HeaderActionButton>
-					<HeaderActionButton
-						theme={theme}
-						variant="ghost"
-						onClick={handleReset}
-						icon={<RotateCcw />}
-						title={`Forget where the agents in this scope were placed and go back to the ${DELEGATION_LAYOUT_LABELS[defaultLayout].name} layout`}
-						disabled={!hasSavedLayout}
-						testId="delegation-graph-reset"
-					>
-						Reset layout
-					</HeaderActionButton>
-					<HeaderActionButton
-						theme={theme}
-						variant="ghost"
-						onClick={legend.toggle}
-						icon={<Info />}
-						title={legend.value ? 'Hide the legend' : 'Show the legend'}
-						testId="delegation-graph-legend-toggle"
-					>
-						Legend
-					</HeaderActionButton>
+						ariaLabel="Mode"
+						testId="delegation-graph-mode"
+					/>
+					<ShortcutKeys theme={theme} keys={['Meta', 'e']} />
 				</div>
+				{isEditing && (
+					<DelegationAddAgentSelect
+						theme={theme}
+						sections={addableSections}
+						disabledReason={
+							!canPlace
+								? 'This group has no agent that an added agent could be connected to'
+								: addableAgents.length === 0
+									? 'Every agent is already on this graph'
+									: undefined
+						}
+						onAdd={placeAgent}
+					/>
+				)}
+				<GraphLayoutMenu
+					theme={theme}
+					value={layout}
+					label={DELEGATION_LAYOUT_LABELS[layout].name}
+					options={DELEGATION_ALGORITHM_LAYOUTS.map((value) => ({
+						value,
+						label: DELEGATION_LAYOUT_LABELS[value].name,
+						description: DELEGATION_LAYOUT_LABELS[value].description,
+					}))}
+					onChange={handleLayoutChange}
+					open={layoutMenuOpen}
+					onOpenChange={setLayoutMenuOpen}
+					priority={MODAL_PRIORITIES.DELEGATION_GRAPH + 1}
+					testId="delegation-graph-layout"
+				/>
+				<GraphToolbarButton
+					theme={theme}
+					onClick={scrollPans.toggle}
+					active={scrollPans.value}
+					aria-pressed={scrollPans.value}
+					icon={scrollPans.value ? <Move /> : <ZoomIn />}
+					title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
+					data-testid="delegation-graph-scroll-mode"
+				>
+					Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
+				</GraphToolbarButton>
+
+				<GraphToolbarButton
+					theme={theme}
+					icon={<Unplug />}
+					active={hideUnconnected.value}
+					onClick={() => {
+						hideUnconnected.toggle();
+						requestFit();
+					}}
+					aria-label="Hide unconnected"
+					aria-pressed={hideUnconnected.value}
+					title="Hide agents with no incoming or outgoing peer relationships"
+				>
+					Hide unconnected
+				</GraphToolbarButton>
+
+				<GraphToolbarButton
+					theme={theme}
+					onClick={requestFit}
+					icon={<Maximize2 />}
+					title="Fit the whole graph in view (F)"
+					disabled={isEmpty}
+					data-testid="delegation-graph-fit"
+				>
+					Fit
+				</GraphToolbarButton>
+				<GraphToolbarButton
+					theme={theme}
+					onClick={handleReset}
+					icon={<RotateCcw />}
+					title={`Forget where the agents in this scope were placed and go back to the ${DELEGATION_LAYOUT_LABELS[defaultLayout].name} layout`}
+					disabled={!hasSavedLayout}
+					aria-label="Reset layout"
+					data-testid="delegation-graph-reset"
+				></GraphToolbarButton>
+				<GraphToolbarButton
+					theme={theme}
+					onClick={legend.toggle}
+					icon={<Info />}
+					title={legend.value ? 'Hide the legend' : 'Show the legend'}
+					aria-label="Legend"
+					active={legend.value}
+					aria-pressed={legend.value}
+					data-testid="delegation-graph-legend-toggle"
+				></GraphToolbarButton>
+				{onClose && (
+					<GhostIconButton
+						onClick={onClose}
+						ariaLabel="Close Delegation Graph"
+						title="Close (Esc)"
+						color={colors.textDim}
+						padding="p-1.5"
+						className="absolute top-5 right-4"
+						testId="delegation-graph-esc"
+					>
+						<X className="w-4 h-4" />
+					</GhostIconButton>
+				)}
 			</div>
 
 			{/* Canvas */}

@@ -327,6 +327,76 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
+	it('gh that runs but exits non-zero is reported to the user, not to Sentry (MAESTRO-15J)', async () => {
+		const config = makeConfig();
+		mockExecFile.mockImplementation(
+			(
+				cmd: string,
+				args: string[],
+				_opts: unknown,
+				cb: (err: Error | null, stdout: string, stderr: string) => void
+			) => {
+				if (args.includes('--version')) {
+					// execFile's shape for a process that exited non-zero: the
+					// exit status lands on `code` as a number, stderr in the message.
+					const err = Object.assign(
+						new Error(
+							`Command failed: ${cmd} --version\nNo version is set for command gh\nConsider adding one of the following versions`
+						),
+						{ code: 126 }
+					);
+					cb(err, '', '');
+					return;
+				}
+				cb(null, '', '');
+			}
+		);
+
+		const cleanup = createCueGitHubPoller(config);
+		await vi.advanceTimersByTimeAsync(2000);
+
+		expect(config.onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('exited with code 126')
+		);
+		expect(config.onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('No version is set for command gh')
+		);
+		expect(mockCaptureException).not.toHaveBeenCalled();
+		expect(config.onEvent).not.toHaveBeenCalled();
+
+		cleanup();
+	});
+
+	it('gh lookup failing with a non-exit error still reaches Sentry', async () => {
+		const config = makeConfig();
+		mockExecFile.mockImplementation(
+			(
+				_cmd: string,
+				args: string[],
+				_opts: unknown,
+				cb: (err: Error | null, stdout: string, stderr: string) => void
+			) => {
+				if (args.includes('--version')) {
+					cb(Object.assign(new Error('spawn gh EACCES'), { code: 'EACCES' }), '', '');
+					return;
+				}
+				cb(null, '', '');
+			}
+		);
+
+		const cleanup = createCueGitHubPoller(config);
+		await vi.advanceTimersByTimeAsync(2000);
+
+		expect(mockCaptureException).toHaveBeenCalledWith(
+			expect.any(Error),
+			expect.objectContaining({ operation: 'cue:github:resolveGh' })
+		);
+
+		cleanup();
+	});
+
 	it('repo auto-detection - resolves from gh repo view', async () => {
 		const config = makeConfig({ repo: undefined });
 		setupExecFile({

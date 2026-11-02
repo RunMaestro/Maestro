@@ -30,7 +30,7 @@ describe('Process CommandRemote Preload API', () => {
 	});
 
 	describe('onRemoteCommand', () => {
-		it('should register listener and invoke callback with all parameters including tabId, force, images, background, and the consult chain', () => {
+		it('should register listener and invoke callback with all parameters including tabId, force, images, background, the consult chain, and mentionRouting', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
@@ -42,6 +42,7 @@ describe('Process CommandRemote Preload API', () => {
 				images?: string[],
 				background?: boolean,
 				consultChain?: { chainId: string; depth: number },
+				mentionRouting?: string,
 				receiptChannel?: string
 			) => void;
 
@@ -63,6 +64,7 @@ describe('Process CommandRemote Preload API', () => {
 				images,
 				true,
 				{ chainId: 'chain-1', depth: 2 },
+				'handoff',
 				'receipt-channel'
 			);
 
@@ -75,6 +77,7 @@ describe('Process CommandRemote Preload API', () => {
 				images,
 				true,
 				{ chainId: 'chain-1', depth: 2 },
+				'handoff',
 				'receipt-channel'
 			);
 		});
@@ -91,6 +94,7 @@ describe('Process CommandRemote Preload API', () => {
 				images?: string[],
 				background?: boolean,
 				consultChain?: { chainId: string; depth: number },
+				mentionRouting?: string,
 				receiptChannel?: string
 			) => void;
 
@@ -107,6 +111,7 @@ describe('Process CommandRemote Preload API', () => {
 				'session-123',
 				'test command',
 				'ai',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -131,6 +136,7 @@ describe('Process CommandRemote Preload API', () => {
 				images?: string[],
 				background?: boolean,
 				consultChain?: { chainId: string; depth: number },
+				mentionRouting?: string,
 				receiptChannel?: string
 			) => void;
 
@@ -160,6 +166,7 @@ describe('Process CommandRemote Preload API', () => {
 				undefined,
 				undefined,
 				false,
+				undefined,
 				undefined,
 				undefined
 			);

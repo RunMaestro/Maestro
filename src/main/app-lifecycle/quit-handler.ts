@@ -104,6 +104,8 @@ export interface QuitHandlerDependencies {
 	closeEmbeddingStore: () => void;
 	/** Function to stop the Maestro model server, the whole process tree, at once */
 	stopModelServer?: () => void;
+	/** Synchronous permanent authority fence, only after quit is confirmed. */
+	stopPluginToolAuthority?: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 	/** Function to stop settings file watcher (optional, may not be started yet) */
@@ -183,6 +185,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		closeStatsDB,
 		closeEmbeddingStore,
 		stopModelServer,
+		stopPluginToolAuthority,
 		stopCliWatcher,
 		stopSettingsWatcher,
 		releaseDataDirLock,
@@ -349,6 +352,13 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 	 * Called synchronously from before-quit, so async operations are fire-and-forget.
 	 */
 	function performCleanup(): void {
+		// Retire before persistence/watch/process callbacks can reenter tool ingress.
+		// A failed private-file cleanup must not prevent the rest of shutdown.
+		try {
+			stopPluginToolAuthority?.();
+		} catch {
+			logger.warn('Plugin tool authority retirement failed', 'Shutdown');
+		}
 		logger.info('Application shutting down', 'Shutdown');
 
 		// Land the last sessions write before anything else. Session persistence is

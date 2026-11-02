@@ -6,6 +6,7 @@
 // the far end blocks on that reply.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -27,7 +28,7 @@ import { captureException } from '../../../../main/utils/sentry';
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { deriveDashboard } from '../../../../renderer/components/PianolaDashboard/usePianolaDashboardData';
 import type { Session, SessionState } from '../../../../renderer/types';
 import type { PianolaDecisionRecord } from '../../../../shared/pianola/storage';
+import { createMockAITab } from '../../../helpers/mockTab';
 
 function session(overrides: Partial<Session> & { id: string; state: SessionState }): Session {
 	return {
@@ -59,13 +60,136 @@ describe('deriveDashboard', () => {
 		expect(needsInput[0].description).toBe('Waiting for your input');
 	});
 
+	it('shows the busy tab when the selected first tab is idle', () => {
+		const { working } = deriveDashboard(
+			[
+				session({
+					id: 'codex',
+					state: 'busy',
+					busySource: 'ai',
+					activeTabId: 'idle',
+					aiTabs: [
+						createMockAITab({ id: 'idle', name: 'Build local RC', state: 'idle' }),
+						createMockAITab({ id: 'busy', name: 'Fix waiting count', state: 'busy' }),
+					],
+				}),
+			],
+			[]
+		);
+		expect(working).toHaveLength(1);
+		expect(working[0]).toMatchObject({ description: 'Fix waiting count', tabId: 'busy' });
+	});
+
+	it.each([
+		['selected busy tab', 'second', 'second'],
+		['selected idle tab', 'idle', 'first'],
+		['stale selection', 'missing', 'first'],
+	])('chooses the %s consistently when several tabs are busy', (_, activeTabId, expected) => {
+		const { working } = deriveDashboard(
+			[
+				session({
+					id: 'agent',
+					state: 'busy',
+					activeTabId,
+					aiTabs: [
+						createMockAITab({ id: 'idle', name: 'Idle task' }),
+						createMockAITab({ id: 'first', name: 'First busy task', state: 'busy' }),
+						createMockAITab({ id: 'second', name: 'Second busy task', state: 'busy' }),
+					],
+				}),
+			],
+			[]
+		);
+		expect(working).toHaveLength(1);
+		expect(working[0]).toMatchObject({
+			tabId: expected,
+			description: expected === 'first' ? 'First busy task' : 'Second busy task',
+		});
+	});
+
+	it.each([null, '   '])('uses a generic label for an unnamed busy tab (%s)', (name) => {
+		const { working } = deriveDashboard(
+			[
+				session({
+					id: 'agent',
+					state: 'busy',
+					activeTabId: 'idle',
+					aiTabs: [
+						createMockAITab({ id: 'idle', name: 'Idle task' }),
+						createMockAITab({ id: 'busy', name, state: 'busy' }),
+					],
+				}),
+			],
+			[]
+		);
+		expect(working[0]).toMatchObject({ description: 'Working...', tabId: 'busy' });
+	});
+
+	it.each(['none', 'hidden', 'closed'])(
+		'uses a generic label without an open visible busy tab (%s)',
+		(kind) => {
+			const busy = createMockAITab({
+				id: 'busy',
+				name: 'Background task',
+				state: 'busy',
+				hidden: kind === 'hidden',
+			});
+			const { working } = deriveDashboard(
+				[
+					session({
+						id: 'agent',
+						state: 'busy',
+						activeTabId: 'idle',
+						aiTabs: [
+							createMockAITab({ id: 'idle', name: 'Idle task' }),
+							...(kind === 'hidden' ? [busy] : []),
+						],
+						orphanedThinkingTabs: kind === 'closed' ? [busy] : [],
+					}),
+				],
+				[]
+			);
+			expect(working[0].description).toBe('Working...');
+			expect(working[0].tabId).toBeUndefined();
+		}
+	);
+
+	it.each(['idle', 'waiting_input'] as const)(
+		'selects a busy child tab under a %s parent',
+		(state) => {
+			const { working, needsInput } = deriveDashboard(
+				[
+					session({ id: 'parent', state }),
+					session({
+						id: 'child',
+						parentSessionId: 'parent',
+						state: 'busy',
+						activeTabId: 'idle',
+						aiTabs: [
+							createMockAITab({ id: 'idle', name: 'Idle task' }),
+							createMockAITab({ id: 'busy', name: 'Child task', state: 'busy' }),
+						],
+					}),
+				],
+				[]
+			);
+			const row = (state === 'idle' ? working : needsInput)[0];
+			expect(row.tabId).toBeUndefined();
+			expect(row.worktreeChildren?.[0]).toMatchObject({
+				sessionId: 'child',
+				description: 'Child task',
+				tabId: 'busy',
+			});
+		}
+	);
+
 	it('lists busy agents under working with their active tab name', () => {
 		const sessions = [
 			session({
 				id: 'b',
 				state: 'busy',
 				activeTabId: 't1',
-				aiTabs: [{ id: 't1', name: 'refactor parser' }] as Session['aiTabs'],
+				aiTabs: [{ id: 't1', name: 'refactor parser', state: 'busy' }] as Session['aiTabs'],
 			}),
 		];
 		const { working } = deriveDashboard(sessions, []);
@@ -106,7 +230,7 @@ describe('deriveDashboard', () => {
 				parentSessionId: 'parent',
 				name: 'Child',
 				activeTabId: 't1',
-				aiTabs: [{ id: 't1', name: 'fixing tests' }] as Session['aiTabs'],
+				aiTabs: [{ id: 't1', name: 'fixing tests', state: 'busy' }] as Session['aiTabs'],
 			}),
 		];
 		// Parent has prior decision history, so absent the busy child it would land
@@ -141,7 +265,7 @@ describe('deriveDashboard', () => {
 				parentSessionId: 'parent',
 				name: 'Child',
 				activeTabId: 't1',
-				aiTabs: [{ id: 't1', name: 'fixing tests' }] as Session['aiTabs'],
+				aiTabs: [{ id: 't1', name: 'fixing tests', state: 'busy' }] as Session['aiTabs'],
 			}),
 		];
 		const { needsInput, working } = deriveDashboard(sessions, []);

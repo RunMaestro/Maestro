@@ -37,6 +37,7 @@ import { MaestroCliManager, normalizeVersion } from '../../main/maestro-cli-mana
 describe('MaestroCliManager', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.restoreAllMocks();
 		mockExecFileNoThrow.mockResolvedValue({
 			exitCode: 0,
 			stderr: '',
@@ -77,6 +78,60 @@ describe('MaestroCliManager', () => {
 		expect(script).toContain("$installDir = 'C:\\Users\\O''Brien\\.local\\bin'");
 		expect(script).toContain('if ($parts -notcontains $installDir) {\n');
 		expect(script).not.toContain('{;');
+	});
+
+	describe('ensurePosixPathExport', () => {
+		const callEnsure = (manager: MaestroCliManager, installDir: string) =>
+			(
+				manager as unknown as {
+					ensurePosixPathExport(
+						installDir: string
+					): Promise<{ updated: boolean; files: string[]; error?: string }>;
+				}
+			).ensurePosixPathExport(installDir);
+
+		const withShell = async (shell: string, run: () => Promise<void>) => {
+			const previous = process.env.SHELL;
+			process.env.SHELL = shell;
+			try {
+				await run();
+			} finally {
+				if (previous === undefined) delete process.env.SHELL;
+				else process.env.SHELL = previous;
+			}
+		};
+
+		it('reports an unwritable rc file as a PATH error instead of throwing (MAESTRO-177, MAESTRO-15Z)', async () => {
+			vi.spyOn(os, 'homedir').mockReturnValue('/home/tester');
+			vi.spyOn(fs.promises, 'readFile').mockResolvedValue('');
+			vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(
+				Object.assign(new Error("EPERM: operation not permitted, open '/home/tester/.zshrc'"), {
+					code: 'EPERM',
+				})
+			);
+
+			await withShell('/bin/zsh', async () => {
+				const result = await callEnsure(new MaestroCliManager(), '/home/tester/.local/bin');
+				expect(result.updated).toBe(false);
+				expect(result.files).toEqual([]);
+				expect(result.error).toContain(path.join('/home/tester', '.zshrc'));
+				expect(result.error).toContain('export PATH="$HOME/.local/bin:$PATH"');
+			});
+		});
+
+		it('still throws an rc write failure that is not a permission problem', async () => {
+			vi.spyOn(os, 'homedir').mockReturnValue('/home/tester');
+			vi.spyOn(fs.promises, 'readFile').mockResolvedValue('');
+			vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(
+				Object.assign(new Error('EIO: i/o error, write'), { code: 'EIO' })
+			);
+
+			await withShell('/bin/zsh', async () => {
+				await expect(
+					callEnsure(new MaestroCliManager(), '/home/tester/.local/bin')
+				).rejects.toThrow('EIO');
+			});
+		});
 	});
 
 	// Creating a symlink needs elevated rights on Windows CI; the bug is POSIX-only.

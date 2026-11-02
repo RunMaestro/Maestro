@@ -6,6 +6,7 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
@@ -321,7 +322,8 @@ export function registerBrowserTabCallbacks(
 			prompt: string,
 			background?: boolean,
 			hidden?: boolean,
-			consultChain?: ConsultChain
+			consultChain?: ConsultChain,
+			mentionRouting?: MentionRouting
 		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -373,7 +375,8 @@ export function registerBrowserTabCallbacks(
 					responseChannel,
 					background,
 					hidden,
-					consultChain
+					consultChain,
+					mentionRouting
 				);
 
 				const timeoutId = setTimeout(() => {

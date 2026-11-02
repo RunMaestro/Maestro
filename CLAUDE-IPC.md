@@ -10,13 +10,28 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots)
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots); getPendingPermissions/onPendingPermissionsChanged (native-only permission relay status)
 - `fs` - readDir, readFile
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - Folder selection
 - `shells` - Detect available shells
 - `shell` - OS shell integration: openExternal, openPath, trashItem, showItemInFolder, clipboard image read/write, and `capturePage(rect?)`. `capturePage` screenshots the CALLING window as a PNG data URL (`window:capturePage` shoots `event.sender`, so a surface opened in a second window captures itself); pass a viewport-relative CSS-pixel rect to narrow the shot to one region, omit it for the whole page. Resolves null when there is nothing to capture.
 - `logger` - System logging
+
+`process.getPendingPermissions()` and `process.onPendingPermissionsChanged()` return
+`PendingPermissionSnapshot` (`src/shared/pendingPermissions.ts`): a monotonic
+`version` and deduplicated compound `processIds`. Requests, decisions, timeouts,
+and spawn cleanup update the snapshot. These channels stay native-only and carry
+no prompt bodies, tool inputs, or authentication tokens. The owning renderer
+projects this status into agent runtime; browser clients receive that runtime
+through the existing transcript synchronization and private bootstrap snapshots.
+
+`process.onCodexTransport(callback)` reports `(processKey, 'app-server' | 'exec')`
+at spawn and after an app-server fallback. `process.getActiveProcesses()` includes
+the actual `codexTransport` for running Codex processes. Steering uses this runtime
+evidence, never the agent's transport preference. The renderer clears saved
+`AITab.turnCodexTransport` before restoring active processes and on exit; live
+transport and exit events take precedence over an older snapshot.
 
 ## Agent & Provider Sessions
 
@@ -25,6 +40,12 @@ The `window.maestro` API exposes the following namespaces:
 - `agentError` - Agent error handling (clearError, retryAfterError)
 - `memory` - Claude Code per-project memory (list, read, write, create, delete, search, getPath). `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
 - `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
+
+Message deletion uses `agentSessions.deleteMessagePair()` with the message's
+provider and its native session, including parked provider sessions. Await a
+successful result before removing the visible message pair or command history.
+Unsupported providers, remote sessions, and failed requests keep the message
+visible and show an error. Preserve logs appended while deletion is pending.
 
 ## Git Integration
 

@@ -51,7 +51,6 @@ import {
 	ChatUserMessage,
 	ChatTooltip as QuickChatTooltip,
 	ChatIconButton as IconButton,
-	ChatThinkingButton,
 } from '../components/ui/ChatSurface';
 import { VoiceHeldNotice } from '../components/ACappella/VoiceHeldNotice';
 import { useElementHeight } from '../hooks/ui/useElementWidth';
@@ -794,12 +793,6 @@ function QuickChatWindow() {
 						style={picker === 'history' ? { color: c.accent } : undefined}
 					/>
 				</IconButton>
-				<ChatThinkingButton
-					theme={theme}
-					mode={snapshot.thinking}
-					shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking]}
-					onClick={cycleThinking}
-				/>
 				<IconButton
 					theme={theme}
 					label={snapshot.persistent ? 'Kept as a tab' : 'Keep as a tab'}

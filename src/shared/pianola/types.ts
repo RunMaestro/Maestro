@@ -68,6 +68,8 @@ export interface PianolaClassification {
 	risk: PianolaRisk;
 	/** Short human-readable summary of what is being asked. */
 	topic: string;
+	/** Full awaiting message, never the truncated topic; absent in legacy records. */
+	questionText?: string;
 	confidence: 'low' | 'medium' | 'high';
 	/** Why this classification was reached, for the audit log and UI. */
 	evidence: {
@@ -79,7 +81,7 @@ export interface PianolaClassification {
 }
 
 /** Scope a rule applies to. */
-export const RULE_SCOPES = ['global', 'project', 'tab'] as const;
+export const RULE_SCOPES = ['global', 'project', 'tab', 'agent', 'group'] as const;
 export type PianolaRuleScope = (typeof RULE_SCOPES)[number];
 
 /**
@@ -90,11 +92,15 @@ export interface PianolaRule {
 	id: string;
 	enabled: boolean;
 	scope: PianolaRuleScope;
-	/** Project path (scope 'project') or tab id (scope 'tab'); omit for global. */
+	/** Native agent/group/tab ID or legacy project path; omit for global. */
 	scopeId?: string;
 	match: {
 		/** Only fire when classification.risk is at most this level. */
 		maxRisk?: PianolaRisk;
+		/** Exact full awaiting message for learned conditions. */
+		exactQuestion?: string;
+		/** Native group context; null explicitly means ungrouped. */
+		groupId?: string | null;
 		/** Restrict to these signal kinds. */
 		kinds?: PianolaSignalKind[];
 		/** Case-insensitive substring match against the classification topic. */

@@ -27,7 +27,7 @@ import type {
 	DataviewTrustRequest,
 	DataviewTrustResponse,
 } from '../../shared/dataview/types';
-import type { SandboxIndexSnapshot } from '../../shared/dataview/sandboxProtocol';
+import type { SandboxSnapshotPayload } from '../../shared/dataview/sandboxProtocol';
 
 /** Creates the Dataview API object for contextBridge exposure. */
 export function createDataviewApi() {
@@ -46,10 +46,10 @@ export function createDataviewApi() {
 		/** Drop a root's cache and index it again; resolves once the full scan has finished. */
 		rebuild: (request: DataviewRebuildRequest): Promise<DataviewIndexStatus> =>
 			ipcRenderer.invoke('dataview:rebuild', request),
-		/** The index snapshot a DataviewJS run reads (D4). Refused unless DataviewJS is on and the root trusted. */
+		/** The index snapshot a DataviewJS run reads, as JSON text for the guest (D4). Refused unless DataviewJS is on and the root trusted. */
 		jsSnapshot: (
 			request: DataviewJsSnapshotRequest
-		): Promise<DataviewQueryResponse<SandboxIndexSnapshot>> =>
+		): Promise<DataviewQueryResponse<SandboxSnapshotPayload>> =>
 			ipcRenderer.invoke('dataview:jsSnapshot', request),
 		/** Read a text file inside the note's vault root for a DataviewJS script (`dv.io.load`, D4). */
 		readInRoot: (request: DataviewReadInRootRequest): Promise<DataviewReadInRootResponse> =>

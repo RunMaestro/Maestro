@@ -126,6 +126,7 @@ export function applyAutoRunMirrorFrame(
 	// reset entry belongs to the reducer.
 	if (!incoming || !incoming.isRunning) {
 		if (!isMirror) return;
+		lastFrameAt.delete(sessionId);
 		setBatchRunStates((prev) => {
 			const next = { ...prev };
 			delete next[sessionId];
@@ -139,6 +140,18 @@ export function applyAutoRunMirrorFrame(
 	const mirrored = buildMirroredBatchState(incoming, isMirror ? existing : undefined);
 	setBatchRunStates((prev) => ({ ...prev, [sessionId]: mirrored }));
 	noteMirrorFrame(sessionId);
+}
+
+/** Replace mirror inventory after a replay gap without taking local ownership. */
+export function applyAutoRunMirrorSnapshot(incoming: Record<string, AutoRunBroadcastState>): void {
+	for (const [sessionId, state] of Object.entries(useBatchStore.getState().batchRunStates)) {
+		if (state.mirrored && !Object.prototype.hasOwnProperty.call(incoming, sessionId)) {
+			applyAutoRunMirrorFrame(sessionId, null);
+		}
+	}
+	for (const [sessionId, state] of Object.entries(incoming)) {
+		applyAutoRunMirrorFrame(sessionId, state);
+	}
 }
 
 // ============================================================================

@@ -55,10 +55,11 @@ export interface ParsedEvent {
 	 * - 'tool_use': Agent is using a tool (file read, bash, etc.)
 	 * - 'result': Final result/response from agent
 	 * - 'error': Error occurred
+	 * - 'warning': Nonfatal diagnostic to display separately from the answer
 	 * - 'usage': Token usage statistics
 	 * - 'system': System-level messages (not user-facing content)
 	 */
-	type: 'init' | 'text' | 'tool_use' | 'result' | 'error' | 'usage' | 'system';
+	type: 'init' | 'text' | 'tool_use' | 'result' | 'error' | 'warning' | 'usage' | 'system';
 
 	/**
 	 * Session ID for conversation continuity (if available)
@@ -66,7 +67,7 @@ export interface ParsedEvent {
 	sessionId?: string;
 
 	/**
-	 * Text content (for 'text', 'result', 'error' types)
+	 * Text content (for 'text', 'result', 'error', 'warning' types)
 	 */
 	text?: string;
 
@@ -95,9 +96,10 @@ export interface ParsedEvent {
 	 */
 	parentToolUseId?: string;
 
-	/**
-	 * Token usage statistics (for 'usage' type)
-	 */
+	/** Stable provider model-step identity; distinguishes equal per-step usage from replay. */
+	usageEventId?: string;
+
+	/** Token usage statistics. */
 	usage?: {
 		inputTokens: number;
 		outputTokens: number;

@@ -49,6 +49,7 @@ import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargets } from '../../../shared/modelTiers';
 import type { PeerGrants } from '../../../shared/peerAgents';
 import { persistTabStarred } from '../../utils/starredSessions';
+import { flushGroupsToDisk } from '../../services/groupPersistence';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { flushAgentToStore, OFF_TOKEN_PROXY_FIELDS } from '../../services/agentGateway';
 import { killAgentAiProcesses } from '../../services/process';
@@ -293,6 +294,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// the switch too. Each field is written, so a grant the form
 					// switched off is removed and not left behind.
 					peerAgents: peerGrants?.peerAgents,
+					peerDescription: peerGrants ? peerGrants.peerDescription : s.peerDescription,
 					groupPeerAccess: peerGrants?.groupPeerAccess,
 					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					customPath,
@@ -672,7 +674,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// back, so a registry we never read is never persisted.
 	useEffect(() => {
 		if (initialLoadComplete && groupsLoaded) {
-			window.maestro.groups.setAll(groups);
+			void flushGroupsToDisk();
 		}
 	}, [groups, initialLoadComplete, groupsLoaded]);
 

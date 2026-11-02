@@ -1,14 +1,18 @@
 /**
  * Tests for the shared "talk with this document" flow.
  *
- * The point of the service is that the File Preview toolbar's microphone, the
+ * The point of the service is that the document chat's microphone, the
  * Files panel right-click entry, and the command palette cannot drift: all three
- * check the same Encore flag, resolve the same agent, un-hide the HUD, and turn
- * the same refusal into the same toast.
+ * check the same Encore flag and resolve the same agent. Navigation waits for
+ * the panel, whose microphone uses the shared voice controls without a HUD.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
-import { canTalkWithDocument, talkWithDocument } from '../../../renderer/services/documentVoice';
+import {
+	canTalkWithDocument,
+	startDocumentVoice,
+	talkWithDocument,
+} from '../../../renderer/services/documentVoice';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
@@ -40,16 +44,19 @@ beforeEach(() => {
 	openFile = vi.fn();
 	window.addEventListener('maestro:openFileTab', openFile);
 
-	start = vi.fn(async () => ({
-		snapshot: { scope: { kind: 'document', sessionId: SESSION_ID, path: DOC_PATH } },
+	start = vi.fn(async (scope) => ({
+		snapshot: { sessionId: 'voice-1', state: 'listening', scope, seq: 1, providerIds: {} },
 		substitutions: [],
 	}));
-	(window as unknown as { maestro: unknown }).maestro = { voice: { start } };
+	(window as unknown as { maestro: unknown }).maestro = {
+		voice: { start, setListening: vi.fn().mockResolvedValue(true) },
+	};
 
 	useSessionStore.setState({
 		sessions: [createMockSession({ id: SESSION_ID })],
 		activeSessionId: SESSION_ID,
 	});
+	useVoiceSessionStore.getState().reset();
 	useVoiceSessionStore.getState().setDismissed(true);
 	useVoiceUiStore.getState().setMinimized(true);
 	enableVoice(true);
@@ -68,18 +75,15 @@ describe('canTalkWithDocument', () => {
 });
 
 describe('talkWithDocument', () => {
-	it('opens a document-scoped session on the active agent', async () => {
+	it('asks the preview to open its own voice chat before any microphone starts', async () => {
 		await talkWithDocument({ path: DOC_PATH });
 
 		expect(openFile).toHaveBeenCalledWith(
-			expect.objectContaining({ detail: { sessionId: SESSION_ID, filePath: DOC_PATH } })
+			expect.objectContaining({
+				detail: { sessionId: SESSION_ID, filePath: DOC_PATH, documentChat: 'voice' },
+			})
 		);
-		expect(openFile.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]);
-		expect(start).toHaveBeenCalledWith({
-			kind: 'document',
-			sessionId: SESSION_ID,
-			path: DOC_PATH,
-		});
+		expect(start).not.toHaveBeenCalled();
 	});
 
 	it('honours an explicit agent, since the Files panel can show another one', async () => {
@@ -91,20 +95,18 @@ describe('talkWithDocument', () => {
 		await talkWithDocument({ path: DOC_PATH, sessionId: 'agent-2' });
 
 		expect(openFile).toHaveBeenCalledWith(
-			expect.objectContaining({ detail: { sessionId: 'agent-2', filePath: DOC_PATH } })
+			expect.objectContaining({
+				detail: { sessionId: 'agent-2', filePath: DOC_PATH, documentChat: 'voice' },
+			})
 		);
-		expect(start).toHaveBeenCalledWith({
-			kind: 'document',
-			sessionId: 'agent-2',
-			path: DOC_PATH,
-		});
+		expect(start).not.toHaveBeenCalled();
 	});
 
-	it('un-hides the HUD, so the microphone it opened has a surface', async () => {
+	it('leaves the separate HUD alone while opening the document chat', async () => {
 		await talkWithDocument({ path: DOC_PATH });
 
-		expect(useVoiceSessionStore.getState().dismissed).toBe(false);
-		expect(useVoiceUiStore.getState().minimized).toBe(false);
+		expect(useVoiceSessionStore.getState().dismissed).toBe(true);
+		expect(useVoiceUiStore.getState().minimized).toBe(true);
 	});
 
 	it('does nothing at all when the Encore Feature is off', async () => {
@@ -128,12 +130,24 @@ describe('talkWithDocument', () => {
 		);
 	});
 
-	it('turns a refused start into a toast rather than into silence', async () => {
+	it('starts the embedded microphone on its document without opening the file again', async () => {
+		await startDocumentVoice({ path: DOC_PATH });
+		expect(start).toHaveBeenCalledWith({ kind: 'document', sessionId: SESSION_ID, path: DOC_PATH });
+		expect(openFile).not.toHaveBeenCalled();
+		expect(useVoiceUiStore.getState().minimized).toBe(true);
+	});
+
+	it('uses the shared hold gesture when the embedded microphone is held', async () => {
+		await startDocumentVoice({ path: DOC_PATH }, true);
+		expect(window.maestro.voice.setListening).toHaveBeenCalledWith({ listening: true, hold: true });
+	});
+
+	it('turns a refused embedded start into a toast rather than into silence', async () => {
 		// The capability gate refuses BY NAME. A menu entry that appeared to do
 		// nothing is the one outcome that teaches people the feature is broken.
 		start.mockRejectedValueOnce(new Error('No speech-to-text model is installed'));
 
-		await talkWithDocument({ path: DOC_PATH });
+		await startDocumentVoice({ path: DOC_PATH });
 
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({

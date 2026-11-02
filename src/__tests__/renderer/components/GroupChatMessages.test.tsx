@@ -150,6 +150,24 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		expect(scrollTo).toHaveBeenCalled();
 	});
 
+	it('focuses the scrolling transcript through the handle', () => {
+		const ref = createRef<GroupChatMessagesHandle>();
+		const result = render(
+			<GroupChatMessages
+				ref={ref}
+				theme={mockTheme}
+				messages={[{ timestamp: '1700000000000', from: 'Alice', content: 'hello' }]}
+				participants={participants}
+				state="idle"
+			/>
+		);
+		const container = result.container.querySelector('[role="region"]') as HTMLElement;
+
+		act(() => ref.current?.focus());
+
+		expect(document.activeElement).toBe(container);
+	});
+
 	it('retries highlighting until an offscreen target row mounts', async () => {
 		const ref = createRef<GroupChatMessagesHandle>();
 		const timestamp = 1700000000000;

@@ -5,23 +5,9 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-	Mic,
-	Bookmark,
-	BookmarkCheck,
-	History,
-	ImagePlus,
-	PenSquare,
-	ExternalLink,
-	Square,
-} from 'lucide-react';
+import { Mic, History, ImagePlus, PenSquare, Square } from 'lucide-react';
 import type { Theme } from '../../types';
-import {
-	ChatComposerSurface,
-	ChatSendButton,
-	ChatIconButton,
-	ChatThinkingButton,
-} from '../ui/ChatSurface';
+import { ChatComposerSurface, ChatSendButton, ChatIconButton } from '../ui/ChatSurface';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import type { UseFontScaleReturn } from '../../hooks/ui/useFontScale';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
@@ -47,7 +33,8 @@ interface DocumentChatComposerProps {
 	voiceEnabled: boolean;
 	/** True while the live voice session is about this document. */
 	voiceActive: boolean;
-	onStartVoice: () => void;
+	onStartVoice: (hold?: boolean) => void;
+	onReleaseVoice: () => void;
 	onStopVoice: () => void;
 }
 
@@ -63,6 +50,7 @@ export const DocumentChatComposer = React.memo(function DocumentChatComposer({
 	voiceEnabled,
 	voiceActive,
 	onStartVoice,
+	onReleaseVoice,
 	onStopVoice,
 }: DocumentChatComposerProps) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -94,19 +82,19 @@ export const DocumentChatComposer = React.memo(function DocumentChatComposer({
 
 	const onHoldStart = useCallback(() => {
 		if (isTalkMode) {
-			if (!voiceActive) onStartVoice();
+			onStartVoice(true);
 			return;
 		}
 		dictation.startVoiceInput();
-	}, [isTalkMode, voiceActive, onStartVoice, dictation.startVoiceInput]);
+	}, [isTalkMode, onStartVoice, dictation.startVoiceInput]);
 
 	const onHoldEnd = useCallback(() => {
 		if (isTalkMode) {
-			onStopVoice();
+			onReleaseVoice();
 			return;
 		}
 		dictation.stopVoiceInput();
-	}, [isTalkMode, onStopVoice, dictation.stopVoiceInput]);
+	}, [isTalkMode, onReleaseVoice, dictation.stopVoiceInput]);
 
 	// A tap toggles, which is what a tap has always meant on the voice hotkey and
 	// on the HUD's talk button: someone having a conversation taps once and
@@ -250,31 +238,6 @@ export const DocumentChatComposer = React.memo(function DocumentChatComposer({
 					onClick={onHistory}
 				>
 					<History className="w-4 h-4" />
-				</ChatIconButton>
-				<ChatThinkingButton
-					theme={theme}
-					mode={chat.tab?.showThinking ?? 'off'}
-					onClick={chat.cycleThinking}
-				/>
-				<ChatIconButton
-					theme={theme}
-					label={chat.tab && !chat.tab.hidden ? 'Kept as a tab' : 'Keep as a tab'}
-					hint="Show this saved conversation in the tab bar."
-					onClick={chat.keep}
-				>
-					{chat.tab && !chat.tab.hidden ? (
-						<BookmarkCheck className="w-4 h-4" style={{ color: theme.colors.accent }} />
-					) : (
-						<Bookmark className="w-4 h-4" />
-					)}
-				</ChatIconButton>
-				<ChatIconButton
-					theme={theme}
-					label="Open in tab"
-					onClick={chat.popOut}
-					disabled={!chat.tab}
-				>
-					<ExternalLink className="w-4 h-4" />
 				</ChatIconButton>
 				<ChatIconButton
 					theme={theme}

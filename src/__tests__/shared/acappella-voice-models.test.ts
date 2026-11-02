@@ -192,6 +192,7 @@ describe('voice models', () => {
 	it('has a pretrained classifier for the default wake phrase', () => {
 		// The default must be a phrase something can detect. "hey maestro" shipped
 		// as the default with no model behind it and could never fire.
+		expect(DEFAULT_WAKE_PHRASE).toBe('Hey Jarvis');
 		const pretrained = findPretrainedWakePhrase(DEFAULT_WAKE_PHRASE);
 		expect(pretrained?.modelId).toBe(HEY_JARVIS_WAKE_ID);
 		expect(getLocalModel(pretrained!.modelId)?.files.map((file) => file.path)).toContain(

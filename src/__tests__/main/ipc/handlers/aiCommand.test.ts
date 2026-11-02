@@ -157,6 +157,7 @@ describe('aiCommand IPC handler', () => {
 				sessionCustomArgs: undefined,
 				sessionCustomEnvVars: undefined,
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				acceptWorkspaceTrust: true,
 			}),
 			expect.anything(),
 			expect.anything()
@@ -211,6 +212,14 @@ describe('aiCommand IPC handler', () => {
 		const [options] = mockGroomContext.mock.calls[0];
 		expect(options.sessionSshRemoteConfig).toEqual({ enabled: true, remoteId: 'r1' });
 		expect(options.sshStore.getSshRemotes()).toEqual([remote]);
+	});
+
+	// The suggestion runs in the agent's own directory, and can be the first TUI
+	// spawn there (#1872).
+	it("accepts claude's folder trust for the agent's own directory", async () => {
+		await invokeSuggest({});
+
+		expect(mockGroomContext.mock.calls[0][0].acceptWorkspaceTrust).toBe(true);
 	});
 
 	it('passes no remote list for a local agent', async () => {

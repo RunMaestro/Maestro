@@ -120,8 +120,14 @@ describe('codexUsageStore', () => {
 		});
 
 		it('keeps accounts isolated from one another', () => {
-			const work = makeSnapshot({ codexHomeKey: '/Users/test/.codex-work' });
-			const personal = makeSnapshot({ codexHomeKey: '/Users/test/.codex-personal' });
+			const work = makeSnapshot({
+				codexHomeKey: '/Users/test/.codex-work',
+				credits: { kind: 'unlimited' },
+			});
+			const personal = makeSnapshot({
+				codexHomeKey: '/Users/test/.codex-personal',
+				credits: { kind: 'balance', balance: 42.5 },
+			});
 			setCodexUsageSnapshot(work);
 			setCodexUsageSnapshot(personal);
 
@@ -137,6 +143,20 @@ describe('codexUsageStore', () => {
 			setCodexUsageSnapshot(refreshed);
 
 			expect(getAllCodexUsageSnapshots()).toEqual({ [refreshed.codexHomeKey]: refreshed });
+		});
+
+		it('replaces a previous balance with explicit zero, then clears unavailable details', () => {
+			setCodexUsageSnapshot(makeSnapshot({ credits: { kind: 'balance', balance: 42.5 } }));
+			const zero = makeSnapshot({ credits: { kind: 'balance', balance: 0 } });
+			setCodexUsageSnapshot(zero);
+			expect(getAllCodexUsageSnapshots()[zero.codexHomeKey].credits).toEqual({
+				kind: 'balance',
+				balance: 0,
+			});
+
+			const unavailable = makeSnapshot();
+			setCodexUsageSnapshot(unavailable);
+			expect(getAllCodexUsageSnapshots()[unavailable.codexHomeKey].credits).toBeUndefined();
 		});
 
 		it('clears every account', () => {

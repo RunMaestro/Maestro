@@ -148,5 +148,20 @@ describe.each(['tailscale', 'lan'] as const)(
 			expect(socket.readyState).toBe(WebSocket.CLOSED);
 			expect(commands).toBe(1);
 		});
+		it('reuses the recovery port and refuses an origin-changing fallback', async () => {
+			const origin = relay.url.origin;
+			const port = Number(new URL(origin).port);
+			await relay.tunnel.stop();
+			const blocker = createServer();
+			await new Promise<void>((resolve) => blocker.listen(port, '127.0.0.1', resolve));
+			const open = () =>
+				transport === 'lan'
+					? openLanRelay(endpoint, credential, abort.signal, port, false)
+					: openTailnetRelay(endpoint, credential, abort.signal, 'host-node', port, false);
+			await expect(open()).rejects.toThrow(/EADDRINUSE/);
+			await new Promise<void>((resolve) => blocker.close(() => resolve()));
+			relay = await open();
+			expect(relay.url.origin).toBe(origin);
+		});
 	}
 );

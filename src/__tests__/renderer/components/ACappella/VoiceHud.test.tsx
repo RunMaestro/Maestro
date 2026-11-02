@@ -207,6 +207,19 @@ afterEach(() => {
 });
 
 describe('VoiceHud gating', () => {
+	it('leaves a document voice session inside its chat panel without displaying the HUD', () => {
+		renderHud();
+		startSession();
+		emit(
+			event('scope-change', {
+				scope: { kind: 'document', sessionId: 'agent-1', path: '/repo/doc.md' },
+			})
+		);
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
+		expect(useVoiceSessionStore.getState().state).toBe('listening');
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+	});
+
 	it('renders nothing and subscribes to nothing when the Encore flag is off', () => {
 		renderHud({ enabled: false, showDevHarness: true });
 		expect(screen.queryByTestId('voice-hud')).toBeNull();

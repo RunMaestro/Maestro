@@ -32,7 +32,7 @@ import {
 	observedPlatformFor,
 } from '../../shared/computer-history/exclusions';
 import { GIB, describeDigestWriter, isDigestSource } from '../../shared/computer-history/config';
-import { parseDurationInput, parseTimeInput } from '../../shared/computer-history/timeRange';
+import { parseDurationInput, parseTimeInput } from '../../shared/timeInput';
 import {
 	fenceUntrusted,
 	resolveKindInput,

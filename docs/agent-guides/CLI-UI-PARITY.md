@@ -18,7 +18,7 @@ Change the agent default in Edit Agent or `update-agent --provider`; native conv
 
 ## Focus belongs to the human (`--background` / `--focus`)
 
-Provider switching (`update-agent --provider`) uses `provider_translation`. Without `--convert` it sends the `switch` action, which runs `switchProviderWithoutConversion()` (`src/renderer/services/providerTranslation.ts`), the same plain switch Edit Agent saves when **Convert memory and session history** is unchecked. With `--convert` (or any translation option) it forwards to the same migration callback as Edit Agent's opt-in conversion. Its dedicated transport prevents a newer CLI's preflight/apply from falling through to an older desktop's destructive provider settings patch. `--migration-plan` targets a reviewed operation; `--dry-run --json` supplies its ID for a Cue shell Command node. This operation changes the active provider; it is not an independent replica sync API.
+Provider translation (`update-agent --provider`) uses `provider_translation`, which forwards to the same migration callback as Edit Agent. Its dedicated transport prevents a newer CLI's preflight/apply from falling through to an older desktop's destructive provider settings patch. `--migration-plan` targets a reviewed operation; `--dry-run --json` supplies its ID for a Cue shell Command node. This operation changes the active provider; it is not an independent replica sync API.
 
 | UI action                                                                     | CLI path                                                  | Shared operation                                                                                                                                   |
 | ----------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,20 +55,26 @@ turn that ended with an unflagged refresh yanked the user to that agent. The
 flip is CLI-side (`CLI_BACKGROUND_DEFAULTS`), so a web client that omits the
 field still gets the old behaviour, and `--focus` restores it from the CLI.
 
-| Verb                                              | Message                                               | Default (unchanged)                     |
-| ------------------------------------------------- | ----------------------------------------------------- | --------------------------------------- |
-| `open-file`                                       | `open_file_tab`                                       | focuses                                 |
-| `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                 |
-| `open-browser`                                    | `open_browser_tab`                                    | focuses                                 |
-| `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                 |
-| `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
-| `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
-| `create-agent`                                    | `create_session`                                      | selects the new agent                   |
-| `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                   |
-| `switch-mode`                                     | `switch_mode`                                         | switches                                |
-| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)     |
-| `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op |
-| `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**          |
+| Verb                                              | Message                                               | Default (unchanged)                                                 |
+| ------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| `open-file`                                       | `open_file_tab`                                       | focuses                                                             |
+| `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                                             |
+| `open-browser`                                    | `open_browser_tab`                                    | focuses                                                             |
+| `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                                             |
+| `tab reopen`                                      | `closed_tab_command` (`action: 'reopen'`)             | focuses                                                             |
+| `tab compact`                                     | `summarize_context`                                   | selects the compacted tab                                           |
+| `tab merge`                                       | `merge_context`                                       | jumps to the receiving tab; `--background` stages the context there |
+| `tab transfer`                                    | `transfer_context`                                    | jumps to the new tab in the target agent                            |
+| `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)                                   |
+| `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                                            |
+| `create-agent`                                    | `create_session`                                      | selects the new agent                                               |
+| `duplicate-agent`                                 | `create_session`                                      | selects the new agent                                               |
+| `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                                               |
+| `switch-mode`                                     | `switch_mode`                                         | switches                                                            |
+| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)                                 |
+| `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op                             |
+| `live on`, `live off`                             | `live_command`                                        | **already quiet**; flag accepted, no-op                             |
+| `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**                                      |
 
 `focus-agent`, `send --tab`, `open` and `open-graph` exist TO move the view - the
 caller named that intent, and the graph is a full-window overlay whose only
@@ -120,9 +126,10 @@ and the placement flags apply.
 ### Verbs that accept the flag and ignore it
 
 `refresh-files` renders no notice and moves no selection: the Files panel it
-refreshes is only drawn for the agent already on screen. It still accepts
-`--background`, and `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts` is where
-that is recorded.
+refreshes is only drawn for the agent already on screen. `live on` / `live off`
+move no view either: every window's LIVE pill follows the switch. They still
+accept `--background`, and `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts`
+is where that is recorded.
 
 This is not a placeholder. The guidance agents are given is "pass `--background`
 unless the user asked to be taken there", and commander **rejects an unknown
@@ -280,23 +287,35 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Dismiss one / all visible notifications                                                                                                                                                                                                                                                                                                                                                                         | `notify inbox dismiss [id]`                                                                                                                                                                                                                                                                                                                                                                              |
 | Expand / collapse full inbox details                                                                                                                                                                                                                                                                                                                                                                            | `notify inbox detail <id>` / `collapse`                                                                                                                                                                                                                                                                                                                                                                  |
 | In-App Toasts switch (bell popover, palette, Toggle In-App Toasts)                                                                                                                                                                                                                                                                                                                                              | `settings set toastDuration -1` (off) / `settings set toastDuration <seconds>` (on)                                                                                                                                                                                                                                                                                                                      |
+| Create, edit, pause, enable or remove a whole-agent/group Pianola watch scope                                                                                                                                                                                                                                                                                                                                   | `pianola supervise scope --manager <id> --label <label> [--id <id>] [--agents <ids>] [--groups <ids>] [--exclude <ids>] [--json]` (comma-separated IDs; new scopes paused, edits retain enabled state); `pianola supervise list`, `enable <id>`, `disable <id>`, `remove <id>`; `pianola watch-scope <scope-id> [--once] [--dry-run] [--json]`.                                                          |
+| Enable or revoke Pianola automatic repair permission (Settings > Plugins > Pianola > Settings)                                                                                                                                                                                                                                                                                                                  | `settings set pianolaAutoFixEnabled true` / `false`; read with `settings get pianolaAutoFixEnabled --json` and `encore list --json` for the effective mode. This permission does not authorize merging.                                                                                                                                                                                                  |
+| Resolve or escalate a pending Pianola decision                                                                                                                                                                                                                                                                                                                                                                  | `pianola resolve <decision-id> --answer <text>` or `--escalation <recommendation>`; read with `pianola log --json`. CLI manager replies and explicit human `pianola.resolveDecision()` actions share the native resolver; actor provenance is transport-specific.                                                                                                                                        |
 | Quick Chat window: hotkey, back to Maestro (Cmd+`), send, attach images (paste, drop, image button), new, keep, pin, thinking, tab picker, text size, agent, open in Maestro, open a message's tab (the pill), send a queued message to a new tab, steer a queued message into the running reply, thumbs-down a routed tab (resend in a new tab), recent chats (History button, recall one), stop, drag, resize | `quick-chat toggle\|show\|hide\|return\|send [--image <path...>]\|new\|keep\|pin\|thinking\|tab\|font\|agent\|reveal [message-id]\|new-tab [message-id]\|steer [message-id]\|recall <chat>\|stop\|bounds`, read with `quick-chat status` (each message, its id, and the tab it went to) and `quick-chat history` (the recent chats) (or bare `quick-chat font`); `open quick-chat`                       |
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                                                                                                                                                                                                                                                                                                                                    | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                                                                                                                                                                                                                                                                                  |
 | Create / rename / remove an agent                                                                                                                                                                                                                                                                                                                                                                               | `create-agent`, `rename-agent`, `remove-agent`                                                                                                                                                                                                                                                                                                                                                           |
+| Duplicate an agent (context menu Duplicate...)                                                                                                                                                                                                                                                                                                                                                                  | `duplicate-agent <agent> [--name] [--group] [--cwd]`, read with `show-agent`; copies what the modal copies via `buildDuplicateAgentInput()`                                                                                                                                                                                                                                                              |
 | Edit Agent modal fields                                                                                                                                                                                                                                                                                                                                                                                         | `update-agent`, `settings agent set`                                                                                                                                                                                                                                                                                                                                                                     |
-| Switch an agent's provider                                                                                                                                                                                                                                                                                                                                                                                      | `update-agent --provider [--convert]`                                                                                                                                                                                                                                                                                                                                                                    |
+| Switch an agent's provider                                                                                                                                                                                                                                                                                                                                                                                      | `update-agent --provider`                                                                                                                                                                                                                                                                                                                                                                                |
 | Codex transport (Standard / App server)                                                                                                                                                                                                                                                                                                                                                                         | `update-agent --codex-transport exec\|app-server`, read back via `show-agent`                                                                                                                                                                                                                                                                                                                            |
 | Move an agent to a group                                                                                                                                                                                                                                                                                                                                                                                        | `update-agent --group`                                                                                                                                                                                                                                                                                                                                                                                   |
 | Change working directory                                                                                                                                                                                                                                                                                                                                                                                        | `update-agent --cwd`                                                                                                                                                                                                                                                                                                                                                                                     |
 | SSH remote execution config                                                                                                                                                                                                                                                                                                                                                                                     | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                                                                                                                                                                                                                                                                                                                             |
 | Edit an SSH remote, incl. its `ssh -o` list                                                                                                                                                                                                                                                                                                                                                                     | `update-ssh-remote --ssh-option / --clear-ssh-options`                                                                                                                                                                                                                                                                                                                                                   |
+| Test an SSH remote, enable / disable it, set the default                                                                                                                                                                                                                                                                                                                                                        | `test-ssh-remote <remote-id>`, `update-ssh-remote --enabled true\|false`, `update-ssh-remote --set-default` (read back with `list ssh-remotes --json`)                                                                                                                                                                                                                                                   |
 | Focus an agent, switch AI/Shell mode                                                                                                                                                                                                                                                                                                                                                                            | `focus-agent`, `switch-mode`                                                                                                                                                                                                                                                                                                                                                                             |
 | Create / rename / remove a group                                                                                                                                                                                                                                                                                                                                                                                | `create-group`, `rename-group`, `remove-group`                                                                                                                                                                                                                                                                                                                                                           |
-| Group icon, color, and nesting                                                                                                                                                                                                                                                                                                                                                                                  | `create-group --icon/--color/--parent`, `update-group`                                                                                                                                                                                                                                                                                                                                                   |
+| Group emoji, icon, color, and nesting                                                                                                                                                                                                                                                                                                                                                                           | `create-group --emoji/--icon/--color/--parent`, `update-group`                                                                                                                                                                                                                                                                                                                                           |
 | Hide / show a group in the Left Bar                                                                                                                                                                                                                                                                                                                                                                             | `update-group --hide / --show` (read back with `list groups --json`)                                                                                                                                                                                                                                                                                                                                     |
+| Collapse / expand a group                                                                                                                                                                                                                                                                                                                                                                                       | `update-group --collapse / --expand` (read back with `list groups --json`, field `collapsed`)                                                                                                                                                                                                                                                                                                            |
+| Reorder agents or groups in the Left Bar                                                                                                                                                                                                                                                                                                                                                                        | No verb: the Left Bar sorts agents and groups by name and stores no order. A drag only changes membership: `update-agent --group` (worktree children move with the agent), `update-group --parent / --clear-parent`                                                                                                                                                                                      |
+| Live mode switch (web interface, the LIVE pill), and Remote Control (the Cloudflare tunnel)                                                                                                                                                                                                                                                                                                                     | `live on [--tunnel]`, `live off`, `live tunnel on\|off` (read with `live status`; `live off` also stops Remote Control, as the pill does)                                                                                                                                                                                                                                                                |
 | Move an agent or a whole group to another window                                                                                                                                                                                                                                                                                                                                                                | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`                                                                                                                                                                                                                                                                                                                    |
 | Create a worktree agent                                                                                                                                                                                                                                                                                                                                                                                         | `create-worktree`                                                                                                                                                                                                                                                                                                                                                                                        |
 | New / close / rename a tab                                                                                                                                                                                                                                                                                                                                                                                      | `tab new`, `tab close`, `tab rename`                                                                                                                                                                                                                                                                                                                                                                     |
+| Reopen Closed Tab (Cmd+Shift+T)                                                                                                                                                                                                                                                                                                                                                                                 | `tab reopen [--index <n> \| --tab <id>]`, read with `tab closed`                                                                                                                                                                                                                                                                                                                                         |
+| Context: Compact (AI tab overlay menu, palette, composer warning)                                                                                                                                                                                                                                                                                                                                               | `tab compact [<tab-id>]`, prints the compacted tab's id; read with `tab show <id>`                                                                                                                                                                                                                                                                                                                       |
+| Context: Merge Into (AI tab overlay menu)                                                                                                                                                                                                                                                                                                                                                                       | `tab merge [<tab-id>] --into <agent> [--target-tab <id>]`, verbatim into an existing tab; read with `tab show <target-tab>`                                                                                                                                                                                                                                                                              |
+| Context: Send to Agent (AI tab overlay menu)                                                                                                                                                                                                                                                                                                                                                                    | `tab transfer [<tab-id>] --to <agent>`, prints the new tab's id (`queued` when the target is busy); read with `tab show <id>`                                                                                                                                                                                                                                                                            |
 | Star a tab (Cmd+Shift+S)                                                                                                                                                                                                                                                                                                                                                                                        | `tab star` / `tab unstar`                                                                                                                                                                                                                                                                                                                                                                                |
 | Mark a tab unread                                                                                                                                                                                                                                                                                                                                                                                               | `tab unread` / `tab read`                                                                                                                                                                                                                                                                                                                                                                                |
 | Toggle Save to History                                                                                                                                                                                                                                                                                                                                                                                          | `tab save-to-history`                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -306,7 +325,10 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Read one tab's settings back                                                                                                                                                                                                                                                                                                                                                                                    | `tab show`, or `session list --json`                                                                                                                                                                                                                                                                                                                                                                     |
 | Move Tab to First / Last                                                                                                                                                                                                                                                                                                                                                                                        | `tab move <tab-id> first\|last\|<index>`                                                                                                                                                                                                                                                                                                                                                                 |
 | Send a message, or run a shell command (incl. a code fence's Run button)                                                                                                                                                                                                                                                                                                                                        | `send`, `dispatch`, `send-terminal`                                                                                                                                                                                                                                                                                                                                                                      |
+| Stop a running turn (the Stop pill; no key is bound to Stop)                                                                                                                                                                                                                                                                                                                                                    | `interrupt <agent>` stops every busy tab, as the pill does; `interrupt <agent> --tab <id\|active>` stops one tab (read back with `tab show`)                                                                                                                                                                                                                                                             |
 | Consult another agent (`@mention`)                                                                                                                                                                                                                                                                                                                                                                              | `ask <agent> "<question>" --from <caller>`                                                                                                                                                                                                                                                                                                                                                               |
+| Mention routing strip (Parallel, Consult first, Hand-off, Only)                                                                                                                                                                                                                                                                                                                                                 | `dispatch --routing <parallel\|consult-first\|handoff\|only>` (also with `--queue` and `--new-tab`; read back with `queue list`, which shows each item's `mentionRouting`)                                                                                                                                                                                                                               |
+| List the execution queue, remove a queued card                                                                                                                                                                                                                                                                                                                                                                  | `queue list [--agent <id>]`, `queue remove <item-id> --agent <id>` (read back with `queue list`)                                                                                                                                                                                                                                                                                                         |
 | Hold / Resume a queued card                                                                                                                                                                                                                                                                                                                                                                                     | `queue hold <item-id> --agent <id>`, `queue resume <item-id> --agent <id>` (read back with `queue list`, which shows `paused`)                                                                                                                                                                                                                                                                           |
 | Merge a queued card into the one above                                                                                                                                                                                                                                                                                                                                                                          | `queue merge <item-id> --agent <id>` (read back with `queue list`: the item is gone and the one above carries both texts)                                                                                                                                                                                                                                                                                |
 | Group chat: Steer a queued message into the running round (moderator or working participants)                                                                                                                                                                                                                                                                                                                   | `group-chat steer <chat> --item <queued-id>` (find the id with `group-chat status`), or `group-chat steer <chat> "<message>"` for new text                                                                                                                                                                                                                                                               |
@@ -333,15 +355,10 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: Log in to GitHub / Check Again                                                                                                                                                                                                                                                                                                                                                                        | `feedback login`, `feedback auth --fresh`                                                                                                                                                                                                                                                                                                                                                                |
 | Feedback: live self-diagnosis                                                                                                                                                                                                                                                                                                                                                                                   | `feedback diagnose`                                                                                                                                                                                                                                                                                                                                                                                      |
 | Feedback: Submit now (early exit)                                                                                                                                                                                                                                                                                                                                                                               | `feedback submit` (the caller supplies whatever fields it has)                                                                                                                                                                                                                                                                                                                                           |
-| Create Debug Package (support package)                                                                                                                                                                                                                                                                                                                                                                          | `support-package -o <dir> [--no-logs ...]`                                                                                                                                                                                                                                                                                                                                                               |
+| Create Debug Package (support package)                                                                                                                                                                                                                                                                                                                                                                          | `support-package -o <dir> [--no-logs ...]`; the package carries the same Auto Run state, fetched from every app window (`batch-state.json` records why when no window answers; a run owned by a web-desktop tab is missing in both)                                                                                                                                                                      |
 | Start / End Performance Profiling                                                                                                                                                                                                                                                                                                                                                                               | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                                                                                                                                                                                                                                                                                                                         |
 | Cue dashboard: subscription on/off switch                                                                                                                                                                                                                                                                                                                                                                       | `cue enable <sub>`, `cue disable <sub>` (any event type)                                                                                                                                                                                                                                                                                                                                                 |
 | Cue dashboard: activity log                                                                                                                                                                                                                                                                                                                                                                                     | `cue activity [-a <agent>] [-n <limit>]`                                                                                                                                                                                                                                                                                                                                                                 |
-| Check a data dir is ready to run Cue unattended (CLI first; no UI surface yet)                                                                                                                                                                                                                                                                                                                                  | `cue engine check [--data-dir <path>] [--json]`; `cue engine start --require-ready` refuses on the same report                                                                                                                                                                                                                                                                                           |
-| Cue modal, Bundles tab: export a pipeline, with Claude Code assets                                                                                                                                                                                                                                                                                                                                              | `bundle export --pipeline <name>` [`--no-claude-skills` `--no-claude-mcp` `--no-claude-memory`]                                                                                                                                                                                                                                                                                                          |
-| Cue modal, Bundles tab: choose a bundle (contents and validation)                                                                                                                                                                                                                                                                                                                                               | `bundle inspect <zip> [--json]`, `bundle validate <zip> [--check-env] [--json]`                                                                                                                                                                                                                                                                                                                          |
-| Cue modal, Bundles tab: import (dry run, conflicts, Overwrite, Restore machine settings)                                                                                                                                                                                                                                                                                                                        | `bundle import <zip> -w <key=path> [--dry-run] [--force] [--no-local] [--reject-shell-commands] [--json]`                                                                                                                                                                                                                                                                                                |
-| Open the Bundles tab                                                                                                                                                                                                                                                                                                                                                                                            | `open cue --tab bundles`                                                                                                                                                                                                                                                                                                                                                                                 |
 | Auto Run panel: progress                                                                                                                                                                                                                                                                                                                                                                                        | `auto-run-status -a <agent>`                                                                                                                                                                                                                                                                                                                                                                             |
 | Auto Run panel: Change folder                                                                                                                                                                                                                                                                                                                                                                                   | `auto-run-folder <path> -a <agent>`                                                                                                                                                                                                                                                                                                                                                                      |
 | Thought Stream: Steer Auto Run (send a note, cancel one, read replies)                                                                                                                                                                                                                                                                                                                                          | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`                                                                                                                                                                                                                                                                                                             |
@@ -487,15 +504,25 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Left Bar group right-click, Import Agent... (or palette Import Agent)                                                                                                                                                                                                                                                                                                                                           | `bundle import <zip> --group <id> [-w <key=path>] [--no-local] [--dry-run] [--force]`                                                                                                                                                                                                                                                                                                                    |
 | Usage-data scan progress (modal / corner card)                                                                                                                                                                                                                                                                                                                                                                  | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)                                                                                                                                                                                                                                                                                                                     |
 | Left Bar: Archive / Unarchive a group chat                                                                                                                                                                                                                                                                                                                                                                      | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)                                                                                                                                                                                                                                                                                                                       |
+| User Journey (read-only agent surface; the desktop records it as the user works, so there is no UI write counterpart)                                                                                                                                                                                                                                                                                           | `journey [--agent <id>] [--since <time>] [--tail <n>] [--kind <kinds>] [--json]`                                                                                                                                                                                                                                                                                                                         |
+| User Journey switch (Settings > General > User Journey)                                                                                                                                                                                                                                                                                                                                                         | `settings set userJourneyEnabled false` / `true`, read back with `settings get userJourneyEnabled`                                                                                                                                                                                                                                                                                                       |
+| Timeline (read-only agent surface: the merged history, User Journey, and commits; no UI counterpart)                                                                                                                                                                                                                                                                                                            | `timeline [--agent <id>] [--since <time>] [--until <time>] [--sources <list>] [--tail <n>] [--per-source <n>] [--grep <text>] [--json]`, `timeline show <entry> [--agent <id>] [--json]`                                                                                                                                                                                                                 |
 
 ### Isolated Lite connection controls
 
-| Point-and-click action                                | CLI                                                                                                                |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Lite: list / edit / save / delete connection profiles | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes` |
-| Lite: forget validated host identity                  | `lite profile reset-identity <id> --yes`                                                                           |
-| Lite: connect / reconnect / disconnect / status       | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                            |
-| Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
+| Point-and-click action                                                                                                                          | CLI                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Lite: list / edit / save / delete connection profiles                                                                                           | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes`                                                 |
+| Lite: forget validated host identity                                                                                                            | `lite profile reset-identity <id> --yes`                                                                                                                           |
+| Lite: connect / reconnect / disconnect / status                                                                                                 | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                                                                            |
+| Lite: connections / commands / dismiss / close                                                                                                  | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                                                                    |
+| Group icon, color, and nesting                                                                                                                  | `create-group --icon/--color/--parent`, `update-group`                                                                                                             |
+| Check a data dir is ready to run Cue unattended (CLI first; no UI surface yet)                                                                  | `cue engine check [--data-dir <path>] [--json]`; `cue engine start --require-ready` refuses on the same report                                                     |
+| Left Bar agent right-click, Export Agent... (or palette Export Agent): Cue subscriptions, Claude Code assets, Exact copy                        | `bundle export --agent <name>` [`--no-cue`] [`--no-claude-skills` `--no-claude-mcp` `--no-claude-memory`] [`--exact`]                                              |
+| Left Bar group right-click, Import Agent... (or palette Import Agent): choose a bundle, dry run, conflicts, Overwrite, Restore machine settings | `bundle inspect <zip>`, `bundle validate <zip>`, `bundle import <zip> [--group <id>] [-w <key=path>] [--dry-run] [--force] [--no-local] [--reject-shell-commands]` |
+| Export a pipeline (CLI only; the Cue modal has no Bundles tab)                                                                                  | `bundle export --pipeline <name>` [`--no-claude-skills` `--no-claude-mcp` `--no-claude-memory`]                                                                    |
+| Usage-data scan progress (modal / corner card)                                                                                                  | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)                                                                               |
+| Left Bar: Archive / Unarchive a group chat                                                                                                      | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)                                                                                 |
 
 `maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
 server (the third case in [CLI-HEADLESS.md](CLI-HEADLESS.md#need-a-running-lite-client):
@@ -557,228 +584,158 @@ acting again.
 
 ## Open gaps
 
-Ranked by how often an agent is likely to hit them. Most are not built yet;
-deliberate design constraints, including protected host consent, are noted below.
+Ranked by how often an agent is likely to hit them. Every entry is buildable
+work; UI actions left without a verb on purpose are listed under
+[Not mirrored by design](#not-mirrored-by-design).
 
-1. **Interrupt a running turn.** Escape stops a busy agent in the UI. There is
-   no CLI equivalent and no WS message behind one. This is the largest remaining
-   gap: an agent that starts a runaway turn on another agent cannot stop it.
-2. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
-   runtime-only and never persisted, so the CLI cannot see the stack to restore
-   from it. Closing this means persisting that history first.
-3. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
-   options (what to copy). `create-agent` can approximate it, but there is no
-   one-shot duplicate.
-4. **Toggle Live mode** (`isLive`) for the web interface.
-5. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
-   presentation; low value for automation, which is why they are last.
-6. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
-   Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
-   agent already has `git` and `gh` in its shell, which is strictly more capable.
-   Only the modal-opening is unavailable, not the capability.
-7. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
-   Tab Switcher, Search: Messages). These are interactive by definition; the
-   underlying data is reachable through `list`, `session show`, and
-   `director-notes history`.
-8. **Auto Run state in a CLI-built support package.** The desktop's Create
-   Debug Package hands main a snapshot of the renderer's in-memory batch store
-   (`captureAutoRunSnapshots()`). `support-package` and
-   `feedback submit --support-package` are built in main with no renderer round
-   trip, so that section reads "unavailable". The Feedback modal's own support
-   package checkbox has the same gap today. Closing it needs a main-to-renderer
-   request with a response channel.
-9. **Context: Compact, Merge Into, Send to Agent.** The WS messages
-   (`summarize_context`, `merge_context`, `transfer_context`) and the preload
-   listeners exist, but NO renderer code subscribes to
-   `onRemoteSummarizeContext` / `onRemoteMergeContext` /
-   `onRemoteTransferContext`, so every call times out. Closing it means wiring
-   those listeners to the same hooks the tab overlay menu uses, then adding
-   `tab compact / merge / transfer`. Do not wrap the dead messages.
-10. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
-    `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
-    legacy `${sessionId}-ai` process id, which misses per-tab processes
-    (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
-    then add `interrupt <agent> [--tab]`.
-11. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
-    an element already rendered in a transcript or document
-    (`openZoomViewer(element)`), and a transcript element has no address the
-    CLI can name. The capability is still reachable: `open-file <image>` opens
-    the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
-    an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
-    viewing; there is no result for an agent to read back.
-12. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
-    document dropdown's height via `useResizableDropdownHeight`, the Document
-    Graph preview width via `usePersistedPanelWidth`). Pure view preferences
-    with nothing for an agent to act on; the values never reach main, so a
-    verb needs a renderer round trip. Double-click on the grip resets them.
-    The same holds for two `usePersistedToggle` view switches: the Library's
-    "Show models too large for this machine" (`models list --fit` lists every
-    model with its fit label, so nothing is hidden from the CLI) and the
-    Delegation Graph legend. The sort order of a Usage Dashboard Models table
-    is not saved at all; `stats models --json` returns the rows to sort.
-13. **Log in to a provider account** (Usage Dashboard quota row "Log in",
-    palette "Reauthenticate Provider"). The login is an interactive OAuth or
-    device-code flow in a PTY, so there is nothing a non-interactive verb could
-    complete. The capability is reachable from an agent's shell as
-    `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
-    `/login`. There is no CLI read of the quota snapshots yet, so verifying the
-    login from the CLI is part of this gap.
-14. **A Cappella: what `maestro-cli voice` leaves out.** The session, the
-    HUD controls, providers, voices, keys, paired devices and the wake word
-    are covered (see the Covered table). What remains: - **Pairing a device** (the QR code, Approve, Deny). Deliberate, not
-    unbuilt: Approve is the one step that stops a six-character code from
-    being enough to hold somebody's microphone, and it is a decision for
-    the person at the desktop. An agent that could approve its own pairing
-    request would remove the step. Everything after pairing has a verb. - **Holding the talk button.** A hold has no non-interactive form. `voice
-listen on` then `voice listen off --send` is the same pair of calls the
-    press and the release make. - **The HUD "wrong tab" correction** (`acappella:correct-route`) and the
-    **routing log** (`acappella:routing-log`). Not built. Both belong on
-    `voice`, over the service functions those channels call. - **Typing an utterance** (`acappella:submit-utterance`). Only the dev
-    harness has it in the UI, so there is no control to mirror; a caller
-    with no microphone cannot yet put words into a live session. - **The Diagnostics card** (copy, clear). The log is a ring buffer in the
-    renderer; a verb needs a main-side copy of it first. `voice self-test`
-    and `support-package` (which writes `voice-runtime.json`) are the reads
-    there are. - **The dictation microphone.** `models run dictation --audio <file.wav>`
-    transcribes a FILE through the same `transcribeClip()`. Recording from
-    the microphone into a text box has no verb: there is no text box on the
-    other end of a command line. - **The TURN credential at rest.** `acappella.ice.turn.credential` is
-    stored in the settings file in plain text. `settings get` and `settings
-list` mask it in an object read, but the file itself is not sealed.
-    Closing it means moving the field to a sealed state file
-    (`createPrivateStateFile()` / `sealSecret()`), with a migration for
-    installs that hold one, and it touches the Connection panel, the ICE
-    config reader and the phone handshake. - **The two voice hotkeys.** They are entries of the ordinary `shortcuts`
-    map, so they are covered by whatever covers shortcut rebinding (the
-    audit backlog below), not by `voice`.
-15. **Local Models: Remove All.** "Remove All" on A Cappella's Models page
-    (`models:remove-all`) has no verb on purpose: unfiltered it would delete
-    every consumer's models, and `models remove <model-id>` reaches each one by
-    name. (The other half of this gap, installing a native runtime, is closed:
-    the Engines card and `models runtimes list|install` share
-    `listLocalRuntimes()` / `installLocalRuntime()`, and a model's Download
-    button and `models install` fetch its runtime with it through
-    `installLocalModel()`.)
-16. **Group Chat moderator settings** (the moderator form's Provider,
-    Environment and SSH tabs: path, args, model, Claude token source, env vars
-    with parked rows, SSH remote). `group-chat start --moderator <agent>` picks
-    the moderator's provider and nothing else; the rest is reachable only
-    through the modal, whose Save hands `ModeratorConfig` to `groupChat:update`.
-    Closing it means a `group-chat update` verb over that same handler, with
-    flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
-    `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
-    below.
-17. **Delegation Graph: layout and reset.** `open delegation-graph` opens
-    the graph on every agent, and `--group <id>` opens it on one group (see
-    the Covered table). Picking a named layout, Reset layout, Fit, the legend
-    toggle and dragging an agent have no verb of their own. All of these are
-    presentation: they change where an agent is DRAWN, never whom it can
-    reach. What a drag or a layout pick leaves behind is one setting, so it
-    is reachable without a verb: read it with `settings get
-delegationGraphLayouts`, and return a scope to the automatic layout with
-    `settings reset delegationGraphLayouts.<scope key>` (the settings watcher
-    reloads the open graph). Fit is never saved, and the legend toggle is a
-    view switch in renderer localStorage (gap 12). The
-    View / Edit switch has no verb and needs none: it is a guard against a
-    slipped pointer, it is never saved, and a CLI caller has no pointer to
-    slip. What Edit lets the pointer write, `update-agent --peer` writes (see
-    the "draw or re-draw an edge" row in the Covered table). "Add agent",
-    and an agent row dropped on the canvas, have no verb and need none
-    either: placing an agent on a group's graph writes nothing (no peer row,
-    no group change, and the placement itself is never saved), and it exists
-    so a pointer has something to draw an edge to. The CLI names the target
-    by id, in or out of the group: `update-agent <source> --peer <target>:r`.
-    The relationships the graph draws are covered in full (`update-agent --peer`
-    writes them, `show agent` reads them resolved for one agent, and
-    `delegation graph` reads the whole graph). Changing the scope of a
-    graph that is already open is the same `open delegation-graph --group`
-    call: the modal is keyed by scope, so a second open shows the new one.
-
-18. **Agent settings: what `update-agent` reaches and its siblings do not.**
-    `update-agent` takes the Agent Resilience toggles, the Codex auto reset,
-    Additional Directories, parking an environment variable and the history
-    mirror (see the Covered table). `create-agent` and `update-group-settings`
-    do not take those flags yet: create the agent, then `update-agent` it;
-    a group's defaults for them are set only in the Group Settings dialog.
-    Closing it means registering the same flags on both verbs (the reader,
-    `buildConfigPatch()`, is already shared) and teaching
-    `applyGroupDefaultsPatch()` the four keys.
-19. **Provider model and effort lists** (the Refresh models and Refresh agent
-    buttons of the agent settings form). `models tiers options` reads a
-    harness's tier choices; there is no verb that lists every model and effort
-    level a provider reports, or forces a refresh. Closing it means a read
-    over the `agents:getModels` and `agents:getConfigOptions` handlers.
-20. **Document Chat** (send, mode, fresh chat, open as a tab). No verb. The
-    panel is renderer-only, so it needs a bridge message with a response
-    channel that calls `sendDocumentChatMessage()`, `readDocumentChatView()`,
-    `resetDocumentChat()` and `popOutDocumentChat()`.
-21. **A finished turn's Model, Effort and "Ran on" stamps.** Readable only
-    for an Auto turn (`s1 ledger --task model-routing`). They belong on a
-    transcript read, which is the `session read` line of the audit backlog.
-22. **Smaller read-backs.** Each is a field a dialog shows and a verb does
-    not print yet:
-    - `update-agent --remove-peer` prints `removed`, not what the canvas says
-      remains (a grant that still reaches the peer):
-      `describeDelegationEdgeRemoval()`.
-    - `cue gate` and `cue screen` print the "no model assigned, runs
-      unchecked" note only without `--json`, and `cue activity` does not carry
-      the "ran unchecked" / "ran unscreened" records.
-    - `group-settings` does not say when a group's pill is hidden, and
-      `update-group-settings --publish` has no preview (`--dry-run`) and no
-      undo. The app raises an Undo toast.
-    - `models tiers set` writes one tier per call; the dialog's Save writes
-      the row.
-23. **Testing an unsaved draft.** The endpoint Test and the Run on Test
-    buttons act on what is typed in the form. The CLI tests what is stored:
-    `models endpoints add` then `models endpoints test`, `update-agent
---run-on` then `agent test-run-on`. By design: a command line has no
-    draft.
-24. **Host LAN and Tailscale access controls** (enable, disable, select a LAN
-    interface, and inspect access state in Connect another device / Manage access).
-    These remain in the protected native host window as a deliberate human-consent
-    design choice. Enabling a private listener requires the host owner's review;
-    no CLI verbs expose these controls.
-25. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
-    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
-    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
-    reachable over the WS bridge. Every mode IS reachable from the CLI through
-    the prompt's wording, which `inferMentionTiming()` reads on every path, so
-    this is a convenience gap, not a capability gap. Closing it means threading
-    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-26. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
-    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
-    Cue modal panel could render its gaps directly; it is CLI first because it
-    exists for unattended servers, where nobody opens the desktop.
-27. **Run a DataviewJS block again, or Run once** (Run again on a block whose
-    script timed out, crashed its sandbox, or failed to load; Run once on the
-    trust prompt of a block in a vault that is not trusted, and Run on an
-    inline `$=` span there). The CLI can trust
-    the vault (`dataview trust <root>`), which is what Run once avoids, but it
-    cannot run one block. Deliberate: DataviewJS renders
-    in the desktop app only (spec D8), so the CLI never runs note scripts, and
-    `dataview query` on a `dataviewjs` block exits 2. The block's source is
-    readable with `dataview query <file> --json`; there is no rendered output
-    for an agent to read back.
-28. **Pipeline Graph view selection** (the selector's pipeline / agent / All
-    Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
+1. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+   have no CLI read. An agent needs one to check plan usage, and it is also
+   how an agent would verify a provider login (see **Log in to a provider
+   account** under Not mirrored by design).
+2. **Merge Into a new merged agent.** The Merge Into modal's "create new
+   session" option builds a fresh agent from both transcripts. `tab merge`
+   only merges into an existing tab; the new-agent path reports its result
+   through `onSessionCreated`, which would need the new agent's id threaded
+   back to `runRemoteTabContextOp()`.
+3. **Pipeline Graph view selection** (the selector's pipeline / agent / All
+   Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
 pipeline` reaches the graph but cannot name what it shows. Pure view state
-    on a read-only canvas, with nothing for an agent to read back; the data it
-    filters is already readable through `cue pipeline` and `cue list`. Closing
-    it means carrying a target through `open_modal` into `CueModal`'s
-    `pendingGraphTarget`.
+   on a read-only canvas, with nothing for an agent to read back; the data it
+   filters is already readable through `cue pipeline` and `cue list`. Closing
+   it means carrying a target through `open_modal` into `CueModal`'s
+   `pendingGraphTarget`.
 
-### Audit backlog (2026-09-27)
+### Acappella-specific audit notes
+
+- **A Cappella: what `maestro-cli voice` leaves out.** The session, the
+  HUD controls, providers, voices, keys, paired devices and the wake word
+  are covered (see the Covered table). What remains: - **Pairing a device** (the QR code, Approve, Deny). Deliberate, not
+  unbuilt: Approve is the one step that stops a six-character code from
+  being enough to hold somebody's microphone, and it is a decision for
+  the person at the desktop. An agent that could approve its own pairing
+  request would remove the step. Everything after pairing has a verb. - **Holding the talk button.** A hold has no non-interactive form. `voice
+listen on` then `voice listen off --send` is the same pair of calls the
+  press and the release make. - **The HUD "wrong tab" correction** (`acappella:correct-route`) and the
+  **routing log** (`acappella:routing-log`). Not built. Both belong on
+  `voice`, over the service functions those channels call. - **Typing an utterance** (`acappella:submit-utterance`). Only the dev
+  harness has it in the UI, so there is no control to mirror; a caller
+  with no microphone cannot yet put words into a live session. - **The Diagnostics card** (copy, clear). The log is a ring buffer in the
+  renderer; a verb needs a main-side copy of it first. `voice self-test`
+  and `support-package` (which writes `voice-runtime.json`) are the reads
+  there are. - **The dictation microphone.** `models run dictation --audio <file.wav>`
+  transcribes a FILE through the same `transcribeClip()`. Recording from
+  the microphone into a text box has no verb: there is no text box on the
+  other end of a command line. - **The TURN credential at rest.** `acappella.ice.turn.credential` is
+  stored in the settings file in plain text. `settings get` and `settings
+list` mask it in an object read, but the file itself is not sealed.
+  Closing it means moving the field to a sealed state file
+  (`createPrivateStateFile()` / `sealSecret()`), with a migration for
+  installs that hold one, and it touches the Connection panel, the ICE
+  config reader and the phone handshake. - **The two voice hotkeys.** They are entries of the ordinary `shortcuts`
+  map, so they are covered by whatever covers shortcut rebinding (the
+  audit backlog below), not by `voice`.
+- **Local Models: Remove All.** "Remove All" on A Cappella's Models page
+  (`models:remove-all`) has no verb on purpose: unfiltered it would delete
+  every consumer's models, and `models remove <model-id>` reaches each one by
+  name. (The other half of this gap, installing a native runtime, is closed:
+  the Engines card and `models runtimes list|install` share
+  `listLocalRuntimes()` / `installLocalRuntime()`, and a model's Download
+  button and `models install` fetch its runtime with it through
+  `installLocalModel()`.)
+- **Group Chat moderator settings** (the moderator form's Provider,
+  Environment and SSH tabs: path, args, model, Claude token source, env vars
+  with parked rows, SSH remote). `group-chat start --moderator <agent>` picks
+  the moderator's provider and nothing else; the rest is reachable only
+  through the modal, whose Save hands `ModeratorConfig` to `groupChat:update`.
+  Closing it means a `group-chat update` verb over that same handler, with
+  flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
+  `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
+  below.
+- **Delegation Graph: layout and reset.** `open delegation-graph` opens
+  the graph on every agent, and `--group <id>` opens it on one group (see
+  the Covered table). Picking a named layout, Reset layout, Fit, the legend
+  toggle and dragging an agent have no verb of their own. All of these are
+  presentation: they change where an agent is DRAWN, never whom it can
+  reach. What a drag or a layout pick leaves behind is one setting, so it
+  is reachable without a verb: read it with `settings get
+delegationGraphLayouts`, and return a scope to the automatic layout with
+  `settings reset delegationGraphLayouts.<scope key>` (the settings watcher
+  reloads the open graph). Fit is never saved, and the legend toggle is a
+  view switch in renderer localStorage (gap 12). The
+  View / Edit switch has no verb and needs none: it is a guard against a
+  slipped pointer, it is never saved, and a CLI caller has no pointer to
+  slip. What Edit lets the pointer write, `update-agent --peer` writes (see
+  the "draw or re-draw an edge" row in the Covered table). "Add agent",
+  and an agent row dropped on the canvas, have no verb and need none
+  either: placing an agent on a group's graph writes nothing (no peer row,
+  no group change, and the placement itself is never saved), and it exists
+  so a pointer has something to draw an edge to. The CLI names the target
+  by id, in or out of the group: `update-agent <source> --peer <target>:r`.
+  The relationships the graph draws are covered in full (`update-agent --peer`
+  writes them, `show agent` reads them resolved for one agent, and
+  `delegation graph` reads the whole graph). Changing the scope of a
+  graph that is already open is the same `open delegation-graph --group`
+  call: the modal is keyed by scope, so a second open shows the new one.
+
+- **Agent settings: what `update-agent` reaches and its siblings do not.**
+  `update-agent` takes the Agent Resilience toggles, the Codex auto reset,
+  Additional Directories, parking an environment variable and the history
+  mirror (see the Covered table). `create-agent` and `update-group-settings`
+  do not take those flags yet: create the agent, then `update-agent` it;
+  a group's defaults for them are set only in the Group Settings dialog.
+  Closing it means registering the same flags on both verbs (the reader,
+  `buildConfigPatch()`, is already shared) and teaching
+  `applyGroupDefaultsPatch()` the four keys.
+- **Provider model and effort lists** (the Refresh models and Refresh agent
+  buttons of the agent settings form). `models tiers options` reads a
+  harness's tier choices; there is no verb that lists every model and effort
+  level a provider reports, or forces a refresh. Closing it means a read
+  over the `agents:getModels` and `agents:getConfigOptions` handlers.
+- **Document Chat** (send, mode, fresh chat, open as a tab). No verb. The
+  panel is renderer-only, so it needs a bridge message with a response
+  channel that calls `sendDocumentChatMessage()`, `readDocumentChatView()`,
+  `resetDocumentChat()` and `popOutDocumentChat()`.
+- **A finished turn's Model, Effort and "Ran on" stamps.** Readable only
+  for an Auto turn (`s1 ledger --task model-routing`). They belong on a
+  transcript read, which is the `session read` line of the audit backlog.
+- **Smaller read-backs.** Each is a field a dialog shows and a verb does
+  not print yet:
+  - `update-agent --remove-peer` prints `removed`, not what the canvas says
+    remains (a grant that still reaches the peer):
+    `describeDelegationEdgeRemoval()`.
+  - `cue gate` and `cue screen` print the "no model assigned, runs
+    unchecked" note only without `--json`, and `cue activity` does not carry
+    the "ran unchecked" / "ran unscreened" records.
+  - `group-settings` does not say when a group's pill is hidden, and
+    `update-group-settings --publish` has no preview (`--dry-run`) and no
+    undo. The app raises an Undo toast.
+  - `models tiers set` writes one tier per call; the dialog's Save writes
+    the row.
+- **Testing an unsaved draft.** The endpoint Test and the Run on Test
+  buttons act on what is typed in the form. The CLI tests what is stored:
+  `models endpoints add` then `models endpoints test`, `update-agent
+--run-on` then `agent test-run-on`. By design: a command line has no
+  draft.
+- **Host LAN and Tailscale access controls** (enable, disable, select a LAN
+  interface, and inspect access state in Connect another device / Manage access).
+  These remain in the protected native host window as a deliberate human-consent
+  design choice. Enabling a private listener requires the host owner's review;
+  no CLI verbs expose these controls.
+
+### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
 A full sweep of the palette, shortcuts, context menus, and modals found these
 still missing. Grouped, highest value first:
 
-- **Execution queue:** list, remove, edit, reorder, hold, force-send (`queue ...`).
+- **Execution queue:** edit, reorder, and force-send a queued item (`queue ...`).
 - **Composer:** send images with a prompt (`dispatch --image`); fork a tab from a
   message (`tab fork --at`); resume a stored provider session into a tab
-  (`tab new --resume`), read a stored transcript (`session read`).
+  (`tab new --resume`); read the transcript of a stored session that has no
+  open tab (`session read`).
 - **Tabs of every kind:** `tab close/rename/move` resolve AI tabs only; no
-  listing of file/terminal/browser tabs; bulk close (others/left/right);
-  terminal close, restart, startup command; `read-browser` page text;
-  `open-browser` refuses `file://`.
+  listing of file/browser tabs; bulk close (others/left/right); terminal close,
+  restart, and changing an open terminal's startup command; `read-browser` page
+  text; `open-browser` refuses `file://`.
 - **Tiled tab groups:** rename, break apart, and close group (chip menu and
   palette) have no CLI verbs. `session list` does not expose `tabGroups`, so
   `resolveTabOwner` cannot resolve a group id; the family should land together
@@ -792,17 +749,82 @@ still missing. Grouped, highest value first:
   agent; it does not merge the `<project>/.maestro/history` files other hosts wrote,
   which the panel's text filter does see.)
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
-  logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.
-- **SSH remotes:** test, edit, enable/disable, set default.
+  logs (`logs`), reset stuck busy state, restart agent, retry.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
-- **Web access:** dashboard URL, QR pairing, persistent token, tunnel.
+- **Web access:** QR pairing (the web interface and tunnel URLs are `live status`).
 - **Updates:** check/download/install.
 - **Exports:** tab as HTML, Usage Dashboard CSV, plan usage.
-- **Media player:** play/pause/next/prev/seek/volume, queue management.
-- **Cue:** engine start/stop, stop a run, backups, global settings, rename pipeline.
-- **Agents/groups:** worktree folder + scan, group emoji, `remove-agent --erase`.
-- **Symphony** contributions; **low value:** devtools, tour, leaderboard,
-  `notify clear`, clear terminal, `gist --file`, deep link, reveal in Finder.
+- **Media player:** play/pause/next/prev/seek/volume; list, remove, and reorder
+  the play queue.
+- **Cue:** the desktop engine's own on/off, stop a run, backups, global settings,
+  rename pipeline.
+- **Agents/groups:** worktree folder + scan, `remove-agent --erase`.
+- **Symphony** contributions; **low value:** devtools, tour, leaderboard, clear
+  terminal, `gist --file`, deep link, reveal in Finder.
+
+## Not mirrored by design
+
+These are UI actions deliberately left without a CLI verb. Each entry states
+why: the action is interactive by nature, sits behind a human-consent boundary,
+or is a pure view preference with nothing for an agent to read back. A new
+entry needs a stated reason, the same way a Covered row needs a verb.
+
+- **Grooming on Merge Into and Send to Agent** (the modals' "clean up the
+  context" checkbox). `tab merge` and `tab transfer` always move the
+  transcript verbatim: context carried to another agent or provider is never
+  summarized or trimmed. Only `tab compact` summarizes, because that is what
+  Compact is.
+- **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
+  Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
+  agent already has `git` and `gh` in its shell, which is strictly more capable.
+  Only the modal-opening is unavailable, not the capability.
+- **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
+  Tab Switcher, Search: Messages). These are interactive by definition; the
+  underlying data is reachable through `list`, `session show`, and
+  `director-notes history`.
+- **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
+  an element already rendered in a transcript or document
+  (`openZoomViewer(element)`), and a transcript element has no address the
+  CLI can name. The capability is still reachable: `open-file <image>` opens
+  the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
+  an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
+  viewing; there is no result for an agent to read back.
+- **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
+  document dropdown's height via `useResizableDropdownHeight`, the Document
+  Graph preview width via `usePersistedPanelWidth`). Pure view preferences
+  with nothing for an agent to act on; the values never reach main, so a
+  verb needs a renderer round trip. Double-click on the grip resets them.
+- **Log in to a provider account** (Usage Dashboard quota row "Log in",
+  palette "Reauthenticate Provider"). The login is an interactive OAuth or
+  device-code flow in a PTY, so there is nothing a non-interactive verb could
+  complete. The capability is reachable from an agent's shell as
+  `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
+  `/login`. Verifying the login afterwards is the Open gaps entry **Read
+  provider quota snapshots**.
+- **Pianola learned suggestion review** (accept, edit, or reject). When owner
+  identity settings are absent or empty, a verified local native desktop sender
+  is the owner by default. Configured web identity is opt-in; explicit or
+  malformed restrictions still apply. Each review requires explicit human
+  consent in the native window or through an authorized configured web identity.
+  CLI and agent calls cannot supply that consent or impersonate the human.
+  Existing serialized identity keys and principal values remain supported;
+  these UI actions do not migrate or reinterpret prior evidence.
+- **Host LAN and Tailscale access controls** (enable, disable, select a LAN
+  interface, and inspect access state in Connect another device / Manage access).
+  These remain in the protected native host window as a deliberate human-consent
+  design choice. Enabling a private listener requires the host owner's review;
+  no CLI verbs expose these controls. This is not Live mode: the LIVE pill
+  has no consent step, so `live on|off` mirrors it (see the Covered row).
+- **Run a DataviewJS block again, or Run once** (Run again on a block whose
+  script timed out, crashed its sandbox, or failed to load; Run once on the
+  trust prompt of a block in a vault that is not trusted, and Run on an
+  inline `$=` span there). The CLI can trust
+  the vault (`dataview trust <root>`), which is what Run once avoids, but it
+  cannot run one block. Deliberate: DataviewJS renders
+  in the desktop app only (spec D8), so the CLI never runs note scripts, and
+  `dataview query` on a `dataviewjs` block exits 2. The block's source is
+  readable with `dataview query <file> --json`; there is no rendered output
+  for an agent to read back.
 
 ### Backstage plugin updates
 

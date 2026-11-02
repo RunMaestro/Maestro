@@ -182,6 +182,7 @@ describe('GroupChatModal', () => {
 			expect(dropdown).toHaveValue('claude-code');
 
 			// The moderator's environment is part of Provider customization.
+			await screen.findByRole('button', { name: /^customize$/i });
 			openTab('Provider');
 			fireEvent.click(screen.getByText('Environment variables'));
 
@@ -403,6 +404,7 @@ describe('GroupChatModal', () => {
 			expect(dropdown).toHaveValue('claude-code');
 
 			// The moderator's environment is part of Provider customization.
+			await screen.findByRole('button', { name: /^customize$/i });
 			openTab('Provider');
 			fireEvent.click(screen.getByText('Environment variables'));
 

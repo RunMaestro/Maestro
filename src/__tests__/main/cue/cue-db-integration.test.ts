@@ -759,3 +759,234 @@ describe.skipIf(!canLoadBetterSqlite3())(
 		});
 	}
 );
+
+describe.skipIf(!canLoadBetterSqlite3())('real SQLite: plugin receipt uninstall lifecycle', () => {
+	it.each([
+		'a'.repeat(64),
+		'receipt-v3:' + 'b'.repeat(64),
+		'receipt-v2:' + 'g'.repeat(64),
+		'receipt-v2:' + 'a'.repeat(63),
+	])(
+		'retains unresolved receipt format %s and blocks only its owner before a stable write',
+		async (legacyKey) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-plugin-legacy-'));
+			const cueDb = await import('../../../main/cue/cue-db');
+			const receipt = { receiptId: 'receipt', payloadHash: 'hash', proof: 'proof' };
+			const stableKey = 'receipt-v2:' + 'c'.repeat(64);
+			try {
+				cueDb.initCueDb(undefined, path.join(dir, 'cue.db'));
+				// Historical/malformed input is seeded directly, not through the new-format writer.
+				cueDb.writePluginEventReceipt('com.example.seed', 'seed', receipt);
+				const Database = (await import('better-sqlite3')).default;
+				const raw = new Database(path.join(dir, 'cue.db'));
+				try {
+					raw
+						.prepare('INSERT INTO cue_plugin_receipts VALUES (?,?,?,?,?)')
+						.run(
+							'com.example.owner',
+							legacyKey,
+							receipt.receiptId,
+							receipt.payloadHash,
+							receipt.proof
+						);
+				} finally {
+					raw.close();
+				}
+				expect(() =>
+					cueDb.pluginEventReceiptCapacityAvailable('com.example.owner', { stableFormatOnly: true })
+				).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+				expect(() =>
+					cueDb.writePluginEventReceipt('com.example.owner', stableKey, receipt)
+				).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+				expect(cueDb.readPluginEventReceipt('com.example.owner', legacyKey)).toEqual(receipt);
+				expect(cueDb.readPluginEventReceipt('com.example.owner', stableKey)).toBeNull();
+				expect(
+					cueDb.pluginEventReceiptCapacityAvailable('com.example.other', { stableFormatOnly: true })
+				).toBe(true);
+				cueDb.writePluginEventReceipt('com.example.other', stableKey, receipt);
+				expect(cueDb.readPluginEventReceipt('com.example.other', stableKey)).toEqual(receipt);
+				expect(
+					cueDb.pluginEventReceiptCapacityAvailable('com.example.other', { stableFormatOnly: true })
+				).toBe(true);
+				// Read/admission checks do not rewrite the unresolved namespace.
+				expect(cueDb.readPluginEventReceipt('com.example.owner', legacyKey)).toEqual(receipt);
+			} finally {
+				cueDb.closeCueDb();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	);
+	it('restores capacity for only the uninstalled plugin and permits a fresh installation', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-plugin-purge-'));
+		const cueDb = await import('../../../main/cue/cue-db');
+		const receipt = { receiptId: 'receipt', payloadHash: 'hash', proof: 'proof' };
+		try {
+			cueDb.initCueDb(undefined, path.join(dir, 'cue.db'));
+			for (let index = 0; index < 4096; index++)
+				cueDb.writePluginEventReceipt('com.example.owner', String(index), receipt);
+			cueDb.writePluginEventReceipt('com.example.other', 'kept', receipt);
+			expect(cueDb.pluginEventReceiptCapacityAvailable('com.example.owner')).toBe(false);
+			cueDb.closeCueDb();
+			cueDb.purgePluginEventReceipts('com.example.owner', path.join(dir, 'cue.db'));
+			cueDb.initCueDb(undefined, path.join(dir, 'cue.db'));
+			expect(cueDb.pluginEventReceiptCapacityAvailable('com.example.owner')).toBe(true);
+			expect(cueDb.readPluginEventReceipt('com.example.owner', '0')).toBeNull();
+			expect(cueDb.readPluginEventReceipt('com.example.other', 'kept')).toEqual(receipt);
+			cueDb.writePluginEventReceipt('com.example.owner', '0', receipt);
+			expect(cueDb.readPluginEventReceipt('com.example.owner', '0')).toEqual(receipt);
+		} finally {
+			cueDb.closeCueDb();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}, 60_000);
+});
+
+describe.skipIf(!canLoadBetterSqlite3())(
+	'authenticated historical plugin receipt migration',
+	() => {
+		it('checkpoints exact HMAC evidence across reconsent/restart; rejects tamper and unknown history', async () => {
+			const { AuthorizationStore } = await import('../../../main/plugins/authorization-ledger');
+			const { canonicalJson } = await import('../../../shared/canonicalJson');
+			const { createHash } = await import('node:crypto');
+			const cue = await import('../../../main/cue/cue-db');
+			const Database = (await import('better-sqlite3')).default;
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-migration-'));
+			let anchor: import('../../../main/utils/keyring-anchor').Anchor | null = null;
+			const deps = {
+				ledgerPath: path.join(dir, 'auth.sealed'),
+				seal: {
+					available: () => true,
+					seal: (text: string) => Buffer.from(text),
+					unseal: (data: Buffer) => data.toString(),
+				},
+				anchor: {
+					available: () => true,
+					read: () => anchor,
+					write: (value: typeof anchor) => {
+						anchor = value;
+					},
+					clear: () => {
+						anchor = null;
+					},
+				},
+			};
+			const store = new AuthorizationStore(deps);
+			const plugin = 'com.example.owner';
+			const identity = {
+				contentHash: 'a'.repeat(64),
+				signatureStatus: 'trusted' as const,
+				signerKey: 'old-signer',
+			};
+			const current = { ...identity, contentHash: 'b'.repeat(64) };
+			const consumer = 'consumer',
+				event = 'event',
+				payloadHash = 'c'.repeat(64),
+				receiptId = 'd'.repeat(64);
+			const id = createHash('sha256')
+				.update(canonicalJson([plugin, identity, consumer, event]))
+				.digest('hex');
+			store.mint(plugin, [], identity);
+			const row = {
+				receiptId,
+				payloadHash,
+				proof: store.pluginEventProof(plugin, identity, { id, receiptId }, { payloadHash }),
+			};
+			try {
+				cue.initCueDb(undefined, path.join(dir, 'cue.db'));
+				cue.writePluginEventReceipt(plugin, id, row);
+				const before = anchor;
+				expect(cue.checkpointPluginEventReceipts(plugin, store)).toBe(1);
+				expect(cue.readPluginEventReceipt(plugin, id)).toEqual(row); // preceding code still sees the blocking v1 original
+				expect(anchor).toEqual(before);
+				expect(cue.checkpointPluginEventReceipts(plugin, store)).toBe(0);
+				expect(cue.pluginEventReceiptCapacityAvailable(plugin, { stableFormatOnly: true })).toBe(
+					true
+				);
+				store.onPluginAuthorizationChange((id) => {
+					try {
+						cue.checkpointPluginEventReceipts(id, store);
+					} catch {
+						/* revoke remains mandatory */
+					}
+				});
+				store.revoke(plugin);
+				expect(store.readGrants(plugin)).toEqual([]);
+				store.mint(plugin, [], current);
+				cue.closeCueDb();
+				cue.initCueDb(undefined, path.join(dir, 'cue.db'));
+				const reopened = new AuthorizationStore(deps);
+				expect(
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						event,
+						payloadHash,
+						reopened
+					)
+				).toBe(receiptId);
+				expect(
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						'different',
+						payloadHash,
+						reopened
+					)
+				).toBeNull();
+				expect(() =>
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						event,
+						'e'.repeat(64),
+						reopened
+					)
+				).toThrow();
+				expect(() =>
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						identity,
+						consumer,
+						event,
+						payloadHash,
+						reopened
+					)
+				).toThrow();
+				const raw = new Database(path.join(dir, 'cue.db'));
+				raw
+					.prepare('UPDATE cue_plugin_legacy_receipts SET receipt_id=? WHERE plugin_id=?')
+					.run('f'.repeat(64), plugin);
+				expect(() =>
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						event,
+						payloadHash,
+						reopened
+					)
+				).toThrow();
+				raw.close();
+				const unknown = 'e'.repeat(64);
+				cue.writePluginEventReceipt(plugin, unknown, { ...row, proof: 'f'.repeat(64) });
+				expect(cue.checkpointPluginEventReceipts(plugin, reopened)).toBe(0);
+				expect(() =>
+					cue.pluginEventReceiptCapacityAvailable(plugin, { stableFormatOnly: true })
+				).toThrow();
+				expect(cue.readPluginEventReceipt(plugin, unknown)).toEqual({
+					...row,
+					proof: 'f'.repeat(64),
+				});
+				expect(
+					cue.pluginEventReceiptCapacityAvailable('com.example.other', { stableFormatOnly: true })
+				).toBe(true);
+			} finally {
+				cue.closeCueDb();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	}
+);

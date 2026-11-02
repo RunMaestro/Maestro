@@ -57,6 +57,7 @@ import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createTabsApi } from './tabs';
+import { createJourneyApi } from './journey';
 import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
@@ -259,6 +260,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Tab lifecycle API (renderer -> main tab-close notification)
 	tabs: createTabsApi(),
+	// User Journey API (per-agent log of user actions inside Maestro)
+	journey: createJourneyApi(),
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: createAiCommandApi(),
 
@@ -271,7 +274,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
-	// Cue Bundle API (Cue modal Bundles tab - export / import pipelines and agents)
+	// Cue Bundle API (Export Agent and Import Agent modals - export / import pipelines and agents)
 	cueBundle: createCueBundleApi(),
 
 	// Pianola API (autonomous manager: rules + decision log)
@@ -287,7 +290,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	maestroCli: createMaestroCliApi(),
 	// Core Prompts API (view, edit, reset system prompts)
 	prompts: createPromptsApi(),
-	// Per-project Memory API (Claude Code memory viewer)
+	// Agent memory API (Memory Viewer: Claude Code per project, Codex per account)
 	memory: createMemoryApi(),
 	// Context Timeline capture log (backfills the per-agent turn history)
 	contextTimeline: createContextTimelineApi(),
@@ -425,6 +428,8 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// User Journey
+	createJourneyApi,
 	// AgentRun
 	createAgentRunApi,
 	// Coworking
@@ -660,6 +665,11 @@ export type {
 	// From tabs
 	TabsApi,
 } from './tabs';
+export type {
+	// From journey
+	JourneyApi,
+	JourneyReadOptions,
+} from './journey';
 export type {
 	// From aiCommand
 	AiCommandApi,

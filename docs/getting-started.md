@@ -97,7 +97,7 @@ Point your new agent at a project directory. Maestro will detect git repos autom
 
 ## 4. Start a conversation
 
-Use the **AI Terminal** to talk with your AI provider, and the **Command Terminal** for shell commands. Toggle between them with `Cmd+J` / `Ctrl+J`. Each tab in the AI Terminal is a separate session.
+Use the **AI Terminal** to talk with your AI provider, and the **Command Terminal** for shell commands. Open a new terminal tab with `Cmd+J` / `Ctrl+J`, or jump to the nearest one with `Opt+Cmd+J` / `Alt+Ctrl+J`. Each tab in the AI Terminal is a separate session.
 
 ## 5. Try Auto Run
 

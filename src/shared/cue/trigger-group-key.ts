@@ -1,3 +1,4 @@
+import { canonicalJson } from '../canonicalJson';
 /**
  * Stable identity key for "subscriptions that represent one visual trigger."
  *
@@ -32,8 +33,9 @@ export function triggerGroupKey(sub: CueSubscription): string {
 					return acc;
 				}, {})
 		: null;
-	return JSON.stringify({
+	return canonicalJson({
 		event: sub.event,
+		plugin: sub.plugin ?? null,
 		schedule_times: sub.schedule_times ?? null,
 		schedule_days: sub.schedule_days ?? null,
 		interval_minutes: sub.interval_minutes ?? null,

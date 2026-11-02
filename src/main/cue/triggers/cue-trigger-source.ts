@@ -129,7 +129,7 @@ export interface CueTriggerSourceContext {
 	 * Sources should call this whenever the trigger fires; they should NOT
 	 * touch session state directly.
 	 */
-	emit: (event: CueEvent) => void;
+	emit: (event: CueEvent) => void | number;
 	/**
 	 * Optional: request that the subscription self-destruct from cue.yaml.
 	 * Used by `time.once` to consume one-shot tasks after they fire (or after

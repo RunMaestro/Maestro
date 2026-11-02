@@ -25,7 +25,12 @@ function member(id: string, overrides: Partial<Session> = {}): Session {
 }
 
 function seed(groups: Group[], sessions: Session[] = []): void {
-	useSessionStore.setState({ groups, sessions });
+	useSessionStore.setState({
+		groups,
+		sessions,
+		groupsLoaded: true,
+		groupPersistenceBaseline: groups,
+	});
 }
 
 function storedGroup(): Group {
@@ -67,6 +72,21 @@ describe('applyRemoteGroupSettings', () => {
 		expect(storedGroup().defaults).toEqual({ nudgeMessage: 'Be brief.' });
 		const flushed = vi.mocked(window.maestro.groups.setAll).mock.calls[0][0] as Group[];
 		expect(flushed.find((g) => g.id === GROUP_ID)?.defaults).toEqual({ nudgeMessage: 'Be brief.' });
+	});
+
+	it('reports a failed flush without publishing the changed defaults', async () => {
+		const original = [group()];
+		seed(original, [member('worker')]);
+		vi.mocked(window.maestro.groups.setAll).mockResolvedValueOnce(false as never);
+
+		const result = await applyRemoteGroupSettings(GROUP_ID, {
+			configPatch: { nudgeMessage: 'Pending persistence.' },
+			publish: true,
+		});
+
+		expect(result).toEqual({ success: false, error: 'Failed to persist group defaults' });
+		expect(useSessionStore.getState().groupPersistenceBaseline).toBe(original);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
 
 	it('writes nothing when a value is refused', async () => {

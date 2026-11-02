@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // ============================================================================
 // Mock useBatchProcessor BEFORE importing useBatchHandlers
@@ -1217,6 +1218,34 @@ describe('useBatchHandlers', () => {
 			// Queue should have been shortened
 			const updatedSession = useSessionStore.getState().sessions[0];
 			expect(updatedSession.executionQueue.length).toBe(1);
+		});
+
+		// MAESTRO-ZS: the item's tab is running a turn the user started while the
+		// Auto Run was going. Dispatching onto it collides with that live process.
+		it('leaves the item queued when its target tab is still mid-turn', () => {
+			const mockProcessQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const processQueuedItemRef = { current: mockProcessQueuedItem };
+
+			const session = createMockSession({
+				id: 'session-1',
+				activeTabId: 'tab-1',
+				aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+				executionQueue: [{ id: 'q1', type: 'message', text: 'Hello', tabId: 'tab-1' }] as any,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useBatchHandlers(createDeps({ processQueuedItemRef })));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			act(() => {
+				callArgs.onProcessQueueAfterCompletion('session-1');
+			});
+
+			expect(mockProcessQueuedItem).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].executionQueue.map((i) => i.id)).toEqual([
+				'q1',
+			]);
 		});
 
 		it('does nothing when queue is empty', () => {

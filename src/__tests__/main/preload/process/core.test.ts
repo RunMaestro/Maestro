@@ -27,7 +27,39 @@ describe('Process Core Preload API', () => {
 		api = createProcessCoreApi();
 	});
 
+	describe('pending permission runtime', () => {
+		it('reads only the metadata snapshot through the native IPC channel', async () => {
+			const snapshot = { version: 4, processIds: ['agent-ai-tab'] };
+			mockInvoke.mockResolvedValue(snapshot);
+			expect(await api.getPendingPermissions()).toEqual(snapshot);
+			expect(mockInvoke).toHaveBeenCalledWith('process:getPendingPermissions');
+		});
+		it('forwards versioned status events and unregisters its listener', () => {
+			const callback = vi.fn();
+			const off = api.onPendingPermissionsChanged(callback);
+			const handler = mockOn.mock.calls.find(
+				([channel]) => channel === 'process:pending-permissions'
+			)![1];
+			handler({}, { version: 5, processIds: [] });
+			expect(callback).toHaveBeenCalledWith({ version: 5, processIds: [] });
+			off();
+			expect(mockRemoveListener).toHaveBeenCalledWith('process:pending-permissions', handler);
+		});
+	});
+
 	describe('spawn', () => {
+		it('forwards actual Codex transport updates and removes the listener', () => {
+			const callback = vi.fn();
+			const off = api.onCodexTransport(callback);
+			const handler = mockOn.mock.calls.find(
+				([channel]) => channel === 'process:codex-transport'
+			)![1];
+			handler({}, 'agent-ai-tab', 'exec');
+			expect(callback).toHaveBeenCalledWith('agent-ai-tab', 'exec');
+			off();
+			expect(mockRemoveListener).toHaveBeenCalledWith('process:codex-transport', handler);
+		});
+
 		it('should invoke process:spawn with config', async () => {
 			const config: ProcessConfig = {
 				sessionId: 'session-123',

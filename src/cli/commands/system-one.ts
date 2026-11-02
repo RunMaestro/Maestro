@@ -40,7 +40,7 @@ import {
 	formatSystemOneTestResult,
 	formatWarning,
 } from '../output/formatter';
-import { parseTimeInput } from '../../shared/computer-history/timeRange';
+import { parseTimeInput } from '../../shared/timeInput';
 import {
 	LOCAL_JUDGE_DEFAULT_TIMEOUT_MS,
 	type SystemOneRemoteEngineId,

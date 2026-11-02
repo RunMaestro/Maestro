@@ -291,7 +291,6 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'copyContent',
 	'publishGist',
 	'documentGraph',
-	'talkWithDocument',
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
@@ -446,6 +445,7 @@ export interface SettingsStoreState
 	/** Peer consults and delegations one user message may spend, whole chain. See shared/consultBudget.ts. */
 	maxConsultationsPerTurn: number;
 	crossAgentHandoffsWritable: boolean;
+	relayArchiveHours: number;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -557,7 +557,9 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	userJourneyEnabled: boolean;
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
 }
 
 export interface SettingsStoreActions
@@ -596,6 +598,7 @@ export interface SettingsStoreActions
 	setCrossAgentMentionsWritable: (value: boolean) => void;
 	setMaxConsultationsPerTurn: (value: number) => void;
 	setCrossAgentHandoffsWritable: (value: boolean) => void;
+	setRelayArchiveHours: (value: number) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -688,6 +691,8 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setUserJourneyEnabled: (value: boolean) => void;
+	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
@@ -824,7 +829,9 @@ export function resolveForceParallel(optionForce?: boolean): boolean {
 	return optionForce === true || s.forcedParallelAlways;
 }
 
-// Order confirmed auto-watch saves and hydration without exposing unsaved values.
+// Order confirmed Pianola permission saves and hydration without exposing unsaved values.
+let pianolaAutoFixRevision = 0;
+let pianolaAutoFixAppliedRevision = 0;
 let pianolaAutoWatchRevision = 0;
 let pianolaAutoWatchAppliedRevision = 0;
 
@@ -863,6 +870,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		crossAgentMentionsWritable: false,
 		maxConsultationsPerTurn: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 		crossAgentHandoffsWritable: true,
+		relayArchiveHours: 24,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -961,7 +969,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		userJourneyEnabled: true,
 		pianolaAutoWatchNewAgents: false,
+		pianolaAutoFixEnabled: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -1107,6 +1117,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('crossAgentHandoffsWritable', value);
 		},
 
+		setRelayArchiveHours: (value) => {
+			const hours = Number.isFinite(value) ? Math.max(0, Math.min(8760, value)) : 24;
+			set({ relayArchiveHours: hours });
+			window.maestro.settings.set('relayArchiveHours', hours);
+		},
 		setDefaultSaveToHistory: (value) => {
 			set({ defaultSaveToHistory: value });
 			window.maestro.settings.set('defaultSaveToHistory', value);
@@ -1671,6 +1686,28 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('spellCheck', value);
 		},
 
+		setUserJourneyEnabled: (value) => {
+			set({ userJourneyEnabled: value });
+			window.maestro.settings.set('userJourneyEnabled', value);
+		},
+
+		setPianolaAutoFixEnabled: async (value) => {
+			const revision = ++pianolaAutoFixRevision;
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoFixEnabled', value);
+				if (saved === false) throw new Error('Automatic repair permission was not saved');
+				// A newer confirmed save or hydration, including an identical value,
+				// supersedes this acknowledgement.
+				if (revision > pianolaAutoFixAppliedRevision) {
+					pianolaAutoFixAppliedRevision = revision;
+					set({ pianolaAutoFixEnabled: value });
+				}
+			} catch (error) {
+				await loadAllSettings();
+				throw error;
+			}
+		},
+
 		setPianolaAutoWatchNewAgents: async (value) => {
 			const revision = ++pianolaAutoWatchRevision;
 			try {
@@ -2161,6 +2198,7 @@ export async function loadAllSettings(): Promise<void> {
 	// they are in flight must survive this load - see the filter before setState.
 	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
 	const pianolaRevisionAtRead = ++pianolaAutoWatchRevision;
+	const pianolaAutoFixRevisionAtRead = ++pianolaAutoFixRevision;
 
 	try {
 		// Batch load all settings in a single IPC call
@@ -2281,6 +2319,11 @@ export async function loadAllSettings(): Promise<void> {
 				allSettings[MAX_CONSULTATIONS_PER_TURN_SETTING]
 			);
 
+		if (
+			typeof allSettings['relayArchiveHours'] === 'number' &&
+			Number.isFinite(allSettings['relayArchiveHours'])
+		)
+			patch.relayArchiveHours = Math.max(0, Math.min(8760, allSettings['relayArchiveHours']));
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
 
@@ -2932,6 +2975,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
+		// On unless explicitly switched off.
+		patch.userJourneyEnabled = allSettings['userJourneyEnabled'] !== false;
+
+		patch.pianolaAutoFixEnabled = allSettings['pianolaAutoFixEnabled'] === true;
 		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
 
 		hydrateAnnotatorSettings(allSettings, patch);
@@ -2947,6 +2994,9 @@ export async function loadAllSettings(): Promise<void> {
 			const live = useSettingsStore.getState() as unknown as Record<string, unknown>;
 			const patchKeys = patch as unknown as Record<string, unknown>;
 			for (const key of Object.keys(patchKeys)) {
+				// Repair permission has operation ordering below: an older save may
+				// acknowledge during this read without making its value newer.
+				if (key === 'pianolaAutoFixEnabled') continue;
 				if (live[key] !== beforeRead[key]) {
 					delete patchKeys[key];
 				}
@@ -2954,6 +3004,13 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		// Even an identical persisted value supersedes older save acknowledgements.
+		if (patch.pianolaAutoFixEnabled !== undefined) {
+			if (pianolaAutoFixRevisionAtRead > pianolaAutoFixAppliedRevision) {
+				pianolaAutoFixAppliedRevision = pianolaAutoFixRevisionAtRead;
+			} else {
+				delete patch.pianolaAutoFixEnabled;
+			}
+		}
 		if (patch.pianolaAutoWatchNewAgents !== undefined) {
 			if (pianolaRevisionAtRead > pianolaAutoWatchAppliedRevision) {
 				pianolaAutoWatchAppliedRevision = pianolaRevisionAtRead;
@@ -3202,7 +3259,9 @@ export function getSettingsActions() {
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setUserJourneyEnabled: state.setUserJourneyEnabled,
 		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
+		setPianolaAutoFixEnabled: state.setPianolaAutoFixEnabled,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Session, Group, FocusArea } from '../../types';
 import type { SidebarExtraSelection } from '../../stores/uiStore';
 import type { StarredItem } from '../session/useStarredItems';
+import type { GroupChatMessagesHandle } from '../../components/GroupChatMessages';
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
@@ -48,6 +49,10 @@ export interface UseKeyboardNavigationDeps {
 	setBookmarksCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>;
+	/** The group chat composer; Escape in it focuses the room's transcript. */
+	groupChatInputRef?: React.RefObject<HTMLTextAreaElement | null>;
+	/** The group chat transcript that Escape in the room composer focuses. */
+	groupChatMessagesRef?: React.RefObject<GroupChatMessagesHandle | null>;
 	/** @deprecated Prefer sidebarNavStore; optional for App. */
 	starredItems?: StarredItem[];
 	/** @deprecated Prefer sidebarNavStore; optional for App. */
@@ -146,6 +151,8 @@ export function useKeyboardNavigation(
 		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
+		groupChatInputRef,
+		groupChatMessagesRef,
 		starredItems: starredItemsProp,
 		activateStarredItem: activateStarredItemProp,
 		starredSectionCollapsed,
@@ -653,21 +660,33 @@ export function useKeyboardNavigation(
 	);
 
 	/**
-	 * Handle Escape in main area to blur input and focus terminal.
-	 * Returns true if the event was handled.
+	 * Handle Escape in main area to blur the composer and focus its transcript:
+	 * the AI composer hands focus to the terminal output, the group chat
+	 * composer to the room's messages. Returns true if the event was handled.
 	 */
 	const handleEscapeInMain = useCallback(
 		(e: KeyboardEvent): boolean => {
 			const focus = activeFocusRef.current;
 			if (focus !== 'main' || e.key !== 'Escape') return false;
-			if (document.activeElement !== inputRef.current) return false;
 
-			e.preventDefault();
-			inputRef.current?.blur();
-			terminalOutputRef.current?.focus();
-			return true;
+			if (document.activeElement === inputRef.current) {
+				e.preventDefault();
+				inputRef.current?.blur();
+				terminalOutputRef.current?.focus();
+				return true;
+			}
+
+			const roomInput = groupChatInputRef?.current;
+			if (roomInput && document.activeElement === roomInput) {
+				e.preventDefault();
+				roomInput.blur();
+				groupChatMessagesRef?.current?.focus();
+				return true;
+			}
+
+			return false;
 		},
-		[inputRef, terminalOutputRef]
+		[inputRef, terminalOutputRef, groupChatInputRef, groupChatMessagesRef]
 	);
 
 	// Sync selectedSidebarIndex with activeSessionId

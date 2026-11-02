@@ -22,6 +22,7 @@ export const EGRESS_CAPABILITIES: readonly PluginCapability[] = [
 	'media:tools',
 	'net:fetch',
 	'net:connect',
+	'net:tls',
 	'process:spawn',
 ];
 

@@ -63,8 +63,12 @@ export interface DualPaneFileEditorProps {
 	/** Select handler - consumer should guard unsaved changes before accepting. */
 	onSelect: (id: string) => void;
 
-	/** Display name lookup by category key. If omitted the list renders flat. */
-	categories?: Record<string, { label: string }>;
+	/**
+	 * Display name lookup by category key. If omitted the list renders flat.
+	 * Groups sort by `order` (lowest first) and then by label; a group without
+	 * an `order` sorts after every group that has one.
+	 */
+	categories?: Record<string, { label: string; order?: number }>;
 
 	/** Optional collapsed-categories state (Set of category keys). */
 	collapsedCategories?: Set<string>;
@@ -297,6 +301,9 @@ export function DualPaneFileEditor({
 			groups[cat].push(item);
 		}
 		return Object.entries(groups).sort(([a], [b]) => {
+			const orderA = categories[a]?.order ?? Number.POSITIVE_INFINITY;
+			const orderB = categories[b]?.order ?? Number.POSITIVE_INFINITY;
+			if (orderA !== orderB) return orderA < orderB ? -1 : 1;
 			const labelA = categories[a]?.label ?? a;
 			const labelB = categories[b]?.label ?? b;
 			return labelA.localeCompare(labelB);

@@ -19,6 +19,7 @@
  * position.
  */
 
+import type { FloatingWidgetOverflow } from '../../shared/floatingWidgets';
 import type { MediaKind } from '../../shared/mediaTypes';
 import {
 	MEDIA_FLOAT_TRANSPORT_FALLBACK_HEIGHT,
@@ -163,4 +164,41 @@ export function sanitizeMediaWindowBaseline(value: unknown): MediaWindowBaseline
 	const actualSize = sanitizeSize(actual);
 	if (!requestedSize || !actualSize) return null;
 	return { kind, requested: requestedSize, actual: actualSize };
+}
+
+/**
+ * Space a list needs beyond its own height: the gap `useAnchoredMenuPosition`
+ * leaves under the button (6) plus the edge padding `useContextMenuPosition`
+ * keeps from the viewport (8), with a couple of pixels for rounding.
+ */
+export const MEDIA_LIST_CLEARANCE = 16;
+
+/** The vertical span of an element, in the window's coordinates. */
+export interface VerticalSpan {
+	top: number;
+	bottom: number;
+}
+
+/**
+ * How far the window would have to grow on each side for a queue or history
+ * list of `listHeight` px to fit beside its button.
+ *
+ * Measured against the CARD rather than the window, so the answer is the same
+ * whether or not the window already borrowed room: a list that shrinks while
+ * open (a row removed) asks for less, not for its old room plus more.
+ *
+ * @param card       The widget's card.
+ * @param anchor     The button the list hangs off (inside the card).
+ * @param listHeight The list's height, already capped at its design height.
+ */
+export function mediaListOverflowNeed(
+	card: VerticalSpan,
+	anchor: VerticalSpan,
+	listHeight: number
+): FloatingWidgetOverflow {
+	const reach = listHeight + MEDIA_LIST_CLEARANCE;
+	return {
+		above: Math.max(0, Math.ceil(reach - (anchor.top - card.top))),
+		below: Math.max(0, Math.ceil(reach - (card.bottom - anchor.bottom))),
+	};
 }

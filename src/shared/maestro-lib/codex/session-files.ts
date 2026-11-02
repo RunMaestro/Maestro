@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { readFirstJsonlLine } from '../storage/jsonl-stream';
 import type { TranslationFs } from '../translation/fs-port';
 import { assertTranslationTarget } from '../translation/resource-projections';
 
@@ -106,10 +107,9 @@ export async function findCodexSessionFile(
 		// Also check by reading first line for session ID
 		try {
 			if (nativeFs) await assertTranslationTarget(filePath, accountRoot, nativeFs);
-			const content = nativeFs
-				? (await nativeFs.readFile(filePath)).toString('utf8')
-				: await fs.readFile(filePath, 'utf-8');
-			const firstLine = content.split('\n')[0];
+			const firstLine = nativeFs
+				? (await nativeFs.readFile(filePath)).toString('utf8').split('\n')[0]
+				: await readFirstJsonlLine(filePath);
 			if (firstLine) {
 				const metadata = JSON.parse(firstLine) as { payload?: { id?: string }; id?: string };
 				const metadataId = metadata?.payload?.id || metadata.id;

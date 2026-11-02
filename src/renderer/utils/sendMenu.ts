@@ -142,6 +142,8 @@ export interface SendMenuModel {
 	steerProvider: Session['toolType'];
 	/** The active tab is the one mid-turn (as opposed to another tab of the agent). */
 	activeTabWorking: boolean;
+	/** Any tab of the agent is mid-turn. False only when a right-click opened the menu on an idle agent. */
+	agentWorking: boolean;
 }
 
 /**
@@ -159,7 +161,10 @@ export function buildSendMenuModel(
 	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId);
 	const activeTabWorking = activeTab?.state === 'busy';
 	const steerProvider = resolveTurnProvider(activeTab, session);
-	const steerSupport = getSteerSupport(projectTabProvider(session, activeTab, steerProvider).agent);
+	const steerSupport: SteerSupport =
+		activeTabWorking && steerProvider === 'codex' && activeTab?.turnCodexTransport === 'app-server'
+			? { kind: 'supported' }
+			: getSteerSupport(projectTabProvider(session, activeTab, steerProvider).agent);
 
 	const force: SendMenuRow = activeTabWorking
 		? {
@@ -203,5 +208,6 @@ export function buildSendMenuModel(
 		steerSupport,
 		steerProvider,
 		activeTabWorking,
+		agentWorking: isAgentWorking(session),
 	};
 }

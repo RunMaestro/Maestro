@@ -673,6 +673,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				}
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
+					querySource: item.querySource,
 					toolType: session.toolType,
 					cwd: session.cwd,
 					command: commandToUse,
@@ -785,6 +786,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
+						querySource: item.querySource,
 						toolType: session.toolType,
 						cwd: session.cwd,
 						command: commandToUse,

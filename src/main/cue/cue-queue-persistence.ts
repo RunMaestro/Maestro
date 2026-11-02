@@ -1,3 +1,5 @@
+import { CUE_EVENT_TYPES } from '../../shared/cue/contracts';
+import { isDurableCueEvent } from './triggers/cue-plugin-trigger-source';
 /**
  * Cue Queue Persistence - Phase 12A.
  *
@@ -23,8 +25,9 @@ import type {
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import {
 	getQueuedEvents,
-	clearPersistedQueue,
+	removeQueuedEvent,
 	safePersistQueuedEvent,
+	persistQueuedEvent,
 	safeRemoveQueuedEvent,
 	safeRecordCueEvent,
 	type CueQueuedEventRecord,
@@ -67,7 +70,11 @@ export interface PersistableQueueEntry {
 	turnSettings?: CueTurnSettings;
 }
 
+export type DurableRestoreState = 'ready' | 'deferred' | 'removed';
+
 export interface RestoredQueueEntry extends PersistableQueueEntry {
+	/** Owner/config not yet discovered; this entry must not be executed. */
+	deferred?: boolean;
 	persistId: string;
 }
 
@@ -79,26 +86,30 @@ export interface RestoredQueueEntry extends PersistableQueueEntry {
 const DRAINED_AT_KEY = 'maestroDrainedAt';
 
 export interface CueQueuePersistence {
-	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void;
+	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void | boolean;
 	remove(persistId: string): void;
-	clearSession(sessionId: string): void;
+	clearSession(sessionId: string, options?: { includeDurable?: boolean }): void;
 	clearAll(): void;
+	/** Start a new engine cycle's exclusion epoch before initializing sessions. */
+	beginRestoreEpoch(): void;
 	/**
 	 * Ids of every row currently persisted. The engine snapshots this BEFORE
 	 * it initializes sessions, because initializing one can enqueue (and so
 	 * persist) an `app.startup` or initial `time.heartbeat` event behind a busy
 	 * slot - and restoring that row would run the same event a second time.
+	 * With previousInstanceOnly, exclude this epoch's writes until a snapshot
+	 * succeeds. Null denotes a failed read and keeps that exclusion active.
 	 */
-	persistedIds(): Set<string>;
-	/** Restore persisted rows, limited to `onlyIds` when given (see `persistedIds`). */
-	restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]>;
+	persistedIds(previousInstanceOnly?: boolean): Set<string> | null;
+	/** Restore selected rows; null preserves retry candidates after a failed read. */
+	restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> | null;
 }
 
 export interface CueQueuePersistenceDeps {
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/** Per-session timeout - used to discard stale rows at restore time. */
 	getSessionTimeoutMs: (sessionId: string) => number;
-	/** Membership check: drop persisted entries whose session is no longer registered. */
+	/** Live membership for ordinary rows; unknown durable owners are deferred. */
 	knownSessionIds: () => Set<string>;
 	/**
 	 * Every subscription name in a registered agent's current config. A row
@@ -110,14 +121,27 @@ export interface CueQueuePersistenceDeps {
 	 * the check.
 	 */
 	knownSubscriptionNames?: () => Set<string>;
+	/** Distinguish unavailable live state from confirmed source/owner removal. */
+	durableSourceState?: (sessionId: string, subscriptionName: string) => DurableRestoreState;
 	/** Override for testing - defaults to Date.now. */
 	now?: () => number;
 }
 
 export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQueuePersistence {
 	const now = deps.now ?? (() => Date.now());
+	// Track current-start writes only until the pre-start snapshot succeeds.
+	// IDs remain excluded even if their later removal failed.
+	let currentStartWrites: Set<string> | null = null;
+	function beginRestoreEpoch(): void {
+		currentStartWrites = new Set();
+	}
 
-	function persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void {
+	function persist(
+		sessionId: string,
+		persistId: string,
+		entry: PersistableQueueEntry
+	): void | boolean {
+		currentStartWrites?.add(persistId);
 		const record: CueQueuedEventRecord = {
 			id: persistId,
 			sessionId,
@@ -140,6 +164,16 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			notifyJson: entry.notify ? JSON.stringify(entry.notify) : null,
 			turnSettingsJson: entry.turnSettings ? JSON.stringify(entry.turnSettings) : null,
 		};
+		if (isDurableCueEvent(entry.event)) {
+			try {
+				persistQueuedEvent(record);
+				return getQueuedEvents(sessionId).some(
+					(row) => row.id === record.id && row.eventJson === record.eventJson
+				);
+			} catch {
+				return false;
+			}
+		}
 		safePersistQueuedEvent(record);
 	}
 
@@ -147,9 +181,27 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		safeRemoveQueuedEvent(persistId);
 	}
 
-	function clearSession(sessionId: string): void {
+	// Lifecycle clearing must not erase already acknowledged plugin deliveries.
+	// Terminal completion and explicit source/authority removal still use remove().
+	function clearRows(sessionId?: string, includeDurable = false): void {
+		for (const row of getQueuedEvents(sessionId)) {
+			let durable = false,
+				pluginEvent = false;
+			try {
+				const event = JSON.parse(row.eventJson);
+				pluginEvent = isDurableCueEvent(event);
+				durable =
+					pluginEvent || (typeof event?.type === 'string' && !CUE_EVENT_TYPES.includes(event.type));
+			} catch {
+				/* corrupt ordinary row is discardable */
+			}
+			if (!durable || (includeDurable && pluginEvent)) removeQueuedEvent(row.id);
+		}
+	}
+
+	function clearSession(sessionId: string, options?: { includeDurable?: boolean }): void {
 		try {
-			clearPersistedQueue(sessionId);
+			clearRows(sessionId, options?.includeDurable);
 		} catch (err) {
 			void captureException(err, {
 				operation: 'cueQueuePersistence.clearSession',
@@ -164,7 +216,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 	function clearAll(): void {
 		try {
-			clearPersistedQueue();
+			clearRows();
 		} catch (err) {
 			void captureException(err, { operation: 'cueQueuePersistence.clearAll' });
 			deps.onLog(
@@ -174,17 +226,23 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 	}
 
-	function persistedIds(): Set<string> {
+	function persistedIds(previousInstanceOnly = false): Set<string> | null {
 		try {
-			return new Set(getQueuedEvents().map((row) => row.id));
+			const ids = new Set(
+				getQueuedEvents()
+					.filter((row) => !previousInstanceOnly || !currentStartWrites?.has(row.id))
+					.map((row) => row.id)
+			);
+			if (previousInstanceOnly) currentStartWrites = null;
+			return ids;
 		} catch {
-			// restoreAll() reports the same read failure; an empty snapshot just
-			// defers any prior rows to the next start rather than running twice.
-			return new Set();
+			// A failed snapshot is not an empty queue. Keep excluding this
+			// start's writes until a later heartbeat can capture the old IDs.
+			return null;
 		}
 	}
 
-	function restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> {
+	function restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> | null {
 		let rows: CueQueuedEventRecord[];
 		try {
 			rows = getQueuedEvents();
@@ -193,9 +251,9 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			void captureException(err, { operation: 'cueQueuePersistence.restoreAll' });
 			deps.onLog(
 				'warn',
-				`[CUE] Failed to read persisted queue - starting empty: ${err instanceof Error ? err.message : String(err)}`
+				`[CUE] Failed to read persisted queue - retry deferred: ${err instanceof Error ? err.message : String(err)}`
 			);
-			return new Map();
+			return null;
 		}
 
 		const currentTime = now();
@@ -239,22 +297,23 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 
 		for (const row of rows) {
-			// Drop rows whose session is no longer registered - they'd just be
-			// dead weight in the DB otherwise. Record the drop so a user
-			// inspecting history after deleting/recreating a session still
-			// sees what happened to their queued events.
-			if (!knownSessions.has(row.sessionId)) {
-				recordRestoredDrop(row, 'session-missing');
-				safeRemoveQueuedEvent(row.id);
-				droppedMissingSession++;
-				continue;
-			}
-
-			if (knownSubscriptions && !knownSubscriptions.has(row.subscriptionName)) {
-				recordRestoredDrop(row, 'subscription-missing');
-				safeRemoveQueuedEvent(row.id);
-				droppedMissingSubscription++;
-				continue;
+			// Unsupported historical source rows stay parked on disk for explicit migration.
+			// Do not let ordinary stale/session cleanup destroy a retired producer's data.
+			try {
+				const historical = JSON.parse(row.eventJson);
+				if (
+					historical &&
+					typeof historical.type === 'string' &&
+					!CUE_EVENT_TYPES.includes(historical.type)
+				) {
+					deps.onLog(
+						'warn',
+						'[CUE] Unsupported queued source preserved; explicit migration required'
+					);
+					continue;
+				}
+			} catch {
+				/* the existing malformed-row handling below owns this case */
 			}
 
 			// Deserialize. Any JSON failure is a data integrity problem - drop the
@@ -290,6 +349,28 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
+			const durableState = isDurableCueEvent(event)
+				? (deps.durableSourceState?.(row.sessionId, row.subscriptionName) ??
+					(!knownSessions.has(row.sessionId) ||
+					(knownSubscriptions && !knownSubscriptions.has(row.subscriptionName))
+						? 'deferred'
+						: 'ready'))
+				: undefined;
+			if (durableState === 'removed' || (!durableState && !knownSessions.has(row.sessionId))) {
+				const sessionMissing = !knownSessions.has(row.sessionId);
+				recordRestoredDrop(row, sessionMissing ? 'session-missing' : 'subscription-missing');
+				safeRemoveQueuedEvent(row.id);
+				if (sessionMissing) droppedMissingSession++;
+				else droppedMissingSubscription++;
+				continue;
+			}
+			if (!durableState && knownSubscriptions && !knownSubscriptions.has(row.subscriptionName)) {
+				recordRestoredDrop(row, 'subscription-missing');
+				safeRemoveQueuedEvent(row.id);
+				droppedMissingSubscription++;
+				continue;
+			}
+
 			// Staleness check (mirrors cue-run-manager's runtime drainQueue check).
 			// A drained row's age is the time it waited while an engine was up:
 			// downtime does not count against work a drain deferred.
@@ -298,7 +379,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 					? Math.max(0, drainedAt - row.queuedAt)
 					: currentTime - row.queuedAt;
 			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
-			if (timeoutMs > 0 && ageMs > timeoutMs) {
+			if (!isDurableCueEvent(event) && timeoutMs > 0 && ageMs > timeoutMs) {
 				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
 				safeRemoveQueuedEvent(row.id);
 				droppedStale++;
@@ -307,6 +388,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 			const entry: RestoredQueueEntry = {
 				persistId: row.id,
+				...(durableState === 'deferred' ? { deferred: true } : {}),
 				event,
 				subscriptionName: row.subscriptionName,
 				prompt: row.prompt,
@@ -386,5 +468,5 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		return restored;
 	}
 
-	return { persist, remove, clearSession, clearAll, persistedIds, restoreAll };
+	return { persist, remove, clearSession, clearAll, beginRestoreEpoch, persistedIds, restoreAll };
 }

@@ -24,6 +24,7 @@ import { createMockSession } from '../../helpers/mockSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 
 vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
@@ -708,6 +709,7 @@ describe('Toast', () => {
 			offsetWidthSpy.mockRestore();
 			useToastAvoidZoneStore.setState({ zones: {} });
 			useSettingsStore.setState({ toastPosition: 'bottom-right' });
+			useUIStore.setState({ rightPanelOpen: true });
 		});
 
 		const composerZone = (right: number) => ({
@@ -743,6 +745,7 @@ describe('Toast', () => {
 
 		it('ignores the composer in a top corner', () => {
 			useSettingsStore.setState({ toastPosition: 'top-right' });
+			useUIStore.setState({ rightPanelOpen: false });
 			useToastAvoidZoneStore.setState({ zones: composerZone(window.innerWidth) });
 			setStoreToasts([createMockToast()]);
 			render(<ToastContainer theme={mockTheme} />);
@@ -794,6 +797,98 @@ describe('Toast', () => {
 			const toastOuter = document.body.querySelector('.relative.overflow-hidden');
 			expect(toastOuter).toHaveStyle({ transform: 'translateX(-100%)' });
 		});
+	});
+});
+
+describe('ToastContainer clear of the Right Bar tab strip (#1628)', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [createMockToast()] });
+		useSettingsStore.setState({ toastPosition: 'bottom-right' });
+		useUIStore.setState({ rightPanelOpen: true });
+	});
+
+	afterEach(() => {
+		useToastAvoidZoneStore.setState({ zones: {} });
+		useSettingsStore.setState({ toastPosition: 'bottom-right' });
+		useUIStore.setState({ rightPanelOpen: true });
+	});
+
+	it('caps a bottom stack below the title bar and tab strip and scrolls the overflow', () => {
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		// 8px offset + 112px band - 16px of scroller padding (border-box cap).
+		expect(stack.style.maxHeight).toBe('calc(100vh - 104px)');
+		expect(stack.style.overflowY).toBe('auto');
+		expect(stack.style.overflowX).toBe('hidden');
+	});
+
+	it('lets a bottom-right stack grow to the title bar when the Right Bar is closed', () => {
+		useUIStore.setState({ rightPanelOpen: false });
+		render(<ToastContainer theme={mockTheme} />);
+		// 8px offset + 48px title-bar clearance - 16px of scroller padding.
+		expect(screen.getByTestId('toast-stack').style.maxHeight).toBe('calc(100vh - 40px)');
+	});
+
+	it('lets a bottom-left stack grow to the title bar, away from the Right Bar', () => {
+		useSettingsStore.setState({ toastPosition: 'bottom-left' });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.maxHeight).toBe('calc(100vh - 40px)');
+	});
+
+	it('shrinks the cap by however far the stack is lifted', () => {
+		useToastAvoidZoneStore.setState({
+			zones: {
+				composer: {
+					left: 0,
+					top: window.innerHeight - 120,
+					right: window.innerWidth,
+					bottom: window.innerHeight,
+				},
+			},
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		expect(stack.style.bottom).toBe('128px');
+		expect(stack.style.maxHeight).toBe('calc(100vh - 224px)');
+	});
+
+	it('starts a top-right stack below the tab strip while the Right Bar is open', () => {
+		useSettingsStore.setState({ toastPosition: 'top-right' });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.top).toBe('112px');
+	});
+
+	it('keeps a top-right stack under the title bar when the Right Bar is closed', () => {
+		useSettingsStore.setState({ toastPosition: 'top-right' });
+		useUIStore.setState({ rightPanelOpen: false });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.top).toBe('48px');
+	});
+
+	it('keeps a top-left stack under the title bar, away from the Right Bar', () => {
+		useSettingsStore.setState({ toastPosition: 'top-left' });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.top).toBe('48px');
+	});
+
+	it('scrolls a bottom stack to the newest toast when one arrives', () => {
+		const scrollHeightSpy = vi
+			.spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
+			.mockReturnValue(900);
+		const scrollTopSpy = vi.spyOn(Element.prototype, 'scrollTop', 'set');
+		try {
+			render(<ToastContainer theme={mockTheme} />);
+			scrollTopSpy.mockClear();
+			act(() => {
+				useNotificationStore.setState({
+					toasts: [createMockToast(), createMockToast({ id: 'toast-2', title: 'Newest' })],
+				});
+			});
+			expect(scrollTopSpy).toHaveBeenCalledWith(900);
+		} finally {
+			scrollHeightSpy.mockRestore();
+			scrollTopSpy.mockRestore();
+		}
 	});
 });
 

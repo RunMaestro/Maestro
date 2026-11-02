@@ -69,7 +69,7 @@ export interface PluginBackgroundSupervisorDeps {
 	 * plugin that is not running - including the crashed one. The restarted
 	 * child re-runs activate(), which re-registers its services.
 	 */
-	restartPlugin: (pluginId: string) => void;
+	restartPlugin: (pluginId: string) => void | Promise<unknown>;
 	/**
 	 * Whether the plugin is still installed + enabled. Re-checked when a
 	 * backoff timer fires so a plugin disabled mid-backoff is never restarted.
@@ -259,7 +259,7 @@ export class PluginBackgroundSupervisor {
 		entry.state = 'restarting';
 		const delay = Math.min(BACKOFF_BASE_MS * 2 ** (entry.restarts - 1), BACKOFF_CAP_MS);
 		if (entry.backoffTimer) clearTimeout(entry.backoffTimer);
-		const timer = setTimeout(() => {
+		const timer = setTimeout(async () => {
 			entry.backoffTimer = undefined;
 			// Re-check at fire time: a plugin disabled/uninstalled mid-backoff
 			// must never be restarted.
@@ -270,8 +270,9 @@ export class PluginBackgroundSupervisor {
 			}
 			entry.lastStartAt = this.now();
 			try {
-				this.deps.restartPlugin(pluginId);
+				await this.deps.restartPlugin(pluginId);
 			} catch (error) {
+				if (this.plugins.get(pluginId) !== entry || !this.deps.isPluginEnabled(pluginId)) return;
 				entry.lastError = error instanceof Error ? error.message : String(error);
 				this.scheduleRestart(pluginId, entry);
 			}

@@ -23,6 +23,7 @@ import {
 	parseSystemOneLedgerQuery,
 	summarizeSystemOneDecision,
 	systemOneDecisionRun,
+	systemOneLedgerContext,
 	systemOneLedgerEngineLabel,
 	systemOneLedgerTaskLabel,
 	type SystemOneDecision,
@@ -140,6 +141,93 @@ describe('what a record is filed under', () => {
 		expect(systemOneLedgerEngineLabel('off')).toBe('Off');
 		// Not a System One engine: it decides a routing run with no engine at all.
 		expect(systemOneLedgerEngineLabel('embedding-router')).toBe('Embedding router, not calibrated');
+	});
+});
+
+describe('systemOneLedgerContext', () => {
+	it('uses the authoritative task label even when its questions mention another topic', () => {
+		expect(
+			systemOneLedgerContext({
+				taskId: 'model-routing',
+				input: formatSystemOneLedgerInput({
+					state: 'private',
+					questions: { pick: noul('Is this email urgent?') },
+				}),
+			})
+		).toEqual({ label: 'Model routing', question: 'Is this email urgent?' });
+	});
+
+	it.each([
+		['Is this email something the recipient personally needs to see?', 'Email classification'],
+		['Which working session is `message` about?', 'Session routing'],
+		['Does this document need a review?', 'Agent judgment'],
+	])('describes an agent request from its question: %s', (question, label) => {
+		expect(
+			systemOneLedgerContext({
+				taskId: 'agent:ask',
+				input: formatSystemOneLedgerInput({ state: 'private', questions: { ask: noul(question) } }),
+			})
+		).toEqual({ label, question });
+	});
+
+	it('reads structured rank instructions without exposing the candidate or state', () => {
+		expect(
+			systemOneLedgerContext({
+				taskId: 'agent:rank',
+				input: formatSystemOneLedgerInput({
+					state: 'PRIVATE STATE',
+					questions: {
+						item: noul({ question: 'Is this email relevant?', candidate: 'PRIVATE CANDIDATE' }),
+					},
+				}),
+			})
+		).toEqual({ label: 'Email classification', question: 'Is this email relevant?' });
+	});
+
+	it('keeps multiple questions and normalizes whitespace for the preview', () => {
+		expect(
+			systemOneLedgerContext({
+				taskId: 'agent:ask',
+				input: formatSystemOneLedgerInput({
+					state: 'private',
+					questions: {
+						tab: noul('Which working\n session is this about?'),
+						followup: noul('Is this a follow-up?'),
+					},
+				}),
+			})
+		).toEqual({
+			label: 'Session routing',
+			question: 'Which working session is this about? · Is this a follow-up?',
+		});
+	});
+
+	it.each([
+		undefined,
+		'invalid JSON',
+		'null',
+		'[]',
+		'{}',
+		'{"questions":[]}',
+		'{"questions":{"bad":null}}',
+		'{"questions":{"bad":{"instructions":17}}}',
+	])('handles unavailable or malformed saved questions: %s', (input) => {
+		expect(systemOneLedgerContext({ taskId: 'agent:ask', input })).toEqual({
+			label: 'Agent judgment',
+			question: null,
+		});
+	});
+
+	it('does not infer a topic from private state or an arbitrary JSON field', () => {
+		expect(
+			systemOneLedgerContext({
+				taskId: 'agent:ask',
+				input: JSON.stringify({
+					state: 'Which working session? Is this email urgent?',
+					questions: { ask: noul({ candidate: 'Is this email urgent?' }) },
+				}),
+			})
+		).toEqual({ label: 'Agent judgment', question: null });
 	});
 });
 

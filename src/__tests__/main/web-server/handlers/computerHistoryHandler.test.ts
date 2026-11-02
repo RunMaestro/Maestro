@@ -5,6 +5,7 @@
 // refused before the service is touched.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -49,7 +50,7 @@ import type { WebClient } from '../../../../main/web-server/handlers/messageHand
 
 function client(cli: boolean): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: cli ? 'cli-1' : 'browser-1',
 		connectedAt: 0,
 		...(cli ? { cli: true } : {}),

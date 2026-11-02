@@ -113,7 +113,7 @@ export async function applyRemoteGroupSettings(
 				: candidate
 		)
 	);
-	await flushGroupsToDisk(useSessionStore.getState().groups);
+	if (!(await flushGroupsToDisk())) return refuse('Failed to persist group defaults');
 
 	const summary = summarizeGroupDefaultsDiff(diff);
 	const result: GroupSettingsUpdateResult = {

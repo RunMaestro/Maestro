@@ -30,6 +30,14 @@ function splitOutputLines(output: string): string[] {
 		.filter(Boolean);
 }
 
+/** The filesystem refused a write the app has no way to grant itself. */
+const PERMISSION_ERROR_CODES = new Set(['EACCES', 'EPERM', 'EROFS']);
+
+function isPermissionError(err: unknown): boolean {
+	const code = (err as { code?: unknown } | null)?.code;
+	return typeof code === 'string' && PERMISSION_ERROR_CODES.has(code);
+}
+
 /**
  * Candidate on-disk locations for the bundled maestro-cli.js, most-specific
  * first: packaged resources, the built dev output (`dist/cli`), and a path
@@ -203,7 +211,7 @@ export class MaestroCliManager {
 
 	private async ensurePosixPathExport(
 		installDir: string
-	): Promise<{ updated: boolean; files: string[] }> {
+	): Promise<{ updated: boolean; files: string[]; error?: string }> {
 		const home = os.homedir();
 		const shellName = path.basename(process.env.SHELL || '').toLowerCase();
 		const rcFiles = new Set<string>();
@@ -222,6 +230,7 @@ export class MaestroCliManager {
 
 		let updated = false;
 		const filesUpdated: string[] = [];
+		let error: string | undefined;
 
 		logger.info('Ensuring POSIX PATH export for maestro-cli', LOG_CONTEXT, {
 			installDir,
@@ -260,11 +269,17 @@ export class MaestroCliManager {
 					rcPath,
 					error: err instanceof Error ? err.message : String(err),
 				});
-				throw err;
+				// The shim is already installed by now; only the PATH line failed.
+				// A shell rc file the app may not write (owned by root, locked by a
+				// dotfile manager, or blocked by macOS privacy controls) is the
+				// user's to fix, so hand them the line instead of failing the whole
+				// install with an exception (MAESTRO-177, MAESTRO-15Z).
+				if (!isPermissionError(err)) throw err;
+				error = `Could not add maestro-cli to PATH: ${rcPath} is not writable. Add this line to it yourself: ${exportLine}`;
 			}
 		}
 
-		return { updated, files: filesUpdated };
+		return { updated, files: filesUpdated, error };
 	}
 
 	private async ensureWindowsUserPath(installDir: string): Promise<boolean> {
@@ -426,6 +441,7 @@ export class MaestroCliManager {
 				const result = await this.ensurePosixPathExport(installDir);
 				pathUpdated = result.updated;
 				shellFilesUpdated = result.files;
+				pathUpdateError = result.error;
 			}
 		}
 

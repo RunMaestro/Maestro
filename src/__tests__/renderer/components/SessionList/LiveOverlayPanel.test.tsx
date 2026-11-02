@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { LiveOverlayPanel } from '../../../../renderer/components/SessionList/LiveOverlayPanel';
 import type { Theme } from '../../../../renderer/types';
 
@@ -114,6 +114,67 @@ describe('LiveOverlayPanel', () => {
 		it('displays URL without protocol prefix', () => {
 			render(<LiveOverlayPanel {...createDefaultProps()} />);
 			expect(screen.getByText('192.168.1.10:3456')).toBeTruthy();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Height budget
+	// -----------------------------------------------------------------------
+	describe('height budget', () => {
+		const originalInnerHeight = window.innerHeight;
+
+		afterEach(() => {
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight,
+			});
+		});
+
+		function renderUnderAnchor(anchorBottom: number) {
+			const { container } = render(
+				<div data-testid="anchor">
+					<LiveOverlayPanel {...createDefaultProps()} />
+				</div>
+			);
+			const anchor = screen.getByTestId('anchor');
+			vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+				top: anchorBottom - 20,
+				bottom: anchorBottom,
+				left: 40,
+				right: 120,
+				width: 80,
+				height: 20,
+				x: 40,
+				y: anchorBottom - 20,
+				toJSON: () => ({}),
+			});
+			return container.querySelector('[data-testid="anchor"] > div') as HTMLElement;
+		}
+
+		it('caps the panel to the space below where it lands and re-measures on resize', () => {
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 700 });
+			const panel = renderUnderAnchor(100);
+
+			// The mount measurement ran before the spy existed; a resize re-measures.
+			act(() => {
+				window.dispatchEvent(new Event('resize'));
+			});
+			expect(panel.style.top).toBe('100px');
+			expect(panel.style.maxHeight).toBe('592px');
+
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 400 });
+			act(() => {
+				window.dispatchEvent(new Event('resize'));
+			});
+			expect(panel.style.maxHeight).toBe('292px');
+		});
+
+		it('lets the content scroll inside the capped panel', () => {
+			const panel = renderUnderAnchor(100);
+			const scroller = panel.firstElementChild as HTMLElement;
+			expect(panel.className).toContain('flex-col');
+			expect(scroller.className).toContain('min-h-0');
+			expect(scroller.className).toContain('overflow-y-auto');
 		});
 	});
 

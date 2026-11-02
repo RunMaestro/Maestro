@@ -88,6 +88,7 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
  */
 const NO_PEER_GRANTS = {
 	peerAgents: undefined,
+	peerDescription: undefined,
 	groupPeerAccess: undefined,
 	worktreePeerAccess: undefined,
 };
@@ -622,7 +623,7 @@ describe('EditAgentModal', () => {
 				expect.objectContaining({ action: 'plan', tabId: 'pending-tab', destination: 'codex' })
 			)
 		);
-		fireEvent.click(await screen.findByLabelText('Accept the listed conversion limitations'));
+		fireEvent.click(await screen.findByLabelText('Allow experimental carry-over'));
 		expect(screen.getByRole('button', { name: 'Agent Provider' })).toBeDisabled();
 		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });
 		fireEvent.click(screen.getByRole('button', { name: /Save/ }));
@@ -688,7 +689,7 @@ describe('EditAgentModal', () => {
 		expect(screen.queryByText('Review selection')).not.toBeInTheDocument();
 	});
 
-	it('deduplicates repeated size warnings and enables Save after visible acceptance', async () => {
+	it('omits conversion metadata and enables Save after experimental carry-over acceptance', async () => {
 		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
 		const warning = {
 			code: 'context-capacity',
@@ -702,6 +703,26 @@ describe('EditAgentModal', () => {
 				limitations: [
 					{ ...warning, tabId: 'one' },
 					{ ...warning, tabId: 'two' },
+					{
+						code: 'native-project-memory-unavailable',
+						severity: 'warning',
+						message: 'Generated Codex account memory is excluded from project migration.',
+					},
+					{
+						code: 'untested-version',
+						severity: 'warning',
+						message: 'codex 0.164.0 is untested; tested versions: 0.162.1, 0.163.0.',
+					},
+					{
+						code: 'untested-version',
+						severity: 'warning',
+						message: 'claude-code 2.1.310 is untested; tested versions: 2.1.296, 2.1.302.',
+					},
+					{
+						code: 'unverified-native-resume',
+						severity: 'warning',
+						message: 'Native resume and round-trip continuity have not been verified.',
+					},
 				],
 			},
 		});
@@ -719,9 +740,12 @@ describe('EditAgentModal', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-		await screen.findByText(warning.message);
-		expect(screen.getAllByText(warning.message)).toHaveLength(1);
-		const accept = screen.getByLabelText('Accept the listed conversion limitations');
+		const accept = await screen.findByLabelText('Allow experimental carry-over');
+		expect(screen.queryByText(warning.message)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Generated Codex account memory/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/codex 0.164.0 is untested/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/claude-code 2.1.310 is untested/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Native resume and round-trip continuity/)).not.toBeInTheDocument();
 		expect(screen.getByTestId('edit-agent-tab-body')).not.toContainElement(accept);
 		expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
 		fireEvent.click(accept);
@@ -778,7 +802,7 @@ describe('EditAgentModal', () => {
 		fireEvent.click(picker);
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-		await screen.findByText('Native resume remains unverified');
+		await screen.findByLabelText('Allow experimental carry-over');
 		const checkbox = screen.getByLabelText(
 			'Also install skills and subagents into the project (git-excluded)'
 		);
@@ -792,7 +816,7 @@ describe('EditAgentModal', () => {
 				expect.objectContaining({ action: 'plan', projectResourcesIntoRepo: true })
 			)
 		);
-		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+		fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
 		fireEvent.click(screen.getByText('Save Changes'));
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		expect(onSave.mock.calls[0][30]).toBe(true);
@@ -828,8 +852,8 @@ describe('EditAgentModal', () => {
 		fireEvent.click(picker);
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-		await screen.findByText('Native resume remains unverified');
-		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+		await screen.findByLabelText('Allow experimental carry-over');
+		fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
 		fireEvent.click(screen.getByText('Save Changes'));
 		expect(screen.getByRole('status')).toHaveTextContent(
 			'Translating memory and session history...'
@@ -878,8 +902,8 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-			await screen.findByText('Review conversion');
-			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+			await screen.findByLabelText('Allow experimental carry-over');
+			fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
 			fireEvent.click(screen.getByText('Save Changes'));
 			expect(screen.getByRole('status')).toHaveTextContent(
 				'Waiting for the current turn to finish...'
@@ -948,7 +972,7 @@ describe('EditAgentModal', () => {
 			expect(screen.queryByText('Notes')).not.toBeInTheDocument();
 			expect(screen.queryByText('Original directories stay archived')).not.toBeInTheDocument();
 			openTab('General');
-			const accept = screen.queryByLabelText('Accept the listed conversion limitations');
+			const accept = screen.queryByLabelText('Allow experimental carry-over');
 			if (withWarning) {
 				expect(accept).toBeInTheDocument();
 				expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
@@ -961,7 +985,7 @@ describe('EditAgentModal', () => {
 		}
 	);
 
-	it('blocks an unverified conversion until its listed limitations are accepted', async () => {
+	it('requires experimental carry-over acceptance before converting', async () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
@@ -976,8 +1000,8 @@ describe('EditAgentModal', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
-		const accept = screen.getByLabelText('Accept the listed conversion limitations');
+		const accept = await screen.findByLabelText('Allow experimental carry-over');
+		expect(screen.queryByText('Native resume remains unverified')).not.toBeInTheDocument();
 		const save = screen.getByText('Save Changes').closest('button')!;
 		expect(save).toBeDisabled();
 		fireEvent.click(accept);
@@ -2342,6 +2366,15 @@ describe('EditAgentModal', () => {
 			expect(api.status).toHaveBeenCalledWith('agent-under-edit');
 		});
 
+		it('includes Audit Log when cycling visible tabs with Cmd brackets', () => {
+			installCotExport();
+			renderDialog();
+			fireEvent.keyDown(screen.getByDisplayValue('My Agent'), { key: '[', metaKey: true });
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+			fireEvent.keyDown(screen.getByRole('tabpanel'), { key: ']', metaKey: true });
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
+		});
+
 		it('leaves the Provider tab without the section', async () => {
 			installCotExport();
 			renderDialog();
@@ -2752,24 +2785,43 @@ describe('EditAgentModal', () => {
 			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
 		});
 
-		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[ from inside the dialog', () => {
+		it.each([
+			{ metaKey: true, shiftKey: false },
+			{ ctrlKey: true, shiftKey: false },
+			{ metaKey: true, shiftKey: true },
+		])('cycles the tabs from inside the dialog with %j', (modifiers) => {
 			renderModal();
 
 			const name = screen.getByDisplayValue('My Agent');
 			name.focus();
-			fireEvent.keyDown(name, { key: ']', metaKey: true, shiftKey: true });
+			expect(fireEvent.keyDown(name, { key: ']', ...modifiers })).toBe(false);
 			expect(selectedTab()).toHaveTextContent('Provider');
 			fireEvent.keyDown(screen.getByRole('tab', { name: 'Provider' }), {
 				key: '[',
-				metaKey: true,
-				shiftKey: true,
+				...modifiers,
 			});
 			fireEvent.keyDown(screen.getByDisplayValue('My Agent'), {
 				key: '[',
-				metaKey: true,
-				shiftKey: true,
+				...modifiers,
 			});
 			expect(selectedTab()).toHaveTextContent('SSH');
+			fireEvent.keyDown(selectedTab()!, { key: ']', ...modifiers });
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('steps through every visible tab with Cmd+] and Cmd+[ without saving', () => {
+			renderModal();
+			const tabs = screen.getAllByRole('tab');
+			for (const tab of [...tabs.slice(1), tabs[0]]) {
+				fireEvent.keyDown(screen.getByRole('tabpanel'), { key: ']', metaKey: true });
+				expect(tab).toHaveAttribute('aria-selected', 'true');
+			}
+			for (const tab of [...tabs].reverse()) {
+				fireEvent.keyDown(screen.getByRole('tabpanel'), { key: '[', metaKey: true });
+				expect(tab).toHaveAttribute('aria-selected', 'true');
+			}
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
 		});
 
 		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
@@ -2788,6 +2840,7 @@ describe('EditAgentModal', () => {
 			it('draws the Peer Agents section from the live fleet and saves the three grants', () => {
 				const session = createSession({
 					groupId: 'g-backend',
+					peerDescription: 'Builds labs',
 					peerAgents: [
 						{ sessionId: 'peer-infra', read: true, write: false, description: 'Owns the infra' },
 					],
@@ -2814,6 +2867,12 @@ describe('EditAgentModal', () => {
 				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeChecked();
 				expect(screen.getByRole('checkbox', { name: /Worktree family/ })).not.toBeChecked();
 				expect(screen.getByDisplayValue('Owns the infra')).toBeInTheDocument();
+				expect(screen.getByRole('textbox', { name: 'How peers see this agent' })).toHaveValue(
+					'Builds labs'
+				);
+				fireEvent.change(screen.getByRole('textbox', { name: 'How peers see this agent' }), {
+					target: { value: '  Builds and validates labs  ' },
+				});
 
 				// The agent being edited is not offered as its own peer.
 				const picker = screen.getByRole('button', { name: 'Peer agent' });
@@ -2840,6 +2899,7 @@ describe('EditAgentModal', () => {
 					],
 					groupPeerAccess: undefined,
 					worktreePeerAccess: { read: true, write: false },
+					peerDescription: 'Builds and validates labs',
 				});
 				// Off is absent, never a pair of false bits.
 				expect(grants.groupPeerAccess).toBeUndefined();
@@ -3322,8 +3382,8 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-			await screen.findByText('Native resume remains unverified');
-			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+			await screen.findByLabelText('Allow experimental carry-over');
+			fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
 			openTab('Models');
 			await waitFor(() =>
 				expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (gpt-6-luna)')

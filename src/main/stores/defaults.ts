@@ -81,6 +81,7 @@ export function resolveConfiguredShell(store: ShellSettingsReader): string {
 // ============================================================================
 
 export const SETTINGS_DEFAULTS: MaestroSettings = {
+	relayArchiveHours: 24,
 	activeThemeId: 'dracula',
 	shortcuts: {},
 	fontSize: 14,
@@ -137,11 +138,13 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	concertoStageFloating: false,
 	concertoStagePosition: null,
 	spellCheck: false,
+	userJourneyEnabled: true,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
 	// Consultation budget: peer consults and delegations per user message, whole
 	// chain. Main and the CLI enforce it. See shared/consultBudget.ts.
 	maxConsultationsPerTurn: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+	pianolaAutoFixEnabled: false,
 	annotatorPenColor: '#9146FF',
 	annotatorPenSize: 10,
 	annotatorThinning: 0.5,

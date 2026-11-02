@@ -56,7 +56,22 @@ const GIT_REPOSITORY_ENV_VARS = [
 	'GIT_NO_REPLACE_OBJECTS',
 	'GIT_INTERNAL_SUPER_PREFIX',
 ];
-for (const name of GIT_REPOSITORY_ENV_VARS) {
+// Variables a host Maestro hands the agent it spawned. A suite run from inside
+// that agent's shell (a pre-push hook, an agent running the tests) inherits
+// them, and code under test that reads them then behaves as if it were the
+// host's spawn: `MAESTRO_CLAUDE_BIN` made a turn look like it ran under
+// maestro-p and broke run-agent-turn's API-fallback case.
+const HOST_AGENT_ENV_VARS = ['MAESTRO_CLAUDE_BIN'];
+for (const name of [...GIT_REPOSITORY_ENV_VARS, ...HOST_AGENT_ENV_VARS]) {
+	delete process.env[name];
+}
+
+// Knobs maestro-p exports to the claude it drives, so they reach any shell an
+// agent on a TUI turn runs - including a pre-push hook. Spawn builders copy
+// process.env into the env they build, so an inherited value makes every
+// "does not opt in" assertion fail on a machine where nothing is wrong.
+const MAESTRO_P_ENV_VARS = ['MAESTRO_P_ACCEPT_WORKSPACE_TRUST'];
+for (const name of MAESTRO_P_ENV_VARS) {
 	delete process.env[name];
 }
 

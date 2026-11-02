@@ -8,11 +8,13 @@
 
 import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { DocumentChatMessages } from '../../../../renderer/components/DocumentChat/DocumentChatMessages';
 import { DocumentChatOverlay } from '../../../../renderer/components/DocumentChat';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
+import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
 import { sendDocumentChatMessage } from '../../../../renderer/services/documentChat';
 import { createMockSession } from '../../../helpers/mockSession';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
@@ -51,6 +53,7 @@ function enableVoice(enabled: boolean): void {
 }
 
 beforeEach(() => {
+	useVoiceSessionStore.getState().reset();
 	// Font size is a persisted reading preference; give each case fresh storage.
 	installLocalStorageMock();
 	useSessionStore.setState({
@@ -62,19 +65,126 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
 describe('DocumentChatOverlay', () => {
-	it('uses the compact icon toolbar and only an ESC control in the header', () => {
+	it('anchors the panel above the visible bottom-left icon within the preview', () => {
+		render(<Harness />);
+		expect(screen.getByTestId('document-chat-button')).toHaveClass(
+			'absolute',
+			'bottom-4',
+			'left-4'
+		);
+		expect(screen.getByTestId('document-chat-button')).not.toHaveClass('hidden');
+		expect(screen.getByTestId('document-chat-panel')).toHaveClass(
+			'absolute',
+			'bottom-16',
+			'left-4'
+		);
+		expect(screen.getByTestId('document-chat-panel')).not.toHaveClass('mx-auto');
+		expect(screen.getByTestId('document-chat-panel')).toHaveStyle({
+			width: 'calc(100% - 2rem)',
+			maxWidth: '36rem',
+		});
+	});
+
+	it('stops only its own embedded microphone when the panel closes', async () => {
+		const { rerender } = render(<Harness />);
+		act(() => {
+			useVoiceSessionStore.setState({
+				state: 'listening',
+				scope: { kind: 'document', sessionId: SESSION_ID, path: DOC_PATH },
+			});
+		});
+		vi.mocked(window.maestro.voice.stop).mockClear();
+		rerender(<Harness open={false} />);
+		await waitFor(() => expect(window.maestro.voice.stop).toHaveBeenCalledTimes(1));
+	});
+
+	it('ends its own document voice session when the preview unmounts', async () => {
+		const { unmount } = render(<Harness />);
+		act(() => {
+			useVoiceSessionStore.setState({
+				state: 'listening',
+				scope: { kind: 'document', sessionId: SESSION_ID, path: DOC_PATH },
+			});
+		});
+		vi.mocked(window.maestro.voice.stop).mockClear();
+		unmount();
+		await waitFor(() => expect(window.maestro.voice.stop).toHaveBeenCalledTimes(1));
+	});
+
+	it.each([
+		{ sessionId: 'other-agent', path: DOC_PATH },
+		{ sessionId: SESSION_ID, path: '/repo/other.md' },
+	])('leaves another document voice session alone on unmount: %o', async (scope) => {
+		const { unmount } = render(<Harness />);
+		act(() => {
+			useVoiceSessionStore.setState({
+				state: 'listening',
+				scope: { kind: 'document', ...scope },
+			});
+		});
+		vi.mocked(window.maestro.voice.stop).mockClear();
+		unmount();
+		await act(async () => {});
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+	});
+
+	it('holds the document microphone and sends on release without ending the session', async () => {
+		useVoiceSessionStore.setState({
+			state: 'listening',
+			scope: { kind: 'document', sessionId: SESSION_ID, path: DOC_PATH },
+		});
+		render(<Harness />);
+		vi.mocked(window.maestro.voice.setListening).mockClear();
+		vi.mocked(window.maestro.voice.stop).mockClear();
+		vi.useFakeTimers();
+		fireEvent.pointerDown(screen.getByTestId('document-chat-push'));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(useVoiceUiStore.getState().holdThresholdMs);
+		});
+		expect(window.maestro.voice.setListening).toHaveBeenCalledWith({ listening: true, hold: true });
+		await act(async () => {
+			fireEvent.pointerUp(window);
+		});
+		expect(window.maestro.voice.setListening).toHaveBeenLastCalledWith({
+			listening: false,
+			send: true,
+		});
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		expect(useVoiceSessionStore.getState().state).toBe('listening');
+	});
+
+	it.each([
+		{ sessionId: SESSION_ID, path: DOC_PATH, visible: true },
+		{ sessionId: 'other-agent', path: DOC_PATH, visible: false },
+		{ sessionId: SESSION_ID, path: '/repo/other.md', visible: false },
+	])('shows only this document voice error: %o', ({ sessionId, path, visible }) => {
+		useVoiceSessionStore.setState({
+			state: 'error',
+			scope: { kind: 'document', sessionId, path },
+			error: { code: 'microphone', message: 'Microphone unavailable', recoverable: true },
+		});
+		render(<Harness />);
+		if (visible) expect(screen.getByRole('alert')).toHaveTextContent('Microphone unavailable');
+		else expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('keeps secondary actions out of the compact composer', () => {
 		render(<Harness />);
 		expect(screen.getByTestId('document-chat-font-scale')).toBeInTheDocument();
 		expect(screen.getByTestId('document-chat-push')).toBeEnabled();
 		expect(screen.getByTestId('document-chat-close')).toHaveTextContent('ESC');
 		expect(screen.queryByTestId('document-chat-reset')).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Open in tab' })).toBeDisabled();
-		expect(screen.getByRole('button', { name: /^Thinking hidden/ })).toBeEnabled();
-		expect(screen.getByRole('button', { name: /^Keep as a tab/ })).toBeEnabled();
+		expect(screen.queryByRole('button', { name: /^Thinking hidden/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /^Keep as a tab/ })).not.toBeInTheDocument();
+		expect(screen.getByTestId('document-chat-composer')).not.toContainElement(
+			screen.getByRole('button', { name: 'Open in tab' })
+		);
 		expect(screen.getByRole('button', { name: /^Attach images/ })).toBeEnabled();
 		expect(
 			screen.queryByRole('button', { name: /Pinned on top|Not pinned/ })
@@ -82,14 +192,17 @@ describe('DocumentChatOverlay', () => {
 		expect(screen.queryByRole('radiogroup', { name: 'Chat input mode' })).not.toBeInTheDocument();
 	});
 
-	it('keeps a conversation in the tab bar without closing the panel', () => {
-		sendDocumentChatMessage({ path: DOC_PATH, text: 'keep this' });
-		const before = useSessionStore.getState().sessions[0];
+	it('opens the saved conversation in its full tab from the header', () => {
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'open this' });
+		const tab = useSessionStore
+			.getState()
+			.sessions[0].aiTabs?.find((t) => t.documentOrigin?.path === DOC_PATH);
 		render(<Harness />);
-		fireEvent.click(screen.getByRole('button', { name: /^Keep as a tab/ }));
-		expect(screen.getByRole('button', { name: /^Kept as a tab/ })).toBeEnabled();
-		expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
-		expect(useSessionStore.getState().sessions[0].activeTabId).toBe(before.activeTabId);
+		fireEvent.click(screen.getByRole('button', { name: 'Open in tab' }));
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.activeTabId).toBe(tab?.id);
+		expect(session.aiTabs?.find((t) => t.id === tab?.id)?.hidden).toBe(false);
+		expect(session.unifiedTabOrder).toContainEqual({ type: 'ai', id: tab?.id });
 	});
 	it('starts a new thread and resumes the earlier thread from history', () => {
 		sendDocumentChatMessage({ path: DOC_PATH, text: 'original question' });
@@ -203,7 +316,7 @@ describe('DocumentChatOverlay', () => {
 		expect(screen.queryByTestId('document-chat-messages')).not.toBeInTheDocument();
 		expect(screen.getByTestId('document-chat-input')).toHaveFocus();
 		expect(screen.getByTestId('document-chat-panel').style.height).toBe('');
-		expect(screen.getByTestId('document-chat-panel')).not.toHaveClass('absolute');
+		expect(screen.getByTestId('document-chat-panel')).toHaveClass('absolute');
 		expect(screen.getByTestId('document-chat-composer')).toHaveStyle({
 			backgroundColor: mockTheme.colors.bgActivity,
 		});

@@ -59,6 +59,7 @@ export function computeTurnDurations(logs: LogEntry[]): Map<string, number> {
 		} else if (
 			log.source === 'tool' ||
 			log.source === 'thinking' ||
+			log.source === 'stderr' ||
 			log.source === 'error' ||
 			isSelfContainedCard(log)
 		) {
@@ -74,10 +75,7 @@ export function computeTurnDurations(logs: LogEntry[]): Map<string, number> {
 			turnReplyId = log.id;
 		} else {
 			const provider =
-				log.turnProvider ??
-				(log.source === 'stdout' || log.source === 'ai' || log.source === 'stderr'
-					? null
-					: undefined);
+				log.turnProvider ?? (log.source === 'stdout' || log.source === 'ai' ? null : undefined);
 			if (provider !== undefined && groupProvider !== undefined && provider !== groupProvider)
 				flushGroup();
 			if (provider !== undefined) groupProvider = provider;

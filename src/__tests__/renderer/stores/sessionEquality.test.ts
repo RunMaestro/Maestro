@@ -229,6 +229,7 @@ describe('delegationRosterEquality', () => {
 		['name', { name: 'Renamed' }],
 		['group', { groupId: 'g1' }],
 		['parent', { parentSessionId: 'p1' }],
+		['peer specialty', { peerDescription: 'Lab design' }],
 		['group grant', { groupPeerAccess: { read: true, write: false } }],
 		['worktree grant', { worktreePeerAccess: { read: true, write: true } }],
 		['peer rows', { peerAgents: [{ sessionId: 'b', read: true, write: false }] }],

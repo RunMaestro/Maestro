@@ -1028,6 +1028,12 @@ describe('formatter', () => {
 			expect(result).toContain('My Group');
 		});
 
+		it("shows the agent's advertised specialty", () => {
+			expect(formatAgentDetail({ ...baseAgent, peerDescription: 'Builds labs' })).toContain(
+				'Builds labs'
+			);
+		});
+
 		it('should show the Codex transport for a Codex agent only', () => {
 			const codex = formatAgentDetail({
 				...baseAgent,

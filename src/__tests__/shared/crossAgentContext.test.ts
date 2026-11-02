@@ -13,6 +13,9 @@ import {
 	selectContextWindow,
 	deriveConsultSubject,
 	DEFAULT_RECENT_TURNS,
+	MENTION_ROUTINGS,
+	isMentionRouting,
+	parseMentionRoutingField,
 } from '../../shared/crossAgentContext';
 import type { LogEntry } from '../../renderer/types';
 
@@ -331,5 +334,41 @@ describe('inferMentionTiming', () => {
 
 	it('is parallel when there is no agent mention', () => {
 		expect(inferMentionTiming('send the results to finance')).toBe('parallel');
+	});
+});
+
+describe('isMentionRouting', () => {
+	it.each(['parallel', 'consult-first', 'handoff', 'only'])('accepts %s', (mode) => {
+		expect(isMentionRouting(mode)).toBe(true);
+	});
+
+	it.each(['Parallel', 'consult_first', 'hand-off', '', ' only', undefined, null, 1, ['only']])(
+		'rejects %j',
+		(value) => {
+			expect(isMentionRouting(value)).toBe(false);
+		}
+	);
+
+	it('lists exactly the four routings, the default first', () => {
+		expect(MENTION_ROUTINGS).toEqual(['parallel', 'consult-first', 'handoff', 'only']);
+	});
+});
+
+describe('parseMentionRoutingField', () => {
+	it('treats an absent field as no override', () => {
+		expect(parseMentionRoutingField(undefined)).toEqual({ ok: true });
+		expect(parseMentionRoutingField(null)).toEqual({ ok: true });
+	});
+
+	it('returns a valid routing', () => {
+		expect(parseMentionRoutingField('handoff')).toEqual({ ok: true, routing: 'handoff' });
+	});
+
+	it('refuses an unknown routing and names the valid ones', () => {
+		const result = parseMentionRoutingField('sideways');
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain('"sideways"');
+		expect(result.error).toContain('parallel, consult-first, handoff, only');
 	});
 });

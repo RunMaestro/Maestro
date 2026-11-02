@@ -20,9 +20,11 @@ import {
 	resolveMediaRuntime,
 	resolveMediaModelDirectory,
 } from '../../plugins/plugin-media-tools';
+import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
+import { deleteJourney } from '../../user-journey-manager';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 import {
@@ -42,7 +44,9 @@ import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
+import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
 	mergeDeferredSessionContent,
 	projectWebSession,
@@ -50,6 +54,7 @@ import {
 } from '../../stores/deferred-session-content';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -421,13 +426,17 @@ export function registerPersistenceHandlers(
 		// no matter who writes: a renderer that has not finished hydrating (its
 		// copy is still zeroed), a second window with a staler copy, or the web
 		// client. See src/shared/usagePeaks.ts for the incidents this prevents.
+		// `autoRunStats` (Conductor time, runs, badges) is the same shape of
+		// invariant and was lost the same way - see src/shared/autoRunStatsMerge.ts.
 		const toPersist =
 			key === 'usageStats'
 				? mergeUsagePeaks(
 						settingsStore.get('usageStats') as Partial<UsagePeaks> | undefined,
 						value as Partial<UsagePeaks>
 					)
-				: value;
+				: key === 'autoRunStats'
+					? mergeAutoRunStats(settingsStore.get('autoRunStats'), value)
+					: value;
 		try {
 			settingsStore.set(key, toPersist);
 		} catch (err) {
@@ -515,12 +524,18 @@ export function registerPersistenceHandlers(
 		try {
 			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
 			let toolOutputCount = 0;
+			// Closed-tab stacks written before they were stored as pointers (or by a
+			// raw write) carry whole transcripts and the legacy key. Bring them to
+			// the stored form the renderer projects, so its next change merges.
+			let closedTabCount = 0;
 			const compacted = relocated.map((session) => {
-				const result = compactSessionToolOutputs(session);
+				const normalized = normalizeStoredClosedTabs(session);
+				if (normalized !== session) closedTabCount++;
+				const result = compactSessionToolOutputs(normalized);
 				toolOutputCount += result.compacted;
 				return result.session;
 			});
-			if (imageCount > 0 || toolOutputCount > 0) {
+			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -531,6 +546,12 @@ export function registerPersistenceHandlers(
 				if (toolOutputCount > 0) {
 					logger.info(
 						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (closedTabCount > 0) {
+					logger.info(
+						`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
 						'Sessions'
 					);
 				}
@@ -625,11 +646,44 @@ export function registerPersistenceHandlers(
 					});
 					return undefined;
 				});
-				if (!live) return session;
+				if (!live)
+					return {
+						...session,
+						deferredContent: { ...session.deferredContent, ownerUnavailable: true },
+					};
+				const storedTabs = new Map<string, Record<string, unknown>>();
+				for (const tab of session.aiTabs ?? []) storedTabs.set(tab.id, tab);
+				const inventory: Array<
+					Record<string, unknown> & { id: string; clearRuntimeFields?: string[] }
+				> = live.tabInventory ?? session.aiTabs ?? [];
+				const aiTabs = inventory.map(({ clearRuntimeFields, ...tab }) => {
+					const current: Record<string, unknown> = {
+						...storedTabs.get(tab.id),
+						...tab,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+					};
+					for (const field of clearRuntimeFields ?? []) delete current[field];
+					return current;
+				});
+				const current = { ...session, ...live.runtime };
+				for (const field of live.clearRuntimeFields ?? []) delete current[field];
 				return {
-					...session,
+					...current,
+					aiTabs,
 					browserTabs: live.runtime?.browserTabs,
 					terminalTabs: live.runtime?.terminalTabs,
+					deferredContent: { ...session.deferredContent, tabIds: aiTabs.map((tab) => tab.id) },
+					// Keep requested runtime private and separate from persisted metadata.
+					// The browser applies it after restoration resets restart-only state.
+					transcriptSnapshots: [
+						{
+							sessionId: live.sessionId,
+							runtime: live.runtime,
+							clearRuntimeFields: live.clearRuntimeFields,
+						},
+					],
 				};
 			})
 		);
@@ -637,13 +691,10 @@ export function registerPersistenceHandlers(
 	ipcMain.handle(
 		'sessions:getDeferredContent',
 		async (event, sessionId: string, tabId: string | null, includeCommands: boolean) => {
-			const content = readDeferredContent(
-				sessionsStore.get('sessions', []).find((item) => item.id === sessionId),
-				sessionId,
-				tabId,
-				includeCommands
-			);
+			const stored = sessionsStore.get('sessions', []).find((item) => item.id === sessionId);
 			if ((event as { type?: string })?.type === 'bridge') {
+				// A newly acknowledged tab can exist in the owner before its disk write.
+				const content = readDeferredContent(stored, sessionId, null, includeCommands);
 				const [tab, shell] = await Promise.all([
 					tabId ? readOwningTranscript(sessionId, tabId) : undefined,
 					includeCommands ? readOwningTranscript(sessionId, '') : undefined,
@@ -662,7 +713,7 @@ export function registerPersistenceHandlers(
 						})),
 				};
 			}
-			return content;
+			return readDeferredContent(stored, sessionId, tabId, includeCommands);
 		}
 	);
 
@@ -757,6 +808,8 @@ export function registerPersistenceHandlers(
 								mergeDeferredSessionContent(update, prev),
 								prev,
 								baselineMap.get(prev.id),
+								remote,
+								false,
 								remote
 							)
 						);
@@ -767,10 +820,24 @@ export function registerPersistenceHandlers(
 				}
 				for (const newSession of updateMap.values()) {
 					if (removeSet.has(newSession.id)) continue;
-					merged.push(mergeDeferredSessionContent(newSession, undefined));
+					merged.push(
+						mergeSessionPersistenceChanges(
+							mergeDeferredSessionContent(newSession, undefined),
+							undefined,
+							undefined,
+							remote,
+							false,
+							remote
+						)
+					);
 				}
+				// Normalize after the merge, never before: a peer baseline can hold a
+				// stack in a form the stored side would not, and normalizing only one
+				// side would turn that into a conflict.
 				const sessionsToPersist = merged.map((session) =>
-					touchedIds.has(session.id) ? compactSessionToolOutputs(session).session : session
+					touchedIds.has(session.id)
+						? compactSessionToolOutputs(normalizeStoredClosedTabs(session)).session
+						: session
 				);
 
 				// Lifecycle logging (parallel to setAll's debug logs)
@@ -865,6 +932,9 @@ export function registerPersistenceHandlers(
 					throw err;
 				}
 
+				// Crash-report context (agent count + provider types); no-op unless changed.
+				noteSentryAgentInventory(sessionsToPersist);
+
 				// Tell the other clients (desktop windows + web-desktop) what entered and
 				// left, so an agent created or closed in one of them stops being
 				// invisible to - and resurrectable by - the rest.
@@ -878,6 +948,9 @@ export function registerPersistenceHandlers(
 				// A closed agent can never produce another turn, so drop whatever the
 				// spawn path noted about who was driving its tabs.
 				for (const id of removedIds) forgetAgentActors(id);
+				// The User Journey log belongs to the agent; it goes with it.
+				// Fire-and-forget: deleteJourney reports its own failures.
+				for (const id of removedIds) void deleteJourney(id);
 				const updatedSessions = sessionsToPersist.filter(
 					(session) =>
 						touchedIds.has(session.id) &&
@@ -945,11 +1018,15 @@ export function registerPersistenceHandlers(
 			const sessionsToPersist = sessions.map((session) =>
 				incomingIds.has(session.id)
 					? compactSessionToolOutputs(
-							mergeSessionPersistenceChanges(
-								mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-								previousSessionMap.get(session.id),
-								baselineMap.get(session.id),
-								remote
+							normalizeStoredClosedTabs(
+								mergeSessionPersistenceChanges(
+									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+									previousSessionMap.get(session.id),
+									baselineMap.get(session.id),
+									remote,
+									false,
+									remote
+								)
 							)
 						).session
 					: session
@@ -1023,6 +1100,9 @@ export function registerPersistenceHandlers(
 				return false;
 			}
 
+			// Crash-report context (agent count + provider types); no-op unless changed.
+			noteSentryAgentInventory(sessionsToPersist);
+
 			// Opening snapshots may add/update observed agents but never infer a
 			// deletion from an omitted id. Explicit removes arrive through setMany.
 			const updatedSessions = sessionsToPersist.filter(
@@ -1060,35 +1140,31 @@ export function registerPersistenceHandlers(
 	);
 
 	// Groups persistence
-	ipcMain.handle('groups:getAll', async () => {
-		return groupsStore.get('groups', []);
-	});
+	ipcMain.handle('groups:getAll', () =>
+		sessionWriteQueue.enqueue('groups', async () => groupsStore.get('groups', []))
+	);
 
-	ipcMain.handle('groups:setAll', async (_, groups: Group[]) => {
-		try {
-			// Back the registry up before letting an empty one replace it.
-			//
-			// Emptying the group registry is unrecoverable: the group rows carry the
-			// names, emoji and collapsed state, and nothing else on disk holds a
-			// second copy. Agents keep their `groupId`, so the ids survive and point
-			// at rows that no longer exist. A single bad write costs the user every
-			// group they have.
-			//
-			// Deleting the last group is a legitimate thing to do, so this does not
-			// refuse the write - it keeps a copy first, which turns a permanent loss
-			// into a recoverable one. It sits here rather than in the renderer on
-			// purpose: the CLI (`remove-group`) and the web bridge reach the store
-			// through this same handler, so guarding at one caller would not cover
-			// the others.
-			await backupGroupsBeforeWipe(groupsStore, groups);
-			groupsStore.set('groups', groups);
-		} catch (err) {
-			const code = (err as NodeJS.ErrnoException).code;
-			logger.warn(`Failed to persist groups: ${code || (err as Error).message}`, 'Groups');
-			return false;
-		}
-		return true;
-	});
+	ipcMain.handle('groups:setAll', (_event, groups: Group[], baseline: Group[]) =>
+		sessionWriteQueue.enqueue('groups', async () => {
+			try {
+				if (!Array.isArray(groups) || !Array.isArray(baseline)) {
+					throw new Error('Group persistence requires an observed baseline');
+				}
+				const merged = mergeGroupPersistenceChanges(
+					groupsStore.get('groups', []),
+					groups,
+					baseline
+				);
+				await backupGroupsBeforeWipe(groupsStore, merged);
+				groupsStore.set('groups', merged);
+				return true;
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				logger.warn(`Failed to persist groups: ${code || (err as Error).message}`, 'Groups');
+				return false;
+			}
+		})
+	);
 
 	// CLI activity (for detecting when CLI is running playbooks)
 	ipcMain.handle('cli:getActivity', async () => {

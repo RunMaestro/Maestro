@@ -7,7 +7,10 @@ import {
 	setStatsIndexingBroadcaster,
 	withStatsIndexing,
 } from '../../../main/stats/stats-indexing';
-import { STATS_INDEXING_VISIBLE_MIN_FILES } from '../../../shared/statsIndexing';
+import {
+	STATS_INDEXING_VISIBLE_AFTER_MS,
+	STATS_INDEXING_VISIBLE_MIN_FILES,
+} from '../../../shared/statsIndexing';
 
 describe('stats indexing registry', () => {
 	const broadcast = vi.fn();
@@ -69,27 +72,61 @@ describe('stats indexing registry', () => {
 		expect(getStatsIndexingState().jobs).toEqual([]);
 	});
 
-	it('coalesces progress pushes and pushes the end at once', () => {
+	it('coalesces progress pushes once surfaced, and pushes the end at once', () => {
 		const handle = beginStatsIndexing({ id: 'g', label: 'G', reason: 'index' });
-		handle.addWork(STATS_INDEXING_VISIBLE_MIN_FILES, 10);
-		handle.advance(1, 1);
-		handle.advance(1, 1);
-		expect(broadcast).not.toHaveBeenCalled();
-
-		vi.advanceTimersByTime(STATS_INDEXING_BROADCAST_INTERVAL_MS);
+		handle.addWork(STATS_INDEXING_VISIBLE_MIN_FILES, 1000);
+		handle.advance(1, 10);
+		vi.advanceTimersByTime(STATS_INDEXING_VISIBLE_AFTER_MS);
+		// The reveal check: 1% done after the silent window is a slow scan.
 		expect(broadcast).toHaveBeenCalledTimes(1);
-		expect(broadcast.mock.calls[0][0].jobs[0].doneFiles).toBe(2);
+		expect(broadcast.mock.calls[0][0].jobs[0].surfaced).toBe(true);
+
+		handle.advance(1, 10);
+		handle.advance(1, 10);
+		expect(broadcast).toHaveBeenCalledTimes(1);
+		vi.advanceTimersByTime(STATS_INDEXING_BROADCAST_INTERVAL_MS);
+		expect(broadcast).toHaveBeenCalledTimes(2);
+		expect(broadcast.mock.calls[1][0].jobs[0].doneFiles).toBe(3);
 
 		handle.end();
-		expect(broadcast).toHaveBeenCalledTimes(2);
-		expect(broadcast.mock.calls[1][0]).toEqual({ jobs: [] });
+		expect(broadcast).toHaveBeenCalledTimes(3);
+		expect(broadcast.mock.calls[2][0]).toEqual({ jobs: [] });
+	});
+
+	it('never shows a large scan that finishes quickly', () => {
+		// Opening a dashboard on a big history: hundreds of changed transcripts,
+		// parsed in a few seconds. That is not worth a modal.
+		const handle = beginStatsIndexing({ id: 'g', label: 'G', reason: 'index' });
+		handle.addWork(500, 5000);
+		for (let i = 0; i < 500; i++) {
+			handle.advance(1, 10);
+			vi.advanceTimersByTime(10);
+		}
+		handle.end();
+		vi.advanceTimersByTime(STATS_INDEXING_VISIBLE_AFTER_MS);
+		expect(broadcast).not.toHaveBeenCalled();
+	});
+
+	it('keeps a surfaced scan showing when its projected time left drops', () => {
+		const handle = beginStatsIndexing({ id: 'g', label: 'G', reason: 'upgrade' });
+		handle.addWork(100, 1000);
+		handle.advance(1, 10);
+		vi.advanceTimersByTime(STATS_INDEXING_VISIBLE_AFTER_MS);
+		expect(getStatsIndexingState().jobs[0].surfaced).toBe(true);
+
+		// A burst of small files: nearly done, well under the remaining-time cut.
+		handle.advance(98, 980);
+		vi.advanceTimersByTime(STATS_INDEXING_BROADCAST_INTERVAL_MS);
+		const last = broadcast.mock.calls.at(-1)![0];
+		expect(last.jobs[0]).toMatchObject({ surfaced: true, doneFiles: 99 });
+		handle.end();
 	});
 
 	it('stays silent for a scan too small to show', () => {
 		const handle = beginStatsIndexing({ id: 'g', label: 'G', reason: 'index' });
 		handle.addWork(STATS_INDEXING_VISIBLE_MIN_FILES - 1, 10);
 		handle.advance(1, 1);
-		vi.advanceTimersByTime(STATS_INDEXING_BROADCAST_INTERVAL_MS);
+		vi.advanceTimersByTime(STATS_INDEXING_VISIBLE_AFTER_MS);
 		// Not pushed, but still readable on request (the CLI asks directly).
 		expect(getStatsIndexingState().jobs).toHaveLength(1);
 		handle.end();

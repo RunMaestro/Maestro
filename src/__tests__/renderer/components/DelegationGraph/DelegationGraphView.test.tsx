@@ -860,12 +860,12 @@ describe('DelegationGraphView', () => {
 				initialMode = mode;
 				const sessions = useSessionStore.getState().sessions;
 				renderView();
-				const toggle = screen.getByRole('switch', { name: 'Hide unconnected' });
-				expect(toggle).toHaveAttribute('aria-checked', 'false');
+				const toggle = screen.getByRole('button', { name: 'Hide unconnected' });
+				expect(toggle).toHaveAttribute('aria-pressed', 'false');
 
 				fireEvent.click(toggle);
 
-				expect(toggle).toHaveAttribute('aria-checked', 'true');
+				expect(toggle).toHaveAttribute('aria-pressed', 'true');
 				expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
 				expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'd->e']);
 				if (mode === 'view') expect(sharedCanvas.props?.fitToken).toBeGreaterThan(0);
@@ -879,14 +879,14 @@ describe('DelegationGraphView', () => {
 
 		it('remembers the filter across scopes and reopening', () => {
 			const first = renderView();
-			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Hide unconnected' }));
 			changeScope(scopeStorageKey(RESEARCH_SCOPE));
 			expect(drawnNodeIds()).toEqual(['a', 'b']);
 			first.unmount();
 
 			renderView();
-			expect(screen.getByRole('switch', { name: 'Hide unconnected' })).toHaveAttribute(
-				'aria-checked',
+			expect(screen.getByRole('button', { name: 'Hide unconnected' })).toHaveAttribute(
+				'aria-pressed',
 				'true'
 			);
 			expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
@@ -894,7 +894,7 @@ describe('DelegationGraphView', () => {
 
 		it('updates the filter when incoming relationships are added and removed', () => {
 			renderView();
-			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Hide unconnected' }));
 			patchSession('a', {
 				peerAgents: [...sessionOf('a').peerAgents!, { sessionId: 'c', read: true, write: false }],
 			});
@@ -905,7 +905,7 @@ describe('DelegationGraphView', () => {
 
 		it('keeps an agent added in Edit visible until switching to View', () => {
 			renderView();
-			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Hide unconnected' }));
 			expect(addableIds()).toEqual(['c']);
 			fireEvent.change(addAgentSelect()!, { target: { value: 'c' } });
 			expect(drawnNodeIds()).toEqual(ALL_IDS);
@@ -916,7 +916,7 @@ describe('DelegationGraphView', () => {
 		it('lets the user add an endpoint in Edit when every agent is hidden', () => {
 			useSessionStore.setState({ sessions: [createMockSession({ id: 'c', name: 'Gamma' })] });
 			renderView();
-			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Hide unconnected' }));
 			expect(drawnNodeIds()).toEqual([]);
 			expect(addableIds()).toEqual(['c']);
 			expect(addAgentSelect()).not.toBeDisabled();
@@ -931,12 +931,12 @@ describe('DelegationGraphView', () => {
 		it('explains when every agent is hidden and lets the user restore them', () => {
 			useSessionStore.setState({ sessions: [createMockSession({ id: 'c', name: 'Gamma' })] });
 			renderView();
-			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Hide unconnected' }));
 			expect(screen.getByText('No connected agents')).toBeInTheDocument();
 			expect(screen.getByText(/Turn off Hide unconnected/)).toBeInTheDocument();
 			expect(screen.getByTestId('delegation-graph-fit')).toBeDisabled();
 			expect(drawnNodeIds()).toEqual([]);
-			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Hide unconnected' }));
 			expect(drawnNodeIds()).toEqual(['c']);
 		});
 	});
@@ -982,9 +982,12 @@ describe('DelegationGraphView', () => {
 
 		it('offers the shared layout choices and keeps the chosen layout per scope', () => {
 			renderView();
-			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
-				target: { value: 'mindmap' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+			fireEvent.click(
+				screen.getByRole('menuitemradio', {
+					name: new RegExp(DELEGATION_LAYOUT_LABELS.mindmap.name),
+				})
+			);
 			expect(sharedCanvas.props?.layoutType).toBe('mindmap');
 			changeScope(PLATFORM_KEY);
 			expect(sharedCanvas.props?.layoutType).toBe('hierarchical');
@@ -2154,7 +2157,7 @@ describe('DelegationGraphView', () => {
 				});
 				expect(writeCount()).toBe(1);
 				expect(positionsOnCanvas()).toEqual({ ...before, c: GAMMA_DROP });
-				expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('manual');
+				expect(screen.getByRole('button', { name: 'Layout' })).toHaveTextContent('Manual');
 			});
 
 			it('keeps the agent where it was dropped after the drag ends and the write settles', () => {
@@ -2532,7 +2535,7 @@ describe('DelegationGraphView', () => {
 	describe('dragging', () => {
 		it('turns the scope manual on the first move and saves every agent', () => {
 			renderView();
-			expect(screen.getByRole('combobox', { name: 'Layout' })).not.toHaveValue('manual');
+			expect(screen.getByRole('button', { name: 'Layout' })).not.toHaveTextContent('Manual');
 			expect(screen.getByTestId('delegation-graph-reset')).toBeDisabled();
 			const before = positionsOnCanvas();
 
@@ -2542,7 +2545,7 @@ describe('DelegationGraphView', () => {
 				layout: 'manual',
 				positions: { ...before, a: DRAGGED },
 			});
-			expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('manual');
+			expect(screen.getByRole('button', { name: 'Layout' })).toHaveTextContent('Manual');
 			expect(screen.getByTestId('delegation-graph-reset')).toBeEnabled();
 		});
 
@@ -2559,39 +2562,47 @@ describe('DelegationGraphView', () => {
 	describe('a named layout', () => {
 		it('offers every algorithm in a compact picker and shows manual placement without making it selectable', () => {
 			renderView();
-			const picker = screen.getByRole('combobox', { name: 'Layout' });
-			expect(
-				within(picker)
-					.getAllByRole('option')
-					.map((option) => option.getAttribute('value'))
-			).toEqual(['hierarchical', 'force', 'radial', 'mindmap', 'lobes']);
+			const picker = screen.getByRole('button', { name: 'Layout' });
+			fireEvent.click(picker);
+			expect(screen.getAllByRole('menuitemradio').map((option) => option.textContent)).toEqual(
+				['hierarchical', 'force', 'radial', 'mindmap', 'lobes'].map((layout) => {
+					const choice = DELEGATION_LAYOUT_LABELS[layout as keyof typeof DELEGATION_LAYOUT_LABELS];
+					return choice.name + choice.description;
+				})
+			);
+			fireEvent.keyDown(window, { key: 'Escape' });
 			drag('a', DRAGGED);
-			expect(picker).toHaveValue('manual');
-			expect(within(picker).getByRole('option', { name: 'Manual' })).toBeDisabled();
+			expect(picker).toHaveTextContent('Manual');
+			fireEvent.click(picker);
+			expect(screen.queryByRole('menuitemradio', { name: 'Manual' })).not.toBeInTheDocument();
 		});
 
 		// Moving between two algorithms destroys nothing the user made.
 		it('is applied at once when nothing was placed by hand', () => {
 			renderView();
 
-			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
-				target: { value: 'force' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+			fireEvent.click(
+				screen.getByRole('menuitemradio', { name: new RegExp(DELEGATION_LAYOUT_LABELS.force.name) })
+			);
 
 			expect(screen.queryByTestId('delegation-graph-confirm')).toBeNull();
 			expect(layouts()[ALL_KEY].layout).toBe('force');
 			expect(Object.keys(layouts()[ALL_KEY].positions).sort()).toEqual(ALL_IDS);
 			expect(positionsOnCanvas()).toEqual(layouts()[ALL_KEY].positions);
-			expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('force');
+			expect(screen.getByRole('button', { name: 'Layout' })).toHaveTextContent('Force');
 		});
 
 		it('asks first when the scope was arranged by hand, and changes nothing on Cancel', () => {
 			renderView();
 			drag('a', DRAGGED);
 
-			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
-				target: { value: 'radial' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+			fireEvent.click(
+				screen.getByRole('menuitemradio', {
+					name: new RegExp(DELEGATION_LAYOUT_LABELS.radial.name),
+				})
+			);
 			const dialog = screen.getByTestId('delegation-graph-confirm');
 			expect(layouts()[ALL_KEY].layout).toBe('manual');
 
@@ -2606,9 +2617,12 @@ describe('DelegationGraphView', () => {
 			renderView();
 			drag('a', DRAGGED);
 
-			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
-				target: { value: 'radial' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+			fireEvent.click(
+				screen.getByRole('menuitemradio', {
+					name: new RegExp(DELEGATION_LAYOUT_LABELS.radial.name),
+				})
+			);
 			fireEvent.click(
 				within(screen.getByTestId('delegation-graph-confirm')).getByRole('button', {
 					name: `Apply ${DELEGATION_LAYOUT_LABELS.radial.name}`,
@@ -2619,7 +2633,7 @@ describe('DelegationGraphView', () => {
 			expect(layouts()[ALL_KEY].layout).toBe('radial');
 			expect(positionOf('a')).not.toEqual(DRAGGED);
 			expect(positionsOnCanvas()).toEqual(layouts()[ALL_KEY].positions);
-			expect(screen.getByRole('combobox', { name: 'Layout' })).not.toHaveValue('manual');
+			expect(screen.getByRole('button', { name: 'Layout' })).not.toHaveTextContent('Manual');
 		});
 
 		it('forgets the arrangement on a confirmed reset', () => {

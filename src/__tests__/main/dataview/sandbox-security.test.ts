@@ -20,8 +20,9 @@
  * - **`dataview:readInRoot`** (the real `DataviewService` over the real local file system): traversal,
  *   absolute paths, drive paths, and symlinks that resolve outside the root are refused; a symlink that stays
  *   inside is followed.
- * - **The watchdog** (both hosts, AST): a 5 s wall-clock watchdog (per block run, per inline expression) whose
- *   expiry, like a dead guest process, destroys the guest by remounting the tag under a new key.
+ * - **The watchdog** (both hosts, AST): a 5 s wall-clock watchdog (per block run, per inline expression), after
+ *   a separate budget for the index build, whose expiry, like a dead guest process, destroys the guest by
+ *   remounting the tag under a new key.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -80,6 +81,7 @@ import {
 	DATAVIEW_GUEST_PARTITION_PREFIX,
 	DATAVIEW_GUEST_URL,
 	DATAVIEW_JS_RUN_TIMEOUT_MS,
+	DATAVIEW_JS_INDEX_TIMEOUT_MS,
 	dataviewGuestPartition,
 	isAllowedDataviewGuestAttachment,
 } from '../../../shared/dataview/sandboxHost';
@@ -702,11 +704,33 @@ describe.each(GUEST_HOSTS)('the run watchdog (%s)', (_name, hostPath) => {
 		return declarations[0];
 	}
 
-	it('times out at 5 seconds', () => {
+	it('times out at 5 seconds, after 30 for the index build', () => {
 		expect(DATAVIEW_JS_RUN_TIMEOUT_MS).toBe(5000);
+		expect(DATAVIEW_JS_INDEX_TIMEOUT_MS).toBe(30_000);
 	});
 
-	it('arms one watchdog per run on DATAVIEW_JS_RUN_TIMEOUT_MS that is never touched (wall clock)', () => {
+	it('arms every watchdog with one of the two budgets, the index budget once per run', () => {
+		// The one function that builds a watchdog, and the argument that carries its budget.
+		const [armName, budgetArg] = isInlineHost ? ['armWatchdog', 1] : ['runWatchdog', 0];
+		const arm = functionBody(armName);
+		const budgetParam = findAll(arm, (node): node is ts.ParameterDeclaration =>
+			ts.isParameter(node)
+		).find((param) => param.name.getText() === 'idleMs');
+		expect(budgetParam, `${armName} takes the budget as idleMs`).toBeDefined();
+		if (isInlineHost)
+			expect(budgetParam!.initializer?.getText()).toBe('DATAVIEW_JS_RUN_TIMEOUT_MS');
+
+		const arms = findAll(frameSource, (node): node is ts.CallExpression => isCallTo(node, armName));
+		const budgets = arms.map(
+			(call) => call.arguments[budgetArg]?.getText() ?? budgetParam!.initializer?.getText()
+		);
+		expect(budgets.length).toBeGreaterThanOrEqual(2);
+		for (const budget of budgets)
+			expect(['DATAVIEW_JS_INDEX_TIMEOUT_MS', 'DATAVIEW_JS_RUN_TIMEOUT_MS']).toContain(budget);
+		expect(budgets.filter((budget) => budget === 'DATAVIEW_JS_INDEX_TIMEOUT_MS')).toHaveLength(1);
+	});
+
+	it('builds the watchdog in one place, with no maximum, and never touches it (wall clock)', () => {
 		const watchdogs = findAll(frameSource, (node): node is ts.CallExpression =>
 			isCallTo(node, 'createIdleWatchdog')
 		);
@@ -716,7 +740,8 @@ describe.each(GUEST_HOSTS)('the run watchdog (%s)', (_name, hostPath) => {
 		const props = new Map(
 			(options as ts.ObjectLiteralExpression).properties.map((p) => [p.name?.getText(), p])
 		);
-		expect(props.get('idleMs')?.getText()).toBe('idleMs: DATAVIEW_JS_RUN_TIMEOUT_MS');
+		// The budget is the arming function's parameter, checked by the test above.
+		expect(props.get('idleMs')?.getText()).toBe('idleMs');
 		expect(props.has('maxMs')).toBe(false);
 		// Expiry destroys the guest with a timeout.
 		const onIdle = props.get('onIdle');

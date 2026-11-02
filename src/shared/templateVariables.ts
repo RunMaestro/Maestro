@@ -21,6 +21,7 @@ import type { SystemOnePromptVariables } from './local-models/system-one-prompt'
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
+ *   {{AGENT_JOURNEY_PATH}} - Path to agent's User Journey JSONL file (what the user did in Maestro)
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
@@ -227,6 +228,11 @@ export interface TemplateContext {
 	// History file path for task recall
 	historyFilePath?: string;
 	/**
+	 * The agent's User Journey file, for {{AGENT_JOURNEY_PATH}}. Builders leave
+	 * it unset for SSH-remote agents, whose shell cannot reach that path.
+	 */
+	journeyFilePath?: string;
+	/**
 	 * `<userData>/computer-history` on the Maestro machine, for the Computer
 	 * History system-prompt section. Builders leave it unset for SSH-remote
 	 * agents, whose shell cannot reach that path.
@@ -273,6 +279,10 @@ export interface TemplateContext {
 	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
+		pluginId?: string;
+		pluginTopic?: string;
+		pluginEventId?: string;
+		pluginMetadata?: string;
 		eventType?: string;
 		eventTimestamp?: string;
 		triggerName?: string;
@@ -374,6 +384,7 @@ export const TEMPLATE_VARIABLES = [
 		encoreFlag: 'maestroRun',
 	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
+	{ variable: '{{AGENT_JOURNEY_PATH}}', description: 'User Journey file path (user actions)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
@@ -402,6 +413,14 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_ID}}', description: 'Authenticated plugin ID', cueOnly: true },
+	{
+		variable: '{{CUE_PLUGIN_TOPIC}}',
+		description: 'Authenticated plugin event topic',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_PLUGIN_EVENT_ID}}', description: 'Stable plugin event ID', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_METADATA}}', description: 'Opaque plugin event JSON', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
 	{
 		variable: '{{CUE_GH_ASSIGNEES}}',
@@ -618,7 +637,7 @@ const CUE_GITHUB_EVENTS = ['github.pull_request', 'github.issue', 'github.label'
  *
  * In: GitHub titles, bodies, comments and the head branch of a pull request
  * (the author of a fork names it), the content of a watched task file, and
- * everything a webhook sender controls.
+ * everything a webhook sender controls, and plugin-provided event metadata.
  *
  * Out, on purpose: labels and the base branch (set by people with write access
  * to the repository), authors and URLs (a fixed character set), file paths (a
@@ -628,6 +647,12 @@ const CUE_GITHUB_EVENTS = ['github.pull_request', 'github.issue', 'github.label'
  * would be flagged constantly).
  */
 export const CUE_UNTRUSTED_TEMPLATE_VARIABLES: readonly CueUntrustedTemplateVariable[] = [
+	{
+		variable: 'CUE_PLUGIN_METADATA',
+		contextKey: 'pluginMetadata',
+		events: ['plugin.event'],
+		description: 'plugin event metadata',
+	},
 	{
 		variable: 'CUE_GH_TITLE',
 		contextKey: 'ghTitle',
@@ -745,6 +770,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		goalExitCriteria,
 		predecessorHandoff,
 		historyFilePath,
+		journeyFilePath,
 		computerHistoryDir,
 		maestroRunPath,
 		conductorProfile,
@@ -768,6 +794,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		AGENT_JOURNEY_PATH: journeyFilePath || '',
 		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
 		MAESTRO_RUN_PATH: maestroRunPath || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
@@ -859,6 +886,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		SYSTEM_ONE_BUDGET: context.systemOne?.budget || '',
 
 		// Cue variables
+		CUE_PLUGIN_ID: context.cue?.pluginId ?? '',
+		CUE_PLUGIN_TOPIC: context.cue?.pluginTopic ?? '',
+		CUE_PLUGIN_EVENT_ID: context.cue?.pluginEventId ?? '',
+		CUE_PLUGIN_METADATA: context.cue?.pluginMetadata ?? '',
 		CUE_EVENT_TYPE: context.cue?.eventType || '',
 		CUE_EVENT_TIMESTAMP: context.cue?.eventTimestamp || '',
 		CUE_TRIGGER_NAME: context.cue?.triggerName || '',

@@ -1,21 +1,24 @@
-/**
- * Writing the group list to disk, and waiting for it.
- *
- * The store's own persistence runs from a React effect, so it lands after a
- * remote listener has already answered its caller. A CLI that verifies its
- * write by reading `maestro-groups.json` back would then see the pre-update
- * list and report a false mismatch. Flushing before responding makes the
- * readback deterministic; the effect's later write is the same data and is
- * idempotent.
- */
-
-import type { Group } from '../../shared/types';
+import { useSessionStore } from '../stores/sessionStore';
 import { logger } from '../utils/logger';
 
-export async function flushGroupsToDisk(groups: Group[]): Promise<void> {
-	try {
-		await window.maestro.groups.setAll(groups);
-	} catch (error) {
-		logger.error('[Remote] Failed to persist group change:', undefined, error);
-	}
+let pending: Promise<boolean> = Promise.resolve(true);
+
+/** Serialize effect and command flushes; only acknowledged snapshots become baselines. */
+export function flushGroupsToDisk(): Promise<boolean> {
+	pending = pending.then(async () => {
+		const { groups, groupsLoaded, groupPersistenceBaseline } = useSessionStore.getState();
+		if (!groupsLoaded) return false;
+		if (groups === groupPersistenceBaseline) return true;
+		try {
+			if (!(await window.maestro.groups.setAll(groups, groupPersistenceBaseline))) {
+				throw new Error('Host rejected group persistence');
+			}
+			useSessionStore.setState({ groupPersistenceBaseline: groups });
+			return true;
+		} catch (error) {
+			logger.error('Failed to persist group changes:', undefined, error);
+			return false;
+		}
+	});
+	return pending;
 }

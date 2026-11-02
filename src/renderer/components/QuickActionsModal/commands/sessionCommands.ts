@@ -5,6 +5,7 @@ import { getModalActions, useModalStore } from '../../../stores/modalStore';
 import { canExportAgent } from '../../../utils/agentBundles';
 import type { Session } from '../../../types';
 import { sessionJumpShortcut } from '../../../utils/sessionJumpSlots';
+import { getRunningJumpTab } from '../../../utils/tabHelpers';
 import type { QuickAction } from '../types';
 import { alphabetizeKey } from '../utils/quickActionSorting';
 import { makeAgentJumpAction, type GetSessionWindow } from './agentJumpAction';
@@ -63,6 +64,7 @@ export function buildSessionJumpCommands({
 				setActiveSessionId,
 				revealJumpTarget,
 				getSessionWindow,
+				tabId: getRunningJumpTab(session)?.id,
 			}),
 			subtext: session.state.toUpperCase(),
 			bookmarked: !!session.bookmarked,

@@ -180,14 +180,37 @@ async function enrichContext(
 	const activeAgentSessionId =
 		context.activeAgentSessionId ?? assembled?.activeAgentSessionId ?? null;
 
-	const candidates = rankRecallCandidates(input, roster, { activeAgentSessionId });
+	// Rank against the live roster BEFORE the size cap: an older named tab may
+	// have been dropped from the cached context. Restore only the shortlist.
+	const recallRoster = roster.map((agent) => {
+		const live = context.roster.find((candidate) => candidate.sessionId === agent.sessionId);
+		const known = new Set(agent.tabs.map((tab) => tab.id));
+		return {
+			...agent,
+			tabs: [...agent.tabs, ...(live?.tabs.filter((tab) => !known.has(tab.id)) ?? [])],
+		};
+	});
+	const candidates = rankRecallCandidates(
+		`${context.clarification?.utterance ?? ''} ${input}`,
+		recallRoster,
+		{ activeAgentSessionId }
+	);
+	const restoredRoster = roster.map((agent) => ({
+		...agent,
+		tabs: [
+			...candidates
+				.filter((candidate) => candidate.agentSessionId === agent.sessionId)
+				.map((candidate) => candidate.tab),
+			...agent.tabs.filter((tab) => !candidates.some((candidate) => candidate.tab.id === tab.id)),
+		],
+	}));
 
 	return {
 		context: {
 			...context,
 			// Only the shortlisted prior tabs, plus everything still open: a model
 			// handed sixty topic lines picks the one it saw most recently.
-			roster: narrowRosterForRecall(roster, candidates),
+			roster: narrowRosterForRecall(restoredRoster, candidates),
 			activeAgentSessionId,
 		},
 		candidates,
@@ -260,16 +283,15 @@ function buildDisambiguation(
 ): string | null {
 	if (roster.length < 2) return null;
 
-	if (decision.tabAction === 'recall' && candidates.length >= 2) {
+	const targetId = routeTargetSessionId(decision.target);
+	if ((decision.tabAction === 'recall' || !targetId) && candidates.length >= 2) {
 		const [first, second] = candidates;
 		return `${tabLabel(first)} or ${tabLabel(second)}?`;
 	}
 
-	// The agent the model leaned toward comes first so the likely answer is the
-	// first thing the user hears. With no such agent - a conductor target, or an
-	// id that was rejected - the two most plausible are simply the first two.
-	const targetId = routeTargetSessionId(decision.target);
-	const chosen = roster.find((agent) => agent.sessionId === targetId) ?? roster[0];
+	// No evidence for an agent means no meaningful pair of alternatives.
+	const chosen = roster.find((agent) => agent.sessionId === targetId);
+	if (!chosen) return 'Which agent or tab should take that?';
 	const other = roster.find((agent) => agent.sessionId !== chosen.sessionId);
 	if (!other) return null;
 

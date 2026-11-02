@@ -172,10 +172,8 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 		forgetTracker(key);
 
 		const completions = [...tracker.values()];
-		const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
-			completions,
-			sub
-		);
+		const { outputCompletions, perSourceOutputs, forwardedOutputs, perSourceCompletions } =
+			buildFilteredOutputs(completions, sub);
 
 		const event = createCueEvent('agent.completed', sub.name, {
 			completedSessions: completions.map((c) => c.sessionId),
@@ -183,6 +181,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
 			outputTruncated: outputCompletions.some((c) => c.truncated),
 			perSourceOutputs,
+			...(Object.keys(perSourceCompletions).length > 0 ? { perSourceCompletions } : {}),
 			...(Object.keys(forwardedOutputs).length > 0 ? { forwardedOutputs } : {}),
 		});
 		const maxChainDepth =
@@ -254,10 +253,8 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			const completions = [...tracker.values()];
 			forgetTracker(key);
 
-			const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
-				completions,
-				sub
-			);
+			const { outputCompletions, perSourceOutputs, forwardedOutputs, perSourceCompletions } =
+				buildFilteredOutputs(completions, sub);
 
 			const event = createCueEvent('agent.completed', sub.name, {
 				completedSessions: completions.map((c) => c.sessionId),
@@ -266,6 +263,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
 				outputTruncated: outputCompletions.some((c) => c.truncated),
 				perSourceOutputs,
+				...(Object.keys(perSourceCompletions).length > 0 ? { perSourceCompletions } : {}),
 				...(Object.keys(forwardedOutputs).length > 0 ? { forwardedOutputs } : {}),
 				partial: true,
 			});
@@ -313,6 +311,10 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			const completion: FanInSourceCompletion = {
 				sessionId: completedSessionId,
 				sessionName: completedSessionName,
+				...(completionData?.sourceProcessId
+					? { sourceProcessId: completionData.sourceProcessId }
+					: {}),
+				...(completionData?.sourceTabId ? { sourceTabId: completionData.sourceTabId } : {}),
 				output: sliceTailByChars(rawOutput, SOURCE_OUTPUT_MAX_CHARS),
 				truncated: rawOutput.length > SOURCE_OUTPUT_MAX_CHARS,
 				chainDepth: completionData?.chainDepth ?? 0,
@@ -332,6 +334,8 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			}
 
 			// Write-through, so a crash or a drain keeps this source's arrival.
+			// Desktop process/tab identities are intentionally transient: the desktop
+			// has no persistence adapter, and the standalone schema stores no such fields.
 			const now = Date.now();
 			deps.persistence?.saveSource({
 				ownerSessionId,

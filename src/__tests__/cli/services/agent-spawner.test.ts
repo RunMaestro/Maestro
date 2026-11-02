@@ -188,6 +188,31 @@ import { resolveEffortLevel } from '../../../shared/modelTiers';
 const hostPlatform = process.platform;
 
 describe('agent-spawner', () => {
+	it.each(['claude-code', 'codex'] as const)(
+		'rejects invalid idle supervision before %s can start a child',
+		async (provider) => {
+			const onProcessStarted = vi.fn();
+			for (const timeoutMs of [0, -1, NaN, Infinity]) {
+				await expect(
+					spawnAgent(provider, '/project', 'prompt', undefined, {
+						timeoutMs,
+						idle: { warnMs: 1, idleMs: 2, toolMs: 3 },
+						onProcessStarted,
+					})
+				).rejects.toThrow('Invalid headless idle profile');
+			}
+			await expect(
+				spawnAgent(provider, '/project', 'prompt', undefined, {
+					timeoutMs: 100,
+					idle: { warnMs: 3, idleMs: 2, toolMs: 3 },
+					onProcessStarted,
+				})
+			).rejects.toThrow('Invalid headless idle profile');
+			expect(onProcessStarted).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		}
+	);
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Reset mock child emitter for each test
@@ -945,6 +970,54 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it('accepts a custom idle profile without a lifetime ceiling', async () => {
+			const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
+				idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(mockSpawn).toHaveBeenCalledOnce();
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"verified"}}\n'
+				)
+			);
+			mockChild.emit('close', 0);
+			expect(await pending).toMatchObject({ success: true, response: 'verified' });
+		});
+
+		it('keeps standalone Codex defaults alive with progress beyond six hours', async () => {
+			vi.useFakeTimers();
+			try {
+				const pending = spawnAgent('codex', '/project', 'prompt');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockSpawn).toHaveBeenCalledOnce();
+				for (let n = 0; n < 74; n++) {
+					mockStdout.emit(
+						'data',
+						Buffer.from(
+							JSON.stringify({
+								type: 'item.completed',
+								item: { type: 'reasoning', text: `work ${n}` },
+							}) + '\n'
+						)
+					);
+					await vi.advanceTimersByTimeAsync(300_000);
+				}
+				expect(mockChild.kill).not.toHaveBeenCalled();
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"verified"}}\n'
+					)
+				);
+				mockChild.emit('close', 0);
+				expect(await pending).toMatchObject({ success: true, response: 'verified' });
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it.each(['claude-code', 'codex'] as const)(
 			'reports the actual %s process only after launch',
 			async (type) => {
@@ -1049,7 +1122,7 @@ Some text with [x] in it that's not a checkbox
 			mockChild.emit('close', 0);
 			expect(await pending).toMatchObject({
 				success: false,
-				error: 'Agent run timed out or was cancelled',
+				error: 'Agent run cancelled',
 				agentSessionId: 'provider-late',
 				usageStats: { totalCostUsd: 0.08 },
 			});
@@ -1932,6 +2005,142 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-1');
 		});
 
+		it.each(['claude-code', 'codex', 'opencode', 'copilot-cli'] as const)(
+			'keeps %s normalized model work alive for seventy minutes',
+			async (type) => {
+				vi.useFakeTimers();
+				try {
+					const onProgress = vi.fn();
+					const pending = spawnAgent(type, '/project', 'prompt', undefined, {
+						timeoutMs: 21_600_000,
+						idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+						onProgress,
+					});
+					await vi.advanceTimersByTimeAsync(0);
+					expect(mockSpawn).toHaveBeenCalledOnce();
+					for (let n = 0; n < 14; n++) {
+						const text = `PRIVATE_REASONING_${n}`;
+						const message =
+							type === 'codex'
+								? { type: 'item.completed', item: { type: 'reasoning', text } }
+								: type === 'claude-code'
+									? {
+											type: 'assistant',
+											message: { content: [{ type: 'thinking', thinking: text }] },
+										}
+									: type === 'copilot-cli'
+										? { type: 'assistant.reasoning_delta', data: { deltaContent: text } }
+										: {
+												type: 'step_finish',
+												part: {
+													id: `step-${n}`,
+													reason: 'tool-calls',
+													tokens: { input: 10, output: 10 },
+												},
+											};
+						mockStdout.emit('data', Buffer.from(JSON.stringify(message) + '\n'));
+						await vi.advanceTimersByTimeAsync(300_000);
+					}
+					expect(mockChild.kill).not.toHaveBeenCalled();
+					const answer =
+						type === 'claude-code'
+							? { type: 'result', result: 'verified' }
+							: type === 'codex'
+								? {
+										type: 'item.completed',
+										item: { type: 'agent_message', phase: 'final', text: 'verified' },
+									}
+								: type === 'copilot-cli'
+									? { type: 'assistant.message', data: { content: 'verified', toolRequests: [] } }
+									: { type: 'text', part: { text: 'verified' } };
+					mockStdout.emit('data', Buffer.from(JSON.stringify(answer) + '\n'));
+					mockChild.emit('close', 0);
+					expect(await pending).toMatchObject({ success: true, response: 'verified' });
+					expect(
+						onProgress.mock.calls.some(
+							([event]) => event.type === 'activity' && event.text.includes('PRIVATE_REASONING')
+						)
+					).toBe(false);
+				} finally {
+					vi.useRealTimers();
+				}
+			}
+		);
+
+		it.each([
+			['claude-code', 'cancel'],
+			['claude-code', 'deadline'],
+			['codex', 'cancel'],
+			['codex', 'deadline'],
+		] as const)('bounds stalled %s launch preparation by %s', async (provider, stop) => {
+			vi.resetModules();
+			const { spawnAgent: freshSpawnAgent } = await import('../../../cli/services/agent-spawner');
+			vi.useFakeTimers();
+			const controller = new AbortController();
+			let finish!: () => void;
+			const stalled = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			mockCheckBinaryExists.mockImplementationOnce(async () => {
+				await stalled;
+				return { exists: true, path: `/usr/local/bin/${provider}` };
+			});
+			const onProcessStarted = vi.fn();
+			try {
+				const pending = freshSpawnAgent(provider, '/project', 'prompt', undefined, {
+					timeoutMs: 1_000,
+					signal: controller.signal,
+					onProcessStarted,
+				});
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockCheckBinaryExists).toHaveBeenCalledOnce();
+				if (stop === 'cancel') controller.abort();
+				else await vi.advanceTimersByTimeAsync(1_000);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(
+					await Promise.race([
+						pending,
+						Promise.resolve().then(() => Promise.resolve('still waiting')),
+					])
+				).toMatchObject({
+					success: false,
+					error:
+						stop === 'cancel'
+							? 'Agent run cancelled'
+							: 'Agent run stopped: absolute runtime ceiling exceeded',
+				});
+				finish();
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(onProcessStarted).not.toHaveBeenCalled();
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				controller.abort();
+				finish();
+				vi.useRealTimers();
+			}
+		});
+
+		it('charges launch preparation to the original absolute budget', async () => {
+			vi.useFakeTimers();
+			try {
+				mockReadAgentConfig.mockImplementationOnce(() => {
+					vi.advanceTimersByTime(300);
+					return {};
+				});
+				const pending = spawnAgent('codex', '/project', 'prompt', undefined, { timeoutMs: 1_000 });
+				await vi.advanceTimersByTimeAsync(701);
+				expect(mockKill).toHaveBeenCalledWith('SIGTERM');
+				mockChild.emit('close', 0);
+				expect(await pending).toMatchObject({
+					success: false,
+					error: expect.stringContaining('absolute runtime ceiling'),
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it.each([undefined, 'resumed-provider-session'])(
 			'bounds Codex startup despite stderr and init chatter (resume: %s)',
 			async (resumeId) => {
@@ -1955,7 +2164,7 @@ Some text with [x] in it that's not a checkbox
 					await vi.advanceTimersByTimeAsync(119_999);
 					expect(mockChild.kill).not.toHaveBeenCalled();
 					await vi.advanceTimersByTimeAsync(1);
-					expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
+					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
 					mockChild.emit('close', 0);
 					expect(await run).toMatchObject({
 						success: false,
@@ -2008,7 +2217,7 @@ Some text with [x] in it that's not a checkbox
 					});
 					await vi.advanceTimersByTimeAsync(1);
 					await vi.advanceTimersByTimeAsync(1_000);
-					expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
+					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
 					mockStdout.emit(
 						'data',
 						Buffer.from(
@@ -2017,16 +2226,53 @@ Some text with [x] in it that's not a checkbox
 								: '{"type":"result","result":"Late"}\n'
 						)
 					);
-					await vi.advanceTimersByTimeAsync(5_000);
+					await vi.advanceTimersByTimeAsync(10_000);
 					expect(mockChild.kill).toHaveBeenLastCalledWith('SIGKILL');
 					expect(await pending).toMatchObject({
 						success: false,
 						outcome: 'crashed',
-						error: 'Agent run timed out or was cancelled',
+						error: 'Agent run stopped: absolute runtime ceiling exceeded',
 					});
-					expect(onProgress).not.toHaveBeenCalled();
+					expect(onProgress).toHaveBeenCalledExactlyOnceWith(
+						expect.objectContaining({
+							type: 'activity',
+							text: expect.stringContaining('absolute runtime ceiling'),
+						})
+					);
 					expect(vi.getTimerCount()).toBe(0);
 				} finally {
+					vi.useRealTimers();
+				}
+			}
+		);
+
+		it.each(['claude-code', 'codex'] as const)(
+			'retains an original-bearing %s call through forced return until a late exit',
+			async (type) => {
+				vi.useFakeTimers();
+				let settled = false;
+				const controller = new AbortController();
+				const pending = spawnAgent(type, '/project', 'original-bearing prompt', undefined, {
+					signal: controller.signal,
+					...{ requireProcessExit: true },
+				}).then((result) => {
+					settled = true;
+					return result;
+				});
+				try {
+					await vi.advanceTimersByTimeAsync(0);
+					expect(mockSpawn).toHaveBeenCalledOnce();
+					controller.abort();
+					await vi.advanceTimersByTimeAsync(10_000);
+					expect(mockKill).toHaveBeenLastCalledWith('SIGKILL');
+					expect(mockChild.exitCode).toBeNull();
+					expect(mockChild.signalCode).toBeNull();
+					expect(settled).toBe(false);
+					mockChild.emit('exit', null, 'SIGKILL');
+					expect(await pending).toMatchObject({ success: false });
+				} finally {
+					mockChild.emit('close', null, 'SIGKILL');
+					await pending;
 					vi.useRealTimers();
 				}
 			}
@@ -2056,7 +2302,7 @@ Some text with [x] in it that's not a checkbox
 			expect(await pending).toMatchObject({
 				success: false,
 				outcome: 'interrupted',
-				error: 'Agent run timed out or was cancelled',
+				error: 'Agent run cancelled',
 				agentSessionId: 'codex-cancelled',
 			});
 		});
@@ -2293,7 +2539,7 @@ Some text with [x] in it that's not a checkbox
 
 			mockStdout.emit('data', Buffer.from(claudeResult('partial answer')));
 			controller.abort();
-			expect(mockKill).toHaveBeenCalledWith('SIGKILL');
+			expect(mockKill).toHaveBeenCalledWith('SIGTERM');
 			mockChild.emit('close', null, 'SIGTERM');
 
 			const result = await resultPromise;
@@ -2328,7 +2574,7 @@ Some text with [x] in it that's not a checkbox
 				await vi.advanceTimersByTimeAsync(0);
 
 				controller.abort();
-				expect(mockKill).toHaveBeenCalledTimes(2);
+				expect(mockKill).toHaveBeenCalledTimes(1);
 				await vi.advanceTimersByTimeAsync(5000);
 				expect(mockKill).toHaveBeenLastCalledWith('SIGKILL');
 
@@ -3417,6 +3663,46 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(false);
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
 		});
+
+		it('keeps a successful answer and effort when a warning contains a refusal message', async () => {
+			const message = JSON.parse(REFUSAL_LINE).message;
+			const output = [
+				{ type: 'item.completed', item: { type: 'error', message } },
+				{ type: 'item.completed', item: { type: 'agent_message', text: 'Finished normally' } },
+				{ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 2 } },
+			]
+				.map((event) => JSON.stringify(event))
+				.join('\n');
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			const result = await driveSpawnToCompletion(p, 0, output);
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Finished normally');
+			expect(result.error).toBeUndefined();
+			expect(errorSpy).toHaveBeenCalledWith(`Codex warning: ${message}`);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(resolveEffortLevel('codex', 'low')).toBe('low');
+		});
+
+		it.each([
+			['Reasoning summaries are unavailable', 'Codex warning: Reasoning summaries are unavailable'],
+			[undefined, 'Codex warning'],
+		])(
+			'prints warning %s without treating it as the answer or the error',
+			async (message, diagnostic) => {
+				const output = JSON.stringify({ type: 'item.completed', item: { type: 'error', message } });
+				const p = spawnAgent('codex', '/p', 'hi');
+				const result = await driveSpawnToCompletion(p, 0, output);
+
+				// rc fails a turn that produced no answer; what matters here is that
+				// the warning is neither the answer nor the error it fails with.
+				expect(result.success).toBe(false);
+				expect(result.response).toBeUndefined();
+				expect(result.error).toBe('Agent returned no final text');
+				expect(errorSpy).toHaveBeenCalledWith(diagnostic);
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			}
+		);
 	});
 
 	describe('spawnAgent: SSH integration', () => {
@@ -4030,9 +4316,11 @@ Some text with [x] in it that's not a checkbox
 			mockChild.emit('close', null, 'SIGTERM');
 			expect(await pending).toMatchObject({
 				success: false,
-				error: 'Agent run timed out or was cancelled',
+				error: 'Agent run cancelled',
 			});
-			expect(onProgress).not.toHaveBeenCalled();
+			expect(onProgress).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ type: 'activity', text: 'Agent run cancelled' })
+			);
 		});
 
 		it('streams Codex public commentary and tool status without raw arguments or reasoning', async () => {
@@ -4201,6 +4489,171 @@ Some text with [x] in it that's not a checkbox
 			]);
 			expect(JSON.stringify(onProgress.mock.calls)).not.toMatch(/SECRET_/);
 		});
+
+		it.each(['codex', 'claude-code'] as const)(
+			'streams safe detailed %s actions through the provider boundary',
+			async (provider) => {
+				const cases: Array<[string, unknown, string]> = [
+					[
+						'Read',
+						{ file_path: '/PRIVATE_HOME/.codex/skills/research/SKILL.md' },
+						'Reading skill research',
+					],
+					['Skill', { skill: 'research', args: 'PRIVATE_ARGS' }, 'Reading skill research'],
+					['Skill', { skill: 'bad;PRIVATE' }, 'Reading skill'],
+					['Read', { path: '/PRIVATE_HOME/src/main.ts' }, 'Reading file main.ts'],
+					['Read', { path: 'PRIVATE\nfile.ts' }, 'Reading file'],
+					['Skill', { skill: 'research\n' }, 'Reading skill'],
+					['Glob', { pattern: '*.ts\n' }, 'Searching files'],
+					['Bash', { command: 'cat README.md\n' }, 'Running shell command'],
+					['Read', { path: '/PRIVATE_HOME/ghp_' + 'A'.repeat(36) }, 'Reading file'],
+					['Read', {}, 'Reading file'],
+					['Glob', { pattern: 'src/**/*.test.ts' }, 'Searching files for *.test.ts'],
+					['Grep', { glob: '*.ts', pattern: 'PRIVATE_SEARCH' }, 'Searching files for *.ts'],
+					['Grep', { pattern: 'PRIVATE_SEARCH' }, 'Searching files'],
+					['Glob', { pattern: 'PRIVATE?token=abc&other=1' }, 'Searching files'],
+					[
+						'Bash',
+						{ command: 'cat /PRIVATE_HOME/.codex/skills/research/SKILL.md' },
+						'Reading skill research',
+					],
+					[
+						'functions.exec_command',
+						{ cmd: "sed -n '1,80p' /PRIVATE_HOME/src/main.ts" },
+						'Reading file main.ts',
+					],
+					['functions.exec_command', { cmd: "rg --files -g '*.ts'" }, 'Searching files for *.ts'],
+					[
+						'functions.exec_command',
+						{ cmd: "rg --files -g '*ghp_" + 'A'.repeat(36) + "'" },
+						'Searching files',
+					],
+					['Bash', { command: 'cat --help' }, 'Running shell command'],
+					['Bash', { command: 'head -n' }, 'Running shell command'],
+					['Bash', { command: 'tail --version' }, 'Running shell command'],
+					['Bash', { command: 'cat -- -notes.md' }, 'Reading file -notes.md'],
+					['Bash', { command: "sed -n '1,80p' --help" }, 'Running shell command'],
+					[
+						'Bash',
+						{ command: 'git status --short' },
+						'Running shell command to inspect repository status',
+					],
+					[
+						'Bash',
+						{ command: 'npm run build:main' },
+						'Running shell command to build the main process',
+					],
+					// A workspace's lint script may run ESLint, types, or another linter.
+					['Bash', { command: 'npm run lint' }, 'Running shell command to run lint checks'],
+					[
+						'functions.exec',
+						'await tools.exec_command({"cmd":"npm run lint"});',
+						'Running shell command to run lint checks',
+					],
+					['Bash', { command: 'cat README.md; echo PRIVATE_DATA' }, 'Running shell command'],
+					['Bash', { command: 'cat README.md | head' }, 'Running shell command'],
+					['Bash', { command: 'cat $(PRIVATE_SUBSTITUTION)' }, 'Running shell command'],
+					['Bash', { command: 'TOKEN=PRIVATE npm test' }, 'Running shell command'],
+					[
+						'Bash',
+						{ command: 'curl https://private.invalid?token=PRIVATE' },
+						'Running shell command',
+					],
+					['Bash', { command: 'cat README.md\necho PRIVATE_DATA' }, 'Running shell command'],
+					[
+						'functions.exec',
+						'await tools.exec_command({"cmd":"cat /PRIVATE_HOME/.codex/skills/research/SKILL.md"});',
+						'Reading skill research',
+					],
+					[
+						'functions.exec',
+						'await tools.exec_command({"cmd":"npm test"});',
+						'Running shell command to run tests',
+					],
+					[
+						'functions.exec',
+						'await tools.exec_command({"cmd":"cat README.md"}); PRIVATE_CODE();',
+						'Running shell command',
+					],
+					[
+						'functions.exec',
+						'await tools.exec_command({cmd: "PRIVATE_CODE"});',
+						'Running shell command',
+					],
+					[
+						'functions.exec',
+						'await tools.exec_command({"cmd":"git status"}); await tools.exec_command({"cmd":"PRIVATE"});',
+						'Running shell commands',
+					],
+					['Read', { path: '/PRIVATE_HOME/' + 'x'.repeat(81) + '.md' }, 'Reading file'],
+				];
+				const onProgress = vi.fn();
+				const pending = spawnAgent(provider, '/p', 'hi', undefined, { onProgress });
+				const lines =
+					provider === 'codex'
+						? [
+								...cases.flatMap(([name, input], index) => [
+									{
+										type: 'response_item',
+										payload: {
+											type: 'function_call',
+											name,
+											call_id: `c${index}`,
+											arguments: JSON.stringify(input),
+										},
+									},
+									{
+										type: 'response_item',
+										payload: {
+											type: 'function_call_output',
+											call_id: `c${index}`,
+											output: 'PRIVATE_OUTPUT',
+										},
+									},
+								]),
+								{ type: 'item.completed', item: { type: 'agent_message', text: 'done' } },
+							]
+						: [
+								{
+									type: 'assistant',
+									message: {
+										content: cases.map(([name, input], index) => ({
+											type: 'tool_use',
+											id: `c${index}`,
+											name,
+											input,
+										})),
+									},
+								},
+								{
+									type: 'user',
+									message: {
+										content: cases.map((_, index) => ({
+											type: 'tool_result',
+											tool_use_id: `c${index}`,
+											content: 'PRIVATE_OUTPUT',
+										})),
+									},
+								},
+								{ type: 'result', result: 'done' },
+							];
+				await driveSpawnToCompletion(
+					pending,
+					0,
+					lines.map((line) => JSON.stringify(line)).join('\n') + '\n'
+				);
+				const events = onProgress.mock.calls
+					.map(([event]) => event)
+					.filter((event) => event.type === 'tool');
+				for (const status of ['started', 'completed']) {
+					expect(
+						events.filter((event) => event.status === status).map((event) => event.summary)
+					).toEqual(cases.map((entry) => entry[2]));
+				}
+				expect(JSON.stringify(events)).not.toMatch(/PRIVATE/);
+				for (const event of events) expect(event.summary.length).toBeLessThanOrEqual(120);
+			}
+		);
 
 		it('Claude spawn without any options still includes base stream-json flags', async () => {
 			const p = spawnAgent('claude-code', '/p', 'hi');

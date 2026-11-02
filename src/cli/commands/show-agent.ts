@@ -185,6 +185,7 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			// can read the full config without parsing raw store files.
 			...readAgentSessionSettings(agent),
 			nudgeMessage: agent.nudgeMessage ?? null,
+			peerDescription: agent.peerDescription ?? null,
 			newSessionMessage: agent.newSessionMessage ?? null,
 			customPath: agent.customPath ?? null,
 			customArgs: agent.customArgs ?? null,

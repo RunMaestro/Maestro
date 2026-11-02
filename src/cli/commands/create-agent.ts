@@ -77,6 +77,27 @@ interface CreateAgentOptions {
 	json?: boolean;
 }
 
+/**
+ * Send a `create_session` message and wait for its reply. The one create path
+ * `create-agent` and `duplicate-agent` share; throws when the app is absent.
+ */
+export async function sendCreateSession(
+	payload: Record<string, unknown>
+): Promise<
+	{ success: boolean; sessionId?: string; error?: string } & Partial<GroupSeededCreateReport>
+> {
+	return withMaestroClient((client) =>
+		client.sendCommand<
+			{
+				type: string;
+				success: boolean;
+				sessionId?: string;
+				error?: string;
+			} & Partial<GroupSeededCreateReport>
+		>({ ...payload, type: 'create_session' }, 'create_session_result')
+	);
+}
+
 /** The peer flags join the create options: the New Agent dialog has a Peers tab. */
 type CreateAgentFlags = CreateAgentOptions & PeerFlagOptions;
 
@@ -348,16 +369,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 	if (runOn) payload.runOn = runOn;
 
 	try {
-		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<
-				{
-					type: string;
-					success: boolean;
-					sessionId?: string;
-					error?: string;
-				} & Partial<GroupSeededCreateReport>
-			>(payload, 'create_session_result');
-		});
+		const result = await sendCreateSession(payload);
 
 		// The agent exists. Its peers are a second write; when the app refuses it
 		// the agent is still there, so the caller is told both things.

@@ -131,6 +131,29 @@ describe('CueSelect', () => {
 		expect(screen.getByText('unknown')).toBeInTheDocument();
 	});
 
+	it('shows a placeholder without adding it to the filterable options', () => {
+		render(
+			<CueSelect
+				value=""
+				placeholder="Add agent"
+				options={options}
+				onChange={onChange}
+				theme={theme}
+				filterable
+				filterPlaceholder="Filter agents..."
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent' }));
+		expect(screen.queryByRole('option', { name: 'Add agent' })).not.toBeInTheDocument();
+		fireEvent.change(screen.getByRole('textbox', { name: 'Filter agents...' }), {
+			target: { value: 'BETA' },
+		});
+		expect(screen.getAllByRole('option')).toHaveLength(1);
+		fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+		expect(onChange).toHaveBeenCalledWith('b');
+		expect(screen.getByRole('button', { name: 'Add agent' })).toBeInTheDocument();
+	});
+
 	it('navigates options with arrow keys', () => {
 		render(<CueSelect value="a" options={options} onChange={onChange} theme={theme} />);
 		fireEvent.click(screen.getByText('Alpha').closest('button')!);

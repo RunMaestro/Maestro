@@ -33,6 +33,7 @@ import { isInheritValue, parseCliBool } from '../utils/parse';
 /** The commander options the setting flags populate. */
 export interface AgentSettingFlagOptions {
 	nudge?: string;
+	peerDescription?: string;
 	newSessionMessage?: string;
 	customPath?: string;
 	customArgs?: string;
@@ -143,6 +144,7 @@ export function buildConfigPatch(
 	};
 
 	strField(options.nudge, 'nudgeMessage');
+	strField(options.peerDescription, 'peerDescription');
 	strField(options.newSessionMessage, 'newSessionMessage');
 	strField(options.customPath, 'customPath');
 	strField(options.customArgs, 'customArgs');

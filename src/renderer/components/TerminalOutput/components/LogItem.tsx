@@ -1227,8 +1227,8 @@ export const LogItem = memo(
 										Delete?
 									</span>
 									<button
-										onClick={() => {
-											const nextIndex = onDeleteLog(log.id);
+										onClick={async () => {
+											const nextIndex = await onDeleteLog(log.id);
 											onSetDeleteConfirmLogId(null);
 											if (nextIndex !== null && nextIndex >= 0) {
 												setTimeout(() => {

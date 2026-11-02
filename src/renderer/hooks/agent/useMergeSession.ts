@@ -542,6 +542,15 @@ export interface MergeSessionCreatedInfo {
 }
 
 /**
+ * Where a merge's result may appear. `background` (`maestro-cli tab merge
+ * --background`) asks the completion callbacks to leave the selected agent and
+ * tab alone and to skip the success notices.
+ */
+export interface MergePlacement {
+	background?: boolean;
+}
+
+/**
  * Dependencies for the useMergeSessionWithSessions hook variant
  */
 export interface UseMergeSessionWithSessionsDeps {
@@ -550,9 +559,9 @@ export interface UseMergeSessionWithSessionsDeps {
 	/** Active tab ID for per-tab state tracking */
 	activeTabId?: string;
 	/** Callback after merge creates a new session. Receives session info for notification purposes. */
-	onSessionCreated?: (info: MergeSessionCreatedInfo) => void;
+	onSessionCreated?: (info: MergeSessionCreatedInfo, placement?: MergePlacement) => void;
 	/** Callback after merge completes successfully (for any merge type). Receives source tab ID and target info for state cleanup and toast display. */
-	onMergeComplete?: (sourceTabId: string, result: MergeResult) => void;
+	onMergeComplete?: (sourceTabId: string, result: MergeResult, placement?: MergePlacement) => void;
 }
 
 /**
@@ -565,7 +574,8 @@ export interface UseMergeSessionWithSessionsResult extends UseMergeSessionResult
 		sourceTabId: string,
 		targetSessionId: string,
 		targetTabId: string | undefined,
-		options: MergeOptions
+		options: MergeOptions,
+		placement?: MergePlacement
 	) => Promise<MergeResult>;
 }
 
@@ -606,7 +616,8 @@ export function useMergeSessionWithSessions(
 			sourceTabId: string,
 			targetSessionId: string,
 			targetTabId: string | undefined,
-			options: MergeOptions
+			options: MergeOptions,
+			placement: MergePlacement = {}
 		): Promise<MergeResult> => {
 			// PERF: Resolve sessions at event time so App need not subscribe to the
 			// full array (streaming rebuilds would otherwise wake the console shell).
@@ -699,14 +710,17 @@ export function useMergeSessionWithSessions(
 
 						// Notify caller with session info for notification purposes
 						if (onSessionCreated) {
-							onSessionCreated({
-								sessionId: newSession.id,
-								sessionName: mergedName,
-								sourceSessionName: result.sourceSessionName,
-								targetSessionName: result.targetSessionName,
-								estimatedTokens: result.estimatedTokens,
-								tokensSaved: result.tokensSaved,
-							});
+							onSessionCreated(
+								{
+									sessionId: newSession.id,
+									sessionName: mergedName,
+									sourceSessionName: result.sourceSessionName,
+									targetSessionName: result.targetSessionName,
+									estimatedTokens: result.estimatedTokens,
+									tokensSaved: result.tokensSaved,
+								},
+								placement
+							);
 						}
 
 						// Return result with the actual new session ID
@@ -797,7 +811,7 @@ export function useMergeSessionWithSessions(
 
 					// Notify caller that merge completed (for state cleanup and toast)
 					if (onMergeComplete) {
-						onMergeComplete(sourceTabId, result);
+						onMergeComplete(sourceTabId, result, placement);
 					}
 				}
 			}

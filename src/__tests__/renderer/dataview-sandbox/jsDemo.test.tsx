@@ -28,7 +28,7 @@ import { createDataviewGuest } from '../../../renderer/dataview-sandbox/guestRun
 import { OBSIDIAN_API_UNAVAILABLE } from '../../../renderer/dataview-sandbox/dvApi';
 import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../renderer/hooks/file/useLiveDataviewResult';
 import { resetDataviewJsGuestSlotsForTests } from '../../../renderer/services/dataviewJsGuestSlots';
-import { fixtureSnapshot, fixtureText } from '../../helpers/dataviewFixtureVault';
+import { fixtureSnapshot, fixtureText, snapshotPayload } from '../../helpers/dataviewFixtureVault';
 import { dataviewGuestRealm } from '../../helpers/dataviewGuestRealm';
 import { mockTheme } from '../../helpers/mockTheme';
 
@@ -71,7 +71,7 @@ function snapshotResponse() {
 		sshRemoteId: null,
 		revision,
 		path: NOTE_PATH,
-		result: fixtureSnapshot(revision),
+		result: snapshotPayload(fixtureSnapshot(revision)),
 	};
 }
 
@@ -104,7 +104,8 @@ function mockMain() {
 
 /**
  * Back every `<webview>` not yet wired with a real guest, then raise `dom-ready` on it. A guest spinning on
- * {@link LOOP_SOURCE} takes the run and stays silent (see the file comment).
+ * {@link LOOP_SOURCE} takes the run, builds its index (`index.ready`, which starts the script's budget), and
+ * stays silent (see the file comment).
  */
 function wireGuests(container: HTMLElement): void {
 	for (const element of container.querySelectorAll('webview')) {
@@ -114,21 +115,25 @@ function wireGuests(container: HTMLElement): void {
 		document.body.append(root);
 		const wired: WiredGuest = { root, runs: [] };
 		guests.set(element, wired);
+		const toHost = (message: unknown) => {
+			const event = new Event('ipc-message');
+			Object.assign(event, { channel: SANDBOX_TO_HOST_CHANNEL, args: [message] });
+			webview.dispatchEvent(event);
+		};
 		const guest = createDataviewGuest({
 			document,
 			root,
 			scriptGlobal: dataviewGuestRealm(),
-			send: (message) => {
-				const event = new Event('ipc-message');
-				Object.assign(event, { channel: SANDBOX_TO_HOST_CHANNEL, args: [message] });
-				webview.dispatchEvent(event);
-			},
+			send: toHost,
 		});
 		webview.send = (channel, message) => {
 			if (channel !== SANDBOX_TO_GUEST_CHANNEL) return;
-			const { type, source } = message as { type: string; source?: string };
+			const { type, source, runId } = message as { type: string; source?: string; runId?: string };
 			if (type === 'run') wired.runs.push(source ?? '');
-			if (type === 'run' && source === LOOP_SOURCE) return;
+			if (type === 'run' && source === LOOP_SOURCE) {
+				toHost({ type: 'index.ready', runId });
+				return;
+			}
 			void guest.receive(message);
 		};
 		act(() => {

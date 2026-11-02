@@ -2,6 +2,46 @@ import { describe, expect, it } from 'vitest';
 import { mergeSessionPersistenceChanges } from '../../shared/sessionPersistenceMerge';
 
 describe('observed session changes', () => {
+	it('preserves only unchanged Host-observed human queue origins on remote saves', () => {
+		const item = { id: 'human', type: 'message', text: 'Read mail', querySource: 'user' };
+		const stored = { executionQueue: [item] };
+		expect(
+			mergeSessionPersistenceChanges(stored, stored, stored, true, false, true).executionQueue[0]
+		).toEqual(item);
+		for (const changed of [
+			{ ...item, text: 'Different operation' },
+			{ ...item, tabId: 'other-tab' },
+			{ ...item, id: 'new-item' },
+		]) {
+			const incoming = { executionQueue: [changed] };
+			const merged = mergeSessionPersistenceChanges(incoming, stored, stored, true, false, true);
+			expect(merged.executionQueue[0].querySource).toBe('auto');
+		}
+		const incoming = { executionQueue: [item] };
+		expect(
+			mergeSessionPersistenceChanges(incoming, undefined, undefined, true, false, true)
+				.executionQueue[0].querySource
+		).toBe('auto');
+		expect(
+			mergeSessionPersistenceChanges(incoming, undefined, undefined).executionQueue[0].querySource
+		).toBe('user');
+		expect(
+			mergeSessionPersistenceChanges(incoming, undefined, undefined, true).executionQueue[0]
+				.querySource
+		).toBe('user');
+	});
+
+	it('does not accept a remote user claim for existing automatic or legacy queue items', () => {
+		for (const querySource of ['auto', undefined]) {
+			const stored = { executionQueue: [{ id: 'item', text: 'Read mail', querySource }] };
+			const incoming = { executionQueue: [{ ...stored.executionQueue[0], querySource: 'user' }] };
+			expect(
+				mergeSessionPersistenceChanges(incoming, stored, stored, true, false, true)
+					.executionQueue[0].querySource
+			).toBe('auto');
+		}
+	});
+
 	it('accepts tab and queue drag order and new-tab insertion without stealing host group focus', () => {
 		const baseline = {
 			id: 'shared',

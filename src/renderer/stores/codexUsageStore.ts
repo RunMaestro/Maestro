@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 
+import type { CodexCreditBalance } from '../../shared/codexCredits';
 import type { CodexResetCreditCounts } from '../../shared/codexResetCredits';
 
 export interface CodexUsageWindow {
@@ -41,6 +42,8 @@ export interface CodexUsageSnapshot {
 	session?: CodexUsageWindow;
 	weekly?: CodexUsageWindow;
 	additionalLimits?: CodexAdditionalLimit[];
+	/** Additional usage credits; absent when the endpoint does not report a usable balance. */
+	credits?: CodexCreditBalance;
 	/** Reset-credit inventory, carried free on the usage payload. */
 	resetCredits?: CodexResetCreditCounts;
 	error?: string;

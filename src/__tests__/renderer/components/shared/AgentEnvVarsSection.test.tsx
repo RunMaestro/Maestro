@@ -4,13 +4,14 @@
  * own Environment tab.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import {
 	AgentEnvVarsSection,
 	type AgentEnvVarsSectionProps,
 } from '../../../../renderer/components/shared/AgentEnvVarsSection';
 import { createMockTheme } from '../../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 
 function createProps(overrides: Partial<AgentEnvVarsSectionProps> = {}): AgentEnvVarsSectionProps {
 	return {
@@ -27,6 +28,32 @@ function createProps(overrides: Partial<AgentEnvVarsSectionProps> = {}): AgentEn
 }
 
 describe('AgentEnvVarsSection', () => {
+	beforeEach(() => {
+		installLocalStorageMock();
+	});
+
+	it('edits live and parked variables in advanced mode on the Provider surface', () => {
+		const onEnvVarsReplace = vi.fn();
+		render(
+			<AgentEnvVarsSection
+				{...createProps({
+					customEnvVars: { LIVE: '1' },
+					customEnvVarsDisabled: { PARKED: '2' },
+					onEnvVarToggle: vi.fn(),
+					onEnvVarsReplace,
+				})}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('radio', { name: 'Advanced' }));
+		expect(screen.queryByText('Add Variable')).not.toBeInTheDocument();
+		fireEvent.change(screen.getByTestId('env-vars-dotenv-textarea'), {
+			target: { value: 'NEW=3\n# DISABLED=4' },
+		});
+
+		expect(onEnvVarsReplace).toHaveBeenLastCalledWith({ NEW: '3' }, { DISABLED: '4' });
+	});
+
 	it('asks the parent to add a row and focuses the unnamed row it adds', () => {
 		const onEnvVarAdd = vi.fn();
 		const { rerender } = render(<AgentEnvVarsSection {...createProps({ onEnvVarAdd })} />);

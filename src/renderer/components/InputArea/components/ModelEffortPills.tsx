@@ -86,14 +86,14 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	return (
 		<>
 			{onModelChange && availableModels.length > 0 && (
-				<div className="relative" ref={modelMenuRef} data-tour="model-selector">
+				<div className="relative min-w-0 max-w-full" ref={modelMenuRef} data-tour="model-selector">
 					<button
 						onClick={() => {
 							setModelFilter('');
 							setModelMenuOpen(!modelMenuOpen);
 							setEffortMenuOpen(false);
 						}}
-						className="flex items-center gap-1 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
+						className="flex max-w-full items-center gap-1 whitespace-nowrap text-2xs px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
 						style={{
 							backgroundColor: `${theme.colors.accent}10`,
 							color: theme.colors.accent,
@@ -105,8 +105,10 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 								: `Change model${shortcutSuffix(shortcutKeys)}`
 						}
 					>
-						<Sparkles className="w-3 h-3" />
-						<span>{currentModel ? modelChoiceLabel(currentModel) : 'default'}</span>
+						<Sparkles className="w-3 h-3 shrink-0" />
+						<span className="max-w-48 truncate">
+							{currentModel ? modelChoiceLabel(currentModel) : 'default'}
+						</span>
 					</button>
 					{modelMenuOpen && (
 						<div
@@ -224,13 +226,13 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 				</div>
 			)}
 			{onEffortChange && availableEfforts.some((e) => e !== '') && (
-				<div className="relative" ref={effortMenuRef} data-tour="effort-selector">
+				<div className="relative shrink-0" ref={effortMenuRef} data-tour="effort-selector">
 					<button
 						onClick={() => {
 							setEffortMenuOpen(!effortMenuOpen);
 							setModelMenuOpen(false);
 						}}
-						className="flex items-center gap-1 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
+						className="flex items-center gap-1 whitespace-nowrap text-2xs px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
 						style={{
 							backgroundColor: `${theme.colors.warning}10`,
 							color: theme.colors.warning,
@@ -238,7 +240,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 						}}
 						title={`Change effort level${shortcutSuffix(shortcutKeys)}`}
 					>
-						<Gauge className="w-3 h-3" />
+						<Gauge className="w-3 h-3 shrink-0" />
 						<span>{currentEffort || 'default'}</span>
 					</button>
 					{effortMenuOpen && (

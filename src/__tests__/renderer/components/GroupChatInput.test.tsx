@@ -23,6 +23,7 @@ vi.mock('../../../renderer/services/voiceListening', () => ({
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { resetStores } from '../../helpers/resetStores';
@@ -435,6 +436,47 @@ describe('GroupChatInput', () => {
 
 			// Dropdown should be hidden
 			expect(screen.queryByText('Maestro')).not.toBeInTheDocument();
+		});
+
+		it('keeps an Escape that closes the dropdown away from the window handler', () => {
+			// The window-level Escape handler blurs the composer and focuses the
+			// transcript. While the picker is open, Escape must only close it.
+			const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+			const windowEscape = vi.fn();
+			window.addEventListener('keydown', windowEscape);
+
+			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(screen.queryByText('Maestro')).not.toBeInTheDocument();
+			expect(windowEscape).not.toHaveBeenCalled();
+			window.removeEventListener('keydown', windowEscape);
+		});
+
+		it('lets Escape reach the window handler when the dropdown is closed', () => {
+			const windowEscape = vi.fn();
+			window.addEventListener('keydown', windowEscape);
+
+			render(<GroupChatInput {...createDefaultProps()} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(windowEscape).toHaveBeenCalledTimes(1);
+			window.removeEventListener('keydown', windowEscape);
+		});
+
+		it('claims main-area focus when the composer is focused', () => {
+			useUIStore.getState().setActiveFocus('sidebar');
+
+			render(<GroupChatInput {...createDefaultProps()} />);
+
+			fireEvent.focus(screen.getByPlaceholderText(/Type a message/i));
+
+			expect(useUIStore.getState().activeFocus).toBe('main');
 		});
 
 		it('closes the popover on Escape even when the filter matches no agents', () => {
@@ -852,6 +894,37 @@ describe('GroupChatInput', () => {
 			expect(onOpenLightbox).toHaveBeenCalledWith(stagedImages[0], stagedImages, 'staged');
 		});
 
+		it('leaves the read-only and carousel chords to the window handler', () => {
+			// The window handler reads the live bindings and acts on the room, so
+			// the composer must neither consume these chords nor act on them itself.
+			const onOpenLightbox = vi.fn();
+			const setReadOnlyMode = vi.fn();
+			const stagedImages = ['data:image/png;base64,a'];
+			const windowKeys = vi.fn();
+			window.addEventListener('keydown', windowKeys);
+
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						stagedImages,
+						setStagedImages: vi.fn(),
+						onOpenLightbox,
+						readOnlyMode: false,
+						setReadOnlyMode,
+					})}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i);
+			fireEvent.keyDown(textarea, { key: 'r', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 'y', metaKey: true });
+
+			expect(windowKeys).toHaveBeenCalledTimes(2);
+			expect(setReadOnlyMode).not.toHaveBeenCalled();
+			expect(onOpenLightbox).not.toHaveBeenCalled();
+			window.removeEventListener('keydown', windowKeys);
+		});
+
 		it('removes a staged image by content when its remove button is clicked', () => {
 			const setStagedImages = vi.fn();
 			const stagedImages = ['data:image/png;base64,a', 'data:image/png;base64,b'];
@@ -888,6 +961,100 @@ describe('GroupChatInput', () => {
 	// paused queue sends nothing, and an item already in flight cannot be pulled
 	// back. Both used to be invisible, so messages sat there with no explanation
 	// and no control.
+	describe('send column', () => {
+		it('disables Send until there is text', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend })} />);
+
+			const send = screen.getByTitle('Send message');
+			expect(send).toBeDisabled();
+
+			typeInTextarea(screen.getByRole('textbox') as HTMLTextAreaElement, 'hello');
+			expect(send).not.toBeDisabled();
+			fireEvent.click(send);
+
+			expect(onSend).toHaveBeenCalledWith('hello', undefined, false);
+		});
+
+		it('offers to queue while the room is busy, in the warning tint, with no Send menu', () => {
+			const theme = createMockTheme();
+			render(<GroupChatInput {...createDefaultProps({ theme, state: 'moderator-thinking' })} />);
+			typeInTextarea(screen.getByRole('textbox') as HTMLTextAreaElement, 'next');
+
+			const send = screen.getByTitle('Queue message');
+			expect(send).toHaveStyle({ backgroundColor: theme.colors.warning });
+			expect(send).not.toHaveAttribute('aria-haspopup');
+		});
+	});
+
+	describe('attach image', () => {
+		it('opens its own file input from the Attach Image button', () => {
+			const { container } = render(<GroupChatInput {...createDefaultProps()} />);
+			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
+			const click = vi.spyOn(input, 'click');
+
+			fireEvent.click(screen.getByTitle('Attach Image'));
+
+			expect(click).toHaveBeenCalled();
+		});
+
+		it('tells the user why a picked file was refused', () => {
+			const showFlashNotification = vi.fn();
+			const setStagedImages = vi.fn();
+			const { container } = render(
+				<GroupChatInput
+					{...createDefaultProps({ showFlashNotification, stagedImages: [], setStagedImages })}
+				/>
+			);
+			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
+			const huge = new File(['x'], 'huge.png', { type: 'image/png' });
+			Object.defineProperty(huge, 'size', { value: 11 * 1024 * 1024 });
+
+			fireEvent.change(input, {
+				target: { files: [new File(['x'], 'doc.svg', { type: 'image/svg+xml' }), huge] },
+			});
+
+			expect(showFlashNotification).toHaveBeenCalledWith(
+				'Unsupported image type (PNG, JPEG, GIF or WebP)'
+			);
+			expect(showFlashNotification).toHaveBeenCalledWith('Image too large (max 10MB)');
+			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('paste', () => {
+		function paste(textarea: HTMLTextAreaElement, text: string, types = ['text/plain']) {
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: types.map((type) => ({ type })),
+					getData: () => text,
+				},
+			});
+		}
+
+		it('trims a text paste and persists it as the draft', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			paste(textarea, '  hello\n');
+
+			expect(textarea.value).toBe('hello');
+			act(() => vi.advanceTimersByTime(300));
+			expect(onDraftChange).toHaveBeenLastCalledWith('hello', 'test-group-chat');
+		});
+
+		it('hands an image paste to the shared handler untrimmed', () => {
+			const handlePaste = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ handlePaste })} />);
+
+			paste(screen.getByRole('textbox') as HTMLTextAreaElement, '', ['image/png']);
+
+			expect(handlePaste).toHaveBeenCalled();
+		});
+	});
+
 	describe('queue state', () => {
 		const queuedItem = (id: string, text: string) => ({ id, timestamp: 1, text });
 

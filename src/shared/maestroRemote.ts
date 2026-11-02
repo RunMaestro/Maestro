@@ -1,5 +1,6 @@
 /** Attach-to-existing-host contract. Workload capabilities describe host-owned execution. */
 export const MAESTRO_REMOTE_PROTOCOL_VERSION = 1;
+export const MAESTRO_REMOTE_WORKFLOW_VERSION = 1;
 
 export interface MaestroRemoteHandshake {
 	protocolVersion: number;
@@ -11,4 +12,6 @@ export interface MaestroRemoteHandshake {
 	unavailableReason?: string;
 	authentication: { loginEnabled: boolean; authenticated: boolean; method?: 'device-pairing' };
 	capabilities: { sessions: boolean; terminal: boolean; files: boolean; browserRelay: boolean };
+	/** Capabilities were checked against the live bridge policy and read probes. */
+	workflowQualificationVersion: number;
 }

@@ -157,16 +157,11 @@ describe('FilePreviewHeader on a phone', () => {
 		expect(screen.getByText('View in Document Graph')).toBeInTheDocument();
 	});
 
-	it('carries Talk with Document into the sheet, pressed while a session runs', () => {
-		const onTalkWithDocument = vi.fn();
-		renderHeader({ onTalkWithDocument, isTalkingAboutDocument: true });
+	it('omits the duplicate document microphone from the actions sheet', () => {
+		renderHeader();
 		openSheet();
-
-		const row = screen.getByText('End the voice session about this document').closest('button');
-		expect(row).toHaveAttribute('aria-pressed', 'true');
-
-		fireEvent.click(row!);
-		expect(onTalkWithDocument).toHaveBeenCalledTimes(1);
+		expect(screen.queryByTestId('talk-with-document-button')).not.toBeInTheDocument();
+		expect(screen.queryByText('Talk with this document')).not.toBeInTheDocument();
 	});
 
 	it('offers the preview tier as an accordion rather than an anchored popover', () => {
@@ -203,26 +198,43 @@ describe('FilePreviewHeader on a desktop', () => {
 		expect(screen.getByText('Size:')).toBeInTheDocument();
 	});
 
-	// Talk with Document is a TOGGLE - the same button ends the session it
-	// started - so it has to announce that state, not just take the accent color.
-	it('draws Talk with Document and announces whether a session is running', () => {
-		const onTalkWithDocument = vi.fn();
-		renderHeader({ onTalkWithDocument });
-
-		const idle = screen.getByTestId('talk-with-document-button');
-		expect(idle).toHaveAttribute('aria-pressed', 'false');
-
-		cleanup();
-		renderHeader({ onTalkWithDocument, isTalkingAboutDocument: true });
-		expect(screen.getByTestId('talk-with-document-button')).toHaveAttribute('aria-pressed', 'true');
+	it('omits the duplicate document microphone and its toolbar preference', () => {
+		renderHeader();
+		expect(screen.queryByTestId('talk-with-document-button')).not.toBeInTheDocument();
+		expect(FILE_PREVIEW_TOOLBAR_BUTTON_KEYS).not.toContain('talkWithDocument');
 	});
 
-	it('drops Talk with Document when it is switched off in Settings', () => {
+	// MAESTRO-YS: an Untitled (unsaved) tab has an empty path. Reveal handed that
+	// empty string to shell:showItemInFolder, which rejects it.
+	it('offers no path-bound actions for an unsaved Untitled file', () => {
 		renderHeader({
-			onTalkWithDocument: vi.fn(),
-			toolbarVisibility: { ...allVisible, talkWithDocument: false },
+			file: { name: 'Untitled', content: '', path: '' },
+			directoryPath: '',
 		});
 
-		expect(screen.queryByTestId('talk-with-document-button')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('reveal-in-folder-button')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('delete-file-button')).not.toBeInTheDocument();
+	});
+
+	it('leaves the path-bound rows out of the phone sheet for an Untitled file', () => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		renderHeader({
+			file: { name: 'Untitled', content: '', path: '' },
+			directoryPath: '',
+		});
+		openSheet();
+
+		expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
+		expect(screen.queryByText('Copy full path to clipboard')).not.toBeInTheDocument();
+		expect(screen.queryByText('Delete file')).not.toBeInTheDocument();
+		// Actions that do not need a path are still there.
+		expect(screen.getByText('View in Document Graph')).toBeInTheDocument();
+	});
+
+	it('keeps the path-bound actions for a saved file', () => {
+		renderHeader();
+
+		expect(screen.getByTestId('reveal-in-folder-button')).toBeInTheDocument();
+		expect(screen.getByTestId('delete-file-button')).toBeInTheDocument();
 	});
 });

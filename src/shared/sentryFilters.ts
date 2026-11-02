@@ -13,6 +13,8 @@
  * the app - filtering it reduces alert fatigue without losing signal on real bugs.
  */
 
+import { isExpectedBridgeError } from './bridgeError';
+
 interface MinimalSentryEvent {
 	message?: string;
 	exception?: {
@@ -29,6 +31,12 @@ interface MinimalSentryEvent {
  */
 export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	const values = event.exception?.values ?? [];
+	if (
+		isExpectedBridgeError(event.message) ||
+		values.some((value) => isExpectedBridgeError(value.value))
+	) {
+		return true;
+	}
 	const firstException = values[0];
 	const value = firstException?.value ?? '';
 	const type = firstException?.type ?? '';
@@ -89,8 +97,12 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	const ipcMatch = haystack.match(/Error invoking remote method '([^']+)'/);
 	const ipcMethod = ipcMatch ? ipcMatch[1] : '';
 	if (ipcMethod === 'fs:stat' || ipcMethod === 'fs:readFile') {
+		// ENAMETOOLONG is the same miss: a sentence of agent prose that starts with
+		// `/` gets linked as a path, and clicking it asks the OS to stat a "file
+		// name" hundreds of bytes long (MAESTRO-16F/16G/176).
 		if (
 			/ENOENT: no such file or directory/i.test(haystack) ||
+			/ENAMETOOLONG: name too long/i.test(haystack) ||
 			/File not found:/i.test(haystack) ||
 			/Path not found:/i.test(haystack) ||
 			/EISDIR: illegal operation on a directory/i.test(haystack)
@@ -107,7 +119,11 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// code, and the delete is user-initiated - the caller already shows a
 	// "Failed to Erase Directory" toast carrying this message, so the user knows
 	// and can retry. The crash report on top of that is pure noise (MAESTRO-9V).
-	if (ipcMethod === 'shell:trashItem' && /Failed to perform delete operation/i.test(haystack)) {
+	// Linux words the same refusal "Failed to move item to trash" (MAESTRO-15T).
+	if (
+		ipcMethod === 'shell:trashItem' &&
+		/Failed to (perform delete operation|move item to trash)/i.test(haystack)
+	) {
 		return true;
 	}
 

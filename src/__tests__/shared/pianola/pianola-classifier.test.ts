@@ -395,3 +395,29 @@ describe('classifyMessages - full-turn risk (per-message bypass fix)', () => {
 		expect(c.risk).toBe('low');
 	});
 });
+
+describe('RF03 bounded optional question text', () => {
+	it.each([
+		['ASCII', 'x'.repeat(7998), 'x'.repeat(7999)],
+		['Unicode', 'é'.repeat(3999), 'é'.repeat(4000)],
+		['escaped control characters', '\n'.repeat(3999), '\n'.repeat(4000)],
+	])(
+		'preserves fitting %s text and omits oversized text without losing risk',
+		(_name, fitting, oversized) => {
+			const signal: AwaitingInputSignal = { kind: 'question', prompt: 'Should I continue?' };
+			const classify = (content: string) =>
+				classifyMessages([
+					msg('assistant', 'I will deploy to production.'),
+					msg('assistant', content, signal),
+				]);
+			expect(classify(fitting)).toMatchObject({
+				kind: 'question',
+				risk: 'high',
+				questionText: fitting,
+			});
+			const result = classify(oversized);
+			expect(result).toMatchObject({ kind: 'question', risk: 'high' });
+			expect(result.questionText).toBeUndefined();
+		}
+	);
+});

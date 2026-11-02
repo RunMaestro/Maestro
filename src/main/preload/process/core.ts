@@ -1,9 +1,11 @@
+import type { PendingPermissionSnapshot } from '../../../shared/pendingPermissions';
 import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivity';
 import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ConsultChain } from '../../../shared/consultBudget';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
  * Configuration for spawning a process
@@ -66,10 +68,13 @@ export interface RunCommandConfig {
 export interface ActiveProcess {
 	sessionId: string;
 	toolType: string;
+	/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 	pid: number;
 	cwd: string;
 	isTerminal: boolean;
 	isBatchMode: boolean;
+	/** Actual transport of this running Codex turn, including exec fallbacks. */
+	codexTransport?: CodexTransport;
 	startTime: number;
 	command?: string;
 	args?: string[];
@@ -291,6 +296,13 @@ export function createProcessCoreApi() {
 		 * Subscribe to Claude Code permission-relay requests (standard mode).
 		 * The renderer shows a prompt and replies via respondPermission().
 		 */
+		getPendingPermissions: (): Promise<PendingPermissionSnapshot> =>
+			ipcRenderer.invoke('process:getPendingPermissions'),
+		onPendingPermissionsChanged: (callback: (snapshot: PendingPermissionSnapshot) => void) => {
+			const handler = (_: unknown, snapshot: PendingPermissionSnapshot) => callback(snapshot);
+			ipcRenderer.on('process:pending-permissions', handler);
+			return () => ipcRenderer.removeListener('process:pending-permissions', handler);
+		},
 		onPermissionRequest: (
 			callback: (request: {
 				requestId: string;
@@ -353,6 +365,15 @@ export function createProcessCoreApi() {
 				callback(sessionId, verdict);
 			ipcRenderer.on('process:steering-verdict', handler);
 			return () => ipcRenderer.removeListener('process:steering-verdict', handler);
+		},
+		/** Actual Codex transport, reported at spawn and after an exec fallback. */
+		onCodexTransport: (
+			callback: (sessionId: string, transport: CodexTransport) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, transport: CodexTransport) =>
+				callback(sessionId, transport);
+			ipcRenderer.on('process:codex-transport', handler);
+			return () => ipcRenderer.removeListener('process:codex-transport', handler);
 		},
 
 		/**

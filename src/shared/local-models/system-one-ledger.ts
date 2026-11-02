@@ -350,6 +350,56 @@ export interface SystemOneLedgerPage {
 // Words for a person
 // ---------------------------------------------------------------------------
 
+/**
+ * The subject of a decision, using the task's name or the saved questions.
+ * Agent verbs say how a request was asked, not what it was about. Recognize
+ * explicit subjects in the questions and leave other requests as agent
+ * judgments with their question text. Never classify from the saved state.
+ */
+export function systemOneLedgerContext(decision: Pick<SystemOneDecision, 'taskId' | 'input'>): {
+	label: string;
+	question: string | null;
+} {
+	let question: string | null = null;
+	try {
+		const saved = JSON.parse(decision.input ?? 'null');
+		if (
+			saved?.questions &&
+			typeof saved.questions === 'object' &&
+			!Array.isArray(saved.questions)
+		) {
+			const instructions = Object.values(saved.questions).flatMap((value) => {
+				if (!value || typeof value !== 'object' || !('instructions' in value)) return [];
+				const text = value.instructions;
+				if (typeof text === 'string') return [text];
+				// Rank puts the question beside its candidate. Only the question is a preview.
+				if (
+					text &&
+					typeof text === 'object' &&
+					'question' in text &&
+					typeof text.question === 'string'
+				) {
+					return [text.question];
+				}
+				return [];
+			});
+			question = instructions.join(' · ').replace(/\s+/g, ' ').trim() || null;
+		}
+	} catch {
+		// Old or malformed inputs still have a task label; do not expose raw JSON as a preview.
+	}
+	if (!isSystemOneAgentSourceId(decision.taskId)) {
+		return { label: systemOneLedgerTaskLabel(decision.taskId), question };
+	}
+	if (question && /\bwhich (?:working )?session\b/i.test(question)) {
+		return { label: 'Session routing', question };
+	}
+	if (question && /\b(?:this|the|each|an?|incoming) (?:email|e-mail)\b/i.test(question)) {
+		return { label: 'Email classification', question };
+	}
+	return { label: 'Agent judgment', question };
+}
+
 /** A number from 0 to 1 as two decimals, the way the Test result prints P(yes). */
 function fixed(value: number): string {
 	return value.toFixed(2);

@@ -2,14 +2,17 @@
  * The DataviewJS guest runtime (D4, M7): the page side of the sandbox bridge. It runs inside the isolated
  * `<webview>` guest, where note scripts run, and nowhere else.
  *
- * - A `run` message renders one block. The runtime builds the run's index from the snapshot
- *   (`PageIndex.fromSnapshot`, the same source resolution `VaultIndex` runs), gives the script a fresh `dv`
+ * - A `run` message renders one block. The runtime decodes the snapshot's JSON text
+ *   (`decodeSandboxSnapshot`) and builds the run's index from it (`PageIndex.fromSnapshot`, the same source
+ *   resolution `VaultIndex` runs), gives the script a fresh `dv`
  *   object and container, runs it (`./inlineScript`, DEV-6), waits for the views it started, and answers
  *   `render.done` with the block's height, or `render.error` with upstream's `Evaluation Error:` text.
  *   After a run it sends `render.done` again whenever the block's height changes.
  * - An `eval` message evaluates the inline `` `$= expr` `` spans of one note (DEV-5), one after another, each
  *   with a fresh `dv` as its only scope, and answers `eval.result` per expression: the value in the wire form
  *   the host renders with the DQL value renderer, nothing for `undefined`, or the error text.
+ * - Once a run's index is built, the runtime sends `index.ready`, which starts the script's time budget on the
+ *   host. The index build has its own, larger one.
  * - `dv.query`, `dv.io.load`, and the calls built on them are requests the host answers by request id.
  * - A link click sends `open.link`; a task checkbox sends `toggle.task`.
  * - Everything the host sends goes through `parseSandboxMessage(raw, 'host')`; anything it refuses is
@@ -23,6 +26,7 @@ import {
 	SANDBOX_TO_GUEST_CHANNEL,
 	SANDBOX_TO_HOST_CHANNEL,
 	Values,
+	decodeSandboxSnapshot,
 	openSandboxEnvelope,
 	parseSandboxMessage,
 	sandboxEnvelope,
@@ -33,8 +37,8 @@ import {
 	type SandboxEvalOutcome,
 	type SandboxGuestMessage,
 	type SandboxHostMessage,
-	type SandboxIndexSnapshot,
 	type SandboxRunMessage,
+	type SandboxSnapshotPayload,
 } from '../../shared/dataview';
 import { serializedJsonByteLength } from '../../shared/jsonUtils';
 import { normalizeRootRelativePath } from '../../shared/pathContainment';
@@ -230,9 +234,9 @@ export function createDataviewGuest(options: DataviewGuestOptions): DataviewGues
 	});
 
 	/** The run's index, built from its snapshot; a string is the error when the snapshot cannot be read. */
-	const buildIndex = (snapshot: SandboxIndexSnapshot): PageIndex | string => {
+	const buildIndex = (snapshot: SandboxSnapshotPayload): PageIndex | string => {
 		try {
-			return PageIndex.fromSnapshot(snapshot, async (path) => {
+			return PageIndex.fromSnapshot(decodeSandboxSnapshot(snapshot), async (path) => {
 				const text = await loadText(path);
 				if (text === null) throw new Error(`No such file: '${path}'.`);
 				return text;
@@ -249,6 +253,8 @@ export function createDataviewGuest(options: DataviewGuestOptions): DataviewGues
 	): Promise<string | null> => {
 		const index = buildIndex(message.snapshot);
 		if (typeof index === 'string') return index;
+		// The script's own time budget starts here, not when the run arrived.
+		send({ type: 'index.ready', runId: message.runId });
 
 		// Views and queries the script started without awaiting them still belong to this run.
 		const pending = new Set<Promise<unknown>>();
@@ -344,6 +350,7 @@ export function createDataviewGuest(options: DataviewGuestOptions): DataviewGues
 
 	const evaluate = async (message: SandboxEvalMessage): Promise<void> => {
 		const index = buildIndex(message.snapshot);
+		if (typeof index !== 'string') send({ type: 'index.ready', runId: message.runId });
 		for (const expression of message.expressions) {
 			let outcome: SandboxEvalOutcome =
 				typeof index === 'string'

@@ -41,6 +41,7 @@ import {
 	readConsultBudgetStatus,
 	type ConsultBudgetStoreOptions,
 } from '../peer-consults/consult-budget';
+import { getJourneyFilePath } from '../user-journey-manager';
 import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
@@ -168,6 +169,15 @@ async function localHistoryFilePath(sessionId: string): Promise<string | undefin
 	}
 }
 
+/** The agent's journey file, or undefined when the data directory cannot be resolved. */
+function localJourneyFilePath(sessionId: string): string | undefined {
+	try {
+		return getJourneyFilePath(sessionId);
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * The MaestroRun launcher while it is installed, verified, and granted on this
  * Mac, else undefined. Never throws: a failed check reads as "not ready", which
@@ -231,7 +241,7 @@ function loadPluginSections(
 
 /**
  * The full Maestro system prompt for one persisted agent: the base template
- * with that agent's identity, git branch (local only), history file (local
+ * with that agent's identity, git branch (local only), history and journey files (local
  * only), conductor profile, its Peer Agents roster, the Pianola role section
  * when it is the Pianola agent, the core sections that are ready for it (System One, local agents
  * only), and every enabled plugin section (`localOnly` ones skipped over SSH).
@@ -262,6 +272,7 @@ export async function buildMaestroSystemPromptForSession(
 	// neither: the values would describe the wrong host.
 	const gitBranch = !isSsh && record.isGitRepo && cwd ? await localGitBranch(cwd) : undefined;
 	const historyFilePath = isSsh ? undefined : await localHistoryFilePath(record.id);
+	const journeyFilePath = isSsh ? undefined : localJourneyFilePath(record.id);
 	// The launcher is on this Mac, so an SSH agent is never told about it.
 	const maestroRunPath = isSsh ? undefined : await localMaestroRunPath();
 	// `maestro-cli s1` reaches this desktop, so an SSH agent is never asked about.
@@ -301,6 +312,7 @@ export async function buildMaestroSystemPromptForSession(
 		groupId: record.groupId,
 		activeTabId: opts.activeTabId,
 		historyFilePath,
+		journeyFilePath,
 		conductorProfile,
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
 		maestroRunPath,

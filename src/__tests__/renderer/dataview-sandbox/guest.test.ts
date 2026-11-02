@@ -32,7 +32,7 @@ import {
 import { compileInlineScript } from '../../../renderer/dataview-sandbox/inlineScript';
 import { renderMarkdown } from '../../../renderer/dataview-sandbox/markdownDom';
 import { OBSIDIAN_API_UNAVAILABLE } from '../../../renderer/dataview-sandbox/dvApi';
-import { fixtureSnapshot, fixtureText } from '../../helpers/dataviewFixtureVault';
+import { fixtureSnapshot, fixtureText, snapshotPayload } from '../../helpers/dataviewFixtureVault';
 import { dataviewGuestRealm, type DataviewGuestRealm } from '../../helpers/dataviewGuestRealm';
 
 /** The `dv` members D5 lists, top level (`io` holds `load`, `csv`, and `normalize`). */
@@ -89,10 +89,14 @@ interface Harness {
 	evaluate(sources: string[], options?: { thisPath?: string }): Promise<SandboxEvalResultMessage[]>;
 }
 
-/** A guest and a fake host over the fixture vault snapshot. */
-function createHarness(): Harness {
+/**
+ * A guest and a fake host over the fixture vault snapshot. `readText` stands in for the host's file
+ * read, so a test can serve the bytes another checkout would have (CRLF on Windows).
+ */
+function createHarness(readText: (relPath: string) => string = fixtureText): Harness {
 	const snapshot: SandboxIndexSnapshot = fixtureSnapshot();
-	const hostIndex = PageIndex.fromSnapshot(snapshot, async (relPath) => fixtureText(relPath));
+	const hostIndex = PageIndex.fromSnapshot(snapshot, async (relPath) => readText(relPath));
+	const payload = snapshotPayload(snapshot);
 	const root = document.createElement('div');
 	document.body.append(root);
 	const sent: SandboxGuestMessage[] = [];
@@ -105,7 +109,7 @@ function createHarness(): Harness {
 				guest.receive({ type: 'query.dql.result', requestId: message.requestId, result })
 			);
 		} else if (message.type === 'io.load') {
-			const text = snapshot.files.includes(message.path) ? fixtureText(message.path) : null;
+			const text = snapshot.files.includes(message.path) ? readText(message.path) : null;
 			void guest.receive({ type: 'io.load.result', requestId: message.requestId, text });
 		}
 	};
@@ -118,7 +122,14 @@ function createHarness(): Harness {
 		realm,
 		async run(source, { thisPath = 'Scripts/JS Demo.md', blockId = 'block-1', runId } = {}) {
 			const id = runId ?? `run-${++runCount}`;
-			await guest.receive({ type: 'run', runId: id, blockId, source, thisPath, snapshot });
+			await guest.receive({
+				type: 'run',
+				runId: id,
+				blockId,
+				source,
+				thisPath,
+				snapshot: payload,
+			});
 			const block = root.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
 			const outcome = sent.find(
 				(message) =>
@@ -130,7 +141,7 @@ function createHarness(): Harness {
 		async evaluate(sources, { thisPath = 'Scripts/JS Demo.md' } = {}) {
 			const runId = `inline-run-${++runCount}`;
 			const expressions = sources.map((source, index) => ({ id: `expr-${index + 1}`, source }));
-			await guest.receive({ type: 'eval', runId, thisPath, snapshot, expressions });
+			await guest.receive({ type: 'eval', runId, thisPath, snapshot: payload, expressions });
 			return sent.filter(
 				(message): message is SandboxEvalResultMessage =>
 					message.type === 'eval.result' && message.runId === runId
@@ -337,7 +348,7 @@ describe('the dv object', () => {
 				"const rows = await dv.io.csv('data/people.csv');",
 				"dv.table(['Name', 'Company'], rows.map((r) => [r.name, r.company]));",
 				"const text = await dv.io.load('data/people.csv');",
-				"globalThis.__captured = { first: text.split('\\n')[0], outside: await dv.io.load('../outside.md'), hidden: await dv.io.load('.obsidian/app.json'), normalized: dv.io.normalize('people.csv', 'data/x.md') };",
+				"globalThis.__captured = { first: text.split(/\\r?\\n/)[0], outside: await dv.io.load('../outside.md'), hidden: await dv.io.load('.obsidian/app.json'), normalized: dv.io.normalize('people.csv', 'data/x.md') };",
 			].join('\n'),
 			{ thisPath: 'Scripts/JS Demo.md' }
 		);
@@ -368,6 +379,29 @@ describe('the dv object', () => {
 			'views/sample/view.css',
 			'views/sample/view.js',
 		]);
+	});
+
+	it('reads a CRLF file (a Windows checkout) as clean rows, and dv.io.load returns it unchanged', async () => {
+		harness.root.remove();
+		harness = createHarness((relPath) => fixtureText(relPath).replace(/\r?\n/g, '\r\n'));
+		const { block, outcome } = await harness.run(
+			[
+				"const rows = await dv.io.csv('data/people.csv');",
+				"dv.table(['Name', 'Company'], rows.map((r) => [r.name, r.company]));",
+				"globalThis.__captured = await dv.io.load('data/people.csv');",
+			].join('\n')
+		);
+		expect(outcome).toMatchObject({ type: 'render.done' });
+		expect(
+			Array.from(block.querySelectorAll('tbody tr'), (row) => texts(row.querySelectorAll('td')))
+		).toEqual([
+			['Rami Example', 'Example Corp'],
+			['Dana Sample', 'Sample Labs'],
+		]);
+		// Upstream's dv.io.load is the raw file text; only the CSV parser drops the line endings.
+		expect(harness.realm.__captured).toBe(
+			'name,company\r\nRami Example,Example Corp\r\nDana Sample,Sample Labs\r\n'
+		);
 	});
 
 	it('fails the run when a render call gets bad rows, even when the script does not await it', async () => {
@@ -508,9 +542,13 @@ describe('runs', () => {
 		(harness.realm.__releaseStale as () => void)();
 		await stale;
 		expect(fresh.outcome).toMatchObject({ type: 'render.done', runId: 'fresh' });
-		expect(harness.sent.some((message) => 'runId' in message && message.runId === 'stale')).toBe(
-			false
-		);
+		// Its index was built before the newer run arrived; nothing after that goes out.
+		expect(
+			harness.sent.some(
+				(message) =>
+					'runId' in message && message.runId === 'stale' && message.type !== 'index.ready'
+			)
+		).toBe(false);
 		expect(texts(fresh.block.querySelectorAll('p'))).toEqual(['fresh']);
 		delete harness.realm.__releaseStale;
 	});
@@ -548,14 +586,13 @@ describe('startDataviewGuest', () => {
 			OBSIDIAN_API_UNAVAILABLE
 		);
 
-		const snapshot = fixtureSnapshot();
 		const message = {
 			type: 'run',
 			runId: 'r1',
 			blockId: 'b1',
 			source: "dv.paragraph('hi');",
 			thisPath: 'Scripts/JS Demo.md',
-			snapshot,
+			snapshot: snapshotPayload(fixtureSnapshot()),
 		};
 		// Its own posts and other channels are not host messages.
 		for (const listener of listeners)
@@ -568,6 +605,7 @@ describe('startDataviewGuest', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(root.querySelector('p')!.textContent).toBe('hi');
 		expect(posted).toEqual([
+			sandboxEnvelope(SANDBOX_TO_HOST_CHANNEL, { type: 'index.ready', runId: 'r1' }),
 			sandboxEnvelope(SANDBOX_TO_HOST_CHANNEL, {
 				type: 'render.done',
 				blockId: 'b1',

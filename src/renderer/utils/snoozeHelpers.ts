@@ -769,6 +769,11 @@ export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
 	return snoozedEntryLabel(entry);
 }
 
+/** Label for a parked or closed tab, using the shared snooze fallbacks. */
+export function getParkedTabLabel(entry: SnoozedGroupMember): string {
+	return snoozedEntryLabel(entry);
+}
+
 /**
  * Flatten a snooze for anything outside the renderer - today, the
  * `snooze_command` wire and so `maestro-cli snooze list`.

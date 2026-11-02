@@ -36,6 +36,7 @@ export type AgentEnvVarHandlers = Pick<
 	| 'onEnvVarRemove'
 	| 'onEnvVarAdd'
 	| 'onEnvVarsBlur'
+	| 'onEnvVarsReplace'
 >;
 
 /**
@@ -85,6 +86,10 @@ export function agentEnvVarHandlers({
 		},
 		onEnvVarAdd: () => {
 			setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
+		},
+		onEnvVarsReplace: (vars, disabledVars) => {
+			setCustomEnvVars(vars);
+			setCustomEnvVarsDisabled(disabledVars);
 		},
 		onEnvVarsBlur: () => {
 			/* Saved on the form's Save */

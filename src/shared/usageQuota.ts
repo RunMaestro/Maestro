@@ -15,6 +15,8 @@
  * without either process importing the other's types.
  */
 
+import type { CodexCreditBalance } from './codexCredits';
+
 export interface QuotaWindowLike {
 	percent: number;
 	resetsAt?: string;
@@ -29,6 +31,7 @@ export interface ClaudeQuotaSnapshotLike {
 
 export interface CodexQuotaSnapshotLike {
 	authState: string;
+	credits?: CodexCreditBalance;
 	session?: QuotaWindowLike;
 	weekly?: QuotaWindowLike;
 	additionalLimits?: QuotaWindowLike[];
@@ -64,6 +67,8 @@ export function hasUsefulAnthropicQuotaDetails(snapshot: ClaudeQuotaSnapshotLike
 export function hasUsefulCodexQuotaDetails(snapshot: CodexQuotaSnapshotLike): boolean {
 	if (snapshot.authState !== 'authenticated') return false;
 	return (
+		// Credits alone populate the tab and keep discovery/startup sampling warm.
+		snapshot.credits !== undefined ||
 		hasValidQuotaWindow(snapshot.session) ||
 		hasValidQuotaWindow(snapshot.weekly) ||
 		(snapshot.additionalLimits ?? []).some(hasValidQuotaWindow)

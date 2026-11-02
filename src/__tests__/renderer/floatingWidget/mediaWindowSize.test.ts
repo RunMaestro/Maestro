@@ -5,8 +5,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	MEDIA_LIST_CLEARANCE,
 	MEDIA_WINDOW_FRAME_BORDER,
 	MEDIA_WINDOW_STRIP_HEIGHT,
+	mediaListOverflowNeed,
 	mediaWindowBaselineAfter,
 	mediaWindowSizeFor,
 	planMediaWindowSize,
@@ -163,5 +165,37 @@ describe('sanitizeMediaWindowBaseline', () => {
 		['a non-finite height', { ...valid, requested: { width: 10, height: Infinity } }],
 	])('rejects %s', (_label, value) => {
 		expect(sanitizeMediaWindowBaseline(value)).toBeNull();
+	});
+});
+
+describe('mediaListOverflowNeed', () => {
+	// An audio card 96px tall with its list button 4-28px down the title strip.
+	const card = { top: 0, bottom: 96 };
+	const anchor = { top: 4, bottom: 28 };
+
+	it('asks each side for the list plus its clearance, less the space already there', () => {
+		expect(mediaListOverflowNeed(card, anchor, 300)).toEqual({
+			above: 300 + MEDIA_LIST_CLEARANCE - 4,
+			below: 300 + MEDIA_LIST_CLEARANCE - 68,
+		});
+	});
+
+	it('asks for nothing below when the card is tall enough (a video)', () => {
+		expect(mediaListOverflowNeed({ top: 0, bottom: 400 }, anchor, 300).below).toBe(0);
+	});
+
+	it('measures against the card, so room already borrowed does not change the answer', () => {
+		const shifted = mediaListOverflowNeed(
+			{ top: 300, bottom: 396 },
+			{ top: 304, bottom: 328 },
+			300
+		);
+		expect(shifted).toEqual(mediaListOverflowNeed(card, anchor, 300));
+	});
+
+	it('rounds fractional layout up', () => {
+		expect(mediaListOverflowNeed(card, { top: 4.4, bottom: 28.4 }, 100.2).below).toBe(
+			Math.ceil(100.2 + MEDIA_LIST_CLEARANCE - (96 - 28.4))
+		);
 	});
 });

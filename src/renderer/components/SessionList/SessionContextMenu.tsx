@@ -36,6 +36,7 @@ import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
 import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
+import { duplicateAgentBlocker } from '../../../shared/newAgentRecord';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
@@ -389,7 +390,7 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{!session.isPianola && (
+			{duplicateAgentBlocker(session) === null && (
 				<button
 					type="button"
 					onClick={() => {

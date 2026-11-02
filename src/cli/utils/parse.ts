@@ -51,6 +51,31 @@ export function parseCliSeconds(value: string, flag: string): number {
 }
 
 /**
+ * Parse a point in time typed as `--since`:
+ *   - ISO-8601 ("2026-04-28T10:00:00Z"), the natural cursor a previous
+ *     `--json` run hands back.
+ *   - A bare epoch number, ms or seconds, told apart by magnitude.
+ * Returns epoch ms, or null when the input is unparseable so the caller can
+ * fail loudly rather than silently filter everything out.
+ */
+export function parseCliTimestamp(value: string): number | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+
+	if (/^-?\d+$/.test(trimmed)) {
+		const num = Number(trimmed);
+		if (!Number.isFinite(num)) return null;
+		// Timestamps after ~2001 are above 1e9 in seconds and 1e12 in ms, so a
+		// bare integer below 1e12 is seconds. Right for both `Date.now()` and
+		// `Date.now() / 1000`.
+		return num >= 1e12 ? num : num * 1000;
+	}
+
+	const parsed = Date.parse(trimmed);
+	return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
  * Words that clear a per-tab or per-agent override so the value is inherited
  * again (from the agent, or from the global setting). Distinct from `false`:
  * clearing enter-to-send returns the tab to the `enterToSendAI` setting rather

@@ -1,9 +1,18 @@
-import { MAESTRO_REMOTE_PROTOCOL_VERSION } from '../../shared/maestroRemote';
+import {
+	MAESTRO_REMOTE_PROTOCOL_VERSION,
+	MAESTRO_REMOTE_WORKFLOW_VERSION,
+} from '../../shared/maestroRemote';
 import type { MaestroRemoteHandshake } from '../../shared/maestroRemote';
 import type { LiteProfile } from '../../shared/lite-control';
 
 export class HostConnectionError extends Error {
 	name = 'HostConnectionError';
+	constructor(
+		message: string,
+		readonly retryable = false
+	) {
+		super(message);
+	}
 }
 
 /** Require a compatible, ready host with the pinned identity and authentication appropriate to its transport. */
@@ -16,6 +25,7 @@ export function validateHandshake(
 	if (
 		!host ||
 		host.protocolVersion !== MAESTRO_REMOTE_PROTOCOL_VERSION ||
+		host.workflowQualificationVersion !== MAESTRO_REMOTE_WORKFLOW_VERSION ||
 		typeof host.instanceId !== 'string' ||
 		!host.instanceId ||
 		typeof host.hostName !== 'string' ||
@@ -57,11 +67,13 @@ export function validateHandshake(
 	}
 	if (!host.ready)
 		throw new HostConnectionError(
-			`Host is not ready: ${host.unavailableReason || 'keep full Maestro and its owning window running.'}`
+			`Host is not ready: ${host.unavailableReason || 'keep full Maestro and its owning window running.'}`,
+			true
 		);
 	if (!host.capabilities.sessions || !host.capabilities.terminal || !host.capabilities.files)
 		throw new HostConnectionError(
-			'Host does not support the required Lite session, terminal, and file workflows.'
+			'Host does not support the required Lite session, terminal, and file workflows. ' +
+				(host.unavailableReason || '')
 		);
 	return host;
 }

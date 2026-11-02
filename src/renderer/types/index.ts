@@ -563,6 +563,8 @@ export interface QueuedItem {
 	timestamp: number; // When it was queued (for ordering)
 	tabId: string; // Target tab for this item
 	type: QueuedItemType; // 'message' or 'command'
+	/** Set by known send paths; absent on legacy/programmatic items, which remain unattended. */
+	querySource?: ProcessConfig['querySource'];
 	// For messages
 	text?: string; // Message text
 	images?: string[]; // Attached images (base64)
@@ -850,6 +852,7 @@ export interface OnboardingStats {
 export interface AITab {
 	/** Transient native translation progress, shown in the existing busy pill. */
 	translatingFrom?: ToolType;
+	relayConversation?: import('../../shared/relayConversation').RelayConversationState;
 	/** Durable conversation provenance, independent of whether a turn is running. */
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
@@ -986,6 +989,8 @@ export interface AITab {
 	 */
 	turnProvider?: ToolType;
 	turnSessionId?: string;
+	/** Actual running Codex transport from main, including per-turn exec fallbacks. */
+	turnCodexTransport?: CodexTransport;
 	turnRunOnTarget?: RunOnTarget;
 	turnRouting?: import('../../shared/modelTiers').TierRouting;
 	/**
@@ -1079,6 +1084,10 @@ export interface FilePreviewTab {
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined if no pending changes)
 	createdAt: number; // Timestamp for ordering
+	// When the tab started showing its current path (ms). Differs from createdAt
+	// once an open replaces the file in this tab. The User Journey dwell time on
+	// close counts from here; tabs that predate it fall back to createdAt.
+	openedAt?: number;
 	lastModified: number; // Timestamp (ms) when file was last modified on disk (for refresh detection)
 	// SSH remote support
 	sshRemoteId?: string; // SSH remote ID for re-fetching content if needed
@@ -1271,8 +1280,10 @@ export type ClosedTabEntry =
  * shape mirrors {@link ClosedTabEntry} because waking reuses the same
  * restore-at-original-position logic as reopening a closed tab.
  *
- * Unlike `unifiedClosedTabHistory` (a runtime-only undo stack), this list IS
- * persisted: a snooze has to survive quitting the app.
+ * Both lists persist, but differently: `unifiedClosedTabHistory` stores each
+ * closed tab as a pointer (no transcript when the provider can give it back, no
+ * file content; see src/shared/closedTabHistory.ts), while a snooze keeps its
+ * tab's newest logs, because a snoozed tab comes back verbatim.
  */
 /**
  * How a snooze ended. All three mean "no longer snoozed", but the distinction
@@ -1441,6 +1452,8 @@ export interface Session {
 	// Explicit rows. A row replaces any derived grant for that peer, so a row with
 	// neither bit set is a deliberate exclusion.
 	peerAgents?: PeerAgent[];
+	// This agent's specialty, advertised in other agents' peer rosters.
+	peerDescription?: string;
 	// "Peers in my group": every other agent sharing this agent's groupId is a
 	// peer at this access. Absent means the checkbox is off.
 	groupPeerAccess?: PeerAccess;
@@ -1571,7 +1584,8 @@ export interface Session {
 	aiTabs: AITab[];
 	// Currently active tab ID
 	activeTabId: string;
-	// Stack of recently closed tabs for undo (max 25, runtime-only, not persisted)
+	// Legacy AI-only stack of recently closed tabs (max 25, runtime-only, never
+	// persisted). The unified stack below is the one Cmd+Shift+T pops and stores.
 	closedTabHistory: ClosedTab[];
 	// Tabs that were closed while still thinking - kept here so the thinking pill
 	// can surface them until the underlying agent process finishes. Runtime-only,
@@ -1602,8 +1616,11 @@ export interface Session {
 
 	// Unified tab ordering - determines visual order of all tabs (AI, file, browser, and terminal)
 	unifiedTabOrder: UnifiedTabRef[];
-	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo (max 25, runtime-only, not persisted)
-	// Used by Cmd+Shift+T to restore any recently closed tab
+	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo, newest first
+	// (max MAX_CLOSED_TAB_HISTORY). Used by Cmd+Shift+T to restore any recently closed tab.
+	// Persisted as pointers via projectClosedTabHistory() in src/shared/closedTabHistory.ts:
+	// a restored AI entry may have no logs and a file entry no content until
+	// services/reopenedTabContent.ts reads them back. Absent on disk when empty.
 	unifiedClosedTabHistory: ClosedTabEntry[];
 
 	// Tab tiling (split panes) - each TabGroup renders several existing tabs side

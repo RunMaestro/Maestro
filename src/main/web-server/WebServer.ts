@@ -46,6 +46,7 @@ import { registerPairingRoutes } from '../lite/pairing/routes';
 
 import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
 import { logger } from '../utils/logger';
+import { resolvePianolaDecision } from '../pianola/pianola-decisions';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { GroupSettingsUpdateRequest } from '../../shared/groupSettingsUpdate';
 import { getLocalIpAddress } from '../utils/networkUtils';
@@ -78,6 +79,7 @@ import type {
 	StartAutoRunCallback,
 	ControlAutoRunCallback,
 } from '../../shared/autoRunRemote';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { BatchRunConfig } from '../../shared/types';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
@@ -113,6 +115,7 @@ import type {
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	ClosedTabCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -195,9 +198,7 @@ import type {
 	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
-	MergeContextCallback,
-	TransferContextCallback,
-	SummarizeContextCallback,
+	TabContextOpCallback,
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
@@ -226,6 +227,8 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
+import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 import type { ConsultChain } from '../../shared/consultBudget';
@@ -585,6 +588,15 @@ export class WebServer {
 		this.callbackRegistry.setExecuteCommandCallback(callback);
 	}
 
+	/** Explicit renderer action, sharing native admission with manager answers. */
+	resolvePianolaHumanDecision(payload: unknown, actorId: string, principal?: 'owner') {
+		return resolvePianolaDecision(this.callbackRegistry, payload, {
+			kind: 'human',
+			actorId,
+			principal,
+		});
+	}
+
 	setInterruptSessionCallback(callback: InterruptSessionCallback): void {
 		this.callbackRegistry.setInterruptSessionCallback(callback);
 	}
@@ -624,6 +636,10 @@ export class WebServer {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
+	}
+
+	setClosedTabCommandCallback(callback: ClosedTabCommandCallback): void {
+		this.callbackRegistry.setClosedTabCommandCallback(callback);
 	}
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
@@ -951,16 +967,8 @@ export class WebServer {
 		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
-	setMergeContextCallback(callback: MergeContextCallback): void {
-		this.callbackRegistry.setMergeContextCallback(callback);
-	}
-
-	setTransferContextCallback(callback: TransferContextCallback): void {
-		this.callbackRegistry.setTransferContextCallback(callback);
-	}
-
-	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
-		this.callbackRegistry.setSummarizeContextCallback(callback);
+	setTabContextOpCallback(callback: TabContextOpCallback): void {
+		this.callbackRegistry.setTabContextOpCallback(callback);
 	}
 
 	setCreateGistCallback(callback: CreateGistCallback): void {
@@ -1231,7 +1239,8 @@ export class WebServer {
 				this.callbackRegistry.getSessionDetail(sessionId, tabId),
 			getTheme: () => this.callbackRegistry.getTheme(),
 			writeToSession: (sessionId, data) => this.callbackRegistry.writeToSession(sessionId, data),
-			interruptSession: async (sessionId) => this.callbackRegistry.interruptSession(sessionId),
+			interruptSession: (sessionId, tabId) =>
+				this.callbackRegistry.interruptSession(sessionId, tabId),
 			getHistory: (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -1344,7 +1353,9 @@ export class WebServer {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
-				consultChain?: ConsultChain
+				consultChain?: ConsultChain,
+				mentionRouting?: MentionRouting,
+				requireDeliveryReceipt?: boolean
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1354,7 +1365,9 @@ export class WebServer {
 					force,
 					images,
 					background,
-					consultChain
+					consultChain,
+					mentionRouting,
+					...(requireDeliveryReceipt ? [true] : [])
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1372,6 +1385,8 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			closedTabCommand: async (request: ClosedTabCommandRequest) =>
+				this.callbackRegistry.closedTabCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
@@ -1407,15 +1422,19 @@ export class WebServer {
 				prompt: string,
 				background?: boolean,
 				hidden?: boolean,
-				consultChain?: ConsultChain
+				consultChain?: ConsultChain,
+				mentionRouting?: MentionRouting
 			) =>
 				this.callbackRegistry.newAITabWithPrompt(
 					sessionId,
 					prompt,
 					background,
 					hidden,
-					consultChain
+					consultChain,
+					mentionRouting
 				),
+			interruptSession: (sessionId: string, tabId?: string) =>
+				this.callbackRegistry.interruptSession(sessionId, tabId),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
@@ -1428,7 +1447,8 @@ export class WebServer {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				consultChain?: ConsultChain
+				consultChain?: ConsultChain,
+				mentionRouting?: MentionRouting
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1438,7 +1458,8 @@ export class WebServer {
 					images,
 					background,
 					held,
-					consultChain
+					consultChain,
+					mentionRouting
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1552,12 +1573,8 @@ export class WebServer {
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
 				this.callbackRegistry.steerGroupChat(chatId, request),
-			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
-				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
-			transferContext: async (sourceSessionId: string, targetSessionId: string) =>
-				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
-			summarizeContext: async (sessionId: string) =>
-				this.callbackRegistry.summarizeContext(sessionId),
+			tabContextOp: async (request: TabContextOpRequest) =>
+				this.callbackRegistry.tabContextOp(request),
 			createGist: async (
 				sessionId: string,
 				description: string,
@@ -1602,7 +1619,7 @@ export class WebServer {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
 			},
-			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// Bundles: the same service the Export Agent and Import Agent modals call, with
 			// the app context its IPC handlers own (live agents, renderer hand-off).
 			exportCueBundle: async (request) => {
 				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
@@ -1751,6 +1768,10 @@ export class WebServer {
 
 	broadcastSettingsChanged(settings: WebSettings): void {
 		this.broadcastService.broadcastSettingsChanged(settings);
+	}
+
+	getAutoRunStates(): Record<string, AutoRunState> {
+		return Object.fromEntries(this.liveSessionManager.getAutoRunStates());
 	}
 
 	broadcastAutoRunState(sessionId: string, state: AutoRunState | null): void {

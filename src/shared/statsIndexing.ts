@@ -30,6 +30,12 @@ export interface StatsIndexingJob {
 	totalBytes: number;
 	startedAt: number;
 	updatedAt: number;
+	/**
+	 * Set by main once the scan has proven itself slow enough to show (see
+	 * {@link shouldSurfaceIndexingJob}), and never cleared while it runs, so a
+	 * bar does not blink out when the projected time left dips below the cut.
+	 */
+	surfaced?: boolean;
 }
 
 export interface StatsIndexingState {
@@ -45,15 +51,58 @@ export const EMPTY_STATS_INDEXING_STATE: StatsIndexingState = { jobs: [] };
  */
 export const STATS_INDEXING_VISIBLE_MIN_FILES = 25;
 
+/**
+ * How long a scan runs silently before it may be shown. File count alone is a
+ * poor proxy for duration: on a machine with tens of thousands of transcripts
+ * and Cue writing new ones all day, nearly every dashboard open finds 25+
+ * changed files and still finishes in a few seconds. The progress surface is
+ * for the scans that take minutes (a cache upgrade, a first index), so a scan
+ * has to prove it is slow before it interrupts anyone.
+ */
+export const STATS_INDEXING_VISIBLE_AFTER_MS = 10_000;
+
+/**
+ * Projected time left a scan must still have, once past the silent window, to
+ * be shown. One that is about to finish is left alone rather than opening a
+ * modal only to close it a moment later.
+ */
+export const STATS_INDEXING_VISIBLE_MIN_REMAINING_MS = 30_000;
+
 /** Bytes that must be done before an ETA is offered (the first files skew it). */
 export const STATS_INDEXING_ETA_MIN_FRACTION = 0.05;
 
 /** Milliseconds a scan must have run before an ETA is offered. */
 export const STATS_INDEXING_ETA_MIN_ELAPSED_MS = 3000;
 
-/** Jobs large enough to report. */
+/** Jobs main has surfaced: large and slow enough to report. */
 export function visibleIndexingJobs(state: StatsIndexingState): StatsIndexingJob[] {
-	return state.jobs.filter((job) => job.totalFiles >= STATS_INDEXING_VISIBLE_MIN_FILES);
+	return state.jobs.filter((job) => job.surfaced === true);
+}
+
+/** 0-1 progress of one job, by bytes when known (file counts lie), else by files. */
+export function indexingJobFraction(
+	job: Pick<StatsIndexingJob, 'doneBytes' | 'totalBytes' | 'doneFiles' | 'totalFiles'>
+): number {
+	if (job.totalBytes > 0) return clampFraction(job.doneBytes / job.totalBytes);
+	if (job.totalFiles > 0) return clampFraction(job.doneFiles / job.totalFiles);
+	return 0;
+}
+
+/**
+ * Whether a running scan has earned the progress surface: enough files, past
+ * the silent window, and either still too early to project (under 5% done
+ * after ten seconds is itself a slow scan) or projected to need at least
+ * {@link STATS_INDEXING_VISIBLE_MIN_REMAINING_MS} more. Main latches the
+ * answer onto the job as `surfaced`, so this is asked only until it says yes.
+ */
+export function shouldSurfaceIndexingJob(job: StatsIndexingJob, now: number): boolean {
+	if (job.totalFiles < STATS_INDEXING_VISIBLE_MIN_FILES) return false;
+	const elapsedMs = now - job.startedAt;
+	if (elapsedMs < STATS_INDEXING_VISIBLE_AFTER_MS) return false;
+	const fraction = indexingJobFraction(job);
+	if (fraction >= 1) return false;
+	const etaMs = estimateRemainingMs(fraction, elapsedMs);
+	return etaMs === undefined || etaMs >= STATS_INDEXING_VISIBLE_MIN_REMAINING_MS;
 }
 
 export interface StatsIndexingSummary {
@@ -93,12 +142,7 @@ export function summarizeStatsIndexing(
 		startedAt = Math.min(startedAt, job.startedAt);
 	}
 
-	const fraction =
-		totalBytes > 0
-			? clampFraction(doneBytes / totalBytes)
-			: totalFiles > 0
-				? clampFraction(doneFiles / totalFiles)
-				: 0;
+	const fraction = indexingJobFraction({ doneBytes, totalBytes, doneFiles, totalFiles });
 
 	return {
 		reason: jobs.some((job) => job.reason === 'upgrade') ? 'upgrade' : 'index',

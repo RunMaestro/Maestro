@@ -163,6 +163,11 @@ describe('resolveUiSurfaceTab', () => {
 		expect(surfaceTabIds(settings)).not.toContain('local-models');
 	});
 
+	it('no longer has the Bundles or Readiness tabs', () => {
+		expect(resolveUiSurfaceTab(cue, 'bundles')).toBeNull();
+		expect(resolveUiSurfaceTab(cue, 'readiness')).toBeNull();
+	});
+
 	it('returns null for a tab the surface does not have', () => {
 		expect(resolveUiSurfaceTab(cue, 'nope')).toBeNull();
 		const about = resolveUiSurface('about')!;

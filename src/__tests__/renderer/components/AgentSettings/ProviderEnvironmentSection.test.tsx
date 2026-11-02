@@ -32,7 +32,7 @@ describe('ProviderEnvironmentSection', () => {
 		render(<ProviderEnvironmentSection {...createProps()} />);
 
 		expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
-		expect(screen.getByText('Environment variables').closest('details')).toHaveAttribute('open');
+		expect(screen.getByRole('heading', { name: 'Environment variables' })).toBeVisible();
 		expect(screen.getByText(/override the global environment from Settings/)).toBeInTheDocument();
 		expect(screen.getByText(/A parked row is kept but not passed/)).toBeInTheDocument();
 		expect(screen.getByDisplayValue('API_HOST')).toBeInTheDocument();
@@ -60,16 +60,18 @@ describe('ProviderEnvironmentSection', () => {
 		expect(screen.queryByText(/Editing the/)).not.toBeInTheDocument();
 	});
 
-	it('collapses an empty environment and lets the user expand it', () => {
+	it('keeps an empty environment visible without a collapse control', () => {
 		render(<ProviderEnvironmentSection {...createProps({ customEnvVars: {} })} />);
-		const summary = screen.getByText('Environment variables');
-		expect(summary.closest('details')).not.toHaveAttribute('open');
-		fireEvent.click(summary);
-		expect(summary.closest('details')).toHaveAttribute('open');
+		const heading = screen.getByRole('heading', { name: 'Environment variables' });
+		expect(heading.closest('details')).toBeNull();
+		expect(heading.parentElement?.querySelector('summary')).toBeNull();
+		expect(screen.getByText('Add Variable')).toBeVisible();
+		expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeVisible();
+		fireEvent.click(heading);
 		expect(screen.getByText('Add Variable')).toBeVisible();
 	});
 
-	it('expands parked variables so the account configuration remains discoverable', () => {
+	it('keeps parked variables visible so the account configuration remains discoverable', () => {
 		render(
 			<ProviderEnvironmentSection
 				{...createProps({
@@ -79,7 +81,7 @@ describe('ProviderEnvironmentSection', () => {
 				})}
 			/>
 		);
-		expect(screen.getByText('Environment variables').closest('details')).toHaveAttribute('open');
+		expect(screen.getByRole('heading', { name: 'Environment variables' })).toBeVisible();
 		expect(screen.getByDisplayValue('~/.claude-work')).toBeVisible();
 	});
 });

@@ -1,6 +1,6 @@
-// Update group command - change a group's name, appearance, parent, or whether
-// it is parked out of the Left Bar, in the running desktop app via the
-// update_group WS message.
+// Update group command - change a group's name, appearance, parent, whether it
+// is parked out of the Left Bar, or whether it is folded, in the running
+// desktop app via the update_group WS message.
 //
 // `rename-group` stays as-is for backward compatibility; this is the verb that
 // covers everything the Left Bar's group editor can do, so a bootstrap script
@@ -30,6 +30,8 @@ interface UpdateGroupOptions {
 	clearParent?: boolean;
 	hide?: boolean;
 	show?: boolean;
+	collapse?: boolean;
+	expand?: boolean;
 	json?: boolean;
 }
 
@@ -53,6 +55,10 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 		return failCommand('Cannot pass both --hide and --show', options.json);
 	}
 	const hidden = options.hide ? true : options.show ? false : undefined;
+	if (options.collapse && options.expand) {
+		return failCommand('Cannot pass both --collapse and --expand', options.json);
+	}
+	const collapsed = options.collapse ? true : options.expand ? false : undefined;
 
 	let parentGroupId: string | undefined;
 	if (options.parent) {
@@ -73,6 +79,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 		...(options.color !== undefined ? { color: options.color } : {}),
 		...(parentGroupId ? { parentGroupId } : {}),
 		...(hidden !== undefined ? { hidden } : {}),
+		...(collapsed !== undefined ? { collapsed } : {}),
 		...(clear.length > 0 ? { clear } : {}),
 	});
 	if (!validated.ok) {
@@ -107,6 +114,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 		color: validated.value.color,
 		parentGroupId: validated.value.parentGroupId,
 		hidden: validated.value.hidden,
+		collapsed: validated.value.collapsed,
 		cleared: clear,
 	});
 	if (mismatch) {

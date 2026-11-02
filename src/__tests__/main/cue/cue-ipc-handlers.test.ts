@@ -44,6 +44,7 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	validateCueConfig: vi.fn(),
+	loadCueConfigDetailed: vi.fn(),
 }));
 
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({

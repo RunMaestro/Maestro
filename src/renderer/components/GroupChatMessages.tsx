@@ -70,6 +70,8 @@ interface GroupChatMessagesProps {
 /** Handle exposed via ref for scrolling to messages */
 export interface GroupChatMessagesHandle {
 	scrollToMessage: (timestamp: number) => void;
+	/** Focus the transcript so it takes the arrow-key scrolling. */
+	focus: () => void;
 }
 
 export const GroupChatMessages = memo(
@@ -200,6 +202,7 @@ export const GroupChatMessages = memo(
 					};
 					requestAnimationFrame(highlightWhenMounted);
 				},
+				focus: () => containerRef.current?.focus(),
 			}),
 			[messages, virtualizer]
 		);

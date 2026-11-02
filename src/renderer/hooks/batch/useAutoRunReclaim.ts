@@ -1,25 +1,14 @@
 /**
  * useAutoRunReclaim - pick an Auto Run back up after this page reloads.
  *
- * Auto Run is renderer-owned: the loop is a live async closure in the page that
- * pressed Go, and "task finished, start the next one" is an exit listener that
- * page registered. A reload destroys all of it while main keeps the spawned task
- * running, so the task finishes and nothing starts the next one (#1470). On a
- * web-desktop browser tab this is common, not rare: a backgrounded tab is
- * routinely discarded and reloaded when the user comes back to it.
+ * The owning desktop renderer runs the Auto Run loop. Reloading it destroys
+ * its async closure and exit listeners while main keeps the current task alive.
+ * Main records the owner and config so that renderer can reclaim the run after
+ * reload, wait for the orphaned task, and continue from durable task progress.
  *
- * Main survives the reload, and it records who started each run and with what
- * config (`claimAutoRunStart`'s owner). On load, a page that IS a reload of the
- * same tab (`isReloadedClientInstance`) asks main for the runs that tab owned,
- * waits for the orphaned task to finish, and starts each run again from the
- * same config. Task progress is durable - finished tasks are checked off in the
- * documents - so the restarted loop continues where the old one stopped.
- *
- * Only the owning tab can reclaim, which is what keeps this from double-spawning
- * tasks: a run started by the desktop app or another browser tab is never handed
- * to this page, however dead it looks from here. Main also cancels a reclaim the
- * moment the original loop publishes again, so an owner that was not actually
- * gone keeps its run.
+ * Remote clients only mirror and control the host's run; they never reclaim it.
+ * Main cancels a reclaim if the original owner publishes again, preventing two
+ * live loops from taking ownership of the same run.
  */
 
 import { useEffect } from 'react';
@@ -30,6 +19,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getClientInstanceId, isReloadedClientInstance } from '../../utils/clientInstance';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { useStableCallback } from '../utils/useStableCallback';
 
 export type ReclaimedAutoRun = OrphanedAutoRun<Partial<AutoRunBroadcastState>, BatchRunConfig>;
@@ -243,6 +233,7 @@ export function useAutoRunReclaim(startBatchRun: StartBatchRun): void {
 	const initialLoadComplete = useSessionStore((s) => s.initialLoadComplete);
 
 	useEffect(() => {
+		if (isWebDesktop()) return;
 		if (!initialLoadComplete || reclaimAttempted) return;
 		if (!window.maestro?.web?.takeOrphanedAutoRuns) return;
 		if (!isReloadedClientInstance()) return;

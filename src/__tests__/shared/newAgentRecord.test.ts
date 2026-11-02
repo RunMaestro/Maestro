@@ -5,7 +5,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../shared/newAgentRecord';
+import {
+	buildDuplicateAgentInput,
+	buildNewAgentRecord,
+	defaultDuplicateAgentName,
+	duplicateAgentBlocker,
+	newAgentClaudeInteractive,
+	type DuplicateAgentSource,
+} from '../../shared/newAgentRecord';
 
 function idSource() {
 	let n = 0;
@@ -84,5 +91,203 @@ describe('newAgentClaudeInteractive', () => {
 	it('starts Claude Code in automatic API mode and leaves other providers unset', () => {
 		expect(newAgentClaudeInteractive('claude-code')).toEqual({ mode: 'api', modeReason: 'auto' });
 		expect(newAgentClaudeInteractive('codex')).toBeUndefined();
+	});
+});
+
+describe('buildDuplicateAgentInput', () => {
+	const source: DuplicateAgentSource = {
+		name: 'Alpha',
+		toolType: 'claude-code',
+		cwd: '/work/proj',
+		groupId: 'g1',
+		additionalDirectories: [{ path: '/shared/docs', read: true, write: false }],
+		nudgeMessage: ' be brief ',
+		newSessionMessage: 'hello',
+		customPath: '/opt/claude',
+		customArgs: '--verbose',
+		customEnvVars: { DEBUG: '1' },
+		customModel: 'opus',
+		customContextWindow: 200000,
+		customProviderPath: '/opt/provider',
+		customEffort: 'high',
+		enableMaestroP: true,
+		maestroPMode: 'interactive',
+		maestroPPath: '/opt/maestro-p',
+		retryOnAvailabilityErrors: false,
+		retryOnTokenExhaustion: undefined,
+		codexAutoResetOnExhaustion: true,
+		codexTransport: 'app-server',
+	};
+
+	it('copies the provider, directory, group and every custom setting', () => {
+		expect(buildDuplicateAgentInput(source)).toEqual({
+			toolType: 'claude-code',
+			name: 'Alpha (Copy)',
+			cwd: '/work/proj',
+			groupId: 'g1',
+			additionalDirectories: [{ path: '/shared/docs', read: true, write: false }],
+			nudgeMessage: 'be brief',
+			newSessionMessage: 'hello',
+			customPath: '/opt/claude',
+			customArgs: '--verbose',
+			customEnvVars: { DEBUG: '1' },
+			customModel: 'opus',
+			customContextWindow: 200000,
+			customProviderPath: '/opt/provider',
+			customEffort: 'high',
+			enableMaestroP: true,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: true,
+			codexAutoResetOnExhaustion: true,
+			codexTransport: 'app-server',
+			sessionSshRemoteConfig: { enabled: false, remoteId: null },
+		});
+	});
+
+	it('clones additional directories and env vars instead of aliasing them', () => {
+		const input = buildDuplicateAgentInput(source);
+		expect(input.additionalDirectories[0]).not.toBe(source.additionalDirectories![0]);
+		expect(input.customEnvVars).not.toBe(source.customEnvVars);
+	});
+
+	it('falls back to the fresh-agent defaults for an unconfigured source', () => {
+		const input = buildDuplicateAgentInput({ name: 'B', toolType: 'codex', cwd: '/p' });
+		expect(input).toEqual({
+			toolType: 'codex',
+			name: 'B (Copy)',
+			cwd: '/p',
+			groupId: undefined,
+			additionalDirectories: [],
+			nudgeMessage: undefined,
+			newSessionMessage: undefined,
+			customPath: undefined,
+			customArgs: undefined,
+			customEnvVars: undefined,
+			customModel: undefined,
+			customContextWindow: undefined,
+			customProviderPath: undefined,
+			customEffort: undefined,
+			// Unset stays unset: the same default path a fresh agent takes.
+			enableMaestroP: undefined,
+			maestroPMode: undefined,
+			maestroPPath: undefined,
+			retryOnAvailabilityErrors: true,
+			retryOnTokenExhaustion: true,
+			codexAutoResetOnExhaustion: false,
+			codexTransport: 'exec',
+			sessionSshRemoteConfig: { enabled: false, remoteId: null },
+		});
+	});
+
+	it('keeps an explicit Adaptive Mode off and drops its refinements', () => {
+		const input = buildDuplicateAgentInput({
+			...source,
+			enableMaestroP: false,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+		});
+		expect(input.enableMaestroP).toBe(false);
+		expect(input.maestroPMode).toBeUndefined();
+		expect(input.maestroPPath).toBeUndefined();
+	});
+
+	it('defaults the token-source mode to dynamic when Adaptive Mode is on', () => {
+		const input = buildDuplicateAgentInput({ ...source, maestroPMode: undefined });
+		expect(input.maestroPMode).toBe('dynamic');
+	});
+
+	it('treats blank strings and an empty env map as unset', () => {
+		const input = buildDuplicateAgentInput({
+			...source,
+			customPath: '  ',
+			customArgs: '',
+			customEnvVars: {},
+			customEffort: ' ',
+		});
+		expect(input.customPath).toBeUndefined();
+		expect(input.customArgs).toBeUndefined();
+		expect(input.customEnvVars).toBeUndefined();
+		expect(input.customEffort).toBeUndefined();
+	});
+
+	it('starts an SSH copy in the remote override and gives it its own override', () => {
+		const input = buildDuplicateAgentInput({
+			...source,
+			cwd: '/local/placeholder',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/srv/app',
+			},
+		});
+		expect(input.cwd).toBe('/srv/app');
+		expect(input.sessionSshRemoteConfig).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+			workingDirOverride: '/srv/app',
+		});
+	});
+
+	it('never carries the stored SSH override or history-sync flags to a moved copy', () => {
+		const input = buildDuplicateAgentInput(
+			{
+				...source,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/srv/app',
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				} as DuplicateAgentSource['sessionSshRemoteConfig'],
+			},
+			{ cwd: '/srv/other' }
+		);
+		expect(input.cwd).toBe('/srv/other');
+		expect(input.sessionSshRemoteConfig).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+			workingDirOverride: '/srv/other',
+		});
+	});
+
+	it('runs locally when SSH is configured but disabled or has no remote', () => {
+		const disabled = buildDuplicateAgentInput({
+			...source,
+			sessionSshRemoteConfig: { enabled: false, remoteId: 'r', workingDirOverride: '/srv' },
+		});
+		expect(disabled.cwd).toBe('/work/proj');
+		expect(disabled.sessionSshRemoteConfig).toEqual({ enabled: false, remoteId: null });
+		const noRemote = buildDuplicateAgentInput({
+			...source,
+			sessionSshRemoteConfig: { enabled: true, remoteId: null },
+		});
+		expect(noRemote.sessionSshRemoteConfig).toEqual({ enabled: false, remoteId: null });
+	});
+
+	it('applies name, group and working directory overrides', () => {
+		const input = buildDuplicateAgentInput(source, {
+			name: ' Beta ',
+			groupId: 'g2',
+			cwd: '/elsewhere',
+		});
+		expect(input).toMatchObject({ name: 'Beta', groupId: 'g2', cwd: '/elsewhere' });
+	});
+
+	it('moves the copy out of every group with a null group override', () => {
+		expect(buildDuplicateAgentInput(source, { groupId: null }).groupId).toBeUndefined();
+	});
+});
+
+describe('duplicate agent helpers', () => {
+	it('names a copy after its source', () => {
+		expect(defaultDuplicateAgentName('Alpha')).toBe('Alpha (Copy)');
+	});
+
+	it('refuses only the Pianola manager', () => {
+		expect(duplicateAgentBlocker({ isPianola: true })).toMatch(/Pianola/);
+		expect(duplicateAgentBlocker({ isPianola: false })).toBeNull();
+		expect(duplicateAgentBlocker({})).toBeNull();
 	});
 });

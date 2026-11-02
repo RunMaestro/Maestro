@@ -223,6 +223,38 @@ describe('group-chat-storage', () => {
 			// Clean up
 			await deleteGroupChat(created.id);
 		});
+
+		// MAESTRO-170/171: metadata without the paths crashed every reader.
+		it('derives the paths when metadata lacks them', async () => {
+			const created = await createGroupChat('No Paths', 'claude-code');
+			const { logPath: _logPath, imagesDir: _imagesDir, ...rest } = created;
+			const metadataPath = path.join(path.dirname(created.logPath), 'metadata.json');
+			await fs.writeFile(metadataPath, JSON.stringify(rest), 'utf-8');
+
+			const loaded = await loadGroupChat(created.id);
+
+			expect(loaded!.logPath).toBe(created.logPath);
+			expect(loaded!.imagesDir).toBe(created.imagesDir);
+
+			await deleteGroupChat(created.id);
+		});
+
+		// Metadata that parses to something other than an object (`null`, an
+		// array) is as unusable as a corrupt file: skip the chat rather than throw,
+		// or one bad room fails listGroupChats for every healthy one.
+		it('treats metadata that is not an object as missing', async () => {
+			const created = await createGroupChat('Null Metadata', 'claude-code');
+			const metadataPath = path.join(path.dirname(created.logPath), 'metadata.json');
+
+			for (const content of ['null', '[]', '42']) {
+				await fs.writeFile(metadataPath, content, 'utf-8');
+				expect(await loadGroupChat(created.id)).toBeNull();
+				const listed = await listGroupChats();
+				expect(listed.some((chat) => chat.id === created.id)).toBe(false);
+			}
+
+			await deleteGroupChat(created.id);
+		});
 	});
 
 	// ===========================================================================

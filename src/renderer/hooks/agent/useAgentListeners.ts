@@ -1,3 +1,5 @@
+import { useOwnedSideEffectGate } from './internal/useOwnedSessionGate';
+import { subscribeRelayConversations } from '../../services/relayConversations';
 /**
  * useAgentListeners - coordinator for the 11 IPC process event listeners that
  * route agent lifecycle events (data, exit, error, usage, etc.) into the
@@ -99,6 +101,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		activeHiddenToolRef,
 	});
 	useEffect(subscribeHeadlessActivity, []);
+	const relayOwner = useOwnedSideEffectGate();
+	useEffect(
+		() => subscribeRelayConversations((id) => relayOwner.current?.(id) === true),
+		[relayOwner]
+	);
 	useAgentThinkingListener();
 	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();

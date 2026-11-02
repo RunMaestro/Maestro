@@ -31,9 +31,9 @@ import type { WebClient, WebClientMessage, MessageHandlerContext } from './types
  * `outputDir`. The desktop's Create Debug Package raises a save dialog; the
  * CLI names the directory instead so it works unattended.
  *
- * Auto Run live state lives only in the renderer's batch store, so a package
- * built here reports that section as unavailable rather than claiming no
- * runs were active.
+ * Auto Run live state lives only in each app window's batch store. The
+ * package build asks every window for it (`requestAutoRunSnapshots` on the
+ * shared deps), and records why when none can answer.
  */
 export async function handleSupportPackageCreate(
 	ctx: MessageHandlerContext,

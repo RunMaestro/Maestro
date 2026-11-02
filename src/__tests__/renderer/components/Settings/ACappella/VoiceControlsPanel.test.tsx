@@ -24,6 +24,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VoiceControlsPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceControlsPanel';
 import type { Shortcut } from '../../../../../renderer/types';
 import { mockTheme } from '../../../../helpers/mockTheme';
+import type { VoiceSettingsBlob } from '../../../../../renderer/services/voiceSettings';
 
 const voice = () => window.maestro.voice;
 
@@ -202,7 +203,7 @@ describe('VoiceControlsPanel wake word Test', () => {
 		vi.mocked(voice().onWakeTest).mockReturnValueOnce(cleanupTest);
 		vi.mocked(voice().onEvent).mockReturnValueOnce(cleanupEvents);
 		const { unmount } = render(<VoiceControlsPanel theme={mockTheme} enabled />);
-		await screen.findByDisplayValue('hey jarvis');
+		await screen.findByDisplayValue('Hey Jarvis');
 
 		unmount();
 
@@ -217,6 +218,112 @@ describe('VoiceControlsPanel wake word Test', () => {
 		expect(voice().onWakeTest).not.toHaveBeenCalled();
 		expect(voice().onEvent).not.toHaveBeenCalled();
 		expect(screen.getByRole('button', { name: 'Test' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Reset wake phrase to default' })).toBeDisabled();
+	});
+
+	it.each(['okay computer', 'hey jarvis'])(
+		'resets "%s" to the capitalized default and preserves other settings',
+		async (wakePhrase) => {
+			vi.mocked(window.maestro.settings.get).mockResolvedValue({
+				providers: { stt: 'parakeet-local' },
+				controls: { wakePhrase, wakeSensitivity: 0.7 },
+			});
+			render(<VoiceControlsPanel theme={mockTheme} enabled />);
+			await screen.findByDisplayValue(wakePhrase);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Reset wake phrase to default' }));
+
+			await waitFor(() => {
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('acappella', {
+					providers: { stt: 'parakeet-local' },
+					controls: { wakePhrase: 'Hey Jarvis', wakeSensitivity: 0.7 },
+				});
+			});
+			expect(screen.getByLabelText('Phrase')).toHaveValue('Hey Jarvis');
+			expect(screen.getByRole('button', { name: 'Reset wake phrase to default' })).toBeDisabled();
+		}
+	);
+
+	it('displays the capitalized default without an unnecessary reset', async () => {
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+
+		await screen.findByDisplayValue('Hey Jarvis');
+		expect(screen.getByRole('button', { name: 'Reset wake phrase to default' })).toBeDisabled();
+		expect(window.maestro.settings.set).not.toHaveBeenCalled();
+	});
+});
+
+describe('VoiceControlsPanel per-agent phrases', () => {
+	let stored: VoiceSettingsBlob;
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockShortcuts = {};
+		stored = { controls: { agentPhrases: [{ agentSessionId: 'a', phrase: 'hello alpha' }] } };
+		vi.mocked(window.maestro.settings.get).mockImplementation(async () => stored);
+		vi.mocked(window.maestro.settings.set).mockImplementation(async (_key, value) => {
+			stored = value as VoiceSettingsBlob;
+		});
+		vi.mocked(voice().getRoster).mockResolvedValue([
+			{ sessionId: 'a', name: 'Alpha', agentType: 'codex', cwd: '/alpha', tabs: [] },
+			{ sessionId: 'b', name: 'Beta', agentType: 'codex', cwd: '/beta', tabs: [] },
+			{ sessionId: 'c', name: 'Gamma', agentType: 'codex', cwd: '/gamma', tabs: [] },
+		]);
+		vi.mocked(voice().hotkeyStatus).mockResolvedValue({ statuses: [], note: '' });
+	});
+
+	afterEach(() => {
+		vi.mocked(window.maestro.settings.set).mockReset();
+		vi.mocked(window.maestro.settings.set).mockResolvedValue(undefined);
+	});
+
+	it('shows only configured phrases, then filters and adds an agent without saving a blank entry', async () => {
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		expect(await screen.findByLabelText('Wake phrase for Alpha')).toHaveValue('hello alpha');
+		expect(screen.queryByLabelText('Wake phrase for Beta')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent wake phrase' }));
+		expect(screen.queryByRole('option', { name: 'Alpha' })).not.toBeInTheDocument();
+		fireEvent.change(screen.getByRole('textbox', { name: 'Filter agents...' }), {
+			target: { value: 'BETA' },
+		});
+		expect(screen.queryByRole('option', { name: 'Gamma' })).not.toBeInTheDocument();
+		fireEvent.keyDown(screen.getByRole('textbox', { name: 'Filter agents...' }), { key: 'Enter' });
+		expect(screen.getByLabelText('Wake phrase for Beta')).toHaveValue('');
+		expect(window.maestro.settings.set).not.toHaveBeenCalled();
+		fireEvent.change(screen.getByLabelText('Wake phrase for Beta'), {
+			target: { value: 'hello beta' },
+		});
+		await waitFor(() =>
+			expect(stored.controls?.agentPhrases).toEqual([
+				{ agentSessionId: 'a', phrase: 'hello alpha' },
+				{ agentSessionId: 'b', phrase: 'hello beta' },
+			])
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent wake phrase' }));
+		expect(screen.getAllByRole('option')).toHaveLength(1);
+		expect(screen.getByRole('option', { name: 'Gamma' })).toBeInTheDocument();
+	});
+
+	it('keeps a cleared field editable until removed, and makes the agent available again', async () => {
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		const input = await screen.findByLabelText('Wake phrase for Alpha');
+		fireEvent.change(input, { target: { value: '' } });
+		expect(screen.getByLabelText('Wake phrase for Alpha')).toHaveValue('');
+		await waitFor(() => expect(stored.controls?.agentPhrases).toEqual([]));
+		fireEvent.click(screen.getByRole('button', { name: 'Remove wake phrase for Alpha' }));
+		expect(screen.queryByLabelText('Wake phrase for Alpha')).not.toBeInTheDocument();
+		expect(screen.getByText('No per-agent phrases configured.')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent wake phrase' }));
+		expect(screen.getByRole('option', { name: 'Alpha' })).toBeInTheDocument();
+		await waitFor(() => expect(window.maestro.settings.set).toHaveBeenCalledTimes(2));
+	});
+
+	it('disables adding when no agents exist or voice controls are disabled', async () => {
+		vi.mocked(voice().getRoster).mockResolvedValue([]);
+		const { rerender } = render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await waitFor(() => expect(voice().getRoster).toHaveBeenCalled());
+		expect(screen.getByRole('button', { name: 'Add agent wake phrase' })).toBeDisabled();
+		rerender(<VoiceControlsPanel theme={mockTheme} enabled={false} />);
+		expect(screen.getByRole('button', { name: 'Add agent wake phrase' })).toBeDisabled();
 	});
 });
 

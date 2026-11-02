@@ -138,7 +138,7 @@ import {
 	type VoiceProviderSettings,
 	type VoiceProviderSubstitution,
 } from '../../acappella/providers/provider-registry';
-import type { TtsProvider } from '../../../shared/acappella/providers';
+import type { TtsProvider, TtsVoice } from '../../../shared/acappella/providers';
 import {
 	clearCredential,
 	listCredentialStates,
@@ -974,9 +974,7 @@ export async function applyACappellaProviders(
 
 /** A provider that can enumerate its voices. Duck-typed: not every one can. */
 interface VoiceListingProvider {
-	listVoices?: () =>
-		| Promise<Array<{ id: string; name: string }>>
-		| Array<{ id: string; name: string }>;
+	listVoices?: () => Promise<TtsVoice[]> | TtsVoice[];
 }
 
 /**
@@ -986,9 +984,7 @@ interface VoiceListingProvider {
  * "Provider default" rather than as an error: a mock has no voices and that is
  * not a failure.
  */
-async function listVoiceOptions(
-	deps: ACappellaHandlerDependencies
-): Promise<Array<{ id: string; name: string }>> {
+async function listVoiceOptions(deps: ACappellaHandlerDependencies): Promise<TtsVoice[]> {
 	const resolution =
 		activePipeline ??
 		resolveVoicePipeline({

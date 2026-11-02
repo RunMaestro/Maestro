@@ -19,6 +19,7 @@ import {
 	type ApiRouteCallbacks,
 	type RateLimitConfig,
 } from '../../../../main/web-server/routes/apiRoutes';
+import { interruptTurnFailure, type InterruptTurnResult } from '../../../../shared/turnInterrupt';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -71,7 +72,15 @@ function createMockCallbacks(): ApiRouteCallbacks {
 			foreground: '#ffffff',
 		}),
 		writeToSession: vi.fn().mockReturnValue(true),
-		interruptSession: vi.fn().mockResolvedValue(true),
+		interruptSession: vi.fn().mockResolvedValue({
+			success: true,
+			sessionId: 'session-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-a'],
+			exited: true,
+		}),
 		getHistory: vi
 			.fn()
 			.mockReturnValue([{ id: '1', command: 'test command', timestamp: Date.now() }]),
@@ -339,24 +348,102 @@ describe('ApiRoutes', () => {
 	});
 
 	describe('POST /api/session/:id/interrupt', () => {
-		it('should interrupt session successfully', async () => {
+		const stopped = (overrides: Partial<InterruptTurnResult> = {}): InterruptTurnResult => ({
+			success: true,
+			sessionId: 'session-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-a'],
+			exited: true,
+			...overrides,
+		});
+
+		it('should interrupt session successfully and report what stopped', async () => {
 			const route = mockFastify.getRoute('POST', `/${securityToken}/api/session/:id/interrupt`);
 			const reply = createMockReply();
 			const result = await route!.handler({ params: { id: 'session-1' } }, reply);
 
-			expect(result.success).toBe(true);
-			expect(result.sessionId).toBe('session-1');
-			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1');
+			expect(result).toMatchObject({
+				success: true,
+				message: 'Interrupt signal sent successfully',
+				sessionId: 'session-1',
+				tabId: null,
+				wasBusy: true,
+				interrupted: true,
+				stoppedTabIds: ['tab-a'],
+				exited: true,
+			});
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', undefined);
 		});
 
+		it('reads tabId from the query string, then the JSON body', async () => {
+			const route = mockFastify.getRoute('POST', `/${securityToken}/api/session/:id/interrupt`);
+
+			await route!.handler(
+				{ params: { id: 'session-1' }, query: { tabId: 'tab-q' }, body: { tabId: 'tab-b' } },
+				createMockReply()
+			);
+			expect(callbacks.interruptSession).toHaveBeenLastCalledWith('session-1', 'tab-q');
+
+			await route!.handler(
+				{ params: { id: 'session-1' }, body: { tabId: 'tab-b' } },
+				createMockReply()
+			);
+			expect(callbacks.interruptSession).toHaveBeenLastCalledWith('session-1', 'tab-b');
+
+			// Not a string, or empty: the whole agent, never a bogus tab id.
+			await route!.handler({ params: { id: 'session-1' }, body: { tabId: 42 } }, createMockReply());
+			expect(callbacks.interruptSession).toHaveBeenLastCalledWith('session-1', undefined);
+		});
+
+		it('answers "Nothing to stop" as a success when nothing ran', async () => {
+			(callbacks.interruptSession as any).mockResolvedValue(
+				stopped({ wasBusy: false, interrupted: false, stoppedTabIds: [], exited: false })
+			);
+
+			const route = mockFastify.getRoute('POST', `/${securityToken}/api/session/:id/interrupt`);
+			const reply = createMockReply();
+			const result = await route!.handler({ params: { id: 'session-1' } }, reply);
+
+			expect(reply.code).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ success: true, message: 'Nothing to stop', wasBusy: false });
+		});
+
+		it.each(['AGENT_NOT_FOUND', 'TAB_NOT_FOUND'] as const)(
+			'should return 404 on %s',
+			async (code) => {
+				(callbacks.interruptSession as any).mockResolvedValue(
+					interruptTurnFailure('session-1', 'tab-x', code, 'gone')
+				);
+
+				const route = mockFastify.getRoute('POST', `/${securityToken}/api/session/:id/interrupt`);
+				const reply = createMockReply();
+				await route!.handler({ params: { id: 'session-1' } }, reply);
+
+				expect(reply.code).toHaveBeenCalledWith(404);
+				expect(reply.send).toHaveBeenCalledWith(
+					expect.objectContaining({ code, sessionId: 'session-1', tabId: 'tab-x' })
+				);
+			}
+		);
+
 		it('should return 500 when interrupt fails', async () => {
-			(callbacks.interruptSession as any).mockResolvedValue(false);
+			(callbacks.interruptSession as any).mockResolvedValue(
+				interruptTurnFailure('session-1', null, 'SIGNAL_FAILED', 'kill failed')
+			);
 
 			const route = mockFastify.getRoute('POST', `/${securityToken}/api/session/:id/interrupt`);
 			const reply = createMockReply();
 			await route!.handler({ params: { id: 'session-1' } }, reply);
 
 			expect(reply.code).toHaveBeenCalledWith(500);
+			expect(reply.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					code: 'SIGNAL_FAILED',
+					message: expect.stringContaining('kill failed'),
+				})
+			);
 		});
 
 		it('should return 500 when interrupt throws error', async () => {

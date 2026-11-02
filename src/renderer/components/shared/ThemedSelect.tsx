@@ -40,6 +40,8 @@ interface ThemedSelectProps {
 	filterable?: boolean;
 	/** Placeholder for the filter input (defaults to "Filter…"). */
 	filterPlaceholder?: string;
+	/** Trigger text when no option is selected. */
+	placeholder?: string;
 }
 
 export function ThemedSelect({
@@ -54,6 +56,7 @@ export function ThemedSelect({
 	id,
 	filterable = false,
 	filterPlaceholder = 'Filter…',
+	placeholder,
 }: ThemedSelectProps) {
 	const instanceId = useId();
 	const [open, setOpen] = useState(false);
@@ -179,7 +182,7 @@ export function ThemedSelect({
 		[filteredOptions, activeIndex, handleSelect, closeAndRefocus, filterable]
 	);
 
-	const selectedLabel = options.find((o) => o.value === value)?.label ?? value;
+	const selectedLabel = options.find((o) => o.value === value)?.label ?? (value || placeholder);
 
 	return (
 		<div ref={containerRef} style={{ position: 'relative', ...style }}>

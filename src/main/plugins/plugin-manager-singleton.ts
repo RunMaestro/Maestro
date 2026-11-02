@@ -1,3 +1,4 @@
+import { PluginAuthorityError } from './plugin-authority';
 /**
  * Active PluginManager accessor (main process).
  *
@@ -19,10 +20,15 @@ import type { AutoTurnReport } from '../../shared/autoTurn';
 import type { ConsultChain } from '../../shared/consultBudget';
 
 export interface HeadlessAgentReply {
+	originalAttachments?: readonly [
+		import('../../shared/plugins/media-tools').OriginalAttachmentReceipt,
+	];
 	success: boolean;
 	response: string | null;
 	sessionId: string | null;
 	error?: string;
+	/** Host-only: false proves a returned preflight failure started no provider work. */
+	executionStarted?: boolean;
 	usageStats?: import('../../shared/types').UsageStats;
 	/** Present only for an authenticated CLI run that requested one tool ID. */
 	toolReceipts?: PluginToolReceipt[];
@@ -40,6 +46,10 @@ export interface HeadlessTurnSettings {
 	 */
 	consultChain?: ConsultChain;
 }
+export interface HeadlessTurnSettings {
+	originalAttachment?: import('./plugin-media-tools').OriginalAttachmentLease;
+}
+
 export type HeadlessAgentRunner = (
 	agentId: string,
 	prompt: string,
@@ -49,6 +59,8 @@ export type HeadlessAgentRunner = (
 	onProgress?: (event: AgentSendProgressEvent) => void,
 	receiptToolId?: string,
 	requirePluginTools?: boolean,
+	/** Host-only: Relay already holds the tab/provider reservation for this run. */
+	writerLeaseHeld?: boolean,
 	/** Settings for this one turn that replace the agent's own (`maestro-cli send --model`). */
 	turn?: HeadlessTurnSettings
 ) => Promise<HeadlessAgentReply>;
@@ -64,13 +76,83 @@ export function getHeadlessAgentRunner(): HeadlessAgentRunner | null {
 
 let activePluginManager: PluginManager | null = null;
 let pluginsEnabledCheck: (() => boolean) | null = null;
+let managerTransition: object = {};
+let hostStopped = false;
+// At most one detached shutdown owner; retained only for bounded cleanup retry.
+let shutdownManager: PluginManager | null = null;
+let shutdownStopping = false;
 
 export function setActivePluginManager(
 	manager: PluginManager | null,
 	isEnabled?: () => boolean
 ): void {
+	if (hostStopped) {
+		// Shutdown is permanent, including assignments from synchronous abort hooks.
+		if (manager && manager === shutdownManager && shutdownStopping)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		try {
+			manager?.stopToolAuthority();
+		} catch {
+			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		}
+		if (manager) throw new PluginAuthorityError('PLUGIN_DENIED');
+		return;
+	}
+	if (activePluginManager && manager && activePluginManager !== manager)
+		activePluginManager.assertIndependentToolAuthority(manager);
+	// Even an explicit clear while already detached cancels an older transition.
+	const transition = {};
+	managerTransition = transition;
+	if (activePluginManager === manager) {
+		pluginsEnabledCheck = isEnabled ?? null;
+		return;
+	}
+	const previous = activePluginManager;
+	// Remove ingress authority before cleanup can synchronously reenter this setter.
+	activePluginManager = null;
+	pluginsEnabledCheck = null;
+	let failed = false;
+	try {
+		previous?.stopToolAuthority();
+	} catch {
+		failed = true;
+	}
+	if (managerTransition !== transition || failed) {
+		// A newer transition owns the accessor. Never overwrite it or leave this
+		// abandoned candidate's proofs alive; an adopted candidate stays its owner.
+		if (manager && manager !== activePluginManager) {
+			try {
+				manager.stopToolAuthority();
+			} catch {
+				failed = true;
+			}
+		}
+		if (failed) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		return;
+	}
 	activePluginManager = manager;
 	pluginsEnabledCheck = isEnabled ?? null;
+}
+
+/** Confirmed host quit only. Detach before cleanup; repeated calls retry the
+ * same bounded owner without reopening ingress or accepting a replacement. */
+export function stopActivePluginManager(): void {
+	if (!hostStopped) {
+		hostStopped = true;
+		managerTransition = {};
+		shutdownManager = activePluginManager;
+		activePluginManager = null;
+		pluginsEnabledCheck = null;
+	}
+	if (shutdownStopping) return;
+	shutdownStopping = true;
+	try {
+		shutdownManager?.stopToolAuthority();
+	} catch {
+		throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+	} finally {
+		shutdownStopping = false;
+	}
 }
 
 export function getActivePluginManager(): PluginManager | null {

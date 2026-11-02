@@ -38,6 +38,7 @@ import {
 export {
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
+	isAgentOwnWorkingDirectory,
 	isMaestroPBinaryPath,
 	REMOTE_MAESTRO_P_COMMAND,
 } from './claudeSpawnCore';

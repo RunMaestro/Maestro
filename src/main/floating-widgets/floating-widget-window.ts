@@ -16,11 +16,14 @@
  */
 
 import { BrowserWindow, screen } from 'electron';
-import type {
-	FloatingWidgetBounds,
-	FloatingWidgetId,
-	FloatingWidgetSize,
-	FloatingWidgetSpec,
+import {
+	NO_FLOATING_WIDGET_OVERFLOW,
+	planFloatingWidgetOverflow,
+	type FloatingWidgetBounds,
+	type FloatingWidgetId,
+	type FloatingWidgetOverflow,
+	type FloatingWidgetSize,
+	type FloatingWidgetSpec,
 } from '../../shared/floatingWidgets';
 import { isMacOS } from '../../shared/platformDetection';
 import { debounce } from '../utils/debounce';
@@ -70,7 +73,7 @@ export interface FloatingWidgetController {
 	ensureCreated(): BrowserWindow | null;
 	/** The live window, or null when it has not been created (or was closed). */
 	getWindow(): BrowserWindow | null;
-	/** The live window's bounds, or null when there is no window. */
+	/** The live window's bounds, without any overflow, or null when there is no window. */
 	getBounds(): Electron.Rectangle | null;
 	/**
 	 * Move or resize the window the way a drag would, and remember it. Fields
@@ -79,6 +82,14 @@ export interface FloatingWidgetController {
 	 * window's bounds afterwards, or null when there is no window.
 	 */
 	setBounds(partial: FloatingWidgetBounds): Electron.Rectangle | null;
+	/**
+	 * Borrow room past the card for content taller than it (see
+	 * `FloatingWidgetOverflow`). `need` is how far each side would have to grow;
+	 * the window grows on one side only, within the work area, and resolves with
+	 * what it granted. A zero need gives the room back. Never saved; dropped on
+	 * hide and on reload.
+	 */
+	setOverflow(need: FloatingWidgetOverflow): FloatingWidgetOverflow;
 	/** Whether the widget's renderer has mounted and subscribed (see the relay). */
 	isReady(): boolean;
 	/** Called by the relay when the window's renderer says it is ready. */
@@ -112,10 +123,43 @@ export function createFloatingWidgetWindow(
 	let revealPending = false;
 	let ready = false;
 	let flushPendingSave: (() => void) | null = null;
+	/** Room currently borrowed past the card. Everything saved or reported excludes it. */
+	let overflow: FloatingWidgetOverflow = NO_FLOATING_WIDGET_OVERFLOW;
 
 	const enabled = () => deps.isEnabled?.() ?? true;
 
 	const live = (): BrowserWindow | null => (win && !win.isDestroyed() ? win : null);
+
+	/** The card's rect inside the window's real one. */
+	function withoutOverflow(b: Electron.Rectangle): Electron.Rectangle {
+		return {
+			x: b.x,
+			y: b.y + overflow.above,
+			width: b.width,
+			height: b.height - overflow.above - overflow.below,
+		};
+	}
+
+	/** The window's real rect around a card rect. */
+	function withOverflow(b: Electron.Rectangle): Electron.Rectangle {
+		return {
+			x: b.x,
+			y: b.y - overflow.above,
+			width: b.width,
+			height: b.height + overflow.above + overflow.below,
+		};
+	}
+
+	/**
+	 * Give the borrowed room back. The card is put back exactly where the user
+	 * sees it now, so a drag made while a list was open is kept.
+	 */
+	function dropOverflow(target: BrowserWindow | null): void {
+		if (overflow.above === 0 && overflow.below === 0) return;
+		const card = target ? withoutOverflow(target.getBounds()) : null;
+		overflow = NO_FLOATING_WIDGET_OVERFLOW;
+		if (card && target && !target.isDestroyed()) target.setBounds(card);
+	}
 
 	function loadSaved(): FloatingWidgetBounds {
 		if (!saved) saved = sanitizeSavedBounds(deps.boundsStore.get());
@@ -233,11 +277,14 @@ export function createFloatingWidgetWindow(
 
 		// A reload or a crashed renderer has to mount and subscribe again before
 		// it can take commands.
+		// Overflow belongs to the page that asked for it, so a reload gives it back.
 		created.webContents.on('did-start-loading', () => {
 			ready = false;
+			dropOverflow(created);
 		});
 		created.webContents.on('render-process-gone', () => {
 			ready = false;
+			dropOverflow(created);
 		});
 
 		// Once the window starts closing, its moves and resizes are teardown, not
@@ -248,11 +295,14 @@ export function createFloatingWidgetWindow(
 		const persist = debounce(recordBounds, WINDOW_STATE_SAVE_DEBOUNCE_MS);
 		const capture = () => {
 			if (closing || created.isDestroyed()) return;
-			persist(created.getBounds());
+			persist(withoutOverflow(created.getBounds()));
 		};
 		created.on('move', capture);
 		created.on('resize', capture);
-		created.on('hide', () => persist.flush());
+		created.on('hide', () => {
+			dropOverflow(created);
+			persist.flush();
+		});
 		created.on('close', () => {
 			closing = true;
 			persist.flush();
@@ -271,6 +321,7 @@ export function createFloatingWidgetWindow(
 			painted = false;
 			revealPending = false;
 			ready = false;
+			overflow = NO_FLOATING_WIDGET_OVERFLOW;
 			// The next window reloads the store, so a spot the user chose survives a
 			// close (feature toggled off and on) the same way it survives a restart.
 			saved = null;
@@ -335,15 +386,31 @@ export function createFloatingWidgetWindow(
 		// A resize of a window never placed keeps it where it is, rather than
 		// jumping to the default corner.
 		if (target && (next.x === undefined || next.y === undefined)) {
-			const current = target.getBounds();
+			const current = withoutOverflow(target.getBounds());
 			next.x = current.x;
 			next.y = current.y;
 		}
 		saved = next;
 		deps.boundsStore.set(next);
 		if (!target) return null;
-		target.setBounds(openingBounds());
-		return target.getBounds();
+		target.setBounds(withOverflow(openingBounds()));
+		return withoutOverflow(target.getBounds());
+	}
+
+	function setOverflow(need: FloatingWidgetOverflow): FloatingWidgetOverflow {
+		const target = live();
+		if (!target) return NO_FLOATING_WIDGET_OVERFLOW;
+		const card = withoutOverflow(target.getBounds());
+		const area = screen.getDisplayMatching(card).workArea;
+		const granted = planFloatingWidgetOverflow(need, {
+			above: card.y - area.y,
+			below: area.y + area.height - (card.y + card.height),
+		});
+		if (granted.above === overflow.above && granted.below === overflow.below) return granted;
+		// Set before the resize: the move and resize events it fires read it.
+		overflow = granted;
+		target.setBounds(withOverflow(card));
+		return granted;
 	}
 
 	return {
@@ -354,8 +421,12 @@ export function createFloatingWidgetWindow(
 		isVisible,
 		ensureCreated,
 		getWindow: live,
-		getBounds: () => live()?.getBounds() ?? null,
+		getBounds: () => {
+			const target = live();
+			return target ? withoutOverflow(target.getBounds()) : null;
+		},
 		setBounds,
+		setOverflow,
 		isReady: () => !!live() && ready,
 		markReady: () => {
 			if (live()) ready = true;

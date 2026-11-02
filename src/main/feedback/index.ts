@@ -1523,9 +1523,6 @@ export async function submitFeedbackConversation(
 		try {
 			const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps, {
 				allowSecrets,
-				...(liveDiagnosis.rendererAvailable
-					? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
-					: {}),
 			});
 			if (packageResult.secretFindings?.length) {
 				findings.push(...packageResult.secretFindings);

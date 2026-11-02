@@ -630,7 +630,7 @@ describe('SettingsModal', () => {
 			expect(screen.getByTestId('models-settings-tab')).toHaveAttribute('data-panel', 'gateway');
 		});
 
-		it('should open the Library section named by a sub-tab path', async () => {
+		it('should open the Library section with no scrollport inset above its sticky strip', async () => {
 			// `maestro-cli open settings --tab models --sub-tab library/engines`
 			render(
 				<SettingsModal
@@ -647,6 +647,10 @@ describe('SettingsModal', () => {
 
 			expect(screen.getByTitle('Library')).toHaveAttribute('aria-current', 'page');
 			expect(screen.getByRole('tab', { name: 'Engines' })).toHaveAttribute('aria-selected', 'true');
+			const content = screen.getByTestId('models-settings-tab').parentElement!;
+			expect(content).toHaveStyle({ paddingTop: '0px' });
+			fireEvent.click(screen.getByTitle('Sources'));
+			expect(content.style.paddingTop).toBe('');
 		});
 
 		it('should open the inner tab that renders the setting named by initialSettingId', async () => {

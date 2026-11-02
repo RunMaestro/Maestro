@@ -169,12 +169,44 @@ describe('getSteerSupport', () => {
 });
 
 describe('buildSendMenuModel', () => {
+	it('blocks an image turn on exec even when the agent prefers app-server', () => {
+		const session = workingSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'exec' })],
+		});
+		expect(rowFor(session, 'steer')).toMatchObject({
+			enabled: false,
+			reason: expect.stringContaining('exec fallbacks'),
+		});
+	});
+
+	it('keeps steering available when the preference changes during an app-server turn', () => {
+		const session = workingSession({
+			toolType: 'codex',
+			codexTransport: 'exec',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'app-server' })],
+		});
+		expect(rowFor(session, 'steer').enabled).toBe(true);
+	});
+
 	it('offers Steer, not Force Send, when the active tab is working', () => {
 		const session = workingSession();
 		expect(rowFor(session, 'steer').enabled).toBe(true);
 		expect(rowFor(session, 'force')).toMatchObject({ enabled: false });
 		expect(rowFor(session, 'queue').enabled).toBe(true);
 		expect(rowFor(session, 'hold').enabled).toBe(true);
+	});
+
+	it('reports whether any tab works, for a right-click on an idle agent', () => {
+		const opts = { forcedParallelEnabled: true };
+		const draft = { text: 'hi', imageCount: 0 };
+		expect(buildSendMenuModel(workingSession(), draft, opts).agentWorking).toBe(true);
+		const idle = workingSession({ state: 'idle', aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(buildSendMenuModel(idle, draft, opts)).toMatchObject({
+			agentWorking: false,
+			activeTabWorking: false,
+		});
 	});
 
 	it('offers Force Send, not Steer, when only another tab is working', () => {
@@ -209,7 +241,7 @@ describe('buildSendMenuModel', () => {
 	it('ghosts Steer with the harness reason on an unsteerable agent', () => {
 		const row = rowFor(workingSession({ toolType: 'codex' }), 'steer');
 		expect(row.enabled).toBe(false);
-		expect(row.reason).toMatch(/exec transport/);
+		expect(row.reason).toMatch(/exec fallbacks/);
 	});
 
 	it('ghosts Steer with the draft reason when the draft cannot be steered', () => {

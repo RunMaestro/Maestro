@@ -11,7 +11,7 @@ This page goes in order: install, sign agents in, import, check, start, run an a
 ## Before you start
 
 - **Agents run unattended with full permissions.** Cue always runs agents in YOLO mode, and on a server nobody watches the run. Give the engine its own machine or container, the dedicated `maestro` user both installs create, and workspaces that hold nothing else.
-- **Secrets never travel in a bundle.** A bundle carries the names of the secrets its agents and webhooks need, never the values. You supply each value on the server.
+- **Secrets never travel in a bundle.** A bundle carries the names of the secrets its agents and webhooks need, never the values. You supply each value on the server. An [exact copy](./maestro-cue-bundles#exact-copies) is the exception: it is a backup for the machine it came from, so do not use one to provision a server.
 - **Sign agents in on the server.** Each provider is signed in on the server, either with an API key supplied as a secret or by running that provider's own login there, as the `maestro` user. Do not copy a login from your desktop.
 - **Claude agents run in API mode.** The server bundle does not include the driver for Claude's TUI mode, so a Claude agent exported in TUI or Dynamic mode runs `claude --print` on the server.
 - **Webhooks stay on loopback.** The webhook listener is never exposed directly. Public delivery goes through a reverse proxy or a tunnel (see [Webhooks behind a proxy](#webhooks-behind-a-proxy)).

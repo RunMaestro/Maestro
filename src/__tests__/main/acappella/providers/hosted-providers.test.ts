@@ -426,14 +426,27 @@ describe('ElevenLabsTtsProvider', () => {
 			fetchImpl: async () =>
 				new Response(
 					JSON.stringify({
-						voices: [{ voice_id: 'v1', name: 'Rachel', labels: { accent: 'us' } }],
+						voices: [
+							{
+								voice_id: 'v1',
+								name: 'Rachel',
+								labels: { accent: 'us', language: 'en', gender: 'female' },
+							},
+						],
 					}),
 					{ status: 200 }
 				),
 		});
 
 		expect(await provider.listVoices()).toEqual([
-			{ id: 'v1', name: 'Rachel', description: 'us', previewUrl: undefined },
+			{
+				id: 'v1',
+				name: 'Rachel',
+				description: 'us, en, female',
+				language: 'en',
+				gender: 'female',
+				previewUrl: undefined,
+			},
 		]);
 	});
 });

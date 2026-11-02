@@ -12,6 +12,17 @@ import {
 	type SnoozeCommandRequest,
 	type SnoozeCommandResult,
 } from '../../../shared/snoozeCommands';
+import {
+	normalizeClosedTabCommandResult,
+	type ClosedTabCommandRequest,
+	type ClosedTabCommandResult,
+} from '../../../shared/closedTabCommands';
+
+/**
+ * How long main waits for the renderer to answer a `tab reopen`. Past the
+ * renderer's own content budget plus a flush, inside the CLI's 10 s deadline.
+ */
+const CLOSED_TAB_REOPEN_REPLY_MS = 9_000;
 
 /**
  * How long a single remote rename may hold its per-tab queue slot without the
@@ -279,6 +290,24 @@ export function registerTabCallbacks(
 			// command rather than as the renderer never answering.
 			fallback: { success: false, error: 'Maestro did not answer the snooze request' },
 			parse: normalizeSnoozeCommandResult,
+			args: [request],
+		});
+	});
+
+	// Cmd+Shift+T from the CLI. Answered by the agent's owning window, which
+	// holds the live stack. A reopen waits for the tab's content and a tracked
+	// flush before it answers (both bounded renderer-side so the reply fits the
+	// CLI's 10 s request budget), hence the longer deadline than a plain read.
+	server.setClosedTabCommandCallback(async (request: ClosedTabCommandRequest) => {
+		const targetWindow = resolveSessionWindow(request.sessionId);
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No owning window is available for closedTabCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<ClosedTabCommandResult>(targetWindow, 'remote:closedTabCommand', {
+			fallback: { success: false, error: 'Maestro did not answer the closed-tab request' },
+			parse: normalizeClosedTabCommandResult,
+			timeoutMs: request.action === 'reopen' ? CLOSED_TAB_REOPEN_REPLY_MS : undefined,
 			args: [request],
 		});
 	});

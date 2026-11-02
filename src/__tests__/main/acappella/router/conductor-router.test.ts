@@ -25,6 +25,7 @@ import type { RoutingContext } from '../../../../main/acappella/router/routing-c
 import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import type { BrainProvider, VoiceRouteContext } from '../../../../shared/acappella/providers';
 import type { RouteDecision } from '../../../../shared/acappella/route-decision';
+import { MockBrainProvider } from '../../../../main/acappella/providers/mock/mock-brain';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -205,6 +206,78 @@ describe('createConductorRouter - decisions', () => {
 // ---------------------------------------------------------------------------
 
 describe('createConductorRouter - disambiguation', () => {
+	it('resolves the Family Movie clarification after the context cap dropped the tab', async () => {
+		const live = roster();
+		live[0].name = 'Maestro';
+		live[1].name = 'Tome: RSSidian';
+		live.push({
+			sessionId: 'agent-pedsidian',
+			name: 'Pedsidian',
+			agentType: 'claude-code',
+			cwd: '/repo/personal',
+			tabs: [
+				{ id: 'tab-recent', name: 'Recent Work', lastActiveAt: NOW, state: 'open' },
+				{ id: 'tab-movie', name: 'Family Movie', lastActiveAt: 1, state: 'open' },
+			],
+		});
+		const capped = live.map((agent) => ({
+			...agent,
+			tabs: agent.tabs.filter((tab) => tab.id !== 'tab-movie'),
+		}));
+		const { router } = makeRouter(new MockBrainProvider(), { agents: capped });
+		const request = 'I want to talk about a family movie to watch tonight.';
+		const first = await router.route(request, context({ roster: live }));
+
+		expect(first.clarify).toBe('Which agent or tab should take that?');
+
+		const result = await router.route(
+			"It's going to be actually Ped Sidian is the best, and it even has a tab open for Family Movie. Go find that.",
+			context({
+				roster: live,
+				clarification: { question: first.clarify!, utterance: request },
+			})
+		);
+
+		expect(result).toMatchObject({
+			target: { sessionId: 'agent-pedsidian' },
+			tabAction: 'recall',
+			tabId: 'tab-movie',
+			prompt: request,
+		});
+		expect(result.clarify).toBeUndefined();
+	});
+
+	it('keeps the original recall topic in the shortlist for a short answer', async () => {
+		const live = roster();
+		live[0].tabs[0].state = 'snoozed';
+		const capped = live.map((agent) => ({
+			...agent,
+			tabs: agent.tabs.filter((tab) => tab.id !== 'tab-auth'),
+		}));
+		const brain = fakeBrain(decision({ tabAction: 'recall', tabId: 'tab-auth' }));
+		const { router } = makeRouter(brain, { agents: capped });
+
+		const result = await router.route(
+			'Backend',
+			context({
+				roster: live,
+				clarification: { question: 'Which agent?', utterance: 'back to the auth refactor' },
+			})
+		);
+
+		expect(brain.calls[0].roster[0].tabs).toContainEqual(live[0].tabs[0]);
+		expect(result.tabId).toBe('tab-auth');
+		expect(result.clarify).toBeUndefined();
+	});
+
+	it('asks an open question when there is no evidence for either agent', async () => {
+		const { router } = makeRouter(fakeBrain(decision({ target: 'conductor', confidence: 0.5 })));
+
+		const result = await router.route('do that', context());
+
+		expect(result.clarify).toBe('Which agent or tab should take that?');
+	});
+
 	it('asks rather than dispatching below the threshold', async () => {
 		const { router } = makeRouter(fakeBrain(decision({ confidence: 0.3 })));
 
@@ -276,7 +349,7 @@ describe('createConductorRouter - validation failures', () => {
 		const result = await router.route('deploy the thing', context());
 
 		expect(result.target).toBe('conductor');
-		expect(result.clarify).toContain('Backend or API?');
+		expect(result.clarify).toContain('Which agent or tab should take that?');
 		// The user's own words survive, so answering the question routes the
 		// request they actually made.
 		expect(result.prompt).toBe('deploy the thing');

@@ -59,7 +59,8 @@ interface PluginConsentBridge {
 	confirm(
 		approved: string[],
 		approvedHighRisk: string[],
-		unattended: string[]
+		unattended: string[],
+		originalAudioExport?: boolean
 	): Promise<{ ok: boolean }>;
 	cancel(): Promise<void>;
 }
@@ -84,13 +85,19 @@ const offer = readOffer();
 const bridge: PluginConsentBridge = offer
 	? {
 			offer,
-			confirm: (approved: string[], approvedHighRisk: string[], unattended: string[]) =>
+			confirm: (
+				approved: string[],
+				approvedHighRisk: string[],
+				unattended: string[],
+				originalAudioExport?: boolean
+			) =>
 				ipcRenderer.invoke('plugins:confirm-consent', {
 					pluginId: offer.pluginId,
 					nonce: offer.nonce,
 					approved,
 					approvedHighRisk,
 					unattended,
+					originalAudioExport: originalAudioExport === true,
 				}),
 			cancel: () => ipcRenderer.invoke('plugins:cancel-consent'),
 		}

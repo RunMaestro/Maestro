@@ -596,6 +596,7 @@ export interface AgentDetailDisplay {
 	bookmarked?: boolean;
 	// Editable per-agent settings (the Edit Agent modal fields). `null` = unset.
 	nudgeMessage?: string | null;
+	peerDescription?: string | null;
 	newSessionMessage?: string | null;
 	customPath?: string | null;
 	customArgs?: string | null;
@@ -701,6 +702,7 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 		);
 	};
 	addConfig('Nudge', agent.nudgeMessage ? truncate(agent.nudgeMessage, 60) : undefined);
+	addConfig('Peer description', agent.peerDescription);
 	addConfig(
 		'New session msg',
 		agent.newSessionMessage ? truncate(agent.newSessionMessage, 60) : undefined

@@ -98,6 +98,7 @@ import { useVoiceModeSwitch } from './useVoiceModeSwitch';
 import { useVoiceScope } from './useVoiceScope';
 import { useVoiceScopeFollow } from './useVoiceScopeFollow';
 import { useOwnsVoiceSession } from './useOwnsVoiceSession';
+import { isDocumentScope } from '../../../shared/acappella/document-scope';
 import { VoiceInputPicker } from './VoiceInputPicker';
 import { useVoiceInputDevices } from './useVoiceInputDevices';
 import { useVoiceSession } from './useVoiceSession';
@@ -181,6 +182,7 @@ export function VoiceHud({
 	);
 
 	const state = useVoiceSessionStore((s) => s.state);
+	const documentSession = useVoiceSessionStore((s) => isDocumentScope(s.scope));
 	const sendState = useVoiceSessionStore((s) => s.sendState);
 	const forceSendAllowed = useSettingsStore((s) => s.forcedParallelExecution);
 	const partial = useVoiceSessionStore((s) => s.partialTranscript);
@@ -403,8 +405,8 @@ export function VoiceHud({
 	// A new session un-hides the widget. Otherwise a hotkey or a wake word would
 	// open a microphone behind a HUD the user dismissed an hour ago.
 	useEffect(() => {
-		if (active && !floatingWindow) setDismissed(false);
-	}, [active, setDismissed, floatingWindow]);
+		if (active && !documentSession && !floatingWindow) setDismissed(false);
+	}, [active, documentSession, setDismissed, floatingWindow]);
 
 	const micIssue = mic?.issue ?? null;
 	const { hasOpenModal } = useLayerStack();
@@ -432,7 +434,7 @@ export function VoiceHud({
 	// Tab and Agent mode follow the user to another agent or tab. Here rather
 	// than in the mode switch, which is only mounted while a session is live:
 	// the HUD is the one voice surface that is always mounted.
-	useVoiceScopeFollow(enabled && ownsSession && !floatingWindow);
+	useVoiceScopeFollow(enabled && ownsSession && !documentSession && !floatingWindow);
 	// Only while this window owns the surface: enumerating devices in every window
 	// would have each one subscribing to a list none of them is showing.
 	const localInputDevices = useVoiceInputDevices(enabled && ownsSession && !floatingWindow);
@@ -449,6 +451,8 @@ export function VoiceHud({
 	// session has been live here, only the close control takes the HUD away.
 	const visible =
 		enabled &&
+		// Document chat owns its microphone and transcript inside the preview.
+		!documentSession &&
 		!dismissed &&
 		// Temporarily yield to blocking dialogs without dismissing or stopping the
 		// session. The shared stack excludes passive panels, including this HUD.

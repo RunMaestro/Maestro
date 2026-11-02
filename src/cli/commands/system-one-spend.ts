@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 
 import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
-import { parseTimeInput } from '../../shared/computer-history/timeRange';
+import { parseTimeInput } from '../../shared/timeInput';
 import {
 	JEV_PRICE_PER_MTOK_INPUT_USD,
 	systemOneEngineLabel,

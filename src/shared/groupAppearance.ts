@@ -203,6 +203,11 @@ export interface GroupUpdateRequest {
 	 * is put in, not the absence of a value.
 	 */
 	hidden?: boolean;
+	/**
+	 * Fold the group in the Left Bar (`true`) or unfold it (`false`). A set
+	 * rather than a toggle, so a script never has to read the current state.
+	 */
+	collapsed?: boolean;
 	clear?: GroupClearableField[];
 }
 
@@ -263,6 +268,12 @@ export function validateGroupUpdate(request: GroupUpdateRequest): GroupUpdateVal
 			return { ok: false, error: 'hidden must be true or false' };
 		}
 		value.hidden = request.hidden;
+	}
+	if (request.collapsed !== undefined) {
+		if (typeof request.collapsed !== 'boolean') {
+			return { ok: false, error: 'collapsed must be true or false' };
+		}
+		value.collapsed = request.collapsed;
 	}
 	if (clear.length > 0) value.clear = [...clear];
 

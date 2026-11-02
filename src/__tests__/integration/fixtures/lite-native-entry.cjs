@@ -93,6 +93,10 @@ const fixture = {
 	node: 'client-node',
 	remoteIdentity: 'aster-id',
 	backendPort: 56036,
+	holdRecoveryWrite: false,
+	recoveryWriteFinished: 0,
+	recoveryWriteStarted: 0,
+	releaseRecoveryWrite: undefined,
 };
 const status = (selfIsHost = false) => ({
 	BackendState: fixture.online ? 'Running' : 'Stopped',
@@ -154,6 +158,25 @@ mocks.set('node:http', {
 			callback
 		);
 	},
+});
+const { LiteLastConnections: ProductionLastConnections } = require(
+	path.join(dist, 'main/lite/last-connection.js')
+);
+class FixtureLastConnections extends ProductionLastConnections {
+	async remember(profile, signal) {
+		if (fixture.holdRecoveryWrite) {
+			fixture.recoveryWriteStarted++;
+			await new Promise((resolve) => {
+				fixture.releaseRecoveryWrite = resolve;
+			});
+		}
+		const result = await super.remember(profile, signal);
+		fixture.recoveryWriteFinished++;
+		return result;
+	}
+}
+mocks.set(path.join(dist, 'main/lite/last-connection.js'), {
+	LiteLastConnections: FixtureLastConnections,
 });
 mocks.set(path.join(dist, 'main/lite/control-server.js'), {
 	startLiteControlServer: async () => ({ close: async () => {} }),
@@ -454,7 +477,7 @@ async function main() {
 		path.join(web, 'assets/workload.js'),
 		'window.__MAESTRO_BRIDGE_STATE__="connecting";const socket=new WebSocket(location.origin.replace("http:","ws:")+"' +
 			CONNECT +
-			'/ws");socket.onopen=()=>{window.__MAESTRO_BRIDGE_STATE__="connected";document.querySelector("#transport").textContent="Actual HTTP and WebSocket through private relay";};socket.onclose=()=>window.__MAESTRO_BRIDGE_STATE__="disconnected";'
+			'/ws");socket.onopen=()=>{window.__MAESTRO_BRIDGE_STATE__="connected";document.querySelector("#transport").textContent="Actual HTTP and WebSocket through private relay";};socket.onclose=()=>window.__MAESTRO_BRIDGE_STATE__="disconnected";const draft=document.querySelector("#draft");draft.value=localStorage.getItem("draft")||"";draft.addEventListener("input",()=>localStorage.setItem("draft",draft.value));'
 	);
 	const apiRoutes = new ApiRoutes('test-legacy', {
 		max: 100,
@@ -493,12 +516,48 @@ async function main() {
 	});
 	let healthFailureStatus = 0;
 	let failedHealthReads = 0;
+	let failWorkflowRead = false;
+	let failedWorkflowReads = 0;
+	let ownerReady = true;
+	let failedOwnerReadinessChecks = 0;
 	api.addHook('onRequest', async (request, reply) => {
 		if (healthFailureStatus && request.url === CONNECT + '/api/lite/handshake') {
 			failedHealthReads++;
 			return reply.code(healthFailureStatus).send({ error: 'Isolated transient relay failure' });
 		}
 	});
+	// This fixture exercises pairing/admission, not agent execution. Supply the
+	// declared synthetic host's reviewed bindings; any mutation probe is a bug.
+	const { ipcMain } = require('electron');
+	const { REMOTE_WORKFLOWS } = require(path.join(dist, 'main/web-server/remote-workflows.js'));
+	const fixtureReads = new Map([
+		['sessions:getBootstrap', []],
+		['groups:getAll', []],
+		['settings:getAll', {}],
+		['web:getAutoRunStates', {}],
+		['process:getActiveProcesses', []],
+		['fs:homeDir', directory],
+		[
+			'prompts:getSystemPromptPaths',
+			{ success: true, computerHistoryDir: path.join(directory, 'context') },
+		],
+	]);
+	for (const workflow of Object.values(REMOTE_WORKFLOWS)) {
+		for (const channel of workflow.methods) {
+			if (ipcMain._invokeHandlers.has(channel)) continue;
+			ipcMain.handle(channel, () => {
+				if (channel === 'groups:getAll' && failWorkflowRead) {
+					failedWorkflowReads++;
+					throw new Error('Isolated required workflow read unavailable');
+				}
+				assert(
+					fixtureReads.has(channel),
+					'Qualification must never execute synthetic host mutations'
+				);
+				return fixtureReads.get(channel);
+			});
+		}
+	}
 	require(
 		path.join(dist, 'main/web-server/routes/liteConnectionRoutes.js')
 	).registerLiteConnectionRoutes(api, {
@@ -507,14 +566,25 @@ async function main() {
 		webAssetsPath: web,
 		apiRoutes,
 		wsRoute,
-		getHostStatus: async () => ({
-			instanceId: fixture.remoteIdentity,
-			hostName: 'Synthetic Aster',
-			appVersion: options.appVersion,
-			platform: process.platform,
-			ready: true,
-			capabilities: { sessions: true, terminal: true, files: true, browserRelay: true },
-		}),
+		getHostStatus: async () => {
+			if (!ownerReady) failedOwnerReadinessChecks++;
+			return {
+				instanceId: fixture.remoteIdentity,
+				hostName: 'Synthetic Aster',
+				appVersion: options.appVersion,
+				platform: process.platform,
+				ready: ownerReady,
+				capabilities: {
+					sessions: ownerReady,
+					terminal: ownerReady,
+					files: ownerReady,
+					browserRelay: ownerReady,
+				},
+				...(!ownerReady
+					? { unavailableReason: 'Owning desktop renderer is not ready to accept remote work' }
+					: {}),
+			};
+		},
 	});
 	await api.listen({ port: 0, host: '127.0.0.1' });
 	backendPort = api.server.address().port;
@@ -629,10 +699,6 @@ async function main() {
 		true
 	);
 	await capture(lite, '03-connected-lite');
-	fs.writeFileSync(
-		path.join(process.env.MAESTRO_LITE_TEST_ARTIFACTS || directory, '03-connected-workload.png'),
-		(await remote.capturePage()).toPNG()
-	);
 	check(
 		'production Lite PIN approval opens actual HTTP/WebSocket relay with a secure browser context and no account login'
 	);
@@ -661,12 +727,102 @@ async function main() {
 	check(
 		'transient HTTP 502/503/504 health reads retain the same native host view, unsent draft and connected WebSocket'
 	);
+	ownerReady = false;
+	await until(() => failedOwnerReadinessChecks > 0, 'unavailable owning-renderer health check');
+	await delay(1100);
+	assert.equal(remote.isDestroyed(), false);
+	assert.equal(lite.contentView.children[0].webContents.id, healthViewId);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+	ownerReady = true;
+	check(
+		'unavailable owning-renderer health check retains native view, unsent draft and live bridge'
+	);
+	failWorkflowRead = true;
+	await until(() => failedWorkflowReads > 0, 'failed required qualification read');
+	await delay(1100);
+	assert.equal(remote.isDestroyed(), false);
+	assert.equal(lite.contentView.children[0].webContents.id, healthViewId);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+	failWorkflowRead = false;
+	check('failed required qualification read retains native view, unsent draft and live bridge');
+	await js(remote, 'document.querySelector("#draft").dispatchEvent(new Event("input"))');
+	const crashedViewId = remote.id;
+	const recoveryOrigin = new URL(remote.getURL()).origin;
+	remote.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+	await until(
+		async () => {
+			const current = lite.contentView.children[0]?.webContents;
+			return (
+				current && current.id !== crashedViewId && (await state()).status.startsWith('connected')
+			);
+		},
+		'automatic renderer crash recovery',
+		3000
+	);
+	remote = lite.contentView.children[0].webContents;
+	assert.equal(new URL(remote.getURL()).origin, recoveryOrigin);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+	check(
+		'renderer crash automatically recovers the same origin and persistent draft without manual reconnect'
+	);
+	const discoveredViewId = remote.id;
+	const discoveredClientUrl = remote.getURL();
+	await js(
+		remote,
+		'socket.addEventListener("close", () => { setTimeout(() => { const recovered = new WebSocket(location.origin.replace("http:", "ws:") + "' +
+			CONNECT +
+			'/ws"); recovered.onopen = () => { window.__MAESTRO_BRIDGE_STATE__ = "connected"; }; recovered.onclose = () => { window.__MAESTRO_BRIDGE_STATE__ = "disconnected"; }; }, 100); }, { once: true }); true'
+	);
+	await invoke(lite.webContents, 'lite:control', 'pair-cancel');
+	await until(
+		async () => (await state()).status.startsWith('connected'),
+		'same-host automatic recovery'
+	);
+	remote = lite.contentView.children[0].webContents;
+	assert.equal(remote.id, discoveredViewId);
+	assert.equal(remote.getURL(), discoveredClientUrl);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	check(
+		'same-host automatic recovery preserves the mounted view, client identity and unsent draft'
+	);
+	const recoveryWritesBefore = fixture.recoveryWriteFinished;
+	fixture.holdRecoveryWrite = true;
+	await js(lite.webContents, 'void window.__nativeProbe.invoke("lite:control", "reconnect")');
+	await until(() => fixture.recoveryWriteStarted > 0, 'held recovery metadata write');
+	await invoke(lite.webContents, 'lite:control', 'disconnect');
+	fixture.holdRecoveryWrite = false;
+	fixture.releaseRecoveryWrite();
+	await until(
+		() => fixture.recoveryWriteFinished > recoveryWritesBefore,
+		'released recovery metadata write'
+	);
+	const recoveryIntent = JSON.parse(
+		fs.readFileSync(path.join(liteDirectory, 'lite-last-connection.json'), 'utf8')
+	);
+	assert.equal(recoveryIntent.enabled, false);
+	check('disconnect during a held recovery write cannot restore stale recovery intent');
 	const credentialPath = path.join(liteDirectory, 'lite-device-credentials.json');
 	const credentialBytes = fs.readFileSync(credentialPath, 'utf8');
 	assert(!credentialBytes.includes('"credential":'));
 	await invoke(lite.webContents, 'lite:control', 'reconnect');
 	await until(async () => (await state()).status.startsWith('connected'), 'remembered reconnect');
 	assert.equal(hostShell.host.devices.list('aster-id').length, 1);
+	assert.equal(lite.contentView.children.length, 1);
 	await until(
 		() => js(host.webContents, '!document.querySelector("#manage-access").hidden'),
 		'pairing complete navigation'

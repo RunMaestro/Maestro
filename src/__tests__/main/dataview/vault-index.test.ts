@@ -29,7 +29,11 @@ import {
 	VaultIndex,
 	type VaultIndexChange,
 } from '../../../main/dataview/vault-index';
-import { DATAVIEW_INDEX_CACHE_VERSION } from '../../../main/dataview/vault-cache';
+import {
+	DATAVIEW_CACHE_MANIFEST_FILE,
+	DATAVIEW_INDEX_CACHE_VERSION,
+	dataviewCacheShardOf,
+} from '../../../main/dataview/vault-cache';
 
 const FIXTURE_VAULT = path.resolve(__dirname, '..', '..', 'fixtures', 'dataview-vault');
 
@@ -386,7 +390,7 @@ describe('VaultIndex disk cache (DV-5)', () => {
 		await first.open();
 		expect(first.cacheHit).toBe(false);
 		await first.dispose();
-		expect(fs.existsSync(first.cacheFile!)).toBe(true);
+		expect(fs.existsSync(path.join(first.cachePath!, DATAVIEW_CACHE_MANIFEST_FILE))).toBe(true);
 
 		const vaultFs = memoryFs(files);
 		const readText = vi.spyOn(vaultFs, 'readText');
@@ -436,9 +440,10 @@ describe('VaultIndex disk cache (DV-5)', () => {
 		const first = new VaultIndex(memoryFs(files), { cacheDir, watch: false });
 		await first.open();
 		await first.dispose();
-		const cached = JSON.parse(fs.readFileSync(first.cacheFile!, 'utf8'));
+		const manifestFile = path.join(first.cachePath!, DATAVIEW_CACHE_MANIFEST_FILE);
+		const cached = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
 		fs.writeFileSync(
-			first.cacheFile!,
+			manifestFile,
 			JSON.stringify({ ...cached, version: DATAVIEW_INDEX_CACHE_VERSION - 1 })
 		);
 
@@ -451,10 +456,47 @@ describe('VaultIndex disk cache (DV-5)', () => {
 		await second.dispose();
 	});
 
+	it('rewrites only the shard of a changed page, and serves the change on the next open', async () => {
+		const files: Record<string, string> = {};
+		for (let i = 0; i < 40; i++) files[`Note ${i}.md`] = `note ${i}`;
+		const first = new VaultIndex(memoryFs(files), { cacheDir, watch: false });
+		await first.open();
+		await first.flushCache();
+		const shardFiles = () =>
+			new Map(
+				fs
+					.readdirSync(first.cachePath!)
+					.filter((name) => name.startsWith('pages-'))
+					.map((name) => [name, fs.readFileSync(path.join(first.cachePath!, name), 'utf8')])
+			);
+		const before = shardFiles();
+		expect(before.size).toBeGreaterThan(1);
+
+		files['Note 7.md'] = 'note 7 grew a #tag';
+		await first.scan();
+		await first.flushCache();
+		const after = shardFiles();
+		const rewritten = [...after].filter(([name, text]) => before.get(name) !== text);
+		expect(rewritten.map(([name]) => name)).toEqual([
+			`pages-${String(dataviewCacheShardOf('Note 7.md')).padStart(3, '0')}.json`,
+		]);
+		await first.dispose();
+
+		const vaultFs = memoryFs(files);
+		const readText = vi.spyOn(vaultFs, 'readText');
+		const second = new VaultIndex(vaultFs, { cacheDir, watch: false });
+		await second.open();
+		await second.scan();
+		expect(second.cacheHit).toBe(true);
+		expect(markdownReads(readText)).toEqual([]);
+		expect(second.getPage('Note 7.md')!.tags).toEqual(new Set(['#tag']));
+		await second.dispose();
+	});
+
 	it('keeps nothing on disk without a cache folder', async () => {
 		const index = new VaultIndex(memoryFs({ 'A.md': 'a' }), { watch: false });
 		await index.open();
-		expect(index.cacheFile).toBeNull();
+		expect(index.cachePath).toBeNull();
 		await index.dispose();
 		expect(fs.readdirSync(cacheDir)).toEqual([]);
 	});

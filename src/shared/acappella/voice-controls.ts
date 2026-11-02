@@ -14,12 +14,12 @@
 /**
  * The phrase a fresh install listens for.
  *
- * "hey jarvis" because it is the phrase a trained classifier SHIPS for (see
+ * "Hey Jarvis" because it is the phrase a trained classifier SHIPS for (see
  * `PRETRAINED_WAKE_PHRASES` in model-catalog.ts). "hey maestro" was the default
  * before that, and nothing could ever detect it: openWakeWord fires only on
  * phrases it was trained on, and no "hey maestro" model exists.
  */
-export const DEFAULT_WAKE_PHRASE = 'hey jarvis';
+export const DEFAULT_WAKE_PHRASE = 'Hey Jarvis';
 
 /** The old default, which no classifier exists for. Migrated away from on upgrade. */
 export const LEGACY_DEFAULT_WAKE_PHRASE = 'hey maestro';

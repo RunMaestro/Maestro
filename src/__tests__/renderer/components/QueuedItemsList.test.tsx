@@ -217,6 +217,38 @@ describe('QueuedItemsList force-send shortcut gate', () => {
 	});
 });
 
+describe('QueuedItemsList steer button', () => {
+	it('steers an eligible item on click', () => {
+		const onSteerQueuedItem = vi.fn();
+		setup({ onSteerQueuedItem, getSteerContext: () => ({ canSteer: true }) });
+		const button = screen.getByText('Steer').closest('button')!;
+		expect(button).toHaveAttribute('aria-disabled', 'false');
+		fireEvent.click(button);
+		expect(onSteerQueuedItem).toHaveBeenCalledWith('q1');
+	});
+
+	it('dims the button for an item with images, explains why, and ignores the click', () => {
+		const onSteerQueuedItem = vi.fn();
+		setup({
+			onSteerQueuedItem,
+			getSteerContext: () => ({ canSteer: false, blockedReason: 'has-images' }),
+		});
+		const button = screen.getByText('Steer').closest('button')!;
+		expect(button).toHaveAttribute('aria-disabled', 'true');
+		expect(button.getAttribute('title')).toContain('Remove the image');
+		fireEvent.click(button);
+		expect(onSteerQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('hides the button for a reason the card cannot fix', () => {
+		setup({
+			onSteerQueuedItem: vi.fn(),
+			getSteerContext: () => ({ canSteer: false, blockedReason: 'tab-not-working' }),
+		});
+		expect(screen.queryByText('Steer')).toBeNull();
+	});
+});
+
 describe('QueuedItemsList drag-to-reorder', () => {
 	afterEach(() => {
 		vi.useRealTimers();

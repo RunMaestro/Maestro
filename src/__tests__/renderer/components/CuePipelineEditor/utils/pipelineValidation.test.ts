@@ -78,8 +78,8 @@ function pipeline(
 
 describe('pipelineValidation', () => {
 	describe('DEFAULT_TRIGGER_LABELS', () => {
-		it('covers all 12 CueEventType values', () => {
-			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(12);
+		it('covers all 13 CueEventType values', () => {
+			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(13);
 			expect(DEFAULT_TRIGGER_LABELS['app.startup']).toBe('Startup');
 			expect(DEFAULT_TRIGGER_LABELS['time.heartbeat']).toBe('Heartbeat');
 			expect(DEFAULT_TRIGGER_LABELS['time.scheduled']).toBe('Scheduled');
@@ -92,6 +92,7 @@ describe('pipelineValidation', () => {
 			expect(DEFAULT_TRIGGER_LABELS['task.pending']).toBe('Pending Task');
 			expect(DEFAULT_TRIGGER_LABELS['cli.trigger']).toBe('CLI Trigger');
 			expect(DEFAULT_TRIGGER_LABELS['webhook.received']).toBe('Webhook');
+			expect(DEFAULT_TRIGGER_LABELS['plugin.event']).toBe('Plugin Event');
 		});
 	});
 
@@ -226,6 +227,22 @@ describe('pipelineValidation', () => {
 		});
 
 		describe('per-event trigger config', () => {
+			it('accepts a plugin source and refuses malformed source identity before saving', () => {
+				const a = agentNode('a1', { inputPrompt: 'p' });
+				const config = {
+					plugin: { pluginId: 'test.plugin', topic: 'mail.received', config: { folder: 'INBOX' } },
+				};
+				const t = triggerNode('t1', 'plugin.event', config);
+				expect(validatePipelines([pipeline('Plugin', [t, a], [edge('e1', 't1', 'a1')])])).toEqual(
+					[]
+				);
+				const invalid = triggerNode('t1', 'plugin.event', {
+					plugin: { ...config.plugin, pluginId: '../other' },
+				});
+				expect(
+					validatePipelines([pipeline('Plugin', [invalid, a], [edge('e1', 't1', 'a1')])])
+				).toEqual([expect.stringContaining('needs a valid plugin source')]);
+			});
 			it('GitHub triggers need a secret once any webhook setting is filled in', () => {
 				for (const eventType of ['github.pull_request', 'github.issue', 'github.label'] as const) {
 					const t = triggerNode('t1', eventType, { repo: 'org/repo', webhook_path: 'gh' });

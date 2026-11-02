@@ -17,6 +17,7 @@ vi.mock('../../../renderer/stores/centerFlashStore', () => ({
 }));
 
 import {
+	applyCodexTransport,
 	applySteeringVerdict,
 	pendingSteerCount,
 	reconcilePendingSteers,
@@ -86,6 +87,31 @@ beforeEach(() => {
 afterEach(() => {
 	delete maestroProcess.steer;
 	delete maestroProcess.getActiveProcesses;
+});
+
+describe('applyCodexTransport', () => {
+	it('updates the target tab and an orphan without changing another tab', () => {
+		const session = steerableSession([]);
+		session.aiTabs.push(createMockAITab({ id: 'other-tab', turnCodexTransport: 'app-server' }));
+		session.orphanedThinkingTabs = [createMockAITab({ id: 'tab-1' })];
+		useSessionStore.setState({ sessions: [session] });
+
+		applyCodexTransport(PROCESS_KEY, 'exec');
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.aiTabs[0].turnCodexTransport).toBe('exec');
+		expect(updated.orphanedThinkingTabs![0].turnCodexTransport).toBe('exec');
+		expect(updated.aiTabs[1].turnCodexTransport).toBe('app-server');
+
+		applyCodexTransport(PROCESS_KEY, undefined);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].turnCodexTransport).toBeUndefined();
+	});
+
+	it('does not overwrite the steering target with a forced parallel process', () => {
+		useSessionStore.setState({ sessions: [steerableSession([])] });
+		applyCodexTransport(PROCESS_KEY, 'app-server');
+		applyCodexTransport(`${PROCESS_KEY}-fp-123`, 'exec');
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].turnCodexTransport).toBe('app-server');
+	});
 });
 
 describe('steerQueuedItem', () => {
@@ -266,6 +292,9 @@ describe('steerQueuedItem', () => {
 					...steerableSession([item()]),
 					toolType: 'codex',
 					codexTransport: 'app-server',
+					aiTabs: [
+						createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'app-server' }),
+					],
 				} as Session,
 			],
 		});
@@ -294,7 +323,9 @@ describe('steerQueuedItemOrExplain', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
 				title: 'Could not steer this turn',
-				message: expect.stringMatching(/app server.*The message stays queued\.$/),
+				message: expect.stringMatching(
+					/no confirmed app-server transport.*The message stays queued\.$/
+				),
 				sessionId: 'sess-1',
 				tabId: 'tab-1',
 			})

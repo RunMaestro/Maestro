@@ -458,6 +458,91 @@ describe('useKeyboardNavigation', () => {
 
 			expect(handled).toBe(false);
 		});
+
+		it('should blur the group chat composer and focus the room transcript on Escape', () => {
+			const roomTextarea = document.createElement('textarea');
+			roomTextarea.blur = vi.fn();
+			document.body.appendChild(roomTextarea);
+			roomTextarea.focus();
+
+			const mockTerminal = document.createElement('div');
+			mockTerminal.focus = vi.fn();
+			const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+			const deps = createMockDeps({
+				activeFocus: 'main',
+				inputRef: { current: null },
+				terminalOutputRef: { current: mockTerminal },
+				groupChatInputRef: { current: roomTextarea },
+				groupChatMessagesRef: { current: roomMessages },
+			});
+			const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+			const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+			const handled = result.current.handleEscapeInMain(event);
+
+			expect(handled).toBe(true);
+			expect(event.defaultPrevented).toBe(true);
+			expect(roomTextarea.blur).toHaveBeenCalled();
+			expect(roomMessages.focus).toHaveBeenCalled();
+			expect(mockTerminal.focus).not.toHaveBeenCalled();
+			document.body.removeChild(roomTextarea);
+		});
+
+		it('should keep the AI composer path when a group chat composer ref is also present', () => {
+			const aiTextarea = document.createElement('textarea');
+			aiTextarea.blur = vi.fn();
+			document.body.appendChild(aiTextarea);
+			aiTextarea.focus();
+
+			const mockTerminal = document.createElement('div');
+			mockTerminal.focus = vi.fn();
+			const roomTextarea = document.createElement('textarea');
+			roomTextarea.blur = vi.fn();
+			const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+			const deps = createMockDeps({
+				activeFocus: 'main',
+				inputRef: { current: aiTextarea },
+				terminalOutputRef: { current: mockTerminal },
+				groupChatInputRef: { current: roomTextarea },
+				groupChatMessagesRef: { current: roomMessages },
+			});
+			const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+			const handled = result.current.handleEscapeInMain(
+				new KeyboardEvent('keydown', { key: 'Escape' })
+			);
+
+			expect(handled).toBe(true);
+			expect(aiTextarea.blur).toHaveBeenCalled();
+			expect(mockTerminal.focus).toHaveBeenCalled();
+			expect(roomTextarea.blur).not.toHaveBeenCalled();
+			expect(roomMessages.focus).not.toHaveBeenCalled();
+			document.body.removeChild(aiTextarea);
+		});
+
+		it('should not handle Escape in the group chat composer when focus is not on main', () => {
+			const roomTextarea = document.createElement('textarea');
+			roomTextarea.blur = vi.fn();
+			document.body.appendChild(roomTextarea);
+			roomTextarea.focus();
+
+			const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+			const deps = createMockDeps({
+				activeFocus: 'sidebar',
+				groupChatInputRef: { current: roomTextarea },
+				groupChatMessagesRef: { current: roomMessages },
+			});
+			const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+			const handled = result.current.handleEscapeInMain(
+				new KeyboardEvent('keydown', { key: 'Escape' })
+			);
+
+			expect(handled).toBe(false);
+			expect(roomTextarea.blur).not.toHaveBeenCalled();
+			expect(roomMessages.focus).not.toHaveBeenCalled();
+			document.body.removeChild(roomTextarea);
+		});
 	});
 
 	describe('sidebar index sync', () => {

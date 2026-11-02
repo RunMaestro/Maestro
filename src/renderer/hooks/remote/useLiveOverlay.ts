@@ -215,6 +215,32 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		};
 	}, [isLiveMode, tunnelStatus]);
 
+	// Follow tunnel changes main pushes, so a tunnel started or stopped by
+	// `maestro-cli live tunnel` shows here. The polling above only runs once the
+	// panel already believes a tunnel exists, so it cannot discover one alone.
+	// A push never demotes 'starting': that transition belongs to the
+	// tunnel.start() promise, and restartTunnel's own stop pushes "not running".
+	const tunnelStatusRef = useRef(tunnelStatus);
+	tunnelStatusRef.current = tunnelStatus;
+	useEffect(() => {
+		const unsubscribe = window.maestro?.live?.onStateChanged?.((state) => {
+			// Live going off is handled by the isLiveMode reset above.
+			if (!state.live) return;
+			if (state.remoteControl && state.remoteControlUrl) {
+				setTunnelStatus('connected');
+				setTunnelUrl(state.remoteControlUrl);
+				setTunnelError(null);
+				return;
+			}
+			if (tunnelStatusRef.current === 'starting') return;
+			setTunnelStatus(state.remoteControlError ? 'error' : 'off');
+			setTunnelError(state.remoteControlError ?? null);
+			setTunnelUrl(null);
+			setActiveUrlTab('local');
+		});
+		return () => unsubscribe?.();
+	}, []);
+
 	// Restart the tunnel by tearing down any existing (or half-dead) cloudflared
 	// process and starting fresh. Used both when the underlying web server changes
 	// (e.g. port change) and to recover from an 'error' state. Runs from either

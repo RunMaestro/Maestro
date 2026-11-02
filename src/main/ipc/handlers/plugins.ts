@@ -110,7 +110,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				// window via plugins:request-consent). The renderer cannot flip it on.
 				if (tier >= 1 && !authStore.isEnabled(id)) throw new Error('PluginNotAuthorized');
 			}
-			const registry = manager.setEnabled(id, enabled);
+			const registry = await manager.setEnabled(id, enabled);
 			if (!enabled) await manager.stopAndDrain(id);
 			return snapshotOf(registry);
 		}
@@ -176,7 +176,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			// Revoke drops the sealed grant AND disables the plugin: a code-tier plugin
 			// must not keep running without grants.
 			authStore.revoke(id);
-			manager.setEnabled(id, false);
+			await manager.setEnabled(id, false);
 			await manager.stopAndDrain(id);
 			return { requested: manager.getRequestedPermissions(id) ?? [], granted: [] };
 		}

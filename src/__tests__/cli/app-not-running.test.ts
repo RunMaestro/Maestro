@@ -69,6 +69,7 @@ vi.mock('../../cli/services/pianola-store', async (importOriginal) => {
 
 import { MAESTRO_NOT_RUNNING_MESSAGE } from '../../cli/services/maestro-not-running';
 import { focusAgent, switchMode } from '../../cli/commands/agent-control';
+import { interrupt } from '../../cli/commands/interrupt';
 import {
 	autoRunFolder,
 	autoRunStatus,
@@ -79,6 +80,7 @@ import { autoRun } from '../../cli/commands/auto-run';
 import { setBookmark } from '../../cli/commands/bookmark';
 import { cadenzaClose } from '../../cli/commands/cadenza';
 import { createAgent } from '../../cli/commands/create-agent';
+import { duplicateAgent } from '../../cli/commands/duplicate-agent';
 import { createGroup } from '../../cli/commands/create-group';
 import { createWorktree } from '../../cli/commands/create-worktree';
 import { cueEnable } from '../../cli/commands/cue-control';
@@ -148,10 +150,21 @@ import {
 	dataviewTrusted,
 	dataviewUntrust,
 } from '../../cli/commands/dataview';
-import { tabClose, tabNew, tabRename, tabShow } from '../../cli/commands/tab';
+import {
+	tabClose,
+	tabClosed,
+	tabCompact,
+	tabMerge,
+	tabNew,
+	tabRename,
+	tabReopen,
+	tabShow,
+	tabTransfer,
+} from '../../cli/commands/tab';
 import { themeSet } from '../../cli/commands/theme';
 import { updateAgent } from '../../cli/commands/update-agent';
 import { updateGroup } from '../../cli/commands/update-group';
+import { liveOff, liveOn, liveStatus } from '../../cli/commands/live';
 import { ask } from '../../cli/commands/ask';
 import { GLOSS_LEVELS } from '../../shared/themeGloss';
 
@@ -188,6 +201,9 @@ const rows: Row[] = [
 	{ name: 'remove-playbook', run: (json) => removePlaybook('agent-1', 'pb-1', j(json)) },
 	{ name: 'focus-agent', run: (json) => focusAgent('agent-1', j(json)) },
 	{ name: 'switch-mode', run: (json) => switchMode('agent-1', 'ai', j(json)) },
+	// interrupt: the agent-scope stop, and --tab, whose tab lookup is the first bridge call
+	{ name: 'interrupt', run: (json) => interrupt('agent-1', j(json)) },
+	{ name: 'interrupt --tab', run: (json) => interrupt('agent-1', { tab: 'tab-1', ...j(json) }) },
 	// failCommand family
 	{ name: 'auto-run stop', run: (json) => stopAutoRun('agent-1', j(json)) },
 	{ name: 'auto-run status', run: (json) => autoRunStatus('agent-1', j(json)) },
@@ -205,8 +221,24 @@ const rows: Row[] = [
 	{ name: 'tab close', run: (json) => tabClose('tab-1', j(json)) },
 	{ name: 'tab rename', run: (json) => tabRename('tab-1', 'New', j(json)) },
 	{ name: 'tab show', run: (json) => tabShow('tab-1', j(json)) },
+	{ name: 'tab closed', run: (json) => tabClosed({ agent: 'agent-1', json }) },
+	{ name: 'tab reopen', run: (json) => tabReopen({ agent: 'agent-1', json }) },
+	{ name: 'tab reopen --index', run: (json) => tabReopen({ index: '1', json }) },
+	{ name: 'tab compact', run: (json) => tabCompact(undefined, { agent: 'agent-1', json }) },
+	{
+		name: 'tab merge',
+		run: (json) => tabMerge('tab-1', { into: 'agent-1', targetTab: 'tab-2', json }),
+	},
+	{ name: 'tab transfer', run: (json) => tabTransfer(undefined, { to: 'agent-2', json }) },
 	{ name: 'theme set', run: (json) => themeSet(['bgMain=#000000'], j(json)) },
 	{ name: 'update-group', run: (json) => updateGroup('group-1', { name: 'New', json }) },
+	{
+		name: 'update-group --collapse',
+		run: (json) => updateGroup('group-1', { collapse: true, json }),
+	},
+	{ name: 'live status', run: (json) => liveStatus(j(json)) },
+	{ name: 'live on', run: (json) => liveOn(j(json)) },
+	{ name: 'live off', run: (json) => liveOff(j(json)) },
 	// local fail / emitError helpers
 	{ name: 'ask', run: (json) => ask('agent-2', 'What?', j(json)) },
 	{
@@ -255,6 +287,7 @@ const rows: Row[] = [
 		name: 'create-agent',
 		run: (json) => createAgent('Agent', { cwd: dataDir, type: 'claude-code', json }),
 	},
+	{ name: 'duplicate-agent', run: (json) => duplicateAgent('agent-1', j(json)) },
 	{ name: 'cue list', run: (json) => cueList(j(json)), envelope: { type: 'error' } },
 	{ name: 'cue trigger', run: (json) => cueTrigger('sub', j(json)), envelope: { type: 'error' } },
 	{

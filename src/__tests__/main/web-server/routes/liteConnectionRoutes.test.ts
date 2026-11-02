@@ -24,6 +24,13 @@ import { WEB_LOGIN_COOKIE } from '../../../../shared/webLogin';
 import { isAllowedRequestOrigin } from '../../../../main/web-server/originPolicy';
 const appVersion: string = require('../../../../../package.json').version;
 const state = vi.hoisted(() => ({ enabled: false, authenticated: false }));
+vi.mock('electron', async () => {
+	const { EventEmitter } = await import('node:events');
+	return {
+		ipcMain: Object.assign(new EventEmitter(), { _invokeHandlers: new Map() }),
+		app: { getVersion: () => 'test', getPath: () => '/isolated-host' },
+	};
+});
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));

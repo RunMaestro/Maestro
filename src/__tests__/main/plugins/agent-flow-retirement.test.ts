@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -128,7 +129,7 @@ afterEach(() => {
 
 it('retires the unchanged 0.3.0 installation left behind by #1740 before discovery', async () => {
 	const { recoveryPath } = await manager.retireBundledAgentFlow(authorization);
-	manager.refresh();
+	await manager.refresh();
 	expect(manager.getRegistry().records.map((record) => record.id)).not.toContain('agent-flow');
 	expect(fs.existsSync(path.join(pluginsDir(), 'agent-flow'))).toBe(false);
 	for (const [name, content] of Object.entries(files)) {
@@ -139,7 +140,7 @@ it('retires the unchanged 0.3.0 installation left behind by #1740 before discove
 
 it('removes orphan grants through the host tombstone contract when the package is already absent', async () => {
 	fs.rmSync(path.join(pluginsDir(), 'agent-flow'), { recursive: true });
-	manager.refresh();
+	await manager.refresh();
 	expect(manager.getRequestedPermissions('agent-flow')).toEqual([]);
 	expect(authorization.readGrants('agent-flow')).toHaveLength(4);
 	await manager.retireBundledAgentFlow(authorization);
@@ -178,7 +179,7 @@ it('purges only Agent Flow state and keeps unrelated plugins, grants, data and b
 		settings.set(`plugins.${id}.layout`, `saved ${id}`);
 		eventBus.subscribe(id, ['tool.executed']);
 	}
-	manager.refresh();
+	await manager.refresh();
 	const otherRecords = manager.getRegistry().records.filter((record) => record.id !== 'agent-flow');
 	const otherGrants = otherIds.map((id) => authorization.readGrants(id));
 	const { recoveryPath } = await manager.retireBundledAgentFlow(authorization);
@@ -186,7 +187,7 @@ it('purges only Agent Flow state and keeps unrelated plugins, grants, data and b
 	await expect(manager.retireBundledAgentFlow(authorization)).resolves.toEqual({
 		recoveryPath: undefined,
 	});
-	manager.refresh();
+	await manager.refresh();
 	expect(manager.getRegistry().records).toEqual(otherRecords);
 	expect(otherIds.map((id) => authorization.readGrants(id))).toEqual(otherGrants);
 	expect(fs.readFileSync(authorizationDeps.ledgerPath)).toEqual(ledger);
@@ -442,7 +443,7 @@ it.each(['preserved', 'read failure', 'archive failure', 'purge failure'])(
 			'seedBundledPlugins',
 			'pluginScheduler',
 			'trustedKeysFor',
-			`${js}\nreturn reconcile;`
+			`let pluginStartupToken = {};\n${js}\nreturn reconcile;`
 		)(
 			manager,
 			authorization,
@@ -550,7 +551,7 @@ it('does not restart a cached enabled sandbox after archive failure', async () =
 		sandbox,
 		trustedKeys: () => [keys.publicKeyB64],
 	});
-	liveManager.refresh();
+	await liveManager.refresh();
 	expect(sandbox.start).toHaveBeenCalledOnce();
 	vi.mocked(fs.renameSync).mockImplementation((from, to) => {
 		if (String(from) === source) throw new Error('archive failed');

@@ -18,12 +18,16 @@ import { useSessionStore } from '../../stores/sessionStore';
 import type { Session } from '../../types';
 import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { getBusyTabs } from '../../utils/tabHelpers';
+import { visibleAiTabs } from '../../utils/unifiedTabOrderUtils';
 
 /** A row in one of the agent-status sections. */
 export interface DashboardAgentRow {
 	key: string;
 	/** Owning agent id, for click-to-jump (omitted for a closed/unknown agent). */
 	sessionId?: string;
+	/** Open busy AI tab described by this row, when one is available. */
+	tabId?: string;
 	agentName: string;
 	/** What the agent is doing / waiting on / last did. */
 	description: string;
@@ -58,11 +62,12 @@ function agentNameFor(sessionId: string, nameById: Map<string, string>): string 
 	return nameById.get(sessionId) ?? `Agent ${sessionId.slice(0, 6)}`;
 }
 
-/** The agent's current task label: its active tab name, else a generic verb. */
-function activeTaskLabel(session: Session, fallback: string): string {
-	const tab = session.aiTabs?.find((t) => t.id === session.activeTabId) ?? session.aiTabs?.[0];
-	const name = tab?.name?.trim();
-	return name && name.length > 0 ? name : fallback;
+/** Prefer the selected busy tab, then the first visible busy tab. Never label
+ * background/agent-level work with the name of an unrelated idle tab. */
+function workingTask(session: Session): Pick<DashboardAgentRow, 'description' | 'tabId'> {
+	const busyTabs = visibleAiTabs(getBusyTabs(session));
+	const tab = busyTabs.find((t) => t.id === session.activeTabId) ?? busyTabs[0];
+	return { description: tab?.name?.trim() || 'Working...', tabId: tab?.id };
 }
 
 /** ISO timestamp -> epoch ms (NaN-safe: unparseable strings sort last). */
@@ -126,7 +131,7 @@ export function deriveDashboard(
 				key: c.id,
 				sessionId: c.id,
 				agentName: c.name,
-				description: activeTaskLabel(c, 'Working...'),
+				...workingTask(c),
 			}));
 	};
 
@@ -160,10 +165,9 @@ export function deriveDashboard(
 				key: s.id,
 				sessionId: s.id,
 				agentName: s.name,
-				description:
-					s.state === 'busy'
-						? activeTaskLabel(s, 'Working...')
-						: `${childCount} worktree${childCount === 1 ? '' : 's'} working`,
+				...(s.state === 'busy'
+					? workingTask(s)
+					: { description: `${childCount} worktree${childCount === 1 ? '' : 's'} working` }),
 				...(worktreeChildren ? { worktreeChildren } : {}),
 			};
 		});
@@ -208,7 +212,11 @@ const DECISION_LIMIT = 50;
  * Live dashboard data. Subscribes to the session store and polls the Pianola
  * decision log. `refresh` forces an immediate refetch.
  */
-export function usePianolaDashboardData(): { data: DashboardData; refresh: () => void } {
+export function usePianolaDashboardData(): {
+	data: DashboardData;
+	decisions: PianolaDecisionRecord[];
+	refresh: () => void;
+} {
 	const sessions = useSessionStore((s) => s.sessions);
 	const [decisions, setDecisions] = useState<PianolaDecisionRecord[]>([]);
 	const [nonce, setNonce] = useState(0);
@@ -234,5 +242,5 @@ export function usePianolaDashboardData(): { data: DashboardData; refresh: () =>
 	}, [nonce]);
 
 	const data = useMemo(() => deriveDashboard(sessions, decisions), [sessions, decisions]);
-	return { data, refresh: () => setNonce((n) => n + 1) };
+	return { data, decisions, refresh: () => setNonce((n) => n + 1) };
 }

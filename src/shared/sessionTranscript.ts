@@ -9,6 +9,8 @@ export interface SessionTranscriptPatch<T extends { id: string } = { id: string 
 	snapshot?: boolean;
 	runtime?: Record<string, unknown>;
 	clearRuntimeFields?: string[];
+	/** Private owner inventory, including tabs not yet flushed to disk. Never a live delta. */
+	tabInventory?: Array<{ id: string; clearRuntimeFields?: string[]; [field: string]: unknown }>;
 }
 
 /** Private runtime hydration accompanies logs without duplicating their payload. */

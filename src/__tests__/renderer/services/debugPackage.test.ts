@@ -14,7 +14,13 @@ import { useSecretScreenStore } from '../../../renderer/stores/secretScreenStore
 import {
 	captureAutoRunSnapshots,
 	createDebugPackage,
+	installAutoRunSnapshotResponder,
 } from '../../../renderer/services/debugPackage';
+import { captureException } from '../../../renderer/utils/sentry';
+
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
 
 const createBatchRunState = (overrides: Partial<BatchRunState> = {}): BatchRunState => ({
 	isRunning: false,
@@ -210,6 +216,71 @@ describe('debugPackage service', () => {
 				await expect(pending).resolves.toMatchObject({ cancelled: true });
 				expect(createPackage).toHaveBeenCalledTimes(1);
 			});
+		});
+	});
+
+	describe('installAutoRunSnapshotResponder', () => {
+		/** Install the responder against a fake bridge; returns a way to fire a request. */
+		const installWithFakeBridge = () => {
+			let onRequest: ((responseChannel: string) => void) | undefined;
+			const unsubscribe = vi.fn();
+			const sendAutoRunSnapshotResponse = vi.fn();
+			(globalThis as unknown as { window: unknown }).window = {
+				maestro: {
+					debug: {
+						onAutoRunSnapshotRequest: vi.fn((cb: (responseChannel: string) => void) => {
+							onRequest = cb;
+							return unsubscribe;
+						}),
+						sendAutoRunSnapshotResponse,
+					},
+				},
+			};
+			const dispose = installAutoRunSnapshotResponder();
+			return {
+				dispose,
+				unsubscribe,
+				sendAutoRunSnapshotResponse,
+				request: (responseChannel: string) => onRequest?.(responseChannel),
+			};
+		};
+
+		it('replies on the response channel with captureAutoRunSnapshots() output', () => {
+			useBatchStore.setState({
+				batchRunStates: { 'agent-1': createBatchRunState({ isRunning: true, loopIteration: 2 }) },
+			});
+			const bridge = installWithFakeBridge();
+
+			bridge.request('debug:autoRunSnapshotRequest:response:abc');
+
+			expect(bridge.sendAutoRunSnapshotResponse).toHaveBeenCalledWith(
+				'debug:autoRunSnapshotRequest:response:abc',
+				{ ok: true, snapshots: captureAutoRunSnapshots() }
+			);
+		});
+
+		it('answers ok: false and reports to Sentry when the capture throws', () => {
+			const bridge = installWithFakeBridge();
+			const getState = vi.spyOn(useBatchStore, 'getState').mockImplementationOnce(() => {
+				throw new Error('store exploded');
+			});
+
+			bridge.request('rc-1');
+
+			expect(bridge.sendAutoRunSnapshotResponse).toHaveBeenCalledWith('rc-1', {
+				ok: false,
+				error: 'store exploded',
+			});
+			expect(captureException).toHaveBeenCalledWith(expect.any(Error), expect.anything());
+			getState.mockRestore();
+		});
+
+		it('returns the bridge unsubscribe', () => {
+			const bridge = installWithFakeBridge();
+
+			bridge.dispose();
+
+			expect(bridge.unsubscribe).toHaveBeenCalledTimes(1);
 		});
 	});
 });

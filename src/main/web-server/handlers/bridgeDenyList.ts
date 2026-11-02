@@ -37,7 +37,7 @@ const METHODS: Record<string, string> = {
 		'generateSynopsis getGraphData getOffsetForTimestamp getRichOverviewStats getUnifiedHistory',
 	documentGraph: 'unwatchFolder watchFolder',
 	feedback:
-		'check-gh-auth compose-prompt drafts:delete drafts:list drafts:save get-conversation-prompt issues:delete issues:list issues:refresh-states search-issues submit submit-conversation subscribe-issue',
+		'check-gh-auth compose-prompt drafts:delete drafts:list drafts:save get-conversation-prompt gh-login-command issues:delete issues:list issues:refresh-states list-accounts remember-account search-issues submit submit-conversation subscribe-issue',
 	fonts: 'detect',
 	fs: 'cancelReadFile compressFolder copyPath countItems delete deleteMany directoryInfo directorySize downloadRemoteFile fetchImageAsBase64 homeDir listTreeRemote mkdir readDir readDirTree readFile rename stat writeFile writeImageFile',
 	git: 'branch branches cancelCommand checkGhCli checkoutBranch commitAll commitCount createGist createPR diff getDefaultBranch getRepoRoot graph info init isRepo listWorktrees log numstat remote removeWorktree runCommand scanWorktreeDirectory show showFile status switch tags unwatchWorktreeDirectory watchWorktreeDirectory worktreeCheckout worktreeInfo worktreeRunSetup worktreeSetup',
@@ -47,23 +47,29 @@ const METHODS: Record<string, string> = {
 	history:
 		'add clear delete getAll getAllPaginated getCueGroupRuns getFilePath getGraphData getOffsetForTimestamp listSessions reload update updateSessionName',
 	images: 'resolve',
+	// The browser records what its user opens and browses, and reads it back for the prompt.
+	journey: 'append path read',
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
+	// The shared renderer checks task availability on mount; this read starts no models.
+	localModels: 'taskReadiness',
 	logger: 'getLogLevel log',
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
 	permission: 'respond',
 	pianola:
-		'apply-suggestion get-decisions get-rules get-suggestions save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
+		'apply-suggestion get-decisions get-rules get-suggestions resolve-decision review-suggestion save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
 		'broadcast-user-input cancelCommand getActiveProcesses getHeadlessActivity interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
-	prompts: 'get getAll getAllIds getBundledDefault getPath listFiles reset save',
+	prompts:
+		'get getAll getAllIds getBundledDefault getPath getSystemPromptPaths listFiles reset save',
 	sessions:
 		'getActiveSessionId getAll getBootstrap getDeferredContent setActiveSessionId setAll setMany',
 	settings: 'get getAll set',
@@ -79,7 +85,7 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
+	web: 'getAutoRunStates broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
 	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
@@ -102,7 +108,7 @@ const EVENTS: Record<string, string> = {
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
 	marketplace: 'manifestChanged',
-	notification: 'commandCompleted',
+	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
@@ -162,7 +168,7 @@ export function isRemoteSettingReadable(key: unknown): key is string {
 export function isRemoteSettingWritable(key: unknown): key is string {
 	return (
 		isRemoteSettingReadable(key) &&
-		!/^(?:webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
+		!/^(?:pianolaLearningIdentity|webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
 			key
 		)
 	);

@@ -428,7 +428,7 @@ describe('capability-gate', () => {
 			const wake = readiness.slots.find((slot) => slot.slot === 'wake-word')!;
 			expect(wake.reason).toBe('wake-phrase-untrained');
 			expect(wake.detail).toContain('hey maestro');
-			expect(wake.suggestedAction).toContain('hey jarvis');
+			expect(wake.suggestedAction).toContain('Hey Jarvis');
 			// And the way out that needs nobody else's model.
 			expect(wake.suggestedAction).toMatch(/Train it from your own voice/);
 		});

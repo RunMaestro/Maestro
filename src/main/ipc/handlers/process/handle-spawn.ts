@@ -3,6 +3,10 @@ import {
 	type ProviderSwitchAgent,
 	type ProviderSwitchTab,
 } from '../../../../shared/maestro-lib/agents/providerSwap';
+import {
+	acquireProviderSessionWriter,
+	bindProviderSessionWriter,
+} from '../../../utils/provider-session-writer';
 import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -50,7 +54,7 @@ import { newConsultChainId } from '../../../peer-consults/consult-budget';
 import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
-import { REGEX_AI_SUFFIX } from '../../../constants';
+import { REGEX_AI_SUFFIX, REGEX_AI_TAB_ID } from '../../../constants';
 import { agentIdFromProcessId } from '../../../utils/process-ids';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import {
@@ -96,7 +100,7 @@ import {
 	ensureTokenProxyForGateway,
 	tokenProxyLaunchGatewayUrl,
 } from '../../../local-models/proxy/service';
-import { preparePermissionRelayArgs } from '../../../permission-relay';
+import { cleanupSessionRelay, preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
 	computeOmpCatalogKey,
@@ -105,6 +109,16 @@ import {
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
+
+const pendingDesktopSpawns = new Map<string, Set<AbortController>>();
+
+/** Stop a visible desktop turn that is still waiting for its writer or preflight. */
+export function cancelPendingDesktopSpawns(processId: string): boolean {
+	const pending = pendingDesktopSpawns.get(processId);
+	if (!pending?.size) return false;
+	for (const controller of pending) controller.abort();
+	return true;
+}
 
 /** Dependencies injected into the `process:spawn` orchestration handler. */
 export interface SpawnHandlerDependencies {
@@ -127,25 +141,127 @@ export async function handleProcessSpawn(
 	deps: SpawnHandlerDependencies
 ) {
 	const proofCleanup: { release?: () => void } = {};
+	const manager = requireProcessManager(deps.getProcessManager);
+	const controller = new AbortController();
+	const pending = pendingDesktopSpawns.get(config.sessionId) ?? new Set<AbortController>();
+	pending.add(controller);
+	pendingDesktopSpawns.set(config.sessionId, pending);
 	try {
-		return await handleProcessSpawnImpl(config, deps, proofCleanup);
-	} catch (error) {
-		try {
-			proofCleanup.release?.();
-		} catch (cleanupError) {
-			captureException(
-				cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
-				{ context: 'plugin run proof cleanup', sessionId: config.sessionId }
-			);
+		const records = () =>
+			(deps.sessionsStore?.get('sessions', []) ?? []) as Array<{
+				id: string;
+				toolType?: string;
+				aiTabs?: Array<{ id: string; agentSessionId?: string; relayConversation?: unknown }>;
+			}>;
+		const relayTab =
+			config.toolType !== 'terminal'
+				? records()
+						.flatMap((agent) => (agent.aiTabs ?? []).map((tab) => ({ agentId: agent.id, tab })))
+						.find(
+							({ agentId, tab }) =>
+								tab.relayConversation &&
+								(config.sessionId === `${agentId}-ai-${tab.id}` ||
+									(!!config.agentSessionId && tab.agentSessionId === config.agentSessionId))
+						)
+				: undefined;
+		// The existing queue decides order. Reserve every desktop writer before any
+		// awaits, including an unmarked conversation that Relay may adopt mid-turn.
+		const resolveCurrentSessionId = relayTab
+			? () => {
+					const owner = records().find((agent) => agent.id === relayTab.agentId);
+					if (!owner || (owner.toolType && owner.toolType !== config.toolType))
+						throw new Error('Relay provider changed while waiting');
+					return (
+						owner.aiTabs?.find((tab) => tab.id === relayTab.tab.id)?.agentSessionId ??
+						config.agentSessionId
+					);
+				}
+			: undefined;
+		let release = () => {};
+		if (config.toolType !== 'terminal') {
+			let requestedId = config.agentSessionId;
+			for (;;) {
+				// The helper may retry internally; track the identity it actually reserves.
+				let protectedId = requestedId;
+				release = await acquireProviderSessionWriter(
+					config.toolType,
+					config.sessionId,
+					requestedId,
+					controller.signal,
+					resolveCurrentSessionId ? () => (protectedId = resolveCurrentSessionId()) : undefined
+				);
+				let currentId: string | undefined;
+				try {
+					if (controller.signal.aborted) throw new Error('Provider writer wait cancelled');
+					currentId = resolveCurrentSessionId?.() ?? requestedId;
+				} catch (error) {
+					release();
+					throw error;
+				}
+				if (currentId === protectedId) {
+					requestedId = protectedId;
+					break;
+				}
+				// The ID changed after acquisition resolved. Drop all stale keys before
+				// reacquiring in the canonical order; binding alone does not wait.
+				release();
+				requestedId = currentId;
+			}
+			if (relayTab && requestedId) config = { ...config, agentSessionId: requestedId };
 		}
-		throw error;
+		const onSessionId = (id: string, providerId: string) => {
+			if (id === config.sessionId) bindProviderSessionWriter(id, providerId);
+		};
+		const onExit = (id: string, code?: number) => {
+			if (id !== config.sessionId) return;
+			queueMicrotask(() => {
+				// ExitHandler removes the old process before emitting exit. The
+				// interactive replay listener can synchronously claim that same key;
+				// retain its writer and provider-id binding until its final exit.
+				// Skipped/failed replay leaves no replacement. Preflight cleanup
+				// calls this without an exit code and must release unconditionally.
+				if (code !== undefined && manager.get(config.sessionId)) return;
+				if (config.toolType !== 'terminal') {
+					manager.off('exit', onExit);
+					manager.off('session-id', onSessionId);
+				}
+				release();
+			});
+		};
+		if (config.toolType !== 'terminal') {
+			manager.on('exit', onExit);
+			manager.on('session-id', onSessionId);
+		}
+		try {
+			const result = await handleProcessSpawnImpl(config, deps, proofCleanup, controller.signal);
+			if (!result.success) cleanupSessionRelay(config.sessionId);
+			if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
+			return result;
+		} catch (error) {
+			onExit(config.sessionId);
+			cleanupSessionRelay(config.sessionId);
+			try {
+				proofCleanup.release?.();
+			} catch (cleanupError) {
+				captureException(
+					cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+					{ context: 'plugin run proof cleanup', sessionId: config.sessionId }
+				);
+			}
+			throw error;
+		}
+	} finally {
+		pending.delete(controller);
+		if (!pending.size && pendingDesktopSpawns.get(config.sessionId) === pending)
+			pendingDesktopSpawns.delete(config.sessionId);
 	}
 }
 
 async function handleProcessSpawnImpl(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies,
-	proofCleanup: { release?: () => void }
+	proofCleanup: { release?: () => void },
+	signal: AbortSignal
 ) {
 	const {
 		getProcessManager,
@@ -180,10 +296,12 @@ async function handleProcessSpawnImpl(
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
+	signal.throwIfAborted();
 	let invalidLocalCustomPath = false;
 	if (config.sessionCustomPath && !config.sessionSshRemoteConfig?.enabled) {
 		const requestedCustomPath = config.sessionCustomPath;
 		const detection = await checkCustomPath(requestedCustomPath);
+		signal.throwIfAborted();
 		if (detection.exists && detection.path) {
 			config = { ...config, sessionCustomPath: detection.path };
 			if (detection.path !== requestedCustomPath) {
@@ -303,6 +421,7 @@ async function handleProcessSpawnImpl(
 		envLayers: claudeEnvLayers,
 		runOn: launchRunOn,
 	});
+	signal.throwIfAborted();
 	const {
 		baseSessionId,
 		claudeResolvedMode,
@@ -566,11 +685,15 @@ async function handleProcessSpawnImpl(
 	// runs can be marked in its own transcript (see shared/agentDelegation.ts).
 	// Same injection point as Pianola's id, for the same reason: it has to reach
 	// both the local and the SSH env-merge paths. A terminal is a shell the user
-	// drives, not an agent turn, so it is never stamped.
+	// drives, not an agent turn, so it is never stamped. Desktop turns do not
+	// send `tabId`; the tab lives in the compound `{agentId}-ai-{tabId}` process
+	// id instead. Without it the shell had no tab, and a `dispatch
+	// --notify-on-complete` woke whichever tab the user happened to be viewing.
 	if (config.toolType !== 'terminal') {
+		const callerTabId = config.tabId ?? config.sessionId.match(REGEX_AI_TAB_ID)?.[1];
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
-			...buildCallerIdentityEnv(baseSessionId, config.tabId),
+			...buildCallerIdentityEnv(baseSessionId, callerTabId),
 		};
 
 		// Who asked for this turn, when the spawn came from a logged-in browser.
@@ -639,7 +762,12 @@ async function handleProcessSpawnImpl(
 			(session) => session?.id === baseSessionId
 		);
 		if (mcpTools.length > 0 && storedAgent) {
-			pluginRunToken = pluginToolRunIdentity.issue(baseSessionId);
+			pluginRunToken = pluginToolRunIdentity.issue(
+				baseSessionId,
+				undefined,
+				undefined,
+				config.querySource !== 'user'
+			);
 			try {
 				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
 			} catch (error) {
@@ -731,6 +859,7 @@ async function handleProcessSpawnImpl(
 			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
+		signal.throwIfAborted();
 		try {
 			const relayArgs = await preparePermissionRelayArgs({
 				sessionId: config.sessionId,
@@ -757,6 +886,7 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
+	signal.throwIfAborted();
 	// ========================================================================
 	// System prompt delivery (flag / Windows temp file / embed / resume skip).
 	// The rules live in applySystemPromptDelivery so Cue and Group Chat spawns
@@ -773,6 +903,7 @@ async function handleProcessSpawnImpl(
 		agentId: agent?.id,
 		logContext: LOG_CONTEXT,
 	});
+	signal.throwIfAborted();
 	finalArgs = delivered.args;
 	let effectivePrompt = delivered.prompt;
 	const systemPromptTempFile = delivered.tempFile;
@@ -891,6 +1022,7 @@ async function handleProcessSpawnImpl(
 		hasPrompt: !!config.prompt,
 	});
 
+	signal.throwIfAborted();
 	// Get contextWindow: session-level override takes priority over agent-level config
 	// Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
 	// A Run on target states its own: the window the harness was told it has.
@@ -1000,6 +1132,7 @@ async function handleProcessSpawnImpl(
 		settingsStore,
 		codexTransport,
 	});
+	signal.throwIfAborted();
 	const sshStdinScript = sshWrap.sshStdinScript;
 	const sshRemoteCommand = sshWrap.sshRemoteCommand;
 	commandToSpawn = sshWrap.commandToSpawn;
@@ -1076,10 +1209,12 @@ async function handleProcessSpawnImpl(
 			const relativeDetection = localSpawnBinaryPath
 				? await checkCustomPath(localSpawnBinaryPath)
 				: undefined;
+			signal.throwIfAborted();
 			if (relativeDetection?.exists && relativeDetection.path) {
 				ompPrimeBinaryPath = relativeDetection.path;
 			} else {
 				const probed = await checkBinaryExists(agent?.binaryName || localSpawnBinaryPath || 'omp');
+				signal.throwIfAborted();
 				if (probed.exists && probed.path && path.isAbsolute(probed.path)) {
 					ompPrimeBinaryPath = probed.path;
 				}
@@ -1126,6 +1261,7 @@ async function handleProcessSpawnImpl(
 				prime.then(() => false),
 				new Promise<boolean>((resolve) => setTimeout(() => resolve(true), OMP_PRIME_SPAWN_CAP_MS)),
 			]);
+			signal.throwIfAborted();
 			if (primeExceededCap) {
 				// Makes the cold-start theory checkable in the packaged app's log:
 				// the first turn will show the fallback window until the prime lands.
@@ -1176,7 +1312,7 @@ async function handleProcessSpawnImpl(
 	// spawn resumes. Two writers on one session fail the turn on Codex and
 	// interleave the transcript on Claude, so wait it out (see the helper).
 	if (agentSessionId) {
-		const gate = await awaitSynopsisWriters(processManager, agentSessionId);
+		const gate = await awaitSynopsisWriters(processManager, agentSessionId, { signal });
 		if (gate.waitedFor.length > 0) {
 			logger.info('Spawn waited for a synopsis writing the same provider session', LOG_CONTEXT, {
 				sessionId: config.sessionId,
@@ -1188,6 +1324,7 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
+	if (signal.aborted) throw new Error('Agent run cancelled');
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,

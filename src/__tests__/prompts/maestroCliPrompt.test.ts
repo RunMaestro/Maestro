@@ -18,6 +18,21 @@ import { declaredFlags, descendCommandTree, findSubcommand } from '../helpers/cl
 const prompt = readFileSync(path.join(__dirname, '../../prompts/_maestro-cli.md'), 'utf-8');
 const peerParagraph = prompt.split('\n').find((line) => line.startsWith('**Peer agents.**'));
 
+describe('timeline scope guidance', () => {
+	test('requires explicit global reads in every agent entry point', () => {
+		for (const file of [
+			'_maestro-cli.md',
+			'_interface-primitives.md',
+			'maestro-system-prompt.md',
+		]) {
+			const text = readFileSync(path.join(__dirname, '../../prompts', file), 'utf-8');
+			expect(text).toContain('--global');
+			expect(text).not.toMatch(/(?:drop|Drop) `--agent` (?:for|to see) every agent/);
+		}
+		expect(prompt).toContain('MAESTRO_CALLER_AGENT_ID');
+	});
+});
+
 describe('_maestro-cli.md peer agents', () => {
 	test('has a peer paragraph beside the ask / dispatch guidance', () => {
 		expect(peerParagraph).toBeDefined();

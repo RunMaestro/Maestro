@@ -4,6 +4,7 @@
 // echo the request id. The accessor is mocked so no transcripts are read.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 
 vi.mock('electron', () => ({
 	app: { getVersion: () => '9.9.9', getAppPath: () => '/repo', getPath: () => '/tmp' },
@@ -35,7 +36,7 @@ import type { WebClient } from '../../../../main/web-server/handlers/messageHand
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

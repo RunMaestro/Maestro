@@ -8,7 +8,6 @@ import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { resolveDictationTarget } from '../../../renderer/services/dictation';
 import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
-import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -403,22 +402,16 @@ describe('InputArea', () => {
 			expect(screen.getByTitle('Send message')).toBeInTheDocument();
 		});
 
-		it('renders Enter to send toggle', () => {
-			const props = createDefaultProps();
-			render(<InputArea {...props} />);
+		it.each([true, false])(
+			'keeps the send-key preference out of the toolbar: %s',
+			(enterToSend) => {
+				const props = createDefaultProps({ enterToSend });
+				render(<InputArea {...props} />);
 
-			const button = screen.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/);
-			expect(button).toBeInTheDocument();
-			expect(button).toHaveTextContent('Enter');
-		});
-
-		it('renders Cmd+Enter (or Ctrl+Enter on non-Mac) when enterToSend is false', () => {
-			const props = createDefaultProps({ enterToSend: false });
-			render(<InputArea {...props} />);
-
-			const button = screen.getByTitle('Switch to Enter to send');
-			expect(button).toHaveTextContent(formatEnterToSend(false));
-		});
+				expect(screen.queryByTitle(/Switch to .*Enter to send/)).not.toBeInTheDocument();
+				expect(screen.getByTitle('Send message')).toBeInTheDocument();
+			}
+		);
 	});
 
 	describe('AI Mode', () => {
@@ -1979,14 +1972,14 @@ describe('InputArea', () => {
 			expect(processInput).toHaveBeenCalled();
 		});
 
-		it('toggles enterToSend when clicking keyboard button', () => {
-			const setEnterToSend = vi.fn();
-			const props = createDefaultProps({ enterToSend: true, setEnterToSend });
+		it('forwards Enter to the input key handler without changing the send-key preference', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(/Switch to (Cmd|Ctrl)\+Enter to send/));
+			fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
-			expect(setEnterToSend).toHaveBeenCalledWith(false);
+			expect(props.handleInputKeyDown).toHaveBeenCalledTimes(1);
+			expect(props.setEnterToSend).not.toHaveBeenCalled();
 		});
 
 		it('cycles permission mode when clicking the toggle', () => {

@@ -1,19 +1,10 @@
-## Task Recall (history JSON)
+## Task Recall (history JSONL)
 
-Your session history is stored at `{{AGENT_HISTORY_PATH}}` as a JSON file with this envelope:
+Start with `maestro-cli timeline`: it lists recent history entries next to the user's actions and commits, each with an `[entry <id>]` handle, and `timeline show <id>` prints one entry in full. Read the file below only for a scan the CLI does not cover.
 
-```json
-{
-	"version": 1,
-	"sessionId": "<provider session id>",
-	"projectPath": "<absolute path>",
-	"entries": [
-		/* HistoryEntry[], newest entries appended last; not pre-sorted */
-	]
-}
-```
+Your history is stored at `{{AGENT_HISTORY_PATH}}` as JSONL: one entry per line, appended when a turn finishes, so the newest entries are at the end. Another agent's history sits in the same folder, named `<agentId>.jsonl`. A line can fail to parse after a crash; skip it.
 
-Each `entries[]` element has the following fields (optional unless marked required):
+Each line is one entry with the following fields (optional unless marked required):
 
 - `id` _(required, string)_ - UUID for the entry
 - `type` _(required, `'AUTO' | 'USER' | 'CUE' | 'AGENT'`)_ - `AUTO` = Auto Run, `USER` = interactive turn, `CUE` = started by Cue (a subscription's own run, or a `maestro-cli send` Cue started), `AGENT` = an ordinary message from another agent, by an `@mention` consult or by `maestro-cli send` from its shell (a normal turn, not automation; see `sourceAgentName` for who asked)
@@ -21,9 +12,10 @@ Each `entries[]` element has the following fields (optional unless marked requir
 - `summary` _(required, string)_ - short description of the task / response
 - `projectPath` _(required, string)_ - absolute path of the working directory at the time
 - `fullResponse` - complete AI response text; pull this when you need full context, not just the summary
-- `agentSessionId` - Maestro agent UUID (the in-app session container)
-- `sessionId` - provider session id (e.g. Claude Code's resume id)
-- `sessionName` - human-readable agent/tab name
+- `sessionId` - the Maestro agent id (the file's name)
+- `agentSessionId` - provider session id (e.g. Claude Code's resume id)
+- `tabId` - the AI tab the turn ran in (`session show <tab-id>` prints its transcript while the tab is open)
+- `sessionName` - human-readable tab name
 - `sourceAgentName` - on an `AGENT` entry, the display name of the agent that consulted or sent to this one
 - `success` - boolean; whether the run completed without error
 - `elapsedTimeMs` - wall-clock duration of the run
@@ -35,4 +27,4 @@ Each `entries[]` element has the following fields (optional unless marked requir
 - `cueTriggerName`, `cueEventType`, `cueSourceSession` - populated on a `CUE` entry for a subscription's own run; identify the subscription, event, and upstream agent that triggered it. Absent on a `CUE` entry written by a Cue-started `maestro-cli send`
 - `hostname` - set when history is shared across machines
 
-To recall recent work, read the file, sort `entries` by `timestamp` descending, and scan from the top. Use `summary` for quick triage and `fullResponse` when you need detail.
+To find one entry, grep its id. To scan recent work by hand, read the last lines and sort by `timestamp` (file order is finish order). Use `summary` for quick triage and `fullResponse` when you need detail.

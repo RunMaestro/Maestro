@@ -124,11 +124,10 @@ export function DelegationAddAgentSelect({
 				'Put an agent that is not drawn on this graph, so an edge can be drawn to it. The agent is not moved into the group'
 			}
 			data-testid="delegation-graph-add-agent"
-			className="px-2 py-1 rounded text-xs border cursor-pointer outline-none max-w-[180px] disabled:opacity-50 disabled:cursor-not-allowed"
+			className="px-3 py-1.5 rounded text-sm cursor-pointer outline-none shrink-0 max-w-[160px] disabled:opacity-50 disabled:cursor-not-allowed"
 			style={{
-				backgroundColor: colors.bgMain,
-				borderColor: colors.border,
-				color: colors.textMain,
+				backgroundColor: `${colors.accent}10`,
+				color: colors.textDim,
 			}}
 		>
 			<option value="">Add agent...</option>

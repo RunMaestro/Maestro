@@ -42,6 +42,7 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 				updateAutoRunProgress: mockUpdateAutoRunProgress,
 				updateUsageStats: mockUpdateUsageStats,
 				autoRunStats: mockAutoRunStats,
+				settingsLoaded: true,
 			})),
 		}
 	),
@@ -180,6 +181,7 @@ describe('useAutoRunAchievements', () => {
 			updateAutoRunProgress: mockUpdateAutoRunProgress,
 			updateUsageStats: mockUpdateUsageStats,
 			autoRunStats: mockAutoRunStats,
+			settingsLoaded: true,
 		});
 	});
 
@@ -927,6 +929,57 @@ describe('useAutoRunAchievements', () => {
 
 			expect(mockUpdateAutoRunProgress).toHaveBeenCalled();
 			expect(mockSubmitLeaderboardTimeDelta).not.toHaveBeenCalled();
+		});
+
+		// Regression: every window and every web-desktop client receives the same
+		// Cue broadcast. Each one crediting it added the minutes once per
+		// renderer and shipped the same delta to the leaderboard once per renderer.
+		it('does not subscribe in a renderer that is not the lifecycle owner', () => {
+			renderHook(() =>
+				useAutoRunAchievements({ activeBatchSessionIds: [], isLifecycleOwner: false })
+			);
+
+			expect(mockCueOnActivityUpdate).not.toHaveBeenCalled();
+			expect(mockUpdateAutoRunProgress).not.toHaveBeenCalled();
+		});
+
+		// Regression: credit arriving before hydration was added to the zeroed
+		// default store and persisted as the lifetime total (1,352 hours became
+		// 10), and its leaderboard delta was dropped for want of a registration.
+		it('holds credit that arrives before settings hydrate, then applies it once', () => {
+			const notLoaded = {
+				updateAutoRunProgress: mockUpdateAutoRunProgress,
+				updateUsageStats: mockUpdateUsageStats,
+				autoRunStats: mockAutoRunStats,
+				settingsLoaded: false,
+			};
+			(useSettingsStore as any).getState.mockReturnValue(notLoaded);
+			(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
+				selector({ autoRunStats: mockAutoRunStats, settingsLoaded: false })
+			);
+
+			const { rerender } = renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'conductorTimeCredit', creditMs: 60000 });
+				capturedCueActivityCallback?.({ type: 'conductorTimeCredit', creditMs: 120000 });
+			});
+			expect(mockUpdateAutoRunProgress).not.toHaveBeenCalled();
+			expect(mockSubmitLeaderboardTimeDelta).not.toHaveBeenCalled();
+
+			(useSettingsStore as any).getState.mockReturnValue({ ...notLoaded, settingsLoaded: true });
+			(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
+				selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
+			);
+			rerender();
+			rerender();
+
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledTimes(1);
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledWith(180000, 'cue');
+			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledTimes(1);
+			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledWith({
+				deltaMs: 180000,
+				source: 'cue',
+			});
 		});
 
 		it('unsubscribes from Cue activity updates on unmount', () => {

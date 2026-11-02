@@ -196,6 +196,41 @@ export type MentionTiming = 'parallel' | 'consult-first' | 'handoff';
  */
 export type MentionRouting = 'only' | MentionTiming;
 
+/**
+ * Every routing, in the composer menu's order: the default first, then consult
+ * before, hand off after, leave out. The routing strip draws its menu from it
+ * and `maestro-cli dispatch --routing` validates against it.
+ */
+export const MENTION_ROUTINGS: readonly MentionRouting[] = [
+	'parallel',
+	'consult-first',
+	'handoff',
+	'only',
+];
+
+/** Whether an untrusted value (a CLI flag, a WS field) names a routing. */
+export function isMentionRouting(value: unknown): value is MentionRouting {
+	return typeof value === 'string' && (MENTION_ROUTINGS as readonly string[]).includes(value);
+}
+
+/**
+ * Read an optional routing off a boundary (`dispatch --routing`, the
+ * `mentionRouting` field of a dispatch message). Absent is fine and leaves the
+ * wording in charge; anything present that is not a routing is an error, never
+ * dropped, because a caller who asked for a routing and silently got the
+ * wording's would never know.
+ */
+export function parseMentionRoutingField(
+	raw: unknown
+): { ok: true; routing?: MentionRouting } | { ok: false; error: string } {
+	if (raw === undefined || raw === null) return { ok: true };
+	if (isMentionRouting(raw)) return { ok: true, routing: raw };
+	return {
+		ok: false,
+		error: `Unknown mention routing ${JSON.stringify(raw)} (expected one of: ${MENTION_ROUTINGS.join(', ')})`,
+	};
+}
+
 /** Where a clause ends, for scoping the words around one mention. */
 const CLAUSE_BREAK = /[.!?\n;]/;
 

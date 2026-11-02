@@ -266,38 +266,46 @@ describe('useCue', () => {
 		});
 
 		// Phase 12B - queueOverflow activity payload triggers a toast
-		it('fires a warning toast when a queueOverflow activity payload is received', async () => {
-			// Capture the onActivityUpdate callback so we can deliver a payload.
-			let activityCallback: ((p: unknown) => void) | null = null;
-			mockOnActivityUpdate.mockImplementation((cb: (p: unknown) => void) => {
-				activityCallback = cb;
-				return mockUnsubscribe;
-			});
-			const notificationStore = await import('../../../renderer/stores/notificationStore');
-			const notifySpy = vi.spyOn(notificationStore, 'notifyToast').mockReturnValue(undefined);
-
-			await renderAndSettle();
-			expect(activityCallback).not.toBeNull();
-
-			act(() => {
-				activityCallback?.({
-					type: 'queueOverflow',
-					sessionId: 's-1',
-					sessionName: 'Sess A',
-					subscriptionName: 'sub-x',
-					queuedAt: 1_700_000_000_000,
+		it.each([undefined, 'oldest-evicted', 'incoming-rejected'])(
+			'names the overflow outcome %s in its warning',
+			async (outcome) => {
+				// Capture the onActivityUpdate callback so we can deliver a payload.
+				let activityCallback: ((p: unknown) => void) | null = null;
+				mockOnActivityUpdate.mockImplementation((cb: (p: unknown) => void) => {
+					activityCallback = cb;
+					return mockUnsubscribe;
 				});
-			});
+				const notificationStore = await import('../../../renderer/stores/notificationStore');
+				const notifySpy = vi.spyOn(notificationStore, 'notifyToast').mockReturnValue(undefined);
 
-			expect(notifySpy).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'warning',
-					title: expect.stringContaining('Sess A'),
-					message: expect.stringContaining('sub-x'),
-				})
-			);
-			notifySpy.mockRestore();
-		});
+				await renderAndSettle();
+				expect(activityCallback).not.toBeNull();
+
+				act(() => {
+					activityCallback?.({
+						type: 'queueOverflow',
+						outcome,
+						sessionId: 's-1',
+						sessionName: 'Sess A',
+						subscriptionName: 'sub-x',
+						queuedAt: 1_700_000_000_000,
+					});
+				});
+
+				expect(notifySpy).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'warning',
+						title: expect.stringContaining('Sess A'),
+						message: expect.stringContaining(
+							outcome === 'incoming-rejected'
+								? 'Incoming \"sub-x\" event was not admitted'
+								: 'Oldest queued \"sub-x\" event was dropped'
+						),
+					})
+				);
+				notifySpy.mockRestore();
+			}
+		);
 
 		// Regression for 42ac8333e: an earlier version of the toast title
 		// appended the raw `payload.queuedAt` ISO-8601 string in square

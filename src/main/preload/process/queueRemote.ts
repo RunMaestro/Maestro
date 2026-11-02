@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { ConsultChain } from '../../../shared/consultBudget';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function createQueueRemoteApi() {
 	return {
@@ -20,7 +21,8 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				consultChain?: ConsultChain
+				consultChain?: ConsultChain,
+				mentionRouting?: MentionRouting
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -33,7 +35,8 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				consultChain?: ConsultChain
+				consultChain?: ConsultChain,
+				mentionRouting?: MentionRouting
 			) => {
 				try {
 					callback(
@@ -45,7 +48,8 @@ export function createQueueRemoteApi() {
 						images,
 						background,
 						held,
-						consultChain
+						consultChain,
+						mentionRouting
 					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

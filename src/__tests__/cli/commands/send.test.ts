@@ -382,7 +382,7 @@ describe('send command', () => {
 				requirePluginTools: true,
 			}),
 			'plugins_send_agent_result',
-			61 * 60_000
+			361 * 60_000
 		);
 		expect(spawnAgent).not.toHaveBeenCalled();
 		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
@@ -511,7 +511,12 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
+			{
+				readOnlyMode: undefined,
+				signal: expect.any(AbortSignal),
+				consultChain: TARGET_CHAIN,
+				acceptWorkspaceTrust: true,
+			}
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -560,7 +565,12 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
+			{
+				readOnlyMode: undefined,
+				signal: expect.any(AbortSignal),
+				consultChain: TARGET_CHAIN,
+				acceptWorkspaceTrust: true,
+			}
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -628,7 +638,12 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
+			{
+				readOnlyMode: undefined,
+				signal: expect.any(AbortSignal),
+				consultChain: TARGET_CHAIN,
+				acceptWorkspaceTrust: true,
+			}
 		);
 	});
 
@@ -651,6 +666,7 @@ describe('send command', () => {
 			signal: expect.any(AbortSignal),
 			readOnlyMode: undefined,
 			consultChain: TARGET_CHAIN,
+			acceptWorkspaceTrust: true,
 		});
 	});
 
@@ -671,7 +687,12 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
+			{
+				readOnlyMode: true,
+				signal: expect.any(AbortSignal),
+				consultChain: TARGET_CHAIN,
+				acceptWorkspaceTrust: true,
+			}
 		);
 	});
 

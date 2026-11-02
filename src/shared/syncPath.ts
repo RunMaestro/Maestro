@@ -119,6 +119,26 @@ export function isValidSyncPath(customPath: string): boolean {
 	return true;
 }
 
+/** Shown when the user picks a Storage Location inside the install directory. */
+export const INSTALL_DIR_SYNC_PATH_ERROR =
+	'This folder is removed when Maestro updates. Pick a folder outside the Maestro install directory.';
+
+/**
+ * Whether `customPath` is the app's install directory or lives inside it.
+ *
+ * An update replaces the install directory wholesale: the NSIS updater runs the
+ * old uninstaller, which deletes everything under `$INSTDIR`, and macOS swaps
+ * the whole `.app` bundle. A Storage Location in there loses every agent, group
+ * and setting on the next update (issue #1875). `installDir` comes from the
+ * main process so this module stays free of Electron.
+ */
+export function isInsideInstallDir(customPath: string, installDir: string): boolean {
+	const fold = (p: string) => (isWindows() ? path.resolve(p).toLowerCase() : path.resolve(p));
+	const relative = path.relative(fold(installDir), fold(customPath));
+	if (relative === '') return true;
+	return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
 /**
  * The directory the synced stores live in, for a process without Electron.
  *

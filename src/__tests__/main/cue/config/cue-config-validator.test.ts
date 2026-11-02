@@ -15,6 +15,28 @@ function errs(sub: unknown): string[] {
 	return validateSubscription(sub, 'sub');
 }
 
+describe('validateSubscription - bounded plugin delivery', () => {
+	const base = {
+		name: 'mail',
+		event: 'plugin.event',
+		prompt: 'Process the event',
+		plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+	};
+	it('reports unsupported plugin fan-out before loading the source', () => {
+		expect(errs({ ...base, fan_out: ['other-agent'] })).toContain(
+			'sub: "fan_out" is not supported for plugin.event subscriptions'
+		);
+	});
+	it.each([undefined, []])('accepts a single plugin delivery with fan_out=%s', (fanOut) => {
+		expect(errs({ ...base, fan_out: fanOut })).toEqual([]);
+	});
+	it('preserves ordinary event fan-out', () => {
+		expect(
+			errs({ name: 'startup', event: 'app.startup', prompt: 'Work', fan_out: ['other-agent'] })
+		).toEqual([]);
+	});
+});
+
 describe('validateSubscription - structured CLI send tab placement', () => {
 	const base = {
 		name: 'triage',

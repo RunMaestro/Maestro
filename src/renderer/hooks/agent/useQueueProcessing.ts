@@ -28,7 +28,11 @@ import type {
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
-import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import {
+	isQueuedItemTargetBusy,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
@@ -240,10 +244,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 					// Resolved-target lookup rather than `getQueueBusyContext`: that helper
 					// keys off `item.tabId` alone, which misses both the active-tab
 					// fallback and orphan tabs that `resolveQueuedItemTarget` handles.
-					const targetTab =
-						s.aiTabs.find((t) => t.id === target.tabId) ??
-						s.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
-					if (targetTab?.state === 'busy') return s;
+					if (isQueuedItemTargetBusy(s, firstItem)) return s;
 
 					const updatedAiTabs = s.aiTabs.map((tab) =>
 						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem, s) : tab

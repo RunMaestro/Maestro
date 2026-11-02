@@ -327,3 +327,69 @@ describe('maestro:remoteCreateSession group defaults', () => {
 		expect(respond).toHaveBeenCalledWith('ch', expect.objectContaining({ seededFromGroup: null }));
 	});
 });
+
+async function create(toolType: string, config: Record<string, unknown>): Promise<Session> {
+	const { setSessions } = setup();
+	dispatchCreate(toolType, config);
+	await flush();
+	expect(respond).toHaveBeenCalledWith(
+		'ch',
+		expect.objectContaining({ sessionId: expect.any(String) })
+	);
+	return createdSession(setSessions);
+}
+
+describe('maestro:remoteCreateSession', () => {
+	it('stores the duplicate fields and stamps the fresh Claude mode', async () => {
+		const agent = await create('claude-code', {
+			additionalDirectories: [{ path: '/shared', read: true, write: false }],
+			enableMaestroP: true,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: true,
+		});
+
+		expect(agent).toMatchObject({
+			additionalDirectories: [{ path: '/shared', read: true, write: false }],
+			enableMaestroP: true,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: true,
+			claudeInteractive: { mode: 'api', modeReason: 'auto' },
+		});
+	});
+
+	it('keeps an explicit Adaptive Mode off and drops its refinements', async () => {
+		const agent = await create('claude-code', {
+			enableMaestroP: false,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+		});
+
+		expect(agent.enableMaestroP).toBe(false);
+		expect(agent.maestroPMode).toBeUndefined();
+		expect(agent.maestroPPath).toBeUndefined();
+	});
+
+	it('stores only the Codex opt-ins, like createNewSession()', async () => {
+		const optedIn = await create('codex', {
+			codexAutoResetOnExhaustion: true,
+			codexTransport: 'app-server',
+		});
+		expect(optedIn).toMatchObject({
+			codexAutoResetOnExhaustion: true,
+			codexTransport: 'app-server',
+		});
+		expect(optedIn.claudeInteractive).toBeUndefined();
+
+		respond.mockClear();
+		const defaults = await create('codex', {
+			codexAutoResetOnExhaustion: false,
+			codexTransport: 'exec',
+		});
+		expect('codexAutoResetOnExhaustion' in defaults).toBe(false);
+		expect('codexTransport' in defaults).toBe(false);
+	});
+});

@@ -1,3 +1,4 @@
+import { applyRelayConversationRuntime } from '../../services/relayConversations';
 import { resumeDeferredProviderTranslations } from '../../services/providerTranslation';
 /**
  * useSessionLifecycleSync.ts
@@ -86,14 +87,20 @@ export function useSessionLifecycleSync(
 		// like it names an agent this client never had, and the add then commits
 		// the agent the user just closed.
 		let queue: Promise<void> = Promise.resolve();
+		let queueGeneration = useSessionStore.getState().sessionReconciliationGeneration;
 		void whenSessionsLoaded().then(() => {
 			if (!disposed) resumeDeferredProviderTranslations(useSessionStore.getState().sessions);
 		});
 
-		const applyDelta = async (payload: SessionLifecycleSyncPayload): Promise<void> => {
+		const applyDelta = async (
+			payload: SessionLifecycleSyncPayload,
+			generation: number
+		): Promise<void> => {
+			if (generation !== useSessionStore.getState().sessionReconciliationGeneration) return;
 			await whenSessionsLoaded();
+			if (disposed || generation !== useSessionStore.getState().sessionReconciliationGeneration)
+				return;
 			resumeDeferredProviderTranslations(useSessionStore.getState().sessions);
-			if (disposed) return;
 
 			const known = new Set(useSessionStore.getState().sessions.map((s) => s.id));
 			// Both directions are filtered against what this client actually has:
@@ -104,7 +111,8 @@ export function useSessionLifecycleSync(
 			if (removedIds.length === 0 && incoming.length === 0 && !payload.updated?.length) return;
 
 			const restored = await Promise.all(incoming.map((s) => restoreSession(s)));
-			if (disposed) return;
+			if (disposed || generation !== useSessionStore.getState().sessionReconciliationGeneration)
+				return;
 
 			const removeSet = new Set(removedIds);
 			useSessionStore.getState().setSessions((prev) => {
@@ -122,7 +130,10 @@ export function useSessionLifecycleSync(
 					const update = updateMap.get(session.id);
 					const baseline = baselineMap.get(session.id);
 					if (!update || !baseline) return session;
-					let merged = mergeSessionPersistenceChanges(update, session, baseline, true, true);
+					let merged = applyRelayConversationRuntime(
+						mergeSessionPersistenceChanges(update, session, baseline, true, true),
+						session
+					);
 					if (isWebDesktop()) {
 						const previousIds = new Set(session.aiTabs.map((tab) => tab.id));
 						const tabIds = [
@@ -166,16 +177,21 @@ export function useSessionLifecycleSync(
 		};
 
 		const unsubscribe = api.onLifecycleSync((payload: SessionLifecycleSyncPayload) => {
+			const generation = useSessionStore.getState().sessionReconciliationGeneration;
+			if (generation !== queueGeneration) {
+				queueGeneration = generation;
+				queue = Promise.resolve();
+			}
 			// Report a failed delta but keep the chain alive: it is what preserves
 			// arrival order for every delta behind it, and a rejected link would
 			// silently stop this client following its peers for the rest of the run.
-			queue = queue
-				.then(() => applyDelta(payload))
-				.catch((err) => {
-					captureException(err instanceof Error ? err : new Error(String(err)), {
-						extra: { operation: 'useSessionLifecycleSync.applyDelta' },
-					});
+			const applied = queue.then(() => applyDelta(payload, generation));
+			queue = applied.catch((err) => {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { operation: 'useSessionLifecycleSync.applyDelta' },
 				});
+			});
+			return applied;
 		});
 
 		return () => {

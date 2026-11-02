@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * @file plugin-manager-update.test.ts
  * @description Version-aware LOCAL update of an installed plugin. A strictly
@@ -120,8 +121,8 @@ describe('PluginManager.update', () => {
 			}
 		);
 		signPluginDir(src1, keys);
-		expect(manager.install(src1).success).toBe(true);
-		manager.setEnabled(PLUGIN_ID, true);
+		expect(await (await manager.install(src1)).success).toBe(true);
+		await manager.setEnabled(PLUGIN_ID, true);
 		kvStore.set(PLUGIN_ID, 'token', 'saved-token');
 		fs.mkdirSync(path.dirname(sqlFile), { recursive: true });
 		fs.writeFileSync(sqlFile, 'saved-sql-data');
@@ -142,7 +143,8 @@ describe('PluginManager.update', () => {
 		expect(record?.manifest?.version).toBe('2.0.0');
 		expect(record?.signature?.status).toBe('trusted');
 		expect(verifyRecord).toHaveBeenCalledWith(
-			expect.objectContaining({ manifest: record?.manifest })
+			expect.objectContaining({ manifest: record?.manifest }),
+			expect.anything()
 		);
 		expect(record?.enabled).toBe(false); // new identity requires fresh consent
 		expect(grants).toEqual([{ capability: 'storage:read' }]);
@@ -162,11 +164,11 @@ describe('PluginManager.update', () => {
 				'old-only.txt': 'gone-after-update',
 			}
 		);
-		expect(manager.install(src1).success).toBe(true);
+		expect(await (await manager.install(src1)).success).toBe(true);
 
 		// tier-1 plugins default to DISABLED; enabling it makes the toggle a
 		// non-default value, so a wrongly-reset toggle after update would be caught.
-		manager.setEnabled(PLUGIN_ID, true);
+		await manager.setEnabled(PLUGIN_ID, true);
 		expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.enabled).toBe(true);
 
 		const src2 = writeSource(
@@ -218,7 +220,7 @@ describe('PluginManager.update', () => {
 				{ version: '1.0.0' },
 				{ 'marker.txt': 'original' }
 			);
-			expect(manager.install(original).success).toBe(true);
+			expect(await (await manager.install(original)).success).toBe(true);
 			const replacement = writeSource(
 				path.join(workDir, 'replacement'),
 				{ version: '2.0.0' },
@@ -244,7 +246,7 @@ describe('PluginManager.update', () => {
 	it('rejects a downgrade', async () => {
 		const manager = makeManager();
 		const src2 = writeSource(path.join(workDir, 'src-v2'), { version: '2.0.0' });
-		expect(manager.install(src2).success).toBe(true);
+		expect(await (await manager.install(src2)).success).toBe(true);
 
 		const src1 = writeSource(path.join(workDir, 'src-v1'), { version: '1.0.0' });
 		await expect(manager.update(src1)).rejects.toThrow(/not newer/);
@@ -258,7 +260,7 @@ describe('PluginManager.update', () => {
 	it('rejects an equal version', async () => {
 		const manager = makeManager();
 		const src = writeSource(path.join(workDir, 'src-v1'), { version: '1.0.0' });
-		expect(manager.install(src).success).toBe(true);
+		expect(await (await manager.install(src)).success).toBe(true);
 
 		const same = writeSource(path.join(workDir, 'src-v1-again'), { version: '1.0.0' });
 		await expect(manager.update(same)).rejects.toThrow(/not newer/);
@@ -267,7 +269,7 @@ describe('PluginManager.update', () => {
 	it('rejects a source tree containing a symlink', async () => {
 		const manager = makeManager();
 		const src1 = writeSource(path.join(workDir, 'src-v1'), { version: '1.0.0' });
-		expect(manager.install(src1).success).toBe(true);
+		expect(await (await manager.install(src1)).success).toBe(true);
 
 		const src2 = writeSource(path.join(workDir, 'src-v2'), { version: '2.0.0' });
 		// A real directory the link will point at (absolute target, required for a

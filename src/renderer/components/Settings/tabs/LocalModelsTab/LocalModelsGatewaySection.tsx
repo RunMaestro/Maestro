@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Power, Router } from 'lucide-react';
+import { Power, Router, X } from 'lucide-react';
 
 import { resolveAgentEnvironment } from '../../../../../shared/agentEnvironment';
 import { getAgentDisplayName } from '../../../../../shared/agentMetadata';
@@ -48,8 +48,10 @@ import { useSessionStore } from '../../../../stores/sessionStore';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Session, Theme } from '../../../../types';
 import { GatewayUrlField } from '../../../shared/GatewayUrlField';
+import { ThemedSelect } from '../../../shared/ThemedSelect';
 import { TokenProxyModeField, tokenProxyModeBlocker } from '../../../shared/TokenProxyModeField';
 import { EnvVarList } from '../../../ui/EnvVarList';
+import { GhostIconButton } from '../../../ui/GhostIconButton';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelsProxyUsage } from './LocalModelsProxyUsage';
 import { CardButton } from './CardButton';
@@ -86,6 +88,11 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 	const [bulkBusy, setBulkBusy] = useState(false);
 	const [bulkStatus, setBulkStatus] = useState('');
 	const [bulkErrors, setBulkErrors] = useState<string[]>([]);
+	const [addedAgentIds, setAddedAgentIds] = useState<string[]>([]);
+	const listedAgents = agents.filter(
+		(agent) => addedAgentIds.includes(agent.id) || agent.gatewayUrl || agent.tokenProxyMode
+	);
+	const availableAgents = agents.filter((agent) => !listedAgents.includes(agent));
 	const eligibleAgents = useMemo(
 		() =>
 			agents.filter(
@@ -197,35 +204,62 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 								</div>
 							)}
 						</div>
-						<fieldset disabled={bulkBusy}>
-							<table className="w-full text-xs" data-testid="local-models-gateway-table">
-								<thead>
-									<tr>
-										<th className="text-left font-medium opacity-70 pb-2 pr-3">Agent</th>
-										<th className="text-left font-medium opacity-70 pb-2 pr-3">Provider</th>
-										<th className="text-left font-medium opacity-70 pb-2 pr-3">Maestro proxy</th>
-										<th className="text-left font-medium opacity-70 pb-2 w-2/5">Gateway URL</th>
-									</tr>
-								</thead>
-								<tbody>
-									{agents.map((agent) => {
-										const remoteId = agentRemoteId(agent);
-										return (
-											<GatewayRow
-												key={agent.id}
-												theme={theme}
-												agent={agent}
-												providerEnvVars={envByToolType[agent.toolType]}
-												// The id stands in until the name loads: the row must
-												// know the agent is remote either way.
-												sshRemoteName={remoteId ? (remoteNames[remoteId] ?? remoteId) : undefined}
-												proxyPort={proxyPort}
-												onProxyModeChanged={proxy.refresh}
-											/>
-										);
-									})}
-								</tbody>
-							</table>
+						<fieldset disabled={bulkBusy} className="space-y-3">
+							{listedAgents.length === 0 && (
+								<p className="text-xs opacity-70 mb-2">No agent gateways configured.</p>
+							)}
+							<ThemedSelect
+								theme={theme}
+								value=""
+								placeholder="Add agent"
+								aria-label="Add agent gateway"
+								options={availableAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
+								onChange={(id) => setAddedAgentIds((ids) => [...ids, id])}
+								disabled={bulkBusy || availableAgents.length === 0}
+								filterable
+								filterPlaceholder="Filter agents..."
+							/>
+							{listedAgents.length > 0 && (
+								<table className="w-full text-xs" data-testid="local-models-gateway-table">
+									<thead>
+										<tr>
+											<th className="text-left font-medium opacity-70 pb-2 pr-3">Agent</th>
+											<th className="text-left font-medium opacity-70 pb-2 pr-3">Provider</th>
+											<th className="text-left font-medium opacity-70 pb-2 pr-3">Maestro proxy</th>
+											<th className="text-left font-medium opacity-70 pb-2 w-2/5">Gateway URL</th>
+											<th className="w-6">
+												<span className="sr-only">Remove</span>
+											</th>
+										</tr>
+									</thead>
+									<tbody>
+										{listedAgents.map((agent) => {
+											const remoteId = agentRemoteId(agent);
+											return (
+												<GatewayRow
+													key={agent.id}
+													theme={theme}
+													agent={agent}
+													providerEnvVars={envByToolType[agent.toolType]}
+													// The id stands in until the name loads: the row must
+													// know the agent is remote either way.
+													sshRemoteName={remoteId ? (remoteNames[remoteId] ?? remoteId) : undefined}
+													proxyPort={proxyPort}
+													onProxyModeChanged={proxy.refresh}
+													onEdit={() =>
+														setAddedAgentIds((ids) =>
+															ids.includes(agent.id) ? ids : [...ids, agent.id]
+														)
+													}
+													onRemove={() =>
+														setAddedAgentIds((ids) => ids.filter((id) => id !== agent.id))
+													}
+												/>
+											);
+										})}
+									</tbody>
+								</table>
+							)}
 						</fieldset>
 					</>
 				)}
@@ -252,6 +286,8 @@ interface GatewayRowProps {
 	proxyPort: number | null;
 	/** The proxy's picture changed: an agent joined or left it. */
 	onProxyModeChanged: () => void;
+	onEdit: () => void;
+	onRemove: () => void;
 }
 
 function GatewayRow({
@@ -261,10 +297,13 @@ function GatewayRow({
 	sshRemoteName,
 	proxyPort,
 	onProxyModeChanged,
+	onEdit,
+	onRemove,
 }: GatewayRowProps) {
 	const stored = agent.gatewayUrl ?? '';
 	const [draft, setDraft] = useState(stored);
 	const [error, setError] = useState<string | undefined>();
+	const [removing, setRemoving] = useState(false);
 	const proxyMode = resolveTokenProxyMode({
 		gatewayUrl: stored,
 		storedMode: agent.tokenProxyMode,
@@ -332,9 +371,12 @@ function GatewayRow({
 				<TokenProxyModeField
 					theme={theme}
 					value={proxyMode}
-					onChange={modeChoice.choose}
+					onChange={(mode) => {
+						onEdit();
+						void modeChoice.choose(mode);
+					}}
 					disabledReason={modeBlocker}
-					busy={modeChoice.busy}
+					busy={modeChoice.busy || removing}
 					error={modeChoice.error}
 					ariaLabel={`${TOKEN_PROXY_NAME} mode for ${agent.name}`}
 					testId={`gateway-proxy-mode-${agent.id}`}
@@ -347,10 +389,12 @@ function GatewayRow({
 					toolType={agent.toolType}
 					value={draft}
 					onChange={(value) => {
+						onEdit();
 						setDraft(value);
 						setError(undefined);
 					}}
 					onCommit={commit}
+					disabledReason={removing ? 'Removing gateway...' : undefined}
 					userEnvVars={userEnvVars}
 					sshRemoteName={sshRemoteName}
 					error={error}
@@ -375,6 +419,37 @@ function GatewayRow({
 						)}
 					</div>
 				)}
+			</td>
+			<td className="align-top py-1.5 pl-2">
+				<GhostIconButton
+					ariaLabel={`Remove gateway for ${agent.name}`}
+					title="Remove gateway"
+					color={theme.colors.textDim}
+					disabled={removing || modeChoice.busy}
+					onMouseDown={(event) => event.preventDefault()}
+					onClick={() => {
+						if (!stored && !agent.tokenProxyMode) {
+							onRemove();
+							return;
+						}
+						setRemoving(true);
+						void (
+							stored ? setAgentGatewayUrl(agent.id, '') : setAgentTokenProxyMode(agent.id, 'off')
+						)
+							.then((result) => {
+								if (!result.ok) {
+									setError(result.error);
+									return;
+								}
+								onRemove();
+								onProxyModeChanged();
+							})
+							.catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+							.finally(() => setRemoving(false));
+					}}
+				>
+					<X size={14} />
+				</GhostIconButton>
 			</td>
 		</tr>
 	);

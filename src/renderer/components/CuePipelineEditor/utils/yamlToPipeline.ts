@@ -299,6 +299,9 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 	if (sub.injection_threshold != null) config.injection_threshold = sub.injection_threshold;
 
 	switch (sub.event as CueEventType) {
+		case 'plugin.event':
+			config.plugin = sub.plugin;
+			break;
 		case 'time.heartbeat':
 			if (sub.interval_minutes != null) config.interval_minutes = sub.interval_minutes;
 			break;

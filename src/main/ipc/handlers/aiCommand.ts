@@ -234,6 +234,8 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 								: config.customModel,
 							sessionCustomEffort: utility.usesUtilityProvider ? undefined : config.customEffort,
 							claudeTokenSource: utility.changesProvider ? undefined : config.claudeTokenSource,
+							// `cwd` is the requesting agent's own directory (resolveCommandCwd).
+							acceptWorkspaceTrust: true,
 							agentConfigValues,
 						},
 						processManager,

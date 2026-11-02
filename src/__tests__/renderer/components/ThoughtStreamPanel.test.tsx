@@ -648,6 +648,18 @@ describe('ThoughtStreamPanel steering', () => {
 			expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
 		});
 
+		it('draws Steer at rest as a peer of Search, not highlighted', () => {
+			runFor(SID);
+			open();
+
+			// A warning-filled border at rest read as an already-active control.
+			expect(steerButton()).toHaveStyle({
+				backgroundColor: mockTheme.colors.bgActivity,
+				borderColor: mockTheme.colors.border,
+				color: mockTheme.colors.textMain,
+			});
+		});
+
 		it('swaps the whole bar for the search box, focused, when Search is clicked', () => {
 			runFor(SID);
 			open();

@@ -269,6 +269,17 @@ export interface TtsSpeakOptions {
 	rate?: number;
 }
 
+/** A selectable voice. Missing metadata stays unknown, never inferred from a name. */
+export interface TtsVoice {
+	id: string;
+	name: string;
+	/** BCP 47 locale, for example en-US. */
+	language?: string;
+	gender?: 'female' | 'male' | 'neutral';
+	description?: string;
+	previewUrl?: string;
+}
+
 export interface TtsProvider extends VoiceProviderInfo {
 	/** Stream a reply. Iteration ends early when `cancel()` is called. */
 	speak(text: string, options: TtsSpeakOptions): AsyncIterable<TtsChunk>;

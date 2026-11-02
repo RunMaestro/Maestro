@@ -10,7 +10,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useGitStatusPolling, getScaledPollInterval } from '../../../renderer/hooks';
+import {
+	useGitStatusPolling,
+	getScaledPollInterval,
+} from '../../../renderer/hooks/git/useGitStatusPolling';
 import type { Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { gitService } from '../../../renderer/services/git';
@@ -52,7 +55,27 @@ describe('useGitStatusPolling', () => {
 	});
 
 	afterEach(() => {
+		delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
 		setDocumentHidden(false);
+	});
+
+	it('pauses host git reads while restoring and resumes after reconciliation', async () => {
+		const bridge = window as unknown as Record<string, unknown>;
+		bridge.__MAESTRO_BRIDGE_STATE__ = 'restoring';
+		vi.mocked(gitService.getStatus).mockResolvedValue({ files: [], branch: 'main' });
+		const sessions = [createMockSession({ id: 'git-session', isGitRepo: true })];
+		const { result } = renderHook(() => useGitStatusPolling(sessions));
+		await act(async () => {
+			await result.current.refreshGitStatus();
+		});
+		expect(gitService.getStatus).not.toHaveBeenCalled();
+		await act(async () => {
+			bridge.__MAESTRO_BRIDGE_STATE__ = 'connected';
+			window.dispatchEvent(
+				new CustomEvent('maestro:bridge-state', { detail: { state: 'connected' } })
+			);
+		});
+		expect(gitService.getStatus).toHaveBeenCalledOnce();
 	});
 
 	it('clears git status map when no git sessions remain', async () => {

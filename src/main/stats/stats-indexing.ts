@@ -14,6 +14,8 @@
 
 import {
 	EMPTY_STATS_INDEXING_STATE,
+	STATS_INDEXING_VISIBLE_AFTER_MS,
+	shouldSurfaceIndexingJob,
 	visibleIndexingJobs,
 	type StatsIndexingJob,
 	type StatsIndexingReason,
@@ -44,6 +46,12 @@ export interface StatsIndexingHandle {
 interface GroupState {
 	job: StatsIndexingJob;
 	participants: number;
+	/**
+	 * Re-checks the group once its silent window has passed. Progress pushes
+	 * re-check it too, but a scan stuck on one huge transcript sends none, and
+	 * that is exactly the slow scan the surface exists for.
+	 */
+	revealTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const groups = new Map<string, GroupState>();
@@ -68,7 +76,7 @@ export function beginStatsIndexing(options: BeginStatsIndexingOptions): StatsInd
 	const now = Date.now();
 	let group = groups.get(options.id);
 	if (!group) {
-		group = {
+		const created: GroupState = {
 			job: {
 				id: options.id,
 				label: options.label,
@@ -81,8 +89,15 @@ export function beginStatsIndexing(options: BeginStatsIndexingOptions): StatsInd
 				updatedAt: now,
 			},
 			participants: 0,
+			revealTimer: null,
 		};
-		groups.set(options.id, group);
+		created.revealTimer = setTimeout(() => {
+			created.revealTimer = null;
+			push();
+		}, STATS_INDEXING_VISIBLE_AFTER_MS);
+		created.revealTimer.unref?.();
+		groups.set(options.id, created);
+		group = created;
 	} else if (options.reason === 'upgrade') {
 		group.job.reason = 'upgrade';
 	}
@@ -110,6 +125,8 @@ export function beginStatsIndexing(options: BeginStatsIndexingOptions): StatsInd
 			ended = true;
 			owned.participants -= 1;
 			if (owned.participants <= 0 && groups.get(owned.job.id) === owned) {
+				if (owned.revealTimer) clearTimeout(owned.revealTimer);
+				owned.revealTimer = null;
 				groups.delete(owned.job.id);
 			}
 			broadcastNow();
@@ -153,11 +170,22 @@ function broadcastNow(): void {
 /**
  * Push the state to every window, unless nothing visible changed. Listing one
  * project's sessions opens a group for a handful of files several times a
- * minute; none of that is ever shown, so it must not cost every window an IPC
- * message. The push that takes the last visible job away still goes out, so a
- * bar on screen is always cleared.
+ * minute, and most dashboard opens finish their scan in seconds; none of that
+ * is ever shown, so it must not cost every window an IPC message. The push
+ * that takes the last visible job away still goes out, so a bar on screen is
+ * always cleared.
+ *
+ * This is also where a slow scan is latched as `surfaced`: deciding here, in
+ * the one place that owns the clock, keeps the desktop, the web mirror, and
+ * `maestro-cli stats-indexing` agreeing about whether a scan is showing.
  */
 function push(): void {
+	const now = Date.now();
+	for (const group of groups.values()) {
+		if (!group.job.surfaced && shouldSurfaceIndexingJob(group.job, now)) {
+			group.job.surfaced = true;
+		}
+	}
 	const state = getStatsIndexingState();
 	const visible = visibleIndexingJobs(state).length > 0;
 	if (!visible && !lastPushVisible) return;
@@ -167,6 +195,9 @@ function push(): void {
 
 /** Test seam: forget every group and any pending push. */
 export function resetStatsIndexingForTest(): void {
+	for (const group of groups.values()) {
+		if (group.revealTimer) clearTimeout(group.revealTimer);
+	}
 	groups.clear();
 	if (pendingBroadcast) clearTimeout(pendingBroadcast);
 	pendingBroadcast = null;

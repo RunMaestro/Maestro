@@ -400,7 +400,7 @@ export function LocalModelsModelsSection({
 
 	return (
 		<div className="select-none space-y-5" data-testid="local-models-models-section">
-			<div className="space-y-1.5">
+			<div className="space-y-1.5 pt-6">
 				<p className="text-xs opacity-70 select-text" data-testid="local-models-summary">
 					{formatSize(footprintBytes)} on disk, {installedCount} installed
 					{hardware.profile && (
@@ -453,6 +453,7 @@ export function LocalModelsModelsSection({
 				label="Library sections"
 				idPrefix={ID_PREFIX}
 				sticky
+				className="-mx-6 px-6"
 			/>
 
 			<div {...tabPanelProps(ID_PREFIX, section)} className="space-y-5">

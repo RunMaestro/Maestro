@@ -57,6 +57,15 @@ describe('agentEnvVarHandlers', () => {
 		expect(result.current.customEnvVarsDisabled).toEqual({});
 	});
 
+	it('replaces live and parked records together after a bulk edit', () => {
+		const { result } = renderHook(() => useRecords({ OLD: '1' }, { PARKED: '2' }));
+
+		act(() => result.current.onEnvVarsReplace!({ NEW: '3' }, { DISABLED: '4' }));
+
+		expect(result.current.customEnvVars).toEqual({ NEW: '3' });
+		expect(result.current.customEnvVarsDisabled).toEqual({ DISABLED: '4' });
+	});
+
 	it('adds a blank row to the live record', () => {
 		const { result } = renderHook(() => useRecords({ A: '1' }, {}));
 

@@ -194,13 +194,11 @@ describe('recent chats', () => {
 		]);
 	});
 
-	it('the History button sits just left of the thinking button and explains itself', async () => {
+	it('the History button remains beside Keep as a tab and explains itself', async () => {
 		await renderWith(snapshot());
 		const history = screen.getByRole('button', { name: /^Recent chats\./ });
-		const thinking = screen.getByRole('button', { name: /^Thinking hidden\./ });
-		expect(
-			history.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING
-		).toBeTruthy();
+		const keep = screen.getByRole('button', { name: /^Keep as a tab\./ });
+		expect(history.compareDocumentPosition(keep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		fireEvent.mouseEnter(history.parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent('Bring back an earlier chat');
 	});
@@ -281,33 +279,18 @@ describe('tabChoiceFromPickerId', () => {
 	});
 });
 
-describe('Thinking button', () => {
-	it.each([
-		['off', /^Thinking hidden\./, "Click to show the agent's reasoning"],
-		['on', /^Showing thinking\./, 'goes away once the answer arrives'],
-		['sticky', /^Keeping thinking\./, 'stays above each answer'],
-	] as const)('explains the %s mode', async (mode, name, hint) => {
-		await renderWith(snapshot({ thinking: mode }));
-		const button = screen.getByRole('button', { name });
-		fireEvent.mouseEnter(button.parentElement!);
-		expect(screen.getByRole('tooltip')).toHaveTextContent(hint);
-	});
-
-	it('asks the engine to step to the next mode', async () => {
-		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
-			ok: true,
-			snapshot: snapshot({ thinking: 'on' }),
-		});
-		await renderWith(snapshot());
-		await act(async () =>
-			fireEvent.click(screen.getByRole('button', { name: /^Thinking hidden\./ }))
-		);
-		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
-			type: 'setThinking',
-			mode: 'cycle',
-		});
-		expect(screen.getByRole('button', { name: /^Showing thinking\./ })).toBeInTheDocument();
-	});
+describe('Thinking visibility', () => {
+	it.each(['off', 'on', 'sticky'] as const)(
+		'keeps the %s toggle out of the compact toolbar',
+		async (mode) => {
+			await renderWith(snapshot({ thinking: mode }));
+			expect(
+				screen.queryByRole('button', {
+					name: /^(Thinking hidden|Showing thinking|Keeping thinking)/,
+				})
+			).not.toBeInTheDocument();
+		}
+	);
 
 	it('Cmd+Shift+K cycles it, like the main composer', async () => {
 		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
@@ -627,6 +610,10 @@ describe('where a message went', () => {
 			snapshot({ busy: true, messages: [sentMessage('m7', 'one more', { status: 'queued' })] })
 		);
 		expect(screen.getByTestId('quick-chat-route-queued')).toHaveTextContent('Queued');
+		// Drawn as the same tinted pill as Steer, not an underlined link.
+		const newTab = screen.getByTestId('quick-chat-route-new-tab');
+		expect(newTab).toHaveClass('rounded-full');
+		expect(newTab).toHaveAccessibleName('Send to a new tab instead of waiting');
 
 		await act(async () =>
 			fireEvent.click(screen.getByRole('button', { name: /Send to a new tab/ }))

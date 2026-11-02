@@ -4,6 +4,10 @@ import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import type { OpenUiSurfaceRequest } from '../../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type {
+	ClosedTabCommandRequest,
+	ClosedTabCommandResult,
+} from '../../../shared/closedTabCommands';
+import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../../shared/throughputGaugeCommands';
@@ -164,6 +168,27 @@ export function createTabRemoteApi() {
 		sendRemoteSnoozeCommandResponse: (
 			responseChannel: string,
 			result: SnoozeCommandResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to a remote closed-tab verb (`maestro-cli tab closed` /
+		 * `tab reopen`). A round trip: the caller is told what is on the stack or
+		 * which tab came back.
+		 */
+		onRemoteClosedTabCommand: (
+			callback: (request: ClosedTabCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: ClosedTabCommandRequest, responseChannel: string) =>
+				callback(request, responseChannel);
+			ipcRenderer.on('remote:closedTabCommand', handler);
+			return () => ipcRenderer.removeListener('remote:closedTabCommand', handler);
+		},
+
+		sendRemoteClosedTabCommandResponse: (
+			responseChannel: string,
+			result: ClosedTabCommandResult
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

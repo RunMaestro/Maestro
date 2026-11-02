@@ -173,15 +173,21 @@ describe('groups persistence round trip (Group Settings)', () => {
 		// The settings and sessions handlers are registered and never called here.
 		const settingsStore = { get: vi.fn(), set: vi.fn(), store: {} };
 		const sessionsStore = { get: vi.fn().mockReturnValue([]), set: vi.fn(), path: '' };
+		const groupsStore = openGroupsStore();
 		registerPersistenceHandlers({
 			settingsStore: settingsStore as unknown as Store<MaestroSettings>,
 			sessionsStore: sessionsStore as unknown as Store<SessionsData>,
-			groupsStore: openGroupsStore(),
+			groupsStore,
 			getWebServer: () => null,
 			flushSessionWrites: vi.fn().mockResolvedValue(undefined),
 		});
 		return {
-			setAll: (groups) => handlers.get('groups:setAll')!({}, groups) as Promise<boolean>,
+			setAll: (groups) =>
+				handlers.get('groups:setAll')!(
+					{},
+					groups,
+					groupsStore.get('groups', [])
+				) as Promise<boolean>,
 			getAll: () => handlers.get('groups:getAll')!({}) as Promise<Group[]>,
 		};
 	}

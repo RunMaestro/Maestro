@@ -73,6 +73,7 @@ describe('applyAgentConfigExtras', () => {
 			'retryOnTokenExhaustion',
 			'codexAutoResetOnExhaustion',
 			'additionalDirectories',
+			'peerDescription',
 			'envParkEdits',
 		]);
 	});
@@ -93,6 +94,23 @@ describe('applyAgentConfigExtras', () => {
 		});
 		// Cleared is present as a key, so the write removes the stored choice.
 		expect(result.ok && 'retryOnTokenExhaustion' in result.updated).toBe(true);
+	});
+
+	it('trims an advertised peer specialty and supports clearing it', () => {
+		expect(applyAgentConfigExtras(agent, { peerDescription: '  Lab design  ' })).toEqual({
+			ok: true,
+			updated: { peerDescription: 'Lab design' },
+		});
+		for (const peerDescription of ['', '  ', null]) {
+			expect(applyAgentConfigExtras(agent, { peerDescription })).toEqual({
+				ok: true,
+				updated: { peerDescription: undefined },
+			});
+		}
+		expect(applyAgentConfigExtras(agent, { peerDescription: { text: 'Lab design' } })).toEqual({
+			ok: false,
+			error: 'peerDescription must be text or null.',
+		});
 	});
 
 	it('refuses a switch that is not a boolean', () => {

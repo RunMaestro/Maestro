@@ -15,6 +15,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
+import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { createMockSession } from '../../helpers/mockSession';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -62,6 +63,7 @@ const createTheme = (): Theme => ({
  */
 const NO_PEER_GRANTS = {
 	peerAgents: undefined,
+	peerDescription: undefined,
 	groupPeerAccess: undefined,
 	worktreePeerAccess: undefined,
 };
@@ -2445,6 +2447,87 @@ describe('NewInstanceModal', () => {
 	});
 
 	describe('Agent Duplication (sourceSession)', () => {
+		it('submits exactly what buildDuplicateAgentInput() resolves for the source', async () => {
+			// The modal's prefill and `maestro-cli duplicate-agent` share one set of
+			// carry-over rules; an untouched submit must hand createNewSession() the
+			// shared function's output, argument for argument.
+			const sourceSession = createMockSession({
+				id: 'dup-source',
+				name: 'Original Agent',
+				cwd: '/test/project',
+				groupId: 'group-1',
+				additionalDirectories: [{ path: '/shared/docs', read: true, write: false }],
+				nudgeMessage: 'Be terse',
+				newSessionMessage: 'Read the README first',
+				customPath: '/usr/local/bin/claude',
+				customArgs: '--verbose',
+				customEnvVars: { DEBUG: 'true' },
+				customModel: 'claude-opus-4',
+				customContextWindow: 200000,
+				customEffort: 'high',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/opt/maestro-p',
+				retryOnAvailabilityErrors: false,
+				codexAutoResetOnExhaustion: true,
+				codexTransport: 'app-server',
+			});
+			const expected = buildDuplicateAgentInput(sourceSession);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe(expected.name);
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledWith(
+				expected.toolType,
+				expected.cwd,
+				expected.name,
+				expected.nudgeMessage,
+				expected.newSessionMessage,
+				expected.customPath,
+				expected.customArgs,
+				expected.customEnvVars,
+				expected.customModel,
+				expected.customContextWindow,
+				expected.customProviderPath,
+				expect.objectContaining(expected.sessionSshRemoteConfig),
+				expected.customEffort,
+				expected.groupId,
+				expected.enableMaestroP,
+				expected.maestroPPath,
+				expected.maestroPMode,
+				expected.retryOnAvailabilityErrors,
+				expected.retryOnTokenExhaustion,
+				expected.additionalDirectories,
+				expected.codexAutoResetOnExhaustion,
+				expected.codexTransport,
+				undefined, // No gateway override.
+				undefined, // Provider is the default Run-on target.
+				{
+					peerAgents: undefined,
+					peerDescription: undefined,
+					groupPeerAccess: undefined,
+					worktreePeerAccess: undefined,
+				},
+				undefined // No group-seeded extras.
+			);
+		});
+
 		it('should pre-fill all fields when sourceSession is provided', async () => {
 			const sourceSession: Session = {
 				id: 'session-1',
@@ -4031,6 +4114,9 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-peers');
 				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
 				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeDisabled();
+				fireEvent.change(screen.getByRole('textbox', { name: 'How peers see this agent' }), {
+					target: { value: '  Reviews lab instructions  ' },
+				});
 
 				// Choosing a group on General enables it, and the count follows.
 				openTab('General');
@@ -4062,6 +4148,7 @@ describe('NewInstanceModal', () => {
 				const grants = onCreate.mock.calls[0][24];
 				expect(grants).toEqual({
 					peerAgents: [{ sessionId: 'peer-docs', read: true, write: true }],
+					peerDescription: 'Reviews lab instructions',
 					groupPeerAccess: { read: true, write: false },
 					worktreePeerAccess: undefined,
 				});

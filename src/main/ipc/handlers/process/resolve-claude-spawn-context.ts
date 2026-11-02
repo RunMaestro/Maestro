@@ -4,7 +4,10 @@ import {
 } from '../../../../shared/maestro-lib/agents/providerSwap';
 import Store from 'electron-store';
 import type { AgentConfig } from '../../../agents/definitions';
-import { resolveClaudeSpawnMode } from '../../../agents/resolveClaudeSpawnMode';
+import {
+	isAgentOwnWorkingDirectory,
+	resolveClaudeSpawnMode,
+} from '../../../agents/resolveClaudeSpawnMode';
 import {
 	mergeClaudeSpawnEnvLayers,
 	type ClaudeSpawnEnvLayers,
@@ -39,12 +42,19 @@ export interface ClaudeSpawnContext {
 	resolvedConfigDirKey: string | undefined;
 	claudeDecisionRealBinPath: string | undefined;
 	claudeResolvedRemote: boolean;
+	/**
+	 * The spawn runs in the owning agent's own working directory, so maestro-p
+	 * may accept claude's folder-trust prompt there (#1872).
+	 */
+	acceptWorkspaceTrust: boolean;
 }
 
 type PersistedSessionRecord = {
 	id?: string;
 	toolType?: import('../../../../shared/types').ToolType;
 	providerOverrides?: ProviderSwitchAgent['providerOverrides'];
+	cwd?: string;
+	projectRoot?: string;
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
@@ -134,6 +144,7 @@ export async function resolveClaudeSpawnContext(
 	// Interactive resolved for an SSH remote spawn: maestro-p runs on the
 	// remote host (not a local script). Realized in the SSH block below.
 	let claudeResolvedRemote = false;
+	let acceptWorkspaceTrust = false;
 
 	// Resolve the Claude token source (maestro-p TUI vs `claude --print`)
 	// through the shared resolver. Token-mode fields are read from the
@@ -160,6 +171,14 @@ export async function resolveClaudeSpawnContext(
 					}
 				: owner;
 		if (persistedSession?.id) tokenSourceSessionId = persistedSession.id;
+		// The renderer persists agents on a debounce, so a just-created agent's
+		// first turn can spawn before its record lands. Token mode already falls
+		// back to the spawn payload in that window, so trust has to as well, or
+		// the turn resolves to TUI and exits 7 in the folder the user just picked.
+		// The only spawns with no persisted owner are a new agent's own turns.
+		acceptWorkspaceTrust = persistedSession
+			? isAgentOwnWorkingDirectory(config.cwd, persistedSession)
+			: !!config.cwd;
 
 		// Over SSH, warm the remote maestro-p probe BEFORE resolving so the
 		// resolver's TUI->API backstop fires on the very first spawn - the
@@ -251,5 +270,6 @@ export async function resolveClaudeSpawnContext(
 		resolvedConfigDirKey,
 		claudeDecisionRealBinPath,
 		claudeResolvedRemote,
+		acceptWorkspaceTrust,
 	};
 }

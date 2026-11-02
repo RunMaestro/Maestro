@@ -1,3 +1,4 @@
+import { canonicalJson } from '../../shared/canonicalJson';
 /**
  * Cue Template Context Builder - builds the `templateContext.cue` object
  * from a CueEvent's payload using an enricher registry pattern.
@@ -77,6 +78,13 @@ enricherRegistry.set('*', (event, subscription, runId) => {
 
 	return base;
 });
+
+enricherRegistry.set('plugin.event', (event) => ({
+	pluginId: event.pluginSource?.pluginId ?? '',
+	pluginTopic: event.pluginSource?.topic ?? '',
+	pluginEventId: event.pluginSource?.eventId ?? '',
+	pluginMetadata: canonicalJson(event.payload.metadata ?? null),
+}));
 
 /** task.pending enricher - adds task-specific fields. */
 enricherRegistry.set('task.pending', (event) => ({

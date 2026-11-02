@@ -323,6 +323,31 @@ describe('sessionStore', () => {
 			useSessionStore.getState().toggleGroupCollapsed('g1');
 			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 		});
+
+		it('sets group collapsed state explicitly', () => {
+			useSessionStore.getState().setGroups([createMockGroup({ id: 'g1', collapsed: false })]);
+
+			useSessionStore.getState().setGroupCollapsed('g1', true);
+			expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
+
+			// A set, not a toggle: asking again keeps it collapsed.
+			useSessionStore.getState().setGroupCollapsed('g1', true);
+			expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
+
+			useSessionStore.getState().setGroupCollapsed('g1', false);
+			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
+		});
+
+		it('leaves the group list untouched when setGroupCollapsed is a no-op', () => {
+			useSessionStore.getState().setGroups([createMockGroup({ id: 'g1', collapsed: true })]);
+			const before = useSessionStore.getState().groups;
+
+			useSessionStore.getState().setGroupCollapsed('g1', true);
+			useSessionStore.getState().setGroupCollapsed('nonexistent', false);
+			useSessionStore.getState().toggleGroupCollapsed('nonexistent');
+
+			expect(useSessionStore.getState().groups).toBe(before);
+		});
 	});
 
 	// ========================================================================

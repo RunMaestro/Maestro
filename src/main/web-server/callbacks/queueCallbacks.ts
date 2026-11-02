@@ -15,6 +15,7 @@ import type {
 	EnqueueCommandResult,
 	EnqueueCommandFailureReason,
 } from '../types';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 /** Known machine-readable enqueue failure causes, in the order the renderer's
  *  `remote:enqueueCommand` handler can produce them. */
@@ -59,7 +60,8 @@ export function registerQueueCallbacks(
 			images?: string[],
 			background?: boolean,
 			held?: boolean,
-			consultChain?: ConsultChain
+			consultChain?: ConsultChain,
+			mentionRouting?: MentionRouting
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -109,7 +111,8 @@ export function registerQueueCallbacks(
 					images,
 					background,
 					held,
-					consultChain
+					consultChain,
+					mentionRouting
 				);
 
 				const timeoutId = setTimeout(() => {

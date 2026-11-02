@@ -19,6 +19,7 @@ import {
 	type CueInjectionScore,
 	type CueInjectionScorer,
 } from '../../../shared/cue/injection-screen';
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
 
 function makeDeps(
 	sessionsByName: Array<{ id: string; name: string }> = [
@@ -139,7 +140,56 @@ describe('createCueDispatchService', () => {
 		});
 	});
 
+	describe('durable dispatch with deferred checks', () => {
+		it.each<Partial<CueSubscription>>([
+			{ gate: 'metadata reports a change' },
+			{
+				action: 'command',
+				prompt: '{{CUE_PLUGIN_METADATA}}',
+				command: { mode: 'shell', shell: 'notify "{{CUE_PLUGIN_METADATA}}"' },
+			},
+		])('does not acknowledge or enqueue an unadmitted run: %j', (overrides) => {
+			const { deps, executeRun } = makeDeps();
+			const evaluateGate = vi.fn<CueGateEvaluator>();
+			const scoreInjection = vi.fn<CueInjectionScorer>();
+			configurePluginCueHost({
+				register: () => () => {},
+				authorize: () => true,
+				prepare: async () => true,
+			});
+			try {
+				const svc = createCueDispatchService({ ...deps, evaluateGate, scoreInjection });
+				const sub = makeSub({ event: 'plugin.event', ...overrides });
+				const event = createCueEvent('plugin.event', 'my-sub', { metadata: { changed: true } });
+				expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(0);
+				expect(executeRun).not.toHaveBeenCalled();
+				expect(evaluateGate).not.toHaveBeenCalled();
+				expect(scoreInjection).not.toHaveBeenCalled();
+			} finally {
+				configurePluginCueHost(undefined);
+			}
+		});
+	});
+
 	describe('fan-out', () => {
+		it('refuses unsupported durable fan-out before starting any target, even with permissive source authorization', () => {
+			const { deps, executeRun } = makeDeps();
+			executeRun.mockReturnValueOnce(true).mockReturnValueOnce(false);
+			configurePluginCueHost({
+				register: () => () => {},
+				authorize: () => true,
+				prepare: async () => true,
+			});
+			try {
+				const svc = createCueDispatchService(deps);
+				const sub = makeSub({ event: 'plugin.event', fan_out: ['alpha', 'bravo'] });
+				const event = createCueEvent('plugin.event', 'my-sub');
+				expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(0);
+				expect(executeRun).not.toHaveBeenCalled();
+			} finally {
+				configurePluginCueHost(undefined);
+			}
+		});
 		it('returns 2 when both targets have prompts', () => {
 			const { deps, executeRun } = makeDeps();
 			const svc = createCueDispatchService(deps);

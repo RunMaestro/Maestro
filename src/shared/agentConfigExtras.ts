@@ -37,11 +37,13 @@ export type AgentSwitchKey = (typeof AGENT_SWITCH_KEYS)[number];
 export const AGENT_CONFIG_EXTRA_KEYS: readonly string[] = [
 	...AGENT_SWITCH_KEYS,
 	'additionalDirectories',
+	'peerDescription',
 	'envParkEdits',
 ];
 
 /** The part of an agent record this module reads and writes. */
 export interface AgentConfigExtrasFields {
+	peerDescription?: string;
 	retryOnAvailabilityErrors?: boolean;
 	retryOnTokenExhaustion?: boolean;
 	codexAutoResetOnExhaustion?: boolean;
@@ -100,6 +102,13 @@ export function applyAgentConfigExtras(
 	homeDir?: string
 ): AgentConfigExtrasResult {
 	const updated: Partial<AgentConfigExtrasFields> = {};
+	if ('peerDescription' in patch) {
+		const value = patch.peerDescription;
+		if (value !== null && typeof value !== 'string') {
+			return { ok: false, error: 'peerDescription must be text or null.' };
+		}
+		updated.peerDescription = value?.trim() || undefined;
+	}
 
 	// A switch is on, off, or back to its default (`null`). The default is on
 	// for the two retries (`resilienceEnabled`), which is why clearing is not

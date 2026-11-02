@@ -11,6 +11,8 @@ import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
 import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
+import { requestDocumentChatPanel } from '../../../renderer/services/documentChatPanel';
+import * as documentVoice from '../../../renderer/services/documentVoice';
 // Mock lucide-react icons
 vi.mock('lucide-react', async (importOriginal) => ({
 	...(await importOriginal<typeof import('lucide-react')>()),
@@ -1237,6 +1239,8 @@ describe('FilePreview', () => {
 			let originalVoiceEnabled: boolean;
 
 			beforeEach(() => {
+				requestDocumentChatPanel();
+				vi.spyOn(documentVoice, 'startDocumentVoice').mockResolvedValue();
 				originalVoiceEnabled = useSettingsStore.getState().encoreFeatures.aCappella;
 				useSettingsStore.setState({
 					encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, aCappella: true },
@@ -1245,6 +1249,7 @@ describe('FilePreview', () => {
 			});
 
 			afterEach(() => {
+				vi.restoreAllMocks();
 				useVoiceSessionStore.getState().reset();
 				useSettingsStore.setState({
 					encoreFeatures: {
@@ -1254,43 +1259,54 @@ describe('FilePreview', () => {
 				});
 			});
 
-			it('opens the existing chat in voice when the preview is already mounted', () => {
+			it('opens the mounted preview chat and uses its embedded microphone', () => {
 				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
 				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
 				act(() => {
-					useVoiceSessionStore.setState({
-						state: 'listening',
-						scope: { kind: 'document', sessionId: 'agent-1', path: defaultProps.file.path },
+					requestDocumentChatPanel({
+						path: defaultProps.file.path,
+						sessionId: 'agent-1',
+						voice: true,
 					});
 				});
 				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
-				expect(screen.getByRole('button', { name: 'Stop', exact: true })).toBeInTheDocument();
+				expect(documentVoice.startDocumentVoice).toHaveBeenCalledWith({
+					path: defaultProps.file.path,
+					sessionId: 'agent-1',
+				});
 			});
 
-			it('opens chat after voice starts before the preview mounts and allows closing it', () => {
-				useVoiceSessionStore.setState({
-					state: 'listening',
-					scope: { kind: 'document', sessionId: 'agent-1', path: defaultProps.file.path },
+			it('remembers a request before the preview mounts and consumes each request once', () => {
+				requestDocumentChatPanel({
+					path: defaultProps.file.path,
+					sessionId: 'agent-1',
+					voice: true,
 				});
 				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
 				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
 				fireEvent.keyDown(screen.getByTestId('document-chat-input'), { key: 'Escape' });
 				act(() => useVoiceSessionStore.setState({ state: 'speaking' }));
 				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
-				act(() => useVoiceSessionStore.setState({ sessionId: 'new-voice-session' }));
+				expect(documentVoice.startDocumentVoice).toHaveBeenCalledTimes(1);
+				act(() => {
+					requestDocumentChatPanel({
+						path: defaultProps.file.path,
+						sessionId: 'agent-1',
+						voice: true,
+					});
+				});
 				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+				expect(documentVoice.startDocumentVoice).toHaveBeenCalledTimes(2);
 			});
 
 			it.each([
 				{ sessionId: 'other-agent', path: defaultProps.file.path },
 				{ sessionId: 'agent-1', path: '/test/other.md' },
-			])('does not open chat for another document scope: %o', (scope) => {
-				useVoiceSessionStore.setState({
-					state: 'listening',
-					scope: { kind: 'document', ...scope },
-				});
+			])('does not open chat for a request to another document or agent: %o', (scope) => {
+				requestDocumentChatPanel({ ...scope, voice: true });
 				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
 				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+				expect(documentVoice.startDocumentVoice).not.toHaveBeenCalled();
 			});
 		});
 

@@ -21,7 +21,7 @@ import {
 	builtInExclusions,
 	isBuiltInBlockedApp,
 } from '../../../shared/computer-history/exclusions';
-import { parseDurationInput, parseTimeInput } from '../../../shared/computer-history/timeRange';
+import { parseDurationInput, parseTimeInput } from '../../../shared/timeInput';
 import {
 	fenceUntrusted,
 	resolveKindInput,

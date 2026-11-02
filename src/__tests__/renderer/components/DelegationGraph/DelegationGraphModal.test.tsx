@@ -24,9 +24,11 @@ vi.mock('../../../../renderer/components/DelegationGraph/DelegationGraphView', a
 		DelegationGraphView: ({
 			initialScope,
 			focusRef,
+			onClose,
 		}: {
 			initialScope?: DelegationGraphScope;
 			focusRef?: RefObject<HTMLDivElement>;
+			onClose?: () => void;
 		}) => {
 			React.useEffect(() => {
 				view.mounts += 1;
@@ -34,6 +36,9 @@ vi.mock('../../../../renderer/components/DelegationGraph/DelegationGraphView', a
 			return (
 				<div ref={focusRef} tabIndex={-1} data-testid="delegation-graph-view-stub">
 					{initialScope ? JSON.stringify(initialScope) : 'every agent'}
+					<button type="button" onClick={onClose} data-testid="delegation-graph-esc">
+						Close Delegation Graph
+					</button>
 				</div>
 			);
 		},

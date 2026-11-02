@@ -255,8 +255,9 @@ export function resolveToDataUrlSync(value: string): string | null {
  * otherwise), so it is cheap to run on every persistence flush - a scan over
  * already-relocated sessions does no writes and allocates nothing new.
  *
- * Walks `aiTabs[].logs[].images`, `aiTabs[].stagedImages`, and
- * `executionQueue[].images` - the three fields that carry pasted images.
+ * Walks `aiTabs[].logs[].images`, `aiTabs[].stagedImages`, the same two fields
+ * of every closed AI tab in `unifiedClosedTabHistory`, and
+ * `executionQueue[].images` - the fields that carry pasted images.
  *
  * @returns the (possibly new) sessions array plus the number of images relocated.
  */
@@ -287,6 +288,40 @@ export async function relocateSessionImages<T>(
 		return changed ? next : (images as string[]);
 	};
 
+	// One AI tab's `logs[].images` and `stagedImages`. Returns the same tab
+	// reference when nothing changed.
+	const relocateTab = async (tab: Record<string, unknown>): Promise<Record<string, unknown>> => {
+		let tabChanged = false;
+		const tabPatch: Record<string, unknown> = {};
+
+		const logs = tab.logs as Array<Record<string, unknown>> | undefined;
+		if (Array.isArray(logs)) {
+			let logsChanged = false;
+			const nextLogs = await Promise.all(
+				logs.map(async (log) => {
+					const nextImages = await relocateArray(log.images);
+					if (nextImages !== log.images) {
+						logsChanged = true;
+						return { ...log, images: nextImages };
+					}
+					return log;
+				})
+			);
+			if (logsChanged) {
+				tabPatch.logs = nextLogs;
+				tabChanged = true;
+			}
+		}
+
+		const nextStaged = await relocateArray(tab.stagedImages);
+		if (nextStaged !== tab.stagedImages) {
+			tabPatch.stagedImages = nextStaged;
+			tabChanged = true;
+		}
+
+		return tabChanged ? { ...tab, ...tabPatch } : tab;
+	};
+
 	const nextSessions = await Promise.all(
 		sessions.map(async (rawSession) => {
 			const session = rawSession as unknown as Record<string, unknown>;
@@ -299,43 +334,39 @@ export async function relocateSessionImages<T>(
 				let tabsChanged = false;
 				const nextTabs = await Promise.all(
 					aiTabs.map(async (tab) => {
-						let tabChanged = false;
-						const tabPatch: Record<string, unknown> = {};
-
-						const logs = tab.logs as Array<Record<string, unknown>> | undefined;
-						if (Array.isArray(logs)) {
-							let logsChanged = false;
-							const nextLogs = await Promise.all(
-								logs.map(async (log) => {
-									const nextImages = await relocateArray(log.images);
-									if (nextImages !== log.images) {
-										logsChanged = true;
-										return { ...log, images: nextImages };
-									}
-									return log;
-								})
-							);
-							if (logsChanged) {
-								tabPatch.logs = nextLogs;
-								tabChanged = true;
-							}
-						}
-
-						const nextStaged = await relocateArray(tab.stagedImages);
-						if (nextStaged !== tab.stagedImages) {
-							tabPatch.stagedImages = nextStaged;
-							tabChanged = true;
-						}
-
-						if (tabChanged) {
-							tabsChanged = true;
-							return { ...tab, ...tabPatch };
-						}
-						return tab;
+						const next = await relocateTab(tab);
+						if (next !== tab) tabsChanged = true;
+						return next;
 					})
 				);
 				if (tabsChanged) {
 					patch.aiTabs = nextTabs;
+					sessionChanged = true;
+				}
+			}
+
+			// unifiedClosedTabHistory[].tab (AI entries): a stored closed tab keeps
+			// its draft and, when its provider cannot give the transcript back, its
+			// logs, so a pasted image there must not put base64 back into the file.
+			const closedTabs = session.unifiedClosedTabHistory as
+				| Array<Record<string, unknown>>
+				| undefined;
+			if (Array.isArray(closedTabs)) {
+				let closedChanged = false;
+				const nextClosed = await Promise.all(
+					closedTabs.map(async (entry) => {
+						if (!entry || entry.type !== 'ai' || !entry.tab || typeof entry.tab !== 'object') {
+							return entry;
+						}
+						const tab = entry.tab as Record<string, unknown>;
+						const next = await relocateTab(tab);
+						if (next === tab) return entry;
+						closedChanged = true;
+						return { ...entry, tab: next };
+					})
+				);
+				if (closedChanged) {
+					patch.unifiedClosedTabHistory = nextClosed;
 					sessionChanged = true;
 				}
 			}

@@ -33,6 +33,7 @@ import { readSystemOneAccessFromDesktop, type SystemOneAccessReader } from './sy
 import {
 	getConfigDirectory,
 	readSessions,
+	getJourneyFilePath,
 	readSettingValue,
 	resolveSessionHistoryFilePath,
 } from './storage';
@@ -133,6 +134,7 @@ export async function prepareMaestroSystemPromptCli(
 	// The Computer History store is local for the same reason.
 	const isSsh = !!session.sessionSshRemoteConfig?.enabled;
 	const historyFilePath = isSsh ? undefined : resolveSessionHistoryFilePath(session.id);
+	const journeyFilePath = isSsh ? undefined : getJourneyFilePath(session.id);
 
 	const conductorProfileSetting = readSettingValue('conductorProfile');
 	const conductorProfile =
@@ -200,6 +202,7 @@ export async function prepareMaestroSystemPromptCli(
 			gitBranch,
 			groupId: session.groupId,
 			historyFilePath,
+			journeyFilePath,
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,

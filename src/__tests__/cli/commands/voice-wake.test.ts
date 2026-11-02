@@ -158,7 +158,7 @@ describe('voice wake commands', () => {
 
 		expect(readSettingValue).toHaveBeenCalledWith('acappella.controls.wakePhrase');
 		expect(sent.map((entry) => entry.request)).toEqual([
-			{ action: 'status', phrase: 'hey jarvis' },
+			{ action: 'status', phrase: 'Hey Jarvis' },
 			{ action: 'train', phrase: 'hey scout' },
 		]);
 	});

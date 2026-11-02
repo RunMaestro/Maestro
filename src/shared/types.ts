@@ -157,8 +157,10 @@ export interface AgentCapabilities {
 	supportsAppendSystemPrompt: boolean;
 
 	/**
-	 * Agent maintains a per-project persistent memory store on disk that Maestro
-	 * can browse and edit. Claude Code does this at ~/.claude/projects/<path>/memory/.
+	 * Agent maintains a persistent memory store on disk that Maestro can browse
+	 * and edit in the Memory Viewer. Claude Code keeps one per project
+	 * (`~/.claude/projects/<path>/memory/`), Codex one per account
+	 * (`$CODEX_HOME/memories/`). Layouts live in `src/main/memory-manager.ts`.
 	 */
 	supportsProjectMemory: boolean;
 
@@ -344,6 +346,8 @@ export interface SessionInfo {
 	 * (see `shared/peerAgents.ts`); the desktop `Session` documents each field.
 	 */
 	peerAgents?: PeerAgent[];
+	/** This agent's specialty, advertised in other agents' peer rosters. */
+	peerDescription?: string;
 	groupPeerAccess?: PeerAccess;
 	worktreePeerAccess?: PeerAccess;
 	/** Set on a worktree child: the id of the parent agent. Read by the worktree family grant. */
@@ -931,6 +935,9 @@ export type AgentErrorType =
 export interface AgentError {
 	/** The category of error */
 	type: AgentErrorType;
+
+	/** Set only when the host supervisor terminates the turn; overrides a successful process exit. */
+	source?: 'host-supervision';
 
 	/** Human-readable error message for display */
 	message: string;

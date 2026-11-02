@@ -43,6 +43,10 @@ vi.mock('../../../main/history-manager', () => ({
 	})),
 }));
 
+vi.mock('../../../main/user-journey-manager', () => ({
+	getJourneyFilePath: vi.fn((id: string) => `/data/journey/${id}.jsonl`),
+}));
+
 vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(async () => ({ exitCode: 0, stdout: 'feature/x\n', stderr: '' })),
 }));
@@ -165,6 +169,15 @@ describe('buildMaestroSystemPromptForSession', () => {
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
 
+	it('fills the journey path, and leaves it empty for an SSH agent', async () => {
+		prompts['maestro-system-prompt'] = 'journey=[{{AGENT_JOURNEY_PATH}}]';
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe(
+			'journey=[/data/journey/agent-1.jsonl]'
+		);
+		storedSessions = [agent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })];
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('journey=[]');
+	});
+
 	it('appends the Pianola role section for the Pianola agent', async () => {
 		settings.encoreFeatures = { pianola: true };
 		storedSessions = [agent({ isPianola: true })];
@@ -285,13 +298,14 @@ describe('the Peer Agents roster (main builder)', () => {
 			worktreePeerAccess: R,
 			peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }],
 		});
-		storedSessions = [session, alpha, bravo, child];
+		storedSessions = [session, { ...alpha, peerDescription: 'Builds labs' }, bravo, child];
 		const roster = resolvePeerRoster(session as any, storedSessions as any);
 		expect(roster.map((peer) => peer.sessionId)).toEqual(['peer-a', 'peer-b', 'peer-c']);
 
 		const result = await buildMaestroSystemPromptForSession('me');
 		const table = (text: string) => text.split('\n').filter((line) => line.startsWith('| '));
 		expect(table(result ?? '')).toEqual(table(formatPeerAgentsForPrompt(roster)));
+		expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate | Builds labs |');
 	});
 
 	// The one sentence that lets a consulted agent ration. Every case passes a

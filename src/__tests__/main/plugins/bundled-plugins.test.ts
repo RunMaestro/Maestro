@@ -1,3 +1,16 @@
+vi.mock('../../../main/plugins/plugin-scan', () => ({
+	scanPluginFiles: vi.fn(async (dir: string) => {
+		const id = JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf8')).id;
+		const source = dir.endsWith('.seed-tmp')
+			? path.join(process.resourcesPath, 'plugins', id)
+			: dir;
+		return {
+			signature: { status: h.sigStatus[source] ?? 'unsigned' },
+			identity: null,
+			fingerprint: 'fixture',
+		};
+	}),
+}));
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -76,58 +89,65 @@ afterEach(() => {
 });
 
 describe('seedBundledPlugins', () => {
-	it('does not seed an untrusted bundled plugin (empty anchor stays safe)', () => {
+	it('does not swap staged bytes after trust or feature revocation', async () => {
+		bundle('example-plugin', '0.1.0', 'trusted');
+		let checks = 0;
+		await seedBundledPlugins({ trustedKeys, isActive: () => ++checks < 3 });
+		expect(fs.existsSync(path.join(h.target.dir, 'example-plugin'))).toBe(false);
+		expect(fs.existsSync(path.join(h.target.dir, '.example-plugin.seed-tmp'))).toBe(false);
+	});
+	it('does not seed an untrusted bundled plugin (empty anchor stays safe)', async () => {
 		bundle('example-plugin', '0.1.0', 'untrusted');
-		seedBundledPlugins({ trustedKeys });
+		await seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(h.target.dir, 'example-plugin'))).toBe(false);
 	});
 
-	it('seeds a trusted bundled plugin when none is installed', () => {
+	it('seeds a trusted bundled plugin when none is installed', async () => {
 		bundle('example-plugin', '0.1.0', 'trusted');
-		seedBundledPlugins({ trustedKeys });
+		await seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(h.target.dir, 'example-plugin', 'plugin.json'))).toBe(true);
 	});
 
-	it('replaces a same-version install that is not itself trusted', () => {
+	it('replaces a same-version install that is not itself trusted', async () => {
 		bundle('example-plugin', '0.1.0', 'trusted');
 		const dest = path.join(h.target.dir, 'example-plugin');
 		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'manual.txt'), 'user copy');
 		h.sigStatus[dest] = 'unsigned';
-		seedBundledPlugins({ trustedKeys });
+		await seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(dest, 'manual.txt'))).toBe(false);
 	});
 
-	it('leaves an already-trusted install at the same version untouched', () => {
+	it('leaves an already-trusted install at the same version untouched', async () => {
 		bundle('example-plugin', '0.1.0', 'trusted');
 		const dest = path.join(h.target.dir, 'example-plugin');
 		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'keep.txt'), 'unchanged');
 		h.sigStatus[dest] = 'trusted';
-		seedBundledPlugins({ trustedKeys });
+		await seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(dest, 'keep.txt'))).toBe(true);
 	});
 
-	it('refreshes a trusted install when the bundled version is newer', () => {
+	it('refreshes a trusted install when the bundled version is newer', async () => {
 		bundle('example-plugin', '0.2.0', 'trusted');
 		const dest = path.join(h.target.dir, 'example-plugin');
 		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'stale.txt'), 'old');
 		h.sigStatus[dest] = 'trusted';
-		seedBundledPlugins({ trustedKeys });
+		await seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(dest, 'stale.txt'))).toBe(false);
 	});
 
-	it('skips a bundle whose directory name does not match its declared id', () => {
+	it('skips a bundle whose directory name does not match its declared id', async () => {
 		const src = path.join(bundledRoot, 'plugins', 'innocent-name');
 		writePlugin(src, 'evil-plugin', '0.1.0');
 		h.sigStatus[src] = 'trusted';
-		seedBundledPlugins({ trustedKeys });
+		await seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(h.target.dir, 'evil-plugin'))).toBe(false);
 		expect(fs.existsSync(path.join(h.target.dir, 'innocent-name'))).toBe(false);
 	});
 
-	it('preserves the existing install when the copy fails (atomic replace)', () => {
+	it('preserves the existing install when the copy fails (atomic replace)', async () => {
 		bundle('example-plugin', '0.2.0', 'trusted'); // newer -> a replace is attempted
 		const dest = path.join(h.target.dir, 'example-plugin');
 		writePlugin(dest, 'example-plugin', '0.1.0');
@@ -144,7 +164,7 @@ describe('seedBundledPlugins', () => {
 			fs.writeFileSync(path.join(staging, 'live.txt'), 'partial');
 			throw new Error('disk full');
 		});
-		seedBundledPlugins({ trustedKeys, onError: (e) => errors.push(e) });
+		await seedBundledPlugins({ trustedKeys, onError: (e) => errors.push(e) });
 		// The live install and its file survive byte-for-byte, and the error surfaced.
 		expect(fs.readFileSync(path.join(dest, 'live.txt'), 'utf8')).toBe('in use');
 		expect(errors).toContainEqual(expect.objectContaining({ message: 'disk full' }));

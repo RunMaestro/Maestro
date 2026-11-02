@@ -13,6 +13,8 @@
  * - live:getDashboardUrl: Get the dashboard URL
  * - live:getLiveSessions: Get all live sessions
  * - live:broadcastActiveSession: Broadcast active session change
+ * - live:getState: Read Live mode (on/off, URL, tunnel)
+ * - live:set: Turn Live mode on or off (the LIVE pill; idempotent)
  * - live:startServer: Start the web server
  * - live:stopServer: Stop the web server
  * - live:persistCurrentToken: Persist the running server's token and enable persistent web link
@@ -33,12 +35,11 @@ import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 import type { BatchRunConfig } from '../../../shared/types';
 import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
 import type { SettingsStoreInterface } from '../../stores/types';
-import {
-	writeCliServerInfo,
-	deleteCliServerInfo,
-	readCliServerInfo,
-} from '../../../shared/cli-server-discovery';
+import { writeCliServerInfo, readCliServerInfo } from '../../../shared/cli-server-discovery';
 import { getCliSecret } from '../../web-server/auth/cli-secret';
+import { createLiveModeController, setLiveModeController } from '../../web-server/live-mode';
+import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { tunnelManager } from '../../tunnel-manager';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -58,6 +59,8 @@ export interface WebHandlerDependencies {
 	setWebServer: (server: WebServer | null) => void;
 	createWebServer: (options?: WebServerOptions) => WebServer;
 	settingsStore: SettingsStoreInterface;
+	/** Remote Control (the tunnel). Live off stops it first, as the pill always did. */
+	tunnelManager?: Pick<typeof tunnelManager, 'start' | 'stop' | 'getStatus'>;
 }
 
 /**
@@ -262,6 +265,11 @@ function asAutoRunOwner(owner: unknown): AutoRunOwner | undefined {
  */
 export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	const { getWebServer, setWebServer, createWebServer, settingsStore } = deps;
+	ipcMain.handle('web:getAutoRunStates', () => {
+		const server = getWebServer();
+		if (!server) throw new Error('Host Auto Run inventory is unavailable');
+		return server.getAutoRunStates();
+	});
 	ipcMain.handle(
 		'web:startAutoRun',
 		async (_, sessionId: string, config: BatchRunConfig, folderPath: string) => {
@@ -475,104 +483,47 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		}
 	});
 
-	// Start web server (creates if needed, starts if not running)
-	ipcMain.handle('live:startServer', async () => {
-		try {
-			let webServer = getWebServer();
-
-			// Rotate the security token on every Live toggle unless the user
-			// opted into Persistent Web Link. After live:stopServer the CLI-only
-			// server (spun up by ensureCliServer) keeps the previous token -
-			// reusing it on the next Live ON would silently leak the prior URL.
-			// Tear it down so createWebServer() mints a fresh ephemeral token.
-			// The CLI-only server is also bound to loopback, so it has to be
-			// replaced by a LAN server either way; a persistent token survives
-			// the swap because the factory reads it from settings.
-			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
-			if (webServer && (!persistentWebLink || !webServer.isLanAccessible())) {
-				try {
-					await webServer.stop();
-				} catch (err: any) {
-					// Don't drop the reference - the old server may still be bound
-					// to its port. Nulling it would leak a live server and the next
-					// start() would either collide on a custom port or run a second
-					// server in parallel on a random one.
-					logger.error(
-						`Failed to stop existing server before token rotation: ${err?.message ?? err}`,
-						'WebServer'
-					);
-					return { success: false, error: err?.message ?? String(err) };
+	// Live mode switches. Every one goes through the ONE controller, which
+	// runs them single-flight and tells every window the result
+	// (`live:stateChanged`). `maestro-cli live on|off` reaches the same object
+	// over the `live_command` WS message.
+	const liveMode = createLiveModeController({
+		getWebServer,
+		setWebServer,
+		createWebServer,
+		settingsStore,
+		ensureCliServer: () => ensureCliServer(deps),
+		publishCliDiscovery: refreshCliDiscoveryFile,
+		tunnel: {
+			start: (port) =>
+				deps.tunnelManager?.start(port) ??
+				Promise.resolve({ success: false, error: 'Remote Control is not available' }),
+			stop: () => deps.tunnelManager?.stop() ?? Promise.resolve(),
+			getStatus: () =>
+				deps.tunnelManager?.getStatus() ?? { isRunning: false, url: null, error: null },
+		},
+		onStateChanged: (state) => {
+			// Each window draws its own Left Bar with its own LIVE pill.
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send('live:stateChanged', state);
 				}
-				setWebServer(null);
-				webServer = null;
 			}
-
-			// Create web server if it doesn't exist
-			if (!webServer) {
-				logger.info('Creating LAN web server for Live Mode', 'WebServer');
-				webServer = createWebServer({ lanAccess: true });
-				setWebServer(webServer);
-			}
-
-			// Start if not already running
-			if (!webServer.isActive()) {
-				logger.info('Starting web server', 'WebServer');
-				const { port, token, url } = await webServer.start();
-				logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
-
-				// Refresh CLI discovery file so the CLI can reconnect after a
-				// stop/start cycle (ensureCliServer only runs once at app launch).
-				// Non-fatal: the server is genuinely up - a failure here would only
-				// break CLI IPC, so don't let it mask the UI's success path.
-				try {
-					refreshCliDiscoveryFile(port, token);
-				} catch (err: any) {
-					logger.error(`Failed to write CLI discovery file: ${err?.message ?? err}`, 'WebServer');
-				}
-				return { success: true, url };
-			}
-
-			// Already running - refresh discovery file in case it's stale.
-			// Same non-fatal treatment: server is up, CLI discovery is secondary.
-			try {
-				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
-			} catch (err: any) {
-				logger.error(`Failed to refresh CLI discovery file: ${err?.message ?? err}`, 'WebServer');
-			}
-			return { success: true, url: webServer.getSecureUrl() };
-		} catch (error: any) {
-			logger.error(`Failed to start web server: ${error.message}`, 'WebServer');
-			return { success: false, error: error.message };
-		}
+		},
 	});
+	setLiveModeController(liveMode);
+
+	ipcMain.handle('live:getState', async () => liveMode.getStatus());
+
+	// The LIVE pill and auto-start. Idempotent: `on` while on keeps the token.
+	ipcMain.handle('live:set', async (_, live: unknown) => liveMode.set(live === true));
+
+	// Start web server (creates if needed, starts if not running). Used by the
+	// port-change restart, which wants a fresh server even while Live is on.
+	ipcMain.handle('live:startServer', async () => liveMode.startServer());
 
 	// Stop web server and clean up
-	ipcMain.handle('live:stopServer', async () => {
-		const webServer = getWebServer();
-		if (!webServer) {
-			// Even with no server, ensure the CLI channel is available so
-			// maestro-cli works after Live Mode toggles.
-			await ensureCliServer(deps);
-			return { success: true };
-		}
-
-		try {
-			logger.info('Stopping web server', 'WebServer');
-			await webServer.stop();
-			setWebServer(null); // Allow garbage collection, will recreate on next start
-			deleteCliServerInfo();
-			logger.info('Web server stopped and cleaned up', 'WebServer');
-		} catch (error: any) {
-			logger.error(`Failed to stop web server: ${error.message}`, 'WebServer');
-			return { success: false, error: error.message };
-		}
-
-		// Bring the CLI server back up on a fresh port + token, bound to
-		// loopback. The user turned off Live Mode (closing the LAN URL) but
-		// the CLI server must remain reachable for maestro-cli.
-		await ensureCliServer(deps);
-		return { success: true };
-	});
+	ipcMain.handle('live:stopServer', async () => liveMode.stopServer());
 
 	// Persist the current web server's security token and enable persistent web link.
 	// Flag is written first: a crash between the two writes leaves
@@ -628,36 +579,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	});
 
 	// Disable all live sessions and stop the server
-	ipcMain.handle('live:disableAll', async () => {
-		const webServer = getWebServer();
-		if (!webServer) {
-			await ensureCliServer(deps);
-			return { success: true, count: 0 };
-		}
-
-		// First mark all sessions as offline
-		const liveSessions = webServer.getLiveSessions();
-		const count = liveSessions.length;
-		for (const session of liveSessions) {
-			webServer.setSessionOffline(session.sessionId);
-		}
-
-		// Then stop the server
-		try {
-			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
-			await webServer.stop();
-			setWebServer(null);
-			deleteCliServerInfo();
-		} catch (error: any) {
-			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');
-			return { success: false, count, error: error.message };
-		}
-
-		// Bring the CLI server back up on a fresh port + token, bound to
-		// loopback, so maestro-cli keeps working after Live Mode is disabled.
-		await ensureCliServer(deps);
-		return { success: true, count };
-	});
+	ipcMain.handle('live:disableAll', async () => liveMode.disableAll());
 
 	// Web server management
 	ipcMain.handle('webserver:openLitePairing', async (event) => {

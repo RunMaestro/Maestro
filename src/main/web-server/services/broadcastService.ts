@@ -23,6 +23,7 @@
 import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
+import { sendBounded } from './socket-send';
 import type {
 	Theme,
 	WebClient,
@@ -160,7 +161,7 @@ export class BroadcastService {
 				client.isAuthorized?.() !== false &&
 				frameReaches(frame.scope, client.subscribedSessionId)
 			) {
-				client.socket.send(frame.data);
+				sendBounded(client.socket, frame.data, frame.bytes);
 			}
 		}
 	}

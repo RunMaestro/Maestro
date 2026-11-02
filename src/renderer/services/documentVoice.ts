@@ -1,11 +1,10 @@
 /**
  * documentVoice - the single "talk with this document" flow.
  *
- * Three surfaces offer it (the File Preview toolbar's microphone, the Files
+ * Three surfaces offer it (the document chat's microphone, the Files
  * panel right-click menu, and the command palette's "File: Talk with Document"
- * entry) and all three route here, so the Encore gate, the owning agent, the
- * un-hiding of the HUD, and the refusal toast can never drift apart between
- * them. Same arrangement as `fileDeletion.ts`, and for the same reason.
+ * entry) and all three route to the document chat's own microphone. The file
+ * and its panel open before recording starts; no separate voice HUD is needed.
  *
  * It is a module function rather than a hook because two of those three callers
  * are not components: the palette builds plain command objects, and
@@ -14,9 +13,8 @@
  * component with a `Session` in hand does not have to resolve one.
  */
 
-import { beginVoiceSession, useVoiceSessionStore } from '../stores/voiceSessionStore';
-import { useVoiceUiStore } from '../stores/voiceUiStore';
-import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
+import { resolveDocumentChatAgentId } from './documentChat';
+import { openVoiceMic } from './voiceListening';
 import { useSettingsStore, selectACappellaEnabled } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { getBasename } from '../../shared/formatters';
@@ -45,13 +43,7 @@ export function canTalkWithDocument(): boolean {
 }
 
 /**
- * Open a voice session about one document.
- *
- * Un-hiding the HUD is not incidental, and it is the same rule
- * `useVoiceAgentActions.talkToAgent` follows: someone who minimized the HUD
- * earlier and has now asked to talk to a file has asked for a microphone, and
- * opening one with no visible surface attached is exactly what the close button
- * exists to prevent.
+ * Open the document and ask its chat panel to start its own microphone.
  */
 export async function talkWithDocument({
 	path,
@@ -59,10 +51,8 @@ export async function talkWithDocument({
 }: TalkWithDocumentRequest): Promise<void> {
 	if (!canTalkWithDocument() || !path) return;
 
-	// `selectActiveSession` rather than `activeSessionId` straight: the id is `''`
-	// on a fresh launch and can name an agent that has since been closed, and this
-	// is the same resolution every other surface uses to answer "which agent".
-	const agentSessionId = sessionId ?? selectActiveSession(useSessionStore.getState())?.id;
+	// Use the same owning-agent resolution as the document chat.
+	const agentSessionId = resolveDocumentChatAgentId(sessionId);
 	if (!agentSessionId) {
 		// No agent means no workspace to read the document in. Saying so beats a
 		// menu entry that quietly does nothing.
@@ -75,28 +65,20 @@ export async function talkWithDocument({
 	}
 
 	// Reuse the normal file-open path, including SSH reads and existing tabs.
-	// The preview opens its chat when this document gains the voice session, so
-	// it also works when reading the file finishes after voice has started.
 	window.dispatchEvent(
 		new CustomEvent('maestro:openFileTab', {
-			detail: { sessionId: agentSessionId, filePath: path },
+			detail: { sessionId: agentSessionId, filePath: path, documentChat: 'voice' },
 		})
 	);
+}
 
-	useVoiceSessionStore.getState().setDismissed(false);
-	useVoiceUiStore.getState().setMinimized(false);
-
-	try {
-		await beginVoiceSession({ kind: 'document', sessionId: agentSessionId, path });
-	} catch (error) {
-		// A refusal here is expected and specific: the capability gate says a model
-		// is missing, or the microphone was denied. It reaches the user as a toast
-		// rather than as silence, because the entry they clicked otherwise appears
-		// to do nothing at all.
-		notifyToast({
-			color: 'orange',
-			title: 'Voice session could not start',
-			message: (error as Error).message,
-		});
-	}
+/** The panel's microphone, shared with the navigation shortcut once it opens. */
+export async function startDocumentVoice(
+	{ path, sessionId }: TalkWithDocumentRequest,
+	hold = false
+): Promise<void> {
+	if (!canTalkWithDocument() || !path) return;
+	const agentSessionId = resolveDocumentChatAgentId(sessionId);
+	if (!agentSessionId) return;
+	await openVoiceMic({ scope: { kind: 'document', sessionId: agentSessionId, path }, hold });
 }

@@ -80,6 +80,7 @@ These namespaces are exposed on `window.maestro` via the preload bridge:
 | `wakatime`      | `createWakatimeApi()`      | `wakatime.ts`                                                                                                                                            | WakaTime integration                                                                                               |
 | `cue`           | `createCueApi()`           | `cue.ts`                                                                                                                                                 | Maestro Cue event-driven automation                                                                                |
 | `localModels`   | `createLocalModelsApi()`   | `local-models.ts`                                                                                                                                        | Local Models catalog, downloads, runtimes, semantic index, dictation, spoken notices, token proxy report (ungated) |
+| `journey`       | `createJourneyApi()`       | `journey.ts`                                                                                                                                             | User Journey log (per-agent user actions); record via `recordJourney()`                                            |
 
 ---
 

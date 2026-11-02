@@ -209,12 +209,13 @@ describe('Exit Listener', () => {
 				undefined
 			);
 			expect(notifyAgentCompleted).toHaveBeenCalledWith('plain-session-xyz', {
+				sourceProcessId: 'plain-session-xyz',
 				status: 'completed',
 				exitCode: 0,
 			});
 		});
 
-		it('passes only status+exitCode to Cue (no stdout leakage path)', () => {
+		it('passes only outcome and process metadata to Cue (no stdout leakage path)', () => {
 			// Defensive: the exit-listener call shape is the load-bearing
 			// invariant behind the "no stdout fallback" audit in cue-engine.ts.
 			// If this test fails because someone added a stdout field, the
@@ -239,7 +240,7 @@ describe('Exit Listener', () => {
 
 			expect(notifyAgentCompleted).toHaveBeenCalledTimes(1);
 			const [, completionData] = notifyAgentCompleted.mock.calls[0];
-			expect(Object.keys(completionData).sort()).toEqual(['exitCode', 'status']);
+			expect(Object.keys(completionData).sort()).toEqual(['exitCode', 'sourceProcessId', 'status']);
 			expect(completionData.stdout).toBeUndefined();
 		});
 	});

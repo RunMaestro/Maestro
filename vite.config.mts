@@ -75,6 +75,12 @@ export default defineConfig(({ mode }) => ({
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// Release CI sets MAESTRO_RENDERER_SOURCEMAPS=1 so it can upload the maps
+		// to Sentry (renderer frames otherwise arrive as minified
+		// `app://app/assets/index-XXXX.js` columns). 'hidden' writes the .map files
+		// without a sourceMappingURL comment, and the workflow deletes them before
+		// packaging, so no map ships inside the app. Local and fork builds skip it.
+		sourcemap: process.env.MAESTRO_RENDERER_SOURCEMAPS === '1' ? 'hidden' : false,
 		// TODO(vite-css): revisit this pin once one of these is true:
 		//   1) lightningcss tolerates xterm's malformed selectors (see
 		//      `[-:\s|]`-style class on or near style.css line ~2801)
@@ -150,6 +156,14 @@ export default defineConfig(({ mode }) => ({
 									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);
 								}
 								asset.code = fixed;
+								// The chunk's map describes the minified code just discarded, so
+								// with source maps on (release builds, for Sentry) it would point
+								// every xterm frame at the wrong line. Drop it rather than upload
+								// a lie; the shipped code is unminified and readable without one.
+								// Rolldown emits the map as its own bundle entry, so removing that
+								// entry is what keeps the file from being written.
+								asset.map = null;
+								delete bundle[`${asset.fileName}.map`];
 							}
 							xtermPreMinifyCache.clear();
 						},

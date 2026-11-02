@@ -159,6 +159,12 @@ export const VOICE_SETTING_FIELDS: Readonly<Record<string, VoiceSettingField>> =
 		values: () => ['cascade', 'realtime'],
 		description: 'Three separate engines (cascade) or one speech-to-speech service (realtime).',
 	},
+	setupMode: {
+		kind: 'enum',
+		default: undefined,
+		values: () => ['local', 'cloud', 'custom'],
+		description: 'Voice setup preset. Unset is inferred from the pipeline and selected providers.',
+	},
 	'voice.voiceId': {
 		kind: 'string',
 		default: undefined,

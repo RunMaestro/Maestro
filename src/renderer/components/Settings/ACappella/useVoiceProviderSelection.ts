@@ -30,6 +30,7 @@ import { PARAKEET_TDT_V2_ID } from '../../../../shared/local-models/model-catalo
 import {
 	HOSTED_PROVIDER_IDS,
 	LOCAL_PROVIDER_IDS,
+	OPENAI_REALTIME_PROVIDER_ID,
 	getVoiceProvider,
 	voiceProviderRequirement,
 } from '../../../../shared/acappella/provider-catalog';
@@ -66,6 +67,8 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 
 /** Where a slot runs. `hosted` is a stated choice, never a fallback. */
 export type VoiceSlotMode = 'local' | 'cloud';
+
+export type VoiceSetupMode = 'local' | 'cloud' | 'custom';
 
 /** Settings key holding everything A Cappella persists. Mirrors the main-side constant. */
 const ACAPPELLA_SETTINGS_KEY = 'acappella';
@@ -178,6 +181,8 @@ export interface VoiceProviderSelection {
 	setBrainChoice: (value: string) => Promise<string | null>;
 	pipeline: VoicePipelineShape;
 	setPipeline: (shape: VoicePipelineShape) => Promise<void>;
+	setupMode: VoiceSetupMode;
+	setSetupMode: (mode: VoiceSetupMode) => Promise<void>;
 	/** Voice for the TTS slot, when its provider offers a choice. */
 	voiceId: string | null;
 	setVoiceId: (voiceId: string) => Promise<void>;
@@ -208,6 +213,7 @@ export interface VoiceProviderSelection {
 interface StoredBlob {
 	providers?: Record<string, unknown>;
 	pipeline?: unknown;
+	setupMode?: unknown;
 	voice?: { voiceId?: unknown; rate?: unknown; volume?: unknown };
 	speech?: { speakBackgroundCompletions?: unknown };
 	[key: string]: unknown;
@@ -217,10 +223,14 @@ function modeForProviderId(providerId: string): VoiceSlotMode {
 	return getVoiceProvider(providerId)?.tier === 'cloud' ? 'cloud' : 'local';
 }
 
-export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelection {
+export function useVoiceProviderSelection(
+	enabled: boolean,
+	selectionVersion = 0
+): VoiceProviderSelection {
 	const [providerIds, setProviderIds] =
 		useState<Record<VoiceProviderRole, string>>(DEFAULT_SLOT_PROVIDER_IDS);
 	const [pipeline, setPipelineState] = useState<VoicePipelineShape>('cascade');
+	const [preferredSetupMode, setPreferredSetupMode] = useState<VoiceSetupMode>();
 	const [voiceId, setVoiceIdState] = useState<string | null>(null);
 	const [rate, setRateState] = useState(DEFAULT_TTS_RATE);
 	const [volume, setVolumeState] = useState(DEFAULT_TTS_VOLUME);
@@ -244,6 +254,11 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 				brain: asId(providers.brain) ?? DEFAULT_SLOT_PROVIDER_IDS.brain,
 			});
 			setPipelineState(stored?.pipeline === 'realtime' ? 'realtime' : 'cascade');
+			setPreferredSetupMode(
+				stored?.setupMode === 'custom' || stored?.setupMode === 'local'
+					? stored.setupMode
+					: undefined
+			);
 			setVoiceIdState(asId(stored?.voice?.voiceId) ?? null);
 			setRateState(clampTtsRate(stored?.voice?.rate));
 			setVolumeState(clampTtsVolume(stored?.voice?.volume));
@@ -255,7 +270,7 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		return () => {
 			cancelled = true;
 		};
-	}, [enabled]);
+	}, [enabled, selectionVersion]);
 
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
 	const endpoints = useSettingsStore((s) => s.localModelEndpoints);
@@ -273,6 +288,18 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		}),
 		[providerIds, brainSource]
 	);
+	// Existing non-default configurations remain editable after the UI upgrade.
+	const setupMode: VoiceSetupMode =
+		pipeline === 'realtime'
+			? 'cloud'
+			: preferredSetupMode !== 'custom' &&
+				  !brainSource &&
+				  !routedBySystemOne &&
+				  SLOT_DEFINITIONS.every(
+						({ slot }) => effectiveProviderIds[slot] === DEFAULT_SLOT_PROVIDER_IDS[slot]
+				  )
+				? 'local'
+				: 'custom';
 
 	/**
 	 * Tell the running app to pick a change up. The setting is saved either way;
@@ -308,12 +335,13 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 	 * correct and which the panel surfaces rather than retrying.
 	 */
 	const persist = useCallback(
-		async (mutate: (blob: StoredBlob) => void) => {
+		async (mutate: (blob: StoredBlob) => void, onSaved?: () => void) => {
 			const stored = ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ??
 				{}) as StoredBlob;
 			const next: StoredBlob = { ...stored, providers: { ...(stored.providers ?? {}) } };
 			mutate(next);
 			await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, next);
+			onSaved?.();
 			await applyToRunningSession();
 		},
 		[applyToRunningSession]
@@ -364,6 +392,35 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 			});
 		},
 		[persist]
+	);
+
+	const setSetupMode = useCallback(
+		async (mode: VoiceSetupMode) => {
+			if (mode === setupMode) return;
+			const shape = mode === 'cloud' ? 'realtime' : 'cascade';
+			// Save a preset in one update, then apply it once to the running session.
+			await persist(
+				(blob) => {
+					blob.pipeline = shape;
+					blob.setupMode = mode;
+					if (mode === 'local') {
+						blob.providers = { ...blob.providers, ...DEFAULT_SLOT_PROVIDER_IDS };
+					} else if (mode === 'cloud') {
+						blob.providers = { ...blob.providers, realtime: OPENAI_REALTIME_PROVIDER_ID };
+					}
+				},
+				() => {
+					if (mode === 'local') {
+						// Clear routing assignments after saving, before applying the preset.
+						writeBrainAssignment(OFF_ASSIGNMENT);
+						setProviderIds(DEFAULT_SLOT_PROVIDER_IDS);
+					}
+					setPreferredSetupMode(mode);
+					setPipelineState(shape);
+				}
+			);
+		},
+		[setupMode, writeBrainAssignment, persist]
 	);
 
 	const setVoiceId = useCallback(
@@ -446,6 +503,8 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		setBrainChoice,
 		pipeline,
 		setPipeline,
+		setupMode,
+		setSetupMode,
 		voiceId,
 		setVoiceId,
 		rate,

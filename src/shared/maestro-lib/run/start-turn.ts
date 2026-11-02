@@ -62,8 +62,8 @@ export interface WindowsShellRulesOptions {
  * and for a spec that already names its `shell`: that caller has prepared the
  * command line itself. So applying it twice changes nothing.
  *
- * It does not move the prompt. cmd.exe cannot carry a line break, `%` or `^`
- * in an argument (`cmdShellArgProblem()`), so a prompt bound for a shell
+ * It does not move the prompt. cmd.exe cannot carry a line break, a `%NAME%`
+ * pair or `^` in an argument (`cmdShellArgProblem()`), so a prompt bound for a shell
  * launch belongs on stdin; `planSessionTurn` arranges that.
  */
 export function applyWindowsShellRules(
@@ -238,6 +238,17 @@ function appendBoundedTail(current: string, chunk: string, limit: number | undef
 	return combined.slice(combined.length - limit);
 }
 
+/** Only the native spawn call can establish this synchronous nonstart proof.
+ * Exceptions after spawn remain uncertain even if no handle reaches the caller. */
+export class TurnNotStartedError extends Error {
+	readonly cause: unknown;
+	constructor(error: unknown) {
+		super(error instanceof Error ? error.message : String(error));
+		this.name = 'TurnNotStartedError';
+		this.cause = error;
+	}
+}
+
 /**
  * Start one agent turn and stream it.
  *
@@ -259,12 +270,17 @@ export function startTurn(
 	const hasStdin = spec.stdin !== undefined && spec.stdin !== '';
 	const stdinMode = hasStdin ? 'pipe' : (options.emptyStdin ?? 'pipe');
 
-	const child = spawn(spec.command, spec.args, {
-		cwd: spec.cwd,
-		env: spec.env,
-		shell: spec.shell ?? false,
-		stdio: [stdinMode, 'pipe', 'pipe'],
-	});
+	let child: ChildProcess;
+	try {
+		child = spawn(spec.command, spec.args, {
+			cwd: spec.cwd,
+			env: spec.env,
+			shell: spec.shell ?? false,
+			stdio: [stdinMode, 'pipe', 'pipe'],
+		});
+	} catch (error) {
+		throw new TurnNotStartedError(error);
+	}
 
 	const parser = options.parser ?? (options.agentId ? createOutputParser(options.agentId) : null);
 	const tailLimit = options.stdoutTailLimit ?? DEFAULT_STDOUT_TAIL_LIMIT;

@@ -111,7 +111,8 @@ markdown file is open in preview.
 
 The chat button in the **bottom-left** of the preview (`Cmd+Shift+\` /
 `Ctrl+Shift+\`) opens a small chat about the file you are reading, mirroring the
-Table of Contents on the other side. Ask a question and the agent whose
+Table of Contents on the other side. The panel sits above the button, which stays
+visible while the chat is open. Ask a question and the agent whose
 workspace the file lives in reads it and answers there. It is not limited to the
 file: it reads whatever else it needs and uses its tools normally. It just
 starts from your document rather than from nothing.
@@ -125,7 +126,8 @@ Type into the box, or use the microphone beside Send:
   about this document and the reply is spoken back.
 
 The microphone works as a hold or as a tap: hold it for one sentence, or tap
-once to leave it running and tap again to stop.
+once to leave it running and tap again to stop. Releasing a hold sends the utterance
+and keeps the voice session. Closing the panel ends its document voice session.
 
 All inputs land in the **same conversation**, so you can ask something out loud,
 type the follow-up, and read both in the chat. The conversation is an ordinary
@@ -133,11 +135,10 @@ AI tab that Maestro keeps out of your tab strip until you want it, which means:
 
 - **It survives a restart.** Come back to the file tomorrow, open the chat, and
   the whole conversation is still there.
-- **Keep as a tab** adds it to the tab strip without leaving the document.
+- **Open in tab** in the panel header reveals the conversation in the tab strip
+  and switches to it.
 - **History** restores an earlier conversation about this file. **New chat**
   starts a fresh session and keeps the previous thread in that history.
-- **Thinking** cycles between hidden reasoning, reasoning shown while the agent
-  works, and reasoning kept above the answer.
 
 Attach, paste, or drop images into the composer. **Stop** interrupts this
 document's reply and withdraws its queued messages. The chat's text size is
@@ -576,6 +577,8 @@ A row that cannot run right now is dimmed and says why in one line. Force Send w
 
 When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
 
+Right-click **Send** to open the menu at any time, even when the agent is idle, the input is empty, or the setting is off. With nothing running, the first row reads **Send** instead of **Queue**, since the message starts at once.
+
 Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." --held` queues a message held, and `maestro-cli queue hold <item-id> --agent <id>` / `queue resume <item-id> --agent <id>` hold or release a queued card. `queue list` shows which items are held.
 
 ### Execution Queue view
@@ -796,7 +799,7 @@ The command interpreter can be focused for a clean, terminal-only experience whe
 
 ## Command Terminal
 
-Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Switch between them with `Cmd+J` / `Ctrl+J`. Open a new terminal tab with `Ctrl+Shift+` + `` ` ``; close, rename, and reorder it just like an AI tab. Right-click (or hover) a terminal tab to open its action menu.
+Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Open a new terminal tab with `Cmd+J` / `Ctrl+J` (or `Ctrl+Shift+` + `` ` ``); close, rename, and reorder it just like an AI tab. Jump to the nearest terminal tab with `Opt+Cmd+J` / `Alt+Ctrl+J`. To switch the current tab between AI and shell in place, run **Switch AI/Shell Mode** from Quick Actions (`Cmd+K` / `Ctrl+K`). It has no key of its own. Right-click (or hover) a terminal tab to open its action menu.
 
 ### Startup Command
 
@@ -946,6 +949,11 @@ Organize agents into groups for better project management:
 - Right-click an agent → **Move to Group** → Select target group
 - Or drag-and-drop agents between groups
 
+**Adding agents to a group:** right-click the group header.
+
+- **New Agent in Group...** creates an agent in that group.
+- **Import Agent...**, right below it, imports an agent bundle (from **Export Agent...**) into that group.
+
 **Collapsing/Expanding:**
 
 - Click the group header to collapse or expand
@@ -969,6 +977,8 @@ Right-click any agent for quick actions. The menu is headed by the name of the a
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
+- **Duplicate...** - Create a new agent with the same settings
+- **Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
 - **Move to Window** - Send the agent to another Maestro window

@@ -12,6 +12,7 @@ import {
 	type QueueSteerResult,
 } from '../../shared/chatSteering';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 
 interface QueueListItem {
 	id: string;
@@ -23,6 +24,8 @@ interface QueueListItem {
 	commandArgs?: string;
 	tabName?: string;
 	paused?: boolean;
+	/** The `@mention` routing picked for the item (strip or `dispatch --routing`). */
+	mentionRouting?: MentionRouting;
 }
 
 interface QueueListSession {

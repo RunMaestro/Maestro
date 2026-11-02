@@ -57,6 +57,7 @@ export interface AnchorStore {
  * The types are re-exported here so this module's importers keep one import site.
  */
 export type { KeyringEntry, KeyringModule } from './keyring';
+export { createKeyringEntry } from './keyring';
 
 export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorStore {
 	let entry: KeyringEntry | null | undefined;

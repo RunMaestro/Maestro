@@ -15,6 +15,7 @@
 import { randomBytes } from 'crypto';
 import type { PermissionDecision, RelaySpawnBinding } from './types';
 import { RELAY_DECISION_TIMEOUT_MS } from './types';
+import type { PendingPermissionSnapshot } from '../../shared/pendingPermissions';
 
 interface PendingRequest {
 	resolve: (decision: PermissionDecision) => void;
@@ -24,6 +25,38 @@ interface PendingRequest {
 
 const bindings = new Map<string, RelaySpawnBinding>();
 const pending = new Map<string, PendingRequest>();
+let pendingVersion = 0;
+const pendingListeners = new Set<(snapshot: PendingPermissionSnapshot) => void>();
+
+/** The registry is the authority for real blocked requests, across all tabs. */
+export function getPendingPermissionSnapshot(): PendingPermissionSnapshot {
+	return {
+		version: pendingVersion,
+		processIds: [
+			...new Set(
+				[...pending.values()].flatMap((request) => {
+					const binding = bindings.get(request.token);
+					return binding ? [binding.sessionId] : [];
+				})
+			),
+		],
+	};
+}
+
+export function subscribePendingPermissions(
+	listener: (snapshot: PendingPermissionSnapshot) => void
+): () => void {
+	pendingListeners.add(listener);
+	return () => {
+		pendingListeners.delete(listener);
+	};
+}
+
+function notifyPendingPermissions(): void {
+	pendingVersion++;
+	const snapshot = getPendingPermissionSnapshot();
+	for (const listener of pendingListeners) listener(snapshot);
+}
 
 /** Generate a cryptographically-strong per-spawn token. */
 export function generateRelayToken(): string {
@@ -44,15 +77,18 @@ export function registerSpawn(binding: RelaySpawnBinding): {
 
 	const cleanup = () => {
 		bindings.delete(token);
+		let changed = false;
 		// Deny any requests still waiting on this dead spawn so the bridge's
 		// socket handler (if somehow still open) doesn't hang forever.
 		for (const [requestId, req] of pending) {
 			if (req.token === token) {
 				clearTimeout(req.timer);
 				pending.delete(requestId);
+				changed = true;
 				req.resolve({ behavior: 'deny', message: 'Agent process exited.' });
 			}
 		}
+		if (changed) notifyPendingPermissions();
 	};
 
 	return { token, cleanup };
@@ -76,6 +112,7 @@ export function createPending(
 	return new Promise<PermissionDecision>((resolve) => {
 		const timer = setTimeout(() => {
 			pending.delete(requestId);
+			notifyPendingPermissions();
 			resolve({
 				behavior: 'deny',
 				message: 'Permission request timed out with no response.',
@@ -86,6 +123,7 @@ export function createPending(
 			timer.unref();
 		}
 		pending.set(requestId, { resolve, timer, token });
+		notifyPendingPermissions();
 	});
 }
 
@@ -100,6 +138,7 @@ export function resolvePending(requestId: string, decision: PermissionDecision):
 	}
 	clearTimeout(req.timer);
 	pending.delete(requestId);
+	notifyPendingPermissions();
 	req.resolve(decision);
 	return true;
 }

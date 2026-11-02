@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * @file plugin-manager-verify.test.ts
  * @description Refresh-time authorization gate. When a `verifyRecord` seam is
@@ -136,9 +137,9 @@ function tamperSignature(id: string): void {
 }
 
 /** Discover + enable a tier-1 plugin so it is runnable for the gate to apply. */
-function enableTier1(m: PluginManager, id: string): void {
-	m.refresh(); // discover (tier-1 lands disabled by default)
-	m.setEnabled(id, true); // user consent toggle -> persisted
+async function enableTier1(m: PluginManager, id: string): void {
+	await m.refresh(); // discover (tier-1 lands disabled by default)
+	await m.setEnabled(id, true); // user consent toggle -> persisted
 }
 
 let workDir: string;
@@ -185,7 +186,7 @@ describe('PluginManager identity verification', () => {
 				};
 			},
 		});
-		m.refresh();
+		await m.refresh();
 		const oldIdentity = pluginIdentity(installedDir, trustedKeys);
 		if (!oldIdentity) throw new Error('test plugin identity missing');
 		authStore.mint(
@@ -193,7 +194,7 @@ describe('PluginManager identity verification', () => {
 			[{ capability: 'agents:dispatch', scope: 'obsidian-agent', grantedAt: 1, unattended: true }],
 			oldIdentity
 		);
-		m.setEnabled(id, true);
+		await m.setEnabled(id, true);
 		expect(recordOf(m, id)?.enabled).toBe(true);
 
 		const source = path.join(workDir, 'relay-next');
@@ -214,8 +215,8 @@ describe('PluginManager identity verification', () => {
 		expect(recordOf(m, id)?.signature?.status).toBe('trusted');
 		expect(recordOf(m, id)?.enabled).toBe(false);
 		expect(authStore.isEnabled(id)).toBe(true); // old grant still exists
-		m.setEnabled(id, false); // operator leaves the updated plugin off
-		expect(() => m.setEnabled(id, true)).toThrow('PluginNotAuthorized');
+		await m.setEnabled(id, false); // operator leaves the updated plugin off
+		await expect(m.setEnabled(id, true)).rejects.toThrow('PluginNotAuthorized');
 		expect(recordOf(m, id)?.enabled).toBe(false);
 		expect(readPluginState().plugins[id].enabled).toBe(false);
 		expect(m.getActiveRecords().some((record) => record.id === id)).toBe(false);
@@ -230,114 +231,117 @@ describe('PluginManager identity verification', () => {
 			[{ capability: 'agents:dispatch', scope: 'obsidian-agent', grantedAt: 2, unattended: true }],
 			nextIdentity
 		);
-		m.setEnabled(id, true);
+		await m.setEnabled(id, true);
 		expect(recordOf(m, id)?.enabled).toBe(true);
 	});
 
-	it('force-disables an enabled code-tier plugin the gate rejects', () => {
+	it('force-disables an enabled code-tier plugin the gate rejects', async () => {
 		let authorized = true;
 		const verifyRecord = vi.fn(() => ({ disable: !authorized }));
 		const m = manager({ verifyRecord });
 		writePlugin('demo', 1);
-		enableTier1(m, 'demo');
+		await enableTier1(m, 'demo');
 
 		authorized = false;
-		m.refresh(); // now enabled + runnable -> gate consulted
-		expect(verifyRecord).toHaveBeenCalledWith(expect.objectContaining({ id: 'demo' }));
+		await m.refresh(); // now enabled + runnable -> gate consulted
+		expect(verifyRecord).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'demo' }),
+			expect.anything()
+		);
 		expect(recordOf(m, 'demo')?.enabled).toBe(false);
 		expect(m.getActiveRecords().some((r) => r.id === 'demo')).toBe(false);
 	});
 
-	it('leaves an enabled plugin running when the gate accepts it', () => {
+	it('leaves an enabled plugin running when the gate accepts it', async () => {
 		const m = manager({ verifyRecord: () => ({ disable: false }) });
 		writePlugin('demo', 1);
-		enableTier1(m, 'demo');
+		await enableTier1(m, 'demo');
 
-		m.refresh();
+		await m.refresh();
 		expect(recordOf(m, 'demo')?.enabled).toBe(true);
 		expect(m.getActiveRecords().some((r) => r.id === 'demo')).toBe(true);
 	});
 
-	it('does not gate when no verifyRecord seam is injected (current behavior)', () => {
+	it('does not gate when no verifyRecord seam is injected (current behavior)', async () => {
 		const m = manager();
 		writePlugin('demo', 1);
-		enableTier1(m, 'demo');
+		await enableTier1(m, 'demo');
 
-		m.refresh();
+		await m.refresh();
 		expect(recordOf(m, 'demo')?.enabled).toBe(true);
 	});
 
-	it('never gates a tier-0 data-only plugin (not runnable code)', () => {
+	it('never gates a tier-0 data-only plugin (not runnable code)', async () => {
 		const verifyRecord = vi.fn(() => ({ disable: true }));
 		const m = manager({ verifyRecord });
 		writePlugin('data', 0); // tier-0 auto-enables on discovery
 
-		m.refresh();
+		await m.refresh();
 		expect(verifyRecord).not.toHaveBeenCalled();
 		expect(recordOf(m, 'data')?.enabled).toBe(true);
 	});
 
-	it('does not consult the gate for a disabled plugin', () => {
+	it('does not consult the gate for a disabled plugin', async () => {
 		const verifyRecord = vi.fn(() => ({ disable: true }));
 		const m = manager({ verifyRecord });
 		writePlugin('demo', 1);
-		m.refresh(); // tier-1 stays disabled by default; never enabled
+		await m.refresh(); // tier-1 stays disabled by default; never enabled
 
 		expect(verifyRecord).not.toHaveBeenCalled();
 		expect(recordOf(m, 'demo')?.enabled).toBe(false);
 	});
 
-	it('excludes an invalid-signature code plugin from active records + contributions, with no gate', () => {
+	it('excludes an invalid-signature code plugin from active records + contributions, with no gate', async () => {
 		const m = manager(); // no verifyRecord injected at all
 		const theme = { id: 'midnight', name: 'Midnight', mode: 'dark', colors: { bg: '#000' } };
 		writePlugin('demo', 1, { themes: [theme] });
-		enableTier1(m, 'demo');
-		m.refresh();
+		await enableTier1(m, 'demo');
+		await m.refresh();
 		// Positive control: a valid, enabled plugin DOES contribute its theme, so a
 		// later absence proves the exclusion, not a dropped (invalid) fixture.
 		expect(m.getActiveRecords().some((r) => r.id === 'demo')).toBe(true);
 		expect(m.getContributions().themes.some((t) => t.pluginId === 'demo')).toBe(true);
 
 		tamperSignature('demo'); // signature now resolves to 'invalid'
-		m.refresh();
+		await m.refresh();
 		expect(recordOf(m, 'demo')?.signature?.status).toBe('invalid');
 		// Tampered code is inert via the central active filter, regardless of toggle.
 		expect(m.getActiveRecords().some((r) => r.id === 'demo')).toBe(false);
 		expect(m.getContributions().themes.some((t) => t.pluginId === 'demo')).toBe(false);
 	});
 
-	it('keeps an invalid-signature plugin inert even when toggled back on (no setEnabled bypass)', () => {
+	it('keeps an invalid-signature plugin inert even when toggled back on (no setEnabled bypass)', async () => {
 		const m = manager();
 		const theme = { id: 'midnight', name: 'Midnight', mode: 'dark', colors: { bg: '#000' } };
 		writePlugin('demo', 1, { themes: [theme] });
-		enableTier1(m, 'demo');
+		await enableTier1(m, 'demo');
 		tamperSignature('demo');
-		m.refresh();
+		await m.refresh();
 
-		m.setEnabled('demo', true); // try to re-activate the tampered plugin directly
+		await m.setEnabled('demo', true); // try to re-activate the tampered plugin directly
 		expect(m.getActiveRecords().some((r) => r.id === 'demo')).toBe(false);
 		expect(m.getContributions().themes.some((t) => t.pluginId === 'demo')).toBe(false);
 	});
 
-	it('only reads panel HTML for enabled, untampered plugins with a ui:panel grant', () => {
+	it('only reads panel HTML for enabled, untampered plugins with a ui:panel grant', async () => {
 		const grants = new Map<string, PermissionGrant[]>();
 		const m = manager({ getGrants: (id) => grants.get(id) ?? [] });
 		writePanelPlugin('paneler');
 
-		m.refresh();
+		await m.refresh();
 		expect(recordOf(m, 'paneler')?.enabled).toBe(false);
 		expect(m.getPanelHtml('paneler/board')).toBeNull();
 
-		m.setEnabled('paneler', true);
+		await m.setEnabled('paneler', true);
 		expect(recordOf(m, 'paneler')?.enabled).toBe(true);
 		expect(m.getPanelHtml('paneler/board')).toBeNull();
 
 		grants.set('paneler', [{ capability: 'ui:panel', grantedAt: 1 }]);
-		m.refresh();
+		await m.refresh();
 		expect(m.getPanelHtml('paneler/board')).toBe('<p>panel-safe</p>');
 
 		tamperSignature('paneler');
-		m.refresh();
+		await m.refresh();
 		expect(recordOf(m, 'paneler')?.signature?.status).toBe('invalid');
 		expect(m.getPanelHtml('paneler/board')).toBeNull();
 	});
@@ -388,7 +392,7 @@ describe('PluginManager identity verification', () => {
 
 		const archivePath = path.join(workDir, 'packed-archive.tgz');
 		await packPluginArchive(source, archivePath);
-		const installed = m.install(archivePath);
+		const installed = await m.install(archivePath);
 		expect(installed.success).toBe(true);
 		expect(recordOf(m, 'packed.archive')?.enabled).toBe(false);
 		const installedRoot = path.join(pluginsDir(), 'packed.archive');
@@ -397,11 +401,11 @@ describe('PluginManager identity verification', () => {
 		).toBe('runtime-asset');
 		expect(fs.existsSync(path.join(installedRoot, 'node_modules'))).toBe(false);
 
-		m.setEnabled('packed.archive', true);
+		await m.setEnabled('packed.archive', true);
 		expect(starts).toEqual([{ id: 'packed.archive', pluginDir: installedRoot, entry: 'main.js' }]);
 	});
 
-	it('rejects unsafe packed plugin archives and cleans extraction staging', () => {
+	it('rejects unsafe packed plugin archives and cleans extraction staging', async () => {
 		const cases: Array<{
 			name: string;
 			entries: Array<{ name: string; content?: string; typeFlag?: string; linkName?: string }>;
@@ -438,7 +442,7 @@ describe('PluginManager identity verification', () => {
 		for (const c of cases) {
 			const archivePath = path.join(workDir, `${c.name}.tgz`);
 			writeTgzArchive(archivePath, c.entries);
-			const result = m.install(archivePath);
+			const result = await m.install(archivePath);
 			expect(result.success, c.name).toBe(false);
 			expect(result.error, c.name).toMatch(c.error);
 			const stagingLeftovers = fs.existsSync(pluginsDir())

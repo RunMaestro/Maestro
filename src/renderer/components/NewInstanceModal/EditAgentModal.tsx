@@ -37,7 +37,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
-import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
+import { ModalTabStrip, useModalTabCycling, useModalTabs } from '../ui/ModalTabStrip';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
@@ -114,6 +114,7 @@ export function EditAgentModal({
 	// Peer Agents: the explicit rows, and the group and worktree grants. A grant
 	// that is off is `undefined`, never a pair of false bits.
 	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [peerDescription, setPeerDescription] = useState('');
 	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const homeDir = useHomeDir();
@@ -205,6 +206,13 @@ export function EditAgentModal({
 		requestedTab,
 		enabled: isOpen,
 	});
+	useModalTabCycling({
+		tabs: tabIds,
+		activeTab,
+		onSelect: setActiveTab,
+		enabled: isOpen && !!session,
+		shift: false,
+	});
 
 	// Clear copy timeout and reset copied state on unmount, close, or session change
 	useEffect(() => {
@@ -279,11 +287,11 @@ export function EditAgentModal({
 		currentMigration?.operationId === migrationPlan?.id
 			? currentMigration?.state
 			: migrationPlan?.status;
-	const migrationNotices = useMemo(
+	const migrationBlockers = useMemo(
 		() => [
 			...new Map(
 				(migrationLoading ? [] : (migrationPlan?.limitations ?? []))
-					.filter((limit) => limit.severity !== 'info')
+					.filter((limit) => limit.severity === 'block')
 					.map((limit) => [`${limit.severity}:${limit.code}:${limit.message}`, limit])
 			).values(),
 		],
@@ -560,6 +568,7 @@ export function EditAgentModal({
 			// The same for the peer rows and the two grants.
 			setPeerAgents((session.peerAgents ?? []).map((peer) => ({ ...peer })));
 			setGroupPeerAccess(session.groupPeerAccess && { ...session.groupPeerAccess });
+			setPeerDescription(session.peerDescription ?? '');
 			setWorktreePeerAccess(session.worktreePeerAccess && { ...session.worktreePeerAccess });
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
@@ -892,6 +901,7 @@ export function EditAgentModal({
 				// A row with neither square lit is kept: it is an exclusion.
 				{
 					peerAgents: normalizePeerAgents(peerAgents),
+					peerDescription: peerDescription.trim() || undefined,
 					groupPeerAccess,
 					worktreePeerAccess,
 				},
@@ -933,6 +943,7 @@ export function EditAgentModal({
 		additionalDirectories,
 		homeDir,
 		peerAgents,
+		peerDescription,
 		groupPeerAccess,
 		worktreePeerAccess,
 		customPath,
@@ -1215,7 +1226,7 @@ export function EditAgentModal({
 										checked={acceptTranslationLimitations}
 										onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
 									/>
-									Accept the listed conversion limitations
+									Allow experimental carry-over
 								</label>
 							) : migrationLoading ? (
 								'Checking carry-over…'
@@ -1427,15 +1438,10 @@ export function EditAgentModal({
 																			: 'Ready to switch providers.')}
 														</span>
 													</div>
-													{migrationNotices.map((limit) => (
+													{migrationBlockers.map((limit) => (
 														<div
 															key={`${limit.severity}-${limit.code}-${limit.message}`}
-															style={{
-																color:
-																	limit.severity === 'block'
-																		? theme.colors.error
-																		: theme.colors.textDim,
-															}}
+															style={{ color: theme.colors.error }}
 														>
 															{limit.message}
 														</div>
@@ -1669,6 +1675,8 @@ export function EditAgentModal({
 						theme={theme}
 						idPrefix="edit-agent"
 						peers={peerAgents}
+						peerDescription={peerDescription}
+						onPeerDescriptionChange={setPeerDescription}
 						onChange={setPeerAgents}
 						groupAccess={groupPeerAccess}
 						onGroupAccessChange={setGroupPeerAccess}

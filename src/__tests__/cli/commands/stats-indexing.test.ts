@@ -30,6 +30,7 @@ const scanning: StatsIndexingState = {
 			totalBytes: 2048,
 			startedAt: Date.now(),
 			updatedAt: Date.now(),
+			surfaced: true,
 		},
 	],
 };

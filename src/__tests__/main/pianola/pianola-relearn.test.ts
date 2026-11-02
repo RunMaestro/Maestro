@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runRelearnJob, type RelearnDeps } from '../../../main/pianola/pianola-relearn';
 import { synthesizeSuggestions } from '../../../shared/pianola/pianola-synthesis';
+import { createMockNativeDecisionPair } from '../../helpers/pianola';
 import type { DecisionPair } from '../../../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../../../shared/pianola/types';
 
@@ -15,22 +16,7 @@ const NOW = 1_700_000_000_000;
 
 /** A low-risk, affirmatively-answered question pair (the rule-able shape). */
 function lowQuestionPair(i: number): DecisionPair {
-	return {
-		agent: 'claude-code',
-		sessionId: `s-${i}`,
-		classification: {
-			kind: 'question',
-			risk: 'low',
-			topic: 'run the tests?',
-			confidence: 'high',
-			evidence: { messageId: null, reason: 'heuristic', structured: false },
-		},
-		ask: 'Should I run the tests?',
-		reply: 'yes',
-		polarity: 'affirmative',
-		askedAt: new Date(NOW).toISOString(),
-		repliedAt: new Date(NOW).toISOString(),
-	};
+	return createMockNativeDecisionPair(i);
 }
 
 describe('runRelearnJob', () => {

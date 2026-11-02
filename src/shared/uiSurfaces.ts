@@ -131,7 +131,6 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'pipeline-list', label: 'Pipeline List' },
 	{ id: 'activity', label: 'Activity Log' },
 	{ id: 'backup', label: 'Backup' },
-	{ id: 'bundles', label: 'Bundles' },
 ];
 
 export const UI_SURFACES: UiSurface[] = [
@@ -340,7 +339,8 @@ export const UI_SURFACES: UiSurface[] = [
 		label: 'Memory Viewer',
 		aliases: ['memory'],
 		modal: 'memoryViewer',
-		description: "The active agent's CLAUDE.md / AGENTS.md memory files.",
+		description:
+			"The active agent's persistent memory files (Claude Code per project, Codex per account).",
 		shortcutId: 'openMemoryViewer',
 		commandPalette: 'Memory',
 	},

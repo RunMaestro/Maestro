@@ -57,7 +57,7 @@ beforeEach(() => {
 	});
 	settingsSet = vi.fn(async () => true);
 	(window as unknown as { maestro: unknown }).maestro = {
-		voice: { start, setListening },
+		voice: { start, setListening, stop: vi.fn().mockResolvedValue(undefined) },
 		settings: { get: vi.fn(async () => ({})), set: settingsSet },
 	};
 
@@ -227,6 +227,37 @@ describe('openVoiceMic for a surface bound to one thing (the Quick Chat window)'
 });
 
 describe('closeVoiceMic', () => {
+	it('does not close a different document conversation', async () => {
+		useVoiceSessionStore.setState({
+			state: 'listening',
+			scope: { kind: 'document', sessionId: 'other-agent', path: '/doc.md' },
+		});
+		await closeVoiceMic({
+			endSession: true,
+			scope: { kind: 'document', sessionId: 'agent-1', path: '/doc.md' },
+		});
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		expect(setListening).not.toHaveBeenCalled();
+	});
+
+	it('ends a document session after an in-flight microphone start completes', async () => {
+		const scope = { kind: 'document', sessionId: 'agent-1', path: '/doc.md' } as const;
+		let finishStart!: () => void;
+		start.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishStart = () => resolve(snapshot(scope));
+				})
+		);
+		const opening = openVoiceMic({ scope });
+		await vi.waitFor(() => expect(start).toHaveBeenCalled());
+		const closing = closeVoiceMic({ scope, endSession: true });
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		finishStart();
+		await Promise.all([opening, closing]);
+		expect(window.maestro.voice.stop).toHaveBeenCalledTimes(1);
+	});
+
 	it('shuts the microphone, dropping a half-said thought by default', async () => {
 		await closeVoiceMic();
 		expect(setListening).toHaveBeenCalledWith({ listening: false, send: false });

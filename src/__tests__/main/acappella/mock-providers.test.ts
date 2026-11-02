@@ -180,6 +180,83 @@ describe('MockBrainProvider routing', () => {
 	const brain = new MockBrainProvider();
 	const roster = makeRoster();
 
+	it('uses a clarification answer to route the original request', async () => {
+		const decision = await brain.route('Backend', {
+			roster,
+			scope: { kind: 'conductor' },
+			clarification: { question: 'Backend or Frontend?', utterance: 'run the migrations' },
+		});
+
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+		expect(decision.prompt).toBe('run the migrations');
+	});
+
+	it('keeps the named tab from the original request when the answer only names the agent', async () => {
+		const decision = await brain.route('Backend', {
+			roster,
+			scope: { kind: 'conductor' },
+			clarification: { question: 'Which agent?', utterance: 'back to the Auth Refactor' },
+		});
+
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+		expect(decision.tabAction).toBe('recall');
+		expect(decision.tabId).toBe('tab-auth');
+	});
+
+	it('uses a unique full tab name in the answer to identify its agent', async () => {
+		const decision = await brain.route('the Auth Refactor tab', {
+			roster,
+			scope: { kind: 'conductor' },
+			clarification: { question: 'Which agent?', utterance: 'review the middleware' },
+		});
+
+		expect(decision).toMatchObject({
+			target: { sessionId: 'agent-backend' },
+			tabAction: 'recall',
+			tabId: 'tab-auth',
+			prompt: 'review the middleware',
+		});
+		expect(decision.confidence).toBeGreaterThan(0.55);
+	});
+
+	it('does not choose an agent from a duplicated tab name', async () => {
+		const decision = await brain.route('the Auth Refactor tab', {
+			roster: [
+				roster[0],
+				{ ...roster[1], tabs: [{ id: 'tab-other-auth', name: 'Auth Refactor', lastActiveAt: 0 }] },
+			],
+			scope: { kind: 'conductor' },
+			clarification: { question: 'Which agent?', utterance: 'review the middleware' },
+		});
+
+		expect(decision.target).toBe('conductor');
+		expect(decision.tabId).toBeUndefined();
+	});
+
+	it('keeps a new-tab clarification from recalling an existing tab with the same name', async () => {
+		const decision = await brain.route('Backend, a new Auth Refactor tab', {
+			roster,
+			scope: { kind: 'conductor' },
+			clarification: { question: 'Which agent?', utterance: 'review the middleware' },
+		});
+
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+		expect(decision.tabAction).toBe('new');
+		expect(decision.tabId).toBeUndefined();
+	});
+
+	it('does not infer an agent from a partial tab name in an unclear answer', async () => {
+		const decision = await brain.route('the auth one', {
+			roster,
+			scope: { kind: 'conductor' },
+			clarification: { question: 'Which agent?', utterance: 'review the middleware' },
+		});
+
+		expect(decision.target).toBe('conductor');
+		expect(decision.tabId).toBeUndefined();
+		expect(decision.prompt).toBe('review the middleware');
+	});
+
 	it('targets the agent whose name is in the utterance', async () => {
 		const decision = await brain.route('ask backend to run the migrations', {
 			roster,

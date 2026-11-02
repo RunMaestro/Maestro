@@ -22,20 +22,10 @@ export function ProviderEnvironmentSection({
 	...envVars
 }: ProviderEnvironmentSectionProps) {
 	return (
-		<details
-			className="rounded border p-3"
-			style={{ borderColor: theme.colors.border }}
-			open={
-				Object.keys(envVars.customEnvVars).length > 0 ||
-				Object.keys(envVars.customEnvVarsDisabled ?? {}).length > 0
-			}
-		>
-			<summary
-				className="cursor-pointer text-sm font-medium"
-				style={{ color: theme.colors.textMain }}
-			>
+		<div className="rounded border p-3" style={{ borderColor: theme.colors.border }}>
+			<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 				Environment variables
-			</summary>
+			</h3>
 			<div className="mt-3 space-y-3">
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
 					{providerName && <>Editing the {providerName} environment. </>}
@@ -45,6 +35,6 @@ export function ProviderEnvironmentSection({
 				</p>
 				<AgentEnvVarsSection theme={theme} showBuiltInEnvVars {...envVars} />
 			</div>
-		</details>
+		</div>
 	);
 }

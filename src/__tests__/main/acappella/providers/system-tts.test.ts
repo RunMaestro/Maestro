@@ -169,9 +169,32 @@ describe('parseMacVoiceList', () => {
 		].join('\n');
 
 		expect(parseMacVoiceList(output)).toEqual([
-			{ id: 'Daniel', name: 'Daniel (en_GB)' },
-			{ id: 'Eddy (English (US))', name: 'Eddy (English (US)) (en_US)' },
-			{ id: 'Alice', name: 'Alice (it_IT)' },
+			{ id: 'Daniel', name: 'Daniel (en_GB)', language: 'en-GB' },
+			{ id: 'Eddy (English (US))', name: 'Eddy (English (US)) (en_US)', language: 'en-US' },
+			{ id: 'Alice', name: 'Alice (it_IT)', language: 'it-IT' },
+		]);
+	});
+
+	it('reads gender from native metadata, keeping missing and unrecognised values unknown', () => {
+		const output = [
+			'Samantha en_US # Hello',
+			'Daniel en_GB # Hello',
+			'Bells en_US # Hello',
+			'Mystery en_US # Hello',
+			'Missing en_US # Hello',
+		].join('\n');
+		const voices = parseMacVoiceList(output, [
+			{ name: 'Samantha', language: 'en-US', gender: 'VoiceGenderFemale' },
+			{ name: 'Daniel', language: 'en-GB', gender: 'VoiceGenderMale' },
+			{ name: 'Bells', language: 'en-US', gender: 'VoiceGenderNeuter' },
+			{ name: 'Mystery', language: 'en-US', gender: 'unexpected' },
+		]);
+		expect(voices.map((voice) => voice.gender)).toEqual([
+			'female',
+			'male',
+			'neutral',
+			undefined,
+			undefined,
 		]);
 	});
 });

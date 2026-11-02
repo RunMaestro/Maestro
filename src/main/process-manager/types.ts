@@ -236,6 +236,8 @@ export interface CommandResult {
 export interface TurnSettlement {
 	outcome: TurnOutcome;
 	answerCaptured: boolean;
+	/** Bounded, redacted final assistant text for consumers racing renderer persistence. */
+	answerTail?: string;
 }
 
 /**
@@ -249,6 +251,7 @@ export interface ProcessManagerEvents {
 	 *  cannot distinguish a clean exit from a kill. */
 	exit: (sessionId: string, code: number, signal?: number, settlement?: TurnSettlement) => void;
 	spawn: (config: ProcessConfig) => void;
+	'codex-transport': (sessionId: string, transport: CodexTransport) => void;
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;
 	/** One API call's new spend, mid-turn (see `CallUsage`). claude-code only. */

@@ -21,13 +21,11 @@
  */
 
 import { useMemo, useRef } from 'react';
-import { Waypoints } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { DelegationGraphScope } from '../../../shared/delegationGraph';
 import { scopeStorageKey } from '../../../shared/delegationGraphLayout';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { viewportModalSize } from '../../utils/modalSizing';
-import { EscCloseButton } from '../ui/EscCloseButton';
 import { Modal } from '../ui/Modal';
 import { DelegationGraphView } from './DelegationGraphView';
 
@@ -55,11 +53,7 @@ export function DelegationGraphModal({ theme, onClose, scope }: DelegationGraphM
 			priority={MODAL_PRIORITIES.DELEGATION_GRAPH}
 			initialFocusRef={graphRef}
 			onClose={onClose}
-			headerIcon={<Waypoints className="w-4 h-4" style={{ color: theme.colors.accent }} />}
-			showCloseButton={false}
-			headerActions={
-				<EscCloseButton theme={theme} onClose={onClose} testId="delegation-graph-esc" />
-			}
+			showHeader={false}
 			resizeKey={DELEGATION_GRAPH_RESIZE_KEY}
 			defaultSize={defaultSize}
 			minSize={MIN_SIZE}
@@ -69,6 +63,7 @@ export function DelegationGraphModal({ theme, onClose, scope }: DelegationGraphM
 			{/* The view reads its scope once, on mount. Keyed by the scope, a second
 			    open that asks for another scope shows that scope. */}
 			<DelegationGraphView
+				onClose={onClose}
 				focusRef={graphRef}
 				key={scope ? scopeStorageKey(scope) : 'default'}
 				theme={theme}

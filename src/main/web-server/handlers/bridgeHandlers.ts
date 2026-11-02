@@ -124,10 +124,10 @@ export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
  * Handle a bridge.invoke message - dispatch to the registered ipcMain handler
  * and send a bridge.response back to the originating client.
  */
-export async function handleBridgeInvoke(
-	client: WebClient,
+export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 'user' | 'cli'>>(
+	client: TClient,
 	message: InvokeMessage,
-	send: (client: WebClient, payload: object) => void
+	send: (client: TClient, payload: object) => void
 ): Promise<void> {
 	const requestId = message.requestId;
 	const channel = message.channel;
@@ -147,6 +147,12 @@ export async function handleBridgeInvoke(
 	// Default deny, including any subsequently registered host-only channel.
 	if (
 		!isRemoteMethodAllowed(channel) ||
+		(client.cli &&
+			[
+				'pianola:resolve-decision',
+				'pianola:review-suggestion',
+				'pianola:apply-suggestion',
+			].includes(channel)) ||
 		(channel === 'settings:set' && !isRemoteSettingWritable(args[0])) ||
 		(channel === 'agents:setConfigValue' &&
 			(typeof args[1] !== 'string' || /[.\[\]]/.test(args[1]) || isRemoteSecretField(args[1])))
@@ -238,6 +244,14 @@ export async function handleBridgeInvoke(
 		// handler performs still reads the same account from `getActingUser()`.
 		// `client.user` is undefined for maestro-cli (admitted by its secret) and
 		// for every client when the gate is off, which reads as "the desktop".
+		if (channel === 'process:spawn') {
+			const config = args[0];
+			if (!config || typeof config !== 'object' || Array.isArray(config) || args.length !== 1)
+				throw new Error('Invalid remote spawn configuration');
+			// Admission to the generic bridge proves no human origin for this turn.
+			// Override caller claims before the native handler can mint its proof.
+			args = [{ ...config, querySource: 'auto' }];
+		}
 		if (channel === 'agents:setConfig') {
 			const incoming = args[1];
 			if (

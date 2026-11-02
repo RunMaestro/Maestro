@@ -83,6 +83,14 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		color: EVENT_COLORS['cli.trigger'],
 	},
 	{
+		eventType: 'plugin.event',
+		label: 'Plugin Event',
+		description: 'Authenticated events from an enabled plugin source',
+		icon: EVENT_ICONS['plugin.event'],
+		color: EVENT_COLORS['plugin.event'],
+	},
+
+	{
 		eventType: 'webhook.received',
 		label: 'Webhook',
 		description: 'HTTP POST from any external service',

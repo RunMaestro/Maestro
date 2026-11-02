@@ -60,6 +60,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerTabsHandlers,
+	registerJourneyHandlers,
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerACappellaHandlers,
@@ -124,6 +125,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		setWebServer: deps.setWebServer,
 		createWebServer: deps.createWebServer,
 		settingsStore: deps.settingsStore,
+		tunnelManager,
 	});
 
 	// Web Login account management - desktop-only, the bridge refuses every
@@ -212,7 +214,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
-	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	// Cue bundles - export / import pipelines and agents (Export Agent and Import Agent modals)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,
 		getMainWindow: deps.getMainWindow,
@@ -300,8 +302,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		app: deps.app,
 		settingsStore: deps.settingsStore,
-		tunnelManager,
-		getWebServer: deps.getWebServer,
 		bootstrapStore: deps.bootstrapStore, // For iCloud/sync settings
 	});
 
@@ -351,16 +351,15 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
 
-	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers({
-		sessionsStore: deps.sessionsStore,
-		settingsStore: deps.settingsStore,
-		agentConfigsStore: deps.agentConfigsStore,
-		getAgentDetector: deps.getAgentDetector,
-	});
+	// Register agent Memory handlers (Claude Code per project, Codex per account)
+	registerMemoryHandlers();
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
+
+	// User Journey: per-agent log of what the user did inside Maestro (files
+	// opened, saved, browsed). See src/main/user-journey-manager.ts.
+	registerJourneyHandlers();
 
 	// Register Context Timeline capture handlers (per-agent turn history backfill).
 	// The renderer calls these on every panel open and timeline clear, so leaving
@@ -376,6 +375,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		registerPianolaHandlers({
 			settingsStore: deps.settingsStore,
 			supervisor: pianolaSupervisor,
+			getAppWindows: () => deps.windowRegistry.getAppWindows().map((entry) => entry.browserWindow),
+			getWebServer: deps.getWebServer,
 		});
 	}
 

@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ipcRenderer } from 'electron';
+import { createWebApi } from '../../../main/preload/web';
+import { handleBridgeInvoke } from '../../../main/web-server/handlers/bridgeHandlers';
 import {
 	requestDesktopTabClose,
 	requestDesktopTabCloses,
@@ -28,12 +31,21 @@ import {
 import { closeBrowserTab, closeFileTab } from '../../../renderer/utils/tabHelpers';
 import { closeTerminalTab } from '../../../renderer/utils/terminalTabHelpers';
 
+const { invokeHandlers } = vi.hoisted(() => ({
+	invokeHandlers: new Map<string, (...args: unknown[]) => unknown>(),
+}));
+
+vi.mock('electron', () => ({
+	ipcMain: { _invokeHandlers: invokeHandlers },
+	ipcRenderer: { invoke: vi.fn() },
+}));
 vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => true }));
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 describe('desktop conversation lifecycle', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		invokeHandlers.clear();
 		clearLiveDraft('restored');
 		useComposerInputStore.setState(useComposerInputStore.getInitialState(), true);
 		vi.mocked(notifyToast).mockClear();
@@ -47,6 +59,45 @@ describe('desktop conversation lifecycle', () => {
 				createMockAITab({ id: 'other' }),
 			],
 		});
+	});
+
+	it('closes an idle inactive browser conversation through the real preload and bridge without a failure toast', async () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [
+				createMockAITab({ id: 'original', state: 'idle' }),
+				createMockAITab({ id: 'other' }),
+			],
+			activeTabId: 'other',
+		});
+		setLiveDraft('original', 'preserve until the desktop confirms');
+		const ownerClose = vi.fn().mockResolvedValue(true);
+		invokeHandlers.set('web:requestCloseTab', ownerClose);
+		vi.mocked(ipcRenderer.invoke).mockImplementation(async (channel, ...args) => {
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				{ id: 'browser', socket: {} as WebSocket, connectedAt: Date.now() },
+				{ type: 'bridge.invoke', requestId: 1, channel, args },
+				send
+			);
+			const response = send.mock.calls[0][1] as {
+				ok: boolean;
+				result?: unknown;
+				error?: string;
+			};
+			if (!response.ok) throw new Error(response.error);
+			return response.result;
+		});
+		window.maestro.web.requestCloseTab = createWebApi().requestCloseTab;
+
+		const closed = await requestDesktopTabClose('session-1', 'original');
+
+		expect(notifyToast).not.toHaveBeenCalled();
+		expect(closed).toBe(true);
+		expect(ownerClose).toHaveBeenCalledWith(expect.anything(), 'session-1', 'original');
+		expect(getLiveDraft('original')).toBeUndefined();
+		expect(getSession().activeTabId).toBe('other');
+		expect(getSession().unifiedClosedTabHistory[0].tab.id).toBe('original');
 	});
 
 	it.each([

@@ -23,6 +23,7 @@ import type {
 	TtsChunk,
 	TtsProvider,
 	TtsSpeakOptions,
+	TtsVoice,
 } from '../../../../shared/acappella/providers';
 import { splitIntoSpokenSentences } from '../../../../shared/acappella/sentences';
 import { getCredential } from '../credentials';
@@ -46,15 +47,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const MIN_SPEED = 0.7;
 const MAX_SPEED = 1.2;
 
-/** One selectable voice, as the voice picker renders it. */
-export interface TtsVoice {
-	id: string;
-	name: string;
-	/** Free-text descriptor from the service ("american, calm"). Optional. */
-	description?: string;
-	/** A sample the picker can play without spending a synthesis call. */
-	previewUrl?: string;
-}
+export type { TtsVoice } from '../../../../shared/acappella/providers';
 
 /** Per-voice knobs. Sent verbatim; the service owns the ranges. */
 export interface ElevenLabsVoiceSettings {
@@ -127,6 +120,13 @@ export class ElevenLabsTtsProvider implements TtsProvider {
 			.map((voice) => ({
 				id: voice.voice_id,
 				name: voice.name ?? voice.voice_id,
+				language: voice.labels?.language,
+				gender:
+					voice.labels?.gender === 'female' ||
+					voice.labels?.gender === 'male' ||
+					voice.labels?.gender === 'neutral'
+						? voice.labels.gender
+						: undefined,
 				description: voice.labels ? Object.values(voice.labels).join(', ') : undefined,
 				previewUrl: voice.preview_url,
 			}));

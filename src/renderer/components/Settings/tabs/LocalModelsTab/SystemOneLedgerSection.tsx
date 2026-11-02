@@ -15,21 +15,27 @@
  * function: `s1 ledger [--task] [--outcome]` and `s1 set keep-inputs on|off`.
  */
 
-import { useMemo, useState } from 'react';
-import { RefreshCw, ScrollText } from 'lucide-react';
+import { useId, useMemo, useState } from 'react';
+import { ChevronRight, RefreshCw, ScrollText } from 'lucide-react';
 
-import { formatCost, formatCount, formatRelativeTime } from '../../../../../shared/formatters';
+import {
+	formatCount,
+	formatRelativeTime,
+	truncateAtWordBoundary,
+} from '../../../../../shared/formatters';
 import {
 	SYSTEM_ONE_LEDGER_OUTCOME_FILTERS,
 	SYSTEM_ONE_LEDGER_OUTCOME_LABELS,
 	SYSTEM_ONE_LEDGER_RETENTION_DAYS,
 	isSystemOneLedgerOutcomeFilter,
 	summarizeSystemOneDecision,
+	systemOneLedgerContext,
 	systemOneLedgerEngineLabel,
 	systemOneLedgerTaskLabel,
 	type SystemOneLedgerEntry,
 } from '../../../../../shared/local-models/system-one-ledger';
 import { SYSTEM_ONE_KEEP_INPUTS_DESCRIPTIONS } from '../../../../../shared/local-models/system-one-settings';
+import { formatSystemOneCost } from '../../../../../shared/local-models/system-one-spend';
 import {
 	LOCAL_MODEL_TASKS,
 	LOCAL_MODEL_TASK_IDS,
@@ -241,6 +247,8 @@ interface LedgerRowProps {
 
 function LedgerRow({ theme, entry, agentName }: LedgerRowProps) {
 	const [open, setOpen] = useState(false);
+	const detailId = useId();
+	const context = useMemo(() => systemOneLedgerContext(entry), [entry]);
 	const detail: Array<[string, string]> = [
 		['When', new Date(entry.startedAt).toLocaleString()],
 		...(entry.model !== undefined ? [['Model', entry.model] as [string, string]] : []),
@@ -255,7 +263,7 @@ function LedgerRow({ theme, entry, agentName }: LedgerRowProps) {
 				]
 			: []),
 		...(entry.costUsd !== undefined
-			? [['Cost (est.)', formatCost(entry.costUsd)] as [string, string]]
+			? [['Cost (est.)', formatSystemOneCost(entry.costUsd)] as [string, string]]
 			: []),
 		...(agentName !== null ? [['Agent', agentName] as [string, string]] : []),
 	];
@@ -264,23 +272,73 @@ function LedgerRow({ theme, entry, agentName }: LedgerRowProps) {
 		<li data-testid="system-one-ledger-row" data-outcome={entry.outcome} data-task={entry.taskId}>
 			<button
 				type="button"
-				className="w-full text-left text-xs flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1"
-				style={{ color: theme.colors.textMain }}
+				className="w-full text-left text-xs flex items-start gap-2 py-1.5 rounded focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2"
+				style={{ color: theme.colors.textMain, outlineColor: theme.colors.accent }}
 				onClick={() => setOpen((current) => !current)}
 				aria-expanded={open}
+				aria-controls={detailId}
+				title={open ? 'Collapse decision details' : 'Expand decision details'}
 			>
-				<span className="opacity-70 w-16 flex-shrink-0">{formatRelativeTime(entry.startedAt)}</span>
-				<span className="font-medium">{systemOneLedgerTaskLabel(entry.taskId)}</span>
-				<span className="opacity-70">{systemOneLedgerEngineLabel(entry.engine)}</span>
-				<span style={{ color: outcomeColor(theme, entry) }}>
-					{SYSTEM_ONE_LEDGER_OUTCOME_LABELS[entry.outcome]}
+				<ChevronRight
+					className={`w-3.5 h-3.5 mt-0.5 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+					style={{ color: theme.colors.accent }}
+					aria-hidden="true"
+					data-testid="system-one-ledger-chevron"
+				/>
+				<span className="min-w-0 flex-1 space-y-1">
+					<span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+						<span className="opacity-70 w-16 shrink-0">{formatRelativeTime(entry.startedAt)}</span>
+						<span className="font-medium" data-testid="system-one-ledger-topic">
+							{context.label}
+						</span>
+						<span className="opacity-70">{systemOneLedgerEngineLabel(entry.engine)}</span>
+						<span style={{ color: outcomeColor(theme, entry) }}>
+							{SYSTEM_ONE_LEDGER_OUTCOME_LABELS[entry.outcome]}
+						</span>
+						<span className="min-w-0 break-words">{summarizeSystemOneDecision(entry)}</span>
+						<span className="opacity-70 ml-auto whitespace-nowrap">
+							{formatCount(entry.latencyMs)} ms
+						</span>
+					</span>
+					<span
+						className="block break-words opacity-70"
+						title={context.question ?? undefined}
+						data-testid="system-one-ledger-question"
+					>
+						{context.question
+							? truncateAtWordBoundary(context.question, 160)
+							: entry.input === undefined
+								? 'Decision context unavailable: input was not kept.'
+								: 'Decision context unavailable: no saved question.'}
+					</span>
+					<span
+						className="flex flex-wrap gap-x-3 gap-y-0.5 opacity-70"
+						data-testid="system-one-ledger-summary"
+					>
+						{context.label !== systemOneLedgerTaskLabel(entry.taskId) && (
+							<span>{systemOneLedgerTaskLabel(entry.taskId)}</span>
+						)}
+						<span className="min-w-0 break-words">Agent: {agentName ?? 'No agent named'}</span>
+						{entry.model !== undefined && (
+							<span className="min-w-0 break-words">Model: {entry.model}</span>
+						)}
+						{entry.cached && <span>Cached</span>}
+						{entry.usage && (
+							<span>
+								Tokens: {formatCount(entry.usage.inputTokens)} in,{' '}
+								{formatCount(entry.usage.outputTokens)} out
+							</span>
+						)}
+						{entry.costUsd !== undefined && (
+							<span>Cost (est.): {formatSystemOneCost(entry.costUsd)}</span>
+						)}
+					</span>
 				</span>
-				<span>{summarizeSystemOneDecision(entry)}</span>
-				<span className="opacity-70 ml-auto">{formatCount(entry.latencyMs)} ms</span>
 			</button>
 			{open && (
 				<div
-					className="pl-4 pb-2 space-y-1 text-xs select-text"
+					id={detailId}
+					className="pl-6 pb-2 space-y-1 text-xs select-text"
 					data-testid="system-one-ledger-detail"
 				>
 					{detail.map(([label, value]) => (

@@ -579,6 +579,7 @@ describe('useSessionLifecycle', () => {
 				act(() => {
 					saveWithPeers(result.current.handleSaveEditAgent, {
 						peerAgents: ROWS,
+						peerDescription: 'Builds labs',
 						groupPeerAccess: { read: true, write: false },
 						worktreePeerAccess: { read: true, write: true },
 					});
@@ -586,6 +587,7 @@ describe('useSessionLifecycle', () => {
 
 				const updated = useSessionStore.getState().sessions[0];
 				expect(updated.peerAgents).toEqual(ROWS);
+				expect(updated.peerDescription).toBe('Builds labs');
 				expect(updated.groupPeerAccess).toEqual({ read: true, write: false });
 				expect(updated.worktreePeerAccess).toEqual({ read: true, write: true });
 			});
@@ -594,6 +596,7 @@ describe('useSessionLifecycle', () => {
 				const session = createMockSession({
 					id: 'session-1',
 					peerAgents: ROWS,
+					peerDescription: 'Builds labs',
 					groupPeerAccess: { read: true, write: false },
 					worktreePeerAccess: { read: true, write: true },
 				});
@@ -610,6 +613,7 @@ describe('useSessionLifecycle', () => {
 
 				const updated = useSessionStore.getState().sessions[0];
 				expect(updated.peerAgents).toBeUndefined();
+				expect(updated.peerDescription).toBeUndefined();
 				expect(updated.groupPeerAccess).toBeUndefined();
 				expect(updated.worktreePeerAccess).toEqual({ read: false, write: true });
 			});
@@ -2120,21 +2124,43 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('groups persistence effect', () => {
-		it('persists groups when initialLoadComplete is true', () => {
+		it('persists loaded groups after a group change', async () => {
 			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-				groups,
-				initialLoadComplete: true,
-				groupsLoaded: true,
-			});
-
+			useSessionStore.setState({ groups, initialLoadComplete: true, groupsLoaded: true });
 			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups);
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+			act(() => {
+				useSessionStore.setState({
+					groups: [...groups, { id: 'g2', name: 'Group 2', emoji: '', collapsed: false }],
+				});
+			});
+			await vi.waitFor(() =>
+				expect(window.maestro.groups.setAll).toHaveBeenCalledWith(
+					[
+						{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false },
+						{ id: 'g2', name: 'Group 2', emoji: '', collapsed: false },
+					],
+					expect.anything()
+				)
+			);
 		});
 
+		it('persists a successfully loaded empty registry when it first changes', async () => {
+			useSessionStore.setState({ groups: [], initialLoadComplete: true, groupsLoaded: true });
+			renderHook(() => useSessionLifecycle(createDeps()));
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+			act(() => {
+				useSessionStore.setState({
+					groups: [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }],
+				});
+			});
+			await vi.waitFor(() =>
+				expect(window.maestro.groups.setAll).toHaveBeenCalledWith(
+					[{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }],
+					expect.anything()
+				)
+			);
+		});
 		it('does not persist groups before initialLoadComplete', () => {
 			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
 			useSessionStore.setState({
@@ -2148,32 +2174,6 @@ describe('useSessionLifecycle', () => {
 			renderHook(() => useSessionLifecycle(createDeps()));
 
 			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
-		});
-
-		it('re-persists when groups change', () => {
-			const groups1 = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-				groups: groups1,
-				initialLoadComplete: true,
-				groupsLoaded: true,
-			});
-
-			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups1);
-
-			const groups2 = [
-				{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false },
-				{ id: 'g2', name: 'Group 2', emoji: '', collapsed: false },
-			];
-
-			act(() => {
-				useSessionStore.setState({ groups: groups2 });
-			});
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);
 		});
 
 		// Regression: a group registry that was never successfully READ must never
@@ -2210,22 +2210,6 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
-		});
-
-		// A user who genuinely has no groups must still be able to persist: the
-		// gate is "did the read succeed", never "was the result non-empty".
-		it('persists an empty registry that was read successfully', () => {
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-				groups: [],
-				initialLoadComplete: true,
-				groupsLoaded: true,
-			});
-
-			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith([]);
 		});
 	});
 

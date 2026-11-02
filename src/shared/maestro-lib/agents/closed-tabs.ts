@@ -1,10 +1,12 @@
 /**
  * The closed-tab archive (CH-1, gap G13, decision RT6).
  *
- * The desktop keeps closed tabs only in memory: `useDebouncedPersistence` strips
- * `closedTabHistory` and `useSessionRestoration` resets it to `[]` on load. A closed
- * tab the runtime wrote into the agent record would therefore be erased by the
- * desktop's first flush, so the runtime keeps its own archive, one file per agent:
+ * The desktop never stores the legacy `closedTabHistory`: `useDebouncedPersistence`
+ * strips it, main deletes it at every write, and `useSessionRestoration` resets it
+ * to `[]` on load. (The desktop's `unifiedClosedTabHistory` IS stored, as pointers;
+ * see `src/shared/closedTabHistory.ts`.) A closed tab the runtime wrote into the
+ * legacy field would therefore be erased, so the runtime keeps its own archive,
+ * one file per agent:
  *
  *   `<syncDir>/closed-tabs/<agentId>.json`  ->  `{ "closedTabs": [ ClosedTab, ... ] }`
  *
@@ -21,6 +23,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+import { MAX_CLOSED_TAB_HISTORY } from '../../closedTabHistory';
 import { MAX_PERSISTED_SESSION_LOGS } from '../../deferredSessionContent';
 import { logger } from '../host';
 import { quarantineStoreFile, readStoreDocument, writeStoreDocument } from '../store/io';
@@ -28,8 +31,8 @@ import type { ClosedTabRecord } from '../store/records';
 
 const LOG_CONTEXT = '[ClosedTabs]';
 
-/** Tabs kept per agent. The desktop's `MAX_CLOSED_TAB_HISTORY`. */
-export const MAX_CLOSED_TAB_ARCHIVE = 25;
+/** Tabs kept per agent: the desktop's cap. */
+export const MAX_CLOSED_TAB_ARCHIVE = MAX_CLOSED_TAB_HISTORY;
 
 /** Folder under the sync directory holding one archive per agent. */
 export const CLOSED_TABS_DIR = 'closed-tabs';

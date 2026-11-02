@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * FC1 Option-B trusted-to-run gate (`isRunnable` requires `trusted`).
  *
@@ -123,23 +124,23 @@ afterEach(() => {
 });
 
 describe('FC1 trusted-to-run gate', () => {
-	it('starts a sandbox for an enabled plugin signed by a trusted key', () => {
+	it('starts a sandbox for an enabled plugin signed by a trusted key', async () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		const dir = writeCodePlugin('trusted.plugin');
 		signPluginDir(dir, trustedSigner);
-		manager.refresh();
-		manager.setEnabled('trusted.plugin', true);
+		await manager.refresh();
+		await manager.setEnabled('trusted.plugin', true);
 		expect(sandbox.start).toHaveBeenCalledTimes(1);
 		expect(sandbox.isRunning('trusted.plugin')).toBe(true);
 	});
 
-	it('never starts an UNSIGNED plugin, even when enabled', () => {
+	it('never starts an UNSIGNED plugin, even when enabled', async () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		writeCodePlugin('unsigned.plugin');
-		manager.refresh();
-		manager.setEnabled('unsigned.plugin', true);
+		await manager.refresh();
+		await manager.setEnabled('unsigned.plugin', true);
 		expect(sandbox.start).not.toHaveBeenCalled();
 		expect(
 			manager.getRegistry().records.find((r) => r.id === 'unsigned.plugin')?.signature?.status ??
@@ -147,34 +148,34 @@ describe('FC1 trusted-to-run gate', () => {
 		).toBe('unsigned');
 	});
 
-	it('never starts an UNTRUSTED plugin (valid signature, unknown key)', () => {
+	it('never starts an UNTRUSTED plugin (valid signature, unknown key)', async () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		const dir = writeCodePlugin('untrusted.plugin');
 		signPluginDir(dir, strangerSigner);
-		manager.refresh();
-		manager.setEnabled('untrusted.plugin', true);
+		await manager.refresh();
+		await manager.setEnabled('untrusted.plugin', true);
 		expect(sandbox.start).not.toHaveBeenCalled();
 		expect(
 			manager.getRegistry().records.find((r) => r.id === 'untrusted.plugin')?.signature?.status
 		).toBe('untrusted');
 	});
 
-	it('never starts an INVALID plugin (tampered after signing)', () => {
+	it('never starts an INVALID plugin (tampered after signing)', async () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		const dir = writeCodePlugin('tampered.plugin');
 		signPluginDir(dir, trustedSigner);
 		fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { evil: true };');
-		manager.refresh();
-		manager.setEnabled('tampered.plugin', true);
+		await manager.refresh();
+		await manager.setEnabled('tampered.plugin', true);
 		expect(sandbox.start).not.toHaveBeenCalled();
 		expect(
 			manager.getRegistry().records.find((r) => r.id === 'tampered.plugin')?.signature?.status
 		).toBe('invalid');
 	});
 
-	it('a trusted plugin whose signer key is REMOVED from the trusted set stops running on refresh', () => {
+	it('a trusted plugin whose signer key is REMOVED from the trusted set stops running on refresh', async () => {
 		const sandbox = makeSandbox();
 		let trusted: string[] = [trustedSigner.publicKeyB64];
 		const manager = new PluginManager({
@@ -184,36 +185,36 @@ describe('FC1 trusted-to-run gate', () => {
 		});
 		const dir = writeCodePlugin('rotating.plugin');
 		signPluginDir(dir, trustedSigner);
-		manager.refresh();
-		manager.setEnabled('rotating.plugin', true);
+		await manager.refresh();
+		await manager.setEnabled('rotating.plugin', true);
 		expect(sandbox.isRunning('rotating.plugin')).toBe(true);
 
 		trusted = []; // key rotation / revocation
-		manager.refresh();
+		await manager.refresh();
 		expect(sandbox.stop).toHaveBeenCalledWith('rotating.plugin');
 		expect(sandbox.isRunning('rotating.plugin')).toBe(false);
 	});
 
-	it('declarative contributions still aggregate for an enabled UNTRUSTED plugin (code-only gate)', () => {
+	it('declarative contributions still aggregate for an enabled UNTRUSTED plugin (code-only gate)', async () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		const dir = writeCodePlugin('declarative.plugin', { theme: true });
 		signPluginDir(dir, strangerSigner);
-		manager.refresh();
-		manager.setEnabled('declarative.plugin', true);
+		await manager.refresh();
+		await manager.setEnabled('declarative.plugin', true);
 		expect(sandbox.start).not.toHaveBeenCalled();
 		const themes = manager.getContributions().themes;
 		expect(themes.some((t) => t.id === 'declarative.plugin/gate-theme')).toBe(true);
 	});
 
-	it('tampered (invalid) plugins contribute NOTHING - declarative surface included', () => {
+	it('tampered (invalid) plugins contribute NOTHING - declarative surface included', async () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		const dir = writeCodePlugin('tampered.data', { theme: true });
 		signPluginDir(dir, trustedSigner);
 		fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { evil: true };');
-		manager.refresh();
-		manager.setEnabled('tampered.data', true);
+		await manager.refresh();
+		await manager.setEnabled('tampered.data', true);
 		const themes = manager.getContributions().themes;
 		expect(themes.some((t) => t.pluginId === 'tampered.data')).toBe(false);
 	});
@@ -231,18 +232,18 @@ describe('settings panel activation boundary', () => {
 		const trusted = writeCodePlugin('settings.trusted', { settings: true });
 		signPluginDir(trusted, trustedSigner);
 		writeCodePlugin('settings.unsigned', { settings: true });
-		manager.refresh();
-		manager.setEnabled('settings.trusted', true);
-		manager.setEnabled('settings.unsigned', true);
+		await manager.refresh();
+		await manager.setEnabled('settings.trusted', true);
+		await manager.setEnabled('settings.unsigned', true);
 		expect(manager.getContributions().panels.map((p) => p.id)).toEqual(['settings.trusted/config']);
 		expect(manager.getPanelHtml('settings.trusted/config')).toContain('settings');
 		grants = [];
 		expect(manager.getContributions().panels).toEqual([]);
 		expect(manager.getPanelHtml('settings.trusted/config')).toBeNull();
 		grants = [{ capability: 'ui:panel' }];
-		manager.setEnabled('settings.trusted', false);
+		await manager.setEnabled('settings.trusted', false);
 		expect(manager.getContributions().panels).toEqual([]);
-		manager.setEnabled('settings.trusted', true);
+		await manager.setEnabled('settings.trusted', true);
 		await manager.uninstall('settings.trusted');
 		expect(manager.getPanelHtml('settings.trusted/config')).toBeNull();
 	});
@@ -287,8 +288,8 @@ describe('explicit service startup dependencies', () => {
 				writeCodePlugin('mandatory.consumer', { requires: [requirement] }),
 				trustedSigner
 			);
-			manager.refresh();
-			manager.setEnabled('mandatory.consumer', true);
+			await manager.refresh();
+			await manager.setEnabled('mandatory.consumer', true);
 			expect(sandbox.isRunning('mandatory.consumer')).toBe(true);
 			available = false;
 			manager.reconcileServiceDependencies();
@@ -344,8 +345,8 @@ describe('explicit service startup dependencies', () => {
 				trustedKeys: () => [trustedSigner.publicKeyB64],
 				serviceAvailable: () => available,
 			});
-			manager.refresh();
-			manager.setEnabled('mandatory.consumer', true);
+			await manager.refresh();
+			await manager.setEnabled('mandatory.consumer', true);
 			const startImpl = vi.mocked(start).getMockImplementation()!;
 			const startedVersions: string[] = [];
 			vi.mocked(start).mockImplementation((id, dir, entry) => {
@@ -403,8 +404,8 @@ describe('explicit service startup dependencies', () => {
 			sandbox,
 			trustedKeys: () => [trustedSigner.publicKeyB64],
 		});
-		manager.refresh();
-		manager.setEnabled('feature.consumer', true);
+		await manager.refresh();
+		await manager.setEnabled('feature.consumer', true);
 		const pending = manager.update(replacement);
 		await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('feature.consumer'));
 		enabled = false;
@@ -424,7 +425,7 @@ describe('explicit service startup dependencies', () => {
 		}
 	});
 
-	it('starts/stops mandatory consumers with availability while optional denial leaves text plugins running', () => {
+	it('starts/stops mandatory consumers with availability while optional denial leaves text plugins running', async () => {
 		let available = false;
 		const sandbox = makeSandbox();
 		const manager = new PluginManager({
@@ -448,9 +449,9 @@ describe('explicit service startup dependencies', () => {
 			writeCodePlugin('optional.consumer', { requires: [{ ...requirement, optional: true }] }),
 			trustedSigner
 		);
-		manager.refresh();
-		manager.setEnabled('mandatory.consumer', true);
-		manager.setEnabled('optional.consumer', true);
+		await manager.refresh();
+		await manager.setEnabled('mandatory.consumer', true);
+		await manager.setEnabled('optional.consumer', true);
 		expect(sandbox.isRunning('mandatory.consumer')).toBe(false);
 		expect(sandbox.isRunning('optional.consumer')).toBe(true);
 		available = true;

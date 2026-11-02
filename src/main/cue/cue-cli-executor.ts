@@ -24,6 +24,10 @@ import { substituteTemplateVariables, type TemplateContext } from '../../shared/
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
+import {
+	POSIX_PROMPT_ARGV_MAX_BYTES,
+	WINDOWS_PROMPT_ARGV_MAX_CHARS,
+} from '../../shared/maestro-lib/launch/prompt-delivery';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
 import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 
@@ -33,18 +37,14 @@ const CLI_SEND_TIMEOUT_MS = 30_000;
  * Cap on how much of the source output we forward - protects the CLI argv.
  *
  * Platform-aware because `maestro-cli send <agent-id> <message>` takes the
- * message as a positional argv. On Windows, `CreateProcessW` imposes a hard
- * 32,767-char ceiling on the entire command line (process path + script
- * path + all argv + quoting), so a 100K message would fail with
- * `ENAMETOOLONG`/`EINVAL` before the CLI even runs. 30K leaves ~2.7K of
- * headroom for the rest of the argv. POSIX `ARG_MAX` is typically
- * 128K-2MB, so the historic 100K cap is preserved there.
+ * message as a positional argv, so it is held to the same argv limits as an
+ * agent prompt (see `prompt-delivery.ts`). The message is truncated by
+ * characters, so the POSIX byte limit is applied here as a character count,
+ * as it always has been.
  */
-const CLI_SEND_OUTPUT_MAX_CHARS_POSIX = 100_000;
-const CLI_SEND_OUTPUT_MAX_CHARS_WINDOWS = 30_000;
 const CLI_SEND_OUTPUT_MAX_CHARS = isWindows()
-	? CLI_SEND_OUTPUT_MAX_CHARS_WINDOWS
-	: CLI_SEND_OUTPUT_MAX_CHARS_POSIX;
+	? WINDOWS_PROMPT_ARGV_MAX_CHARS
+	: POSIX_PROMPT_ARGV_MAX_BYTES;
 /** Default message body when the user didn't override it. */
 const DEFAULT_CLI_MESSAGE_TEMPLATE = '{{CUE_SOURCE_OUTPUT}}';
 

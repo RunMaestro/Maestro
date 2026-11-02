@@ -4,6 +4,7 @@
 // from. Mocks electron's `app` and the build-info reader so no real app/git is hit.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 
 vi.mock('electron', () => ({
 	app: {
@@ -29,7 +30,7 @@ import type { WebClient } from '../../../../main/web-server/handlers/messageHand
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

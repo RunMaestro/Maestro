@@ -6,6 +6,7 @@ import {
 } from '../../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../../stores/batchStore';
 import { useNotificationStore, selectConfig } from '../../stores/notificationStore';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Watches for the transition from "any activity" to "fully idle" and fires
@@ -34,6 +35,7 @@ export function useIdleNotification(): void {
 	const isActive = anySessionBusy || anyQueuedWork || anyBatchRunning;
 
 	useEffect(() => {
+		if (isWebDesktop()) return;
 		if (isActive) {
 			wasActiveRef.current = true;
 			return;

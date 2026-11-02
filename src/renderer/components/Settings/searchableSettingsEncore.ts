@@ -306,6 +306,28 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-pianola-auto-fix',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Automatic repairs',
+		description:
+			'Pianola supervision and bounded automatic repairs. Merge requires separate approval and is unavailable automatically.',
+		keywords: [
+			'pianola',
+			'autopilot',
+			'repair',
+			'automatic repairs',
+			'current mode disabled allow up to three repair attempts for orchestrated tasks that need review',
+			'repair workers can change files within their existing access',
+			'enabling including its autopilot cli alias does not change this permission',
+			'merging requires separate approval automatic merge is unavailable',
+			'supervision',
+			'merge',
+			'approval',
+		],
+		requiresEncore: 'pianola',
+	},
+	{
 		id: 'encore-concerto',
 		tab: 'encore',
 		tabLabel: 'Plugins',
@@ -382,9 +404,9 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-a-cappella-voice-setup',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Voice Setup',
+		label: 'Microphone and voice models',
 		description:
-			'Pick the microphone and where speech recognition, speech synthesis, and routing run. Manage model files in Settings > Models > Library > Speech',
+			'Pick the microphone. Manage voice model files in Settings > Models > Library > Speech',
 		keywords: [
 			'voice setup',
 			'a cappella',
@@ -549,7 +571,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-a-cappella-stt',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Speech-to-Text',
+		label: 'Transcription',
 		description:
 			'Where your speech is transcribed. Local keeps every sample of your voice on this machine; cloud sends audio to a service you configure',
 		keywords: [
@@ -566,18 +588,18 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-a-cappella-tts',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Text-to-Speech',
+		label: 'Voice',
 		description:
-			'Where replies are spoken from. Local synthesises on this machine; cloud streams audio back from a service you configure',
+			'Choose Custom to pick the reply voice. Local speaks on this machine; cloud services such as ElevenLabs receive reply text and return speech',
 		keywords: ['text to speech', 'tts', 'speak', 'voice', 'kokoro', 'synthesis', 'read aloud'],
 	},
 	{
 		id: 'encore-a-cappella-brain',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Conductor Brain',
+		label: 'Brain',
 		description:
-			'What decides which agent you meant. Local runs a small model here; cloud uses an API model, which is faster to set up and costs per request',
+			'Choose Custom to pick what understands and routes requests. Use built-in routing, an assigned model, or a cloud API model',
 		keywords: ['conductor brain', 'brain', 'routing', 'route', 'qwen', 'llm', 'model'],
 	},
 	{
@@ -917,11 +939,16 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-a-cappella-voice-providers',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Voice Providers',
+		label: 'Voice setup',
 		description:
-			'Which engine fills each voice slot, whether the pipeline is a cascade or the realtime tier, and where your audio goes for the configuration you picked',
+			'Choose On this Mac, Cloud, or Custom. Custom lets you pick transcription, brain, and voice providers, including ElevenLabs and VoiceStudio',
 		keywords: [
 			'voice providers',
+			'voice setup',
+			'on this mac',
+			'cloud',
+			'custom',
+			'voicestudio',
 			'provider',
 			'engine',
 			'openai',
@@ -956,11 +983,15 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-a-cappella-pipeline',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Pipeline',
+		label: 'Voice setup preset',
 		description:
-			'Cascade runs speech-to-text, routing, and speech separately and is the only shape a local install or an ElevenLabs voice can take. Realtime is lowest latency but speaks in the provider voice and sends audio to their servers',
+			'On this Mac uses local transcription, built-in routing, and a system voice. Cloud uses OpenAI Realtime. Custom lets you mix local and cloud providers, including ElevenLabs voices',
 		keywords: [
 			'pipeline',
+			'on this mac',
+			'cloud',
+			'custom',
+			'voice setup preset',
 			'cascade',
 			'realtime',
 			'speech to speech',

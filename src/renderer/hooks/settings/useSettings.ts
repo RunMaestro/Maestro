@@ -93,6 +93,8 @@ export interface UseSettingsReturn {
 
 	// Pianola auto-watch
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
+	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Host media tools
@@ -150,6 +152,8 @@ export interface UseSettingsReturn {
 	setEnterToSendAI: (value: boolean) => void;
 	enterToSendAIExpanded: boolean;
 	setEnterToSendAIExpanded: (value: boolean) => void;
+	relayArchiveHours: number;
+	setRelayArchiveHours: (value: number) => void;
 	defaultSaveToHistory: boolean;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	synopsisDebounceSeconds: number;
@@ -634,6 +638,10 @@ export interface UseSettingsReturn {
 	// Spell check
 	spellCheck: boolean;
 	setSpellCheck: (value: boolean) => void;
+
+	// User Journey recording
+	userJourneyEnabled: boolean;
+	setUserJourneyEnabled: (value: boolean) => void;
 }
 
 // PERF: Identity selector reused across renders so the hook doesn't allocate a new

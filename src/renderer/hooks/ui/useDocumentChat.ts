@@ -20,7 +20,8 @@ import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsS
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { isDocumentScope } from '../../../shared/acappella/document-scope';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
-import { talkWithDocument } from '../../services/documentVoice';
+import { startDocumentVoice } from '../../services/documentVoice';
+import { closeVoiceMic } from '../../services/voiceListening';
 import {
 	buildDocumentChatView,
 	keepDocumentChat,
@@ -73,8 +74,12 @@ export interface UseDocumentChatReturn extends DocumentChatView {
 	voiceEnabled: boolean;
 	/** True while the live voice session is about THIS document. */
 	voiceActive: boolean;
+	/** A failure belonging to this document's embedded voice session. */
+	voiceError: string | null;
 	/** Open a spoken conversation about this document. */
-	startVoice: () => void;
+	startVoice: (hold?: boolean) => void;
+	/** Release a held microphone and send the utterance, keeping the session. */
+	releaseVoice: () => void;
 	/** End it. */
 	stopVoice: () => void;
 	/** Tap-vs-hold threshold, mirrored from the voice control settings. */
@@ -109,12 +114,22 @@ export function useDocumentChat({
 
 	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
 	const holdThresholdMs = useVoiceUiStore((s) => s.holdThresholdMs);
+	const agentSessionId = useSessionStore((s) => resolveSession(s, sessionId)?.id);
 
 	// Matched on the PATH rather than on "a session exists", so the button only
 	// reads as active for the document it belongs to. A conversation about some
 	// other file must not make this panel claim the floor.
 	const voiceActive = useVoiceSessionStore(
-		(s) => isVoiceSessionActive(s.state) && isDocumentScope(s.scope) && s.scope.path === path
+		(s) =>
+			isVoiceSessionActive(s.state) &&
+			isDocumentScope(s.scope) &&
+			s.scope.path === path &&
+			s.scope.sessionId === agentSessionId
+	);
+	const voiceError = useVoiceSessionStore((s) =>
+		isDocumentScope(s.scope) && s.scope.path === path && s.scope.sessionId === agentSessionId
+			? (s.error?.message ?? null)
+			: null
 	);
 
 	const send = useCallback(
@@ -155,13 +170,28 @@ export function useDocumentChat({
 		[path, sessionId]
 	);
 
-	const startVoice = useCallback(() => {
-		void talkWithDocument({ path, sessionId });
-	}, [path, sessionId]);
+	const startVoice = useCallback(
+		(hold = false) => {
+			void startDocumentVoice({ path, sessionId }, hold);
+		},
+		[path, sessionId]
+	);
+
+	const releaseVoice = useCallback(() => {
+		if (!agentSessionId) return;
+		void closeVoiceMic({
+			send: true,
+			scope: { kind: 'document', sessionId: agentSessionId, path },
+		});
+	}, [path, agentSessionId]);
 
 	const stopVoice = useCallback(() => {
-		void window.maestro.voice.stop().catch(() => undefined);
-	}, []);
+		if (!agentSessionId) return;
+		void closeVoiceMic({
+			endSession: true,
+			scope: { kind: 'document', sessionId: agentSessionId, path },
+		});
+	}, [path, agentSessionId]);
 
 	return {
 		...view,
@@ -177,7 +207,9 @@ export function useDocumentChat({
 		popOut,
 		voiceEnabled,
 		voiceActive,
+		voiceError,
 		startVoice,
+		releaseVoice,
 		stopVoice,
 		holdThresholdMs,
 	};

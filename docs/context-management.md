@@ -20,7 +20,7 @@ Hover over any tab with an established session to access the tab menu overlay:
 | **Context: Copy to Clipboard**      | No (1+ logs)     | Copy the full conversation to clipboard                                  |
 | **Context: Compact**                | No (5+ logs)     | Compress context while preserving key information                        |
 | **Context: Merge Into**             | Yes              | Merge this context into another session                                  |
-| **Context: Send to Agent**          | Yes              | Transfer context to a different agent                                    |
+| **Context: Send to Agent**          | Yes              | Transfer context to a new tab of any agent, including this one           |
 | **Context: Publish as GitHub Gist** | No (1+ logs)     | Share conversation as a public or secret GitHub Gist (requires `gh` CLI) |
 | **Move to First Position**          | No               | Move this tab to the first position                                      |
 | **Move to Last Position**           | No               | Move this tab to the last position                                       |
@@ -255,6 +255,8 @@ Transfer your context to a different AI agent:
 2. Search for or select the target agent from the list
 3. Review the token estimate and cleaning options
 4. Click **"Send to Session"**
+
+The agent you are sending from is in the list too, tagged **This agent**. Pick it to open the context in a new tab of the same agent.
 
 If the target agent is busy, the button reads **"Queue for Agent"**: the context opens in a new tab and runs when the agent's current turn finishes. With **Forced Parallel Execution** on (Settings → General), a **"Force Send to Agent"** button (or the Forced Parallel Send shortcut, `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`) sends it now, in parallel with the running turn.
 

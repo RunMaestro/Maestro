@@ -4,13 +4,17 @@ import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useOwnedSideEffectGate } from '../agent/internal/useOwnedSessionGate';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
+import { isExpectedBridgeError } from '../../../shared/bridgeError';
 import {
 	applySessionTranscriptPatch,
 	type SessionTranscriptPatch,
 	type SessionRuntimeSnapshot,
 } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
-import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { getRepairedUnifiedTabOrder, settleAgentStateFromTabs } from '../../utils/tabHelpers';
+import { getBaseSessionId } from '../../utils/sessionIdParser';
+import type { PendingPermissionSnapshot } from '../../../shared/pendingPermissions';
 import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
 
 const runtimeFields = [
@@ -91,59 +95,109 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 		if (!api.onTranscriptSync || !api.publishTranscript) return;
 		let disposed = false;
 		let queue = Promise.resolve();
+		let queueGeneration = useSessionStore.getState().sessionReconciliationGeneration;
 		const unsubscribeSync = api.onTranscriptSync((patch) => {
 			if (ownsTranscript.current?.(patch.sessionId)) return;
-			queue = queue
-				.then(async () => {
-					await whenSessionsLoaded();
-					if (disposed) return;
-					updateSessionWith(patch.sessionId, (session) => {
-						if (patch.tabId) {
-							return {
-								...session,
-								aiTabs: session.aiTabs.map((tab) => {
-									if (tab.id !== patch.tabId) return tab;
-									const logs =
-										patch.orderIds.length ||
-										patch.upserts.length ||
-										patch.removedIds.length ||
-										patch.snapshot
-											? applySessionTranscriptPatch(tab.logs, patch)
-											: tab.logs;
-									const newOutput =
-										!patch.snapshot &&
-										patch.upserts.some(
-											(row) =>
-												row.source === 'stdout' &&
-												tab.logs.find((previous) => previous.id === row.id)?.text !== row.text
-										);
-									const unread =
-										tab.id !== session.activeTabId ||
-										session.id !== useSessionStore.getState().activeSessionId ||
-										tab.isAtBottom === false;
-									const hasUnread =
-										newOutput && (!unread || !isAiTabHidden(tab)) ? unread : tab.hasUnread;
-									return { ...applyRuntime(tab, patch), logs, hasUnread };
-								}),
-							};
-						}
-						const logs = (session as unknown as Record<string, LogEntry[]>)[patch.field] ?? [];
-						const updated = {
-							...applyRuntime(session, patch),
-							[patch.field]: applySessionTranscriptPatch(logs, patch),
+			const generation = useSessionStore.getState().sessionReconciliationGeneration;
+			if (generation !== queueGeneration) {
+				queueGeneration = generation;
+				queue = Promise.resolve();
+			}
+			const applied = queue.then(async () => {
+				if (generation !== useSessionStore.getState().sessionReconciliationGeneration) return;
+				await whenSessionsLoaded();
+				if (disposed || generation !== useSessionStore.getState().sessionReconciliationGeneration)
+					return;
+				updateSessionWith(patch.sessionId, (session) => {
+					if (patch.tabId) {
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) => {
+								if (tab.id !== patch.tabId) return tab;
+								const logs =
+									patch.orderIds.length ||
+									patch.upserts.length ||
+									patch.removedIds.length ||
+									patch.snapshot
+										? applySessionTranscriptPatch(tab.logs, patch)
+										: tab.logs;
+								const newOutput =
+									!patch.snapshot &&
+									patch.upserts.some(
+										(row) =>
+											row.source === 'stdout' &&
+											tab.logs.find((previous) => previous.id === row.id)?.text !== row.text
+									);
+								const unread =
+									tab.id !== session.activeTabId ||
+									session.id !== useSessionStore.getState().activeSessionId ||
+									tab.isAtBottom === false;
+								const hasUnread =
+									newOutput && (!unread || !isAiTabHidden(tab)) ? unread : tab.hasUnread;
+								return { ...applyRuntime(tab, patch), logs, hasUnread };
+							}),
 						};
-						return { ...updated, unifiedTabOrder: getRepairedUnifiedTabOrder(updated) };
-					});
-				})
-				.catch((error) =>
-					logger.error('Failed to apply owning host transcript', 'Sessions', error)
-				);
+					}
+					const logs = (session as unknown as Record<string, LogEntry[]>)[patch.field] ?? [];
+					const updated = {
+						...applyRuntime(session, patch),
+						[patch.field]: applySessionTranscriptPatch(logs, patch),
+					};
+					return { ...updated, unifiedTabOrder: getRepairedUnifiedTabOrder(updated) };
+				});
+			});
+			queue = applied.catch((error) =>
+				logger.error('Failed to apply owning host transcript', 'Sessions', error)
+			);
+			return applied;
 		});
 		if (isWebDesktop())
 			return () => {
 				disposed = true;
 				unsubscribeSync();
 			};
+
+		let pendingVersion = -1;
+		let pendingAgents = new Set<string>();
+		const projectPendingPermissions = () => {
+			if (disposed || pendingVersion < 0) return;
+			useSessionStore.getState().setSessions((sessions) => {
+				let changed = false;
+				const next = sessions.map((session) => {
+					if (pendingAgents.has(session.id)) {
+						if (session.state === 'waiting_input' || session.state === 'error') return session;
+						changed = true;
+						return { ...session, state: 'waiting_input' as const };
+					}
+					if (session.state !== 'waiting_input') return session;
+					changed = true;
+					return settleAgentStateFromTabs(session);
+				});
+				return changed ? next : sessions;
+			});
+		};
+		const acceptPendingPermissions = (snapshot: PendingPermissionSnapshot) => {
+			queue = queue
+				.then(async () => {
+					await whenSessionsLoaded();
+					if (disposed || snapshot.version <= pendingVersion) return;
+					pendingVersion = snapshot.version;
+					pendingAgents = new Set(snapshot.processIds.map(getBaseSessionId));
+					projectPendingPermissions();
+				})
+				.catch((error) =>
+					logger.error('Failed to apply pending permission runtime', 'Sessions', error)
+				);
+		};
+		const unsubscribePending =
+			window.maestro.process.onPendingPermissionsChanged?.(acceptPendingPermissions);
+		const unsubscribeProjection = useSessionStore.subscribe((state, previous) => {
+			if (state.sessions !== previous.sessions) projectPendingPermissions();
+		});
+		void window.maestro.process
+			.getPendingPermissions?.()
+			.then(acceptPendingPermissions)
+			.catch((error) => logger.warn('Pending permission runtime unavailable', 'Sessions', error));
 
 		const publish = (
 			session: Session,
@@ -184,6 +238,31 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 					: previousLogs.filter((log) => !ids!.has(log.id)).map((log) => log.id),
 				orderIds: logs === previousLogs && !requestId ? [] : logs.map((log) => log.id),
 				...(requestId && { snapshot: true }),
+				...(requestId &&
+					metadataOnly &&
+					!tabId && {
+						tabInventory: session.aiTabs
+							.filter((tab) => !tab.wizardState?.isActive)
+							.map((tab) => ({
+								id: tab.id,
+								agentSessionId: tab.agentSessionId,
+								name: tab.name,
+								starred: tab.starred,
+								createdAt: tab.createdAt,
+								state: tab.state,
+								hidden: tab.hidden,
+								readOnlyMode: tab.readOnlyMode,
+								permissionMode: tab.permissionMode,
+								saveToHistory: tab.saveToHistory,
+								showThinking: tab.showThinking,
+								customModel: tab.customModel,
+								customEffort: tab.customEffort,
+								...runtimeOf(tab),
+								clearRuntimeFields: fieldsFor(tab).filter(
+									(key) => Reflect.get(tab, key) === undefined
+								),
+							})),
+					}),
 				...(runtime && {
 					runtime,
 					clearRuntimeFields: fieldsFor(row).filter((key) => !(key in runtime)),
@@ -198,15 +277,30 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 		const unsubscribeRequest = api.onTranscriptRequest?.(
 			({ sessionId, tabId, requestId, metadataOnly }) => {
 				if (!ownsTranscript.current?.(sessionId)) return;
-				const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
-				const tab = session?.aiTabs.find((item) => item.id === tabId);
-				if (session && tab)
-					publish(session, tab, undefined, 'logs', tabId, requestId, metadataOnly);
-				else if (session && !tabId)
-					publish(session, session, undefined, 'shellLogs', undefined, requestId, metadataOnly);
+				void (async () => {
+					// Requests can arrive while the native owner is still hydrating. Do
+					// not drop that request permanently: answer once its tree is ready.
+					if (!useSessionStore.getState().sessions.some((item) => item.id === sessionId))
+						await whenSessionsLoaded();
+					if (disposed || !ownsTranscript.current?.(sessionId)) return;
+					const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
+					const tab = session?.aiTabs.find((item) => item.id === tabId);
+					if (session && tab)
+						publish(session, tab, undefined, 'logs', tabId, requestId, metadataOnly);
+					else if (session && !tabId)
+						publish(session, session, undefined, 'shellLogs', undefined, requestId, metadataOnly);
+				})().catch((error) => {
+					if (isExpectedBridgeError(error)) return;
+					logger.error('Failed to answer owning host snapshot', 'Sessions', error);
+					captureException(error, {
+						extra: { operation: 'useSessionTranscriptSync.answerSnapshot' },
+					});
+				});
 			}
 		);
 		const unsubscribeStore = useSessionStore.subscribe((state, previousState) => {
+			// A prior runtime projection subscriber may have superseded this frame.
+			if (state.sessions !== useSessionStore.getState().sessions) return;
 			if (state.sessions === previousState.sessions) return;
 			const previousById = new Map(previousState.sessions.map((session) => [session.id, session]));
 			for (const session of state.sessions) {
@@ -226,6 +320,8 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 			disposed = true;
 			unsubscribeSync();
 			unsubscribeRequest?.();
+			unsubscribePending?.();
+			unsubscribeProjection();
 			unsubscribeStore();
 		};
 	}, [ownsTranscript, whenSessionsLoaded]);

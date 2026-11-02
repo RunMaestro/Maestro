@@ -52,11 +52,8 @@ import { remarkAlert } from '../Markdown/remarkAlert';
 import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
-import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
-import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
-import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
-import { isDocumentScope } from '../../../shared/acappella/document-scope';
-import { talkWithDocument } from '../../services/documentVoice';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { startDocumentVoice } from '../../services/documentVoice';
 import { DocumentChatOverlay } from '../DocumentChat';
 import { useTocOverlay } from '../../hooks/ui/useTocOverlay';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -129,7 +126,10 @@ import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
-import { DOCUMENT_CHAT_PANEL_EVENT } from '../../services/documentChatPanel';
+import {
+	DOCUMENT_CHAT_PANEL_EVENT,
+	consumeDocumentChatPanelRequest,
+} from '../../services/documentChatPanel';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
@@ -672,10 +672,6 @@ export const FilePreview = React.memo(
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
-		const voiceEnabled = useSettingsStore(selectACappellaEnabled);
-		const voiceScope = useVoiceSessionStore((s) => s.scope);
-		const voiceState = useVoiceSessionStore((s) => s.state);
-		const voiceSessionId = useVoiceSessionStore((s) => s.sessionId);
 		// Reading and editing are separate typographic jobs, so they are separate
 		// settings: a proportional face is easier to read a document in, while an
 		// editor wants the line-number gutter to stay aligned. Empty means "inherit
@@ -1065,13 +1061,6 @@ export const FilePreview = React.memo(
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
 
-		// Offer the microphone only where there is text to talk about. An image, a
-		// video, or a compiled binary gives the agent nothing to read, so the button
-		// would open a conversation whose first act is a failed read.
-		// `isEditableText` is already exactly that question, asked with the bytes in
-		// hand: the path-only surfaces ask `isTalkableDocumentPath` instead.
-		const canTalkAboutThisFile = voiceEnabled && !!file && isEditableText;
-
 		// The chat bubble is offered wherever there is text to talk about, whether or
 		// not A Cappella is on: typing needs no voice stack at all, and hiding the
 		// whole panel behind an Encore Feature would take text chat away from every
@@ -1093,34 +1082,20 @@ export const FilePreview = React.memo(
 		// asks over an app-level event - the same arrangement the heading palette
 		// uses. The guard mirrors the hotkey's: a request for a file with nothing to
 		// read is dropped rather than opening a chat about an image.
-		useEventListener(DOCUMENT_CHAT_PANEL_EVENT, () => {
-			if (!canChatAboutThisFile) return;
+		const openRequestedDocumentChat = useCallback(() => {
+			if (!canChatAboutThisFile || !file) return;
+			const agentSessionId = sessionId ?? useSessionStore.getState().activeSessionId;
+			const request = consumeDocumentChatPanelRequest(file.path, agentSessionId);
+			if (!request) return;
 			documentChat.setOpen(true);
+			if (request.voice) void startDocumentVoice({ path: file.path, sessionId: agentSessionId });
+		}, [canChatAboutThisFile, file?.path, sessionId, documentChat.setOpen]);
+
+		useEventListener(DOCUMENT_CHAT_PANEL_EVENT, (event) => {
+			if (!canChatAboutThisFile) return;
+			if ((event as CustomEvent).detail) openRequestedDocumentChat();
+			else documentChat.setOpen(true);
 		});
-
-		// Whether the live voice session is about THIS file. Matched on the path
-		// rather than on "a session exists", so the button only reads as active for
-		// the document it belongs to - a conversation about some other file must
-		// not make this toolbar claim the floor.
-		const isTalkingAboutDocument =
-			isVoiceSessionActive(voiceState) &&
-			isDocumentScope(voiceScope) &&
-			(!sessionId || voiceScope.sessionId === sessionId) &&
-			!!file?.path &&
-			voiceScope.path === file.path;
-
-		// Talk with the previewed document. Shared with the Files panel menu and
-		// the command palette's "File: Talk with Document" entry, so all three
-		// resolve the agent and handle a refusal the same way. Pressing it during
-		// this file's own session ends it, exactly like the composer microphone.
-		const handleTalkWithDocument = useCallback(() => {
-			if (!file?.path) return;
-			if (isTalkingAboutDocument) {
-				void window.maestro.voice.stop().catch(() => undefined);
-				return;
-			}
-			void talkWithDocument({ path: file.path, sessionId });
-		}, [file?.path, sessionId, isTalkingAboutDocument]);
 
 		// Delete the previewed file. Shared with the command palette's
 		// "File: Delete" entry, so both raise the same confirmation.
@@ -1624,18 +1599,11 @@ export const FilePreview = React.memo(
 			documentChat.setOpen(false);
 		}, [file?.path]); // Run on mount and when navigating to a different file
 
-		// Talk with Document is a shortcut into the existing embedded voice chat.
-		// Run after the navigation reset above, including when voice starts before
-		// the file finishes opening. Closing the chat during a session stays closed.
+		// A targeted request can arrive before this preview mounts. Consume it
+		// after the navigation reset, then use the panel's own microphone path.
 		useEffect(() => {
-			if (canChatAboutThisFile && isTalkingAboutDocument) documentChat.setOpen(true);
-		}, [
-			file?.path,
-			canChatAboutThisFile,
-			isTalkingAboutDocument,
-			voiceSessionId,
-			documentChat.setOpen,
-		]);
+			openRequestedDocumentChat();
+		}, [openRequestedDocumentChat]);
 
 		// Helper to handle escape key - shows confirmation modal if there are unsaved changes
 		// In tab mode: Escape only closes internal UI (search, TOC), not the tab itself
@@ -2139,8 +2107,6 @@ export const FilePreview = React.memo(
 					wordWrap={fileEditWordWrap}
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
-					onTalkWithDocument={canTalkAboutThisFile ? handleTalkWithDocument : undefined}
-					isTalkingAboutDocument={isTalkingAboutDocument}
 					onDelete={handleDeleteFile}
 				/>
 
@@ -2221,13 +2187,17 @@ export const FilePreview = React.memo(
 					// content box edge to edge. The CSV / JSONL tables keep the
 					// padding but scroll themselves, so the column stacks the find
 					// bar over them instead of scrolling. Every other view is a
-					// document that scrolls inside this padded column.
+					// document that scrolls inside this padded column. Its bottom
+					// padding (`pb-24`) lets the last lines scroll clear of the
+					// round controls floating in the bottom corners (the ToC
+					// button is ~56px tall from the edge), so they never sit on
+					// top of the text.
 					className={
 						isParquet
 							? 'flex-1 min-h-0 overflow-hidden'
 							: isTablePane
 								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
-								: 'flex-1 min-h-0 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+								: 'flex-1 min-h-0 overflow-y-auto px-6 pt-3 pb-24 scrollbar-thin'
 					}
 					style={
 						{

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import { VoiceOutputPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceOutputPanel';
 import { useVoiceUiStore } from '../../../../../renderer/stores/voiceUiStore';
@@ -52,6 +52,24 @@ describe('VoiceOutputPanel', () => {
 		expect(await screen.findByText(/ElevenLabs/)).toBeInTheDocument();
 	});
 
+	it('refreshes the selected voice provider when the guided setup changes', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			providers: { tts: 'elevenlabs-tts' },
+		});
+		const { rerender } = render(
+			<VoiceOutputPanel theme={mockTheme} enabled selectionVersion={0} />
+		);
+		await screen.findByText(/Text is sent to ElevenLabs/);
+		vi.mocked(voice().listVoices).mockClear();
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			pipeline: 'realtime',
+			providers: { tts: 'elevenlabs-tts' },
+		});
+		rerender(<VoiceOutputPanel theme={mockTheme} enabled selectionVersion={1} />);
+		expect(await screen.findByText('Audio is sent to OpenAI.')).toBeInTheDocument();
+		await waitFor(() => expect(voice().listVoices).toHaveBeenCalled());
+	});
+
 	it('auditions a voice that has not been selected', async () => {
 		render(<VoiceOutputPanel theme={mockTheme} enabled />);
 
@@ -60,6 +78,62 @@ describe('VoiceOutputPanel', () => {
 		// The voice id is passed explicitly. Without it, hearing a voice would mean
 		// selecting it first and undoing the ones you did not want.
 		await waitFor(() => expect(voice().previewVoice).toHaveBeenCalledWith(PREVIEW_LINE, 'am_puck'));
+	});
+
+	it('combines gender, language and region filters without changing the selected voice', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({ voice: { voiceId: 'daniel' } });
+		vi.mocked(voice().listVoices).mockResolvedValue([
+			{ id: 'samantha', name: 'Samantha', language: 'en-US', gender: 'female' },
+			{ id: 'karen', name: 'Karen', language: 'en-AU', gender: 'female' },
+			{ id: 'monica', name: 'Monica', language: 'es-ES', gender: 'female' },
+			{ id: 'daniel', name: 'Daniel', language: 'en-GB', gender: 'male' },
+		]);
+		render(<VoiceOutputPanel theme={mockTheme} enabled />);
+		const voices = await screen.findByRole('radiogroup', { name: 'Voice', exact: true });
+		await waitFor(() =>
+			expect(within(voices).getByRole('radio', { name: 'Daniel' })).toBeChecked()
+		);
+		vi.mocked(window.maestro.settings.set).mockClear();
+		fireEvent.click(screen.getByRole('button', { name: 'Filter voices by gender' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Female' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Filter voices by language' }));
+		fireEvent.change(screen.getByRole('textbox', { name: 'Search language...' }), {
+			target: { value: 'English' },
+		});
+		fireEvent.click(screen.getByRole('option', { name: 'English' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Filter voices by region' }));
+		fireEvent.click(screen.getByRole('option', { name: 'United States' }));
+		expect(within(voices).getAllByRole('radio')).toHaveLength(1);
+		expect(within(voices).getByRole('radio', { name: 'Samantha' })).not.toBeChecked();
+		expect(screen.getByText('1 of 4 voices')).toBeInTheDocument();
+		expect(screen.getByText('Your current voice is hidden by these filters.')).toBeInTheDocument();
+		expect(window.maestro.settings.set).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+		expect(within(voices).getByRole('radio', { name: 'Daniel' })).toBeChecked();
+	});
+
+	it('keeps unlabelled voices accessible and lets an empty combination be cleared', async () => {
+		vi.mocked(voice().listVoices).mockResolvedValue([
+			{ id: 'known', name: 'Known', language: 'en-US', gender: 'male' },
+			{ id: 'unknown', name: 'Unknown profile', language: 'not a locale' },
+		]);
+		render(<VoiceOutputPanel theme={mockTheme} enabled />);
+		fireEvent.click(await screen.findByRole('button', { name: 'Filter voices by gender' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Unknown' }));
+		expect(screen.getByRole('radio', { name: 'Unknown profile' })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Filter voices by language' }));
+		fireEvent.click(screen.getByRole('option', { name: 'English' }));
+		expect(screen.getByText(/No voices match these filters/)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+		expect(
+			within(screen.getByRole('radiogroup', { name: 'Voice', exact: true })).getAllByRole('radio')
+		).toHaveLength(2);
+	});
+
+	it('omits filters when a provider has no useful metadata', async () => {
+		render(<VoiceOutputPanel theme={mockTheme} enabled />);
+		await screen.findByTestId('voice-preview-am_puck');
+		expect(screen.queryByRole('button', { name: /Filter voices by/ })).not.toBeInTheDocument();
 	});
 
 	it('refreshes VoiceStudio profiles after the source becomes available', async () => {

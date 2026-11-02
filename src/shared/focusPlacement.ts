@@ -73,6 +73,31 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	/** maestro-cli tab new [--prompt] - focuses today. */
 	'tab-new': false,
 	/**
+	 * maestro-cli tab reopen - the CLI half of Cmd+Shift+T, so it focuses the
+	 * restored tab the way the shortcut does (and the way `tab new` does).
+	 * `--background` restores it without moving the view.
+	 */
+	'tab-reopen': false,
+	/**
+	 * maestro-cli tab compact - Context: Compact selects the compacted tab it
+	 * creates, as the overlay menu does. `--background` keeps the source tab
+	 * selected and skips the success toast; the new tab still lands beside it.
+	 */
+	'tab-compact': false,
+	/**
+	 * maestro-cli tab merge - Context: Merge Into jumps to the target tab, whose
+	 * composer then sends the merged context. `--background` stays put and leaves
+	 * the context staged on the target tab: it sends when that tab is next opened
+	 * (at once if it is the tab on screen). The reply says which happened.
+	 */
+	'tab-merge': false,
+	/**
+	 * maestro-cli tab transfer - Context: Send to Agent jumps to the new tab in
+	 * the target agent. `--background` adds the tab without selecting it or the
+	 * agent; the context is sent (or queued behind a busy target) either way.
+	 */
+	'tab-transfer': false,
+	/**
 	 * maestro-cli dispatch --new-tab - the one verb that is ALREADY background by
 	 * default, with `--focus` to opt out. Leaving it alone is the same
 	 * no-default-changes rule as everything else here, not an exception to it.
@@ -89,6 +114,8 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	dispatch: false,
 	/** maestro-cli create-agent - selects the new agent today. */
 	'create-agent': false,
+	/** maestro-cli duplicate-agent - selects the copy, the same as create-agent. */
+	'duplicate-agent': false,
 	/**
 	 * maestro-cli create-worktree - selects the new agent today.
 	 *
@@ -224,6 +251,10 @@ export const ALREADY_QUIET_VERBS = [
 	// Reading the notes and taking one back render nothing.
 	'steer-auto-run-list',
 	'steer-auto-run-cancel',
+	// Live on/off moves no view. Every window's LIVE pill follows the switch,
+	// which is the only indicator the pill's own click gives.
+	'live-on',
+	'live-off',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */

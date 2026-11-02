@@ -181,6 +181,10 @@ describe('LocalModelsModelsSection', () => {
 		expect(summary).toHaveTextContent(/on disk/);
 		const strip = screen.getByRole('tablist', { name: 'Library sections' });
 		expect(strip).toHaveClass('sticky', 'top-0', 'z-20');
+		// Cover the scroll panel's side gutters; the summary, not the
+		// scrollport, owns the top inset so nothing can bleed above the strip.
+		expect(strip).toHaveClass('-mx-6', 'px-6');
+		expect(summary.parentElement).toHaveClass('pt-6');
 		expect(strip).toHaveStyle({ backgroundColor: theme.colors.bgSidebar });
 		expect(await screen.findByTestId('local-models-hardware')).toHaveTextContent(
 			'128.0 GB of unified memory'

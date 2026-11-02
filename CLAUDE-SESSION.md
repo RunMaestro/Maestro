@@ -6,6 +6,13 @@ Session interface (agent data model) and code conventions for the Maestro codeba
 
 ## Session Interface (Agent Data Model)
 
+`waiting_input` means the permission relay has an unresolved request for the agent.
+The native registry owns this transient signal; owning renderers publish it as
+runtime state. A live-process reattach preserves it until the request resolves.
+`selectNeedsInputCount` in `src/renderer/stores/sessionStore.ts` counts waiting
+agents once, excluding Pianola and worktree children, for both the dashboard badge
+and browser page title. Idle or unread conversations do not count as requests.
+
 Key fields on the Session object (abbreviated - see `src/renderer/types/index.ts` for full definition):
 
 ```typescript
@@ -15,7 +22,7 @@ interface Session {
 	name: string;
 	groupId?: string; // Agent grouping
 	toolType: ToolType; // 'claude-code' | 'codex' | 'opencode' | 'factory-droid' | 'terminal' | etc.
-	state: SessionState; // 'idle' | 'busy' | 'error' | 'connecting'
+	state: SessionState; // 'idle' | 'busy' | 'waiting_input' | 'error' | 'connecting'
 	inputMode: 'ai' | 'terminal'; // Which process receives input
 	bookmarked?: boolean; // Pinned to top
 

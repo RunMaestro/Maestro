@@ -38,16 +38,14 @@ import type {
 	TtsChunk,
 	TtsProvider,
 	TtsSpeakOptions,
+	TtsVoice,
 } from '../../../../shared/acappella/providers';
 import { splitIntoSpokenSentences } from '../../../../shared/acappella/sentences';
 import { isLinux, isMacOS, isWindows } from '../../../../shared/platformDetection';
 import { decodeWavPcm16 } from '../pcm';
 
 /** What the picker renders. The id is what the engine is handed back. */
-export interface SystemVoice {
-	id: string;
-	name: string;
-}
+export type SystemVoice = TtsVoice;
 
 export interface SystemVoiceRequest {
 	text: string;
@@ -322,12 +320,27 @@ async function synthesizeLinux(request: SystemVoiceRequest): Promise<SystemVoice
 }
 
 /** `say -v ?` prints `Name<spaces>lang_REGION<spaces># sample`. */
-export function parseMacVoiceList(output: string): SystemVoice[] {
+export function parseMacVoiceList(
+	output: string,
+	attributes: Array<{ name: string; language: string; gender?: string }> = []
+): SystemVoice[] {
+	const metadata = new Map(attributes.map((voice) => [`${voice.name}|${voice.language}`, voice]));
 	const voices: SystemVoice[] = [];
 	for (const line of output.split('\n')) {
 		const match = /^(.+?)\s+([A-Za-z]{2,3}[_-][A-Za-z0-9]+)\s+#/.exec(line);
 		if (!match) continue;
-		voices.push({ id: match[1].trim(), name: `${match[1].trim()} (${match[2]})` });
+		const id = match[1].trim();
+		const language = match[2].replace(/_/g, '-');
+		const nativeGender = metadata.get(`${id}|${language}`)?.gender;
+		const gender =
+			nativeGender === 'VoiceGenderFemale'
+				? 'female'
+				: nativeGender === 'VoiceGenderMale'
+					? 'male'
+					: nativeGender === 'VoiceGenderNeuter'
+						? 'neutral'
+						: undefined;
+		voices.push({ id, name: `${id} (${match[2]})`, language, gender });
 	}
 	// English first, then everything else, each group in the order the OS listed
 	// them. A user of another language still finds theirs; an English speaker is
@@ -338,8 +351,30 @@ export function parseMacVoiceList(output: string): SystemVoice[] {
 }
 
 async function listMacVoices(): Promise<SystemVoice[]> {
-	const output = await runEngine('say', ['-v', '?'], new AbortController().signal);
-	return parseMacVoiceList(output);
+	// Keep `say`'s selectable names and order. AppKit supplies gender without a
+	// guessed name table, and failing to read it must not hide usable voices.
+	const [output, metadata] = await Promise.all([
+		runEngine('say', ['-v', '?'], new AbortController().signal),
+		runEngine(
+			'/usr/bin/osascript',
+			[
+				'-l',
+				'JavaScript',
+				'-e',
+				`ObjC.import('AppKit');
+JSON.stringify(ObjC.deepUnwrap($.NSSpeechSynthesizer.availableVoices).map(function(id) {
+	var a = ObjC.deepUnwrap($.NSSpeechSynthesizer.attributesForVoice(id));
+	return {name: a.VoiceName, language: a.VoiceLocaleIdentifier.replace(/_/g, '-'), gender: a.VoiceGender};
+}));`,
+			],
+			new AbortController().signal
+		).catch(() => '[]'),
+	]);
+	try {
+		return parseMacVoiceList(output, JSON.parse(metadata));
+	} catch {
+		return parseMacVoiceList(output);
+	}
 }
 
 async function listWindowsVoices(): Promise<SystemVoice[]> {

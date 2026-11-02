@@ -21,6 +21,7 @@ import {
 import type { CueSessionRegistry } from './cue-session-registry';
 import { createTriggerSource } from './triggers/cue-trigger-source-registry';
 import { passesFilter } from './triggers/cue-trigger-filter';
+import { isDurableCueEvent } from './triggers/cue-plugin-trigger-source';
 import type { CueScheduleCarry, CueTriggerSource } from './triggers/cue-trigger-source';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
@@ -449,7 +450,7 @@ export function createCueSessionRuntimeService(
 				onLog: deps.onLog,
 				emit: (event) => {
 					state.lastTriggered = event.timestamp;
-					deps.dispatchSubscription(session.id, sub, event, session.name);
+					return deps.dispatchSubscription(session.id, sub, event, session.name);
 				},
 				// The trigger source asks for the sub to be consumed (missed-grace,
 				// or - in theory - any other reason it decides not to fire). The
@@ -636,8 +637,11 @@ export function createCueSessionRuntimeService(
 		if (!session) {
 			teardownSession(sessionId);
 			if (holdQueue) {
+				heldQueues.add(sessionId);
 				deps.retainQueue(sessionId, (entry) =>
-					entry.event.type === 'app.startup' ? null : 'session-missing'
+					entry.event.type === 'app.startup' || isDurableCueEvent(entry.event)
+						? null
+						: 'session-missing'
 				);
 			}
 			return { reloaded: false, configRemoved: false };

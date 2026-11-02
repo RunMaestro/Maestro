@@ -40,6 +40,11 @@ function seed(...sessions: Session[]) {
 	useSessionStore.setState({ sessions });
 }
 
+function addAgent(name: string) {
+	fireEvent.click(screen.getByRole('button', { name: 'Add agent gateway' }));
+	fireEvent.click(screen.getByRole('option', { name }));
+}
+
 function row(agentId: string): HTMLElement {
 	const found = screen
 		.getAllByTestId('local-models-gateway-row')
@@ -158,6 +163,7 @@ describe('LocalModelsGatewaySection', () => {
 		);
 		seed(agent({ id: 'a', name: 'Alpha' }), agent({ id: 'b', name: 'Beta' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 
 		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
 		expect(screen.getByTestId('gateway-proxy-all-off')).toBeDisabled();
@@ -188,7 +194,7 @@ describe('LocalModelsGatewaySection', () => {
 		expect(screen.getByTestId('gateway-proxy-all-off')).toBeEnabled();
 	});
 
-	it('lists every agent by name with its gateway, and leaves terminals out', () => {
+	it('lists configured agents and adds an unconfigured agent from the filtered picker', () => {
 		seed(
 			agent({ id: 'z', name: 'Zed', toolType: 'codex', gatewayUrl: 'http://localhost:4000' }),
 			agent({ id: 'a', name: 'Alpha' }),
@@ -197,10 +203,54 @@ describe('LocalModelsGatewaySection', () => {
 
 		render(<LocalModelsGatewaySection theme={theme} />);
 
+		expect(screen.getAllByTestId('local-models-gateway-row')).toHaveLength(1);
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent gateway' }));
+		expect(screen.queryByRole('option', { name: 'Zed' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: 'Shell' })).not.toBeInTheDocument();
+		fireEvent.change(screen.getByRole('textbox', { name: 'Filter agents...' }), {
+			target: { value: 'ALP' },
+		});
+		fireEvent.keyDown(screen.getByRole('textbox', { name: 'Filter agents...' }), { key: 'Enter' });
 		const rows = screen.getAllByTestId('local-models-gateway-row');
 		expect(rows.map((el) => el.getAttribute('data-agent-id'))).toEqual(['a', 'z']);
 		expect(within(row('z')).getByRole('textbox')).toHaveValue('http://localhost:4000');
 		expect(within(row('z')).getByText('Codex')).toBeInTheDocument();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		expect(screen.getByRole('button', { name: 'Add agent gateway' })).toBeDisabled();
+	});
+
+	it('hides the table until an entry is added and keeps bulk actions available', () => {
+		seed(agent({ id: 'a', name: 'Alpha' }));
+		render(<LocalModelsGatewaySection theme={theme} />);
+		expect(screen.getByText('No agent gateways configured.')).toBeInTheDocument();
+		expect(screen.queryByTestId('local-models-gateway-table')).not.toBeInTheDocument();
+		expect(screen.getByTestId('gateway-proxy-all-compress')).toBeEnabled();
+		addAgent('Alpha');
+		expect(row('a')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Remove gateway for Alpha' }));
+		expect(screen.queryByTestId('local-models-gateway-table')).not.toBeInTheDocument();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('removes a configured gateway and proxy mode through the shared writer', async () => {
+		seed(
+			agent({
+				id: 'a',
+				name: 'Alpha',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress',
+			})
+		);
+		render(<LocalModelsGatewaySection theme={theme} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Remove gateway for Alpha' }));
+		await waitFor(() =>
+			expect(screen.queryByTestId('local-models-gateway-row')).not.toBeInTheDocument()
+		);
+		expect(useSessionStore.getState().sessions[0].gatewayUrl).toBeUndefined();
+		expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBeUndefined();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+		addAgent('Alpha');
+		expect(within(row('a')).getByRole('textbox')).toHaveValue('');
 	});
 
 	it('says there are no agents when there are none', () => {
@@ -222,6 +272,7 @@ describe('LocalModelsGatewaySection', () => {
 	it('saves a gateway on commit, normalized, and flushes it to main', async () => {
 		seed(agent({ id: 'a', name: 'Alpha' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 		const input = within(row('a')).getByRole('textbox');
 
 		fireEvent.change(input, { target: { value: 'http://127.0.0.1:8787/anthropic/' } });
@@ -241,6 +292,7 @@ describe('LocalModelsGatewaySection', () => {
 	it('shows why a value was refused and stores nothing', async () => {
 		seed(agent({ id: 'a', name: 'Alpha' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 		const input = within(row('a')).getByRole('textbox');
 
 		fireEvent.change(input, { target: { value: 'nope' } });
@@ -259,6 +311,7 @@ describe('LocalModelsGatewaySection', () => {
 		seed(agent({ id: 'c', name: 'Copilot', toolType: 'copilot-cli' }));
 
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Copilot');
 
 		expect(within(row('c')).getByRole('textbox')).toBeDisabled();
 		expect(within(row('c')).getByTestId('gateway-url-c-status')).toHaveTextContent(
@@ -318,6 +371,7 @@ describe('LocalModelsGatewaySection', () => {
 		seed(agent({ id: 'a', name: 'Alpha' }));
 
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 
 		expect(screen.queryByTestId('gateway-env-toggle-a')).toBeNull();
 	});
@@ -332,6 +386,7 @@ describe('the Maestro proxy mode', () => {
 		);
 
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 		await screen.findByText(/Listening on/);
 
 		expect(modeSelect('a')).toHaveValue('off');
@@ -395,6 +450,7 @@ describe('the Maestro proxy mode', () => {
 		const proxy = window.maestro.localModels.proxy;
 		seed(agent({ id: 'a', name: 'Alpha' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 		await waitFor(() => expect(proxy.report).toHaveBeenCalledTimes(1));
 		vi.mocked(proxy.report).mockResolvedValue(runningProxy(['a']));
 
@@ -452,6 +508,8 @@ describe('the Maestro proxy mode', () => {
 		);
 
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Copilot');
+		addAgent('Remote');
 
 		expect(modeSelect('c')).toBeDisabled();
 		expect(modeSelect('c').title).toContain('Copilot CLI ignores base-URL variables');
@@ -465,6 +523,7 @@ describe('the Maestro proxy mode', () => {
 		);
 		seed(agent({ id: 'a', name: 'Alpha' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
 
 		await act(async () => {
 			fireEvent.change(modeSelect('a'), { target: { value: 'passthrough' } });

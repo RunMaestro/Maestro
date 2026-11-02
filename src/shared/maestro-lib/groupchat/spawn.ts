@@ -16,6 +16,7 @@
  */
 
 import { STEERING_SOCKET_ENV_VAR } from '../../chatSteering';
+import { isWindows } from '../../platformDetection';
 import type { ClaudeTokenMode } from '../../claudeTokenMode';
 import { logger } from '../host';
 import { getContextWindowValue } from '../launch/agent-args';
@@ -30,6 +31,7 @@ import {
 	type SshRemoteSettingsStore,
 	type SshRemoteResolveResult,
 } from '../launch/ssh-remote-resolver';
+import { promptExceedsArgvLimit } from '../launch/prompt-delivery';
 import { sshUnresolvedRemoteMessage, wrapSpawnWithSsh } from '../launch/ssh-spawn-wrapper';
 import type { WindowsSpawnConfig } from './windows-spawn';
 import type { GroupChatSpawn } from './types';
@@ -158,6 +160,7 @@ export async function prepareGroupChatSpawn(
 			args,
 			customEnvVars,
 			maxWaitSeconds: spawn.maxWaitSeconds,
+			acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -195,6 +198,7 @@ export async function prepareGroupChatSpawn(
 			interactiveModeArgs: agent.interactiveModeArgs,
 			remoteClaudeBin: claudeDecision.claudeRealBinPath,
 			maxWaitSeconds: spawn.maxWaitSeconds,
+			acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		});
 		if (remoteInteractive && debugLabel) {
 			logger.debug(
@@ -250,6 +254,29 @@ export async function prepareGroupChatSpawn(
 		);
 	}
 
+	// A prompt too long for this machine's command line goes over stdin, for an agent that reads
+	// it there. The Windows config above already does that for every Windows prompt; this covers
+	// Linux and macOS, where a synthesis or a consult carrying a long history otherwise fails the
+	// spawn with E2BIG. An SSH turn is skipped: its prompt already travels in the remote script.
+	const sendPromptViaStdin = winConfig.sendPromptViaStdin;
+	let sendPromptViaStdinRaw = winConfig.sendPromptViaStdinRaw;
+	if (
+		spawnPrompt &&
+		!spawnSshStdinScript &&
+		!sshRemoteConfig?.enabled &&
+		!sendPromptViaStdin &&
+		!sendPromptViaStdinRaw &&
+		(agent.capabilities?.supportsPromptViaStdin ?? false) &&
+		promptExceedsArgvLimit(spawnPrompt, isWindows())
+	) {
+		sendPromptViaStdinRaw = true;
+		logger.info(
+			`Prompt for ${debugLabel ?? processId} is too long for the command line; sending it over stdin`,
+			LOG_CONTEXT,
+			{ promptLength: spawnPrompt.length }
+		);
+	}
+
 	// Start the clock at the single choke point every turn shape goes through
 	// (moderator, participant, synthesis, recovery), so a new spawn site is
 	// measured without having to remember to opt in.
@@ -269,8 +296,8 @@ export async function prepareGroupChatSpawn(
 		noPromptSeparator: agent.noPromptSeparator,
 		shell: winConfig.shell,
 		runInShell: winConfig.runInShell,
-		sendPromptViaStdin: winConfig.sendPromptViaStdin,
-		sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
+		sendPromptViaStdin,
+		sendPromptViaStdinRaw,
 		sshStdinScript: spawnSshStdinScript,
 		sshRemoteCommand: spawnSshRemoteCommand,
 	};

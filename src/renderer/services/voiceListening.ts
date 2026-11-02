@@ -113,9 +113,24 @@ export function openVoiceMic(options: OpenVoiceMicOptions = {}): Promise<void> {
  *                     a half-said thought is dropped, which is what switching
  *                     the microphone off mid-sentence means.
  */
-export function closeVoiceMic(options: { send?: boolean } = {}): Promise<void> {
+export function closeVoiceMic(
+	options: {
+		send?: boolean;
+		/** Limit a panel's release or close to its own conversation. */
+		scope?: VoiceScope;
+		/** End the session after any pending microphone start has finished. */
+		endSession?: boolean;
+	} = {}
+): Promise<void> {
 	const send = options.send === true;
 	return queue.enqueue(MIC_KEY, async () => {
+		if (options.scope && !isSameVoiceScope(useVoiceSessionStore.getState().scope, options.scope)) {
+			return;
+		}
+		if (options.endSession) {
+			await window.maestro.voice.stop().catch(() => undefined);
+			return;
+		}
 		// False (no session) is fine: a microphone with no session is already shut.
 		await window.maestro.voice.setListening({ listening: false, send }).catch(() => undefined);
 	});

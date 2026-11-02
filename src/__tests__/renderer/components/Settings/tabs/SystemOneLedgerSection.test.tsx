@@ -19,6 +19,8 @@ import type {
 	SystemOneLedgerEntry,
 	SystemOneLedgerPage,
 } from '../../../../../shared/local-models/system-one-ledger';
+import { formatSystemOneLedgerInput } from '../../../../../shared/local-models/system-one-ledger';
+import { noul } from '../../../../../shared/local-models/system-one';
 import {
 	SYSTEM_ONE_ENGINE_DISCLOSURES,
 	SYSTEM_ONE_KEEP_INPUTS_DESCRIPTIONS,
@@ -167,24 +169,165 @@ describe('SystemOneLedgerSection', () => {
 		expect(rows[1]).toHaveTextContent('timeout');
 	});
 
+	it('shows the agent, model, tokens and precise cost before expanding, without exposing the input', async () => {
+		ledger().mockResolvedValue(
+			page({ entries: [{ ...ANSWERED, input: 'Saved input stays inside the details.' }], total: 1 })
+		);
+		await renderSection();
+		const row = await screen.findByTestId('system-one-ledger-row');
+		const summary = within(row).getByTestId('system-one-ledger-summary');
+
+		expect(summary).toHaveTextContent('Agent: Triage bot');
+		expect(summary).toHaveTextContent('Model: jev-1.13.0');
+		expect(summary).toHaveTextContent('Tokens: 412 in, 3 out');
+		expect(summary).toHaveTextContent('Cost (est.): $0.000017');
+		expect(summary).not.toHaveTextContent('Cached');
+		expect(row).not.toHaveTextContent('Saved input stays inside the details.');
+		expect(within(row).queryByTestId('system-one-ledger-detail')).toBeNull();
+	});
+
+	it('shows the decision topic and a question preview for agent requests before expansion', async () => {
+		const emailQuestion = 'Is this email something the recipient personally needs to see?';
+		ledger().mockResolvedValue(
+			page({
+				entries: [
+					{
+						...ANSWERED,
+						taskId: 'agent:ask',
+						input: formatSystemOneLedgerInput({
+							state: 'PRIVATE EMAIL BODY',
+							questions: { keep: noul(emailQuestion) },
+						}),
+					},
+					{
+						...TIMED_OUT,
+						taskId: 'agent:ask',
+						input: formatSystemOneLedgerInput({
+							state: 'PRIVATE MESSAGE',
+							questions: { tab: noul('Which working session is this message about?') },
+						}),
+					},
+				],
+			})
+		);
+		await renderSection();
+		const rows = await screen.findAllByTestId('system-one-ledger-row');
+		expect(within(rows[0]).getByTestId('system-one-ledger-topic')).toHaveTextContent(
+			'Email classification'
+		);
+		expect(within(rows[0]).getByTestId('system-one-ledger-question')).toHaveTextContent(
+			emailQuestion
+		);
+		expect(within(rows[0]).getByTestId('system-one-ledger-summary')).toHaveTextContent(
+			'Agent: ask'
+		);
+		expect(rows[0]).not.toHaveTextContent('PRIVATE EMAIL BODY');
+		expect(within(rows[0]).queryByTestId('system-one-ledger-detail')).toBeNull();
+		expect(within(rows[1]).getByTestId('system-one-ledger-topic')).toHaveTextContent(
+			'Session routing'
+		);
+		expect(rows[1]).not.toHaveTextContent('PRIVATE MESSAGE');
+	});
+
+	it('shows an unknown question verbatim with a bounded preview and full tooltip', async () => {
+		const question = 'Should this document receive a review? ' + 'Additional criteria. '.repeat(20);
+		ledger().mockResolvedValue(
+			page({
+				entries: [
+					{
+						...ANSWERED,
+						taskId: 'agent:ask',
+						input: formatSystemOneLedgerInput({
+							state: 'private',
+							questions: { review: noul(question) },
+						}),
+					},
+				],
+				total: 1,
+			})
+		);
+		await renderSection();
+		const preview = await screen.findByTestId('system-one-ledger-question');
+		expect(preview).toHaveTextContent('Should this document receive a review?');
+		expect(preview.textContent!.length).toBeLessThanOrEqual(160);
+		expect(preview).toHaveAttribute('title', question.trim());
+	});
+
+	it('says when context is unavailable instead of guessing the subject', async () => {
+		ledger().mockResolvedValue(page({ entries: [{ ...ANSWERED, taskId: 'agent:ask' }], total: 1 }));
+		await renderSection();
+		expect(await screen.findByTestId('system-one-ledger-topic')).toHaveTextContent(
+			'Agent judgment'
+		);
+		expect(screen.getByTestId('system-one-ledger-question')).toHaveTextContent(
+			'Decision context unavailable: input was not kept.'
+		);
+	});
+
+	it('labels cached and unnamed runs, omitting metadata the record does not have', async () => {
+		ledger().mockResolvedValue(
+			page({
+				entries: [
+					{
+						...ANSWERED,
+						id: 'cached',
+						agentId: undefined,
+						model: undefined,
+						usage: undefined,
+						costUsd: undefined,
+						cached: true,
+					},
+					{ ...TIMED_OUT, agentId: 'gone-1234567', costUsd: 0 },
+				],
+			})
+		);
+		await renderSection();
+		const rows = await screen.findAllByTestId('system-one-ledger-row');
+		const summary = within(rows[0]).getByTestId('system-one-ledger-summary');
+
+		expect(summary).toHaveTextContent('Agent: No agent named');
+		expect(summary).toHaveTextContent('Cached');
+		expect(summary).not.toHaveTextContent('Model:');
+		expect(summary).not.toHaveTextContent('Tokens:');
+		expect(summary).not.toHaveTextContent('Cost (est.):');
+		const removed = within(rows[1]).getByTestId('system-one-ledger-summary');
+		expect(removed).toHaveTextContent('Agent: Removed agent gone-123');
+		expect(removed).toHaveTextContent('Cost (est.): $0.00');
+	});
+
 	it('opens a row to its model, questions, tokens, cost and agent, and says the input was not kept', async () => {
 		await renderSection();
-		const [row] = await screen.findAllByTestId('system-one-ledger-row');
+		const [row, otherRow] = await screen.findAllByTestId('system-one-ledger-row');
+		const button = within(row).getByRole('button');
+		const chevron = within(row).getByTestId('system-one-ledger-chevron');
+		expect(button).toHaveAttribute('aria-expanded', 'false');
+		expect(button).toHaveAttribute('title', 'Expand decision details');
+		expect(chevron).toHaveAttribute('aria-hidden', 'true');
+		expect(chevron).not.toHaveClass('rotate-90');
 		expect(within(row).queryByTestId('system-one-ledger-detail')).toBeNull();
 
-		fireEvent.click(within(row).getByRole('button'));
+		fireEvent.click(chevron);
 
 		const detail = within(row).getByTestId('system-one-ledger-detail');
+		expect(button).toHaveAttribute('aria-expanded', 'true');
+		expect(button).toHaveAttribute('title', 'Collapse decision details');
+		expect(button).toHaveAttribute('aria-controls', detail.id);
+		expect(chevron).toHaveClass('rotate-90');
+		expect(within(otherRow).getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+		expect(within(otherRow).queryByTestId('system-one-ledger-detail')).toBeNull();
 		expect(detail).toHaveClass('select-text');
 		expect(detail).toHaveTextContent('jev-1.13.0');
 		expect(detail).toHaveTextContent('proceed');
 		expect(detail).toHaveTextContent('412 in, 3 out');
-		expect(detail).toHaveTextContent('<$0.01');
+		expect(detail).toHaveTextContent('$0.000017');
 		expect(detail).toHaveTextContent('Triage bot');
 		expect(detail).toHaveTextContent('The input was not kept for this run.');
 		expect(within(row).queryByTestId('system-one-ledger-input')).toBeNull();
 
-		fireEvent.click(within(row).getByRole('button'));
+		fireEvent.click(button);
+		expect(button).toHaveAttribute('aria-expanded', 'false');
+		expect(button).toHaveAttribute('title', 'Expand decision details');
+		expect(chevron).not.toHaveClass('rotate-90');
 		expect(within(row).queryByTestId('system-one-ledger-detail')).toBeNull();
 	});
 

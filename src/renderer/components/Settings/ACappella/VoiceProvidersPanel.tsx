@@ -1,7 +1,7 @@
 /**
  * Voice Providers - which engines run, and where your audio goes.
  *
- * The one thing this panel must never get wrong is the sentence at the top. A
+ * The one thing this panel must never get wrong is the privacy statement. A
  * user configuring a voice assistant has exactly one question that matters -
  * "does my microphone leave this machine" - and every other control here is
  * secondary to answering it correctly. So that line is COMPUTED from the current
@@ -30,12 +30,13 @@ import { KeyRound, Radio, ShieldCheck } from 'lucide-react';
 
 import {
 	VOICE_CREDENTIALS,
+	OPENAI_REALTIME_PROVIDER_ID,
 	getVoiceProvider,
 	summariseVoiceEgress,
 	voiceProvidersForRole,
 	type VoiceCredentialService,
 } from '../../../../shared/acappella/provider-catalog';
-import type { VoicePipelineShape, VoiceProviderRole } from '../../../../shared/acappella/providers';
+import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
 import type { VoiceSlotReadiness } from '../../../../shared/acappella/readiness';
 import { VOICE_ROUTING_TASK_ID } from '../../../../shared/acappella/voice-routing';
 import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
@@ -44,6 +45,7 @@ import type {
 	CredentialValidation,
 } from '../../../../main/acappella/providers/credentials';
 import type { Theme } from '../../../types';
+import { hostPlatform } from '../../../utils/platformUtils';
 import { FormInput } from '../../ui/FormInput';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
@@ -52,21 +54,31 @@ import { useLocalModelEndpoints } from '../../../hooks/localModels';
 import { AssignmentOptionElements } from '../tabs/LocalModelsTab/AssignmentOptionElements';
 import type { AssignmentOptionGroup } from '../tabs/LocalModelsTab/assignmentOptions';
 import { buildBrainOptionGroups } from './brainOptions';
-import { SLOT_DEFINITIONS, useVoiceProviderSelection } from './useVoiceProviderSelection';
+import {
+	SLOT_DEFINITIONS,
+	useVoiceProviderSelection,
+	type VoiceSetupMode,
+} from './useVoiceProviderSelection';
 import { useVoiceModels } from './useVoiceModels';
 
 export interface VoiceProvidersPanelProps {
 	theme: Theme;
 	/** Mirror of the A Cappella Encore flag. */
 	enabled: boolean;
+	onSelectionChanged?: () => void;
 }
 
-const PIPELINE_OPTIONS: Array<{ value: VoicePipelineShape; label: string }> = [
-	{ value: 'cascade', label: 'Cascade' },
-	{ value: 'realtime', label: 'Realtime' },
+const SETUP_OPTIONS: Array<{ value: VoiceSetupMode; label: string }> = [
+	{ value: 'local', label: 'On this computer' },
+	{ value: 'cloud', label: 'Cloud' },
+	{ value: 'custom', label: 'Custom' },
 ];
 
-export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps) {
+export function VoiceProvidersPanel({
+	theme,
+	enabled,
+	onSelectionChanged,
+}: VoiceProvidersPanelProps) {
 	const selection = useVoiceProviderSelection(enabled);
 	const models = useVoiceModels(enabled);
 	// The user's own model servers, for the Conductor Brain's endpoint rows.
@@ -75,6 +87,8 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 	const [credentials, setCredentials] = useState<CredentialState[]>([]);
 	// Why the last Conductor Brain pick was refused, until the next pick.
 	const [brainProblem, setBrainProblem] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
+	const [setupProblem, setSetupProblem] = useState<string | null>(null);
 
 	const refreshCredentials = useCallback(async () => {
 		const states = await window.maestro.voice.credentials.list().catch(() => []);
@@ -99,7 +113,7 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 	const egress = useMemo(() => {
 		const ids =
 			selection.pipeline === 'realtime'
-				? ['openai-realtime']
+				? [OPENAI_REALTIME_PROVIDER_ID]
 				: [selection.providerIds.stt, selection.providerIds.tts, selection.providerIds.brain];
 		return summariseVoiceEgress(ids, { endpointName: selection.brainSource?.endpointName });
 	}, [selection.pipeline, selection.providerIds, selection.brainSource]);
@@ -117,29 +131,189 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 	const handleProviderChange = useCallback(
 		async (role: VoiceProviderRole, providerId: string) => {
 			await selection.setProvider(role, providerId);
+			onSelectionChanged?.();
 			// Readiness is per provider: switching a slot changes which requirement
 			// the gate is checking, so a stale verdict would describe the old engine.
 			await models.refresh();
 		},
-		[selection, models]
+		[selection, models, onSelectionChanged]
 	);
 
 	const handleBrainChange = useCallback(
 		async (_role: VoiceProviderRole, value: string) => {
 			setBrainProblem(await selection.setBrainChoice(value));
+			onSelectionChanged?.();
 			await models.refresh();
 		},
-		[selection, models]
+		[selection, models, onSelectionChanged]
 	);
+
+	const handleSetupChange = async (mode: VoiceSetupMode) => {
+		setSaving(true);
+		setSetupProblem(null);
+		setBrainProblem(null);
+		try {
+			await selection.setSetupMode(mode);
+			onSelectionChanged?.();
+			await models.refresh();
+		} catch (error) {
+			setSetupProblem(error instanceof Error ? error.message : 'Could not save the voice setup.');
+		} finally {
+			setSaving(false);
+		}
+	};
 
 	return (
 		<div data-setting-id="encore-a-cappella-voice-providers" className="select-none space-y-5">
-			<SettingsSectionHeading icon={Radio}>Voice Providers</SettingsSectionHeading>
+			<SettingsSectionHeading
+				icon={Radio}
+				description="Choose a setup, or pick each provider yourself."
+			>
+				Voice setup
+			</SettingsSectionHeading>
 
-			{/*
-			 * First, always visible, never behind a disclosure. This is the fact the
-			 * user needs, and it is computed from the selection rather than written.
-			 */}
+			{selection.notice && (
+				<p className="text-xs" style={{ color: theme.colors.warning }}>
+					{selection.notice}
+				</p>
+			)}
+
+			<div data-setting-id="encore-a-cappella-pipeline">
+				<SectionCard theme={theme}>
+					<div>
+						<ToggleButtonGroup
+							options={SETUP_OPTIONS.map((option) =>
+								option.value === 'local' && hostPlatform() === 'darwin'
+									? { ...option, label: 'On this Mac' }
+									: option
+							)}
+							value={selection.setupMode}
+							onChange={(next) => void handleSetupChange(next)}
+							theme={theme}
+							disabled={!selection.loaded || saving}
+						/>
+						{setupProblem && (
+							<p role="alert" className="text-xs mt-2" style={{ color: theme.colors.error }}>
+								{setupProblem}
+							</p>
+						)}
+						{models.error && (
+							<p role="alert" className="text-xs mt-2" style={{ color: theme.colors.error }}>
+								{models.error}
+							</p>
+						)}
+					</div>
+				</SectionCard>
+			</div>
+
+			{selection.setupMode === 'local' && (
+				<SectionCard theme={theme}>
+					<div>
+						<div className="font-medium text-sm">
+							Everything runs on this {hostPlatform() === 'darwin' ? 'Mac' : 'computer'}
+						</div>
+						<p className="text-xs opacity-70 mt-0.5">
+							Parakeet transcription, built-in request routing, and your system voice. Choose Custom
+							to use Kokoro, VoiceStudio, or another provider.
+						</p>
+					</div>
+					{models.readiness?.slots.map((slot) => (
+						<SlotStatus
+							key={slot.slot}
+							theme={theme}
+							readiness={slot}
+							onDownload={(modelId) => void models.download(modelId)}
+						/>
+					))}
+				</SectionCard>
+			)}
+
+			{selection.setupMode === 'custom' && (
+				<SectionCard theme={theme}>
+					<div data-setting-id="encore-a-cappella-stt">
+						<div data-setting-id="encore-a-cappella-provider-stt">
+							<SlotSelector
+								theme={theme}
+								role="stt"
+								selection={selection}
+								readiness={readinessBySlot.get('stt')}
+								credentials={credentials}
+								onChange={handleProviderChange}
+								onCredentialsChanged={refreshCredentials}
+								onDownload={(modelId) => void models.download(modelId)}
+							/>
+						</div>
+					</div>
+					<div data-setting-id="encore-a-cappella-brain">
+						<div data-setting-id="encore-a-cappella-provider-brain">
+							<SlotSelector
+								theme={theme}
+								role="brain"
+								selection={selection}
+								readiness={readinessBySlot.get('brain')}
+								credentials={credentials}
+								optionGroups={brainGroups}
+								value={selection.brainChoice}
+								problem={brainProblem}
+								onChange={handleBrainChange}
+								onCredentialsChanged={refreshCredentials}
+								onDownload={(modelId) => void models.download(modelId)}
+							/>
+							{selection.routedBySystemOne && (
+								<div
+									className="text-xs opacity-70 mt-1"
+									data-testid="voice-routing-system-one-note"
+								>
+									System One decides which agent and tab a request is for (
+									{taskAssignmentLocation(VOICE_ROUTING_TASK_ID)}). This Brain still writes what is
+									spoken, and routes a turn in conversational mode.
+								</div>
+							)}
+						</div>
+					</div>
+					<div data-setting-id="encore-a-cappella-tts">
+						<div data-setting-id="encore-a-cappella-provider-tts">
+							<SlotSelector
+								theme={theme}
+								role="tts"
+								selection={selection}
+								readiness={readinessBySlot.get('tts')}
+								credentials={credentials}
+								onChange={handleProviderChange}
+								onCredentialsChanged={refreshCredentials}
+								onDownload={(modelId) => void models.download(modelId)}
+							/>
+						</div>
+					</div>
+				</SectionCard>
+			)}
+
+			{selection.pipeline === 'realtime' && (
+				<SectionCard theme={theme}>
+					<div>
+						<div className="font-medium text-sm">OpenAI Realtime</div>
+						<p className="text-xs opacity-70 mt-0.5">
+							One service handles your conversation and speaks in an OpenAI voice. Microphone audio
+							is sent to OpenAI. Choose Custom to use ElevenLabs or a local voice.
+						</p>
+					</div>
+					{models.readiness?.slots.map((slot) => (
+						<SlotStatus
+							key={slot.slot}
+							theme={theme}
+							readiness={slot}
+							onDownload={(modelId) => void models.download(modelId)}
+						/>
+					))}
+					<CredentialSection
+						theme={theme}
+						service="openai"
+						credentials={credentials}
+						onChanged={refreshCredentials}
+					/>
+				</SectionCard>
+			)}
+
 			<div
 				data-setting-id="encore-a-cappella-audio-destination"
 				className="p-3 rounded border flex items-start gap-2"
@@ -158,105 +332,10 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 						{egress.statement}
 					</div>
 					<p className="text-xs opacity-70 mt-0.5">
-						This is worked out from the engines selected below. It changes the moment you change
-						one.
+						Your agents use the providers configured for each agent.
 					</p>
 				</div>
 			</div>
-
-			{selection.notice && (
-				<p className="text-xs" style={{ color: theme.colors.warning }}>
-					{selection.notice}
-				</p>
-			)}
-
-			<div data-setting-id="encore-a-cappella-pipeline">
-				<SectionCard theme={theme}>
-					<div>
-						<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-							Pipeline
-						</div>
-						<p className="text-xs opacity-70 mt-0.5 mb-2">
-							Cascade runs three engines in series and is the only shape a local install or an
-							ElevenLabs voice can take. Realtime is the lowest latency, but it speaks in that
-							provider&apos;s voice and sends your audio to their servers.
-						</p>
-						<ToggleButtonGroup
-							options={PIPELINE_OPTIONS}
-							value={selection.pipeline}
-							onChange={(next) => void selection.setPipeline(next)}
-							theme={theme}
-						/>
-					</div>
-				</SectionCard>
-			</div>
-
-			{selection.pipeline === 'cascade' && (
-				<>
-					<div data-setting-id="encore-a-cappella-provider-stt">
-						<SlotSelector
-							theme={theme}
-							role="stt"
-							selection={selection}
-							readiness={readinessBySlot.get('stt')}
-							credentials={credentials}
-							onChange={handleProviderChange}
-							onCredentialsChanged={refreshCredentials}
-							onDownload={(modelId) => void models.download(modelId)}
-						/>
-					</div>
-					<div data-setting-id="encore-a-cappella-provider-tts">
-						<SlotSelector
-							theme={theme}
-							role="tts"
-							selection={selection}
-							readiness={readinessBySlot.get('tts')}
-							credentials={credentials}
-							onChange={handleProviderChange}
-							onCredentialsChanged={refreshCredentials}
-							onDownload={(modelId) => void models.download(modelId)}
-						/>
-					</div>
-					<div data-setting-id="encore-a-cappella-provider-brain">
-						<SlotSelector
-							theme={theme}
-							role="brain"
-							selection={selection}
-							readiness={readinessBySlot.get('brain')}
-							credentials={credentials}
-							optionGroups={brainGroups}
-							value={selection.brainChoice}
-							problem={brainProblem}
-							onChange={handleBrainChange}
-							onCredentialsChanged={refreshCredentials}
-							onDownload={(modelId) => void models.download(modelId)}
-						/>
-						{selection.routedBySystemOne && (
-							<div className="text-xs opacity-70 mt-1" data-testid="voice-routing-system-one-note">
-								System One decides which agent and tab a request is for (
-								{taskAssignmentLocation(VOICE_ROUTING_TASK_ID)}). This Brain still writes what is
-								spoken, and routes a turn in conversational mode.
-							</div>
-						)}
-					</div>
-				</>
-			)}
-
-			{selection.pipeline === 'realtime' && (
-				<SectionCard theme={theme}>
-					<div className="text-xs opacity-70">
-						The realtime tier replaces all three slots with one provider&apos;s speech-to-speech
-						API. Routing stays with Maestro: the model asks for an agent and a tab through a tool
-						call, and Maestro validates and performs it.
-					</div>
-					<CredentialSection
-						theme={theme}
-						service="openai"
-						credentials={credentials}
-						onChanged={refreshCredentials}
-					/>
-				</SectionCard>
-			)}
 
 			{/* Which voice, how fast, and how loud live in the Voice and Speed panel
 			    below, next to the HUD settings. Two voice pickers in one Settings tab
@@ -308,56 +387,62 @@ function SlotSelector({
 	const descriptor = getVoiceProvider(providerId);
 	const groups = useMemo<readonly AssignmentOptionGroup[]>(
 		() =>
-			optionGroups ?? [
-				{
-					label: null,
-					options: voiceProvidersForRole(role).map((option) => ({
-						value: option.id,
-						label: option.label,
-					})),
-				},
-			],
+			optionGroups ??
+			(['local', 'cloud', 'mock'] as const)
+				.map((tier) => ({
+					label: tier === 'local' ? 'Local' : tier === 'cloud' ? 'Cloud' : 'Diagnostics',
+					options: voiceProvidersForRole(role)
+						.filter((option) => option.tier === tier)
+						.map((option) => ({ value: option.id, label: option.label })),
+				}))
+				.filter((group) => group.options.length > 0),
 		[optionGroups, role]
 	);
-	const Icon = definition.icon;
 
 	const requiresKey = descriptor?.requires.kind === 'api-key';
 	const service = descriptor?.requires.kind === 'api-key' ? descriptor.requires.service : null;
 
 	return (
-		<>
-			<SettingsSectionHeading icon={Icon}>{definition.label}</SettingsSectionHeading>
-			<SectionCard theme={theme}>
-				<div>
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{definition.title}
+		<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 items-start py-2">
+			<div>
+				<label htmlFor={`voice-provider-${role}`} className="font-medium text-sm">
+					{role === 'stt' ? 'Transcription' : role === 'brain' ? 'Brain' : 'Voice'}
+				</label>
+				<p className="text-xs opacity-70 mt-0.5">
+					{role === 'stt'
+						? 'Turns your speech into text.'
+						: role === 'brain'
+							? 'Understands and routes requests.'
+							: 'Speaks replies aloud.'}
+				</p>
+				{descriptor && <p className="text-xs opacity-70 mt-2">{descriptor.description}</p>}
+				{problem && (
+					<p className="text-xs mt-2 select-text" style={{ color: theme.colors.error }}>
+						{problem}
+					</p>
+				)}
+				{readiness && (
+					<div className="mt-2">
+						<SlotStatus theme={theme} readiness={readiness} onDownload={onDownload} />
 					</div>
-					<p className="text-xs opacity-70 mt-0.5 mb-2">{definition.description}</p>
+				)}
+			</div>
 
-					<select
-						aria-label={`${definition.label} provider`}
-						value={value ?? providerId}
-						onChange={(event) => void onChange(role, event.target.value)}
-						className="w-full px-2 py-1.5 rounded border text-sm"
-						style={{
-							borderColor: theme.colors.border,
-							backgroundColor: theme.colors.bgMain,
-							color: theme.colors.textMain,
-						}}
-					>
-						<AssignmentOptionElements groups={groups} />
-					</select>
-
-					{problem && (
-						<p className="text-xs mt-1.5 select-text" style={{ color: theme.colors.error }}>
-							{problem}
-						</p>
-					)}
-					{descriptor && <p className="text-xs opacity-70 mt-1.5">{descriptor.description}</p>}
-				</div>
-
-				<SlotStatus theme={theme} readiness={readiness} onDownload={onDownload} />
-
+			<div className="min-w-0 space-y-2">
+				<select
+					id={`voice-provider-${role}`}
+					aria-label={`${definition.label} provider`}
+					value={value ?? providerId}
+					onChange={(event) => void onChange(role, event.target.value)}
+					className="w-full px-2 py-1.5 rounded border text-sm"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+				>
+					<AssignmentOptionElements groups={groups} />
+				</select>
 				{requiresKey && service && (
 					<CredentialSection
 						theme={theme}
@@ -366,8 +451,8 @@ function SlotSelector({
 						onChanged={onCredentialsChanged}
 					/>
 				)}
-			</SectionCard>
-		</>
+			</div>
+		</div>
 	);
 }
 
@@ -526,9 +611,7 @@ function CredentialField({
 				value={draft}
 				onChange={setDraft}
 				onSubmit={() => void handleSave()}
-				placeholder={
-					state?.configured ? 'A key is stored. Type a new one to replace it.' : 'Paste your key'
-				}
+				placeholder={state?.configured ? 'Stored. Enter replacement key' : 'Paste your key'}
 				monospace
 			/>
 

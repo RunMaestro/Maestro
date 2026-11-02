@@ -82,6 +82,7 @@ describe('runProcess against a real process', () => {
 		);
 
 		expect(result.status).toBe('completed');
+		expect(result.executionStarted).toBe(true);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toBe('The capital of France is Paris.');
 		expect(result.providerSessionId).toBe(CAPTURED_OPENCODE_SESSION_ID);
@@ -98,6 +99,7 @@ describe('runProcess against a real process', () => {
 		);
 
 		expect(result.status).toBe('completed');
+		expect(result.executionStarted).toBe(true);
 		expect(result.stdout).toBeTruthy();
 		expect(result.providerSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
 		expect(result.usage?.outputTokens).toBeGreaterThan(0);
@@ -112,6 +114,7 @@ describe('runProcess against a real process', () => {
 
 		expect(result.status).toBe('failed');
 		expect(result.exitCode).toBe(1);
+		expect(result.executionStarted).toBe(true);
 		expect(result.stderr).toContain('not logged in');
 	});
 
@@ -127,6 +130,7 @@ describe('runProcess against a real process', () => {
 		);
 
 		expect(result.status).toBe('completed');
+		expect(result.executionStarted).toBe(true);
 		expect(result.stdout).toBe('The capital of France is Paris.');
 	});
 
@@ -138,6 +142,7 @@ describe('runProcess against a real process', () => {
 		);
 
 		expect(result.status).toBe('completed');
+		expect(result.executionStarted).toBe(true);
 		expect(result.stdout).toBe('plain text\nsecond line\n');
 		expect(result.providerSessionId).toBeNull();
 		expect(result.usage).toBeNull();
@@ -155,6 +160,7 @@ describe('runProcess against a real process', () => {
 		// The fake agent reads stdin to its end first, so finishing proves it
 		// was not left holding an open pipe.
 		expect(result.status).toBe('completed');
+		expect(result.executionStarted).toBe(true);
 	});
 
 	it('delivers a prompt the launch plan moved to stdin', async () => {
@@ -168,6 +174,7 @@ describe('runProcess against a real process', () => {
 		);
 
 		expect(result.status).toBe('completed');
+		expect(result.executionStarted).toBe(true);
 		expect(fs.readFileSync(stdinOut, 'utf8')).toBe('What is the capital of France?');
 	});
 
@@ -186,6 +193,7 @@ describe('runProcess against a real process', () => {
 		expect(result.status).toBe('failed');
 		expect(result.exitCode).toBeNull();
 		expect(result.stderr).toContain('Spawn error');
+		expect(result.executionStarted).toBe(false);
 	});
 
 	it('is listed and readable while it runs, and gone once it settles', async () => {

@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * @file plugin-manager-invoke-tool.test.ts
  * @description PluginManager.invokeTool splits the namespaced contribution id
@@ -14,6 +15,11 @@ vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
 }));
 
+import {
+	getActivePluginManager,
+	setActivePluginManager,
+} from '../../../main/plugins/plugin-manager-singleton';
+import { PluginToolRunIdentity } from '../../../main/plugins/plugin-tool-run-identity';
 import { PluginManager } from '../../../main/plugins/plugin-manager';
 import type { PluginSandboxLifecycle } from '../../../main/plugins/plugin-manager';
 
@@ -86,5 +92,46 @@ describe('PluginManager.invokeTool', () => {
 		const manager = new PluginManager({ isEnabled: () => true, sandbox });
 
 		await expect(manager.invokeTool('demo/lookup')).rejects.toThrow(/not running/);
+	});
+});
+
+describe('PluginManager authority ownership on replacement', () => {
+	it('rejects a shared registry before retiring either manager or existing proofs', () => {
+		const registry = new PluginToolRunIdentity();
+		const deps = { isEnabled: () => true, toolIdentity: registry };
+		const previous = new PluginManager(deps),
+			next = new PluginManager(deps);
+		setActivePluginManager(previous, deps.isEnabled);
+		const token = registry.issue('fixture-agent');
+		try {
+			expect(() => setActivePluginManager(next, deps.isEnabled)).toThrow(
+				expect.objectContaining({ code: 'PLUGIN_CONFLICT' })
+			);
+			expect(getActivePluginManager()).toBe(previous);
+			expect(registry.resolveVerified(token).callerAgentId).toBe('fixture-agent');
+		} finally {
+			setActivePluginManager(null);
+			registry.stop();
+		}
+	});
+	it('retires old proofs while a replacement with independent resources can mint new ones', () => {
+		const oldRegistry = new PluginToolRunIdentity(),
+			nextRegistry = new PluginToolRunIdentity();
+		const previous = new PluginManager({ isEnabled: () => true, toolIdentity: oldRegistry });
+		const next = new PluginManager({ isEnabled: () => true, toolIdentity: nextRegistry });
+		setActivePluginManager(previous, () => true);
+		const token = oldRegistry.issue('fixture-agent');
+		try {
+			setActivePluginManager(next, () => true);
+			expect(getActivePluginManager()).toBe(next);
+			expect(() => oldRegistry.resolveVerified(token)).toThrow();
+			const fresh = nextRegistry.issue('fixture-agent');
+			expect(nextRegistry.resolveVerified(fresh).callerAgentId).toBe('fixture-agent');
+			nextRegistry.revoke(fresh);
+		} finally {
+			setActivePluginManager(null);
+			oldRegistry.stop();
+			nextRegistry.stop();
+		}
 	});
 });

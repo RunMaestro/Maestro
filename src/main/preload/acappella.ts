@@ -13,6 +13,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { TtsVoice } from '../../shared/acappella/providers';
 import type { RosterAgent, VoiceEvent, VoiceScope } from '../../shared/acappella/protocol';
 import type { VoiceReadiness } from '../../shared/acappella/readiness';
 import type { VoiceSendWait } from '../../shared/acappella/listen-mode';
@@ -366,8 +367,7 @@ export function createVoiceApi() {
 		 * Voices the configured TTS provider offers. Empty for a provider with one
 		 * voice or none, which the picker shows as "Provider default".
 		 */
-		listVoices: (): Promise<Array<{ id: string; name: string }>> =>
-			ipcRenderer.invoke('acappella:list-voices'),
+		listVoices: (): Promise<TtsVoice[]> => ipcRenderer.invoke('acappella:list-voices'),
 
 		/**
 		 * Speak one line through a voice.

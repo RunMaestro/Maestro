@@ -7,10 +7,14 @@
  * has exposed window.maestro.
  */
 
+import { isExpectedBridgeError } from '../shared/bridgeError';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const tags = new Map<string, string>();
 let user: unknown = null;
+const recentReports = new Map<string, { at: number; suppressed: number }>();
+const REPORT_INTERVAL_MS = 30_000;
 
 function toErrorMessage(value: unknown): string {
 	if (value instanceof Error) return value.message;
@@ -22,9 +26,20 @@ function toErrorMessage(value: unknown): string {
 	}
 }
 
+/** Throttle matching reports and consume logger failures so reporting cannot recurse. */
 function report(level: LogLevel, message: string, extra?: unknown): void {
+	const key = `${level}:${message}`;
+	const previous = recentReports.get(key);
+	const now = Date.now();
+	if (previous && now - previous.at < REPORT_INTERVAL_MS) {
+		previous.suppressed++;
+		return;
+	}
+	if (recentReports.size >= 100) recentReports.delete(recentReports.keys().next().value!);
+	recentReports.set(key, { at: now, suppressed: 0 });
 	const payload = {
 		extra,
+		...(previous?.suppressed ? { suppressed: previous.suppressed } : {}),
 		tags: Object.fromEntries(tags),
 		user,
 	};
@@ -36,7 +51,9 @@ function report(level: LogLevel, message: string, extra?: unknown): void {
 		console.log(`[web-desktop] ${message}`, payload);
 	}
 	try {
-		void window.maestro?.logger?.log(level, message, 'WebDesktopSentryShim', payload);
+		void window.maestro?.logger?.log(level, message, 'WebDesktopSentryShim', payload)?.catch(() => {
+			// Already recorded locally. Reporting a logger failure would recurse.
+		});
 	} catch {
 		// The logger bridge is best-effort; never let reporting throw back into app code.
 	}
@@ -45,6 +62,7 @@ function report(level: LogLevel, message: string, extra?: unknown): void {
 export function init(_options: unknown): void {}
 
 export function captureException(err: unknown, ctx?: unknown): void {
+	if (isExpectedBridgeError(err)) return;
 	report('error', toErrorMessage(err), {
 		context: ctx,
 		stack: err instanceof Error ? err.stack : undefined,
@@ -52,6 +70,7 @@ export function captureException(err: unknown, ctx?: unknown): void {
 }
 
 export function captureMessage(msg: unknown, levelOrCtx?: unknown, ctx?: unknown): void {
+	if (isExpectedBridgeError(msg)) return;
 	const level =
 		typeof levelOrCtx === 'string' &&
 		['debug', 'info', 'warning', 'warn', 'error'].includes(levelOrCtx)

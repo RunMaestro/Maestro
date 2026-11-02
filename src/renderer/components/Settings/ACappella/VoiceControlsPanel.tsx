@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Keyboard, Mic, Radio, Square } from 'lucide-react';
+import { Keyboard, Mic, Radio, RotateCcw, Square, X } from 'lucide-react';
 
 import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import {
@@ -46,6 +46,8 @@ import { useSettings } from '../../../hooks';
 import type { Theme } from '../../../types';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
+import { GhostIconButton } from '../../ui/GhostIconButton';
+import { ThemedSelect } from '../../shared/ThemedSelect';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { findPretrainedWakePhrase } from '../../../../shared/acappella/voice-models';
@@ -85,6 +87,13 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 	const [statuses, setStatuses] = useState<GlobalHotkeyStatus[]>([]);
 	const [capabilityNote, setCapabilityNote] = useState<string>('');
 	const [agents, setAgents] = useState<RosterAgent[]>([]);
+	const [addedAgentIds, setAddedAgentIds] = useState<string[]>([]);
+	const phraseAgents = agents.filter(
+		(agent) =>
+			addedAgentIds.includes(agent.sessionId) ||
+			controls.agentPhrases.some((entry) => entry.agentSessionId === agent.sessionId)
+	);
+	const availableAgents = agents.filter((agent) => !phraseAgents.includes(agent));
 	const [testing, setTesting] = useState(false);
 	const [testHit, setTestHit] = useState<string | null>(null);
 	const [wakeHits, setWakeHits] = useState(0);
@@ -208,9 +217,22 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 						/>
 					</div>
 
-					<label className="block text-xs opacity-70" htmlFor="acappella-wake-phrase">
-						Phrase
-					</label>
+					<div className="flex items-center justify-between gap-2">
+						<label className="text-xs opacity-70" htmlFor="acappella-wake-phrase">
+							Phrase
+						</label>
+						<GhostIconButton
+							ariaLabel="Reset wake phrase to default"
+							title={`Reset to ${DEFAULT_WAKE_PHRASE}`}
+							color={theme.colors.textMain}
+							className="gap-1 text-xs"
+							disabled={!enabled || controls.wakePhrase === DEFAULT_WAKE_PHRASE}
+							onClick={() => void controls.update({ wakePhrase: DEFAULT_WAKE_PHRASE })}
+						>
+							<RotateCcw className="w-3 h-3" />
+							Reset
+						</GhostIconButton>
+					</div>
 					<input
 						id="acappella-wake-phrase"
 						type="text"
@@ -335,8 +357,10 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 							settings.
 						</p>
 					</div>
-					{agents.length === 0 && <p className="text-xs opacity-70">No agents yet.</p>}
-					{agents.map((agent) => {
+					{phraseAgents.length === 0 && (
+						<p className="text-xs opacity-70">No per-agent phrases configured.</p>
+					)}
+					{phraseAgents.map((agent) => {
 						const assigned =
 							controls.agentPhrases.find((entry) => entry.agentSessionId === agent.sessionId)
 								?.phrase ?? '';
@@ -355,9 +379,12 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 									value={assigned}
 									disabled={!enabled}
 									placeholder="No phrase"
-									onChange={(event) =>
-										void controls.setAgentPhrase(agent.sessionId, event.target.value)
-									}
+									onChange={(event) => {
+										setAddedAgentIds((ids) =>
+											ids.includes(agent.sessionId) ? ids : [...ids, agent.sessionId]
+										);
+										void controls.setAgentPhrase(agent.sessionId, event.target.value);
+									}}
 									className="flex-1 px-2 py-1 rounded border text-xs disabled:opacity-50"
 									style={{
 										borderColor: theme.colors.border,
@@ -365,9 +392,35 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 										color: theme.colors.textMain,
 									}}
 								/>
+								<GhostIconButton
+									ariaLabel={`Remove wake phrase for ${agent.name}`}
+									title="Remove phrase"
+									color={theme.colors.textDim}
+									disabled={!enabled}
+									onClick={() => {
+										setAddedAgentIds((ids) => ids.filter((id) => id !== agent.sessionId));
+										void controls.setAgentPhrase(agent.sessionId, '');
+									}}
+								>
+									<X size={14} />
+								</GhostIconButton>
 							</div>
 						);
 					})}
+					<ThemedSelect
+						theme={theme}
+						value=""
+						placeholder="Add agent"
+						aria-label="Add agent wake phrase"
+						options={availableAgents.map((agent) => ({
+							value: agent.sessionId,
+							label: agent.name,
+						}))}
+						onChange={(id) => setAddedAgentIds((ids) => [...ids, id])}
+						disabled={!enabled || !controls.loaded || availableAgents.length === 0}
+						filterable
+						filterPlaceholder="Filter agents..."
+					/>
 				</SectionCard>
 			</div>
 

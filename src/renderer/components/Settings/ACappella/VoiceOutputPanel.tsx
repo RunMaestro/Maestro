@@ -19,12 +19,14 @@
 import { ToggleSettingRow } from '../tabs/DisplayTab/components/ToggleSettingRow';
 import { setVoiceListenMode } from '../../../services/voiceListening';
 import type { VoiceListenMode } from '../../../../shared/acappella/listen-mode';
+import type { TtsVoice } from '../../../../shared/acappella/providers';
 import type { SwitchableVoiceMode } from '../../../../shared/acappella/voice-mode';
 import { useCallback, useEffect, useState } from 'react';
 import { Play, RefreshCw, RotateCcw, Sliders } from 'lucide-react';
 
 import {
 	summariseVoiceEgress,
+	OPENAI_REALTIME_PROVIDER_ID,
 	VOICE_STUDIO_TTS_PROVIDER_ID,
 } from '../../../../shared/acappella/provider-catalog';
 import type { BackgroundAnnouncementSetting } from '../../../../shared/acappella/announcements';
@@ -43,6 +45,7 @@ import {
 import type { Theme } from '../../../types';
 import { useVoiceUiStore } from '../../../stores/voiceUiStore';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
+import { ThemedSelect } from '../../shared/ThemedSelect';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
@@ -54,6 +57,7 @@ export interface VoiceOutputPanelProps {
 	theme: Theme;
 	/** Mirror of the A Cappella Encore flag. */
 	enabled: boolean;
+	selectionVersion?: number;
 }
 
 // The line a Preview speaks lives in shared, because `maestro-cli voice
@@ -71,18 +75,33 @@ const MINIMIZE_OPTIONS: Array<{ value: VoiceHudMinimizeBehavior; label: string }
 	{ value: 'auto-idle', label: 'When the turn ends' },
 ];
 
-export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
-	const selection = useVoiceProviderSelection(enabled);
+const LANGUAGE_NAMES = new Intl.DisplayNames(['en'], { type: 'language' });
+const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
+const GENDER_LABELS: Record<string, string> = {
+	female: 'Female',
+	male: 'Male',
+	neutral: 'Neutral',
+	unknown: 'Unknown',
+};
+
+export function VoiceOutputPanel({ theme, enabled, selectionVersion }: VoiceOutputPanelProps) {
+	const selection = useVoiceProviderSelection(enabled, selectionVersion);
 	const controls = useVoiceControls(enabled);
 	const ui = useVoiceUiStore();
 
-	const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
+	const [voices, setVoices] = useState<TtsVoice[]>([]);
+	const [filters, setFilters] = useState({ gender: 'all', language: 'all', region: 'all' });
 	const [previewNote, setPreviewNote] = useState<string | null>(null);
 	const [voiceRefresh, setVoiceRefresh] = useState(0);
 	const [voicesLoading, setVoicesLoading] = useState(false);
 	const [voiceListError, setVoiceListError] = useState<string | null>(null);
 
-	const ttsProviderId = selection.providerIds.tts;
+	const ttsProviderId =
+		selection.pipeline === 'realtime' ? OPENAI_REALTIME_PROVIDER_ID : selection.providerIds.tts;
+
+	useEffect(() => {
+		setFilters({ gender: 'all', language: 'all', region: 'all' });
+	}, [ttsProviderId]);
 
 	// Read through `getState()` rather than the subscribed `ui` object: `load` is
 	// stable on the store, but depending on `ui` would re-read settings from disk
@@ -128,7 +147,48 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 		setPreviewNote(spoke ? null : 'That voice could not be previewed.');
 	}, []);
 
-	const egress = summariseVoiceEgress([selection.providerIds.tts]);
+	const egress = summariseVoiceEgress([ttsProviderId]);
+	const voiceOptions = voices.map((voice) => {
+		let language = 'unknown';
+		let region = 'unknown';
+		if (voice.language) {
+			try {
+				const locale = new Intl.Locale(voice.language.replace(/_/g, '-'));
+				language = locale.language;
+				region = locale.region ?? 'unknown';
+			} catch {
+				// A provider's free-text language is not necessarily a locale tag.
+			}
+		}
+		return { ...voice, gender: voice.gender ?? 'unknown', language, region };
+	});
+	const filterGroups = [
+		{ key: 'gender' as const, label: 'Gender', name: (value: string) => GENDER_LABELS[value] },
+		{
+			key: 'language' as const,
+			label: 'Language',
+			name: (value: string) => LANGUAGE_NAMES.of(value) ?? value,
+		},
+		{
+			key: 'region' as const,
+			label: 'Region',
+			name: (value: string) => REGION_NAMES.of(value) ?? value,
+		},
+	].map((group) => ({
+		...group,
+		options: [
+			{ value: 'all', label: 'All' },
+			...Array.from(new Set(voiceOptions.map((voice) => voice[group.key])))
+				.map((value) => ({ value, label: value === 'unknown' ? 'Unknown' : group.name(value) }))
+				.sort((a, b) => a.label.localeCompare(b.label)),
+		],
+	}));
+	const filteredVoices = voiceOptions.filter((voice) =>
+		filterGroups.every(
+			(group) => filters[group.key] === 'all' || filters[group.key] === voice[group.key]
+		)
+	);
+	const hasFilters = Object.values(filters).some((value) => value !== 'all');
 
 	return (
 		<div className="select-none space-y-5">
@@ -162,12 +222,70 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 						</p>
 					</div>
 
+					{voices.length > 0 && (
+						<div className="space-y-2">
+							<div className="grid grid-flow-col auto-cols-fr gap-3">
+								{filterGroups
+									.filter((group) => group.options.length > 2)
+									.map((group) => (
+										<div key={group.key} className="min-w-0">
+											<label
+												htmlFor={`acappella-voice-filter-${group.key}`}
+												className="block text-xs opacity-70 mb-1"
+											>
+												{group.label}
+											</label>
+											<ThemedSelect
+												theme={theme}
+												id={`acappella-voice-filter-${group.key}`}
+												aria-label={`Filter voices by ${group.label.toLowerCase()}`}
+												value={filters[group.key]}
+												options={group.options}
+												disabled={!enabled}
+												filterable={group.key !== 'gender'}
+												filterPlaceholder={`Search ${group.label.toLowerCase()}...`}
+												onChange={(value) =>
+													setFilters((current) => ({ ...current, [group.key]: value }))
+												}
+											/>
+										</div>
+									))}
+							</div>
+							<div className="flex flex-wrap items-center gap-3 text-xs">
+								<span className="opacity-70" role="status">
+									{filteredVoices.length} of {voices.length} voices
+								</span>
+								{hasFilters && (
+									<button
+										type="button"
+										className="hover:underline focus:outline-none focus-visible:ring-2 rounded"
+										style={{ color: theme.colors.accent }}
+										onClick={() => setFilters({ gender: 'all', language: 'all', region: 'all' })}
+									>
+										Clear filters
+									</button>
+								)}
+							</div>
+							{hasFilters &&
+								voices.some((voice) => voice.id === selection.voiceId) &&
+								!filteredVoices.some((voice) => voice.id === selection.voiceId) && (
+									<p className="text-xs opacity-70">
+										Your current voice is hidden by these filters.
+									</p>
+								)}
+						</div>
+					)}
+
 					{voices.length === 0 ? (
 						<p className="text-xs opacity-70">
 							{voiceListError ??
 								(ttsProviderId === VOICE_STUDIO_TTS_PROVIDER_ID
 									? 'No VoiceStudio profiles loaded. Check its source connection and refresh voices.'
 									: 'This engine has one voice. Nothing to choose between.')}
+						</p>
+					) : filteredVoices.length === 0 ? (
+						<p className="text-xs opacity-70">
+							No voices match these filters. Clear filters to see all voices.
 						</p>
 					) : (
 						<div
@@ -176,7 +294,7 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 							role="radiogroup"
 							aria-label="Voice"
 						>
-							{voices.map((voice) => {
+							{filteredVoices.map((voice) => {
 								const selected = selection.voiceId === voice.id;
 								return (
 									<div

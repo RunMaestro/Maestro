@@ -44,8 +44,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 - 🤖 **[Auto Run & Playbooks](https://docs.runmaestro.ai/autorun-playbooks)** - File-system-based task runner that batch-processes markdown checklists (Spec-Driven) or pursues a free-text objective (Goal-Driven) through AI agents. Create playbooks for repeatable workflows, run in loops, and track progress with full history. Each task gets its own AI session for clean conversation context, and you can open the live Thought Stream to watch the agent's reasoning as it works.
 - 💬 **[Group Chat](https://docs.runmaestro.ai/group-chat)** - Delegate the moderating. You appoint one agent as moderator and hand it the question; it routes to the right agents, follows up when an answer is thin, and keeps going for as many rounds as it takes before returning a synthesis. The multi-turn collaboration is the point, and it is what an inline `@mention` cannot do.
 - 📣 **[Cross-Agent Mentions](https://docs.runmaestro.ai/cross-agent-mentions)** - Type `@another-agent` in any chat to consult it inline. Maestro forwards the relevant slice of your conversation, runs the other agent in the background without blocking you, and streams its reply back attributed to who answered. Each mention is a single-turn consult and you stay the moderator, so reach for Group Chat when you want an agent to run the follow-ups instead.
-- 🌐 **[Mobile Remote Control](https://docs.runmaestro.ai/remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
-- 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
+- 🌐 **[Mobile Remote Control](https://docs.runmaestro.ai/remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere. The browser tab title counts agents awaiting input, including background agents after reload or reconnect.
+- 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting. `timeline` and `timeline show` default to the calling agent; use `--agent <id>` for a specific agent or `--global` for fleet context. Outside an agent process, one of those scope flags is required.
 - 🚀 **Multi-Agent Management** - Run unlimited agents and terminal sessions in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
 - 🛡️ **[Agent Resilience](https://docs.runmaestro.ai/agent-resilience)** - Providers fail; your turn does not have to. When a turn dies on `529 Overloaded` or a spent plan quota, Maestro resends the exact prompt on its own, backing off in seconds for a blip or waiting for the real reset time it reads out of the error. One live status card replaces the wall of error dialogs, Auto Run batches resume themselves, and an agent can optionally fail over to a backup endpoint instead of waiting out the window.
@@ -53,11 +53,11 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 ### Core Features
 
 - 🔎 **Semantic Index** - Find past work by meaning across History, archived Director's Notes, and tab transcripts. In Settings > Models > System One, inspect disk usage, browse indexed sources by model and source type, or clear the cached vectors. Clearing keeps the original records; automatic indexing can rebuild the cache while Semantic search remains assigned a model.
-- 🔄 **Dual-Mode Sessions** - Each agent has both an AI Terminal and Command Terminal. Switch seamlessly between AI conversation and shell commands with `Cmd+J`.
+- 🔄 **Dual-Mode Sessions** - Each agent has both an AI Terminal and Command Terminal. Open a new terminal tab with `Cmd+J`, or jump to the nearest one with `Opt+Cmd+J`.
 - ⌨️ **[Keyboard-First Design](https://docs.runmaestro.ai/keyboard-shortcuts)** - Full keyboard control with customizable shortcuts and [mastery tracking](https://docs.runmaestro.ai/keyboard-shortcuts#keyboard-mastery) that rewards you for leveling up. `Cmd+K` quick actions, rapid agent switching, and focus management designed for flow state.
 - 📋 **Session Discovery** - Automatically discovers and imports existing sessions from all supported providers, including conversations from before Maestro was installed. Browse, search, star, rename, and resume any session.
 - 🔀 **Git Integration** - Automatic repo detection, branch display, diff viewer, commit logs, and git-aware file completion. Work with git without leaving the app.
-- 📁 **[File Explorer](https://docs.runmaestro.ai/general-usage#file-explorer-and-preview)** - Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions. Chat about a document from its preview, attach images, and restore earlier conversations about that file.
+- 📁 **[File Explorer](https://docs.runmaestro.ai/general-usage#file-explorer-and-preview)** - Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions. Chat about a document from its preview using text or the embedded microphone, attach images, and restore earlier conversations about that file.
 - 🗃️ **[File Formats](https://docs.runmaestro.ai/file-formats)** - Data files open in a viewer built for them, several with their own filtering language: jq over JSON and JSONL, sortable filtered tables for CSV and TSV, rendered Mermaid diagrams, a full-window pan and zoom view for any diagram or image, and audio and video in a floating player.
 - 🧮 **[Parquet Preview](https://docs.runmaestro.ai/parquet-preview)** - Parquet files open as a live, filterable table with a schema rail. A typed query language (`ts >= now-7d and price > 100`) runs against the whole file while Maestro skips the row groups it can prove cannot match, so a multi-gigabyte file filters instantly and never loads into memory.
 - 🔍 **[Powerful Output Filtering](https://docs.runmaestro.ai/general-usage#output-filtering)** - Search and filter AI output with include/exclude modes, regex support, and per-response local filters.
@@ -122,6 +122,10 @@ npm install
 npm run dev
 ```
 
+### Development Builds
+
+**[Download Pedram's Build](https://pedramamini.com/dropbox/maestro.zip)**, an unofficial development build for **macOS on Apple Silicon only**. It may include unfinished features.
+
 ### Requirements
 
 - At least one supported AI coding agent installed and authenticated:
@@ -139,12 +143,12 @@ npm run dev
 | ------------------- | ----------------- | ------------------- |
 | Quick Actions       | `Cmd+K`           | `Ctrl+K`            |
 | New Agent           | `Cmd+N`           | `Ctrl+N`            |
-| Switch AI/Terminal  | `Cmd+J`           | `Ctrl+J`            |
+| New Terminal Tab    | `Cmd+J`           | `Ctrl+J`            |
 | Previous/Next Agent | `Cmd+[` / `Cmd+]` | `Ctrl+[` / `Ctrl+]` |
-| Toggle Sidebar      | `Cmd+B`           | `Ctrl+B`            |
+| Toggle Left Panel   | `Opt+Cmd+Left`    | `Alt+Ctrl+Left`     |
 | New Tab             | `Cmd+T`           | `Ctrl+T`            |
 | Usage Dashboard     | `Opt+Cmd+U`       | `Alt+Ctrl+U`        |
-| Concerto Stage      | `Opt+C`           | `Alt+C`             |
+| Concerto Stage      | `Opt+Cmd+C`       | `Alt+Ctrl+C`        |
 | All Shortcuts       | `Cmd+/`           | `Ctrl+/`            |
 
 [Full keyboard shortcut reference](https://docs.runmaestro.ai/keyboard-shortcuts)

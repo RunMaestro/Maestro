@@ -82,9 +82,14 @@ describe('host-bound translation knowledge launches', () => {
 		await fs.rm(temporary, { recursive: true, force: true });
 	});
 
-	it.each(['claude-code', 'codex'])(
-		'binds the remote index on %s resume and keeps the file payload off SSH argv',
-		async (provider) => {
+	it.each([
+		['claude-code', false],
+		['claude-code', true],
+		['codex', false],
+		['codex', true],
+	] as const)(
+		'binds the remote index on %s resume and keeps the file payload off SSH argv (Windows host: %s)',
+		async (provider, isWindowsHost) => {
 			const prompt = embedSystemPromptInPrompt(
 				'Existing system instructions',
 				'Recall the earlier fact.'
@@ -96,6 +101,7 @@ describe('host-bound translation knowledge launches', () => {
 				args: ['--resume', 'native'],
 				cwd: '/remote/project',
 				prompt,
+				isWindowsHost,
 				sessionCustomEnvVars: env,
 				sshRemoteConfig,
 				sshStore,
@@ -117,6 +123,7 @@ describe('host-bound translation knowledge launches', () => {
 					args: plan.launchArgs,
 					cwd: plan.cwd,
 					prompt,
+					isWindowsHost,
 					customEnvVars: plan.envVars,
 				},
 				sshRemoteConfig,

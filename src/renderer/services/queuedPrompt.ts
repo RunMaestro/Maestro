@@ -32,7 +32,8 @@ import {
 	mergeQueuedItemIntoPrevious,
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
-import { planCrossAgentMentions } from './crossAgentMentions';
+import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import { routeQueuedAutoItem } from './autoTurn';
 import { generateId } from '../utils/ids';
 import type { ConsultChain } from '../../shared/consultBudget';
@@ -55,6 +56,12 @@ export interface QueuedPromptOptions {
 	slashCommand?: boolean;
 	/** Existing send snapshot, when queueing follows an asynchronous preflight. */
 	turnSettings?: QueuedTurnSettings;
+	/**
+	 * A routing picked for the message's `@mentions` (`dispatch --routing`), the
+	 * way the composer's routing strip picks one. Stamped on the item, because the
+	 * drain re-plans from the text and the text alone would route it by wording.
+	 */
+	mentionRouting?: MentionRouting;
 }
 
 /**
@@ -79,10 +86,13 @@ export function buildQueuedMessageItem({
 	consultChain,
 	slashCommand,
 	turnSettings,
+	mentionRouting,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
 	const firstWhitespace = commandText?.search(/\s/) ?? -1;
-	const mentionPlan = slashCommand ? null : planCrossAgentMentions(text, session.id);
+	const mentionPlan = slashCommand
+		? null
+		: planCrossAgentMentions(text, session.id, mentionRouting);
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -98,10 +108,8 @@ export function buildQueuedMessageItem({
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
 		turnSettings: turnSettings ?? captureQueuedTurnSettings(tab, session),
-		...(mentionPlan && {
-			crossAgentMention: true,
-			crossAgentOnly: mentionPlan.suppressLocal,
-		}),
+		...queuedMentionFields(mentionPlan),
+		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
 		...(consultChain ? { consultChain } : {}),
 	};
 }
@@ -155,8 +163,18 @@ export function enqueuePromptForTab(options: {
 	/** Existing send snapshot, when queueing follows an asynchronous preflight. */
 	turnSettings?: QueuedTurnSettings;
 	expandCommands?: boolean;
+	mentionRouting?: MentionRouting;
 }): QueuedItem | null {
-	const { sessionId, tabId, text, images, consultChain, slashCommand, expandCommands } = options;
+	const {
+		sessionId,
+		tabId,
+		text,
+		images,
+		consultChain,
+		slashCommand,
+		expandCommands,
+		mentionRouting,
+	} = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
@@ -170,6 +188,7 @@ export function enqueuePromptForTab(options: {
 		images,
 		consultChain,
 		slashCommand,
+		mentionRouting,
 		turnSettings: options.turnSettings,
 	});
 	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;

@@ -72,6 +72,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 
 /**
  * NewInstanceModal - the New Agent form.
@@ -105,6 +106,7 @@ export function NewInstanceModal({
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
 	// Peer Agents: the explicit rows and the two grants. An absent grant is off.
 	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [peerDescription, setPeerDescription] = useState('');
 	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [instanceName, setInstanceName] = useState('');
@@ -302,6 +304,18 @@ export function NewInstanceModal({
 		// (a group default that names no provider) fills the fields the form does
 		// not keep per provider, and its env vars, resilience flags and SSH remote
 		// for every provider, so they hold whichever one the user picks.
+		if (source && !sparse && source.toolType && source.name && source.cwd) {
+			source = {
+				...source,
+				...buildDuplicateAgentInput({
+					...source,
+					toolType: source.toolType,
+					name: source.name,
+					cwd: source.cwd,
+				}),
+				toolType: source.toolType,
+			};
+		}
 		const seedProvider = source?.toolType;
 		try {
 			const detectedAgents = await window.maestro.agents.detect(sshRemoteId);
@@ -434,10 +448,11 @@ export function NewInstanceModal({
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
 				// The copy starts with the source's peer grants, cloned for the same reason.
 				setPeerAgents((source.peerAgents ?? []).map((peer) => ({ ...peer })));
+				setPeerDescription(source.peerDescription ?? '');
 				setGroupPeerAccess(source.groupPeerAccess && { ...source.groupPeerAccess });
 				setWorktreePeerAccess(source.worktreePeerAccess && { ...source.worktreePeerAccess });
 				if (source.name !== undefined) {
-					setInstanceName(`${source.name} (Copy)`);
+					setInstanceName(sparse ? `${source.name} (Copy)` : source.name);
 				}
 				setNudgeMessage(source.nudgeMessage || '');
 				setNewSessionMessage(source.newSessionMessage || '');
@@ -969,6 +984,7 @@ export function NewInstanceModal({
 			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined,
 			{
 				peerAgents: normalizePeerAgents(peerAgents),
+				peerDescription: peerDescription.trim() || undefined,
 				groupPeerAccess,
 				worktreePeerAccess,
 			},
@@ -983,6 +999,7 @@ export function NewInstanceModal({
 		handleWorkingDirChange('');
 		setAdditionalDirectories([]);
 		setPeerAgents([]);
+		setPeerDescription('');
 		setGroupPeerAccess(undefined);
 		setWorktreePeerAccess(undefined);
 		setNudgeMessage('');
@@ -1034,6 +1051,7 @@ export function NewInstanceModal({
 		workingDir,
 		additionalDirectories,
 		peerAgents,
+		peerDescription,
 		groupPeerAccess,
 		worktreePeerAccess,
 		homeDir,
@@ -1256,6 +1274,14 @@ export function NewInstanceModal({
 				...prev,
 				[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
 			}));
+		},
+		onEnvVarsReplace: (agentId: string, vars: Record<string, string>) => {
+			setCustomAgentEnvVars((prev) => {
+				const next = { ...prev };
+				if (Object.keys(vars).length > 0) next[agentId] = vars;
+				else delete next[agentId];
+				return next;
+			});
 		},
 	};
 
@@ -1676,6 +1702,7 @@ export function NewInstanceModal({
 								onEnvVarValueChange={envVarHandlers.onEnvVarValueChange}
 								onEnvVarRemove={envVarHandlers.onEnvVarRemove}
 								onEnvVarAdd={envVarHandlers.onEnvVarAdd}
+								onEnvVarsReplace={envVarHandlers.onEnvVarsReplace}
 								onConfigChange={(agentId, key, value) => {
 									setAgentConfigs((prev) => ({
 										...prev,
@@ -1737,6 +1764,7 @@ export function NewInstanceModal({
 									}
 									onEnvVarRemove={(key) => envVarHandlers.onEnvVarRemove(selectedAgent, key)}
 									onEnvVarAdd={() => envVarHandlers.onEnvVarAdd(selectedAgent)}
+									onEnvVarsReplace={(vars) => envVarHandlers.onEnvVarsReplace(selectedAgent, vars)}
 									onEnvVarsBlur={() => {
 										/* Saved on agent create */
 									}}
@@ -1830,6 +1858,8 @@ export function NewInstanceModal({
 						theme={theme}
 						idPrefix="new-agent"
 						peers={peerAgents}
+						peerDescription={peerDescription}
+						onPeerDescriptionChange={setPeerDescription}
 						onChange={setPeerAgents}
 						groupAccess={groupPeerAccess}
 						onGroupAccessChange={setGroupPeerAccess}

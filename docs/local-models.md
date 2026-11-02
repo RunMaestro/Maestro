@@ -418,7 +418,7 @@ A gate answers **proceed** when the probability of yes is 0.5 or more. An event 
 
 ### The decision ledger
 
-Each run that reaches System One leaves one record, answered or not. The **Decision ledger** under the task list shows them, newest first, and filters by task and outcome. A row opens to the model, the question ids, the tokens, the cost estimate, and the agent the run was for.
+Each run that reaches System One leaves one record, answered or not. The **Decision ledger** under the task list shows them, newest first, and filters by task and outcome. Each row shows its topic, a saved-question preview when inputs were kept, and the available agent, model, token, cache, and cost details. Expand it for the full saved details and question ids. Without a saved question, the row says that context is unavailable.
 
 | Outcome           | What happened                                   |
 | ----------------- | ----------------------------------------------- |
@@ -958,7 +958,7 @@ The router reads the request you are sending and the last user message and last 
 
 ## Gateway
 
-A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
+A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists agents with a configured gateway or proxy mode. Use **Add agent** to configure another, or its remove button to clear the configuration. The same gateway field is in each agent's **Edit Agent** dialog.
 
 The gateway table is on **Models -> Gateway**. A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
 

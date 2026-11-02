@@ -44,6 +44,18 @@ describe('FloatingWidgetFrame', () => {
 		expect(screen.queryByText('All agents')).not.toBeInTheDocument();
 	});
 
+	it('fills the window, and stays out of room the window borrowed', () => {
+		renderFrame();
+		expect(screen.getByTestId('floating-widget-frame').style.top).toBe('0px');
+		expect(screen.getByTestId('floating-widget-frame').style.bottom).toBe('0px');
+	});
+
+	it('insets the card by the borrowed room so it stays put on screen', () => {
+		renderFrame({ insets: { above: 120, below: 0 } });
+		expect(screen.getByTestId('floating-widget-frame').style.top).toBe('120px');
+		expect(screen.getByTestId('floating-widget-frame').style.bottom).toBe('0px');
+	});
+
 	it('is select-none on the root', () => {
 		renderFrame();
 		expect(screen.getByTestId('floating-widget-frame').className).toContain('select-none');
