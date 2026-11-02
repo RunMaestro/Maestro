@@ -61,5 +61,14 @@ describe('pathResolver', () => {
 				'C:\\Windows\\System32\\wsl.exe'
 			);
 		});
+
+		// A forward-slash path is still a path: reducing it to a bare name would
+		// start whichever bash.exe is on PATH (possibly WSL's) instead of the
+		// one the user configured.
+		it('leaves a forward-slash Windows path alone', () => {
+			expect(resolveShellPath('C:/Program Files/Git/bin/bash.exe')).toBe(
+				'C:/Program Files/Git/bin/bash.exe'
+			);
+		});
 	});
 });

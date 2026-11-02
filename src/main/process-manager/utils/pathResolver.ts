@@ -17,18 +17,16 @@ export function resolveShellPath(shell: string): string {
 			?.replace(/\.exe$/i, '') || shell;
 
 	if (isWindows()) {
-		if (shellName === 'powershell' && !shell.includes('\\')) {
-			return 'powershell.exe';
-		} else if (shellName === 'pwsh' && !shell.includes('\\')) {
-			return 'pwsh.exe';
-		} else if (shellName === 'cmd' && !shell.includes('\\')) {
-			return 'cmd.exe';
-		} else if (shellName === 'wsl' && !shell.includes('\\')) {
-			// Settings offers 'wsl' and 'bash' on Windows (shellDetector), but node-pty
-			// does not apply PATHEXT: a bare 'wsl' fails with "File not found: ".
-			return 'wsl.exe';
-		} else if (shellName === 'bash' && !shell.includes('\\')) {
-			return 'bash.exe';
+		// Anything with a separator (either kind) is a path the user chose: return it
+		// untouched. Only bare names are mapped, because node-pty does not apply
+		// PATHEXT (a bare 'wsl' fails with "File not found: ").
+		const isBareName = !/[/\\]/.test(shell);
+		if (isBareName) {
+			if (shellName === 'powershell') return 'powershell.exe';
+			if (shellName === 'pwsh') return 'pwsh.exe';
+			if (shellName === 'cmd') return 'cmd.exe';
+			if (shellName === 'wsl') return 'wsl.exe';
+			if (shellName === 'bash') return 'bash.exe';
 		}
 		return shell;
 	}
