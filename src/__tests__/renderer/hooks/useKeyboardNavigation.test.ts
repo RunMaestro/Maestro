@@ -444,6 +444,55 @@ describe('useKeyboardNavigation', () => {
 			document.body.removeChild(mockTextarea);
 		});
 
+		it.each(['isComposing', 'keyCode229'])(
+			'does not blur AI input during an IME composition (%s)',
+			(shape) => {
+				const mockTextarea = document.createElement('textarea');
+				const mockTerminal = document.createElement('div');
+				mockTextarea.blur = vi.fn();
+				mockTerminal.focus = vi.fn();
+
+				document.body.appendChild(mockTextarea);
+				mockTextarea.focus();
+
+				const deps = createMockDeps({
+					activeFocus: 'main',
+					inputRef: { current: mockTextarea },
+					terminalOutputRef: { current: mockTerminal },
+				});
+				const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+				const event =
+					shape === 'isComposing'
+						? new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+						: new KeyboardEvent('keydown', {
+								key: 'Escape',
+								cancelable: true,
+								keyCode: 229,
+							} as KeyboardEventInit);
+				if (shape === 'isComposing') {
+					Object.defineProperty(event, 'isComposing', { value: true });
+				}
+
+				const handled = result.current.handleEscapeInMain(event);
+
+				expect(handled).toBe(false);
+				expect(event.defaultPrevented).toBe(false);
+				expect(mockTextarea.blur).not.toHaveBeenCalled();
+				expect(mockTerminal.focus).not.toHaveBeenCalled();
+
+				// A normal Escape still blurs and focuses transcript once composition ends
+				const normalEvent = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+				const normalHandled = result.current.handleEscapeInMain(normalEvent);
+				expect(normalHandled).toBe(true);
+				expect(normalEvent.defaultPrevented).toBe(true);
+				expect(mockTextarea.blur).toHaveBeenCalled();
+				expect(mockTerminal.focus).toHaveBeenCalled();
+
+				document.body.removeChild(mockTextarea);
+			}
+		);
+
 		it('should not handle when input is not focused', () => {
 			const mockTextarea = document.createElement('textarea');
 			const inputRef = { current: mockTextarea };
@@ -487,6 +536,57 @@ describe('useKeyboardNavigation', () => {
 			expect(mockTerminal.focus).not.toHaveBeenCalled();
 			document.body.removeChild(roomTextarea);
 		});
+
+		it.each(['isComposing', 'keyCode229'])(
+			'does not blur room input during an IME composition (%s)',
+			(shape) => {
+				const roomTextarea = document.createElement('textarea');
+				roomTextarea.blur = vi.fn();
+				document.body.appendChild(roomTextarea);
+				roomTextarea.focus();
+
+				const mockTerminal = document.createElement('div');
+				mockTerminal.focus = vi.fn();
+				const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+				const deps = createMockDeps({
+					activeFocus: 'main',
+					inputRef: { current: null },
+					terminalOutputRef: { current: mockTerminal },
+					groupChatInputRef: { current: roomTextarea },
+					groupChatMessagesRef: { current: roomMessages },
+				});
+				const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+				const event =
+					shape === 'isComposing'
+						? new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+						: new KeyboardEvent('keydown', {
+								key: 'Escape',
+								cancelable: true,
+								keyCode: 229,
+							} as KeyboardEventInit);
+				if (shape === 'isComposing') {
+					Object.defineProperty(event, 'isComposing', { value: true });
+				}
+
+				const handled = result.current.handleEscapeInMain(event);
+
+				expect(handled).toBe(false);
+				expect(event.defaultPrevented).toBe(false);
+				expect(roomTextarea.blur).not.toHaveBeenCalled();
+				expect(roomMessages.focus).not.toHaveBeenCalled();
+
+				// A normal Escape still blurs and focuses room transcript once composition ends
+				const normalEvent = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+				const normalHandled = result.current.handleEscapeInMain(normalEvent);
+				expect(normalHandled).toBe(true);
+				expect(normalEvent.defaultPrevented).toBe(true);
+				expect(roomTextarea.blur).toHaveBeenCalled();
+				expect(roomMessages.focus).toHaveBeenCalled();
+
+				document.body.removeChild(roomTextarea);
+			}
+		);
 
 		it('should keep the AI composer path when a group chat composer ref is also present', () => {
 			const aiTextarea = document.createElement('textarea');

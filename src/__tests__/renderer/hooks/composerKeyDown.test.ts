@@ -56,6 +56,21 @@ describe('isImeComposing', () => {
 		expect(isImeComposing(keyEvent({ key: 'Enter', keyCode: 13 }).event)).toBe(false);
 		expect(isImeComposing(keyEvent({ key: 'Enter' }).event)).toBe(false);
 	});
+
+	it('supports native DOM KeyboardEvents as well', () => {
+		const nativeComposing = new KeyboardEvent('keydown', { key: 'Escape' });
+		Object.defineProperty(nativeComposing, 'isComposing', { value: true, configurable: true });
+		expect(isImeComposing(nativeComposing)).toBe(true);
+
+		const native229 = new KeyboardEvent('keydown', {
+			key: 'Escape',
+			keyCode: 229,
+		} as KeyboardEventInit);
+		expect(isImeComposing(native229)).toBe(true);
+
+		const nativePlain = new KeyboardEvent('keydown', { key: 'Escape' });
+		expect(isImeComposing(nativePlain)).toBe(false);
+	});
 });
 
 describe('yieldKeyToIme', () => {
@@ -428,6 +443,52 @@ describe('handleComposerSendKey', () => {
 			press({ key: 'Enter', ...CHROMIUM_COMPOSING }, true);
 			press({ key: 'Enter', nativeEvent: { isComposing: false }, keyCode: 13 }, true);
 			expect(send).toHaveBeenCalledTimes(1);
+		});
+
+		it.each([true, false])(
+			'claims Escape without preventDefault or blur (with target: %s)',
+			(hasTarget) => {
+				for (const ime of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+					const inputRef = textareaRef();
+					inputRef.current!.focus();
+					const blurSpy = vi.spyOn(inputRef.current!, 'blur');
+					const target = document.createElement('div');
+					target.tabIndex = -1;
+					document.body.appendChild(target);
+					const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Escape', ...ime });
+
+					const handled = handleComposerSendKey(event, {
+						enterToSend: true,
+						send,
+						inputRef,
+						escapeFocusTarget: hasTarget ? { current: target } : undefined,
+					});
+
+					expect(handled).toBe(true);
+					expect(preventDefault).not.toHaveBeenCalled();
+					expect(stopPropagation).toHaveBeenCalled();
+					expect(blurSpy).not.toHaveBeenCalled();
+					expect(document.activeElement).toBe(inputRef.current);
+				}
+			}
+		);
+
+		it('stops composing Escape even when isolateFromWindowKeys is true (room surface)', () => {
+			for (const ime of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+				const inputRef = textareaRef();
+				const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Escape', ...ime });
+
+				const handled = handleComposerSendKey(event, {
+					enterToSend: false,
+					send,
+					inputRef,
+					isolateFromWindowKeys: true,
+				});
+
+				expect(handled).toBe(true);
+				expect(preventDefault).not.toHaveBeenCalled();
+				expect(stopPropagation).toHaveBeenCalled();
+			}
 		});
 	});
 });

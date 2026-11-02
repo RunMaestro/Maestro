@@ -12,11 +12,27 @@ import path from 'node:path';
 
 // Pinned so the same shape is asserted on every runner, with one Windows case:
 // a session turn is planned as the CLI plans one, prompt on the command line.
-const mocks = vi.hoisted(() => ({ isWindows: vi.fn(() => false) }));
+const mocks = vi.hoisted(() => ({
+	isWindows: vi.fn(() => false),
+	// Arguments a test appends to what the provider builds, standing in for a
+	// custom flag such as `--api-key=...`.
+	extraArgs: [] as string[],
+}));
 vi.mock('../../../../shared/platformDetection', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../../shared/platformDetection')>()),
 	isWindows: () => mocks.isWindows(),
 }));
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../shared/maestro-lib/launch/agent-args')>();
+	return {
+		...actual,
+		buildAgentArgs: (...args: Parameters<typeof actual.buildAgentArgs>) => [
+			...actual.buildAgentArgs(...args),
+			...mocks.extraArgs,
+		],
+	};
+});
 
 import {
 	planSessionTurn,
@@ -214,6 +230,7 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 
 	beforeEach(() => {
 		mocks.isWindows.mockReturnValue(true);
+		mocks.extraArgs = [];
 	});
 
 	it('runs the shim through cmd.exe, quoted, with every argument escaped and the prompt on stdin', async () => {
@@ -248,7 +265,7 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 
 	it.each([
 		['a line break', 'first\nsecond', 'line break'],
-		['a percent sign', 'use 50% less', '%'],
+		['a %NAME% pair', 'use %TEMP% for scratch', '%NAME%'],
 		['a caret', 'x ^ y', '^'],
 	])(
 		'refuses a command-line prompt with %s rather than pass it altered',
@@ -264,6 +281,45 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 			expect(planned.error).toContain(named);
 		}
 	);
+
+	it('passes a command-line prompt with a lone %, which cmd.exe leaves alone', async () => {
+		const prompt = 'cut 50% off';
+		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt });
+
+		expect(spec.args).toContain(escapeCmdArg(prompt));
+	});
+
+	it.each([
+		['a --flag=value argument', ['--api-key=sk-%SECRET%-value']],
+		['a --flag value pair', ['--api-key', 'sk-%SECRET%-value']],
+	])('names %s by its flag and never quotes the secret', async (_label, args) => {
+		mocks.extraArgs = args;
+
+		const planned = await planSessionTurn(
+			request({ agentId: 'claude-code', command: shim, prompt: 'fix the bug' })
+		);
+
+		expect(planned.ok).toBe(false);
+		if (planned.ok) return;
+		expect(planned.reason).toBe('windows-shell');
+		expect(planned.error).toBe(
+			`Claude Code at ${shim} only starts through cmd.exe, which cannot pass the value of --api-key intact: it contains a %NAME% pair, which cmd.exe expands as a variable`
+		);
+		expect(planned.error).not.toContain('SECRET');
+	});
+
+	it('names an argument that follows no flag by its position, without quoting it', async () => {
+		mocks.extraArgs = ['--', 'ab^cd'];
+
+		const planned = await planSessionTurn(
+			request({ agentId: 'claude-code', command: shim, prompt: 'fix the bug' })
+		);
+
+		expect(planned.ok).toBe(false);
+		if (planned.ok) return;
+		expect(planned.error).toMatch(/cannot pass argument \d+ intact: it contains \^/);
+		expect(planned.error).not.toContain('ab^cd');
+	});
 
 	it('starts an .exe with a path directly, unescaped', async () => {
 		const { spec } = await plan({ agentId: 'claude-code', command: exe });

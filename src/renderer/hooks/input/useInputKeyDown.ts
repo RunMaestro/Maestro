@@ -376,9 +376,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// the exit gesture into "lose command mode AND lose focus".
 			//
 			// Backspace stays on a strictly empty line: it is an editing key, and on
-			// "   " the user is deleting a space, not asking to leave.
+			// "   " the user is deleting a space, not asking to leave. Mid-composition
+			// the keystroke belongs to the IME, so neither key exits command mode.
 			if (
 				commandMode !== 'off' &&
+				!isImeComposing(e) &&
 				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
 			) {
 				e.preventDefault();

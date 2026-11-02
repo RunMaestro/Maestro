@@ -6,6 +6,7 @@ import type { GroupChatMessagesHandle } from '../../components/GroupChatMessages
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
+import { isImeComposing } from '../input/composerKeyDown';
 
 /**
  * Minimal group-chat shape the sidebar navigation needs. Mirrors the fields
@@ -663,11 +664,12 @@ export function useKeyboardNavigation(
 	 * Handle Escape in main area to blur the composer and focus its transcript:
 	 * the AI composer hands focus to the terminal output, the group chat
 	 * composer to the room's messages. Returns true if the event was handled.
+	 * Mid-composition Escape is ignored so the IME can cancel a candidate.
 	 */
 	const handleEscapeInMain = useCallback(
 		(e: KeyboardEvent): boolean => {
 			const focus = activeFocusRef.current;
-			if (focus !== 'main' || e.key !== 'Escape') return false;
+			if (focus !== 'main' || e.key !== 'Escape' || isImeComposing(e)) return false;
 
 			if (document.activeElement === inputRef.current) {
 				e.preventDefault();

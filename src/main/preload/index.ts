@@ -271,7 +271,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
-	// Cue Bundle API (Cue modal Bundles tab - export / import pipelines and agents)
+	// Cue Bundle API (Export Agent and Import Agent modals - export / import pipelines and agents)
 	cueBundle: createCueBundleApi(),
 
 	// Pianola API (autonomous manager: rules + decision log)

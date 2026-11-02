@@ -2,9 +2,9 @@
  * The Cue readiness report: its shape and its wording.
  *
  * `checkCueReadiness()` in `src/main/cue/cue-readiness.ts` builds the report;
- * this module holds only what every surface that SHOWS it needs, so the Cue
- * modal's Readiness tab reads the same words as `maestro-cli cue engine check`
- * without bundling the checker (which reads the filesystem and probes binaries).
+ * this module holds only what every surface that SHOWS it needs (`maestro-cli
+ * cue engine check`, the status endpoint), without bundling the checker
+ * (which reads the filesystem and probes binaries).
  */
 
 export type CueReadinessGapKind =

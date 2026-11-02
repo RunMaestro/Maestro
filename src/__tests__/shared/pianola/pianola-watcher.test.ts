@@ -301,6 +301,25 @@ describe('runWatchIteration - thought-based handoff', () => {
 		expect(req.promptText).toContain('count or total');
 	});
 
+	it('uses the profile and escalates normally when memory recall fails', async () => {
+		const { deps, requestJudgment } = withHandoff({
+			resolveContext: async () => {
+				throw new Error('memory offline');
+			},
+		});
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBe(true);
+		expect(requestJudgment).toHaveBeenCalledWith(
+			expect.objectContaining({ profile: profileEntry(), context: undefined })
+		);
+	});
+
 	it('does not re-hand-off while awaiting Pianola, and tracks a pending handoff', async () => {
 		const { deps, requestJudgment } = withHandoff();
 		const messages = [assistant('Should I name it count or total?')];

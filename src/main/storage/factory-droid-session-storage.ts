@@ -182,9 +182,12 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 	/**
 	 * Load and parse messages from a session JSONL file
 	 */
-	private async loadSessionMessages(sessionPath: string): Promise<FactoryMessage[]> {
+	private async loadSessionMessages(
+		sessionPath: string,
+		suppliedContent?: string
+	): Promise<FactoryMessage[]> {
 		try {
-			const content = await fs.readFile(sessionPath, 'utf-8');
+			const content = suppliedContent ?? (await fs.readFile(sessionPath, 'utf-8'));
 			const lines = content
 				.trim()
 				.split('\n')
@@ -513,8 +516,10 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 			const sessionPath = `${projectDir}/${sessionId}.jsonl`;
 			factoryMessages = await this.loadSessionMessagesRemote(sessionPath, sshConfig);
 		} else {
-			const sessionPath = path.join(this.getProjectSessionDir(projectPath), `${sessionId}.jsonl`);
-			factoryMessages = await this.loadSessionMessages(sessionPath);
+			const sessionPath =
+				options?.filePath ??
+				path.join(this.getProjectSessionDir(projectPath), `${sessionId}.jsonl`);
+			factoryMessages = await this.loadSessionMessages(sessionPath, options?.content);
 		}
 
 		const sessionMessages: SessionMessage[] = [];
