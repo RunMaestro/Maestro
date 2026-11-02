@@ -1,4 +1,7 @@
-vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
+vi.mock('../../../main/plugins/plugin-scan', async () => {
+	const actual = await import('../../helpers/pluginScan');
+	return { scanPluginFiles: vi.fn(actual.scanPluginFiles) };
+});
 /**
  * FC1 Option-B trusted-to-run gate (`isRunnable` requires `trusted`).
  *
@@ -37,6 +40,7 @@ import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
 import { SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
+import { scanPluginFiles } from '../../../main/plugins/plugin-scan';
 
 const trustedSigner = makeSigningKeys();
 const strangerSigner = makeSigningKeys();
@@ -131,6 +135,97 @@ afterEach(() => {
 });
 
 describe('signed update publisher continuity and runtime recovery', () => {
+	it.each(
+		['backup', 'swap', 'committed'].flatMap((failure) =>
+			['superseded', 'rejected'].map((recheck) => ({ failure, recheck }))
+		)
+	)(
+		'keeps admission retired when $failure reconciliation is $recheck',
+		async ({ failure, recheck }) => {
+			const id = 'recovery.consumer';
+			const sandbox = makeSandbox();
+			let rejectRecheck = false;
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [trustedSigner.publicKeyB64],
+				verifyRecord: () => {
+					if (rejectRecheck) throw new Error('authorization check failed');
+					return { disable: false };
+				},
+			});
+			const installed = writeCodePlugin(id);
+			signPluginDir(installed, trustedSigner);
+			await manager.refresh();
+			await manager.setEnabled(id, true);
+			const admitted = manager.getRegistry().records.find((record) => record.id === id)!;
+			vi.mocked(sandbox.start).mockClear();
+			const replacement = path.join(workDir, 'replacement');
+			fs.cpSync(installed, replacement, { recursive: true });
+			const manifestPath = path.join(replacement, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+			signPluginDir(replacement, trustedSigner);
+			const scanned = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			let recovering = false;
+			const actual = await import('../../helpers/pluginScan');
+			vi.mocked(scanPluginFiles).mockImplementation(async (dir, trustedKeys) => {
+				const result = await actual.scanPluginFiles(dir, trustedKeys);
+				if (
+					dir === installed &&
+					(recovering ||
+						JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf8')).version === '2.0.0')
+				) {
+					scanned.resolve();
+					await release.promise;
+				}
+				return result;
+			});
+			const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+			vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+				if (
+					(failure === 'backup' && String(from) === installed) ||
+					(failure === 'swap' && String(to) === installed && path.basename(String(from)) === id)
+				) {
+					recovering = true;
+					throw new Error(`synthetic ${failure} failure`);
+				}
+				return rename(from, to);
+			});
+			const outcome = manager.update(replacement, id).catch((error: unknown) => error);
+			try {
+				await scanned.promise;
+				expect(sandbox.isRunning(id)).toBe(false);
+				expect(sandbox.start).not.toHaveBeenCalled();
+				if (recheck === 'superseded') await manager.setEnabled(id, false);
+				else rejectRecheck = true;
+				release.resolve();
+				const result = await outcome;
+				expect(result).toBeInstanceOf(Error);
+				expect(String(result)).toMatch(
+					recheck === 'superseded' ? /superseded/ : /authorization check failed/
+				);
+				expect(manager.getRegistry().records.find((record) => record.id === id)).toBeUndefined();
+				expect(() => manager.assertToolRecordCurrent(admitted)).toThrow();
+				expect(sandbox.start).not.toHaveBeenCalled();
+				expect(sandbox.isRunning(id)).toBe(false);
+				expect(
+					JSON.parse(fs.readFileSync(path.join(installed, 'plugin.json'), 'utf8')).version
+				).toBe(failure === 'committed' ? '2.0.0' : '1.0.0');
+				expect(readPluginState().plugins[id]).toEqual({
+					enabled: recheck !== 'superseded',
+					trustedPublisher: trustedSigner.publicKeyB64,
+				});
+			} finally {
+				release.resolve();
+				await outcome;
+				vi.mocked(fs.renameSync).mockImplementation(rename);
+				vi.mocked(scanPluginFiles).mockImplementation(actual.scanPluginFiles);
+			}
+		}
+	);
+
 	it.each(
 		['refresh', 'restart'].flatMap((roundTrip) =>
 			['missing', 'invalid', 'untrusted', 'conflicting'].flatMap((live) =>
@@ -276,8 +371,8 @@ describe('signed update publisher continuity and runtime recovery', () => {
 		}
 	);
 
-	it.each(['backup', 'swap'])(
-		'restarts exactly the restored signed tier-1 runtime after a %s failure',
+	it.each(['backup', 'swap', 'restore'])(
+		'reconciles signed tier-1 runtime admission after a %s failure',
 		async (failure) => {
 			const id = 'recovery.consumer';
 			const sandbox = makeSandbox();
@@ -330,6 +425,7 @@ describe('signed update publisher continuity and runtime recovery', () => {
 				.mockClear()
 				.mockImplementation((from, to) => {
 					if (
+						(failure === 'restore' && String(from).includes('.update-')) ||
 						(failure === 'backup' && String(from) === installed) ||
 						(failure === 'swap' && String(to) === installed && path.basename(String(from)) === id)
 					) {
@@ -348,24 +444,38 @@ describe('signed update publisher continuity and runtime recovery', () => {
 				drained.resolve();
 				const result = await outcome;
 				expect(result).toBeInstanceOf(Error);
-				expect(result).toMatchObject({ message: `synthetic ${failure} failure` });
+				if (failure === 'restore') expect(String(result)).toMatch(/original plugin retained at/);
+				else expect(result).toMatchObject({ message: `synthetic ${failure} failure` });
 			} finally {
 				drained.resolve();
 				await outcome;
 				renameSpy.mockImplementation(rename);
 			}
-			expect(sandbox.start).toHaveBeenCalledExactlyOnceWith(id, installed, 'main.js');
-			expect(startedVersions).toEqual(['1.0.0']);
-			expect(sandbox.isRunning(id)).toBe(true);
-			expect(manager.getRegistry().records.find((record) => record.id === id)).toMatchObject({
-				manifest: { version: '1.0.0' },
-				signature: { status: 'trusted', signerKey: trustedSigner.publicKeyB64 },
-			});
+			if (failure === 'restore') {
+				expect(sandbox.start).not.toHaveBeenCalled();
+				expect(sandbox.isRunning(id)).toBe(false);
+				expect(manager.getRegistry().records.find((record) => record.id === id)).toBeUndefined();
+				expect(fs.existsSync(installed)).toBe(false);
+				const recovery = fs.readdirSync(pluginsDir()).find((name) => name.startsWith('.update-'))!;
+				expect(
+					JSON.parse(
+						fs.readFileSync(path.join(pluginsDir(), recovery, `${id}.old`, 'plugin.json'), 'utf8')
+					).version
+				).toBe('1.0.0');
+			} else {
+				expect(sandbox.start).toHaveBeenCalledExactlyOnceWith(id, installed, 'main.js');
+				expect(startedVersions).toEqual(['1.0.0']);
+				expect(sandbox.isRunning(id)).toBe(true);
+				expect(manager.getRegistry().records.find((record) => record.id === id)).toMatchObject({
+					manifest: { version: '1.0.0' },
+					signature: { status: 'trusted', signerKey: trustedSigner.publicKeyB64 },
+				});
+			}
 			expect(data.get(id, 'token')).toBe('saved-data');
 			expect(grants).toEqual([{ capability: 'storage:read' }]);
 			expect(settings.get(`plugins.${id}.token`)).toBe('saved-setting');
 			expect(purgePluginData).not.toHaveBeenCalled();
-			expect(fs.readdirSync(pluginsDir())).toEqual([id]);
+			if (failure !== 'restore') expect(fs.readdirSync(pluginsDir())).toEqual([id]);
 		}
 	);
 });

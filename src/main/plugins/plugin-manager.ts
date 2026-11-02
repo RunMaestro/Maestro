@@ -169,7 +169,8 @@ export interface InstallResult {
 export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
 	private readonly mutationQueue = createKeyedWriteQueue();
-	private mutationGeneration = 0;
+	private readonly mutationLifetimes = new Map<string, number>();
+	private readonly retiringPlugins = new Set<string>();
 	private readonly pendingMutations = new Map<string, number>();
 	private readonly validatingUpdates = new Map<string, string>();
 	private readonly pendingReloads = new Map<string, symbol>();
@@ -300,13 +301,20 @@ export class PluginManager {
 	 * Encore flag is off this returns an empty registry without touching disk.
 	 */
 	async refresh(): Promise<PluginRegistry> {
-		return this.refreshRegistry();
+		return (await this.refreshRegistry()) ?? this.registry;
 	}
 
-	/** A completed hot reload must not restart unrelated crashed sandboxes. */
-	private async refreshRegistry(onlyPluginId?: string): Promise<PluginRegistry> {
+	/** A scoped reload owns only its source; undefined means its scan was superseded. */
+	private async refreshRegistry(
+		onlyPluginId?: string,
+		mutationSource?: string
+	): Promise<PluginRegistry | undefined> {
 		const before = this.registry;
-		const mutationGeneration = this.mutationGeneration;
+		const mutationLifetimes = new Map(this.mutationLifetimes);
+		const retiringAtStart = new Set(this.retiringPlugins);
+		const observedIds = new Set(
+			onlyPluginId === undefined ? before.records.map((record) => record.id) : [onlyPluginId]
+		);
 		if (!this.deps.isEnabled()) {
 			this.registry = emptyRegistry();
 			this.pluginFingerprints.clear();
@@ -317,9 +325,8 @@ export class PluginManager {
 
 		const dir = pluginsDir();
 		const onlyPluginSource =
-			onlyPluginId === undefined
-				? undefined
-				: this.registry.records.find((record) => record.id === onlyPluginId)?.source;
+			mutationSource ??
+			(onlyPluginId === undefined ? undefined : getRecord(before, onlyPluginId)?.source);
 		let folders: string[];
 		try {
 			folders = fs
@@ -347,8 +354,7 @@ export class PluginManager {
 		const trustedKeys = this.deps.trustedKeys?.() ?? [];
 		let next =
 			onlyPluginId === undefined ? emptyRegistry() : removeRecord(this.registry, onlyPluginId);
-		const previousFingerprints = this.pluginFingerprints;
-		const nextFingerprints =
+		let nextFingerprints =
 			onlyPluginId === undefined ? new Map<string, string>() : new Map(this.pluginFingerprints);
 		if (onlyPluginId !== undefined) nextFingerprints.delete(onlyPluginId);
 		const observedPublishers: Array<{
@@ -378,6 +384,7 @@ export class PluginManager {
 			// A scoped reload owns only this identity. Renamed manifests await a
 			// normal discovery pass and cannot overwrite another plugin's record.
 			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
+			observedIds.add(record.id);
 			// Attach signature trust (the pure builder cannot read files).
 			let signed = record;
 			let scannedIdentity: AuthIdentity | null = null;
@@ -429,15 +436,34 @@ export class PluginManager {
 		}
 
 		if (
-			this.registry !== before ||
-			this.mutationGeneration !== mutationGeneration ||
+			(onlyPluginId === undefined
+				? this.registry !== before
+				: getRecord(this.registry, onlyPluginId) !== getRecord(before, onlyPluginId) ||
+					readPluginState().plugins[onlyPluginId]?.enabled !==
+						state.plugins[onlyPluginId]?.enabled) ||
+			[...observedIds].some(
+				(id) =>
+					this.mutationLifetimes.get(id) !== mutationLifetimes.get(id) || retiringAtStart.has(id)
+			) ||
 			!this.deps.isEnabled() ||
 			canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
 		)
-			return this.registry;
+			return undefined;
 		// A stale scan must not recreate state after an uninstall or a newer discovery.
 		for (const observation of observedPublishers) {
 			rememberPluginPublisher(observation.id, observation.signature, observation.enabledDefault);
+		}
+		// A scoped owner reload publishes only its identity. Unrelated mutations may
+		// have reconciled other records while this scan awaited signature verification.
+		const previousFingerprints = this.pluginFingerprints;
+		if (onlyPluginId !== undefined) {
+			const record = getRecord(next, onlyPluginId);
+			next = removeRecord(this.registry, onlyPluginId);
+			if (record) next = upsertRecord(next, record);
+			const fingerprint = nextFingerprints.get(onlyPluginId);
+			nextFingerprints = new Map(previousFingerprints);
+			nextFingerprints.delete(onlyPluginId);
+			if (fingerprint) nextFingerprints.set(onlyPluginId, fingerprint);
 		}
 		this.registry = next;
 		this.reconcileSandboxes(previousFingerprints, nextFingerprints, onlyPluginId);
@@ -968,6 +994,9 @@ export class PluginManager {
 					try {
 						fs.renameSync(staged, dest);
 						swapped = true;
+						// Old consent/admission must never describe the newly committed bytes.
+						// Backup failure and successful rollback keep their old record instead.
+						this.retireCachedAdmission(id);
 					} catch (swapError) {
 						try {
 							fs.renameSync(backup, dest);
@@ -981,7 +1010,28 @@ export class PluginManager {
 				} catch (updateError) {
 					// The old copy still owns dest after a failed backup or successful rollback.
 					// Reconcile it so a recoverable filesystem failure does not leave it stopped.
-					if (!fs.existsSync(backup) && fs.existsSync(dest)) await this.refresh();
+					if (!fs.existsSync(backup) && fs.existsSync(dest)) {
+						try {
+							const restored = await this.refreshRegistry(id, dest);
+							if (!restored || !getRecord(restored, id)) {
+								throw new Error(
+									'restored plugin reconciliation was superseded or source disappeared'
+								);
+							}
+						} catch (recoveryError) {
+							this.retireCachedAdmission(id);
+							this.syncPluginWatchers();
+							this.deps.onChange?.(this.registry);
+							throw new Error(
+								`update failed (${String(updateError)}); restored plugin requires refresh: ${String(recoveryError)}`
+							);
+						}
+					} else {
+						// Failed restoration retained the backup, not a runnable canonical tree.
+						this.retireCachedAdmission(id);
+						this.syncPluginWatchers();
+						this.deps.onChange?.(this.registry);
+					}
 					throw updateError;
 				}
 			} finally {
@@ -993,7 +1043,18 @@ export class PluginManager {
 			// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
 			// signature trust from scratch. The enable toggle survives because we never
 			// touched the persisted state, so an enabled plugin stays enabled.
-			return await this.refresh();
+			try {
+				const refreshed = await this.refreshRegistry(id, dest);
+				if (!refreshed || !getRecord(refreshed, id)) {
+					throw new Error('updated plugin reconciliation was superseded or source disappeared');
+				}
+				return refreshed;
+			} catch (error) {
+				this.retireCachedAdmission(id);
+				this.syncPluginWatchers();
+				this.deps.onChange?.(this.registry);
+				throw error;
+			}
 		});
 	}
 
@@ -1003,6 +1064,7 @@ export class PluginManager {
 	 */
 	uninstall(id: string): Promise<{ success: boolean; error?: string }> {
 		return this.mutatePlugin(id, async () => {
+			this.retiringPlugins.add(id);
 			if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
 			const record = this.registry.records.find((r) => r.id === id);
 			if (!record) return { success: false, error: `plugin "${id}" is not installed` };
@@ -1032,6 +1094,7 @@ export class PluginManager {
 	): Promise<{ recoveryPath?: string; preserved?: string }> {
 		const id = RETIRED_AGENT_FLOW_ID;
 		return this.mutatePlugin(id, async () => {
+			this.retiringPlugins.add(id);
 			if (!this.deps.isEnabled()) return {};
 			let inspection = inspectRetiredAgentFlow();
 			if (inspection.kind === 'preserved') return { preserved: inspection.reason };
@@ -1053,15 +1116,20 @@ export class PluginManager {
 		});
 	}
 
-	private async purgeUninstalledPlugin(id: string): Promise<void> {
-		forgetPlugin(id);
-		forgetGrants(id);
-		// Retire cached admission before cleanup yields or rejects. Failed cleanup
-		// must never let mutatePlugin's finally restart an enabled cached record.
+	private retireCachedAdmission(id: string): void {
+		this.validatingUpdates.delete(id);
+		this.pendingReloads.delete(id);
 		this.pluginFingerprints.delete(id);
 		this.waitingForServiceDependencies.delete(id);
 		this.registry = removeRecord(this.registry, id);
+	}
+
+	private async purgeUninstalledPlugin(id: string): Promise<void> {
+		// Retire cached admission before any cleanup can throw, including grants reads.
+		this.retireCachedAdmission(id);
 		try {
+			forgetPlugin(id);
+			forgetGrants(id);
 			await this.deps.purgePluginData?.(id);
 		} finally {
 			this.syncPluginWatchers();
@@ -1071,10 +1139,20 @@ export class PluginManager {
 
 	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */
 	private async mutatePlugin<T>(id: string, operation: () => Promise<T>): Promise<T> {
-		this.mutationGeneration++;
+		this.mutationLifetimes.set(id, (this.mutationLifetimes.get(id) ?? 0) + 1);
 		this.pendingMutations.set(id, (this.pendingMutations.get(id) ?? 0) + 1);
 		try {
-			return await this.mutationQueue.enqueue(id, operation);
+			return await this.mutationQueue.enqueue(id, async () => {
+				this.mutationLifetimes.set(id, (this.mutationLifetimes.get(id) ?? 0) + 1);
+				try {
+					return await operation();
+				} finally {
+					// Invalidate scans begun DURING a mutation, even if cleanup failed
+					// before it could remove the cached record or persisted publisher.
+					this.mutationLifetimes.set(id, (this.mutationLifetimes.get(id) ?? 0) + 1);
+					this.retiringPlugins.delete(id);
+				}
+			});
 		} finally {
 			const remaining = (this.pendingMutations.get(id) ?? 1) - 1;
 			if (remaining > 0) this.pendingMutations.set(id, remaining);

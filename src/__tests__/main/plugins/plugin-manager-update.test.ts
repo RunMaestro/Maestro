@@ -405,13 +405,14 @@ describe('PluginManager.update', () => {
 	);
 
 	it('refreshes the working installation if moving it to backup fails', async () => {
-		const manager = makeManager();
+		const onChange = vi.fn();
+		const manager = new PluginManager({ isEnabled: () => true, onChange });
 		const original = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
 		expect((await manager.install(original)).success).toBe(true);
 		const next = writeSource(path.join(workDir, 'next'), { version: '1.0.1' });
 		const archive = path.join(workDir, 'next.tgz');
 		await packPluginArchive(next, archive);
-		const refresh = vi.spyOn(manager, 'refresh');
+		onChange.mockClear();
 		const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
 		vi.mocked(fs.renameSync).mockImplementation((from, to) => {
 			if (String(to).endsWith(`${PLUGIN_ID}.old`)) throw new Error('synthetic backup failure');
@@ -422,7 +423,7 @@ describe('PluginManager.update', () => {
 		} finally {
 			vi.mocked(fs.renameSync).mockImplementation(rename);
 		}
-		expect(refresh).toHaveBeenCalledOnce();
+		expect(onChange).toHaveBeenCalledExactlyOnceWith(manager.getRegistry());
 		expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.manifest?.version).toBe(
 			'1.0.0'
 		);
