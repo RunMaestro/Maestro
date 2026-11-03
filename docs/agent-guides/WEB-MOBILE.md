@@ -59,6 +59,18 @@ On failure it renders through the shared `index.html` error surface (`__maestroS
 
 ### The IPC Bridge
 
+The shim opts into `?bridgeChunks=1` on initial and reconnect sockets.
+`services/socket-send.ts` sends large packets as complete `bridge.chunk`
+envelopes (`data`, UTF-16 `offset`/`total`, `final`), with one receiver-acknowledged
+chunk in flight. Native WebSocket continuation frames only produce a browser
+message event after the whole packet arrives, so a progressing large transcript
+otherwise looks dead to the heartbeat. `bridge.chunkAck` releases the next chunk;
+a missing acknowledgement retires the connection after 30 seconds. Small IPC
+replies and pongs can pass between chunks, while events retain their sequence and
+order. The shim validates and reassembles the packet before applying its sequence,
+and drops partial assembly on disconnect. Existing browsers and CLI clients retain
+their native framing. Submitted mutations are never replayed.
+
 The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` in the Vite config. The renderer's preload factories run unchanged under the alias:
 
 - `contextBridge.exposeInMainWorld('maestro', ...)` writes to `window.maestro` in the browser.

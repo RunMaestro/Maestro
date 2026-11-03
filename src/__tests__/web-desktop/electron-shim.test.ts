@@ -32,8 +32,10 @@ class InertWebSocket {
 		this.sent.push(frame);
 	}
 	closeCalls = 0;
-	close(): void {
+	closeCodes: Array<number | undefined> = [];
+	close(code?: number): void {
 		this.closeCalls += 1;
+		this.closeCodes.push(code);
 	}
 	addEventListener(type: string, cb: (ev?: unknown) => void): void {
 		let set = this.listeners.get(type);
@@ -293,6 +295,193 @@ describe('web-desktop electron-shim autorun_state routing', () => {
 
 		expect(listener).not.toHaveBeenCalled();
 		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+});
+
+describe('web-desktop electron-shim chunked transfers', () => {
+	const frame = (msg: object) => ({ data: JSON.stringify(msg) });
+
+	it('negotiates chunks and resolves an interleaved reply before dispatching the whole Unicode event', async () => {
+		const socket = InertWebSocket.instances[0];
+		expect(new URL(socket.url).searchParams.get('bridgeChunks')).toBe('1');
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		const listener = vi.fn();
+		ipcRenderer.on('test:chunked-event', listener);
+		const text = 'Hello 😀 \\"\n';
+		const event = JSON.stringify({
+			type: 'bridge.event',
+			channel: 'test:chunked-event',
+			args: [text],
+			seq: 6,
+		});
+		const splitAt = event.indexOf('😀') + 2;
+		const query = ipcRenderer.invoke('process:getActiveProcesses');
+		const response = expect(query).resolves.toEqual([{ sessionId: 'agent-ai-tab' }]);
+		await Promise.resolve();
+		const request = JSON.parse(socket.sent.at(-1)!);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.chunk',
+				data: event.slice(0, splitAt),
+				offset: 0,
+				total: event.length,
+				final: false,
+			})
+		);
+		expect(listener).not.toHaveBeenCalled();
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.response',
+				requestId: request.requestId,
+				ok: true,
+				result: [{ sessionId: 'agent-ai-tab' }],
+			})
+		);
+		await response;
+		expect(listener).not.toHaveBeenCalled();
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.chunk',
+				data: event.slice(splitAt),
+				offset: splitAt,
+				total: event.length,
+				final: true,
+			})
+		);
+		expect(listener).toHaveBeenCalledExactlyOnceWith({ senderFrame: null }, text);
+		expect(
+			socket.sent
+				.map((data) => JSON.parse(data))
+				.filter((packet) => packet.type === 'bridge.chunkAck')
+		).toEqual([
+			{ type: 'bridge.chunkAck', offset: splitAt },
+			{ type: 'bridge.chunkAck', offset: event.length },
+		]);
+		expect(socket.closeCodes).toEqual([]);
+	});
+
+	it('resumes before the incomplete sequence and starts its replay from a clean assembly', async () => {
+		const first = InertWebSocket.instances[0];
+		first.readyState = InertWebSocket.OPEN;
+		first.emit('open');
+		first.emit('message', frame({ type: 'connected', bridgeEpoch: 'chunk-run', bridgeSeq: 5 }));
+		const listener = vi.fn();
+		ipcRenderer.on('test:replayed-chunk', listener);
+		const event = JSON.stringify({
+			type: 'bridge.event',
+			channel: 'test:replayed-chunk',
+			args: ['complete'],
+			seq: 6,
+		});
+		const splitAt = Math.floor(event.length / 2);
+		const firstChunk = {
+			type: 'bridge.chunk',
+			data: event.slice(0, splitAt),
+			offset: 0,
+			total: event.length,
+			final: false,
+		};
+		const lastChunk = {
+			type: 'bridge.chunk',
+			data: event.slice(splitAt),
+			offset: splitAt,
+			total: event.length,
+			final: true,
+		};
+		first.emit('message', frame(firstChunk));
+		first.emit('close');
+		await vi.advanceTimersByTimeAsync(1000);
+		const second = InertWebSocket.instances.at(-1)!;
+		expect(second).not.toBe(first);
+		const resumedUrl = new URL(second.url);
+		expect(resumedUrl.searchParams.get('since')).toBe('5');
+		expect(resumedUrl.searchParams.get('bridgeChunks')).toBe('1');
+		// A late frame from the abandoned socket must not finish the old packet.
+		first.emit('message', frame(lastChunk));
+		expect(listener).not.toHaveBeenCalled();
+		second.readyState = InertWebSocket.OPEN;
+		second.emit('open');
+		second.emit(
+			'message',
+			frame({ type: 'connected', bridgeEpoch: 'chunk-run', bridgeSeq: 6, resumed: true })
+		);
+		second.emit('message', frame(firstChunk));
+		second.emit('message', frame(lastChunk));
+		expect(listener).toHaveBeenCalledExactlyOnceWith({ senderFrame: null }, 'complete');
+		expect(second.closeCodes).toEqual([]);
+		second.emit('close');
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(new URL(InertWebSocket.instances.at(-1)!.url).searchParams.get('since')).toBe('6');
+	});
+
+	it('counts partial chunks as heartbeat progress before their event is complete', () => {
+		const socket = InertWebSocket.instances[0];
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		const event = JSON.stringify({ type: 'bridge.event', channel: 'test:progress', args: [] });
+		vi.advanceTimersByTime(BRIDGE_HEARTBEAT_INTERVAL_MS);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.chunk',
+				data: event.slice(0, 10),
+				offset: 0,
+				total: event.length,
+				final: false,
+			})
+		);
+		vi.advanceTimersByTime(BRIDGE_PONG_TIMEOUT_MS + 1);
+		expect(socket.closeCodes).toEqual([]);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.chunk',
+				data: event.slice(10),
+				offset: 10,
+				total: event.length,
+				final: true,
+			})
+		);
+		expect(socket.closeCodes).toEqual([]);
+	});
+
+	it.each([
+		{ name: 'nonzero initial offset', start: false, data: '{', offset: 1, total: 5, final: false },
+		{ name: 'changed total', start: true, data: '}', offset: 1, total: 6, final: false },
+		{ name: 'offset gap', start: true, data: '}', offset: 2, total: 5, final: false },
+		{
+			name: 'unsafe total',
+			start: false,
+			data: '{',
+			offset: 0,
+			total: Number.MAX_SAFE_INTEGER + 1,
+			final: false,
+		},
+		{ name: 'negative total', start: false, data: '{', offset: 0, total: -1, final: false },
+		{ name: 'payload beyond total', start: false, data: '{}', offset: 0, total: 1, final: true },
+		{ name: 'premature final flag', start: false, data: '{', offset: 0, total: 2, final: true },
+		{ name: 'missing final flag', start: false, data: '{}', offset: 0, total: 2, final: false },
+	])('closes malformed chunk streams with 1003: $name', ({ start, data, offset, total, final }) => {
+		const socket = InertWebSocket.instances[0];
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		if (start)
+			socket.emit(
+				'message',
+				frame({ type: 'bridge.chunk', data: '{', offset: 0, total: 5, final: false })
+			);
+		socket.emit('message', frame({ type: 'bridge.chunk', data, offset, total, final }));
+		expect(socket.closeCodes).toEqual([1003]);
+		expect(
+			socket.sent
+				.map((packet) => JSON.parse(packet))
+				.filter((packet) => packet.type === 'bridge.chunkAck')
+		).toHaveLength(start ? 1 : 0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('reconnecting');
 	});
 });
 
