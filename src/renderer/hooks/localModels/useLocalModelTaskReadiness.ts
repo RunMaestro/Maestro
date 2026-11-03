@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { LocalModelTaskId } from '../../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 export interface LocalModelTaskReadinessState {
 	/** Per task id. Absent until the first answer lands. */
@@ -56,6 +57,13 @@ export function useLocalModelTaskReadiness(
 
 	const refresh = useCallback(async () => {
 		const request = ++latestRequest.current;
+		// Task execution remains desktop-only. Shared consumers also mount in
+		// web-desktop/Lite; skip availability probes for tasks they cannot run.
+		if (isWebDesktop()) {
+			setLoading(false);
+			setError('Local model tasks are only available in the desktop app.');
+			return;
+		}
 		setLoading(true);
 		try {
 			const entries = await window.maestro.localModels.taskReadiness(taskId);
