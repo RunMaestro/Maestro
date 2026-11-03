@@ -567,7 +567,7 @@ const PROVIDERS: ProviderConfig[] = [
 		/**
 		 * Mirrors agent-detector.ts OpenCode definition:
 		 *   promptArgs: (prompt) => ['-p', prompt]  // -p flag enables YOLO mode (auto-approve)
-		 *   jsonOutputArgs: ['--format', 'json']
+		 *   jsonOutputArgs: ['--format', 'json', '--thinking']
 		 *
 		 * And process-manager.ts spawn() logic for images:
 		 *   OpenCode does NOT support --input-format stream-json (supportsStreamJsonInput: false)
@@ -577,7 +577,7 @@ const PROVIDERS: ProviderConfig[] = [
 			// OpenCode arg order from process.ts IPC handler:
 			// 1. batchModePrefix: ['run'] (subcommand for batch mode)
 			// 2. base args: [] (empty for OpenCode)
-			// 3. jsonOutputArgs: ['--format', 'json']
+			// 3. jsonOutputArgs: ['--format', 'json', '--thinking']
 			// 4. Optional: --model provider/model (from OPENCODE_MODEL env var)
 			// 5. prompt as positional argument (noPromptSeparator: true)
 
@@ -585,6 +585,7 @@ const PROVIDERS: ProviderConfig[] = [
 				'run', // batchModePrefix
 				'--format',
 				'json',
+				'--thinking',
 			];
 
 			// Allow overriding model via OPENCODE_MODEL env var
@@ -613,6 +614,7 @@ const PROVIDERS: ProviderConfig[] = [
 				'run', // batchModePrefix
 				'--format',
 				'json',
+				'--thinking',
 			];
 
 			// Allow overriding model via OPENCODE_MODEL env var
@@ -634,6 +636,7 @@ const PROVIDERS: ProviderConfig[] = [
 				'run', // batchModePrefix
 				'--format',
 				'json',
+				'--thinking',
 			];
 
 			const model = process.env.OPENCODE_MODEL;
@@ -648,6 +651,7 @@ const PROVIDERS: ProviderConfig[] = [
 				'run', // batchModePrefix
 				'--format',
 				'json',
+				'--thinking',
 			];
 
 			const model = process.env.OPENCODE_MODEL;
@@ -701,6 +705,7 @@ const PROVIDERS: ProviderConfig[] = [
 			'run',
 			'--format',
 			'json',
+			'--thinking',
 			'--model',
 			process.env.OPENCODE_VISION_MODEL || 'ollama/qwen3-vl:latest',
 			'-f',

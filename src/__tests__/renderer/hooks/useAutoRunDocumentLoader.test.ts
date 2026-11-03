@@ -15,8 +15,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
+import { captureException } from '@sentry/electron/renderer';
+import { BridgeTransportError } from '../../../shared/bridgeError';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+
+vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn() }));
 
 // ============================================================================
 // Now import the hook and stores
@@ -792,6 +796,90 @@ describe('useAutoRunDocumentLoader', () => {
 	// ========================================================================
 
 	describe('file watching', () => {
+		it.each(['watch', 'unwatch'])(
+			'handles a rejected %s without an unhandled promise or retry',
+			async (operation) => {
+				const error = new Error('bridge disconnected: Submission uncertainty');
+				const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+				(operation === 'watch' ? mockWatchFolder : mockUnwatchFolder).mockRejectedValue(error);
+				const session = createMockSession({ id: 'session-1', autoRunFolderPath: '/docs' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { unmount } = renderHook(() => useAutoRunDocumentLoader());
+				await act(async () => {});
+				unmount();
+				await act(async () => {});
+				expect(warning).toHaveBeenCalledWith(`[AutoRun] Failed to ${operation} folder`, error);
+				expect(captureException).toHaveBeenCalledWith(error, {
+					extra: { operation: `useAutoRunDocumentLoader.${operation}Folder` },
+				});
+				expect(mockWatchFolder).toHaveBeenCalledTimes(1);
+				expect(mockUnwatchFolder).toHaveBeenCalledTimes(1);
+				if (operation === 'watch') expect(mockOnFileChanged).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['watch', 'unwatch'])(
+			'reports an unexpected %s failure without retrying',
+			async (operation) => {
+				const error = new Error(`No handler registered for autorun:${operation}Folder`);
+				const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+				(operation === 'watch' ? mockWatchFolder : mockUnwatchFolder).mockRejectedValueOnce(error);
+				const session = createMockSession({ id: 'session-1', autoRunFolderPath: '/docs' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { unmount } = renderHook(() => useAutoRunDocumentLoader());
+				await act(async () => {});
+				unmount();
+				await act(async () => {});
+				expect(warning).toHaveBeenCalledWith(`[AutoRun] Failed to ${operation} folder`, error);
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+					extra: { operation: `useAutoRunDocumentLoader.${operation}Folder` },
+				});
+				expect(mockWatchFolder).toHaveBeenCalledTimes(1);
+				expect(mockUnwatchFolder).toHaveBeenCalledTimes(1);
+				if (operation === 'watch') expect(mockOnFileChanged).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['watch', 'unwatch'])(
+			'keeps an expected %s bridge outage out of Sentry',
+			async (operation) => {
+				const error = new BridgeTransportError('reconnecting', 'BRIDGE_RECONNECTING');
+				const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+				(operation === 'watch' ? mockWatchFolder : mockUnwatchFolder).mockRejectedValueOnce(error);
+				const session = createMockSession({ id: 'session-1', autoRunFolderPath: '/docs' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { unmount } = renderHook(() => useAutoRunDocumentLoader());
+				await act(async () => {});
+				unmount();
+				await act(async () => {});
+				expect(warning).toHaveBeenCalledWith(`[AutoRun] Failed to ${operation} folder`, error);
+				expect(captureException).not.toHaveBeenCalled();
+				expect(mockWatchFolder).toHaveBeenCalledTimes(1);
+				expect(mockUnwatchFolder).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it('reports an exception while subscribing to file changes', async () => {
+			const error = new Error('File change subscription failed');
+			const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockOnFileChanged.mockImplementationOnce(() => {
+				throw error;
+			});
+			const session = createMockSession({ id: 'session-1', autoRunFolderPath: '/docs' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			const { unmount } = renderHook(() => useAutoRunDocumentLoader());
+			await act(async () => {});
+			unmount();
+			await act(async () => {});
+			expect(warning).toHaveBeenCalledWith('[AutoRun] Failed to watch folder', error);
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+				extra: { operation: 'useAutoRunDocumentLoader.watchFolder' },
+			});
+			expect(mockWatchFolder).toHaveBeenCalledTimes(1);
+			expect(mockOnFileChanged).toHaveBeenCalledTimes(1);
+			expect(mockUnwatchFolder).toHaveBeenCalledTimes(1);
+		});
+
 		it('calls watchFolder when session has autoRunFolderPath', async () => {
 			const session = createMockSession({
 				id: 'session-1',

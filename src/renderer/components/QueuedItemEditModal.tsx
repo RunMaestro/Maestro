@@ -305,6 +305,8 @@ export function QueuedItemEditModal({
 								onEffortChange={(effort) =>
 									setTurnSettings((prev) => ({ ...prev, effort: effort || undefined }))
 								}
+								onRefreshModels={providerOptions.refreshModels}
+								refreshingModels={providerOptions.refreshingModels}
 								{...menus}
 							/>
 						</div>

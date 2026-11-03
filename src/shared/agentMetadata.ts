@@ -7,6 +7,8 @@
  */
 
 import type { AgentId } from './agentIds';
+import { resolveHarnessControlMode } from './maestro-lib/providers/native-control';
+import { resolveCodexTransport } from './codexTransport';
 
 /**
  * Human-readable display names for every agent.
@@ -124,6 +126,35 @@ export function resolveTabPermissionMode(
 	tab?: { permissionMode?: 'full' | 'standard' | 'readonly'; readOnlyMode?: boolean } | null
 ): 'full' | 'standard' | 'readonly' {
 	return tab?.permissionMode ?? (tab?.readOnlyMode ? 'readonly' : 'full');
+}
+
+export interface StandardApprovalChannelContext {
+	toolType: string;
+	harnessControlMode?: unknown;
+	codexTransport?: unknown;
+	opencodeServer?: boolean;
+	sshEnabled?: boolean;
+	hasImages?: boolean;
+	/** Composer eligibility assumes a future prompt; spawn guards pass the actual value. */
+	hasPrompt?: boolean;
+}
+
+/** Whether this exact turn has a transport able to surface Standard approvals. */
+export function hasStandardApprovalChannel(context: StandardApprovalChannelContext): boolean {
+	const harnessControlMode = resolveHarnessControlMode(context);
+	if (harnessControlMode === 'native' || context.toolType === 'claude-code') return true;
+	if (context.toolType === 'codex') {
+		return resolveCodexTransport(context) === 'app-server' && context.hasImages !== true;
+	}
+	if (context.toolType === 'opencode') {
+		return (
+			context.opencodeServer === true &&
+			context.hasPrompt !== false &&
+			context.sshEnabled !== true &&
+			context.hasImages !== true
+		);
+	}
+	return false;
 }
 
 /**

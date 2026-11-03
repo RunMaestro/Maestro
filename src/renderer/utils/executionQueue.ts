@@ -27,6 +27,7 @@ import {
 	steeringTextTooLong,
 } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
+import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
 import { isSessionRemote } from './sessionHelpers';
 import {
 	getBusyTabs,
@@ -229,6 +230,17 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
 	};
 }
 
+/** A failed attempt restores the same queue ID as a newer incarnation. */
+export function recoverQueuedItem(item: QueuedItem, existing?: QueuedItem): QueuedItem {
+	return {
+		...item,
+		dispatchRecoveryGeneration: Math.max(
+			(item.dispatchRecoveryGeneration ?? 0) + 1,
+			existing?.dispatchRecoveryGeneration ?? 0
+		),
+	};
+}
+
 /**
  * The state transition for a dequeued item whose dispatch THREW before the
  * agent process ever spawned: the exact inverse of
@@ -287,8 +299,9 @@ export function applyQueuedItemDispatchFailure(
 	const queue = item.crossAgentMention
 		? dropConsultHold(released.executionQueue ?? [], item.tabId)
 		: (released.executionQueue ?? []);
-	const restored: QueuedItem = opts.collision ? item : { ...item, paused: true };
-	const executionQueue = queue.some((i) => i.id === item.id)
+	const existing = queue.find((queued) => queued.id === item.id);
+	const restored = recoverQueuedItem(opts.collision ? item : { ...item, paused: true }, existing);
+	const executionQueue = existing
 		? queue.map((i) => (i.id === item.id ? restored : i))
 		: [restored, ...queue];
 
@@ -713,7 +726,8 @@ export type SteerBlockedReason =
 	| 'ssh-remote'
 	| 'steer-in-flight'
 	| 'tui-command-prefix'
-	| 'read-only';
+	| 'read-only'
+	| 'dispatch-callback';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -803,19 +817,35 @@ export function getSteerEligibility(
 		| 'paused'
 		| 'waitingForConnection'
 		| 'readOnlyMode'
+		| 'dispatchCallback'
 	>
 ): SteerEligibility {
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) {
 		return { canSteer: false, blockedReason: 'no-target-tab' };
 	}
+	// A dispatch callback is another agent reporting back. Steering TYPES text
+	// into the running turn as if the user wrote it, so the report (and the
+	// untrusted output fenced inside it) would land mid-thread in a turn about
+	// something else. It waits and runs as its own turn when the tab is idle,
+	// which is the delivery dispatch callbacks were built around.
+	if (item.dispatchCallback) return { canSteer: false, blockedReason: 'dispatch-callback' };
 	// Busy-ness comes from the SAME helper Force Send reads, so the two controls
 	// cannot disagree about whether a tab is mid-turn - which would let a card offer
 	// both, or neither.
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
-	if (session.toolType === 'codex') {
+	const claudeTuiActive =
+		session.toolType === 'claude-code' && session.claudeInteractive?.mode === 'interactive';
+	const nativeSteering =
+		!claudeTuiActive &&
+		session.harnessControlMode === 'native' &&
+		supportsNativeSteering(session.toolType);
+	if (nativeSteering) {
+		// Native control is local-only; its adapter owns the in-turn protocol channel.
+		if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
+	} else if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
 		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
 		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
@@ -846,7 +876,11 @@ export function getSteerEligibility(
 	// leading `!` switches the editor to bash mode. Neither is the message the user
 	// queued, so it waits and dispatches normally. Codex receives `turn/steer` as
 	// plain input, so it is unaffected.
-	if (session.toolType === 'claude-code' && startsWithTuiCommandPrefix(item.text)) {
+	if (
+		session.toolType === 'claude-code' &&
+		!nativeSteering &&
+		startsWithTuiCommandPrefix(item.text)
+	) {
 		return { canSteer: false, blockedReason: 'tui-command-prefix' };
 	}
 	if (item.waitingForConnection) {
@@ -948,6 +982,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'tui-command-prefix':
 		'A message that starts with / or ! would run as a command in the running turn.',
 	'read-only': 'The message is read-only and the running turn is not.',
+	'dispatch-callback':
+		'A dispatch result runs as its own turn once this tab is idle, never inside the running one.',
 };
 
 const STEER_BLOCKED_FALLBACK = 'The running turn cannot take this message right now.';

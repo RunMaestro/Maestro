@@ -49,17 +49,18 @@ export function createPluginsApi() {
 		): Promise<FirstPartyBridgeState> =>
 			ipcRenderer.invoke('plugins:first-party-set-enabled', flag, enabled),
 
-		/** Install a plugin by copying a directory that contains a plugin.json. */
-		install: (sourceDir: string): Promise<InstallResult> =>
-			ipcRenderer.invoke('plugins:install', sourceDir),
+		/** Install a plugin from a directory or a packed .tgz/.tar.gz archive. */
+		install: (sourcePath: string): Promise<InstallResult> =>
+			ipcRenderer.invoke('plugins:install', sourcePath),
 
 		/**
 		 * Update an already-installed plugin to a newer version by copying a new
-		 * source directory over it. Rejects unless the id is already installed and
+		 * source directory or packed .tgz/.tar.gz archive over it. Rejects unless
+		 * its id matches expectedId (when supplied), the id is already installed and
 		 * the source version is strictly newer (semver). Returns the updated list.
 		 */
-		update: (sourceDir: string): Promise<PluginListSnapshot> =>
-			ipcRenderer.invoke('plugins:update', sourceDir),
+		update: (sourcePath: string, expectedId?: string): Promise<PluginListSnapshot> =>
+			ipcRenderer.invoke('plugins:update', sourcePath, expectedId),
 
 		/** Uninstall a plugin by id (removes its directory and forgets its toggle). */
 		uninstall: (id: string): Promise<{ success: boolean; error?: string }> =>

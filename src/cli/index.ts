@@ -99,6 +99,7 @@ import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
+import { listModels } from './commands/list-models';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
@@ -424,6 +425,16 @@ list
 	.action(listSshRemotes);
 
 list
+	.command('models <provider>')
+	.description(
+		'List the models a provider offers (e.g. opencode, claude-code), as the model pickers see them'
+	)
+	.option('--refresh', 'Re-run discovery past the cache and update every open model picker')
+	.option('--ssh-remote <id>', 'Discover on this SSH remote instead of this machine')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(listModels);
+
+list
 	.command('terminals')
 	.description('List open terminal tabs in the desktop app (all agents unless --agent is given)')
 	.option('-a, --agent <id>', 'Only list terminals belonging to this agent')
@@ -624,7 +635,7 @@ program
 	)
 	.option(
 		'--callback-tab <id>',
-		'Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else its active AI tab)'
+		'Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else a new tab)'
 	)
 	.option(
 		'--callback-prompt <text>',
@@ -2912,14 +2923,12 @@ pianola
 	.option('--provider <id>', 'Historical provider for a custom root')
 	.option('--root <path>', 'Custom account/data root')
 	.option('--mine', 'Explicitly attribute selected pools to your human-authored history')
-	.option('--mode <mode>', 'local, hosted, or batch')
+	.option('--mode <mode>', 'local, cli, hosted, or batch')
+	.option('--cli-provider <id>', 'Installed Maestro CLI to use for extraction')
 	.option('--hosted-provider <id>', 'Hosted extraction provider: openai or nan')
 	.option('--model <model>', 'Extraction model')
 	.option('--endpoint <url>', 'Loopback local extraction endpoint')
-	.option(
-		'--qualify-model <model>',
-		'Recall qualification model (default: qwen3:8b; glm5.3-flash measured equal quality at 66% less latency)'
-	)
+	.option('--qualify-model <model>', 'Recall qualification model (default: qwen3:8b)')
 	.option('--qualify-provider <id>', 'Recall qualification provider: local or hosted')
 	.option('--qualify-endpoint <url>', 'Qualification endpoint (loopback for local)')
 	.option('--rerank-model <model>', 'Hosted recall reranker model (default: rerank)')

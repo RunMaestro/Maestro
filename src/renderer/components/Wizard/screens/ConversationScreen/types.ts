@@ -59,4 +59,5 @@ export type WizardConversationState = Pick<
 	| 'enableMaestroP'
 	| 'maestroPMode'
 	| 'maestroPPath'
+	| 'harnessControlMode'
 >;

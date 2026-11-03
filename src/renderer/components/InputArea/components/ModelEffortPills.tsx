@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import type React from 'react';
-import { Gauge, Sparkles } from 'lucide-react';
+import { Gauge, RefreshCw, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
@@ -25,6 +25,14 @@ interface ModelEffortPillsProps {
 	availableEfforts: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	/**
+	 * Re-run model discovery past the cache, for a model added since the list
+	 * loaded (a fresh `ollama pull`). Drawn at the right end of the model
+	 * dropdown's header row; omit it and no Refresh is offered.
+	 */
+	onRefreshModels?: () => void;
+	/** Spins the Refresh icon and blocks a second click while one is running. */
+	refreshingModels?: boolean;
 	modelMenuOpen: boolean;
 	setModelMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	modelMenuRef: React.RefObject<HTMLDivElement>;
@@ -43,6 +51,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	availableEfforts,
 	onModelChange,
 	onEffortChange,
+	onRefreshModels,
+	refreshingModels = false,
 	modelMenuOpen,
 	setModelMenuOpen,
 	modelMenuRef,
@@ -83,7 +93,29 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 								...elevatedSurfaceStyle(theme),
 							}}
 						>
-							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
+							<ShortcutHint
+								theme={theme}
+								keys={shortcutKeys ?? []}
+								label="Try:"
+								variant="row"
+								trailing={
+									onRefreshModels && (
+										<button
+											type="button"
+											onClick={onRefreshModels}
+											disabled={refreshingModels}
+											className="flex items-center gap-1 font-sans rounded px-1 transition-opacity opacity-80 hover:opacity-100 disabled:cursor-default"
+											style={{ color: theme.colors.accent }}
+											title="Re-read the model list (picks up newly installed models)"
+											aria-label="Refresh model list"
+											aria-busy={refreshingModels}
+										>
+											<RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} />
+											<span>Refresh</span>
+										</button>
+									)
+								}
+							/>
 							<div className="max-h-48 overflow-y-auto scrollbar-thin">
 								{(availableModels.includes('') ? availableModels : ['', ...availableModels]).map(
 									(model) => (

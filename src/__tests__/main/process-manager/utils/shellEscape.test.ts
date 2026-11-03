@@ -17,6 +17,11 @@ describe('shellEscape', () => {
 			expect(escapeCmdArg('file.txt')).toBe('file.txt');
 		});
 
+		it('should preserve empty arguments as quoted empty strings', () => {
+			expect(escapeCmdArg('')).toBe('""');
+			expect(escapeCmdArgs(['--tools', ''])).toEqual(['--tools', '""']);
+		});
+
 		it('should escape arguments with spaces', () => {
 			expect(escapeCmdArg('hello world')).toBe('"hello world"');
 			expect(escapeCmdArg('path with spaces')).toBe('"path with spaces"');

@@ -580,6 +580,19 @@ describe('SettingsModal', () => {
 			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 		});
 
+		it('marks the active tab for the nav to scroll into view', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'theme' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const nav = screen.getByLabelText('Settings tabs');
+			const marked = nav.querySelectorAll('[data-reveal-active="true"]');
+			expect(marked).toHaveLength(1);
+			expect(marked[0]).toBe(screen.getByTitle('Themes'));
+		});
+
 		it('should jump to the setting named by initialSettingId', async () => {
 			// Deep link from outside Settings (the Force Send explainer) lands on the
 			// exact control, the same way a search result does.

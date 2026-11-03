@@ -114,6 +114,54 @@ describe('ModelEffortPills', () => {
 			);
 		});
 	});
+	describe('refreshing the model list', () => {
+		it('offers Refresh in the model menu header and keeps the menu open', () => {
+			const onRefreshModels = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({
+				modelMenuOpen: true,
+				shortcutKeys: HINT_KEYS,
+				onRefreshModels,
+				setModelMenuOpen,
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
+
+			expect(onRefreshModels).toHaveBeenCalledTimes(1);
+			// The point of refreshing is to see the new model in this same list.
+			expect(setModelMenuOpen).not.toHaveBeenCalled();
+			expect(hintRow()).toHaveTextContent(HINT_TEXT);
+		});
+
+		it('is offered even where no shortcut hint is shown', () => {
+			renderPills({ modelMenuOpen: true, onRefreshModels: vi.fn() });
+
+			expect(screen.getByRole('button', { name: 'Refresh model list' })).toBeInTheDocument();
+			expect(screen.queryByText(/^Try:/)).not.toBeInTheDocument();
+		});
+
+		it('blocks a second click while a refresh is running', () => {
+			const onRefreshModels = vi.fn();
+			renderPills({ modelMenuOpen: true, onRefreshModels, refreshingModels: true });
+
+			const button = screen.getByRole('button', { name: 'Refresh model list' });
+			expect(button).toBeDisabled();
+			expect(button).toHaveAttribute('aria-busy', 'true');
+		});
+
+		it('is absent when the surface supplies no refresh', () => {
+			renderPills({ modelMenuOpen: true, shortcutKeys: HINT_KEYS });
+
+			expect(screen.queryByRole('button', { name: 'Refresh model list' })).toBeNull();
+		});
+
+		it('stays out of the effort menu', () => {
+			renderPills({ effortMenuOpen: true, onRefreshModels: vi.fn() });
+
+			expect(screen.queryByRole('button', { name: 'Refresh model list' })).toBeNull();
+		});
+	});
+
 	describe('typing a model ID that is not in the list', () => {
 		// The motivating case: a limited-access model the CLI accepts but that
 		// discovery cannot see, so it never reaches availableModels.

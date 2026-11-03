@@ -1887,6 +1887,39 @@ describe('agentStore', () => {
 			expect(spawnCall.permissionMode).toBe('full');
 		});
 
+		it('preserves Standard for queued Codex app-server image turns', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex',
+				codexTransport: 'app-server',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						permissionMode: 'standard',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'Describe this image',
+				images: ['base64encodedimage'],
+			});
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn.mock.calls[0][0].permissionMode).toBe('standard');
+		});
+
 		it('processes slash command and spawns agent', async () => {
 			const session = createMockSession({
 				id: 'session-1',

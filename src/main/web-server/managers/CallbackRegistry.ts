@@ -709,7 +709,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		dispatchCallback?: boolean
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -720,7 +721,8 @@ export class CallbackRegistry {
 			images,
 			background,
 			held,
-			mentionRouting
+			mentionRouting,
+			dispatchCallback
 		);
 	}
 

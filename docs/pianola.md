@@ -48,7 +48,11 @@ Pianola can read your own past CLI transcripts and propose rules and a decision 
 
 ### Memory
 
-The **Memory** tab contains **Backfill & privacy**, **Memory bank**, and **Coverage & usage**. Enable memory separately, select native history roots, and explicitly attribute your human-authored pools. Unattributed roots stay out of learning. Inspect the original evidence, support label, scope, and current/proposed/contested/superseded status before relying on a claim.
+The **Memory** tab contains **Setup**, **Memory bank**, and **Activity**. Enable memory separately, choose local or hosted processing, select native history roots, and explicitly attribute your human-authored pools. Unattributed roots stay out of learning. **Save & start learning** saves the configuration, discovers the selected history, and starts or resumes processing in one step.
+
+The processing provider can use any supported Maestro CLI: **Claude Code, Codex, Antigravity, Qwen3 Coder, Hermes, Pi, Oh My Pi, OpenCode, Factory Droid, Copilot CLI, or Grok**. Local Ollama and the OpenAI/NaN APIs remain available. Maestro detects CLI executables, configured model defaults, and API credential presence automatically; secret values are never copied into the bank. CLI extraction disables tools where supported, otherwise enforces the provider's read-only mode, and always runs in an isolated temporary workspace with the same consent, checkpoints, budgets, and transport accounting as API extraction. Advanced settings are only for overrides. Maestro fills the detected defaults for you.
+
+Inspect the original evidence, support label, scope, and current/proposed/contested/superseded status before relying on a claim.
 
 Memory retains preferences, project knowledge, decisions and rejected alternatives, episodes, commitments, and broader context. It uses a desktop-owned SQLite bank with lexical search and a pinned local semantic embedding model. The manager, watchers, and dispatched tasks receive bounded, relevant context, not the whole bank.
 
@@ -59,6 +63,9 @@ You can explicitly remember information, correct a claim while retaining earlier
 Keep the desktop running. Memory operations use its existing host transport; the CLI does not open the database directly.
 
 ```bash
+# Use an existing Claude Code CLI account; omit --model to inherit its configured default.
+maestro-cli pianola memory configure --mine --mode cli --cli-provider claude-code --consent-hosted
+# Or use local Ollama instead.
 maestro-cli pianola memory configure --mine --mode local --model qwen3:8b --endpoint http://127.0.0.1:11434 --tokens 1000000 --dollars 0
 maestro-cli pianola memory discover
 maestro-cli pianola memory start
@@ -70,7 +77,7 @@ maestro-cli pianola memory recall "storage decisions" --project /path/to/project
 
 Discovery supports Claude Code, Codex, OpenCode, Factory Droid, Copilot CLI, OMP, and Grok. Select custom roots with `--provider` and `--root`; exclude roots, projects, or files with `--exclude`. Exclusions include descendants and linked Git worktrees and are enforced before evidence extraction or hosted submission.
 
-Local extraction uses a loopback Ollama endpoint; embeddings also remain local. Hosted and Batch modes require explicit off-device consent, credentials, and configured budgets. Changing provider clears consent unless it is explicitly supplied again. Pause stops ingestion without deleting the bank; resume retains checkpoints and budget reservations.
+Local extraction uses a loopback Ollama endpoint; embeddings also remain local. CLI, Hosted, and Batch modes require explicit off-device consent, and Hosted/Batch modes require credentials and configured budgets. CLI mode uses the detected executable and configured account, disables tools where supported or enforces read-only mode, and uses an isolated temporary workspace; omitting `--model` inherits the CLI's default. Prompts that exceed the operating system's command-line limit are rejected before they are marked as sent. Changing provider clears consent unless it is explicitly supplied again. Pause stops ingestion without deleting the bank; resume retains checkpoints and budget reservations.
 
 Assertions require exact citations and independent evidence verification. Default recall returns a bounded advisory shortlist and does not assess answerability. Use `--intent current|previous|proposed|contested|history`, or `--intent as-of --at <date>` for lifecycle-specific recall. Optional `--qualify` applies model review; optional `--rerank` sends the question and shortlisted assertions to the configured hosted reranker. Neither feature grants authority or overrides exclusions, evidence status, or validity dates.
 

@@ -38,12 +38,16 @@ import { jumpToAgentConversation } from '../utils/jumpToAgentConversation';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MiniBadge } from './ui/MiniBadge';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { useSessionStore } from '../stores/sessionStore';
 import type { ToolType } from '../../shared/types';
 
 export interface DispatchCallbackCardProps {
 	parsed: ParsedDispatchCallback;
 	theme: Theme;
-	/** The target agent's toolType, if resolvable, for its provider glyph. */
+	/**
+	 * The target agent's toolType, for its provider glyph. Omit it and the card
+	 * looks the target up itself; the glyph is skipped when the agent is gone.
+	 */
 	targetToolType?: ToolType;
 }
 
@@ -72,8 +76,12 @@ function statusStyle(
 export function DispatchCallbackCard({
 	parsed,
 	theme,
-	targetToolType,
+	targetToolType: targetToolTypeProp,
 }: DispatchCallbackCardProps): React.ReactElement {
+	const storeToolType = useSessionStore(
+		(s) => s.sessions.find((session) => session.id === parsed.targetAgentId)?.toolType
+	);
+	const targetToolType = targetToolTypeProp ?? storeToolType;
 	const [expanded, setExpanded] = useState(false);
 	const { accent, Icon, badge } = statusStyle(parsed.status, theme);
 

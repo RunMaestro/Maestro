@@ -44,6 +44,7 @@ const METHODS: Record<string, string> = {
 	groupChat:
 		'addHistoryEntry addParticipant appendMessage archive clearHistory create delete deleteHistoryEntry getHistory getHistoryFilePath getImages getMessages getModeratorSessionId getQueue list load queueAdd queueRemove queueReorder queueResume queueSteer removeParticipant rename reportAutoRunComplete resetParticipantContext saveImage sendToModerator sendToParticipant startModerator stopAll stopModerator submitMessage update',
 	groups: 'getAll setAll',
+	harnessControl: 'listPending respond',
 	history:
 		'add clear delete getAll getAllPaginated getCueGroupRuns getFilePath getGraphData getOffsetForTimestamp listSessions reload update updateSessionName',
 	images: 'resolve',
@@ -110,7 +111,7 @@ const EVENTS: Record<string, string> = {
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
-		'call-usage claude-mode-resolved command-exit data exit headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',
+		'call-usage claude-mode-resolved command-exit data exit harness-interaction-request harness-interaction-settled headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',
 	// Display-only remote pushes, not owner command/reply listeners. Movement
 	// is mirrored intentionally so host-created Concerto panels remain visible.
 	remote:

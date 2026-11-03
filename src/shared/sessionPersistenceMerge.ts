@@ -50,7 +50,8 @@ function mergeRows(
 	stored: RecordData[],
 	baseline: RecordData[],
 	preserveClient: boolean,
-	preserveLive: boolean
+	preserveLive: boolean,
+	queueRows = false
 ): RecordData[] {
 	const key = (row: RecordData): string => (row.type ? `${row.type}:${row.id}` : row.id);
 	if ([...incoming, ...stored, ...baseline].some((row) => !row || typeof row.id !== 'string')) {
@@ -66,8 +67,15 @@ function mergeRows(
 		if (change) {
 			result.push(mergeRecord(change, current, base ?? current, preserveClient, preserveLive));
 			next.delete(id);
-		} else if (!base || !same(current, base)) {
-			// A peer added/edited this row after the caller's snapshot.
+		} else if (
+			!base ||
+			(queueRows
+				? (current.dispatchRecoveryGeneration ?? 0) > (base.dispatchRecoveryGeneration ?? 0)
+				: !same(current, base))
+		) {
+			// Queue removals win metadata edits, but a definite dispatch failure
+			// restores a newer attempt of the same ID. An older removal cannot
+			// discard that recovery. Other collections retain edit-wins behavior.
 			result.push(current);
 		}
 	}
@@ -132,7 +140,8 @@ function mergeRecord(
 				Array.isArray(current) ? current : [],
 				Array.isArray(before) ? before : [],
 				preserveClient,
-				preserveLive
+				preserveLive,
+				field === 'executionQueue'
 			);
 		} else if (field === 'tab' && change && current && before) {
 			result[field] = mergeRecord(change, current, before, preserveClient, preserveLive);

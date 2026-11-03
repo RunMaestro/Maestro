@@ -2858,7 +2858,10 @@ describe('WebSocketMessageHandler', () => {
 		};
 
 		beforeEach(() => {
-			initDispatchCallbacks({ enqueue: vi.fn().mockResolvedValue({ success: true }) });
+			initDispatchCallbacks({
+				enqueue: vi.fn().mockResolvedValue({ success: true }),
+				openTab: vi.fn().mockResolvedValue({ success: true }),
+			});
 		});
 
 		afterEach(() => {
