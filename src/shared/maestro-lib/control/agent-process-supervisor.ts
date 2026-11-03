@@ -26,6 +26,13 @@ export function assertHeadlessIdleProfile(
 	}
 }
 
+/**
+ * Enforce optional startup, lifetime and semantic idle/tool budgets with bounded teardown.
+ * Root startup lifecycle notices record only the last phase and its first observation time;
+ * they never renew budgets or prove compaction. Real model/tool activity disarms startup.
+ * Timeout diagnostics retain no provider records or IDs and leave the cause unknown.
+ * `processExited` confirms exit independently of forced return; dispose releases supervision.
+ */
 export function superviseAgentProcess(
 	child: ChildProcess,
 	options: {

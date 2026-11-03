@@ -311,7 +311,7 @@ describe('headless process supervision', () => {
 		vi.useFakeTimers();
 		const onStop = vi.fn();
 		const supervision = superviseAgentProcess({} as ChildProcess, {
-			startupMs: 120_000,
+			startupMs: CODEX_STARTUP_TIMEOUT_MS,
 			idle: { warnMs: 10 * 60_000, idleMs: 20 * 60_000, toolMs: 60 * 60_000 },
 			onStop,
 			onForcedStop: vi.fn(),
@@ -342,14 +342,17 @@ describe('headless process supervision', () => {
 			const onStop = vi.fn();
 			const onForcedStop = vi.fn(() => supervision.dispose());
 			const supervision = superviseAgentProcess(child, {
-				startupMs: cause === 'startup' ? 120_000 : undefined,
+				startupMs: cause === 'startup' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
 				timeoutMs: 3_600_000,
 				signal: controller.signal,
 				onStop,
 				onForcedStop,
 			});
 			if (cause === 'abort') controller.abort();
-			else await vi.advanceTimersByTimeAsync(cause === 'startup' ? 120_000 : 3_600_000);
+			else
+				await vi.advanceTimersByTimeAsync(
+					cause === 'startup' ? CODEX_STARTUP_TIMEOUT_MS : 3_600_000
+				);
 			expect(onStop).toHaveBeenCalledTimes(1);
 			expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 			expect(onForcedStop).not.toHaveBeenCalled();
@@ -413,13 +416,13 @@ describe('headless process supervision', () => {
 		vi.useFakeTimers();
 		const onStop = vi.fn();
 		const supervision = superviseAgentProcess({} as ChildProcess, {
-			startupMs: 120_000,
+			startupMs: CODEX_STARTUP_TIMEOUT_MS,
 			timeoutMs: 3_600_000,
 			onStop,
 			onForcedStop: vi.fn(),
 		});
 		supervision.modelActivity();
-		await vi.advanceTimersByTimeAsync(120_000);
+		await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS);
 		expect(onStop).not.toHaveBeenCalled();
 		expect(vi.getTimerCount()).toBe(1);
 		supervision.dispose();

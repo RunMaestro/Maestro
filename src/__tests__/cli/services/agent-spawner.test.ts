@@ -20,6 +20,7 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
 import { DEFAULT_STDERR_TAIL_LIMIT } from '../../../shared/maestro-lib/run/start-turn';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
 // Create mock spawn function at module level
 const mockSpawnNativeSdkAgent = vi.hoisted(() => vi.fn());
@@ -2156,7 +2157,7 @@ Some text with [x] in it that's not a checkbox
 						)
 					);
 					mockStderr.emit('data', Buffer.from('Reading additional input from stdin...'));
-					await vi.advanceTimersByTimeAsync(119_999);
+					await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS - 1);
 					expect(mockChild.kill).not.toHaveBeenCalled();
 					await vi.advanceTimersByTimeAsync(1);
 					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
@@ -2186,7 +2187,7 @@ Some text with [x] in it that's not a checkbox
 				});
 				await vi.advanceTimersByTimeAsync(0);
 				mockStdout.emit('data', Buffer.from(activity + '\n'));
-				await vi.advanceTimersByTimeAsync(180_000);
+				await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS + 60_000);
 				expect(mockChild.kill).not.toHaveBeenCalled();
 				mockStdout.emit(
 					'data',
