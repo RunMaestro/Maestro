@@ -35,7 +35,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session } from '../../types';
+import type { QueuedItem, Session } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import {
 	isEphemeralBrowserTab,
@@ -467,6 +467,9 @@ export function useDebouncedPersistence(
 	// Retain its wire snapshot until our first successful save; restoration must
 	// not turn that host-owned row into a client-created row without a baseline.
 	const peerBaselinesRef = useRef(new Map<string, Session>());
+	// Capture the incarnation actually removed from this client's visible queue.
+	// Its saved snapshot can lag behind a peer recovery while a save is in flight.
+	const queueRemovalsRef = useRef(new Map<string, Map<string, { item: QueuedItem }>>());
 	const recoveryGenerationRef = useRef(0);
 	// A submitted write may have reached the host even if its reply was lost.
 	// Recovery must discard that attempted diff and retain only later local edits.
@@ -510,8 +513,21 @@ export function useDebouncedPersistence(
 		const recoveryGeneration = recoveryGenerationRef.current;
 		const current = sessionsRef.current;
 		const peerBaselines = peerBaselinesRef.current;
+		const queueRemovals = new Map(
+			[...queueRemovalsRef.current].map(([id, items]) => [id, new Map(items)])
+		);
+		const forgetSavedQueueRemovals = () => {
+			for (const [id, items] of queueRemovals) {
+				const pending = queueRemovalsRef.current.get(id);
+				for (const [itemId, item] of items) {
+					if (pending?.get(itemId) === item) pending.delete(itemId);
+				}
+				if (pending?.size === 0) queueRemovalsRef.current.delete(id);
+			}
+		};
 		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
-			const ids = new Set(toPersist.map((session) => session.id));
+			const sessionsById = new Map(toPersist.map((session) => [session.id, session]));
+			const ids = new Set(sessionsById.keys());
 			const byId = new Map(
 				(previous ?? [])
 					.filter((session) => ids.has(session.id))
@@ -519,6 +535,18 @@ export function useDebouncedPersistence(
 			);
 			for (const [id, snapshot] of peerBaselines) {
 				if (ids.has(id)) byId.set(id, snapshot);
+			}
+			for (const [id, items] of queueRemovals) {
+				const baseline = byId.get(id);
+				if (!baseline) continue;
+				const queue = new Map((baseline.executionQueue ?? []).map((item) => [item.id, item]));
+				const present = new Set(
+					(sessionsById.get(id)?.executionQueue ?? []).map((item) => item.id)
+				);
+				for (const [itemId, removal] of items) {
+					if (!present.has(itemId)) queue.set(itemId, removal.item);
+				}
+				byId.set(id, { ...baseline, executionQueue: [...queue.values()] });
 			}
 			return [...byId.values()];
 		};
@@ -544,6 +572,7 @@ export function useDebouncedPersistence(
 			}
 			previouslyPersistedRef.current = current;
 			for (const session of current) peerBaselines.delete(session.id);
+			forgetSavedQueueRemovals();
 			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
@@ -565,6 +594,7 @@ export function useDebouncedPersistence(
 		}
 		previouslyPersistedRef.current = current;
 		for (const session of current) peerBaselines.delete(session.id);
+		forgetSavedQueueRemovals();
 		startupBaselineNeedsFullFlushRef.current = false;
 	}, []);
 
@@ -732,6 +762,7 @@ export function useDebouncedPersistence(
 			persistenceDeadlineRef.current = null;
 			flushRequestedRef.current = false;
 			peerBaselinesRef.current.clear();
+			queueRemovalsRef.current.clear();
 			sessionsRef.current = useSessionStore.getState().sessions;
 			previouslyPersistedRef.current = sessions;
 			uncertainBaselineRef.current = null;
@@ -821,13 +852,23 @@ export function useDebouncedPersistence(
 				return;
 			}
 			if (state.sessions === prevState.sessions) return;
-			const queueChanged = state.sessions.some((session) => {
+			let queueChanged = false;
+			for (const session of state.sessions) {
 				const before = previous.get(session.id)?.executionQueue;
-				return (
-					session.executionQueue !== before &&
-					canonicalJson(session.executionQueue ?? []) !== canonicalJson(before ?? [])
-				);
-			});
+				if (
+					session.executionQueue === before ||
+					canonicalJson(session.executionQueue ?? []) === canonicalJson(before ?? [])
+				)
+					continue;
+				queueChanged = true;
+				const present = new Set((session.executionQueue ?? []).map((item) => item.id));
+				for (const item of before ?? []) {
+					if (present.has(item.id)) continue;
+					let removed = queueRemovalsRef.current.get(session.id);
+					if (!removed) queueRemovalsRef.current.set(session.id, (removed = new Map()));
+					removed.set(item.id, { item });
+				}
+			}
 			schedulePersist(queueChanged);
 		});
 

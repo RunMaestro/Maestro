@@ -2950,6 +2950,136 @@ describe('useDebouncedPersistence', () => {
 		});
 	});
 
+	it.each([true, false])(
+		'saves removal of an observed recovery despite an older in-flight save (initially queued=%s)',
+		async (initiallyQueued) => {
+			const item = {
+				id: 'recovered',
+				type: 'message' as const,
+				text: 'work',
+				timestamp: 1,
+				tabId: 'default-tab',
+			};
+			const original = makeSession({
+				id: 'observed-removal',
+				executionQueue: initiallyQueued ? [item] : [],
+			});
+			seedSessions([original]);
+			useSessionStore.setState({ initialLoadComplete: true });
+			let host = structuredClone(original);
+			let releaseSave!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				releaseSave = resolve;
+			});
+			let calls = 0;
+			const save = async (updates: Session[], _removedIds: string[], baselines?: Session[]) => {
+				if (++calls === 1) await gate;
+				for (const update of updates)
+					host = mergeSessionPersistenceChanges(
+						update,
+						host,
+						baselines?.find((s) => s.id === update.id),
+						true
+					);
+				return true;
+			};
+			vi.mocked(window.maestro.sessions.setMany).mockImplementation(save);
+			vi.mocked(window.maestro.sessions.setAll).mockImplementation((updates, baselines) =>
+				save(updates, [], baselines)
+			);
+			const previousListener = window.maestro.sessions.onLifecycleSync;
+			const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
+			window.maestro.sessions.onLifecycleSync = (callback) => {
+				listeners.add(callback);
+				return () => listeners.delete(callback);
+			};
+			const initialLoad = makeInitialLoadRef(true);
+			const view = renderHook(() => {
+				const persistence = useDebouncedPersistence(initialLoad);
+				useSessionLifecycleSync(async (session) => session);
+				return persistence;
+			});
+			try {
+				let first!: Promise<void>;
+				await act(async () => {
+					first = view.result.current.flushNow([{ ...original, name: 'older save' }]);
+				});
+				host = {
+					...host,
+					executionQueue: [{ ...item, paused: true, dispatchRecoveryGeneration: 1 }],
+				};
+				await act(async () => {
+					for (const listener of listeners)
+						listener({ updated: [structuredClone(host)], baselines: [original] });
+				});
+				expect(
+					useSessionStore.getState().sessions[0].executionQueue[0].dispatchRecoveryGeneration
+				).toBe(1);
+				let cancellation!: Promise<void>;
+				await act(async () => {
+					const local = useSessionStore.getState().sessions[0];
+					seedSessions([{ ...local, executionQueue: [] }]);
+					cancellation = view.result.current.flushNow();
+				});
+				await act(async () => {
+					releaseSave();
+					await first;
+					await cancellation;
+				});
+				expect(host.executionQueue).toEqual([]);
+				expect(view.result.current.isPending).toBe(false);
+			} finally {
+				view.unmount();
+				window.maestro.sessions.onLifecycleSync = previousListener;
+			}
+		}
+	);
+
+	it('does not discard a newer cancellation of the same object when an older save acknowledges', async () => {
+		const item = {
+			id: 'same-object',
+			type: 'message' as const,
+			text: 'work',
+			timestamp: 1,
+			tabId: 'default-tab',
+		};
+		const original = makeSession({ id: 'successive-removals', executionQueue: [item] });
+		seedSessions([original]);
+		const stored = mockPersistedSessions([original]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([original]);
+		});
+		let acknowledge!: (ok: boolean) => void;
+		vi.mocked(window.maestro.sessions.setMany).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					acknowledge = resolve;
+				})
+		);
+		let first!: Promise<void>;
+		await act(async () => {
+			seedSessions([{ ...original, executionQueue: [] }]);
+			first = view.result.current.flushNow();
+		});
+		// Its first cancellation was accepted, but another event restored the same
+		// object before the acknowledgement reached the browser. Cancel again.
+		act(() => {
+			seedSessions([original]);
+			seedSessions([{ ...original, executionQueue: [] }]);
+		});
+		let second!: Promise<void>;
+		await act(async () => {
+			second = view.result.current.flushNow();
+		});
+		await act(async () => {
+			acknowledge(true);
+			await first;
+			await second;
+		});
+		expect(stored()[0].executionQueue).toEqual([]);
+	});
+
 	it('saves an agent created on the host after an empty bootstrap with its unmodified observed baseline', async () => {
 		const originalListener = window.maestro.sessions.onLifecycleSync;
 		const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
