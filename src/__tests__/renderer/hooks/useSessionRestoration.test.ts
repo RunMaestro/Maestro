@@ -2053,6 +2053,41 @@ describe('Session & Group loading effect', () => {
 		expect(useSessionStore.getState().sessions[0]).toMatchObject({ state: 'busy', aiPid: 456 });
 	});
 
+	it('recovers a request arriving between loop completion and promise cleanup', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'microtask-agent' });
+		mockGetBootstrap.mockResolvedValue([original]);
+		const getActiveProcesses = vi.fn().mockResolvedValue([]);
+		(window.maestro as any).process = { getActiveProcesses };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		getActiveProcesses.mockClear();
+		mockGetBootstrap.mockClear();
+		let resolveRuntime!: (sessions: Session[]) => void;
+		mockGetBootstrap.mockReturnValueOnce(
+			new Promise<Session[]>((resolve) => {
+				resolveRuntime = resolve;
+			})
+		);
+		getActiveProcesses
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([
+				{ sessionId: 'microtask-agent-ai-tab-1', pid: 789, isTerminal: false, startTime: 30 },
+			]);
+		await act(async () => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+		expect(mockGetBootstrap).toHaveBeenCalledTimes(1);
+		await act(async () => {
+			resolveRuntime([original]);
+			// The first tick completes refreshWebRuntime; the second follows the
+			// reconciliation loop's completion, before chained catch/finally run.
+			await Promise.resolve();
+			await Promise.resolve();
+			window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+		});
+		expect(getActiveProcesses).toHaveBeenCalledTimes(2);
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({ state: 'busy', aiPid: 789 });
+	});
+
 	it('does not apply a stalled process reconciliation after the hook unmounts', async () => {
 		runtime.web = true;
 		const original = createMockSession({ id: 'unmounted-agent' });

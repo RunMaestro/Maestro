@@ -1050,23 +1050,26 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			runtimeReconciliation.current = reconciliation;
 			const { signal } = reconciliation.controller;
 			void (async () => {
-				do {
-					reconciliation.requested = false;
-					await reattachLiveAiTurns(signal);
-					signal.throwIfAborted();
-					await refreshWebRuntime(signal);
-				} while (reconciliation.requested && !signal.aborted);
-			})()
-				.catch((error) => {
-					if (!signal.aborted && !isExpectedBridgeError(error)) {
-						logger.warn('Failed to reconcile host runtime', 'Sessions', error);
-						captureException(error, { tags: { operation: 'reconcileHostRuntime' } });
-					}
-				})
-				.finally(() => {
+				try {
+					do {
+						reconciliation.requested = false;
+						await reattachLiveAiTurns(signal);
+						signal.throwIfAborted();
+						await refreshWebRuntime(signal);
+					} while (reconciliation.requested && !signal.aborted);
+				} finally {
+					// Release ownership in the same microtask as the loop decision.
+					// An event after this point must start a fresh pass, not set a
+					// follow-up flag on a loop that has already finished.
 					if (runtimeReconciliation.current === reconciliation)
 						runtimeReconciliation.current = null;
-				});
+				}
+			})().catch((error) => {
+				if (!signal.aborted && !isExpectedBridgeError(error)) {
+					logger.warn('Failed to reconcile host runtime', 'Sessions', error);
+					captureException(error, { tags: { operation: 'reconcileHostRuntime' } });
+				}
+			});
 			return;
 		}
 		// An older ordinary read must not overwrite the authoritative snapshot
