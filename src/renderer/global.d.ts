@@ -2,6 +2,12 @@ import type {
 	TranslationRequest,
 	TranslationReport,
 } from '../shared/maestro-lib/translation/types';
+import type {
+	HarnessInteractionRequest,
+	HarnessInteractionResolveResult,
+	HarnessInteractionResponse,
+	HarnessInteractionSettledEvent,
+} from '../shared/harness-control/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -69,6 +75,8 @@ interface ProcessConfig {
 	modelId?: string;
 	yoloMode?: boolean;
 	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** Optional provider-native protocol mode for this turn. */
+	harnessControlMode?: import('../shared/maestro-lib/providers/native-control').HarnessControlMode;
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -442,6 +450,7 @@ interface MaestroAPI {
 		}) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
+		closeAgent: (agentId: string) => Promise<boolean>;
 		resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
 		runCommand: (config: {
 			sessionId: string;
@@ -533,6 +542,16 @@ interface MaestroAPI {
 				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
 				| { behavior: 'deny'; message: string }
 		) => Promise<boolean>;
+		onHarnessInteractionRequest: (
+			callback: (request: HarnessInteractionRequest) => void
+		) => () => void;
+		onHarnessInteractionSettled: (
+			callback: (event: HarnessInteractionSettledEvent) => void
+		) => () => void;
+		listHarnessInteractions: () => Promise<HarnessInteractionRequest[]>;
+		respondHarnessInteraction: (
+			response: HarnessInteractionResponse
+		) => Promise<HarnessInteractionResolveResult>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
@@ -964,7 +983,8 @@ interface MaestroAPI {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				dispatchCallback?: boolean
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -2081,6 +2101,9 @@ interface MaestroAPI {
 			global: string[];
 		}>;
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		onModelsRefreshed: (
+			callback: (payload: import('../shared/agentModelsRefresh').ModelsRefreshedPayload) => void
+		) => () => void;
 		getConfigOptions: (
 			agentId: string,
 			optionKey: string,
@@ -2374,6 +2397,10 @@ interface MaestroAPI {
 	};
 	dialog: {
 		selectFolder: () => Promise<string | null>;
+		selectFile: (options: {
+			filters?: Array<{ name: string; extensions: string[] }>;
+			title?: string;
+		}) => Promise<string | null>;
 		saveFile: (options: {
 			defaultPath?: string;
 			filters?: Array<{ name: string; extensions: string[] }>;
@@ -4621,6 +4648,7 @@ interface MaestroAPI {
 		// running as an orphan). Main retires anything scoped to that tab, e.g. an
 		// armed dispatch callback that would otherwise time out an hour later.
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
+		notifyAiTabRetryState: (agentId: string, tabId: string, pending: boolean) => void;
 	};
 
 	// User Journey API (per-agent log of user actions inside Maestro). Record
@@ -4976,8 +5004,8 @@ interface MaestroAPI {
 			flag: FirstPartyEncoreFlag,
 			enabled: boolean
 		) => Promise<FirstPartyBridgeState>;
-		install: (sourceDir: string) => Promise<PluginInstallResult>;
-		update: (sourceDir: string) => Promise<PluginListSnapshot>;
+		install: (sourcePath: string) => Promise<PluginInstallResult>;
+		update: (sourcePath: string, expectedId?: string) => Promise<PluginListSnapshot>;
 		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
 		contributions: () => Promise<PluginContributions>;
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;

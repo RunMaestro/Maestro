@@ -44,16 +44,21 @@ export interface ExecResult {
  *   to prevent percent-sign escaping issues in arguments
  * - Executables (.exe, .com) can run directly
  */
+/** Return whether Windows must use a shell, including quoted npm shim paths. */
 export function needsWindowsShell(command: string): boolean {
 	const lowerCommand = command.toLowerCase();
+	const commandForDetection =
+		lowerCommand.startsWith('"') && lowerCommand.endsWith('"')
+			? lowerCommand.slice(1, -1)
+			: lowerCommand;
 
 	// Batch files always need shell
-	if (lowerCommand.endsWith('.cmd') || lowerCommand.endsWith('.bat')) {
+	if (commandForDetection.endsWith('.cmd') || commandForDetection.endsWith('.bat')) {
 		return true;
 	}
 
 	// Known executables don't need shell
-	if (lowerCommand.endsWith('.exe') || lowerCommand.endsWith('.com')) {
+	if (commandForDetection.endsWith('.exe') || commandForDetection.endsWith('.com')) {
 		return false;
 	}
 
@@ -74,13 +79,13 @@ export function needsWindowsShell(command: string): boolean {
 		'pip',
 		'pip3',
 	]);
-	const commandBaseName = lowerCommand.split(/[\\/]/).pop() || lowerCommand;
+	const commandBaseName = commandForDetection.split(/[\\/]/).pop() || commandForDetection;
 	if (knownExeCommands.has(commandBaseName)) {
 		return false;
 	}
 
 	// Other commands without extension still need shell for PATHEXT resolution
-	const hasExtension = path.extname(command).length > 0;
+	const hasExtension = path.extname(commandForDetection).length > 0;
 	return !hasExtension;
 }
 
@@ -369,6 +374,7 @@ export function execFileStreaming(
  * Execute a command with input written to stdin
  * Uses spawn to allow writing to the process stdin
  */
+/** Spawn with stdin, handle early closure, and terminate the whole tree on timeout. */
 async function execFileWithInput(
 	command: string,
 	args: string[],
@@ -390,47 +396,63 @@ async function execFileWithInput(
 		let stdout = '';
 		let stderr = '';
 		let killed = false;
-
-		// spawn() doesn't support timeout natively, so implement it manually
+		let settled = false;
+		let stdinError: NodeJS.ErrnoException | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		const settle = (result: ExecResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(result);
+		};
+		const timeoutResult = (): ExecResult => ({
+			stdout,
+			stderr: `${stderr}\nETIMEDOUT: process timed out after ${timeout}ms`,
+			exitCode: 'ETIMEDOUT',
+		});
+
 		if (timeout && timeout > 0) {
 			timer = setTimeout(() => {
 				killed = true;
-				child.kill();
+				if (child.pid) killProcessTreeNow(child.pid, { label: `exec:${command}` });
+				else child.kill();
 			}, timeout);
 		}
 
 		child.stdout?.on('data', (data) => {
 			stdout += data.toString();
 		});
-
 		child.stderr?.on('data', (data) => {
 			stderr += data.toString();
 		});
-
+		// A cancelled run resolves on exit, not close: a descendant that inherited
+		// the pipes must not hold the operation open after the tree is terminated.
+		child.on('exit', () => {
+			if (killed) settle(timeoutResult());
+		});
 		child.on('close', (code) => {
-			if (timer) clearTimeout(timer);
-			resolve({
-				stdout,
-				stderr: killed ? `${stderr}\nETIMEDOUT: process timed out after ${timeout}ms` : stderr,
-				exitCode: killed ? 'ETIMEDOUT' : (code ?? 1),
-			});
+			settle(
+				killed
+					? timeoutResult()
+					: {
+							stdout,
+							stderr: stdinError ? `${stderr}${stderr ? '\n' : ''}${stdinError.message}` : stderr,
+							exitCode: stdinError?.code ?? code ?? 1,
+						}
+			);
 		});
-
-		child.on('error', (err) => {
-			if (timer) clearTimeout(timer);
-			resolve({
-				stdout: '',
-				stderr: err.message,
-				exitCode: 1,
-			});
+		child.on('error', (err: NodeJS.ErrnoException) => {
+			settle({ stdout, stderr: stderr || err.message, exitCode: err.code ?? 1 });
 		});
-
-		// Write input to stdin and close it
-		if (child.stdin) {
-			child.stdin.write(input);
-			child.stdin.end();
-		}
+		// stdin emits its own errors when a CLI exits before the prompt is written.
+		// Without a listener, EPIPE is an uncaught exception in the host process.
+		child.stdin?.on('error', (error) => {
+			stdinError ??= error;
+		});
+		child.stdin?.write(input, (error) => {
+			if (error) stdinError ??= error;
+		});
+		child.stdin?.end();
 	});
 }
 

@@ -172,7 +172,9 @@ describe('useRemoteIntegration', () => {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: import('../../../shared/crossAgentContext').MentionRouting,
+				dispatchCallback?: boolean
 		  ) => void)
 		| undefined;
 	let onRemoteSetQueueItemPausedHandler:
@@ -2142,6 +2144,50 @@ describe('useRemoteIntegration', () => {
 			);
 
 			dispatchEventSpy.mockRestore();
+		});
+
+		// A dispatch callback main queues behind a running turn must be marked, so
+		// the queued card never offers to steer another agent's report into it.
+		it('marks a dispatch callback queued on a busy tab, and nothing else', () => {
+			const tab = createMockTab({ id: 'tab-1', name: 'Orchestrator' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'[Maestro dispatch callback]',
+					'chan-cb',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					undefined,
+					undefined,
+					true
+				);
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'plain dispatch --queue',
+					'chan-q',
+					'ai',
+					'tab-1'
+				);
+			});
+
+			const queue = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === 'session-1')?.executionQueue;
+			expect(queue).toHaveLength(2);
+			expect(queue?.[0].dispatchCallback).toBe(true);
+			expect(queue?.[1].dispatchCallback).toBeUndefined();
 		});
 
 		it('queues a held send paused even when the agent is idle (dispatch --held)', () => {

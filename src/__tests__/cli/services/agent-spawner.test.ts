@@ -20,8 +20,13 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
 import { DEFAULT_STDERR_TAIL_LIMIT } from '../../../shared/maestro-lib/run/start-turn';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
 // Create mock spawn function at module level
+const mockSpawnNativeSdkAgent = vi.hoisted(() => vi.fn());
+vi.mock('../../../cli/services/native-sdk-agent', () => ({
+	spawnNativeSdkAgent: mockSpawnNativeSdkAgent,
+}));
 const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
@@ -2152,7 +2157,7 @@ Some text with [x] in it that's not a checkbox
 						)
 					);
 					mockStderr.emit('data', Buffer.from('Reading additional input from stdin...'));
-					await vi.advanceTimersByTimeAsync(119_999);
+					await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS - 1);
 					expect(mockChild.kill).not.toHaveBeenCalled();
 					await vi.advanceTimersByTimeAsync(1);
 					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
@@ -2161,7 +2166,7 @@ Some text with [x] in it that's not a checkbox
 						success: false,
 						outcome: 'crashed',
 						agentSessionId: 'waiting',
-						error: expect.stringContaining('Startup or authentication may be blocked'),
+						error: expect.stringContaining('Last observed startup phase: turn started at +0s.'),
 					});
 					expect(mockSpawn.mock.calls[0][1]).toContain('cli_auth_credentials_store=file');
 					expect(vi.getTimerCount()).toBe(0);
@@ -2182,7 +2187,7 @@ Some text with [x] in it that's not a checkbox
 				});
 				await vi.advanceTimersByTimeAsync(0);
 				mockStdout.emit('data', Buffer.from(activity + '\n'));
-				await vi.advanceTimersByTimeAsync(180_000);
+				await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS + 60_000);
 				expect(mockChild.kill).not.toHaveBeenCalled();
 				mockStdout.emit(
 					'data',
@@ -3867,6 +3872,15 @@ Some text with [x] in it that's not a checkbox
 	describe('spawnAgent: regression', () => {
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('uses the current transport for a stale native value on an unsupported provider', async () => {
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, {
+				harnessControlMode: 'native',
+			});
+			await driveSpawnToCompletion(pending, 0, CODEX_INIT());
+			expect(mockSpawnNativeSdkAgent).not.toHaveBeenCalled();
+			expect(mockSpawn).toHaveBeenCalled();
 		});
 
 		it('returns only the latest phase-less Codex answer after interim text and a tool', async () => {

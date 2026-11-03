@@ -9,7 +9,7 @@ export const HEADLESS_RUN_CLEANUP_MARGIN_MS = 60_000;
 export const HEADLESS_RUN_COMPLETION_TIMEOUT_MS =
 	HEADLESS_RUN_TIMEOUT_MS + HEADLESS_RUN_CLEANUP_MARGIN_MS;
 
-/** Codex auth/startup must produce model activity before the long run budget. */
+/** Codex must produce model activity within the host startup deadline. */
 export const CODEX_STARTUP_TIMEOUT_MS = 120_000;
 
 /** Bound the wait for close after force-killing a headless provider tree. */

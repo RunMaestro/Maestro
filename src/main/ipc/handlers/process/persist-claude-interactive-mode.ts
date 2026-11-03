@@ -38,7 +38,7 @@ export function persistClaudeInteractiveMode(
 	//     gate on `!== undefined`).
 	// When none of those apply we leave `claudeInteractive` alone - the
 	// popover hides itself anyway when `enableMaestroP` is false.
-	if (!isClaudeCode || !resolvedConfigDirKey) return;
+	if (!isClaudeCode || resolvedConfigDirKey === undefined) return;
 
 	try {
 		const allSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;

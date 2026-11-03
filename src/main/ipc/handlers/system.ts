@@ -145,6 +145,35 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 	});
 
+	// File selection stays separate from folder selection: some native dialogs
+	// cannot select both files and directories in one picker.
+	let lastFileDirectory: string | undefined;
+	ipcMain.handle(
+		'dialog:selectFile',
+		async (
+			_event,
+			options: {
+				filters?: Array<{ name: string; extensions: string[] }>;
+				title?: string;
+			} = {}
+		) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow || mainWindow.isDestroyed()) return null;
+			const result = await dialog.showOpenDialog(mainWindow, {
+				properties: ['openFile'],
+				defaultPath:
+					lastFileDirectory && fsSync.existsSync(lastFileDirectory) ? lastFileDirectory : undefined,
+				filters: options.filters,
+				title: options.title ?? 'Select File',
+			});
+			const selected = result.canceled ? null : (result.filePaths[0] ?? null);
+			if (selected && fsSync.existsSync(selected) && fsSync.lstatSync(selected).isFile()) {
+				lastFileDirectory = path.dirname(selected);
+			}
+			return selected;
+		}
+	);
+
 	// File save dialog
 	ipcMain.handle(
 		'dialog:saveFile',

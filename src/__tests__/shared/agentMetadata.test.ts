@@ -12,6 +12,7 @@ import {
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
+	hasStandardApprovalChannel,
 	formatAgentLoginCommand,
 	loginShellSyntaxFor,
 	AGENT_DISPLAY_NAMES,
@@ -362,6 +363,29 @@ describe('agentMetadata', () => {
 		it('is not case or whitespace sensitive', () => {
 			expect(loginShellSyntaxFor('  WSL  ', true)).toBe('posix');
 			expect(loginShellSyntaxFor('CMD', true)).toBe('cmd');
+		});
+	});
+
+	describe('Standard approval channels', () => {
+		it('requires a native channel for ACP providers on their current transport', () => {
+			expect(hasStandardApprovalChannel({ toolType: 'qwen3-coder' })).toBe(false);
+			expect(
+				hasStandardApprovalChannel({ toolType: 'qwen3-coder', harnessControlMode: 'native' })
+			).toBe(true);
+		});
+
+		it('excludes image turns from Codex app-server approvals', () => {
+			const appServer = { toolType: 'codex', codexTransport: 'app-server' } as const;
+			expect(hasStandardApprovalChannel(appServer)).toBe(true);
+			expect(hasStandardApprovalChannel({ ...appServer, hasImages: true })).toBe(false);
+		});
+
+		it('matches the OpenCode server route exclusions', () => {
+			const server = { toolType: 'opencode', opencodeServer: true } as const;
+			expect(hasStandardApprovalChannel(server)).toBe(true);
+			expect(hasStandardApprovalChannel({ ...server, hasPrompt: false })).toBe(false);
+			expect(hasStandardApprovalChannel({ ...server, hasImages: true })).toBe(false);
+			expect(hasStandardApprovalChannel({ ...server, sshEnabled: true })).toBe(false);
 		});
 	});
 });

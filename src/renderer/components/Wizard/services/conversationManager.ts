@@ -29,6 +29,7 @@ import {
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
 } from '../../../../shared/claudeTokenMode';
+import type { HarnessControlMode } from '../../../../shared/maestro-lib/providers/native-control';
 
 /**
  * Configuration for starting a conversation
@@ -55,6 +56,8 @@ export interface ConversationConfig {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Native protocol selection for this conversation's turns. */
+	harnessControlMode?: HarnessControlMode;
 }
 
 /**
@@ -142,6 +145,8 @@ interface ConversationSession {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Native protocol selection for this conversation's turns. */
+	harnessControlMode?: HarnessControlMode;
 }
 
 /**
@@ -195,6 +200,7 @@ class ConversationManager {
 			outputBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
 			claudeTokenSource: config.claudeTokenSource,
+			harnessControlMode: config.harnessControlMode,
 		};
 
 		// Log conversation start
@@ -641,6 +647,7 @@ class ConversationManager {
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
 					// The wizard's process id names no agent, so the TUI pick travels inline.
+					harnessControlMode: this.session!.harnessControlMode,
 					...getClaudeTokenSourceFields(this.session!.claudeTokenSource),
 				})
 				.then(() => {

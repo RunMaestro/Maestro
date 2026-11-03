@@ -20,7 +20,8 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -33,7 +34,8 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean
 			) => {
 				try {
 					callback(
@@ -45,7 +47,8 @@ export function createQueueRemoteApi() {
 						images,
 						background,
 						held,
-						mentionRouting
+						mentionRouting,
+						dispatchCallback
 					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

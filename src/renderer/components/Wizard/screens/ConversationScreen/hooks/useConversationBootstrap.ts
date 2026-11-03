@@ -45,6 +45,7 @@ export function useConversationBootstrap({
 					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
+					harnessControlMode: state.harnessControlMode,
 				});
 
 				if (mounted) {

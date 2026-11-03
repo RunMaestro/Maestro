@@ -401,6 +401,24 @@ describe('DirectorNotesModal', () => {
 				color: mockTheme.colors.textDim,
 			});
 		});
+
+		it('marks the active tab for the strip to scroll into view', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByText('Unified History')).toBeInTheDocument();
+			});
+
+			const historyTabButton = screen.getByText('Unified History').closest('button');
+			const helpTabButton = screen.getByText('Help').closest('button');
+			expect(historyTabButton).toHaveAttribute('data-reveal-active', 'true');
+			expect(helpTabButton).not.toHaveAttribute('data-reveal-active');
+
+			fireEvent.click(helpTabButton!);
+
+			expect(helpTabButton).toHaveAttribute('data-reveal-active', 'true');
+			expect(historyTabButton).not.toHaveAttribute('data-reveal-active');
+		});
 	});
 
 	describe('Keyboard Tab Navigation', () => {
