@@ -164,8 +164,13 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 		await waitFor(() => events.some((e) => e.payload.filename === 'second.txt'));
 		await delay(SETTLE_MS);
 		const after = events.slice(before).filter((e) => e.payload.filename === 'second.txt');
-		expect(after).toHaveLength(1);
+		// Exactly one `add`: a second one would mean two watchers fired for the same
+		// file. One writeFileSync can still surface as add + change when FSEvents
+		// delivers its flags in two batches more than the 50 ms debounce apart, which
+		// a loaded full-suite run hit once here; a trailing `change` is the OS.
+		expect(after.filter((e) => e.payload.changeType === 'add')).toHaveLength(1);
 		expect(after[0].payload.changeType).toBe('add');
+		expect(after.every((e) => e.payload.changeType !== 'unlink')).toBe(true);
 	});
 
 	it('keeps firing after a parent of the folder is deleted and the chain recreated', async () => {
