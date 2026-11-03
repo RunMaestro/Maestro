@@ -25,6 +25,7 @@ import {
 	mergeQueuedItemIntoPrevious,
 	applyReplayDispatch,
 } from '../../../renderer/utils/executionQueue';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -552,6 +553,40 @@ describe('applyQueuedItemDispatchFailure', () => {
 		// Head of the queue, so it keeps its place ahead of everything behind it.
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
 	});
+
+	it.each([false, true])(
+		'retains recovered work against a stale peer dequeue (collision=%s)',
+		(collision) => {
+			const baseline = sessionWithCard({ executionQueue: [failed] });
+			const recovered = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision });
+			// A peer persisted the original dequeue before hearing about spawn failure.
+			const stored = mergeSessionPersistenceChanges(
+				{ ...baseline, executionQueue: [] },
+				recovered,
+				baseline,
+				true
+			);
+			expect(stored.executionQueue).toEqual(recovered.executionQueue);
+			const mirrored = mergeSessionPersistenceChanges(
+				{ ...baseline, executionQueue: [] },
+				recovered,
+				baseline,
+				true,
+				true
+			);
+			expect(mirrored.executionQueue).toEqual(recovered.executionQueue);
+			// Once the recovered attempt really runs, its own removal must win.
+			expect(
+				mergeSessionPersistenceChanges(
+					{ ...recovered, executionQueue: [] },
+					recovered,
+					recovered,
+					true,
+					true
+				).executionQueue
+			).toEqual([]);
+		}
+	);
 
 	it('holds the item when the failure is not a transient collision', () => {
 		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision: false });

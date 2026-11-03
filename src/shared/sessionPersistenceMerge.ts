@@ -51,7 +51,7 @@ function mergeRows(
 	baseline: RecordData[],
 	preserveClient: boolean,
 	preserveLive: boolean,
-	removeEditedRows = false
+	queueRows = false
 ): RecordData[] {
 	const key = (row: RecordData): string => (row.type ? `${row.type}:${row.id}` : row.id);
 	if ([...incoming, ...stored, ...baseline].some((row) => !row || typeof row.id !== 'string')) {
@@ -67,10 +67,15 @@ function mergeRows(
 		if (change) {
 			result.push(mergeRecord(change, current, base ?? current, preserveClient, preserveLive));
 			next.delete(id);
-		} else if (!base || (!removeEditedRows && !same(current, base))) {
-			// New rows survive. For queues, removing an observed ID is final even
-			// if a peer edited it; otherwise consumed work stays visibly queued.
-			// Other collections retain their existing edit-wins conflict policy.
+		} else if (
+			!base ||
+			(queueRows
+				? (current.dispatchRecoveryGeneration ?? 0) > (base.dispatchRecoveryGeneration ?? 0)
+				: !same(current, base))
+		) {
+			// Queue removals win metadata edits, but a definite dispatch failure
+			// restores a newer attempt of the same ID. An older removal cannot
+			// discard that recovery. Other collections retain edit-wins behavior.
 			result.push(current);
 		}
 	}

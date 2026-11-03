@@ -190,3 +190,31 @@ describe('consumed execution queue entries', () => {
 		);
 	});
 });
+
+describe('queue recovery generations', () => {
+	it('does not resurrect an already consumed recovery from an older peer baseline', () => {
+		const item = { id: 'recovered', dispatchRecoveryGeneration: 1 };
+		expect(
+			mergeSessionPersistenceChanges(
+				{ executionQueue: [item] },
+				{ executionQueue: [] },
+				{ executionQueue: [{ id: item.id }] },
+				true,
+				true
+			).executionQueue
+		).toEqual([]);
+	});
+
+	it('does not restore an older recovered attempt after its removal', () => {
+		const item = { id: 'recovered', dispatchRecoveryGeneration: 1 };
+		expect(
+			mergeSessionPersistenceChanges(
+				{ executionQueue: [{ ...item, dispatchRecoveryGeneration: 0 }] },
+				{ executionQueue: [] },
+				{ executionQueue: [item] },
+				true,
+				true
+			).executionQueue
+		).toEqual([]);
+	});
+});

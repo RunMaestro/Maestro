@@ -230,6 +230,17 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
 	};
 }
 
+/** A failed attempt restores the same queue ID as a newer incarnation. */
+export function recoverQueuedItem(item: QueuedItem, existing?: QueuedItem): QueuedItem {
+	return {
+		...item,
+		dispatchRecoveryGeneration: Math.max(
+			(item.dispatchRecoveryGeneration ?? 0) + 1,
+			existing?.dispatchRecoveryGeneration ?? 0
+		),
+	};
+}
+
 /**
  * The state transition for a dequeued item whose dispatch THREW before the
  * agent process ever spawned: the exact inverse of
@@ -288,8 +299,9 @@ export function applyQueuedItemDispatchFailure(
 	const queue = item.crossAgentMention
 		? dropConsultHold(released.executionQueue ?? [], item.tabId)
 		: (released.executionQueue ?? []);
-	const restored: QueuedItem = opts.collision ? item : { ...item, paused: true };
-	const executionQueue = queue.some((i) => i.id === item.id)
+	const existing = queue.find((queued) => queued.id === item.id);
+	const restored = recoverQueuedItem(opts.collision ? item : { ...item, paused: true }, existing);
+	const executionQueue = existing
 		? queue.map((i) => (i.id === item.id ? restored : i))
 		: [restored, ...queue];
 
