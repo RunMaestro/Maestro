@@ -13,11 +13,17 @@ import type { BoardStorageFacade } from './board-storage';
 import type { BoardTickResult } from '../../shared/board/commands';
 import type { BoardCardKey } from './board-workspace-storage';
 
+/** Native IO evidence belongs to one runtime lookup and its launch attempt. */
+export type BoardPreparedContext = Pick<BoardClaimHostContext, 'repository' | 'reviewArtifact'>;
+
 export interface BoardCueHostDeps {
 	storage: () => BoardStorageFacade;
 	lock: () => Pick<DataDirLock, 'info' | 'verify'> | null;
-	context: (key: BoardCardKey) => Omit<BoardClaimHostContext, 'owner'>;
-	prepare: (key: BoardCardKey) => Promise<void>;
+	context: (
+		key: BoardCardKey,
+		prepared: BoardPreparedContext
+	) => Omit<BoardClaimHostContext, 'owner'>;
+	prepare: (key: BoardCardKey) => Promise<BoardPreparedContext>;
 	service: BoardRunService;
 	ownerLiveness: (identity: string) => 'alive' | 'dead' | 'unknown';
 	onChanged?: () => void;
@@ -34,34 +40,41 @@ export class BoardCueHost {
 	readonly runtimeFor = async (key: BoardCardKey, prepare = true): Promise<BoardRuntime | null> => {
 		const lock = this.deps.lock();
 		if (!lock || !lock.verify().ok) return null;
-		if (prepare) await this.deps.prepare(key);
 		const id = canonicalJson([key, lock.info]);
-		let runtime = this.runtimes.get(id);
-		if (!runtime) {
-			const service: BoardRunService = {
-				...this.deps.service,
-				spawn: (spec, hooks) => {
-					const task = this.deps
-						.prepare(spec.key)
-						.then(() => this.deps.service.spawn(spec, hooks))
-						.finally(() => this.tasks.delete(task));
-					this.tasks.add(task);
-					this.deps.onTask?.(task);
-					return task;
-				},
-			};
-			runtime = new BoardRuntime(
-				this.deps.storage(),
-				lock,
-				() => this.deps.context(key),
-				service,
-				this.deps.ownerLiveness,
-				this.deps.onChanged,
-				this.deps.onCompleted
-			);
-			if (!runtime.acquire().ok) return null;
-			this.runtimes.set(id, runtime);
-		}
+		// Control-only lookups may reuse the adapter. A preparation must never
+		// overwrite evidence being consumed by another asynchronous lookup.
+		if (!prepare && this.runtimes.has(id)) return this.runtimes.get(id)!;
+		let prepared: BoardPreparedContext = prepare
+			? await this.deps.prepare(key)
+			: { repository: null, reviewArtifact: null };
+		const service: BoardRunService = {
+			...this.deps.service,
+			spawn: (spec, hooks) => {
+				// Revoke this attempt's previous evidence before fresh launch IO.
+				prepared = { repository: null, reviewArtifact: null };
+				const task = this.deps
+					.prepare(spec.key)
+					.then((fresh) => {
+						prepared = fresh;
+						return this.deps.service.spawn(spec, hooks);
+					})
+					.finally(() => this.tasks.delete(task));
+				this.tasks.add(task);
+				this.deps.onTask?.(task);
+				return task;
+			},
+		};
+		const runtime = new BoardRuntime(
+			this.deps.storage(),
+			lock,
+			() => this.deps.context(key, prepared),
+			service,
+			this.deps.ownerLiveness,
+			this.deps.onChanged,
+			this.deps.onCompleted
+		);
+		if (!runtime.acquire().ok) return null;
+		this.runtimes.set(id, runtime);
 		return runtime;
 	};
 

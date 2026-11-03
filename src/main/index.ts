@@ -238,7 +238,7 @@ import { isPidAlive } from '../shared/maestro-lib/client/discovery';
 import { BoardStorageError } from './board/board-storage';
 import { probeBoardRemoteRepository } from './board/board-remote-source';
 import { configureBoardSourceHost } from './board/board-source-host';
-import { BoardCueHost } from './board/board-cue';
+import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
 import { configureBoardRuntimeHost } from './board/board-runtime-host';
 import type { BoardClaimHostContext } from './board/board-claims';
 import type { BoardCardKey } from './board/board-workspace-storage';
@@ -1530,8 +1530,6 @@ app
 		};
 
 		// One central owner, using Cue's already-held lock and existing process service.
-		const repositoryProofs = new Map<string, NonNullable<BoardClaimHostContext['repository']>>();
-		const reviewProofs = new Map<string, string>();
 		const boardRegistry = new BoardRegistryRevision();
 		const boardIntakeState = (): Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> => {
 			const sessions = boardSpawnContext.getStoredSessions();
@@ -1561,7 +1559,10 @@ app
 			};
 		};
 		configureBoardReadinessHost(boardIntakeState);
-		const boardContext = (key: BoardCardKey): Omit<BoardClaimHostContext, 'owner'> => {
+		const boardContext = (
+			_key: BoardCardKey,
+			prepared: BoardPreparedContext
+		): Omit<BoardClaimHostContext, 'owner'> => {
 			const storage = getBoardStorage();
 			const catalog = storage.captureCatalog();
 			const registryRevision = boardRegistry.observe({
@@ -1576,7 +1577,7 @@ app
 				agentConfigs: agentConfigsStore.get('configs', {}),
 				sshRemotes: store.get('sshRemotes', []),
 			});
-			let repository = repositoryProofs.get(canonicalJson(key)) ?? null;
+			let repository = prepared.repository;
 			if (repository?.location.kind === 'local') {
 				try {
 					const stat = lstatSync(realpathSync(repository.workingDirectory));
@@ -1594,7 +1595,7 @@ app
 			}
 			return {
 				registryRevision,
-				reviewArtifact: reviewProofs.get(canonicalJson(key)) ?? null,
+				reviewArtifact: prepared.reviewArtifact,
 				...boardIntakeState(),
 				repository,
 			};
@@ -1631,22 +1632,20 @@ app
 				const card = storage.workspace
 					.readCollection(key)
 					?.cards.find((c) => c.cardId === key.cardId);
-				const id = canonicalJson(key);
-				repositoryProofs.delete(id);
-				reviewProofs.delete(id);
+				const prepared: BoardPreparedContext = { repository: null, reviewArtifact: null };
 				if (card?.payload.kind === 'review' && card.payload.reviewHandoff) {
 					const handoff = card.payload
 						.reviewHandoff as import('../shared/board/types').BoardReviewHandoff;
 					const proof = await prepareBoardReviewHandoff(storage, handoff);
-					if (proof) reviewProofs.set(id, proof);
+					prepared.reviewArtifact = proof;
 				}
-				if (!card || typeof card.payload.repositoryId !== 'string') return;
+				if (!card || typeof card.payload.repositoryId !== 'string') return prepared;
 				const row = storage.db
 					.prepare('SELECT payload_json FROM repositories WHERE id=?')
 					.get(card?.payload.repositoryId) as { payload_json: string } | undefined;
-				if (!row || typeof card?.payload.workingDirectory !== 'string') return;
+				if (!row || typeof card?.payload.workingDirectory !== 'string') return prepared;
 				const record = JSON.parse(row.payload_json);
-				if (record.validated !== true) return;
+				if (record.validated !== true) return prepared;
 				const cwd = card.payload.workingDirectory;
 				if (record.location?.kind === 'ssh') {
 					try {
@@ -1655,42 +1654,43 @@ app
 							record.workingDirectory,
 							cwd
 						);
-						repositoryProofs.set(id, {
+						prepared.repository = {
 							id: String(card.payload.repositoryId),
 							workingDirectory: cwd,
 							record,
 							location: record.location,
 							identity,
-						});
+						};
 					} catch (error) {
 						if (!(error instanceof BoardStorageError)) throw error;
 						// An unresolved remote never enters the local Git/realpath path.
 					}
-					return;
+					return prepared;
 				}
 				// Native Git validates the explicit directory; never substitute a worker CWD.
 				const git = await execGitReadOnly(
 					['rev-parse', '--show-toplevel', '--absolute-git-dir'],
 					cwd
 				);
-				if (git.exitCode !== 0) return;
+				if (git.exitCode !== 0) return prepared;
 				try {
 					const physical = realpathSync(cwd);
 					const stat = lstatSync(physical);
 					const root = git.stdout.trim().split('\n')[0];
-					if (realpathSync(record.workingDirectory) !== realpathSync(root)) return;
-					repositoryProofs.set(id, {
+					if (realpathSync(record.workingDirectory) !== realpathSync(root)) return prepared;
+					prepared.repository = {
 						id: String(card.payload.repositoryId),
 						workingDirectory: cwd,
 						record,
 						location: { kind: 'local' },
 						identity: canonicalJson([physical, stat.dev, stat.ino]) + '\n' + git.stdout.trim(),
-					});
+					};
 				} catch (error) {
 					if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
 						void captureException(error, { operation: 'board:prepareRepository' });
 					/* Missing native paths leave the repository unresolved. */
 				}
+				return prepared;
 			},
 			// An empty root invalidates the central view, whose listener refetches all sources.
 			onChanged: () => safeSend('board:changed', { projectRoot: '' }),

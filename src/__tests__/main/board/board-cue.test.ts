@@ -24,7 +24,12 @@ import {
 	type CardPrRequest,
 	type CardPrResult,
 } from '../../../main/board/board-pr';
-import { BoardCueHost } from '../../../main/board/board-cue';
+import { BoardCueHost, type BoardPreparedContext } from '../../../main/board/board-cue';
+import {
+	readBoardRunArtifact,
+	captureBoardCardFromHost,
+	prepareBoardReviewHandoff,
+} from '../../../main/board/board-review';
 import {
 	configureBoardRuntimeHost,
 	executeBoardRuntimeCommand,
@@ -51,7 +56,9 @@ let createPr: ReturnType<typeof vi.fn<(request: CardPrRequest) => Promise<CardPr
 let completionTasks: Promise<unknown>[];
 let prepare: ReturnType<
 	typeof vi.fn<
-		(key: import('../../../main/board/board-workspace-storage').BoardCardKey) => Promise<void>
+		(
+			key: import('../../../main/board/board-workspace-storage').BoardCardKey
+		) => Promise<BoardPreparedContext>
 	>
 >;
 const good: CardSpawnResult = {
@@ -155,7 +162,10 @@ beforeEach(() => {
 	createPr = vi.fn(async () => ({ success: true, prUrl: 'https://example.test/pr/1' }));
 	completionTasks = [];
 	changed = [];
-	prepare = vi.fn(async () => {});
+	prepare = vi.fn(async () => ({
+		repository: host.repository,
+		reviewArtifact: host.reviewArtifact,
+	}));
 	cue = new BoardCueHost({
 		storage: () => storage,
 		lock: () => ({
@@ -743,5 +753,252 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		await cue.settle();
 		expect(reserved()).toHaveLength(0);
 		expect(storage.query().collections[0].board.cards[0].heldByUser).toBe(true);
+	});
+});
+
+describe('attempt-owned native review preparation', () => {
+	it.each([
+		'claim',
+		'launch',
+		'dirty',
+		'commit',
+		'registry',
+		'revision',
+		'scope',
+		'owner',
+	] as const)('keeps the %s boundary fresh during overlapping preparations', async (boundary) => {
+		const git = (...args: string[]) =>
+			execFileSync('git', args, { cwd: roots[0], encoding: 'utf8' }).trim();
+		git('init', '--quiet');
+		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'baseline');
+		git('add', '.');
+		git(
+			'-c',
+			'user.name=Fixture',
+			'-c',
+			'user.email=fixture@example.test',
+			'commit',
+			'--quiet',
+			'-m',
+			'baseline'
+		);
+		const base = git('rev-parse', 'HEAD');
+		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'reviewed result');
+		git('add', '.');
+		git(
+			'-c',
+			'user.name=Fixture',
+			'-c',
+			'user.email=fixture@example.test',
+			'commit',
+			'--quiet',
+			'-m',
+			'work'
+		);
+		const artifact = await readBoardRunArtifact(roots[0], base);
+		expect(artifact?.diff?.sha256).toMatch(/^[a-f0-9]{64}$/);
+		const collection = storage.workspace.readCollection({
+			sourceKey: roots[0],
+			collectionKey: 'collection0',
+		})!;
+		const claimed = runtime.claim({
+			sourceKey: roots[0],
+			collectionKey: 'collection0',
+			cardId: 'same',
+			workerAgentId: 'worker',
+			requestId: 'work',
+			readRevision: {
+				workspace: storage.workspace.readRevision(),
+				collection: collection.revision,
+				card: collection.cards[0].revision,
+				registry: host.registryRevision,
+			},
+		});
+		if (!claimed.ok) throw Error(claimed.reason);
+		const work = runtime.start(claimed.runToken);
+		settle({
+			...good,
+			output: '<!-- maestro:card-complete | native checks passed -->',
+			artifact: artifact!,
+		});
+		await work;
+		const board = storage.read(roots[0], 'board');
+		const captured = await captureBoardCardFromHost({
+			projectRoot: roots[0],
+			boardId: 'board',
+			expectedRevision: board.storage!.expectedRevision!,
+			reviewSource: { cardId: 'same', attempt: 1 },
+			card: {
+				id: 'review',
+				title: 'Review result',
+				body: '',
+				kind: 'review',
+				parents: ['same'],
+				status: 'todo',
+				createdAt: 'now',
+				updatedAt: 'now',
+				repositoryId: 'repo0',
+				workingDirectory: roots[0],
+				executionScope: { kind: 'group', groupId: 'group' },
+				assigneeAgentId: 'worker',
+			},
+		});
+		const handoff = captured.value.cards.find((c) => c.id === 'review')!.reviewHandoff!;
+		let commonProof: string | null = null;
+		let releasePrepare!: () => void, enteredPrepare!: () => void;
+		const preparing = new Promise<void>((resolve) => {
+			enteredPrepare = resolve;
+		});
+		const blocked = new Promise<void>((resolve) => {
+			releasePrepare = resolve;
+		});
+		let blockNext = false;
+		let releaseLaunch!: () => void, enteredLaunch!: () => void;
+		const launching = new Promise<void>((resolve) => {
+			enteredLaunch = resolve;
+		});
+		const launchGate = new Promise<void>((resolve) => {
+			releaseLaunch = resolve;
+		});
+		const reviewService: BoardRunService = {
+			...service,
+			spawn: vi.fn(async (_spec, callbacks) => {
+				if (!callbacks.canPrepare()) return { output: '', exitCode: null, executionStarted: false };
+				enteredLaunch();
+				await launchGate;
+				if (!callbacks.beforeLaunch())
+					return { output: '', exitCode: null, executionStarted: false };
+				callbacks.onStarted(303);
+				return {
+					...good,
+					output: '<!-- maestro:card-complete | Reviewed actual commit and diff; no findings -->',
+					artifact: (await readBoardRunArtifact(roots[0], base))!,
+				};
+			}),
+		};
+		const reviewCue = new BoardCueHost({
+			storage: () => storage,
+			lock: () => ({
+				info: { pid: 101, mode: 'desktop', bootTime: 1, startedAt: new Date(1).toISOString() },
+				verify: () => (lockValid ? { ok: true } : { ok: false, reason: 'lost' }),
+			}),
+			context: (_key, prepared) => ({
+				...host,
+				reviewArtifact: prepared ? prepared.reviewArtifact : commonProof,
+			}),
+			prepare: async () => {
+				commonProof = null;
+				const shouldBlock = blockNext;
+				blockNext = false;
+				const proof = await prepareBoardReviewHandoff(storage, handoff);
+				if (shouldBlock) {
+					enteredPrepare();
+					await blocked;
+				}
+				commonProof = proof;
+				return { repository: host.repository, reviewArtifact: proof };
+			},
+			service: reviewService,
+			ownerLiveness: () => 'unknown',
+			onWait: () => {},
+		});
+		const key = { sourceKey: roots[0], collectionKey: 'collection0', cardId: 'review' };
+		const first = (await reviewCue.runtimeFor(key))!;
+		const claimReview = () => {
+			const current = storage.workspace.readCollection(key)!;
+			return first.claim({
+				...key,
+				workerAgentId: 'worker',
+				requestId: 'review',
+				readRevision: {
+					workspace: storage.workspace.readRevision(),
+					collection: current.revision,
+					card: current.cards.find((c) => c.cardId === 'review')!.revision,
+					registry: first.intakeRevision(),
+				},
+			});
+		};
+		if (boundary === 'claim') {
+			blockNext = true;
+			const overlapping = reviewCue.runtimeFor(key);
+			await preparing;
+			const claim = claimReview();
+			releasePrepare();
+			await overlapping;
+			expect(claim).toMatchObject({ ok: true });
+			if (!claim.ok) throw Error(claim.reason);
+			releaseLaunch();
+			await first.start(claim.runToken);
+		} else {
+			const claim = claimReview();
+			if (!claim.ok) throw Error(claim.reason);
+			if (boundary === 'dirty' || boundary === 'commit') {
+				fs.writeFileSync(path.join(roots[0], 'work.txt'), 'changed artifact');
+				if (boundary === 'commit') {
+					git('add', '.');
+					git(
+						'-c',
+						'user.name=Fixture',
+						'-c',
+						'user.email=fixture@example.test',
+						'commit',
+						'--quiet',
+						'-m',
+						'different diff'
+					);
+				}
+				releaseLaunch();
+				await first.start(claim.runToken);
+				const outcome = db
+					.prepare('SELECT outcome_json FROM runs WHERE card_id=?')
+					.get('review') as { outcome_json: string };
+				expect(JSON.parse(outcome.outcome_json).result).toMatchObject({
+					executionStarted: false,
+					error: 'review-artifact-unresolved',
+				});
+				expect(
+					storage
+						.read(roots[0], 'board')
+						.cards.find((c) => c.id === 'review')!
+						.runs?.at(-1)?.outcome
+				).not.toBe('done');
+				expect(db.prepare('SELECT count(*) AS n FROM reservations').get()).toEqual({ n: 0 });
+				return;
+			}
+			const pending = first.start(claim.runToken);
+			await launching;
+			if (['registry', 'revision', 'scope', 'owner'].includes(boundary)) {
+				if (boundary === 'registry') host.registryRevision++;
+				if (boundary === 'revision')
+					db.prepare('UPDATE cards SET revision=revision+1 WHERE id=?').run('review');
+				if (boundary === 'scope') agents[0].groupId = 'removed';
+				if (boundary === 'owner') lockValid = false;
+				releaseLaunch();
+				await pending;
+				const run = db.prepare('SELECT lifecycle_json FROM runs WHERE card_id=?').get('review') as {
+					lifecycle_json: string;
+				};
+				expect(JSON.parse(run.lifecycle_json).process).toBeUndefined();
+				expect(storage.read(roots[0], 'board').cards.find((c) => c.id === 'same')!.status).toBe(
+					'review'
+				);
+				return;
+			}
+			blockNext = true;
+			const overlapping = reviewCue.runtimeFor(key);
+			await preparing;
+			releaseLaunch();
+			await pending;
+			releasePrepare();
+			await overlapping;
+		}
+		expect(reviewService.spawn).toHaveBeenCalledTimes(1);
+		expect(storage.read(roots[0], 'board').cards.find((c) => c.id === 'same')!.status).toBe(
+			'ready-for-human'
+		);
+		expect(db.prepare('SELECT count(*) AS n FROM runs WHERE card_id=?').get('review')).toEqual({
+			n: 1,
+		});
+		expect(db.prepare('SELECT count(*) AS n FROM reservations').get()).toEqual({ n: 0 });
 	});
 });
