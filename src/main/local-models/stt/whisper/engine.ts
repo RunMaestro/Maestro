@@ -27,7 +27,8 @@
  * spelled out at its only call site rather than left to a reader to infer.
  */
 
-import { LocalModelError } from '../../errors';
+import { LocalModelError, throwIfLocalModelCancelled } from '../../errors';
+import type { SpeechToTextDecodeOptions } from '../engines';
 import { runtimeSetupLocation } from '../../runtime/runtime-consumers';
 import {
 	WhisperMelExtractor,
@@ -41,8 +42,12 @@ import {
 	WhisperTokenizer,
 	type WhisperSpecialTokens,
 } from './tokenizer';
-import type { OnnxModule, OnnxSession, OnnxTensor } from '../../runtime/onnx-types';
-import type { SpeechToTextDecodeOptions } from '../engines';
+import {
+	SPEECH_ONNX_SESSION_OPTIONS,
+	type OnnxModule,
+	type OnnxSession,
+	type OnnxTensor,
+} from '../../runtime/onnx-types';
 import { normalizeSpeechVocabulary } from '../../../../shared/acappella/speech-vocabulary';
 
 // The ONNX Runtime surface is shared with the Parakeet engine. Re-exported so
@@ -92,6 +97,8 @@ export class WhisperEngine {
 	private readonly geometry: WhisperGeometry;
 	private readonly special: WhisperSpecialTokens;
 	private readonly maxTokens: number;
+	private readonly suppressedTokens: ReadonlySet<number>;
+	private readonly beginSuppressedTokens: ReadonlySet<number>;
 
 	private encoder: OnnxSession | null = null;
 	private decoder: OnnxSession | null = null;
@@ -102,6 +109,11 @@ export class WhisperEngine {
 		this.geometry = options.geometry ?? WHISPER_BASE_GEOMETRY;
 		this.special = options.specialTokens ?? WHISPER_EN_SPECIAL_TOKENS;
 		this.maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+		this.suppressedTokens = new Set(this.special.suppressTokens);
+		this.beginSuppressedTokens = new Set([
+			...this.suppressedTokens,
+			...(this.special.beginSuppressTokens ?? []),
+		]);
 	}
 
 	get ready(): boolean {
@@ -116,11 +128,19 @@ export class WhisperEngine {
 	 */
 	async load(module: OnnxModule): Promise<void> {
 		try {
-			this.tokenizer = WhisperTokenizer.fromJson(this.options.tokenizerJson);
+			this.tokenizer = WhisperTokenizer.fromJson(this.options.tokenizerJson, this.special);
 			// Sequential rather than Promise.all: both graphs are large, and loading
 			// them at once doubles peak memory on the machines least able to spare it.
-			this.encoder = await module.InferenceSession.create(this.options.encoderPath);
-			this.decoder = await module.InferenceSession.create(this.options.decoderPath);
+			// Bounded CPU use on modest hosts; neither graph fans out across every core.
+
+			this.encoder = await module.InferenceSession.create(
+				this.options.encoderPath,
+				SPEECH_ONNX_SESSION_OPTIONS
+			);
+			this.decoder = await module.InferenceSession.create(
+				this.options.decoderPath,
+				SPEECH_ONNX_SESSION_OPTIONS
+			);
 			this.tensorFactory = module.Tensor;
 		} catch (error) {
 			await this.unload();
@@ -155,7 +175,17 @@ export class WhisperEngine {
 	 *
 	 * Returns trimmed text, empty when the model produced nothing.
 	 */
-	async transcribe(audio: Float32Array, options?: SpeechToTextDecodeOptions): Promise<string> {
+	async transcribe(audio: Float32Array, options: SpeechToTextDecodeOptions = {}): Promise<string> {
+		throwIfLocalModelCancelled(options.signal, this.options.consumerId);
+		const language = options.language ?? 'en';
+		const languageToken = this.special.languages?.[language];
+		if (this.special.languages ? languageToken === undefined : language !== 'en') {
+			throw new LocalModelError(`Whisper does not support the requested language "${language}".`, {
+				code: 'model-unsupported',
+				recovery: 'Choose a compatible language and model in the Dictation assignment.',
+				consumerId: this.options.consumerId,
+			});
+		}
 		const encoder = this.encoder;
 		const decoder = this.decoder;
 		const tokenizer = this.tokenizer;
@@ -169,7 +199,10 @@ export class WhisperEngine {
 		}
 		if (audio.length === 0) return '';
 
-		const features = this.mel.extract(audio);
+		const features = await this.mel.extractAsync(audio, () =>
+			throwIfLocalModelCancelled(options.signal, this.options.consumerId)
+		);
+		throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 		const encoded = await encoder.run({
 			input_features: new Tensor('float32', features, [1, WHISPER_N_MELS, WHISPER_N_FRAMES]),
 		});
@@ -189,7 +222,13 @@ export class WhisperEngine {
 
 		// Priming sequence. `noTimestamps` is what makes the model emit plain words
 		// instead of interleaved `<|0.00|>` segment markers.
-		const prompt = [this.special.startOfTranscript, this.special.noTimestamps];
+		const prompt = [this.special.startOfTranscript];
+		if (languageToken !== undefined) {
+			if (this.special.transcribe === undefined)
+				throw new Error('Missing Whisper transcription token.');
+			prompt.push(languageToken, this.special.transcribe);
+		}
+		prompt.push(this.special.noTimestamps);
 		const vocabulary = normalizeSpeechVocabulary(options?.vocabulary);
 		if (vocabulary.length && this.special.startOfPrevious !== undefined) {
 			prompt.unshift(
@@ -214,6 +253,7 @@ export class WhisperEngine {
 		);
 
 		for (let step = 0; step < budget; step++) {
+			throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 			// First pass feeds the whole prompt; later passes feed only the newest
 			// token, because everything before it is already in the cache.
 			const inputIds = usingCache ? [generated[generated.length - 1]] : [...prompt, ...generated];
@@ -228,7 +268,13 @@ export class WhisperEngine {
 				...past,
 			});
 
-			const next = argmaxLastPosition(outputs.logits);
+			throwIfLocalModelCancelled(options.signal, this.options.consumerId);
+			// Apply the checkpoint rules before selection. The first generated token
+			// follows the complete language/task/no-timestamps prefix, not SOT alone.
+			const next = argmaxLastPosition(
+				outputs.logits,
+				step === 0 ? this.beginSuppressedTokens : this.suppressedTokens
+			);
 			if (next === this.special.endOfText) break;
 			generated.push(next);
 			if (hasRepeatingTail(generated)) {
@@ -302,7 +348,10 @@ function hasRepeatingTail(tokens: readonly number[]): boolean {
  * Only the LAST position matters even when several were fed: the earlier rows
  * are predictions for tokens that are already known.
  */
-function argmaxLastPosition(logits: OnnxTensor | undefined): number {
+function argmaxLastPosition(
+	logits: OnnxTensor | undefined,
+	suppressed: ReadonlySet<number>
+): number {
 	if (!logits) throw new Error('Whisper decoder returned no logits');
 	const [, positions, vocab] = logits.dims;
 	const data = logits.data as Float32Array;
@@ -310,6 +359,7 @@ function argmaxLastPosition(logits: OnnxTensor | undefined): number {
 	let best = 0;
 	let bestValue = -Infinity;
 	for (let i = 0; i < vocab; i++) {
+		if (suppressed.has(i)) continue;
 		const value = data[offset + i];
 		if (value > bestValue) {
 			bestValue = value;

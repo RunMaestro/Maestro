@@ -110,7 +110,11 @@ export type VoiceProviderRequirement =
 	 * and its runtime, or a reachable endpoint. Which one is not known here (the
 	 * assignment decides), so the gate asks task readiness instead of this table.
 	 */
-	| { readonly kind: 'local-models-task'; readonly taskId: LocalModelTaskId };
+	| {
+			readonly kind: 'local-models-task';
+			readonly taskId: LocalModelTaskId;
+			readonly localOnly?: boolean;
+	  };
 
 /**
  * What leaves this machine when a provider runs.
@@ -150,6 +154,8 @@ export const LOCAL_STT_PROVIDER_ID = 'parakeet-local';
 
 /** Whisper Base on ONNX. Still selectable; no longer the default. */
 export const WHISPER_STT_PROVIDER_ID = 'whisper-local';
+/** Same core Dictation model/language as file clips. Legacy explicit choices remain. */
+export const DICTATION_STT_PROVIDER_ID = 'dictation-local';
 
 /**
  * The operating system's own voice: `say`, System.Speech, or `espeak-ng`.
@@ -328,6 +334,17 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		egress: 'none',
 		egressService: null,
 		description: 'A smaller download than Parakeet, and less accurate. No audio leaves it.',
+	}),
+	defineProvider({
+		id: DICTATION_STT_PROVIDER_ID,
+		role: 'stt',
+		label: 'Local Models Dictation',
+		tier: 'local',
+		requires: { kind: 'local-models-task', taskId: 'dictation', localOnly: true },
+		egress: 'none',
+		egressService: null,
+		description:
+			'Uses the same local Dictation model and explicit language as file clips. Configure it in Settings > Models > System One. No cloud fallback.',
 	}),
 	defineProvider({
 		id: OPENAI_STT_PROVIDER_ID,

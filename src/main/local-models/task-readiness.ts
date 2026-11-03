@@ -91,6 +91,8 @@ function aLocalNeed(task: LocalModelTaskDefinition): string {
 }
 
 export interface ResolveTaskReadinessOptions {
+	/** Local-only consumers must never probe a saved endpoint, even for readiness. */
+	localOnly?: boolean;
 	/** The persisted assignments. Defaults to the `localModelAssignments` setting. */
 	assignments?: LocalModelAssignments;
 	/** Injected for tests. Defaults to the model store's cheap status check. */
@@ -195,8 +197,30 @@ async function resolveForAssignment(
 				detail: `${task.label} runs on the Utility Agent.`,
 			};
 		case 'local':
+			if (
+				assignment.language &&
+				!getLocalModel(assignment.modelId)?.speechToText?.languages.includes(assignment.language)
+			) {
+				return {
+					...base,
+					...unavailable(
+						'model-language-unsupported',
+						'The assigned model does not support this transcription language.',
+						`Choose a compatible language in ${taskAssignmentLocation(task.id)}.`
+					),
+				};
+			}
 			return { ...base, ...(await resolveLocal(task, assignment.modelId, options)) };
 		case 'endpoint':
+			if (options.localOnly)
+				return {
+					...base,
+					...unavailable(
+						'endpoint-unsupported',
+						'This consumer requires a local model assignment.',
+						`Choose a local model in ${taskAssignmentLocation(task.id)}.`
+					),
+				};
 			return {
 				...base,
 				...(await resolveEndpoint(task, assignment.endpointId, assignment.model, options)),
@@ -258,6 +282,12 @@ async function resolveLocal(
 		);
 	}
 
+	if (entry.pending)
+		return unavailable(
+			'model-pending',
+			entry.pending,
+			`Choose a qualified model in ${taskAssignmentLocation(task.id)}.`
+		);
 	const runtimeId = entry.runtime;
 	const readRuntimeFailure = options.readRuntimeFailure ?? knownNativeRuntimeUnavailability;
 	const runtimeFailure = await readRuntimeFailure(runtimeId);

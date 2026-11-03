@@ -63,7 +63,7 @@ export type LocalModelTaskNeed = Extract<
 export type LocalModelAssignment =
 	| { type: 'off' }
 	| { type: 'utility-agent' }
-	| { type: 'local'; modelId: string }
+	| { type: 'local'; modelId: string; language?: string }
 	| { type: 'endpoint'; endpointId: string; model: string }
 	| { type: 'system-one' };
 
@@ -580,7 +580,8 @@ export function parseLocalModelAssignment(
 			return LOCAL_MODEL_TASKS[taskId].allowsUtilityAgent ? UTILITY_AGENT_ASSIGNMENT : null;
 		case 'local': {
 			const modelId = nonEmptyString(record.modelId);
-			return modelId ? { type: 'local', modelId } : null;
+			const language = nonEmptyString(record.language);
+			return modelId ? { type: 'local', modelId, ...(language ? { language } : {}) } : null;
 		}
 		case 'endpoint': {
 			const endpointId = nonEmptyString(record.endpointId);
@@ -658,7 +659,8 @@ export function isSameLocalModelAssignment(
 	b: LocalModelAssignment
 ): boolean {
 	if (a.type !== b.type) return false;
-	if (a.type === 'local' && b.type === 'local') return a.modelId === b.modelId;
+	if (a.type === 'local' && b.type === 'local')
+		return a.modelId === b.modelId && a.language === b.language;
 	if (a.type === 'endpoint' && b.type === 'endpoint') {
 		return a.endpointId === b.endpointId && a.model === b.model;
 	}
@@ -726,6 +728,12 @@ export function localModelAssignmentProblem(
 	if (assignment.type === 'local') {
 		const model = getLocalModel(assignment.modelId);
 		if (!model) return `"${assignment.modelId}" is not a known local model.`;
+		if (
+			assignment.language !== undefined &&
+			(model.kind !== 'stt' || !model.speechToText?.languages.includes(assignment.language))
+		) {
+			return `${model.displayName} does not support transcription language "${assignment.language}".`;
+		}
 		if (!taskAcceptsLocalKind(task, model.kind)) {
 			return `${model.displayName} is a ${model.kind} model, but ${task.label} needs a ${taskLocalModelKinds(task).join(' or ')} model.`;
 		}
@@ -879,7 +887,7 @@ export function formatLocalModelAssignmentSpec(assignment: LocalModelAssignment)
 		case 'system-one':
 			return assignment.type;
 		case 'local':
-			return `local:${assignment.modelId}`;
+			return `local:${assignment.modelId}${assignment.language ? `?language=${encodeURIComponent(assignment.language)}` : ''}`;
 		case 'endpoint':
 			return `endpoint:${assignment.endpointId}:${assignment.model}`;
 	}
@@ -896,8 +904,19 @@ export function parseLocalModelAssignmentSpec(spec: string): LocalModelAssignmen
 	if (trimmed === 'utility-agent') return UTILITY_AGENT_ASSIGNMENT;
 	if (trimmed === 'system-one') return SYSTEM_ONE_ASSIGNMENT;
 	if (trimmed.startsWith('local:')) {
-		const modelId = nonEmptyString(trimmed.slice('local:'.length));
-		return modelId ? { type: 'local', modelId } : null;
+		const rest = trimmed.slice('local:'.length);
+		const separator = rest.indexOf('?language=');
+		const modelId = nonEmptyString(separator < 0 ? rest : rest.slice(0, separator));
+		if (!modelId) return null;
+		if (separator < 0) return { type: 'local', modelId };
+		try {
+			const language = nonEmptyString(
+				decodeURIComponent(rest.slice(separator + '?language='.length))
+			);
+			return language ? { type: 'local', modelId, language } : null;
+		} catch {
+			return null;
+		}
 	}
 	if (trimmed.startsWith('endpoint:')) {
 		const rest = trimmed.slice('endpoint:'.length);

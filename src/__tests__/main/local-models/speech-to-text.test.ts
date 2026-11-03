@@ -41,7 +41,11 @@ import type {
 	SpeechToTextEngine,
 } from '../../../main/local-models/stt/engines';
 import { decodeWavPcm16 } from '../../../shared/audio/pcm';
-import { PARAKEET_TDT_V2_ID } from '../../../shared/local-models/model-catalog';
+import {
+	PARAKEET_TDT_V2_ID,
+	WHISPER_BASE_ID,
+	WHISPER_SMALL_ID,
+} from '../../../shared/local-models/model-catalog';
 
 const RATE = 16000;
 const LOCAL = { type: 'local', modelId: PARAKEET_TDT_V2_ID } as const;
@@ -106,6 +110,33 @@ afterEach(() => {
 });
 
 describe('SpeechToTextPool', () => {
+	it('refuses an unsupported language before a Parakeet decode', async () => {
+		const { pool, engine } = makePool();
+		const lease = await pool.acquire(LOCAL.modelId, 'clip');
+		await expect(lease.transcribe(seconds(1), { language: 'de' })).rejects.toMatchObject({
+			code: 'model-unsupported',
+		});
+		expect(engine.transcribe).not.toHaveBeenCalled();
+		await lease.release();
+	});
+
+	it.each([WHISPER_BASE_ID, WHISPER_SMALL_ID])(
+		'keeps each caller language on its queued %s decode without loading a second engine',
+		async (modelId) => {
+			const { pool, engine, createEngine } = makePool();
+			const first = await pool.acquire(modelId, 'live');
+			const second = await pool.acquire(modelId, 'clip');
+			await Promise.all([
+				first.transcribe(seconds(1), { language: 'en' }),
+				second.transcribe(seconds(1), { language: 'de' }),
+			]);
+			expect(createEngine).toHaveBeenCalledTimes(1);
+			expect(engine.transcribe.mock.calls.map((call) => call[1]?.language)).toEqual(['en', 'de']);
+			await first.release();
+			await second.release();
+		}
+	);
+
 	it('loads a model once and shares the engine across leases', async () => {
 		const { pool, engine, createEngine, loadRuntime } = makePool({ idleUnloadMs: 1000 });
 
@@ -400,6 +431,26 @@ describe('transcribeSpeech', () => {
 		expect(decoded.sampleRate).toBe(RATE);
 		expect(decoded.pcm).toHaveLength(RATE);
 	});
+
+	it.each([LOCAL.modelId, WHISPER_SMALL_ID])(
+		'discards the final %s window after cancellation and drains the lease',
+		async (modelId) => {
+			const assignment = { type: 'local', modelId } as const;
+			const decoding = deferred<string>();
+			const { pool, engine } = makePool({ engine: fakeEngine(() => decoding.promise) });
+			__setSpeechToTextPool(pool);
+			const abort = new AbortController();
+			const result = transcribeSpeech(assignment, seconds(1), RATE, { signal: abort.signal });
+			const rejection = expect(result).rejects.toMatchObject({ code: 'cancelled' });
+			await tick();
+			abort.abort();
+			expect(pool.leaseCount(modelId)).toBe(1);
+			decoding.resolve('late result');
+			await rejection;
+			expect(engine.unload).toHaveBeenCalledTimes(1);
+			expect(pool.leaseCount(modelId)).toBe(0);
+		}
+	);
 
 	it('stops before loading anything when the caller already cancelled', async () => {
 		const { pool, resolveModel } = makePool();

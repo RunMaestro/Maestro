@@ -24,6 +24,8 @@
  * rescale that Whisper applies before the encoder sees anything.
  */
 
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
+
 /** Sample rate the whole voice path runs at, and the only one Whisper accepts. */
 export const WHISPER_SAMPLE_RATE = 16000;
 /** Window length in samples. NOT a power of two - see the Bluestein note above. */
@@ -261,6 +263,24 @@ export class WhisperMelExtractor {
 	 * width is fixed, and a caller that needs more must window it themselves.
 	 */
 	extract(audio: Float32Array): Float32Array {
+		const frames = this.extractFrames(audio);
+		let next = frames.next();
+		while (!next.done) next = frames.next();
+		return next.value;
+	}
+
+	/** The same features, yielding between batches so abort and IPC can run. */
+	async extractAsync(audio: Float32Array, checkCancelled: () => void): Promise<Float32Array> {
+		const frames = this.extractFrames(audio);
+		while (true) {
+			checkCancelled();
+			const next = frames.next();
+			if (next.done) return next.value;
+			await yieldToEventLoop();
+		}
+	}
+
+	private *extractFrames(audio: Float32Array): Generator<void, Float32Array> {
 		const padded = new Float32Array(WHISPER_N_SAMPLES);
 		padded.set(audio.subarray(0, Math.min(audio.length, WHISPER_N_SAMPLES)));
 
@@ -290,6 +310,9 @@ export class WhisperMelExtractor {
 				// log10(0) would poison the whole feature map with -Infinity.
 				mel[m * WHISPER_N_FRAMES + t] = Math.log10(Math.max(sum, 1e-10));
 			}
+			// About 10 ms of work on a modest CPU, rather than one blocking
+			// half-second pass. Both public entry points use this one algorithm.
+			if ((t + 1) % 64 === 0) yield;
 		}
 
 		// Whisper's own normalisation: clamp to 8 decades below the loudest bin in

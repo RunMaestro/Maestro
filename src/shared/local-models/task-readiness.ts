@@ -42,6 +42,8 @@ export const LOCAL_MODEL_TASK_UNREADY_REASONS = [
 	'model-unknown',
 	// The model is in the catalog but is the wrong kind for the task.
 	'model-wrong-kind',
+	'model-language-unsupported',
+	'model-pending',
 	'model-not-installed',
 	'model-corrupt',
 	// The native runtime the model needs will not load here.

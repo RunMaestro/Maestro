@@ -15,12 +15,12 @@ import {
 import { getSettingsStore } from '../stores/getters';
 
 export type LocalModelSource =
-	| { type: 'local'; modelId: string }
+	| { type: 'local'; modelId: string; language?: string }
 	| { type: 'endpoint'; endpointId: string; model: string };
 
 /** The source an assignment runs on, or null for `off` and `utility-agent`. */
 export function sourceForAssignment(assignment: LocalModelAssignment): LocalModelSource | null {
-	if (assignment.type === 'local') return { type: 'local', modelId: assignment.modelId };
+	if (assignment.type === 'local') return { ...assignment };
 	if (assignment.type === 'endpoint') {
 		return { type: 'endpoint', endpointId: assignment.endpointId, model: assignment.model };
 	}

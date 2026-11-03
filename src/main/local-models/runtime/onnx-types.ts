@@ -37,3 +37,9 @@ export interface OnnxSessionOptions {
 	interOpNumThreads: number;
 	executionMode: 'sequential';
 }
+/** One bounded CPU policy for every local STT graph, regardless of consumer. */
+export const SPEECH_ONNX_SESSION_OPTIONS = Object.freeze({
+	intraOpNumThreads: 2,
+	interOpNumThreads: 1,
+	executionMode: 'sequential' as const,
+});

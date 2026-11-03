@@ -27,9 +27,15 @@
  * frame cannot loop forever. This mirrors `onnx-asr`'s reference loop exactly.
  */
 
-import { LocalModelError } from '../../errors';
+import { LocalModelError, throwIfLocalModelCancelled } from '../../errors';
+import type { SpeechToTextDecodeOptions } from '../engines';
 import { runtimeSetupLocation } from '../../runtime/runtime-consumers';
-import type { OnnxModule, OnnxSession, OnnxTensor } from '../../runtime/onnx-types';
+import {
+	SPEECH_ONNX_SESSION_OPTIONS,
+	type OnnxModule,
+	type OnnxSession,
+	type OnnxTensor,
+} from '../../runtime/onnx-types';
 
 /** Sample rate the preprocessor graph was exported for. */
 export const PARAKEET_SAMPLE_RATE = 16000;
@@ -120,9 +126,18 @@ export class ParakeetEngine {
 			this.vocab = parseParakeetVocab(this.options.vocabText);
 			// Sequential rather than Promise.all: the encoder is the bulk of the
 			// download, and loading graphs at once raises peak memory for nothing.
-			this.preprocessor = await module.InferenceSession.create(this.options.preprocessorPath);
-			this.encoder = await module.InferenceSession.create(this.options.encoderPath);
-			this.decoderJoint = await module.InferenceSession.create(this.options.decoderJointPath);
+			this.preprocessor = await module.InferenceSession.create(
+				this.options.preprocessorPath,
+				SPEECH_ONNX_SESSION_OPTIONS
+			);
+			this.encoder = await module.InferenceSession.create(
+				this.options.encoderPath,
+				SPEECH_ONNX_SESSION_OPTIONS
+			);
+			this.decoderJoint = await module.InferenceSession.create(
+				this.options.decoderJointPath,
+				SPEECH_ONNX_SESSION_OPTIONS
+			);
 			this.tensorFactory = module.Tensor;
 		} catch (error) {
 			await this.unload();
@@ -154,7 +169,8 @@ export class ParakeetEngine {
 	}
 
 	/** Transcribe 16 kHz mono audio. Returns trimmed text, empty for nothing. */
-	async transcribe(audio: Float32Array): Promise<string> {
+	async transcribe(audio: Float32Array, options: SpeechToTextDecodeOptions = {}): Promise<string> {
+		throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 		const preprocessor = this.preprocessor;
 		const encoder = this.encoder;
 		const decoderJoint = this.decoderJoint;
@@ -173,6 +189,7 @@ export class ParakeetEngine {
 			waveforms: new Tensor('float32', audio, [1, audio.length]),
 			waveforms_lens: new Tensor('int64', BigInt64Array.from([BigInt(audio.length)]), [1]),
 		});
+		throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 		const encoded = await encoder.run({
 			audio_signal: requireOutput(features, 'features'),
 			length: requireOutput(features, 'features_lens'),
@@ -205,6 +222,7 @@ export class ParakeetEngine {
 		let emittedOnFrame = 0;
 
 		while (t < validFrames) {
+			throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 			for (let d = 0; d < width; d++) frame[d] = encoderData[d * frames + t];
 
 			const out = await decoderJoint.run({
@@ -219,6 +237,7 @@ export class ParakeetEngine {
 				input_states_2: state2,
 			});
 
+			throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 			const logits = requireOutput(out, 'outputs').data as Float32Array;
 			const token = argmax(logits, 0, vocabSize);
 			// Everything past the vocabulary is the duration head; its index IS the
@@ -242,6 +261,7 @@ export class ParakeetEngine {
 			}
 		}
 
+		throwIfLocalModelCancelled(options.signal, this.options.consumerId);
 		return detokenizeParakeet(emitted.map((id) => tokens[id] ?? ''));
 	}
 }
