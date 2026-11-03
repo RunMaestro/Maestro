@@ -6,11 +6,12 @@ import {
 	acknowledgeWebSocketChunk,
 	enableWebSocketChunks,
 	sendBounded,
+	WEB_CLIENT_CHUNK_WINDOW_BYTES,
 	WEB_CLIENT_MAX_BUFFERED_BYTES,
 } from '../../../../main/web-server/services/socket-send';
 
 describe('bounded WebSocket output', () => {
-	it('requires the exact receiver acknowledgement and closes a stalled chunk stream', () => {
+	it('bounds the window and ignores invalid ACKs without renewing the oldest chunk deadline', () => {
 		vi.useFakeTimers();
 		const socket = Object.assign(new EventEmitter(), {
 			readyState: WebSocket.OPEN,
@@ -21,27 +22,72 @@ describe('bounded WebSocket output', () => {
 		}) as unknown as WebSocket;
 		try {
 			enableWebSocketChunks(socket);
-			expect(sendBounded(socket, 'x'.repeat(50_000))).toBe(true);
-			expect(socket.send).toHaveBeenCalledTimes(1);
+			expect(sendBounded(socket, 'x'.repeat(1024 * 1024))).toBe(true);
+			const initial = vi.mocked(socket.send).mock.calls;
+			const count = initial.length;
+			expect(count).toBeGreaterThan(1);
+			expect(
+				initial.reduce((bytes, call) => bytes + Buffer.byteLength(call[0] as string), 0)
+			).toBeLessThanOrEqual(WEB_CLIENT_CHUNK_WINDOW_BYTES);
 			const first = JSON.parse(vi.mocked(socket.send).mock.calls[0][0] as string);
 			const firstEnd = first.offset + first.data.length;
-			for (const offset of [undefined, -1, firstEnd - 1, String(firstEnd)]) {
+			for (const offset of [undefined, -1, firstEnd - 1, String(firstEnd), 1024 * 1024]) {
 				acknowledgeWebSocketChunk(socket, offset);
 			}
-			expect(socket.send).toHaveBeenCalledTimes(1);
+			expect(socket.send).toHaveBeenCalledTimes(count);
 			vi.advanceTimersByTime(5000);
 			acknowledgeWebSocketChunk(socket, firstEnd);
-			expect(socket.send).toHaveBeenCalledTimes(2);
+			expect(socket.send).toHaveBeenCalledTimes(count + 1);
 			// A duplicate acknowledgement must not credit the next chunk.
 			acknowledgeWebSocketChunk(socket, firstEnd);
-			expect(socket.send).toHaveBeenCalledTimes(2);
-			vi.advanceTimersByTime(29_999);
+			expect(socket.send).toHaveBeenCalledTimes(count + 1);
+			vi.advanceTimersByTime(24_999);
 			expect(socket.close).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(1);
 			expect(socket.close).toHaveBeenCalledExactlyOnceWith(
 				1013,
 				'Client output backlog exceeded; reconnect to resynchronize'
 			);
+			socket.emit('close');
+		} finally {
+			vi.clearAllTimers();
+			vi.useRealTimers();
+		}
+	});
+
+	it('accepts cumulative ACKs, preserves escaped chunks, and ages newly sent data independently', () => {
+		vi.useFakeTimers();
+		const socket = Object.assign(new EventEmitter(), {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: vi.fn((_data: string, _options: unknown, callback?: () => void) => callback?.()),
+			close: vi.fn(),
+			terminate: vi.fn(),
+		}) as unknown as WebSocket;
+		try {
+			enableWebSocketChunks(socket);
+			const payload = '\u0000'.repeat(100_000) + '😀';
+			expect(sendBounded(socket, payload)).toBe(true);
+			const initial = vi
+				.mocked(socket.send)
+				.mock.calls.map((call) => JSON.parse(call[0] as string));
+			expect(initial).toHaveLength(2);
+			const end = initial.at(-1).offset + initial.at(-1).data.length;
+			vi.advanceTimersByTime(5000);
+			acknowledgeWebSocketChunk(socket, end);
+			expect(socket.send).toHaveBeenCalledTimes(4);
+			// All old data was confirmed. The next window really was sent at 5s.
+			vi.advanceTimersByTime(25_000);
+			expect(socket.close).not.toHaveBeenCalled();
+			while (true) {
+				const last = JSON.parse(vi.mocked(socket.send).mock.calls.at(-1)![0] as string);
+				acknowledgeWebSocketChunk(socket, last.offset + last.data.length);
+				if (last.final) break;
+			}
+			const chunks = vi.mocked(socket.send).mock.calls.map((call) => JSON.parse(call[0] as string));
+			expect(chunks.map((chunk) => chunk.data).join('')).toBe(payload);
+			vi.advanceTimersByTime(30_000);
+			expect(socket.close).not.toHaveBeenCalled();
 			socket.emit('close');
 		} finally {
 			vi.clearAllTimers();

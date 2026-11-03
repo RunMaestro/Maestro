@@ -61,11 +61,15 @@ On failure it renders through the shared `index.html` error surface (`__maestroS
 
 The shim opts into `?bridgeChunks=1` on initial and reconnect sockets.
 `services/socket-send.ts` sends large packets as complete `bridge.chunk`
-envelopes (`data`, UTF-16 `offset`/`total`, `final`), with one receiver-acknowledged
-chunk in flight. Native WebSocket continuation frames only produce a browser
+envelopes (`data`, UTF-16 `offset`/`total`, `final`), with at most 256 KiB of
+unacknowledged envelope data in flight. Native WebSocket continuation frames only produce a browser
 message event after the whole packet arrives, so a progressing large transcript
-otherwise looks dead to the heartbeat. `bridge.chunkAck` releases the next chunk;
-a missing acknowledgement retires the connection after 30 seconds. Small IPC
+otherwise looks dead to the heartbeat. Cumulative `bridge.chunkAck` offsets must
+advance to a sent chunk boundary; duplicates, gaps within a chunk and future offsets
+do not grant credit. The ACK deadline tracks the oldest remaining unacknowledged
+chunk's original send time and retires a stalled connection after 30 seconds.
+Partial progress does not renew that age. The bounded window avoids a round trip
+per chunk while preserving the existing browser read deadline. Small IPC
 replies and pongs can pass between chunks, while events retain their sequence and
 order. The shim validates and reassembles the packet before applying its sequence,
 and drops partial assembly on disconnect. Existing browsers and CLI clients retain
