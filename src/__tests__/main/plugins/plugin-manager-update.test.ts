@@ -19,14 +19,25 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+vi.mock('fs', async () => {
+	const actual = await vi.importActual<typeof import('fs')>('fs');
+	return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
+
 vi.mock('electron', () => ({
 	// Never actually called (MAESTRO_USER_DATA wins in dataDir()), but present so
 	// the named `app` import resolves cleanly under the test runner.
 	app: { getPath: () => os.tmpdir() },
 }));
 
+import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
 import { PluginManager } from '../../../main/plugins/plugin-manager';
-import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import {
+	pluginsDir,
+	readPluginState,
+	writePluginState,
+} from '../../../main/plugins/plugin-store-main';
+import { PLUGIN_STATE_FILENAME } from '../../../shared/plugins/storage';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
@@ -85,6 +96,403 @@ afterEach(() => {
 });
 
 describe('PluginManager.update', () => {
+	it('does not anchor a different alias tree from the cached registry', async () => {
+		const keys = makeSigningKeys();
+		const aliasKeys = makeSigningKeys();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64, aliasKeys.publicKeyB64],
+		});
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		expect((await manager.install(old)).success).toBe(true);
+		const canonical = path.join(pluginsDir(), PLUGIN_ID);
+		const held = path.join(workDir, 'held');
+		fs.renameSync(canonical, held);
+		const alias = writeSource(path.join(pluginsDir(), 'alias'), { version: '1.0.0' });
+		signPluginDir(alias, aliasKeys);
+		await manager.refresh();
+		expect(manager.getRegistry().records.find((record) => record.id === PLUGIN_ID)?.source).toBe(
+			alias
+		);
+		expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBeUndefined();
+		fs.renameSync(held, canonical);
+		const next = writeSource(path.join(workDir, 'next'), { version: '2.0.0' });
+		signPluginDir(next, keys);
+		await manager.update(next, PLUGIN_ID);
+		expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBe(keys.publicKeyB64);
+		expect(JSON.parse(fs.readFileSync(path.join(canonical, 'plugin.json'), 'utf8')).version).toBe(
+			'2.0.0'
+		);
+	});
+
+	it.each([0, 1] as const)(
+		'persists the first tier-%s installed publisher until explicit uninstall',
+		async (tier) => {
+			const keys = makeSigningKeys();
+			const nextKeys = makeSigningKeys();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64, nextKeys.publicKeyB64],
+			});
+			const source = writeSource(
+				path.join(workDir, 'source'),
+				{ version: '1.0.0', tier },
+				{
+					'main.js': 'original',
+				}
+			);
+			signPluginDir(source, keys);
+			expect((await manager.install(source)).success).toBe(true);
+			expect(readPluginState().plugins[PLUGIN_ID]).toEqual({
+				enabled: tier === 0,
+				trustedPublisher: keys.publicKeyB64,
+			});
+			await manager.setEnabled(PLUGIN_ID, true);
+			await manager.setEnabled(PLUGIN_ID, false);
+			expect(readPluginState().plugins[PLUGIN_ID]).toEqual({
+				enabled: false,
+				trustedPublisher: keys.publicKeyB64,
+			});
+			await manager.refresh();
+			await manager.uninstall(PLUGIN_ID);
+			expect(readPluginState().plugins[PLUGIN_ID]).toBeUndefined();
+			signPluginDir(source, nextKeys);
+			expect((await manager.install(source)).success).toBe(true);
+			expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBe(nextKeys.publicKeyB64);
+		}
+	);
+
+	it.each(['unsigned', 'untrusted', 'invalid'])(
+		'does not bootstrap a publisher from %s installed bytes',
+		async (status) => {
+			const keys = makeSigningKeys();
+			const other = makeSigningKeys();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			const source = writeSource(
+				path.join(workDir, 'source'),
+				{ version: '1.0.0' },
+				{
+					'marker.txt': 'original',
+				}
+			);
+			if (status !== 'unsigned') signPluginDir(source, status === 'untrusted' ? other : keys);
+			if (status === 'invalid') fs.writeFileSync(path.join(source, 'marker.txt'), 'tampered');
+			expect((await manager.install(source)).success).toBe(true);
+			await manager.refresh();
+			expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBeUndefined();
+		}
+	);
+
+	it('keeps a malformed-present publisher blocked instead of seeding from discovery', async () => {
+		const keys = makeSigningKeys();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		signPluginDir(old, keys);
+		expect((await manager.install(old)).success).toBe(true);
+		writePluginState({ plugins: { [PLUGIN_ID]: { enabled: false, trustedPublisher: 42 } } });
+		await manager.refresh();
+		const source = writeSource(path.join(workDir, 'next'), { version: '2.0.0' });
+		signPluginDir(source, keys);
+		const stop = vi.spyOn(manager, 'stopAndDrain');
+		await expect(manager.update(source, PLUGIN_ID)).rejects.toThrow(/publisher|signature/);
+		expect(stop).not.toHaveBeenCalled();
+		expect(readPluginState().plugins[PLUGIN_ID]?.trustedPublisher).toBeNull();
+	});
+
+	it('fails before stop when recording an installed publisher cannot be committed', async () => {
+		const keys = makeSigningKeys();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		signPluginDir(old, keys);
+		expect((await manager.install(old)).success).toBe(true);
+		writePluginState({ plugins: { [PLUGIN_ID]: { enabled: false } } }); // Legacy entry.
+		const source = writeSource(path.join(workDir, 'next'), { version: '2.0.0' });
+		signPluginDir(source, keys);
+		const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+		vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+			if (String(to) === path.join(workDir, 'userData', PLUGIN_STATE_FILENAME)) {
+				throw new Error('synthetic publisher persistence failure');
+			}
+			return rename(from, to);
+		});
+		const stop = vi.spyOn(manager, 'stopAndDrain');
+		try {
+			await expect(manager.update(source, PLUGIN_ID)).rejects.toThrow(
+				'publisher persistence failure'
+			);
+		} finally {
+			vi.mocked(fs.renameSync).mockImplementation(rename);
+		}
+		expect(stop).not.toHaveBeenCalled();
+		expect(
+			manager.getRegistry().records.find((record) => record.id === PLUGIN_ID)?.manifest?.version
+		).toBe('1.0.0');
+		expect(fs.readdirSync(pluginsDir())).toEqual([PLUGIN_ID]);
+	});
+
+	it.each(
+		['tgz', 'tar.gz'].flatMap((extension) =>
+			[false, true].flatMap((manifest) =>
+				['install', 'update'].map((operation) => ({ extension, manifest, operation }))
+			)
+		)
+	)(
+		'uses $operation for an unpacked .$extension folder (selected manifest: $manifest)',
+		async ({ extension, manifest, operation }) => {
+			const manager = makeManager();
+			if (operation === 'update') {
+				const original = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+				expect((await manager.install(original)).success).toBe(true);
+			}
+			const source = writeSource(path.join(workDir, `release.${extension}`), {
+				version: '2.0.0',
+			});
+			const selected = manifest ? path.join(source, 'plugin.json') : source;
+			if (operation === 'install') {
+				expect((await manager.install(selected)).success).toBe(true);
+			} else {
+				await manager.update(selected, PLUGIN_ID);
+			}
+			expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.manifest?.version).toBe(
+				'2.0.0'
+			);
+		}
+	);
+
+	it('installs and updates through a selected plugin.json with normal folder validation', async () => {
+		const manager = makeManager();
+		const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		expect((await manager.install(path.join(old, 'plugin.json'))).success).toBe(true);
+		const next = writeSource(path.join(workDir, 'new'), { version: '1.0.1' });
+		const result = await manager.update(path.join(next, 'plugin.json'), PLUGIN_ID);
+		expect(result.records.find((r) => r.id === PLUGIN_ID)?.manifest?.version).toBe('1.0.1');
+	});
+
+	it.each(['linked manifest', 'linked folder', 'other json', 'malformed manifest'])(
+		'rejects an unsafe manifest selection while retaining installed bytes: %s',
+		async (kind) => {
+			const manager = makeManager();
+			const old = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+			expect((await manager.install(old)).success).toBe(true);
+			const next = writeSource(path.join(workDir, 'new'), { version: '1.0.1' });
+			let selected = path.join(next, 'plugin.json');
+			if (kind === 'linked manifest') {
+				fs.renameSync(selected, path.join(next, 'real.json'));
+				fs.symlinkSync('real.json', selected);
+			} else if (kind === 'linked folder') {
+				const alias = path.join(workDir, 'alias');
+				fs.symlinkSync(next, alias, 'dir');
+				selected = path.join(alias, 'plugin.json');
+			} else if (kind === 'other json') {
+				selected = path.join(next, 'other.json');
+				fs.copyFileSync(path.join(next, 'plugin.json'), selected);
+			} else {
+				fs.writeFileSync(selected, '{broken');
+			}
+			await expect(manager.update(selected, PLUGIN_ID)).rejects.toThrow();
+			expect(
+				JSON.parse(fs.readFileSync(path.join(pluginsDir(), PLUGIN_ID, 'plugin.json'), 'utf8'))
+					.version
+			).toBe('1.0.0');
+		}
+	);
+
+	it.each(['tgz', 'tar.gz'])(
+		'updates an installed plugin directly from the distributed signed %s',
+		async (extension) => {
+			const keys = makeSigningKeys();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64],
+			});
+			const oldSource = writeSource(
+				path.join(workDir, 'old'),
+				{ version: '1.0.0', tier: 1 },
+				{ 'main.js': 'old bytes' }
+			);
+			signPluginDir(oldSource, keys);
+			expect((await manager.install(oldSource)).success).toBe(true);
+			const source = writeSource(
+				path.join(workDir, 'new'),
+				{ version: '1.0.1', tier: 1 },
+				{ 'main.js': 'new bytes' }
+			);
+			signPluginDir(source, keys);
+			const archive = path.join(workDir, `distributed.signed.${extension}`);
+			await packPluginArchive(source, archive);
+			const result = await manager.update(archive, PLUGIN_ID);
+			expect(result.records.find((r) => r.id === PLUGIN_ID)).toMatchObject({
+				manifest: { version: '1.0.1' },
+				signature: { status: 'trusted' },
+			});
+			expect(fs.readFileSync(path.join(pluginsDir(), PLUGIN_ID, 'main.js'), 'utf8')).toBe(
+				'new bytes'
+			);
+		}
+	);
+	it.each(['tampered', 'unsigned', 'publisher', 'api', 'id', 'equal', 'older', 'corrupt'])(
+		'keeps a trusted installed plugin intact on rejected archive: %s',
+		async (failure) => {
+			const keys = makeSigningKeys();
+			const other = makeSigningKeys();
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				trustedKeys: () => [keys.publicKeyB64, other.publicKeyB64],
+			});
+			const oldSource = writeSource(
+				path.join(workDir, 'old'),
+				{ version: '1.0.0', tier: 1 },
+				{ 'main.js': 'working' }
+			);
+			signPluginDir(oldSource, keys);
+			expect((await manager.install(oldSource)).success).toBe(true);
+			const source = writeSource(
+				path.join(workDir, 'next'),
+				{
+					version: failure === 'equal' ? '1.0.0' : failure === 'older' ? '0.9.0' : '1.0.1',
+					tier: 1,
+				},
+				{ 'main.js': 'replacement' }
+			);
+			const manifestPath = path.join(source, 'plugin.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+			if (failure === 'id') {
+				manifest.id = 'other-plugin';
+				const otherInstalled = path.join(workDir, 'other-installed');
+				fs.mkdirSync(otherInstalled);
+				fs.writeFileSync(
+					path.join(otherInstalled, 'plugin.json'),
+					JSON.stringify({ ...manifest, version: '0.5.0' })
+				);
+				fs.writeFileSync(path.join(otherInstalled, 'main.js'), 'other working');
+				signPluginDir(otherInstalled, keys);
+				expect((await manager.install(otherInstalled)).success).toBe(true);
+			}
+			if (failure === 'api') manifest.maestro.minHostApi = '99.0.0';
+			fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+			if (failure !== 'unsigned') signPluginDir(source, failure === 'publisher' ? other : keys);
+			if (failure === 'tampered') fs.writeFileSync(path.join(source, 'main.js'), 'tampered');
+			const archive = path.join(workDir, 'replacement.tar.gz');
+			await packPluginArchive(source, archive);
+			if (failure === 'corrupt') fs.writeFileSync(archive, 'not gzip');
+			const stop = vi.spyOn(manager, 'stopAndDrain');
+			await expect(manager.update(archive, PLUGIN_ID)).rejects.toThrow();
+			expect(stop).not.toHaveBeenCalled();
+			if (failure === 'id')
+				expect(fs.readFileSync(path.join(pluginsDir(), 'other-plugin', 'main.js'), 'utf8')).toBe(
+					'other working'
+				);
+			expect(fs.readFileSync(path.join(pluginsDir(), PLUGIN_ID, 'main.js'), 'utf8')).toBe(
+				'working'
+			);
+			expect(
+				JSON.parse(fs.readFileSync(path.join(pluginsDir(), PLUGIN_ID, 'plugin.json'), 'utf8'))
+					.version
+			).toBe('1.0.0');
+			expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.signature?.status).toBe(
+				'trusted'
+			);
+		}
+	);
+
+	it('refreshes the working installation if moving it to backup fails', async () => {
+		const onChange = vi.fn();
+		const manager = new PluginManager({ isEnabled: () => true, onChange });
+		const original = writeSource(path.join(workDir, 'old'), { version: '1.0.0' });
+		expect((await manager.install(original)).success).toBe(true);
+		const next = writeSource(path.join(workDir, 'next'), { version: '1.0.1' });
+		const archive = path.join(workDir, 'next.tgz');
+		await packPluginArchive(next, archive);
+		onChange.mockClear();
+		const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+		vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+			if (String(to).endsWith(`${PLUGIN_ID}.old`)) throw new Error('synthetic backup failure');
+			return rename(from, to);
+		});
+		try {
+			await expect(manager.update(archive, PLUGIN_ID)).rejects.toThrow('synthetic backup failure');
+		} finally {
+			vi.mocked(fs.renameSync).mockImplementation(rename);
+		}
+		expect(onChange).toHaveBeenCalledExactlyOnceWith(manager.getRegistry());
+		expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.manifest?.version).toBe(
+			'1.0.0'
+		);
+		expect(fs.readdirSync(pluginsDir())).toEqual([PLUGIN_ID]);
+	});
+
+	it('restores the working bytes when the staged archive swap fails', async () => {
+		const manager = makeManager();
+		const original = writeSource(
+			path.join(workDir, 'old'),
+			{ version: '1.0.0' },
+			{ 'marker.txt': 'working' }
+		);
+		expect((await manager.install(original)).success).toBe(true);
+		const source = writeSource(
+			path.join(workDir, 'next'),
+			{ version: '1.0.1' },
+			{ 'marker.txt': 'replacement' }
+		);
+		const archive = path.join(workDir, 'next.tgz');
+		await packPluginArchive(source, archive);
+		const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+		const spy = vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+			if (String(from).includes('.update-') && !String(from).endsWith('.old'))
+				throw new Error('synthetic swap failure');
+			return rename(from, to);
+		});
+		try {
+			await expect(manager.update(archive)).rejects.toThrow('synthetic swap failure');
+		} finally {
+			spy.mockImplementation(rename);
+		}
+		expect(fs.readFileSync(path.join(pluginsDir(), PLUGIN_ID, 'marker.txt'), 'utf8')).toBe(
+			'working'
+		);
+		expect(manager.getRegistry().records.find((r) => r.id === PLUGIN_ID)?.manifest?.version).toBe(
+			'1.0.0'
+		);
+		expect(fs.readdirSync(pluginsDir())).toEqual([PLUGIN_ID]);
+	});
+
+	it('retains the original recovery bytes if both swap and rollback rename fail', async () => {
+		const manager = makeManager();
+		const original = writeSource(
+			path.join(workDir, 'old'),
+			{ version: '1.0.0' },
+			{ 'marker.txt': 'working' }
+		);
+		expect((await manager.install(original)).success).toBe(true);
+		const source = writeSource(path.join(workDir, 'next'), { version: '1.0.1' });
+		const archive = path.join(workDir, 'next.tgz');
+		await packPluginArchive(source, archive);
+		const rename = (await vi.importActual<typeof import('fs')>('fs')).renameSync;
+		vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+			if (String(from).includes('.update-')) throw new Error('synthetic filesystem failure');
+			return rename(from, to);
+		});
+		try {
+			await expect(manager.update(archive)).rejects.toThrow(/original plugin retained at/);
+		} finally {
+			vi.mocked(fs.renameSync).mockImplementation(rename);
+		}
+		const recovery = fs.readdirSync(pluginsDir()).find((name) => name.startsWith('.update-'));
+		expect(recovery).toBeDefined();
+		expect(
+			fs.readFileSync(path.join(pluginsDir(), recovery!, `${PLUGIN_ID}.old`, 'marker.txt'), 'utf8')
+		).toBe('working');
+	});
+
 	it('preserves KV, SQL, settings, and grants while rechecking the new signature and consent', async () => {
 		const keys = makeSigningKeys();
 		const kvStore = new PluginKvStore({ baseDir: path.join(workDir, 'userData', 'plugin-data') });
@@ -137,7 +545,9 @@ describe('PluginManager.update', () => {
 			{ 'main.js': 'module.exports = "v2";' }
 		);
 		signPluginDir(src2, keys);
-		const registry = await manager.update(src2);
+		const archive = path.join(workDir, 'state-preservation.tgz');
+		await packPluginArchive(src2, archive);
+		const registry = await manager.update(archive);
 		const record = registry.records.find((entry) => entry.id === PLUGIN_ID);
 
 		expect(record?.manifest?.version).toBe('2.0.0');

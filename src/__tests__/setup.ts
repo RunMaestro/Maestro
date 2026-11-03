@@ -647,6 +647,7 @@ const mockMaestro = {
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),
+		selectFile: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
 	},
 	cueBundle: {

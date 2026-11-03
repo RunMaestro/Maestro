@@ -64,6 +64,7 @@ function fakeManager() {
 		getRegistry: vi.fn(() => emptyRegistry),
 		getContributions: vi.fn(() => EMPTY),
 		getRequestedPermissions: vi.fn(() => []),
+		update: vi.fn(async () => emptyRegistry),
 		setEnabled: vi.fn(() => emptyRegistry),
 		stopAndDrain: vi.fn(async () => {}),
 		uninstall: vi.fn(async () => ({ success: true })),
@@ -95,6 +96,36 @@ const event = {} as unknown;
 beforeEach(() => {
 	handlers.clear();
 	vi.clearAllMocks();
+});
+
+describe('plugins:update source identity', () => {
+	it('forwards the archive and expected id to the authoritative update operation', async () => {
+		const manager = register(true);
+		await handlers.get('plugins:update')!(event, '/releases/relay.tgz', 'sh.maestro.relay');
+		expect(manager.update).toHaveBeenCalledExactlyOnceWith(
+			'/releases/relay.tgz',
+			'sh.maestro.relay'
+		);
+	});
+
+	it.each(['', '../relay', 42, null])(
+		'rejects invalid expected id %j before mutation',
+		async (id) => {
+			const manager = register(true);
+			await expect(
+				handlers.get('plugins:update')!(event, '/releases/relay.tgz', id)
+			).rejects.toThrow('InvalidPluginId');
+			expect(manager.update).not.toHaveBeenCalled();
+		}
+	);
+
+	it('keeps the feature gate in front of updates', async () => {
+		const manager = register(false);
+		await expect(
+			handlers.get('plugins:update')!(event, '/releases/relay.tgz', 'sh.maestro.relay')
+		).rejects.toThrow('PluginsDisabled');
+		expect(manager.update).not.toHaveBeenCalled();
+	});
 });
 
 describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', () => {
