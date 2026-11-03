@@ -61,6 +61,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 // so the tests can assert what peers were told without a live WebSocket server.
 vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 	broadcastBridgeEvent: vi.fn(),
+	isBridgeInvokeEvent: (event: { type?: unknown } | null | undefined) => event?.type === 'bridge',
 }));
 
 const { backupSessionsBeforeWipeMock } = vi.hoisted(() => ({
@@ -1999,6 +2000,65 @@ describe('persistence IPC handlers', () => {
 				added: [expect.objectContaining({ id: 'fresh' })],
 				removedIds: [],
 			});
+		});
+	});
+
+	// The desktop owns the AI tab inventory. A web-desktop client mirrors it, so
+	// its copy is never newer than the store - and after a long mobile suspend it
+	// can be hours older (issue #1985).
+	describe('web-desktop writes keep the stored AI tab inventory', () => {
+		const bridgeEvent = { type: 'bridge', senderFrame: null } as any;
+		const storedAgent = {
+			id: 's1',
+			name: 'Agent',
+			cwd: '/test',
+			projectRoot: '/test',
+			state: 'idle' as const,
+			inputMode: 'ai' as const,
+			toolType: 'claude-code',
+			aiTabs: [
+				{ id: 'old', name: 'Renamed on desktop', logs: [] },
+				{ id: 'opened-while-away', name: 'New tab', logs: [] },
+			],
+		};
+		const staleBrowserCopy = {
+			...storedAgent,
+			name: 'Agent renamed in browser',
+			aiTabs: [{ id: 'old', name: null, logs: [] }],
+		};
+		const tabsOf = (session: any) =>
+			session.aiTabs.map((tab: { id: string; name: string | null }) => [tab.id, tab.name]);
+
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s from a resumed browser cannot close or rename desktop tabs',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([storedAgent]);
+				await handlers.get(channel)!(bridgeEvent, [staleBrowserCopy], []);
+
+				const [saved] = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(tabsOf(saved)).toEqual([
+					['old', 'Renamed on desktop'],
+					['opened-while-away', 'New tab'],
+				]);
+				// The rest of the browser's write still lands.
+				expect(saved.name).toBe('Agent renamed in browser');
+			}
+		);
+
+		it('keeps the browser tabs of an agent the store does not hold yet', async () => {
+			mockSessionsStore.get.mockReturnValue([]);
+			await handlers.get('sessions:setMany')!(bridgeEvent, [staleBrowserCopy], []);
+
+			const [saved] = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(tabsOf(saved)).toEqual([['old', null]]);
+		});
+
+		it('still lets a desktop window rewrite its own tabs', async () => {
+			mockSessionsStore.get.mockReturnValue([storedAgent]);
+			await handlers.get('sessions:setMany')!({} as any, [staleBrowserCopy], []);
+
+			const [saved] = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(tabsOf(saved)).toEqual([['old', null]]);
 		});
 	});
 

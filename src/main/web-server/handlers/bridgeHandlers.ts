@@ -213,3 +213,11 @@ export async function handleBridgeInvoke(
 export function isBridgeInvokeMessage(message: { type: string }): message is InvokeMessage {
 	return message.type === 'bridge.invoke';
 }
+
+/**
+ * True when an `ipcMain` handler was reached from a web-desktop client
+ * through {@link handleBridgeInvoke} rather than from an Electron window.
+ */
+export function isBridgeInvokeEvent(event: unknown): boolean {
+	return (event as { type?: unknown } | null | undefined)?.type === FAKE_EVENT.type;
+}
