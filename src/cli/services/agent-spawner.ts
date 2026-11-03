@@ -2,8 +2,8 @@
 // Spawns agent CLIs and parses their output
 
 import {
-	startAdmittedAgentTurn,
-	type AgentTurnAdmissionProof,
+	createAdmittedCliTurnStarter,
+	type HeadlessTurnAdmissionOptions,
 } from '../../main/utils/headless-agent-activity';
 import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
@@ -37,11 +37,7 @@ import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
-	startTurn,
-	TurnNotStartedError,
-	type TurnProcessSpec,
-	type TurnHandlers,
-	type TurnHandle,
+	startTurn as startUnadmittedTurn,
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
@@ -775,46 +771,6 @@ function cliTurnOptions(signal: AbortSignal | undefined): StartTurnOptions {
 	};
 }
 
-/** The host proof is consumed only here, after all async launch/SSH preparation.
- * The release belongs to this native child, not its caller's promise or stop request.
- * An exception after spawn without a returned handle conservatively retains occupancy. */
-function startCliTurn(
-	spec: TurnProcessSpec,
-	handlers: TurnHandlers,
-	options: StartTurnOptions,
-	overrides: SpawnOverrides,
-	remote: boolean
-): TurnHandle {
-	const release =
-		overrides.originWorkerId !== undefined || overrides.workerAdmission !== undefined
-			? startAdmittedAgentTurn(overrides.workerAdmission, overrides.originWorkerId)
-			: undefined;
-	try {
-		const turn = startTurn(spec, { ...handlers, onStarted: undefined }, options);
-		if (release) {
-			const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-				// A stopped local SSH client does not prove its remote child has ended.
-				if (!remote || (code === 0 && !signal && !overrides.signal?.aborted)) release();
-			};
-			turn.child.once('exit', onExit);
-			turn.child.once('close', onExit);
-			turn.child.once('error', () => {
-				if (!turn.child.pid) release();
-			});
-		}
-		try {
-			handlers.onStarted?.(turn.pid);
-		} catch (error) {
-			turn.terminate();
-			throw error;
-		}
-		return turn;
-	} catch (error) {
-		if (error instanceof TurnNotStartedError) release?.();
-		throw error;
-	}
-}
-
 /**
  * Spawn Claude Code with a prompt and return the result.
  *
@@ -834,6 +790,11 @@ async function spawnClaudeAgent(
 	overrides: SpawnOverrides = {},
 	tokenSource: ClaudeTokenSourceFields = {}
 ): Promise<AgentResult> {
+	const startTurn = createAdmittedCliTurnStarter(
+		startUnadmittedTurn,
+		overrides,
+		!!sshRemoteConfig?.enabled
+	);
 	const def = getAgentDefinition('claude-code');
 
 	// Build args WITHOUT the prompt - the prompt is appended below for local
@@ -1196,7 +1157,7 @@ async function spawnClaudeAgent(
 	if (overrides.signal?.aborted) return interruptedResult();
 	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
 		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
-	const turn = startCliTurn(
+	const turn = startTurn(
 		{
 			command: spawnCommand,
 			args: spawnArgs,
@@ -1214,9 +1175,7 @@ async function spawnClaudeAgent(
 			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
-		cliTurnOptions(undefined),
-		overrides,
-		!!sshRemoteConfig?.enabled
+		cliTurnOptions(undefined)
 	);
 	let forcedStop!: () => void;
 	const forced = new Promise<undefined>((resolve) => {
@@ -1243,7 +1202,7 @@ async function spawnClaudeAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
-	if (overrides.requireProcessExit || overrides.workerAdmission) await supervision.processExited;
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1351,6 +1310,11 @@ async function spawnJsonLineAgent(
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
+	const startTurn = createAdmittedCliTurnStarter(
+		startUnadmittedTurn,
+		overrides,
+		!!sshRemoteConfig?.enabled
+	);
 	const def = getAgentDefinition(toolType);
 
 	// Build args from agent definition (without the prompt or model/customArgs -
@@ -1545,7 +1509,7 @@ async function spawnJsonLineAgent(
 	if (overrides.signal?.aborted) return interruptedResult();
 	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
 		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
-	const turn = startCliTurn(
+	const turn = startTurn(
 		{
 			command: spawnCommand,
 			args: spawnArgs,
@@ -1632,9 +1596,7 @@ async function spawnJsonLineAgent(
 			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
-		{ ...cliTurnOptions(undefined), parser },
-		overrides,
-		!!sshRemoteConfig?.enabled
+		{ ...cliTurnOptions(undefined), parser }
 	);
 	let forcedStop!: () => void;
 	const forced = new Promise<undefined>((resolve) => {
@@ -1662,7 +1624,7 @@ async function spawnJsonLineAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
-	if (overrides.requireProcessExit || overrides.workerAdmission) await supervision.processExited;
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1715,11 +1677,7 @@ async function spawnJsonLineAgent(
  * from `maestro-agent-configs.json`. Pass the session values directly here -
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
-export interface SpawnAgentOptions {
-	/** Host-owned Maestro worker identity; never the provider id or CWD. */
-	originWorkerId?: string;
-	/** Required for managed headless turns; final spawn validates the live capability. */
-	workerAdmission?: AgentTurnAdmissionProof;
+export interface SpawnAgentOptions extends HeadlessTurnAdmissionOptions {
 	/**
 	 * Host-owned original attachments must outlive the actual child. On an
 	 * unconfirmed stop, retain this call and its caller's resources until exit,
@@ -1843,6 +1801,16 @@ export async function spawnAgent(
 			...options,
 			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
 		};
+	// SDK timeout/abort wrappers do not establish native termination. Until an
+	// admission-aware native terminal contract exists, managed turns must use
+	// Current; ordinary native callers retain their provider transport.
+	if (
+		(options?.originWorkerId !== undefined || options?.workerAdmission !== undefined) &&
+		options?.harnessControlMode === 'native'
+	)
+		return spawnFailureResult(
+			'Native control is not supported for admission-managed turns; use Current control'
+		);
 	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
 	// Effort fallback and asynchronous launch planning share one absolute ceiling.
 	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
@@ -1921,7 +1889,7 @@ async function spawnAgentOnce(
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
-		requireProcessExit: options?.requireProcessExit,
+		requireProcessExit: options?.requireProcessExit || !!options?.workerAdmission,
 		originWorkerId: options?.originWorkerId,
 		workerAdmission: options?.workerAdmission,
 		signal: options?.signal,

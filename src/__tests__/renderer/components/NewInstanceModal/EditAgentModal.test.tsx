@@ -735,7 +735,7 @@ describe('EditAgentModal', () => {
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		const args = onSave.mock.calls[0];
 		// acceptTranslationLimitations, resources, plan id, convert flag
-		expect(args.slice(23, 27)).toEqual([true, [], 'plan', true]);
+		expect(args.slice(23)).toEqual([true, [], 'plan', true]);
 	});
 
 	it('switches provider without converting by default', async () => {
@@ -760,7 +760,13 @@ describe('EditAgentModal', () => {
 		const args = onSave.mock.calls[0];
 		expect(args[2]).toBe('codex');
 		// No conversion arguments: the save does a plain switch.
-		expect(args.slice(23, 27)).toEqual([undefined, undefined, undefined, undefined]);
+		expect([args[23], args[24], args[25], args[26], args[27]]).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		]);
 	});
 
 	it('offers no conversion for a provider pair without an adapter, and still saves', async () => {
@@ -819,7 +825,13 @@ describe('EditAgentModal', () => {
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		const args = onSave.mock.calls[0];
 		expect(args[2]).toBe('codex');
-		expect(args.slice(23, 27)).toEqual([undefined, undefined, undefined, undefined]);
+		expect([args[23], args[24], args[25], args[26], args[27]]).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		]);
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
 	});
 

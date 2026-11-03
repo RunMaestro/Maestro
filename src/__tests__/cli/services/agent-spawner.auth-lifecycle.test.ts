@@ -86,3 +86,14 @@ describe.skipIf(process.platform !== 'linux')(
 		});
 	}
 );
+
+it('rejects managed native control before asynchronous provider preparation', async () => {
+	const result = await spawnAgent('claude-code', process.cwd(), 'fixture', undefined, {
+		originWorkerId: 'worker',
+		harnessControlMode: 'native',
+		timeoutMs: 1000,
+		agentCommand: '/must-not-start',
+	});
+	expect(result.success).toBe(false);
+	expect(result.error).toContain('admission-managed');
+});

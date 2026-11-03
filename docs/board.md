@@ -246,3 +246,11 @@ A few behaviors worth knowing:
 - The desktop Cue/bootstrap context installs `configureBoardRuntimeHost` with the central owner and existing Cue lock/run service. CLI requests attach to this owner; they do not create one. An unavailable owner returns `runtime-unavailable`. Legacy `boardWorker` session markers no longer participate in active dispatch; the migrated central registry and migration holds remain authoritative.
 
 Cards display their explicit agent or group scope and the host's current waiting reasons. Capture responses and global Refresh use the same read-only worker eligibility checks as claims, including current membership, role and repository access. Empty eligible scopes, paused intake, durable reservations, native busy/dormant workers, required start approval and Hold remain visible. Missing native occupancy evidence is reported as unknown. An otherwise available card waits for Cue's final dispatch checks; reading a card never claims, releases or renews a reservation. Intake pause prevents new Board starts while existing work continues.
+
+### Managed worker transport
+
+Admission-managed headless turns use Current control. Native control is rejected
+before provider preparation until its SDK lifecycle can establish the terminal
+condition needed to release a worker. Ordinary native-control callers are unaffected.
+A cancellation request does not release a running child; an unconfirmed SSH stop
+retains the worker reservation because the local client cannot prove remote exit.

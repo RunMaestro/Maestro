@@ -684,6 +684,12 @@ const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 // renderer status pills update live as detection / spawn-error events fire.
 capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeSend));
 
+// Create CLI activity watcher with dependency injection (Phase 4 refactoring)
+const cliWatcher = createCliWatcher({
+	getMainWindow: () => mainWindow,
+	getUserDataPath: () => app.getPath('userData'),
+});
+
 // Board: push `board:changed` whenever board.yaml is persisted (by the
 // dispatcher tick, an IPC mutation, or auto-decompose) so the kanban reconciles
 // on the event instead of polling. Storage itself stays host-agnostic - the CLI
@@ -695,12 +701,6 @@ setBoardSavedListener((projectRoot) => safeSend('board:changed', { projectRoot }
 // (and the Board's role picker behind it) reconcile after a CLI or second-window
 // write instead of showing a stale list until the user hits refresh.
 setProfilesSavedListener((projectRoot) => safeSend('profiles:changed', { projectRoot }));
-
-// Create CLI activity watcher with dependency injection (Phase 4 refactoring)
-const cliWatcher = createCliWatcher({
-	getMainWindow: () => mainWindow,
-	getUserDataPath: () => app.getPath('userData'),
-});
 
 // Watch for the laptop crossing timezones. Chromium refreshes its renderers on
 // an OS timezone change but leaves the main process's V8 date cache stale, so

@@ -55,7 +55,7 @@
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
 		"postinstall": "node scripts/postinstall.mjs",
-		"rebuild:node-native": "npm rebuild better-sqlite3",
+		"rebuild:node-native": "node scripts/rebuild-node-native.cjs",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/ && eslint -c eslint.dashes.config.mjs src/__tests__ scripts src/shared/dataview/vendor",
 		"lint:doc-refs": "node scripts/check-doc-refs.mjs",
