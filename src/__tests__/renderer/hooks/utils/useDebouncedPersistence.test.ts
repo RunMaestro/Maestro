@@ -189,6 +189,67 @@ describe('useDebouncedPersistence', () => {
 	// initialLoadComplete is set in a finally, so it is true either way, and
 	// flushNow with a snapshot skips it altogether. persistInternal is the one
 	// gate every flush path shares, so the refusal lives there.
+	describe('queue synchronization during streaming', () => {
+		it('persists a dequeue promptly while another agent keeps streaming', async () => {
+			const item = { id: 'consumed', type: 'message' as const, text: 'Ja bitte', timestamp: 1 };
+			const owner = makeSession({ id: 'owner', executionQueue: [item] });
+			const other = makeSession({ id: 'streaming' });
+			seedSessions([owner, other]);
+			const stored = mockPersistedSessions([owner, other]);
+			renderPersistence(makeInitialLoadRef(true));
+			act(() => seedSessions([{ ...owner, executionQueue: [] }, other]));
+			for (let i = 0; i < 4; i++) {
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+				act(() =>
+					useSessionStore
+						.getState()
+						.setSessions((prev) =>
+							prev.map((session) =>
+								session.id === other.id ? { ...session, contextUsage: i + 1 } : session
+							)
+						)
+				);
+			}
+			expect(stored().find((session) => session.id === owner.id)?.executionQueue).toEqual([]);
+		});
+
+		it('bounds persistence delay even when ordinary session updates never stop', async () => {
+			const session = makeSession({ id: 'streaming' });
+			seedSessions([session]);
+			const stored = mockPersistedSessions([session]);
+			renderPersistence(makeInitialLoadRef(true));
+			for (let i = 1; i <= 20; i++) {
+				act(() => seedSessions([{ ...session, contextUsage: i }]));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+			}
+			expect(stored()[0].contextUsage).toBeGreaterThan(0);
+		});
+
+		it('coalesces a synchronous queue burst into one save of the final queue', async () => {
+			const session = makeSession({ id: 'queue' });
+			seedSessions([session]);
+			const stored = mockPersistedSessions([session]);
+			renderPersistence(makeInitialLoadRef(true));
+			const item = { id: 'queued', type: 'message' as const, text: 'new work', timestamp: 1 };
+			act(() => {
+				seedSessions([{ ...session, executionQueue: [item] }]);
+				seedSessions([{ ...session, executionQueue: [{ ...item, paused: true }] }]);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(stored()[0].executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(
+				vi.mocked(window.maestro.sessions.setAll).mock.calls.length +
+					vi.mocked(window.maestro.sessions.setMany).mock.calls.length
+			).toBe(1);
+		});
+	});
+
 	describe('sessionsReadOk gate', () => {
 		it('does not persist on the debounce timer when the read never came back', () => {
 			useSessionStore.setState({ sessionsReadOk: false });

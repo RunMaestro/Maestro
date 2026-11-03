@@ -3,7 +3,9 @@
  *
  * A hook that debounces session persistence to reduce disk writes.
  * During AI streaming, sessions can change 100+ times per second.
- * This hook batches those changes and writes at most once every 2 seconds.
+ * Ordinary changes are debounced for 2 seconds, with a maximum wait of five
+ * debounce intervals. Queue changes flush on the next task so consumed entries
+ * do not linger in peer clients while another agent is streaming.
  *
  * Persistence path (after PR-A 1.1):
  *  - During a successful initial load: capture the loaded sessions array as
@@ -435,6 +437,9 @@ export function useDebouncedPersistence(
 
 	// Store the timer ID for cleanup
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Streaming must not defer durability forever. Queue changes bring this
+	// deadline forward to the next task; ordinary changes get at most 5 delays.
+	const persistenceDeadlineRef = useRef<number | null>(null);
 
 	// Track if flush is in progress to prevent double-flushing
 	const flushingRef = useRef(false);
@@ -646,6 +651,7 @@ export function useDebouncedPersistence(
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 				timerRef.current = null;
+				persistenceDeadlineRef.current = null;
 			}
 
 			// When the caller hands us the post-mutation snapshot, seed the ref
@@ -723,6 +729,7 @@ export function useDebouncedPersistence(
 			recoveryGenerationRef.current++;
 			if (timerRef.current) clearTimeout(timerRef.current);
 			timerRef.current = null;
+			persistenceDeadlineRef.current = null;
 			flushRequestedRef.current = false;
 			peerBaselinesRef.current.clear();
 			sessionsRef.current = useSessionStore.getState().sessions;
@@ -755,7 +762,7 @@ export function useDebouncedPersistence(
 			}
 			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
 		});
-		const schedulePersist = () => {
+		const schedulePersist = (queueChanged: boolean) => {
 			if (!initialLoadComplete.current) {
 				return;
 			}
@@ -766,16 +773,24 @@ export function useDebouncedPersistence(
 				setIsPending(true);
 			}
 
-			// Clear existing timer
+			const now = Date.now();
+			if (queueChanged) persistenceDeadlineRef.current = now;
+			else persistenceDeadlineRef.current ??= now + delay * 5;
+
+			// Keep the earliest deadline even when another agent keeps streaming.
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}
 
 			// Set new debounce timer
-			timerRef.current = setTimeout(() => {
-				persistSessions();
-				timerRef.current = null;
-			}, delay);
+			timerRef.current = setTimeout(
+				() => {
+					timerRef.current = null;
+					persistenceDeadlineRef.current = null;
+					void persistSessions();
+				},
+				Math.max(0, Math.min(delay, persistenceDeadlineRef.current - now))
+			);
 		};
 
 		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
@@ -789,8 +804,8 @@ export function useDebouncedPersistence(
 			// the startup scan found gone) came back on the next launch.
 			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
+			const previous = new Map(prevState.sessions.map((session) => [session.id, session]));
 			if (initialLoadComplete.current && isWebDesktop()) {
-				const previous = new Map(prevState.sessions.map((session) => [session.id, session]));
 				for (const session of state.sessions) {
 					const before = previous.get(session.id);
 					if (session !== before) persistClientSessionView(session, before);
@@ -806,12 +821,20 @@ export function useDebouncedPersistence(
 				return;
 			}
 			if (state.sessions === prevState.sessions) return;
-			schedulePersist();
+			const queueChanged = state.sessions.some((session) => {
+				const before = previous.get(session.id)?.executionQueue;
+				return (
+					session.executionQueue !== before &&
+					canonicalJson(session.executionQueue ?? []) !== canonicalJson(before ?? [])
+				);
+			});
+			schedulePersist(queueChanged);
 		});
 
 		return () => {
 			unsubscribe();
 			unsubscribePeerSnapshots?.();
+			persistenceDeadlineRef.current = null;
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}
@@ -827,6 +850,7 @@ export function useDebouncedPersistence(
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 				timerRef.current = null;
+				persistenceDeadlineRef.current = null;
 			}
 			// Only flush if initial load is complete - otherwise we might save an empty array
 			// before sessions have been loaded, wiping out the user's data

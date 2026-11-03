@@ -152,3 +152,41 @@ describe('observed session changes', () => {
 		expect(closedNormal.activeBrowserTabId).toBe('private');
 	});
 });
+
+describe('consumed execution queue entries', () => {
+	it.each([{ waitingForConnection: undefined }, { paused: true }, { text: 'edited' }])(
+		'does not retain a consumed ID after a local metadata edit %j',
+		(edit) => {
+			const item = {
+				id: 'consumed',
+				type: 'message',
+				text: 'Ja bitte',
+				waitingForConnection: true,
+			};
+			const baseline = { executionQueue: [item] };
+			const unsent = { id: 'unsent', type: 'message', text: 'new work' };
+			const client = { executionQueue: [{ ...item, ...edit }, unsent] };
+			expect(
+				mergeSessionPersistenceChanges({ executionQueue: [] }, client, baseline, true, true)
+					.executionQueue
+			).toEqual([unsent]);
+		}
+	);
+
+	it('persists a host dequeue even if a browser updated the stored queued item', () => {
+		const item = { id: 'consumed', text: 'Ja bitte' };
+		const baseline = { executionQueue: [item] };
+		const stored = { executionQueue: [{ ...item, paused: true }] };
+		expect(
+			mergeSessionPersistenceChanges({ executionQueue: [] }, stored, baseline).executionQueue
+		).toEqual([]);
+	});
+
+	it('still retains edited rows in other collections', () => {
+		const baseline = { aiTabs: [{ id: 'edited', name: 'before' }] };
+		const stored = { aiTabs: [{ id: 'edited', name: 'after' }] };
+		expect(mergeSessionPersistenceChanges({ aiTabs: [] }, stored, baseline).aiTabs).toEqual(
+			stored.aiTabs
+		);
+	});
+});

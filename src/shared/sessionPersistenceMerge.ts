@@ -50,7 +50,8 @@ function mergeRows(
 	stored: RecordData[],
 	baseline: RecordData[],
 	preserveClient: boolean,
-	preserveLive: boolean
+	preserveLive: boolean,
+	removeEditedRows = false
 ): RecordData[] {
 	const key = (row: RecordData): string => (row.type ? `${row.type}:${row.id}` : row.id);
 	if ([...incoming, ...stored, ...baseline].some((row) => !row || typeof row.id !== 'string')) {
@@ -66,8 +67,10 @@ function mergeRows(
 		if (change) {
 			result.push(mergeRecord(change, current, base ?? current, preserveClient, preserveLive));
 			next.delete(id);
-		} else if (!base || !same(current, base)) {
-			// A peer added/edited this row after the caller's snapshot.
+		} else if (!base || (!removeEditedRows && !same(current, base))) {
+			// New rows survive. For queues, removing an observed ID is final even
+			// if a peer edited it; otherwise consumed work stays visibly queued.
+			// Other collections retain their existing edit-wins conflict policy.
 			result.push(current);
 		}
 	}
@@ -132,7 +135,8 @@ function mergeRecord(
 				Array.isArray(current) ? current : [],
 				Array.isArray(before) ? before : [],
 				preserveClient,
-				preserveLive
+				preserveLive,
+				field === 'executionQueue'
 			);
 		} else if (field === 'tab' && change && current && before) {
 			result[field] = mergeRecord(change, current, before, preserveClient, preserveLive);
