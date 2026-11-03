@@ -474,6 +474,7 @@ describe('process IPC handlers', () => {
 				'process:steer',
 				'process:broadcast-user-input',
 				'process:interrupt',
+				'process:closeAgent',
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
@@ -484,6 +485,8 @@ describe('process IPC handlers', () => {
 				'process:runCommand',
 				'permission:respond',
 				'process:cancelCommand',
+				'harnessControl:listPending',
+				'harnessControl:respond',
 			];
 
 			for (const channel of expectedChannels) {

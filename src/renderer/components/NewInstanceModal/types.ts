@@ -2,6 +2,7 @@ import type React from 'react';
 import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -63,7 +64,8 @@ export interface NewInstanceModalProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -104,6 +106,7 @@ export interface EditAgentModalProps {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
@@ -198,4 +201,7 @@ export interface AgentPickerGridProps {
 	/** Codex transport, per agent id. Defaults to `exec` when absent. */
 	codexTransportByAgent?: Record<string, CodexTransport>;
 	onCodexTransportChange?: (agentId: string, value: CodexTransport) => void;
+	/** Native protocol mode, per agent id. Defaults to current. */
+	harnessControlModeByAgent?: Record<string, HarnessControlMode>;
+	onHarnessControlModeChange?: (agentId: string, value: HarnessControlMode) => void;
 }

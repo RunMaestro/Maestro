@@ -38,6 +38,15 @@ export { useGridColumnCount } from './useGridColumnCount';
 
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
+
+// Keep a scrolling strip's active item on screen (tab bars, segmented controls)
+export {
+	useRevealActiveItem,
+	revealActiveProps,
+	computeRevealScroll,
+	REVEAL_ACTIVE_ATTRIBUTE,
+} from './useRevealActiveItem';
+export type { RevealAlign, RevealAxis } from './useRevealActiveItem';
 export { useStickToBottom } from './useStickToBottom';
 
 // Edge auto-scroll while an HTML5 drag hovers a scrollable container

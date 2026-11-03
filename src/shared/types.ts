@@ -5,6 +5,7 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 import type { CodexTransport } from './codexTransport';
+import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 
 /**
  * Union type of all valid agent IDs.
@@ -323,6 +324,8 @@ export interface SessionInfo {
 	 * Resolve with `resolveCodexTransport` in shared/codexTransport.
 	 */
 	codexTransport?: CodexTransport;
+	/** Optional native protocol control mode. Absent means the current transport. */
+	harnessControlMode?: HarnessControlMode;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential

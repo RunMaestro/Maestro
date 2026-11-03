@@ -146,6 +146,28 @@ it('defers polling an incomplete provider batch until the next tick without resu
 	expect(engine.database.db.prepare('SELECT * FROM usage').all()).toEqual(charge);
 });
 
+it.skipIf(process.platform !== 'win32')(
+	'does not record sent debt for a preflight CLI refusal',
+	async () => {
+		const { engine } = await fixture(1);
+		engine.database.set('config', {
+			...engine.database.config(),
+			mode: 'cli',
+			cliProvider: 'antigravity',
+			cliPath: 'C:\\tools\\agy.cmd',
+			model: '',
+			hostedConsent: true,
+			inputPrice: 0,
+			outputPrice: 0,
+		});
+		await engine.tick();
+		expect(engine.database.get('lastError')).toContain('line break');
+		expect(engine.database.db.prepare('SELECT * FROM usage').all()).toEqual([]);
+		expect(engine.database.db.prepare('SELECT * FROM memory_transport_requests').all()).toEqual([]);
+		expect(engine.database.queueProgress().claimed).toBe(0);
+	}
+);
+
 it('fences competing connections at five durable claims and preserves healthy reservations on open and crashed reservations on restart', async () => {
 	const { engine, directory } = await fixture(8);
 	const other = new MemoryDatabase(path.join(directory, 'pianola-memory.sqlite'));

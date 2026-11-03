@@ -9,7 +9,8 @@ import { FactoryDroidSessionStorage } from '../storage/factory-droid-session-sto
 import { OmpSessionStorage } from '../storage/omp-session-storage';
 import { GrokSessionStorage } from '../storage/grok-session-storage';
 import type { ClaudeSessionOriginsData } from '../storage/claude-session-storage';
-import type { MemoryRequest } from '../../shared/pianola/memory';
+import type { MemoryCliProviderInfo, MemoryRequest } from '../../shared/pianola/memory';
+import type { MemoryCliEnvironments } from './memory-provider-discovery';
 import { MemoryEngine } from './memory-engine';
 
 // Transcript normalization does not use origin mutations. Keep Electron Store out of the Node worker.
@@ -30,16 +31,32 @@ for (const reader of [
 ])
 	registerSessionStorage(reader);
 let featureEnabled = workerData.featureEnabled !== false;
-const engine = new MemoryEngine(workerData.directory, () => featureEnabled);
+let cliProviders: MemoryCliProviderInfo[] = [];
+let cliEnvironments: MemoryCliEnvironments = workerData.cliEnvironments ?? {};
+const engine = new MemoryEngine(workerData.directory, () => featureEnabled, {
+	cliProviders: () => cliProviders,
+	cliEnvironments: () => cliEnvironments,
+});
 let operations = Promise.resolve();
 parentPort?.on(
 	'message',
-	(message: { featureEnabled: boolean } | { id: number; request: MemoryRequest }) => {
+	(
+		message:
+			| { featureEnabled: boolean }
+			| {
+					id: number;
+					request: MemoryRequest;
+					memoryCliProviders?: MemoryCliProviderInfo[];
+					memoryCliEnvironments?: MemoryCliEnvironments;
+			  }
+	) => {
 		if ('featureEnabled' in message) {
 			featureEnabled = message.featureEnabled;
 			return;
 		}
 		operations = operations.then(async () => {
+			if (message.memoryCliProviders) cliProviders = message.memoryCliProviders;
+			if (message.memoryCliEnvironments) cliEnvironments = message.memoryCliEnvironments;
 			try {
 				const result = await engine.request(message.request);
 				if (message.request.action === 'configure' && engine.database.config().enabled)

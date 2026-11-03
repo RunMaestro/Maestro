@@ -629,6 +629,7 @@ function buildAgentSettings(
 		if (typeof session[flag] === 'boolean') settings[flag] = session[flag];
 	}
 	if (session.codexTransport) settings.codexTransport = session.codexTransport;
+	if (session.harnessControlMode === 'native') settings.harnessControlMode = 'native';
 	if (typeof record.fileTreeAutoRefreshInterval === 'number') {
 		settings.fileTreeAutoRefreshInterval = record.fileTreeAutoRefreshInterval;
 	}
