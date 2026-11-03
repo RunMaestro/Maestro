@@ -18,6 +18,14 @@ import { EventEmitter } from 'events';
 
 const { forkMock } = vi.hoisted(() => ({ forkMock: vi.fn() }));
 
+// fs passes straight through. `watch` is wrapped only so a test can see the
+// listener a watcher was given (an ESM namespace cannot be spied on directly).
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const watch = vi.fn(actual.watch);
+	return { ...actual, default: { ...actual, watch }, watch };
+});
+
 vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
 	utilityProcess: { fork: forkMock },
@@ -830,7 +838,20 @@ describe('PluginManager hot reload reconciliation', () => {
 				return actual.scanPluginFiles(dir, trustedKeys);
 			});
 			onChange.mockClear();
+			// Keep the real fs.watch, but hold on to the listener the manager puts on
+			// the plugins root. FSEvents on macOS can drop an event that lands right
+			// after a watch starts, and the staging dir below is created microseconds
+			// later, so waiting on the OS alone failed a random case on most runs.
+			const rootListeners: Array<() => void> = [];
+			const watchCallsBefore = vi.mocked(fs.watch).mock.calls.length;
 			manager.startWatching();
+			for (const [target, ...rest] of vi.mocked(fs.watch).mock.calls.slice(watchCallsBefore)) {
+				const listener = rest.find((arg) => typeof arg === 'function');
+				if (listener && String(target) === pluginsDir()) {
+					rootListeners.push(listener as () => void);
+				}
+			}
+			expect(rootListeners).toHaveLength(1);
 			const update = manager.update(source, 'demo');
 			const queued = condition === 'queued-rejection' ? manager.update(source, 'demo') : null;
 			const rejected = Promise.all([
@@ -859,7 +880,10 @@ describe('PluginManager hot reload reconciliation', () => {
 					available = false;
 					manager.reconcileServiceDependencies();
 				}
-				// Real fs.watch observes staging creation; wait for its normal 150 ms refresh.
+				// Deliver the staging-dir event the watcher is owed, then wait for its
+				// normal 150 ms debounced refresh. A real event arriving as well only
+				// re-arms the same debounce.
+				for (const listener of rootListeners) listener();
 				await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3000 });
 				if (condition === 'unchanged' || condition === 'queued-rejection') {
 					expect(sandbox.stop).not.toHaveBeenCalled();
