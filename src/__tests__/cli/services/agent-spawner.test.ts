@@ -20,8 +20,13 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
 import { DEFAULT_STDERR_TAIL_LIMIT } from '../../../shared/maestro-lib/run/start-turn';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
 // Create mock spawn function at module level
+const mockSpawnNativeSdkAgent = vi.hoisted(() => vi.fn());
+vi.mock('../../../cli/services/native-sdk-agent', () => ({
+	spawnNativeSdkAgent: mockSpawnNativeSdkAgent,
+}));
 const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
@@ -2152,7 +2157,7 @@ Some text with [x] in it that's not a checkbox
 						)
 					);
 					mockStderr.emit('data', Buffer.from('Reading additional input from stdin...'));
-					await vi.advanceTimersByTimeAsync(119_999);
+					await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS - 1);
 					expect(mockChild.kill).not.toHaveBeenCalled();
 					await vi.advanceTimersByTimeAsync(1);
 					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
@@ -2161,7 +2166,7 @@ Some text with [x] in it that's not a checkbox
 						success: false,
 						outcome: 'crashed',
 						agentSessionId: 'waiting',
-						error: expect.stringContaining('Startup or authentication may be blocked'),
+						error: expect.stringContaining('Last observed startup phase: turn started at +0s.'),
 					});
 					expect(mockSpawn.mock.calls[0][1]).toContain('cli_auth_credentials_store=file');
 					expect(vi.getTimerCount()).toBe(0);
@@ -2182,7 +2187,7 @@ Some text with [x] in it that's not a checkbox
 				});
 				await vi.advanceTimersByTimeAsync(0);
 				mockStdout.emit('data', Buffer.from(activity + '\n'));
-				await vi.advanceTimersByTimeAsync(180_000);
+				await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS + 60_000);
 				expect(mockChild.kill).not.toHaveBeenCalled();
 				mockStdout.emit(
 					'data',
@@ -3863,6 +3868,15 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it('uses the current transport for a stale native value on an unsupported provider', async () => {
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, {
+				harnessControlMode: 'native',
+			});
+			await driveSpawnToCompletion(pending, 0, CODEX_INIT());
+			expect(mockSpawnNativeSdkAgent).not.toHaveBeenCalled();
+			expect(mockSpawn).toHaveBeenCalled();
+		});
+
 		it('returns only the latest phase-less Codex answer after interim text and a tool', async () => {
 			const onProgress = vi.fn();
 			const pending = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
@@ -4738,6 +4752,190 @@ Some text with [x] in it that's not a checkbox
 			const sepIdx = args.indexOf('--');
 			expect(sepIdx).toBeGreaterThan(0);
 			expect(args[sepIdx + 1]).toBe('just the user message');
+		});
+	});
+
+	describe('spawnAgent: long prompt file delivery (Windows, omp)', () => {
+		const withPlatform = async (platform: string, fn: () => Promise<void>) => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+			const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			try {
+				await fn();
+			} finally {
+				writeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		};
+		// omp has no native system-prompt flag, so the embedded instructions
+		// ride in the user message; a Pianola-sized instruction block alone
+		// exceeded CreateProcess's argv cap and failed the spawn (ENAMETOOLONG).
+		const longSystemPrompt = 'x'.repeat(30_000);
+
+		it('removes the prompt file on close before the fallback timer, only once', async () => {
+			await withPlatform('win32', async () => {
+				const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+				const file = (fs.writeFileSync as Mock).mock.calls[0][0];
+				expect(unlink).toHaveBeenCalledExactlyOnceWith(file);
+				mockChild.emit('close', 0);
+				expect(unlink).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('cleans the prompt file on an asynchronous spawn error before close', async () => {
+			await withPlatform('win32', async () => {
+				const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				const p = spawnAgent('omp', 'C:\\proj', 'task', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await waitForSpawnCall();
+				mockChild.emit('error', new Error('Spawn failed'));
+				expect((await p).success).toBe(false);
+				expect(unlink).toHaveBeenCalledExactlyOnceWith((fs.writeFileSync as Mock).mock.calls[0][0]);
+				mockChild.emit('close', -1);
+				expect(unlink).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('cleans the prompt file when spawn throws synchronously', async () => {
+			await withPlatform('win32', async () => {
+				const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				mockSpawn.mockImplementationOnce(() => {
+					throw new Error('Invalid argument');
+				});
+				await expect(
+					spawnAgent('omp', 'C:\\proj', 'task', undefined, {
+						appendSystemPrompt: longSystemPrompt,
+					})
+				).rejects.toThrow('Invalid argument');
+				expect(unlink).toHaveBeenCalledExactlyOnceWith((fs.writeFileSync as Mock).mock.calls[0][0]);
+			});
+		});
+
+		it('delivers oversized prompts over stdin for agents without file-delivery support', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('codex', 'C:\\proj', 'task', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0, CODEX_INIT());
+				expect(spawnCall().args.join(' ')).not.toContain(longSystemPrompt);
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					expect.stringContaining(longSystemPrompt),
+					expect.any(Function)
+				);
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		it('does not create local prompt files for an SSH omp turn', async () => {
+			await withPlatform('win32', async () => {
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'ssh',
+					args: ['remotehost', 'omp'],
+					cwd: '/home/user',
+					sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+				});
+				const p = spawnAgent('omp', '/p', 'task', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				});
+				await driveSpawnToCompletion(p, 0);
+				expect(mockWrapSpawnWithSsh.mock.calls[0][0].prompt).toContain(longSystemPrompt);
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('delivers an over-limit prompt through a temp file via omp @path on Windows', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				const fileArg = args.find((a) => /^@.*maestro-prompt-/.test(a));
+				expect(fileArg).toBeDefined();
+				expect(args.at(-1)).toBe(fileArg);
+				expect(args[args.indexOf(fileArg!) - 1]).not.toBe('--');
+				expect(args.some((a) => a.includes('user msg'))).toBe(false);
+				expect(fs.writeFileSync).toHaveBeenCalledWith(
+					expect.stringMatching(/maestro-prompt-/),
+					expect.stringContaining('user msg'),
+					expect.objectContaining({ encoding: 'utf-8' })
+				);
+			});
+		});
+
+		it('creates distinct exclusive prompt files for turns started in the same millisecond', async () => {
+			await withPlatform('win32', async () => {
+				vi.spyOn(Date, 'now').mockReturnValue(123456);
+				const first = spawnAgent('omp', 'C:\\proj', 'first', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(first, 0);
+				const firstFile = (fs.writeFileSync as Mock).mock.calls[0][0];
+				const second = spawnAgent('omp', 'C:\\proj', 'second', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(second, 0);
+				const writes = (fs.writeFileSync as Mock).mock.calls;
+				expect(writes[1][0]).not.toBe(firstFile);
+				for (const call of writes) {
+					expect(call[2]).toEqual({ encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+				}
+			});
+		});
+
+		it('retries a colliding prompt file without reverting to oversized argv', async () => {
+			await withPlatform('win32', async () => {
+				vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+					throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+				});
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+				const writes = (fs.writeFileSync as Mock).mock.calls;
+				expect(writes).toHaveLength(2);
+				expect(writes[1][0]).not.toBe(writes[0][0]);
+				expect(spawnCall().args).toContain('@' + writes[1][0]);
+				expect(writes[1][2]).toEqual({ encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+			});
+		});
+
+		it('keeps a short prompt inline on Windows', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('omp', 'C:\\proj', 'short task');
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				expect(args[args.length - 1]).toBe('short task');
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		it('keeps an over-limit prompt inline off Windows', async () => {
+			await withPlatform('linux', async () => {
+				const p = spawnAgent('omp', '/proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				expect(args[args.length - 1]).toContain('user msg');
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
 		});
 	});
 });

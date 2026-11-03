@@ -125,6 +125,25 @@ describe('ComposerSendColumn', () => {
 			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
 		});
 
+		it('opens the menu on right-click even when a click would send', () => {
+			const { onSend, send } = renderWithMenu(() => false);
+			// fireEvent wraps the dispatch in act(), so the menu has rendered when
+			// it returns. It returns false when the handler prevented the default.
+			const notPrevented = fireEvent.contextMenu(send);
+
+			expect(notPrevented).toBe(false);
+			expect(screen.getByTestId('send-menu')).toBeInTheDocument();
+			expect(onSend).not.toHaveBeenCalled();
+		});
+
+		it('leaves right-click alone when the menu is unavailable (terminal mode)', () => {
+			const { send } = renderWithMenu(() => false, false);
+			const notPrevented = fireEvent.contextMenu(send);
+
+			expect(notPrevented).toBe(true);
+			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+		});
+
 		it('drops the popup attributes when the menu is unavailable (terminal mode)', () => {
 			const { send } = renderWithMenu(() => false, false);
 

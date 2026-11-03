@@ -134,6 +134,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	userJourneyEnabled: true,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
+	pianolaAutoFixEnabled: false,
 	annotatorPenColor: '#9146FF',
 	annotatorPenSize: 10,
 	annotatorThinning: 0.5,

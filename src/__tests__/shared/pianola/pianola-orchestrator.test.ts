@@ -61,6 +61,7 @@ function makeDeps(
 		messages?: Record<string, readonly PianolaMessage[]>;
 		ensureAgent?: OrchestratorDeps['ensureAgent'];
 		dispatch?: OrchestratorDeps['dispatch'];
+		persist?: OrchestratorDeps['persist'];
 		notify?: OrchestratorDeps['notify'];
 	} = {}
 ): OrchestratorDeps {
@@ -76,7 +77,7 @@ function makeDeps(
 				agentType: t.agentType ?? 'claude-code',
 			})),
 		dispatch: config.dispatch ?? vi.fn(async () => ({ success: true, tabId: 'tab-1' })),
-		persist: vi.fn(),
+		persist: config.persist ?? vi.fn(),
 		log: vi.fn(),
 		notify: config.notify,
 	};
@@ -105,6 +106,7 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 		expect(r.done).toBe(false);
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
 		// Iteration 2: A completes (busy -> idle); B becomes ready and dispatches.
 		deps = makeDeps({ runStates: { A: 'idle' }, messages: { A: [msg('assistant', 'A done.')] } });
 		r = await runOrchestratorIteration(state, deps, { concurrencyLimit: 5 });
@@ -115,6 +117,7 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 		expect(statusOf(r.state, 'C')).toBe('pending');
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
 		// Iteration 3: B completes; C dispatches.
 		deps = makeDeps({ runStates: { B: 'idle' }, messages: { B: [msg('assistant', 'B done.')] } });
 		r = await runOrchestratorIteration(state, deps, { concurrencyLimit: 5 });
@@ -124,6 +127,7 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 		expect(r.done).toBe(false);
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
 		// Iteration 4: C completes; plan is done.
 		deps = makeDeps({ runStates: { C: 'idle' }, messages: { C: [msg('assistant', 'C done.')] } });
 		r = await runOrchestratorIteration(state, deps, { concurrencyLimit: 5 });
@@ -148,6 +152,44 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 });
 
 describe('runOrchestratorIteration - concurrency', () => {
+	it('re-reads the program charter before every dispatch and keeps the CLI cap', async () => {
+		const p = plan([task({ id: 'A' }), task({ id: 'B' }), task({ id: 'C' })], {
+			programId: 'product',
+		});
+		let maxConcurrent = 3;
+		const deps = makeDeps({
+			dispatch: vi.fn(async () => {
+				maxConcurrent = 1;
+				return { success: true, tabId: 'tab-A' };
+			}),
+		});
+		deps.getProgramCharter = () => ({ maxConcurrent, maxAttempts: 2, validationRequired: false });
+		const result = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
+			concurrencyLimit: 3,
+		});
+		expect(result.dispatchedTaskIds).toEqual(['A']);
+		maxConcurrent = 5;
+		const capped = await runOrchestratorIteration(result.state, deps, { concurrencyLimit: 1 });
+		expect(capped.dispatchedTaskIds).toEqual([]);
+	});
+	it('honors a lowered charter after an asynchronous agent/history lookup', async () => {
+		const p = plan([task({ id: 'A', status: 'running' }), task({ id: 'B' })], {
+			programId: 'product',
+		});
+		let maxConcurrent = 2;
+		const deps = makeDeps({
+			ensureAgent: async () => {
+				maxConcurrent = 1;
+				return { agentId: 'bound' };
+			},
+		});
+		deps.getProgramCharter = () => ({ maxConcurrent, maxAttempts: 2, validationRequired: false });
+		const result = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
+			concurrencyLimit: 3,
+		});
+		expect(deps.dispatch).not.toHaveBeenCalled();
+		expect(result.state.plan.tasks[1]).toMatchObject({ status: 'pending', agentId: 'bound' });
+	});
 	it('caps simultaneous running tasks at concurrencyLimit', async () => {
 		const p = plan([task({ id: 'A' }), task({ id: 'B' }), task({ id: 'C' })]);
 		const state = initialOrchestratorState(p);
@@ -169,6 +211,7 @@ describe('runOrchestratorIteration - concurrency', () => {
 		expect(r.dispatchedTaskIds).toHaveLength(2);
 		state = r.state;
 
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 2 })).state;
 		// Iteration 2: A completes, freeing a slot; C dispatches; B keeps running.
 		const deps = makeDeps({
 			runStates: { A: 'idle', B: 'busy' },
@@ -301,13 +344,17 @@ describe('runOrchestratorIteration - agent and dispatch failures', () => {
 });
 
 describe('runOrchestratorIteration - persistence and progress', () => {
-	it('calls persist once per iteration with the updated plan', async () => {
+	it('persists the claim and confirmed receipt before the final plan', async () => {
 		const p = plan([task({ id: 'A' }), task({ id: 'B', dependsOn: ['A'] })]);
 		const deps = makeDeps();
 		const r = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
 			concurrencyLimit: 5,
 		});
-		expect(deps.persist).toHaveBeenCalledTimes(1);
+		expect(deps.persist).toHaveBeenCalledTimes(3);
+		expect(vi.mocked(deps.persist).mock.calls[0][0].tasks[0]).toMatchObject({
+			status: 'running',
+			agentId: 'agent-A',
+		});
 		// persist receives the final plan for this iteration (A now running).
 		expect(deps.persist).toHaveBeenCalledWith(r.state.plan);
 		expect(statusOf(r.state, 'A')).toBe('running');
@@ -339,17 +386,16 @@ describe('runOrchestratorIteration - prevStates carry-across', () => {
 		const p = plan([task({ id: 'A' })]);
 		let state = initialOrchestratorState(p);
 
-		// Iteration 1: A dispatched. It is seeded 'connecting' (its just-spun-up
-		// state) so the next poll has a working state to compare against.
+		// Dispatch records delivery without inventing a process state.
 		let r = await runOrchestratorIteration(state, makeDeps({ runStates: { A: 'busy' } }), {
 			concurrencyLimit: 5,
 		});
-		expect(r.state.prevStates.A).toBe('connecting');
+		expect(r.state.prevStates.A).toBeUndefined();
 		expect(statusOf(r.state, 'A')).toBe('running');
 		state = r.state;
 
-		// Iteration 2: A now idle. The carried prev state ('connecting') makes this a
-		// working->idle transition, so the task is detected done.
+		state = (await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 })).state;
+		// A real busy observation followed by idle can settle the legacy adapter.
 		r = await runOrchestratorIteration(
 			state,
 			makeDeps({ runStates: { A: 'idle' }, messages: { A: [msg('assistant', 'finished')] } }),
@@ -374,6 +420,23 @@ describe('runOrchestratorIteration - prevStates carry-across', () => {
 });
 
 describe('runOrchestratorIteration - dispatch failure does not leak agents', () => {
+	it('retains the ensured agent and tab when the pre-dispatch boundary read fails', async () => {
+		const deps = makeDeps();
+		deps.ensureAgent = vi.fn(async () => ({ agentId: 'created-agent', tabId: 'target-tab' }));
+		deps.getRecentMessages = vi.fn(async () => {
+			throw new Error('history unavailable');
+		});
+		const result = await runOrchestratorIteration(initialOrchestratorState(plan([task()])), deps, {
+			concurrencyLimit: 1,
+		});
+		expect(result.state.plan.tasks[0]).toMatchObject({
+			status: 'pending',
+			agentId: 'created-agent',
+			tabId: 'target-tab',
+		});
+		expect(deps.dispatch).not.toHaveBeenCalled();
+		expect(deps.persist).toHaveBeenCalledWith(result.state.plan);
+	});
 	it('persists the bound agent on a failed dispatch so the retry reuses it', async () => {
 		const p = plan([task({ id: 'A' })]);
 		let created = 0;
@@ -405,4 +468,206 @@ describe('runOrchestratorIteration - dispatch failure does not leak agents', () 
 		expect(statusOf(r.state, 'A')).toBe('running');
 		expect(created).toBe(1);
 	});
+	it('persists the claim and accepted dispatch before starting the next task', async () => {
+		const persisted: PianolaPlan[] = [];
+		let dispatchCalls = 0;
+		const deps = makeDeps({
+			dispatch: vi.fn(async () => {
+				dispatchCalls += 1;
+				if (dispatchCalls === 2) expect(persisted).toHaveLength(3);
+				return { success: true, tabId: 'tab-1' };
+			}),
+			persist: vi.fn((plan) => {
+				persisted.push(structuredClone(plan));
+			}),
+		});
+		await runOrchestratorIteration(
+			initialOrchestratorState(plan([task({ id: 'A' }), task({ id: 'B' })])),
+			deps,
+			{ concurrencyLimit: 2 }
+		);
+		expect(persisted).toHaveLength(5);
+		expect(persisted[0].tasks.find((task) => task.id === 'A')?.status).toBe('running');
+		expect(persisted[1].tasks.find((task) => task.id === 'A')?.status).toBe('running');
+		expect(persisted[1].tasks.find((task) => task.id === 'B')?.status).toBe('pending');
+		expect(persisted[3].tasks.find((task) => task.id === 'B')?.status).toBe('running');
+	});
+});
+
+describe('independent oracle settlement', () => {
+	const validation = { command: ['sh', '-c', 'true'], target: '/tmp/work' };
+	it.each(['verified', 'failed'] as const)(
+		'resets transient unknown attempts after %s',
+		async (verdict) => {
+			const deps = makeDeps({ runStates: { t1: 'idle' } });
+			deps.validate = vi.fn(async () => ({ verdict, reason: 'oracle result' }));
+			deps.getRunLedger = vi.fn(async () => ({ checksPassed: verdict === 'verified' }));
+			const result = await runOrchestratorIteration(
+				{
+					plan: plan([task({ status: 'running', validation, validationUnknownAttempts: 1 })]),
+					prevStates: {},
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(result.state.plan.tasks[0].validationUnknownAttempts).toBe(0);
+		}
+	);
+	it('does not settle an unknown oracle using unrelated passing checks or dispatch candidate fixes', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'unknown', reason: 'sandbox unavailable' }));
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: true, openFindings: 0 }));
+		deps.reactiveEnabled = () => true;
+		deps.dispatchFix = vi.fn(async () => ({ success: true }));
+		deps.requestMerge = vi.fn(async () => ({ merged: true }));
+		const first = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 't1')).toBe('needs_review');
+		expect(deps.requestMerge).not.toHaveBeenCalled();
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: false }));
+		await runOrchestratorIteration(second.state, deps, { concurrencyLimit: 1 });
+		expect(deps.dispatchFix).not.toHaveBeenCalled();
+	});
+	it('routes a failed verdict to review even without a ledger reader', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'failed', reason: 'assertion failed' }));
+		const result = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('needs_review');
+		expect(result.completedTaskIds).toEqual([]);
+	});
+	it('does not claim required validation passed when no validator is wired', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.getProgramCharter = () => ({ validationRequired: true, maxAttempts: 3 });
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: true, openFindings: 0 }));
+		deps.reactiveEnabled = () => true;
+		const result = await runOrchestratorIteration(
+			{
+				plan: plan([task({ status: 'running', validation })], { programId: 'p' }),
+				prevStates: { t1: 'busy' },
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('needs_review');
+	});
+	it('validates before reading the ledger and completes only on green', async () => {
+		let checked = false;
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => {
+			checked = true;
+			return { verdict: 'verified', reason: 'passed' };
+		});
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: checked }));
+		const result = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('done');
+		expect(deps.validate).toHaveBeenCalledTimes(1);
+	});
+	it('routes failed checks into a bounded fix cycle', async () => {
+		let green = false;
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => {
+			green = !green;
+			return { verdict: green ? 'failed' : 'verified', reason: 'oracle result' };
+		});
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: !green }));
+		deps.reactiveEnabled = () => true;
+		deps.dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
+		const initial = {
+			plan: plan([task({ status: 'running', validation })]),
+			prevStates: { t1: 'busy' as const },
+		};
+		const first = await runOrchestratorIteration(initial, deps, { concurrencyLimit: 1 });
+		expect(statusOf(first.state, 't1')).toBe('fixing');
+		expect(deps.dispatchFix).toHaveBeenCalledTimes(1);
+		const second = await runOrchestratorIteration(
+			{ ...first.state, prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(second.state, 't1')).toBe('done');
+	});
+	it('retries unknown once while idle then requests review with its reason', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'unknown', reason: 'bubblewrap unavailable' }));
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: false }));
+		const first = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(first.state, 't1')).toBe('running');
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 't1')).toBe('needs_review');
+		expect(second.state.plan.tasks[0].error).toBe('bubblewrap unavailable');
+	});
+	it('does not re-settle a fixing task on an idle tick after an unknown validation', async () => {
+		// The fix agent has been dispatched but not started yet: idle must not count as done,
+		// or every tick would burn a fix attempt without any fix run being observed.
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'failed', reason: 'exit 1' }));
+		const result = await runOrchestratorIteration(
+			{
+				plan: plan([
+					task({ status: 'fixing', validation, validationUnknownAttempts: 1, fixAttempts: 1 }),
+				]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('fixing');
+		expect(deps.validate).not.toHaveBeenCalled();
+	});
+	it('never invokes validation for a task without a spec', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'verified', reason: 'ok' }));
+		await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running' })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(deps.validate).not.toHaveBeenCalled();
+	});
+});
+
+describe('program charter validation requirement', () => {
+	it.each([true, false, undefined])(
+		'respects validationRequired=%s for a task without an oracle',
+		async (validationRequired) => {
+			const deps = makeDeps({ runStates: { t1: 'idle' } });
+			deps.getProgramCharter = vi.fn(() =>
+				validationRequired === undefined ? undefined : { validationRequired, maxAttempts: 3 }
+			);
+			deps.reactiveEnabled = () => true;
+			deps.getRunLedger = vi.fn(async () => ({ checksPassed: true, openFindings: 0 }));
+			deps.requestMerge = vi.fn(async () => ({ merged: true }));
+			const result = await runOrchestratorIteration(
+				{
+					plan: plan([task({ status: 'running' })], { programId: 'program-1' }),
+					prevStates: { t1: 'busy' },
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(statusOf(result.state, 't1')).toBe(validationRequired ? 'needs_review' : 'done');
+			if (validationRequired) {
+				expect(result.state.plan.tasks[0].error).toBe(
+					'validation required by program charter but task declares none'
+				);
+				expect(deps.requestMerge).not.toHaveBeenCalled();
+			}
+		}
+	);
 });

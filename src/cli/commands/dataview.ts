@@ -175,8 +175,9 @@ function taskLines(dv: DataviewModule, entries: unknown[], depth: number): strin
 	return lines;
 }
 
-/** One result as terminal text. Warnings go to stderr. */
+/** One result as terminal text. Warnings, and the note on a result cut at the row cap, go to stderr. */
 function printResult(dv: DataviewModule, result: RevivedDataviewResult): void {
+	let shown = 0;
 	switch (result.kind) {
 		case 'table':
 			if (result.rows.length === 0) console.log('No results.');
@@ -184,14 +185,17 @@ function printResult(dv: DataviewModule, result: RevivedDataviewResult): void {
 				const rows = result.rows.map((row) => row.map((cell) => valueText(dv, cell)));
 				console.log(formatTextTable(result.headers, rows, { maxWidth: terminalWidth() }));
 			}
+			shown = result.rows.length;
 			break;
 		case 'list':
 			if (result.items.length === 0) console.log('No results.');
 			for (const item of result.items) console.log(`- ${valueText(dv, item)}`);
+			shown = result.items.length;
 			break;
 		case 'task': {
 			const lines = taskLines(dv, result.groups as unknown[], 0);
 			console.log(lines.length > 0 ? lines.join('\n') : 'No results.');
+			shown = dv.countTaskGroupRows(result.groups as unknown[]);
 			break;
 		}
 		case 'unsupported':
@@ -203,6 +207,8 @@ function printResult(dv: DataviewModule, result: RevivedDataviewResult): void {
 			);
 			return;
 	}
+	const truncationNote = dv.dataviewTruncationNote(result, shown);
+	if (truncationNote) console.error(`Note: ${truncationNote}`);
 	for (const warning of result.warnings) console.error(`Warning: ${warning}`);
 }
 

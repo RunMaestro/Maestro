@@ -1,5 +1,5 @@
 /**
- * The running app's bundle service: what the Cue modal's Bundles tab and
+ * The running app's bundle service: what the Export Agent and Import Agent modals and
  * `maestro-cli bundle export|import` (through the WebSocket bridge) both call.
  */
 

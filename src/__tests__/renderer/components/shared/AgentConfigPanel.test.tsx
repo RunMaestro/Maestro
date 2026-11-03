@@ -727,6 +727,66 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 	});
 });
 
+describe('AgentConfigPanel - native control selector', () => {
+	const qwenAgent = () =>
+		createMockAgent({
+			id: 'qwen3-coder',
+			name: 'Qwen3 Coder',
+			path: '/usr/local/bin/qwen',
+			binaryName: 'qwen',
+		});
+
+	it('defaults to current and reports a native selection', () => {
+		const onHarnessControlModeChange = vi.fn();
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({ agent: qwenAgent(), onHarnessControlModeChange })}
+			/>
+		);
+
+		expect(screen.getByText('Control Mode')).toBeInTheDocument();
+		expect(screen.getByText('current (default)').closest('button')?.className).toContain('ring-2');
+		fireEvent.click(screen.getByText('native control'));
+		expect(onHarnessControlModeChange).toHaveBeenCalledWith('native');
+	});
+
+	it.each(['claude-code', 'copilot-cli'])('offers native SDK control for %s', (agentId) => {
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: createMockAgent({ id: agentId, name: agentId, binaryName: agentId }),
+					onHarnessControlModeChange: vi.fn(),
+				})}
+			/>
+		);
+		expect(screen.getByText('Control Mode')).toBeInTheDocument();
+		expect(screen.getByText('native control')).toBeInTheDocument();
+	});
+
+	it('shows a stored native choice and hides the selector for unsupported providers', () => {
+		const { rerender } = render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: qwenAgent(),
+					harnessControlMode: 'native',
+					onHarnessControlModeChange: vi.fn(),
+				})}
+			/>
+		);
+		expect(screen.getByText('native control').closest('button')?.className).toContain('ring-2');
+
+		rerender(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: createMockAgent({ id: 'codex', name: 'Codex', binaryName: 'codex' }),
+					onHarnessControlModeChange: vi.fn(),
+				})}
+			/>
+		);
+		expect(screen.queryByTestId('harness-control-mode-option')).not.toBeInTheDocument();
+	});
+});
+
 // =============================================================================
 // DETECTED INSTALLATION CHOOSER TESTS
 // =============================================================================

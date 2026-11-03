@@ -174,15 +174,26 @@ export function ExtensionsView({ theme, settingsBodies, tileRequest }: Extension
 						<ChevronLeft className="w-3.5 h-3.5" /> All plugins
 					</button>
 				) : !pluginsSubsystemEnabled ? null : (
-					<button
-						type="button"
-						data-testid="extensions-install"
-						onClick={() => void installPlugin()}
-						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
-						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-					>
-						<FolderPlus className="w-3.5 h-3.5" /> Install plugin…
-					</button>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							data-testid="extensions-install"
+							onClick={() => void installPlugin()}
+							className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						>
+							<FolderPlus className="w-3.5 h-3.5" /> Install archive…
+						</button>
+						<button
+							type="button"
+							data-testid="extensions-install-folder"
+							onClick={() => void installPlugin(true)}
+							className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						>
+							Install from folder…
+						</button>
+					</div>
 				)}
 			</div>
 			<p className="text-xs mb-4" style={{ color: theme.colors.textDim }}>

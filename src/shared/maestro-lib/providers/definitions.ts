@@ -96,6 +96,8 @@ export interface AgentConfig extends BaseAgentConfig {
 	// These are optional - agents that don't have them use hardcoded behavior
 	batchModePrefix?: string[]; // Args added before base args for batch mode (e.g., ['run'] for OpenCode)
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
+	/** Batch args that would bypass native approval prompts are omitted in Standard mode. */
+	skipBatchModeArgsInStandardMode?: boolean;
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
@@ -122,7 +124,10 @@ export interface AgentConfig extends BaseAgentConfig {
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
-	promptFileArgs?: (filePath: string) => string[]; // Replaces the final prompt and its separator with a Windows file attachment
+	// Args that deliver a prompt stored in a file (for example, omp's @path message).
+	// Replaces the final prompt and its separator where required, keeping embedded
+	// system prompts below Windows command-line limits.
+	promptFileArgs?: (promptFilePath: string) => string[];
 	stdinPromptArgs?: string[]; // Args required to read a raw query from stdin instead of argv
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
@@ -282,6 +287,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		//   - Read-only: --sandbox read-only (can only read files)
 		batchModePrefix: ['exec'], // Codex uses 'exec' subcommand for batch mode
 		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
 		// Read-only/plan mode. Do NOT add --dangerously-bypass-approvals-and-sandbox
@@ -491,6 +497,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: [],
 		batchModeArgs: ['-y'],
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'stream-json'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
 		// Qwen Code (qwen-code v0.19.x) ships a first-class `--approval-mode plan` that denies
@@ -532,6 +539,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: ['chat'],
 		batchModeArgs: ['-Q', '--yolo'],
+		skipBatchModeArgsInStandardMode: true,
 		yoloModeArgs: ['--yolo'],
 		promptArgs: (prompt: string) => ['-q', prompt],
 		stdinPromptArgs: ['--query-file', '-'],
@@ -610,7 +618,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		modelArgs: (modelId: string) => ['--model', modelId],
 		workingDirArgs: (dir: string) => ['--cwd', dir],
 		imageArgs: (imagePath: string) => [`@${imagePath}`],
-		promptFileArgs: (filePath: string) => [`@${filePath}`],
+		promptFileArgs: (promptFilePath: string) => [`@${promptFilePath}`],
 		configOptions: [
 			{
 				key: 'model',
@@ -638,11 +646,14 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'opencode',
 		args: [], // Base args (none for OpenCode - batch mode uses 'run' subcommand)
 		// OpenCode CLI argument builders
-		// Batch mode: opencode run --format json [--model provider/model] [--session <id>] [--agent plan] "prompt"
+		// Batch mode: opencode run --format json --thinking [--model provider/model] [--session <id>] [--agent plan] "prompt"
 		// YOLO mode (auto-approve all permissions) is enabled via OPENCODE_CONFIG_CONTENT env var.
 		// This prevents OpenCode from prompting for permission on external_directory access, which would hang in batch mode.
 		batchModePrefix: ['run'], // OpenCode uses 'run' subcommand for batch mode
-		jsonOutputArgs: ['--format', 'json'], // JSON output format
+		// JSON output format. `--thinking` makes `run` emit `reasoning` events; without
+		// it OpenCode drops reasoning parts and the Thinking toggle has nothing to show.
+		// It rides here rather than batchModeArgs so read-only (plan) runs keep it too.
+		jsonOutputArgs: ['--format', 'json', '--thinking'],
 		resumeArgs: (sessionId: string) => ['--session', sessionId], // Resume with session ID
 		readOnlyArgs: ['--agent', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --agent plan
@@ -707,6 +718,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Always skip permissions in batch mode (like Claude Code's --dangerously-skip-permissions)
 		// Maestro requires full access to work properly
 		batchModeArgs: ['--skip-permissions-unsafe'],
+		skipBatchModeArgsInStandardMode: true,
 
 		// JSON output for parsing
 		jsonOutputArgs: ['-o', 'stream-json'],
@@ -885,6 +897,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		//    boolean flag dedups cleanly.
 		// Keep batchModeArgs === yoloModeArgs so the CLI read-only filter strips it.
 		batchModeArgs: ['--always-approve'],
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
 		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID

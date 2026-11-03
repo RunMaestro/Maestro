@@ -1,7 +1,7 @@
 /**
  * Cue Bundle IPC Handlers
  *
- * Transport for the Cue modal's Bundles tab. Each handler delegates to
+ * Transport for the Left Bar's Export Agent and Import Agent modals. Each handler delegates to
  * `cue-bundle-service.ts`, which the WebSocket bridge also calls for
  * `maestro-cli bundle export|import` while the app runs.
  *

@@ -26,6 +26,7 @@ vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
 	stripJsonEventLines: vi.fn((text: string) => text),
+	isClaudeLimitNotice: vi.fn(() => false),
 }));
 
 vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
@@ -73,6 +74,8 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import {
 	nextSpawnGeneration,
@@ -84,7 +87,7 @@ import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/err
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
-
+import { cleanupTempFiles } from '../../../../main/process-manager/utils/imageUtils';
 const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
 	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
 >('../../../../main/process-manager/CopilotShutdownWaiter');
@@ -148,6 +151,7 @@ describe('ExitHandler', () => {
 	let exitHandler: ExitHandler;
 
 	beforeEach(() => {
+		vi.mocked(cleanupTempFiles).mockClear();
 		processes = new Map();
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
@@ -998,6 +1002,26 @@ describe('ExitHandler', () => {
 			});
 		};
 
+		it('cleans only predecessor files after replacement during shutdown reconciliation, once', async () => {
+			const predecessor = registerPredecessor({ tempFiles: ['/tmp/old-prompt.md'] });
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				// kill() releases the key before the replacement registers its generation.
+				processes.delete('test-session');
+				successor = createMockProcess({ pid: 4321, tempFiles: ['/tmp/new-prompt.md'] });
+				successor.spawnGeneration = nextSpawnGeneration('test-session');
+				processes.set('test-session', successor);
+				return 'timeout';
+			});
+
+			await exitHandler.handleExit('test-session', 143, predecessor);
+			await exitHandler.handleExit('test-session', 143, predecessor);
+
+			expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith(['/tmp/old-prompt.md']);
+			expect(predecessor.tempFiles).toBeUndefined();
+			expect(successor!.tempFiles).toEqual(['/tmp/new-prompt.md']);
+			expect(processes.get('test-session')).toBe(successor);
+		});
+
 		it('suppresses the exit event and leaves the successor tracked', async () => {
 			registerPredecessor();
 			supersedeDuringShutdownWait();
@@ -1560,6 +1584,70 @@ describe('ExitHandler', () => {
 	});
 
 	describe('exit event settlement argument', () => {
+		it.each(['\n', ''])(
+			'captures the final Claude result rather than an earlier failed investigation (delimiter: %j)',
+			async (delimiter) => {
+				const proc = createMockProcess({
+					isStreamJsonMode: true,
+					outputParser: new ClaudeOutputParser(),
+				});
+				processes.set('worker-ai-tab', proc);
+				const stdout = new StdoutHandler({ processes, emitter, bufferManager });
+				stdout.handleData(
+					'worker-ai-tab',
+					`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Build failed: investigating' }] } })}\n`
+				);
+				stdout.handleData(
+					'worker-ai-tab',
+					`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Fixed the build. All checks pass.' })}${delimiter}`
+				);
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				await exitHandler.handleExit('worker-ai-tab', 0);
+				expect(onExit.mock.calls[0][3]).toEqual({
+					outcome: 'completed',
+					answerCaptured: true,
+					answerTail: 'Fixed the build. All checks pass.',
+				});
+			}
+		);
+
+		it('redacts a secret whose label falls just before the stored tail boundary', async () => {
+			const secret = 'private-boundary-password';
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: `password=${secret}\n${' '.repeat(4000 - secret.length - 1)}`,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			await exitHandler.handleExit('worker-ai-tab', 0);
+			expect(onExit.mock.calls[0][3].answerTail).not.toContain(secret);
+			expect(onExit.mock.calls[0][3].answerTail.length).toBeLessThanOrEqual(4000);
+		});
+
+		it('carries a bounded redacted final answer before the renderer transcript is available', async () => {
+			const proc = createMockProcess({
+				toolType: 'codex',
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: `${'preliminary '.repeat(500)}token=super-secret-value\nTask failed: done-when`,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('worker-ai-tab', 0);
+
+			const settlement = onExit.mock.calls[0][3];
+			expect(settlement.answerTail).toContain('Task failed: done-when');
+			expect(settlement.answerTail).not.toContain('super-secret-value');
+			expect(settlement.answerTail.length).toBeLessThanOrEqual(4000);
+		});
+
 		it('emits completed-with-warning when result was emitted but process exited with code 1', async () => {
 			const mockParser = createMockOutputParser();
 			const proc = createMockProcess({
@@ -1584,6 +1672,7 @@ describe('ExitHandler', () => {
 			expect(receivedSettlement).toEqual({
 				outcome: 'completed-with-warning',
 				answerCaptured: true,
+				answerTail: 'Final answer text',
 			});
 		});
 
@@ -1611,6 +1700,7 @@ describe('ExitHandler', () => {
 			expect(receivedSettlement).toEqual({
 				outcome: 'completed-with-warning',
 				answerCaptured: true,
+				answerTail: 'Batch task finished',
 			});
 		});
 

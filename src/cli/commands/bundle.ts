@@ -3,7 +3,7 @@
 // and import one into a data directory.
 //
 // With the desktop app running (and no --data-dir), export and import go
-// through it: the same functions as the Cue modal's Bundles tab
+// through it: the same functions as the Export Agent and Import Agent modals
 // (`src/main/cue-bundle-service.ts`), so agents land in the running app
 // instead of a sessions file it would overwrite. Otherwise they read and
 // write the data directory straight off disk, and import refuses while an

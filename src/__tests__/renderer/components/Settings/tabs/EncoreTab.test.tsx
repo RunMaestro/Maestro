@@ -11,7 +11,7 @@
  * - EncoreTab builds a settingsBodies map with the configurable first-party
  *   keys (usageStats/symphony/maestroCue/directorNotes/quickChat/throughputGauge), each wired
  *   to its real config body (asserted via the body's data-setting-id anchor).
- * - Pianola has no inline config body (it uses its own modal).
+ * - Pianola repair permission has an inline body; manager/rules use its own modal.
  * - The real Director's Notes hook chain: agent detection is gated on
  *   isOpen && directorNotes-enabled; provider changes + custom config persist
  *   through window.maestro; models load for capable agents.
@@ -297,8 +297,8 @@ describe('EncoreTab', () => {
 			expect(screen.getByTestId('settings-body-directorNotes')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-quickChat')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-throughputGauge')).toBeInTheDocument();
-			// Pianola configures via its own modal - no inline body in the map.
-			expect(screen.queryByTestId('settings-body-pianola')).not.toBeInTheDocument();
+			// Repair permission is separate from the manager/rules modal.
+			expect(screen.getByTestId('settings-body-pianola')).toBeInTheDocument();
 			expect(screen.queryByTestId('settings-body-plugins')).not.toBeInTheDocument();
 		});
 

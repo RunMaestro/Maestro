@@ -117,7 +117,9 @@ export interface DispatchResponse {
  * When an agent asks to be notified itself and names no `--callback-tab`, the
  * callback goes back to the tab that ran this command (from its stamped shell
  * identity). Falling back to the agent's ACTIVE tab dropped the result into
- * whatever unrelated conversation the user was viewing when the run finished.
+ * whatever unrelated conversation the user was viewing when the run finished,
+ * so a caller with no tab (a Cue or bot run, a human's shell) gets a new tab
+ * instead; main decides that at delivery time.
  */
 function buildCallbackFields(
 	options: DispatchOptions,

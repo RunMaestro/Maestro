@@ -38,6 +38,19 @@ export function recoverNonTerminalRuns(deps: RecoverRunsDeps): number {
 
 	for (const run of deps.listRuns()) {
 		if (isTerminalAgentRunStatus(run.status)) continue;
+		// A completed process may still be waiting for checks/review. Its durable
+		// exit receipt survives a restart; the absence of a process is expected,
+		// and cannot turn this acceptance hold into an execution failure.
+		if (
+			run.status === 'needs_review' &&
+			typeof run.metadata?.completedAt === 'number' &&
+			Number.isFinite(run.metadata.completedAt) &&
+			run.metadata.exitCode === 0 &&
+			run.metadata.outcome !== 'crashed' &&
+			run.metadata.outcome !== 'interrupted' &&
+			!run.metadata.agentError
+		)
+			continue;
 		if (deps.isSessionLive(run.sessionId)) continue;
 
 		// queued/running with a dead session crashed mid-flight -> failed.

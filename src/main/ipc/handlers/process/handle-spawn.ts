@@ -69,7 +69,18 @@ import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
 import { resolveCodexSpawnTransport } from './resolve-codex-spawn-transport';
-import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
+import { resolveHarnessControlSpawnMode } from './resolve-harness-control-mode';
+import {
+	buildNativeAcpBaseArgs,
+	buildNativeRpcBaseArgs,
+	nativeRpcProtocol,
+} from '../../../../shared/maestro-lib/providers/native-control';
+import {
+	mergeClaudeSpawnEnvLayers,
+	type ClaudeSpawnEnvLayers,
+} from '../../../agents/claudeSpawnCore';
+import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
+import { hasStandardApprovalChannel } from '../../../../shared/agentMetadata';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
@@ -370,6 +381,12 @@ async function handleProcessSpawnImpl(
 	// agent record so a stale renderer cannot route the turn differently from
 	// what is saved. Handed to ProcessManager.spawn() below.
 	const codexTransport = resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore);
+	const harnessControlMode = resolveHarnessControlSpawnMode(
+		config,
+		baseSessionId,
+		deps.sessionsStore,
+		config.sessionId
+	);
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -395,6 +412,36 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	});
 	finalArgs = configResolution.args;
+	const effectivePermissionMode =
+		config.permissionMode ?? (config.readOnlyMode === true ? 'readonly' : undefined);
+	const nativeAcpBaseArgs =
+		harnessControlMode === 'native' && agent
+			? buildNativeAcpBaseArgs(agent, effectivePermissionMode)
+			: null;
+	const nativeAcpArgs = nativeAcpBaseArgs
+		? applyAgentConfigOverrides(agent, nativeAcpBaseArgs, {
+				agentConfigValues,
+				sessionCustomModel: config.sessionCustomModel,
+				sessionCustomEffort: config.sessionCustomEffort,
+				sessionCustomEnvVars: config.sessionCustomEnvVars,
+				sessionCustomArgs: config.sessionCustomArgs,
+				readOnlyMode: effectivePermissionMode === 'readonly',
+			}).args
+		: undefined;
+	const nativeRpcProtocolId =
+		(harnessControlMode === 'native' && agent ? nativeRpcProtocol(agent.id) : null) ?? undefined;
+	const nativeRpcBaseArgs =
+		nativeRpcProtocolId && agent ? buildNativeRpcBaseArgs(agent, effectivePermissionMode) : null;
+	const nativeRpcArgs = nativeRpcBaseArgs
+		? applyAgentConfigOverrides(agent, nativeRpcBaseArgs, {
+				agentConfigValues,
+				sessionCustomModel: config.sessionCustomModel,
+				sessionCustomEffort: config.sessionCustomEffort,
+				sessionCustomArgs: config.sessionCustomArgs,
+				sessionCustomEnvVars: config.sessionCustomEnvVars,
+				readOnlyMode: effectivePermissionMode === 'readonly',
+			}).args
+		: undefined;
 
 	if (configResolution.modelSource === 'session' && config.sessionCustomModel) {
 		logger.debug(`Using session-level model for ${config.toolType}`, LOG_CONTEXT, {
@@ -409,12 +456,8 @@ async function handleProcessSpawnImpl(
 		);
 	}
 
-	// Derive effective read-only state, honoring the legacy boolean flag only
-	// when permissionMode wasn't explicitly set (back-compat for older configs).
-	const hasExplicitPermissionMode = config.permissionMode !== undefined;
-	const isReadOnly =
-		config.permissionMode === 'readonly' ||
-		(!hasExplicitPermissionMode && config.readOnlyMode === true);
+	// Native adapters consume the same effective read-only decision as CLI args.
+	const isReadOnly = effectivePermissionMode === 'readonly';
 
 	// Settings -> Environment (`globalShellEnvVars`, read above before
 	// resolveClaudeSpawnContext). Loaded for every process type: terminals get it
@@ -651,7 +694,12 @@ async function handleProcessSpawnImpl(
 	// or the interactive (maestro-p/TUI) path, which renders its own
 	// native prompts.
 	// ========================================================================
-	if (isClaudeCode && claudeResolvedMode === 'api' && config.permissionMode === 'standard') {
+	if (
+		harnessControlMode !== 'native' &&
+		isClaudeCode &&
+		claudeResolvedMode === 'api' &&
+		config.permissionMode === 'standard'
+	) {
 		if (isSshEnabled) {
 			// Fail loud: never silently downgrade to full/unsafe over SSH.
 			// The relay socket is local-only, so it cannot mediate a remote
@@ -695,6 +743,35 @@ async function handleProcessSpawnImpl(
 			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
+	}
+
+	const standardApprovalChannel = hasStandardApprovalChannel({
+		toolType: config.toolType,
+		harnessControlMode,
+		codexTransport,
+		opencodeServer: encoreFeatures?.opencodeServer === true,
+		hasPrompt: !!config.prompt,
+		sshEnabled: isSshEnabled,
+		hasImages: (config.images?.length ?? 0) > 0,
+	});
+	if (config.permissionMode === 'standard' && !standardApprovalChannel) {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Standard permission mode needs a native approval channel. Select Native ACP or switch to Full Access or Read-Only.'
+		);
+		cleanupPluginRunProof();
+		return { success: false, pid: 0 };
+	}
+
+	if (harnessControlMode === 'native' && isSshEnabled) {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Native ACP control is currently local-only. Disable SSH or select the current transport.'
+		);
+		cleanupPluginRunProof();
+		return { success: false, pid: 0 };
 	}
 
 	signal.throwIfAborted();
@@ -866,15 +943,18 @@ async function handleProcessSpawnImpl(
 		commandToSpawn,
 		argsToSpawn,
 		customEnvVarsToPass,
+		harnessControlMode,
 	});
 	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = interactiveSpawn);
 	const interactiveClaudeBinPath = interactiveSpawn.claudeBinPath;
 
-	persistClaudeInteractiveMode(config, claudeContext, {
-		sessionsStore: deps.sessionsStore,
-		safeSend,
-		getMainWindow,
-	});
+	if (harnessControlMode !== 'native') {
+		persistClaudeInteractiveMode(config, claudeContext, {
+			sessionsStore: deps.sessionsStore,
+			safeSend,
+			getMainWindow,
+		});
+	}
 
 	if (config.sessionCustomPath) {
 		logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
@@ -1147,6 +1227,7 @@ async function handleProcessSpawnImpl(
 		// For SSH, prompt is included in the stdin script, not passed separately
 		// For local execution, pass prompt (with system prompt embedded for non-append-system-prompt agents)
 		prompt: sshRemoteUsed ? undefined : effectivePrompt,
+		appendSystemPrompt: config.appendSystemPrompt,
 		// Host-authoritative (see above): overrides whatever the caller sent.
 		sendPromptViaStdin,
 		sendPromptViaStdinRaw,
@@ -1160,7 +1241,20 @@ async function handleProcessSpawnImpl(
 		customEnvVars: customEnvVarsToPass,
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 		imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
+		harnessControlMode,
+		nativeAcpArgs,
+		nativeRpcProtocol: nativeRpcProtocolId,
+		nativeRpcArgs,
+		effort: config.sessionCustomEffort,
+		...(harnessControlMode === 'native'
+			? {
+					modelId: configResolution.modelId ?? config.modelId,
+					effort: configResolution.effort ?? config.sessionCustomEffort,
+					permissionMode: effectivePermissionMode,
+				}
+			: {}),
 		promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+		promptFileArgs: agent?.promptFileArgs, // Prompt-in-a-file delivery for CLIs that accept it (omp @path)
 		noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 		// Stats tracking: use cwd as projectPath if not explicitly provided
 		projectPath: config.cwd,
@@ -1179,6 +1273,26 @@ async function handleProcessSpawnImpl(
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
 	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
+	if (
+		result.success &&
+		harnessControlMode === 'native' &&
+		config.toolType === 'claude-code' &&
+		processManager.getHarnessControlCapabilities(config.sessionId)
+	) {
+		persistClaudeInteractiveMode(
+			config,
+			{
+				...claudeContext,
+				isClaudeCode: true,
+				claudeResolvedMode: 'api',
+				claudeResolvedReason: 'auto',
+				resolvedConfigDirKey:
+					claudeContext.resolvedConfigDirKey ??
+					resolveConfigDirKey(mergeClaudeSpawnEnvLayers(claudeEnvLayers)),
+			},
+			{ sessionsStore: deps.sessionsStore, safeSend, getMainWindow }
+		);
+	}
 	if (result.success) proofCleanup.release = undefined;
 
 	// The prime outran the spawn cap, so the process started without a usable
@@ -1249,6 +1363,7 @@ async function handleProcessSpawnImpl(
 		resolvedMaestroPBinPath &&
 		resolvedConfigDirKey &&
 		deps.interactiveReplayController &&
+		harnessControlMode !== 'native' &&
 		agent
 	) {
 		const replayPrompt = config.prompt ?? '';

@@ -73,7 +73,12 @@ function makeReactiveDeps(config: ReactiveConfig = {}): OrchestratorDeps {
 		notify: config.notify,
 		reactiveEnabled: config.reactiveEnabled,
 		getRunLedger: config.getRunLedger,
-		dispatchFix: config.dispatchFix,
+		dispatchFix: config.dispatchFix
+			? vi.fn(async (task, ledger) => {
+					const result = await config.dispatchFix!(task, ledger);
+					return result.success ? { ...result, tabId: result.tabId ?? 'fix-tab' } : result;
+				})
+			: undefined,
 		requestMerge: config.requestMerge,
 	};
 }
@@ -98,7 +103,7 @@ function runningState(t: PianolaTask): OrchestratorState {
 describe('reactiveEnabled gate (ISC-8.13)', () => {
 	it('leaves a needs_review task untouched when reactiveEnabled returns false', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review' })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const requestMerge = vi.fn(async () => ({ merged: true }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => false,
@@ -119,7 +124,7 @@ describe('reactiveEnabled gate (ISC-8.13)', () => {
 
 	it('leaves a needs_review task untouched when reactiveEnabled is absent', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review' })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const requestMerge = vi.fn(async () => ({ merged: true }));
 		const deps = makeReactiveDeps({
 			// reactiveEnabled omitted entirely.
@@ -187,7 +192,7 @@ describe('green task merge + settle (ISC-8.14)', () => {
 	it('does not treat a task with open findings as green (no merge)', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A' })]);
 		const requestMerge = vi.fn(async () => ({ merged: true }));
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
 			// checks pass but a finding is still open -> NOT fully green.
@@ -213,7 +218,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 	it('dispatches a fix for an open-findings task, moving it to fixing and incrementing fixAttempts', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A' })]);
 		const ledger: PianolaTaskLedger = { openFindings: 2, checksPassed: false, runId: 'r-A' };
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
 			getRunLedger: vi.fn(async () => ledger),
@@ -244,9 +249,103 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 		expect(taskOf(r.state, 'A')?.fixAttempts).toBe(1);
 	});
 
+	it.each([undefined, 'unconfirmed-fix-tab'])(
+		'holds an uncertain failed repair without redelivery or stale acceptance (tab: %s)',
+		async (tabId) => {
+			const ledger: PianolaTaskLedger = {
+				runId: 'acceptance-A',
+				openFindings: 1,
+				checksPassed: false,
+			};
+			const dispatchFix = vi.fn(async () => ({
+				success: false,
+				deliveryUncertain: true,
+				tabId,
+				error: 'repair response lost after possible delivery',
+			}));
+			const requestMerge = vi.fn(async () => ({ merged: true }));
+			const deps = makeReactiveDeps({
+				reactiveEnabled: () => true,
+				getRunLedger: vi.fn(async (entry) =>
+					entry.id === 'A' ? ledger : { openFindings: 1, checksPassed: false }
+				),
+				dispatchFix,
+				requestMerge,
+			});
+			const p = plan([
+				task({
+					id: 'A',
+					status: 'needs_review',
+					runId: 'acceptance-A',
+					tabId: 'old-tab',
+					executionRunId: 'old-execution',
+					fixAttempts: 1,
+				}),
+				task({ id: 'B', status: 'needs_review' }),
+				task({ id: 'child', dependsOn: ['A'] }),
+				task({ id: 'independent' }),
+			]);
+			const first = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
+				concurrencyLimit: 1,
+			});
+			expect(taskOf(first.state, 'A')).toMatchObject({
+				status: 'needs_review',
+				holdReason: 'delivery_uncertain',
+				runId: 'acceptance-A',
+				fixAttempts: 2,
+			});
+			expect(taskOf(first.state, 'A')?.tabId).toBeUndefined();
+			expect(taskOf(first.state, 'A')?.executionRunId).toBeUndefined();
+			expect(deps.persist).toHaveBeenNthCalledWith(
+				1,
+				expect.objectContaining({
+					tasks: expect.arrayContaining([
+						expect.objectContaining({
+							id: 'A',
+							status: 'fixing',
+							tabId: undefined,
+							executionRunId: undefined,
+							fixAttempts: 2,
+						}),
+					]),
+				})
+			);
+			// The still-failing ledger must not trigger a second repair, even when a
+			// restarted controller has lost all in-memory observations.
+			const retry = await runOrchestratorIteration(
+				initialOrchestratorState(first.state.plan),
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(taskOf(retry.state, 'A')).toEqual(taskOf(first.state, 'A'));
+			expect(dispatchFix).toHaveBeenCalledTimes(1);
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			// Even an old green ledger cannot approve an unidentified repair.
+			ledger.openFindings = 0;
+			ledger.checksPassed = true;
+			const next = await runOrchestratorIteration(
+				initialOrchestratorState(retry.state.plan),
+				deps,
+				{
+					concurrencyLimit: 1,
+				}
+			);
+			expect(taskOf(next.state, 'A')).toEqual(taskOf(first.state, 'A'));
+			expect(statusOf(next.state, 'child')).toBe('pending');
+			expect(statusOf(next.state, 'independent')).toBe('pending');
+			expect(dispatchFix).toHaveBeenCalledTimes(1);
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			expect(first.completedTaskIds).toEqual([]);
+			expect(next.completedTaskIds).not.toContain('A');
+			expect(next.failedTaskIds).toEqual([]);
+			expect(statusOf(next.state, 'B')).toBe('needs_review');
+			expect(requestMerge).not.toHaveBeenCalled();
+		}
+	);
+
 	it('still dispatches a fix at fixAttempts 2 (just under the cap)', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A', fixAttempts: 2 })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
 			getRunLedger: vi.fn(async () => ({ openFindings: 1, checksPassed: false, runId: 'r-A' })),
@@ -262,7 +361,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 
 	it('escalates a still-needs_review task to failed at the cap, dispatching no further fix', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A', fixAttempts: 3 })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const notify = vi.fn(async () => {});
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
@@ -291,7 +390,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 			checksPassed: false,
 			runId: 'r-A',
 		};
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			runStates: { A: 'idle' },
 			reactiveEnabled: () => true,
@@ -384,5 +483,352 @@ describe('ledger-driven settle of a running task (ISC-8.4)', () => {
 		const r = await runOrchestratorIteration(runningState(t), deps, { concurrencyLimit: 5 });
 		expect(statusOf(r.state, 'A')).toBe('done');
 		expect(r.completedTaskIds).toEqual(['A']);
+	});
+});
+
+describe('fix runs shorter than one poll interval', () => {
+	const msg = (role: PianolaMessage['role'], content: string, i: number): PianolaMessage => ({
+		id: `m${i}`,
+		role,
+		source: 'test',
+		content,
+		timestamp: new Date(1_700_000_000_000 + i).toISOString(),
+	});
+
+	it('records the last message id when a fix is dispatched', async () => {
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: { A: [msg('user', 'task', 0), msg('assistant', 'done', 1)] },
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ runId: 'r-A', checksPassed: false, openFindings: 0 })),
+			dispatchFix: vi.fn(async () => ({ success: true })),
+		});
+		const r = await runOrchestratorIteration(
+			{ plan: plan([task({ id: 'A', status: 'needs_review', runId: 'r-A' })]), prevStates: {} },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('fixing');
+		expect(taskOf(r.state, 'A')?.dispatchedMessageId).toBe('m1');
+	});
+
+	it('settles a fixing task that replied and went idle without ever being seen busy', async () => {
+		// The fix agent started and finished between two polls. Rule 6 of the
+		// detector sees only "idle, no transition"; the new reply is the completion.
+		const validate = vi.fn(async () => ({ verdict: 'verified' as const, reason: 'ok' }));
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: {
+				A: [
+					msg('user', 'task', 0),
+					msg('assistant', 'done', 1),
+					msg('user', 'fix', 2),
+					msg('assistant', 'fixed', 3),
+				],
+			},
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ runId: 'r-A', checksPassed: true, openFindings: 0 })),
+		});
+		deps.validate = validate;
+		const r = await runOrchestratorIteration(
+			{
+				plan: plan([
+					task({
+						id: 'A',
+						status: 'fixing',
+						runId: 'r-A',
+						fixAttempts: 1,
+						dispatchedMessageId: 'm2',
+						validation: { command: ['true'], target: '/w' },
+					}),
+				]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(validate).toHaveBeenCalledOnce();
+		expect(statusOf(r.state, 'A')).toBe('done');
+	});
+
+	it('keeps waiting while no reply has arrived since the fix was sent', async () => {
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: { A: [msg('user', 'task', 0), msg('assistant', 'done', 1), msg('user', 'fix', 2)] },
+			reactiveEnabled: () => true,
+		});
+		const r = await runOrchestratorIteration(
+			{
+				plan: plan([
+					task({
+						id: 'A',
+						status: 'fixing',
+						runId: 'r-A',
+						fixAttempts: 1,
+						dispatchedMessageId: 'm2',
+					}),
+				]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('fixing');
+	});
+});
+
+describe('outcome detection is scoped to the current dispatch', () => {
+	const msg = (role: PianolaMessage['role'], content: string, i: number): PianolaMessage => ({
+		id: `m${i}`,
+		role,
+		source: 'test',
+		content,
+		timestamp: new Date(1_700_000_000_000 + i).toISOString(),
+	});
+
+	it('ignores a failure marker from an earlier mission on the same agent tab', async () => {
+		// The agent's tab holds every mission it ever ran. A traceback from last week's
+		// task must not fail today's task, which replied cleanly after its dispatch.
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: {
+				A: [
+					msg('user', 'old task', 0),
+					msg('assistant', 'Traceback (most recent call last): boom', 1),
+					msg('user', 'new task', 2),
+					msg('assistant', 'Implemented on branch x; tests pass.', 3),
+				],
+			},
+		});
+		const r = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'running', dispatchedMessageId: 'm2' })]),
+				prevStates: { A: 'busy' },
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('done');
+	});
+
+	it('records where the transcript stood when a fresh task is dispatched', async () => {
+		const deps = makeReactiveDeps({
+			messages: {
+				A: [msg('user', 'old', 0), msg('assistant', 'done', 1), msg('user', 'new task', 2)],
+			},
+		});
+		const r = await runOrchestratorIteration(
+			{ plan: plan([task({ id: 'A', status: 'pending' })]), prevStates: {} },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('running');
+		expect(taskOf(r.state, 'A')?.dispatchedMessageId).toBe('m2');
+	});
+});
+
+describe('program charter fix attempts', () => {
+	it('caps fixes with the latest charter after history awaits', async () => {
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			runStates: { A: 'busy' },
+			getRunLedger: async () => ({ checksPassed: false, runId: 'r-B' }),
+			dispatchFix: vi.fn(async () => ({ success: true })),
+		});
+		let maxConcurrent = 2;
+		deps.getProgramCharter = () => ({ validationRequired: false, maxAttempts: 2, maxConcurrent });
+		deps.getRecentMessages = vi.fn(async (_task, options) => {
+			if (options?.fresh) maxConcurrent = 1;
+			return [];
+		});
+		const state = initialOrchestratorState(
+			plan([task({ id: 'A', status: 'running' }), task({ id: 'B', status: 'needs_review' })], {
+				programId: 'product',
+			})
+		);
+		const result = await runOrchestratorIteration(state, deps, { concurrencyLimit: 3 });
+		expect(deps.dispatchFix).not.toHaveBeenCalled();
+		expect(statusOf(result.state, 'B')).toBe('needs_review');
+	});
+	it.each([
+		[1, 1, 'failed', 1],
+		[5, 3, 'fixing', 4],
+	] as const)(
+		'uses maxAttempts=%s after %s fixes',
+		async (maxAttempts, attempts, status, nextAttempts) => {
+			const deps = makeReactiveDeps({
+				reactiveEnabled: () => true,
+				getRunLedger: vi.fn(async () => ({ checksPassed: false, runId: 'r-A' })),
+				dispatchFix: vi.fn(async () => ({ success: true })),
+			});
+			deps.getProgramCharter = vi.fn(() => ({ validationRequired: false, maxAttempts }));
+			const result = await runOrchestratorIteration(
+				{
+					plan: plan([task({ id: 'A', status: 'fixing', fixAttempts: attempts })], {
+						programId: 'program-1',
+					}),
+					prevStates: { A: 'busy' },
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(statusOf(result.state, 'A')).toBe(status);
+			expect(taskOf(result.state, 'A')?.fixAttempts).toBe(nextAttempts);
+			expect(deps.dispatchFix).toHaveBeenCalledTimes(status === 'failed' ? 0 : 1);
+		}
+	);
+});
+
+describe('rolling transcript history', () => {
+	const message = (id: number, role: PianolaMessage['role'] = 'assistant'): PianolaMessage => ({
+		id: `m${id}`,
+		role,
+		source: 'test',
+		content: 'work completed',
+		timestamp: new Date(id).toISOString(),
+	});
+	describe('pre-dispatch boundaries', () => {
+		it.each(['initial', 'fix'] as const)(
+			'does not consume old failure output when the %s prompt has not appeared yet',
+			async (kind) => {
+				const history = [
+					message(0, 'user'),
+					{ ...message(1), content: 'Traceback (most recent call last): old failure' },
+				];
+				const deps = makeReactiveDeps({
+					reactiveEnabled: () => true,
+					getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+					dispatchFix: vi.fn(async () => ({ success: true })),
+				});
+				deps.getRecentMessages = vi.fn(async () => [...history]);
+				const first = await runOrchestratorIteration(
+					{
+						plan: plan([task({ id: 'A', status: kind === 'fix' ? 'needs_review' : 'pending' })]),
+						prevStates: {},
+					},
+					deps,
+					{ concurrencyLimit: 1 }
+				);
+				expect(taskOf(first.state, 'A')?.dispatchedMessageId).toBe('m1');
+				const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+				expect(statusOf(second.state, 'A')).toBe(kind === 'fix' ? 'fixing' : 'running');
+			}
+		);
+		it('clears unknown attempts and stale working state when dispatching a fix', async () => {
+			const deps = makeReactiveDeps({
+				reactiveEnabled: () => true,
+				getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+				dispatchFix: vi.fn(async () => ({ success: true })),
+			});
+			const first = await runOrchestratorIteration(
+				{
+					plan: plan([task({ id: 'A', status: 'needs_review', validationUnknownAttempts: 1 })]),
+					prevStates: { A: 'busy' },
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(taskOf(first.state, 'A')?.validationUnknownAttempts).toBe(0);
+			const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+			expect(taskOf(second.state, 'A')?.fixAttempts).toBe(1);
+			expect(deps.dispatchFix).toHaveBeenCalledOnce();
+		});
+		it('reads the exact ensured tab before dispatch, not a post-dispatch snapshot', async () => {
+			const history = [message(0, 'user'), message(1)];
+			const deps = makeReactiveDeps();
+			deps.ensureAgent = vi.fn(async () => ({ agentId: 'agent-A', tabId: 'tab-A' }));
+			deps.getRecentMessages = vi.fn(async (task) => {
+				expect(task.tabId).toBe('tab-A');
+				return [...history];
+			});
+			deps.dispatch = vi.fn(async (task) => {
+				expect(task.tabId).toBe('tab-A');
+				expect(deps.getRecentMessages).toHaveBeenCalledOnce();
+				history.push(message(2, 'user'), message(3));
+				return { success: true, tabId: 'tab-A' };
+			});
+			const first = await runOrchestratorIteration(
+				initialOrchestratorState(plan([task({ id: 'A' })])),
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(taskOf(first.state, 'A')?.dispatchedMessageId).toBe('m1');
+			const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+			expect(statusOf(second.state, 'A')).toBe('done');
+		});
+	});
+	it('detects a fix reply after twenty old messages even when the history tail stays at twelve', async () => {
+		const history = Array.from({ length: 20 }, (_, i) => message(i));
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ runId: 'r-A', checksPassed: false })),
+			dispatchFix: vi.fn(async () => {
+				history.push(message(20, 'user'));
+				return { success: true };
+			}),
+		});
+		deps.getRecentMessages = vi.fn(async () => history.slice(-12));
+		const first = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'needs_review' })]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		history.push(message(21));
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'r-A', checksPassed: true }));
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 'A')).toBe('done');
+	});
+
+	it('refreshes the dispatch boundary instead of counting a cached old reply as a fix reply', async () => {
+		let history = [message(0, 'user'), message(1)];
+		const cached = history;
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+			dispatchFix: vi.fn(async () => {
+				history = [...history, message(2, 'user')];
+				return { success: true };
+			}),
+		});
+		deps.getRecentMessages = vi.fn(async (_task, options) => (options?.fresh ? history : cached));
+		const first = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'needs_review' })]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		// Ordinary polling now returns the refreshed cache, still with no fix reply.
+		deps.getRecentMessages = vi.fn(async () => history);
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 'A')).toBe('fixing');
+	});
+
+	it('does not swallow a fix reply that arrives before the fresh boundary read', async () => {
+		const history = [message(0, 'user'), message(1)];
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+			dispatchFix: vi.fn(async () => {
+				history.push(message(2, 'user'), message(3));
+				return { success: true };
+			}),
+		});
+		deps.getRecentMessages = vi.fn(async () => [...history]);
+		const first = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'needs_review' })]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: true }));
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 'A')).toBe('done');
 	});
 });

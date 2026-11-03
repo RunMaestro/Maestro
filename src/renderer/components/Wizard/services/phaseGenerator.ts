@@ -61,6 +61,8 @@ export interface GenerationConfig {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Native protocol selection for document-generation turns. */
+	harnessControlMode?: import('../../../../shared/maestro-lib/providers/native-control').HarnessControlMode;
 }
 
 /**
@@ -1170,6 +1172,7 @@ class PhaseGenerator {
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
 					...getClaudeTokenSourceFields(config.claudeTokenSource),
+					harnessControlMode: config.harnessControlMode,
 				})
 				.then(() => {
 					logger.info('[PhaseGenerator] Agent spawned successfully');

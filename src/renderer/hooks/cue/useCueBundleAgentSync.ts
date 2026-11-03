@@ -2,7 +2,7 @@
  * useCueBundleAgentSync.ts
  *
  * Answers main's request to add the agents a bundle import brings. Main
- * writes the files (from the Bundles tab, or `maestro-cli bundle import`
+ * writes the files (from the Import Agent modal, or `maestro-cli bundle import`
  * while the app runs), then hands the agents here because the renderer owns
  * them. A failure is reported back, and main rolls the files back.
  *

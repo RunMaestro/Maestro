@@ -258,7 +258,7 @@ describe('UsageDashboardModal shell components', () => {
 		expect(switchViewMode).toHaveBeenCalledWith('activity');
 	});
 
-	it('scrolls the active tab into view when the selection changes', () => {
+	it('marks the active tab for the strip to reveal', () => {
 		const viewModeTabs = [
 			{ value: 'overview' as const, label: 'Overview' },
 			{ value: 'activity' as const, label: 'Activity' },
@@ -266,12 +266,14 @@ describe('UsageDashboardModal shell components', () => {
 		const props = { theme, viewModeTabs, switchViewMode: vi.fn(), onKeyDown: vi.fn() };
 		const { rerender } = render(<UsageDashboardTabs {...props} viewMode="overview" />);
 
+		const overviewTab = screen.getByRole('tab', { name: 'Overview' });
 		const activityTab = screen.getByRole('tab', { name: 'Activity' });
-		const scrollSpy = vi.fn();
-		activityTab.scrollIntoView = scrollSpy;
+		expect(overviewTab).toHaveAttribute('data-reveal-active', 'true');
+		expect(activityTab).not.toHaveAttribute('data-reveal-active');
 
 		rerender(<UsageDashboardTabs {...props} viewMode="activity" />);
-		expect(scrollSpy).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
+		expect(activityTab).toHaveAttribute('data-reveal-active', 'true');
+		expect(overviewTab).not.toHaveAttribute('data-reveal-active');
 	});
 
 	it('forwards the tab strip element to the parent ref', () => {

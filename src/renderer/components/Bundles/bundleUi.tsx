@@ -1,42 +1,13 @@
 /**
- * Layout pieces every bundle surface shares: the Cue modal's Bundles tab and
- * the Left Bar's Export Agent and Import Agent modals.
+ * Layout pieces the Left Bar's Export Agent and Import Agent modals share.
  */
 
 import type { ReactNode } from 'react';
-import { FolderOpen, type LucideIcon } from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueBundleClaudeAssetSelection } from '../../../shared/cue-bundle-types';
 import type { CueBundleExportOutcome } from '../../../main/cue-bundle-service';
 import { formatSize } from '../../../shared/formatters';
-
-export function BundleSection({
-	theme,
-	title,
-	icon: Icon,
-	children,
-}: {
-	theme: Theme;
-	title: string;
-	icon: LucideIcon;
-	children: ReactNode;
-}) {
-	return (
-		<section
-			className="rounded-lg border p-4 space-y-3"
-			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-		>
-			<h3
-				className="flex items-center gap-2 text-sm font-semibold"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Icon className="w-4 h-4" style={{ color: theme.colors.accent }} />
-				{title}
-			</h3>
-			{children}
-		</section>
-	);
-}
 
 type Tone = 'success' | 'warning' | 'error' | 'info';
 
@@ -125,13 +96,15 @@ export function BundleOption({
 		>
 			<input
 				type="checkbox"
+				className="shrink-0"
 				checked={checked}
 				disabled={disabled}
 				onChange={(e) => onChange(e.target.checked)}
 			/>
-			{label}
+			{/* The label never wraps; a long hint does. */}
+			<span className="shrink-0 whitespace-nowrap">{label}</span>
 			{hint && (
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
+				<span className="text-xs min-w-0" style={{ color: theme.colors.textDim }}>
 					{hint}
 				</span>
 			)}
@@ -139,7 +112,7 @@ export function BundleOption({
 	);
 }
 
-export const CLAUDE_ASSET_OPTIONS: ReadonlyArray<{
+const CLAUDE_ASSET_OPTIONS: ReadonlyArray<{
 	key: keyof CueBundleClaudeAssetSelection;
 	label: string;
 	hint: string;

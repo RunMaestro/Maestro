@@ -574,6 +574,12 @@ export class HostBrowserPages {
 			}
 		);
 		ipcMain.handle('browser:pageClose', (event: IpcMainInvokeEvent, target: BrowserRelayTarget) => {
+			// Closing is idempotent. The renderer asks for it after the tab has left
+			// the store, and by then the tab's webview guest has usually unmounted
+			// and taken the page entry with it. A page that is already gone is
+			// closed, not an error (MAESTRO-17P).
+			const current = this.pages.get(key(target));
+			if (!current || current.guest.isDestroyed()) return;
 			const page = this.owned(event, target);
 			page.window?.destroy();
 		});

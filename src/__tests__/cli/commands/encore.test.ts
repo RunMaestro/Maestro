@@ -200,6 +200,38 @@ describe('encore commands', () => {
 		expect((getPayload2().value as Record<string, boolean>).pianola).toBe(true);
 	});
 
+	it('reports the effective Pianola mode independently of its autopilot alias', () => {
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'encoreFeatures' ? { pianola: true, autopilot: true } : undefined
+		);
+		encoreList({ json: true });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).pianola).toEqual({
+			mode: 'supervision',
+			autoFixEnabled: false,
+			automaticMergeAvailable: false,
+		});
+	});
+
+	it('reports explicit repairs as inactive while Pianola is disabled', () => {
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: false }
+		);
+		encoreList({ json: true });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).pianola).toEqual({
+			mode: 'disabled',
+			autoFixEnabled: true,
+			automaticMergeAvailable: false,
+		});
+	});
+
+	it('explains that enabling the autopilot alias only enables Pianola', async () => {
+		const getPayload = mockSend({ success: true });
+		await encoreSet('autopilot', true, { json: true });
+		expect(getPayload()).toMatchObject({ value: { pianola: true } });
+		expect(getPayload().value).not.toHaveProperty('pianolaAutoFixEnabled');
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).note).toMatch(/alias.*Pianola.*repair/i);
+	});
+
 	it.each(['throughput-gauge', 'throughput', 'gauge', 'tps'])(
 		'resolves the "%s" alias to throughputGauge',
 		async (alias) => {

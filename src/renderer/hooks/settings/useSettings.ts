@@ -85,6 +85,8 @@ export interface UseSettingsReturn {
 
 	// Pianola auto-watch
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
+	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Host media tools

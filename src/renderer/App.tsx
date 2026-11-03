@@ -1097,7 +1097,7 @@ function MaestroConsoleInner() {
 	// subsystem so it pauses background work when the window is hidden. Silent
 	// while the Cue Encore Feature is off.
 	useCueVisibilityWiring(encoreFeatures.maestroCue);
-	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
+	// Adds the agents a bundle import brings (Import Agent modal or `maestro-cli bundle import`).
 	useCueBundleAgentSync();
 
 	// --- TAB HANDLERS (extracted hook) ---

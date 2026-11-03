@@ -473,7 +473,7 @@ describe('useSessionLifecycle', () => {
 				sessionId,
 				name,
 				toolType,
-				...Array(23).fill(undefined),
+				...Array(24).fill(undefined),
 				true
 			);
 

@@ -512,6 +512,8 @@ A steered message is headed with the Steer button's arrow in the transcript, and
 
 Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
 
+A result that comes back from `maestro-cli dispatch --notify-on-complete` while its tab is mid-turn waits in the queue and never offers Steer. It is another agent's report, not your message, so it runs as its own turn once the tab is idle instead of being typed into the turn already running.
+
 |                     | Force Send                                                                                              | Steer                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Use it when         | The message's tab is idle and the queue is holding it                                                   | The message's tab is working                                                  |
@@ -534,6 +536,8 @@ While the agent is working, clicking **Send** opens a small menu instead of send
 A row that cannot run right now is dimmed and says why in one line. Force Send while Forced Parallel Execution is off jumps to that setting when you click it. The `?` next to Steer explains how to get steering on this agent: switch a Claude Code agent to the TUI token source, or a Codex agent to the app-server transport. For any other provider, it links a pre-filled feature request.
 
 When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
+
+Right-click **Send** to open the menu at any time, even when the agent is idle, the input is empty, or the setting is off. With nothing running, the first row reads **Send** instead of **Queue**, since the message starts at once.
 
 Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." --held` queues a message held, and `maestro-cli queue hold <item-id> --agent <id>` / `queue resume <item-id> --agent <id>` hold or release a queued card. `queue list` shows which items are held.
 
@@ -1001,13 +1005,14 @@ Every AI tab can run a different model and a different reasoning effort from the
 
 The console puts the two knobs on two axes, so the direction you press matches the axis you see:
 
-| Key              | Does                                                           |
-| ---------------- | -------------------------------------------------------------- |
-| `Up` / `Down`    | Turn the model wheel. It wraps, so you can run off either end. |
-| `Left` / `Right` | Move along the effort scale. It wraps too.                     |
-| Any letter       | Jump the wheel to a model whose name starts with it.           |
-| `Enter`          | Apply both and close.                                          |
-| `Escape`         | Close and leave the tab exactly as it was.                     |
+| Key                | Does                                                           |
+| ------------------ | -------------------------------------------------------------- |
+| `Up` / `Down`      | Turn the model wheel. It wraps, so you can run off either end. |
+| `Left` / `Right`   | Move along the effort scale. It wraps too.                     |
+| Any letter         | Jump the wheel to a model whose name starts with it.           |
+| `Cmd+R` / `Ctrl+R` | Re-read the model list (picks up a model you just installed).  |
+| `Enter`            | Apply both and close.                                          |
+| `Escape`           | Close and leave the tab exactly as it was.                     |
 
 Nothing is written until you press Enter, so browsing costs nothing.
 
@@ -1019,6 +1024,8 @@ Nothing is written until you press Enter, so browsing costs nothing.
 - `(default)` clears the tab's override and falls back to the agent's own setting.
 - Not every model honors effort. Agents that expose the knob pass it through, and a model that has no reasoning budget ignores it.
 - The effort bars under the stops rise with the level, so you can read where you are on the scale without reading the labels. `(default)` sits apart from the scale and has no bar - it means "let the agent decide" rather than naming a level.
+
+**Picking up a new model.** The model list is read once and then cached. After you add a model to the provider (for example `ollama pull` for an OpenCode agent backed by Ollama), press `Cmd+R` / `Ctrl+R` in the console, click the refresh icon beside **Model**, or click **Refresh** at the top of the model pill's dropdown. A flash reports how many models were found and how many are new. A refresh from any of these places, from **Settings -> Agents**, or from `maestro-cli list models <provider> --refresh` updates every model picker on screen.
 
 You can also reach it from Quick Actions (`Cmd+K` / `Ctrl+K`) as **Change Tabs Model and Effort**. It applies to AI tabs only.
 

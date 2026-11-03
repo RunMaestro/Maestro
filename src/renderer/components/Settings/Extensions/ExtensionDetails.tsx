@@ -413,9 +413,9 @@ export function ExtensionDetails({
 							onClick={() => onUpdate(record)}
 							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							title="Choose a folder with a newer version of this plugin"
+							title="Choose a .tgz/.tar.gz archive, or plugin.json inside an unpacked plugin folder"
 						>
-							<RefreshCw className="w-4 h-4" /> Update from folder…
+							<RefreshCw className="w-4 h-4" /> Update from File…
 						</button>
 					)}
 				</div>

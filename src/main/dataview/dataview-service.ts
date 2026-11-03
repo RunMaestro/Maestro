@@ -10,6 +10,8 @@
  *   counts on from where the last one stopped, so a consumer that keyed a result by `(root, revision)`
  *   never mistakes a new answer for an old one.
  * - `onChange` relays every index's changes with the root they belong to (DV-7).
+ * - Each root's DQL runs on that root's query worker (`DataviewQueryRunner`), never on this thread, so a
+ *   slow query cannot freeze the app; the runner is disposed with its index.
  *
  * IPC handlers and the WS bridge (the CLI) both call this one instance (`getDataviewService()`), so every
  * surface reads the same index. The request methods (`query`, `queryInline`, `indexStatus`, `rebuildIndex`,
@@ -38,8 +40,6 @@ import { encoreDisabledMessage, isEncoreFeatureEnabled } from '../../shared/enco
 import { sshUnresolvedRemoteMessage } from '../../shared/maestro-lib/launch/ssh-spawn-wrapper';
 import { isAbsolutePath } from '../../shared/formatters';
 import {
-	executeDql,
-	executeInlineDql,
 	extractDataviewBlocks,
 	type DataviewChangeEvent,
 	type DataviewErrorResult,
@@ -82,6 +82,7 @@ import {
 	type VaultFs,
 } from './vault-fs';
 import { VaultIndex } from './vault-index';
+import { DataviewQueryRunner, type DataviewQueryRunnerOptions } from './query-runner';
 import { resolveVaultRoot } from './vault-root';
 import { toVaultRelativePath } from './vault-watcher';
 import { resolveDataviewAgentContext } from './agent-context';
@@ -137,6 +138,8 @@ export interface DataviewServiceOptions {
 	trustedRoots?: () => readonly unknown[];
 	/** Store a new trust list. Defaults to writing the settings store. */
 	setTrustedRoots?: (roots: string[]) => void;
+	/** How each root's queries run (`query-runner.ts`). Defaults to a worker thread per root. */
+	queryRunner?: DataviewQueryRunnerOptions;
 }
 
 export type DataviewTrustedRootsListener = (roots: string[]) => void;
@@ -144,6 +147,8 @@ export type DataviewTrustedRootsListener = (roots: string[]) => void;
 interface IndexEntry {
 	key: string;
 	index: VaultIndex;
+	/** Runs the root's DQL off the main thread, under a watchdog. */
+	runner: DataviewQueryRunner;
 	/** Settles when the index has opened; rejects when it could not. */
 	ready: Promise<void>;
 	idleTimer: ReturnType<typeof setTimeout> | null;
@@ -208,6 +213,7 @@ export class DataviewService {
 	private readonly isJsEnabled: () => boolean;
 	private readonly trustedRoots: () => readonly unknown[];
 	private readonly setTrustedRoots: (roots: string[]) => void;
+	private readonly queryRunnerOptions: DataviewQueryRunnerOptions;
 	private readonly trustListeners = new Set<DataviewTrustedRootsListener>();
 	/** Roots a block's "Run once" opened for this app session, keyed like `entries`. Never persisted. */
 	private readonly runOnceGrants = new Set<string>();
@@ -222,6 +228,7 @@ export class DataviewService {
 		this.isJsEnabled = options.isJsEnabled ?? defaultIsJsEnabled;
 		this.trustedRoots = options.trustedRoots ?? defaultTrustedRoots;
 		this.setTrustedRoots = options.setTrustedRoots ?? defaultSetTrustedRoots;
+		this.queryRunnerOptions = options.queryRunner ?? {};
 	}
 
 	/** How many roots are open right now. */
@@ -242,6 +249,14 @@ export class DataviewService {
 		return this.openRoot(root, sshRemoteId);
 	}
 
+	/** {@link getIndex}, answering with the root's whole entry (its query runner too). */
+	private async getEntry(filePath: string, agent: DataviewAgentContext): Promise<IndexEntry> {
+		this.requireEnabled();
+		const sshRemoteId = agent.sshRemoteId ?? null;
+		const root = await this.resolveRoot(filePath, { agentCwd: agent.agentCwd, sshRemoteId });
+		return this.openRootEntry(root, sshRemoteId);
+	}
+
 	/**
 	 * Run one `dataview` block with `this` bound to the note at `filePath` (`dataview:query`). Query
 	 * problems come back as an error result (DV-9); a bad request, an unknown agent, an unresolvable SSH
@@ -250,7 +265,7 @@ export class DataviewService {
 	async query(request: DataviewQueryRequest): Promise<DataviewQueryResponse<DataviewResult>> {
 		this.requireEnabled();
 		const source = requireString(request?.source, 'source');
-		return this.runForNote(request, (index, thisPath) => executeDql(source, thisPath, index));
+		return this.runForNote(request, ({ runner }, thisPath) => runner.dql(source, thisPath));
 	}
 
 	/** Evaluate one inline `` `= expr` `` against the note at `filePath` (`dataview:queryInline`). */
@@ -259,8 +274,8 @@ export class DataviewService {
 	): Promise<DataviewQueryResponse<DataviewInlineResult>> {
 		this.requireEnabled();
 		const expression = requireString(request?.expression, 'expression');
-		return this.runForNote(request, async (index, thisPath) =>
-			executeInlineDql(expression, thisPath, index)
+		return this.runForNote(request, ({ runner }, thisPath) =>
+			runner.inlineQuery(expression, thisPath)
 		);
 	}
 
@@ -278,21 +293,24 @@ export class DataviewService {
 		if (wanted !== undefined && (!Number.isInteger(wanted) || wanted < 1)) {
 			throw new Error('Dataview: block must be a whole number from 1');
 		}
-		return this.runForNote(request, async (index, thisPath): Promise<DataviewFileQueryResult> => {
-			const fences = extractDataviewBlocks(await index.fs.readText(thisPath));
-			const blocks: DataviewFileBlock[] = [];
-			let position = 0;
-			for (const fence of fences) {
-				const block = fence.language === 'dataview' ? ++position : null;
-				if (wanted !== undefined && block !== wanted) continue;
-				blocks.push({
-					...fence,
-					block,
-					...(block === null ? {} : { result: await executeDql(fence.source, thisPath, index) }),
-				});
+		return this.runForNote(
+			request,
+			async ({ index, runner }, thisPath): Promise<DataviewFileQueryResult> => {
+				const fences = extractDataviewBlocks(await index.fs.readText(thisPath));
+				const blocks: DataviewFileBlock[] = [];
+				let position = 0;
+				for (const fence of fences) {
+					const block = fence.language === 'dataview' ? ++position : null;
+					if (wanted !== undefined && block !== wanted) continue;
+					blocks.push({
+						...fence,
+						block,
+						...(block === null ? {} : { result: await runner.dql(fence.source, thisPath) }),
+					});
+				}
+				return { kind: 'blocks', blockCount: position, blocks };
 			}
-			return { kind: 'blocks', blockCount: position, blocks };
-		});
+		);
 	}
 
 	/**
@@ -539,23 +557,26 @@ export class DataviewService {
 	 * Open the index of the note a request names, and find the note in it. `thisPath` is the note's
 	 * vault-relative path, or null when the agent's cwd roots the note but the note sits outside it.
 	 */
-	private async openNote(request: {
+	private async openNote(request: { filePath: string; agentId: string }): Promise<{
+		entry: IndexEntry;
+		index: VaultIndex;
 		filePath: string;
-		agentId: string;
-	}): Promise<{ index: VaultIndex; filePath: string; thisPath: string | null }> {
+		thisPath: string | null;
+	}> {
 		const filePath = requireAbsolutePath(request?.filePath, 'filePath');
 		const agent = this.resolveAgent(requireString(request?.agentId, 'agentId'));
-		const index = await this.getIndex(filePath, agent);
+		const entry = await this.getEntry(filePath, agent);
+		const { index } = entry;
 		const pathApi = index.fs.sshRemoteId ? path.posix : path;
-		return { index, filePath, thisPath: toVaultRelativePath(index.root, filePath, pathApi) };
+		return { entry, index, filePath, thisPath: toVaultRelativePath(index.root, filePath, pathApi) };
 	}
 
 	/** Open the note's index and run `run` with the note's vault-relative path bound as `this`. */
 	private async runForNote<R>(
 		request: { filePath: string; agentId: string },
-		run: (index: VaultIndex, thisPath: string) => Promise<R>
+		run: (entry: IndexEntry, thisPath: string) => Promise<R>
 	): Promise<DataviewQueryResponse<R | DataviewErrorResult>> {
-		const { index, filePath, thisPath } = await this.openNote(request);
+		const { entry, index, filePath, thisPath } = await this.openNote(request);
 		const sshRemoteId = index.fs.sshRemoteId;
 		// Read before running: a change that lands mid-query then carries a newer revision, and the
 		// consumer re-runs instead of keeping a result that might predate it.
@@ -575,7 +596,7 @@ export class DataviewService {
 			sshRemoteId,
 			revision,
 			path: thisPath,
-			result: await run(index, thisPath),
+			result: await run(entry, thisPath),
 		};
 	}
 
@@ -586,6 +607,10 @@ export class DataviewService {
 	}
 
 	private async openRoot(root: string, sshRemoteId: string | null): Promise<VaultIndex> {
+		return (await this.openRootEntry(root, sshRemoteId)).index;
+	}
+
+	private async openRootEntry(root: string, sshRemoteId: string | null): Promise<IndexEntry> {
 		const normalized = normalizeVaultRoot(root, sshRemoteId);
 		const key = rootKey(normalized, sshRemoteId);
 		let entry = this.entries.get(key);
@@ -599,7 +624,7 @@ export class DataviewService {
 		this.armIdleTimer(entry);
 		this.evictOverCap();
 		await entry.ready;
-		return entry.index;
+		return entry;
 	}
 
 	private createEntry(key: string, root: string, sshRemoteId: string | null): IndexEntry {
@@ -613,6 +638,7 @@ export class DataviewService {
 		const entry: IndexEntry = {
 			key,
 			index,
+			runner: new DataviewQueryRunner(index, this.queryRunnerOptions),
 			ready: Promise.resolve(),
 			idleTimer: null,
 			unsubscribe,
@@ -684,6 +710,7 @@ export class DataviewService {
 		// An index still opening finishes first (or fails), so dispose sees its final state.
 		await entry.ready.catch(() => undefined);
 		await entry.index.dispose();
+		await entry.runner.dispose();
 		const floor = this.revisionFloors.get(entry.key) ?? 0;
 		this.revisionFloors.set(entry.key, Math.max(floor, entry.index.revision));
 	}

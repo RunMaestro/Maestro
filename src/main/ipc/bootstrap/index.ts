@@ -98,6 +98,7 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
+import { resolveSessionWindow } from './session-window';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
 
@@ -224,7 +225,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
-	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	// Cue bundles - export / import pipelines and agents (Export Agent and Import Agent modals)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,
 		getMainWindow: deps.getMainWindow,
@@ -246,6 +247,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		getWindowForSession: (sessionId) => resolveSessionWindow(sessionId, deps),
 		safeSend: deps.safeSend,
 		sessionsStore: deps.sessionsStore,
 		interactiveReplayController: deps.getInteractiveReplayController() ?? undefined,
@@ -283,9 +285,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
-		onSessionsPersisted: (added, current, removedIds) => {
+		onSessionsPersisted: async (added, current, removedIds) => {
 			try {
-				deps
+				await deps
 					.getPianolaSupervisor()
 					?.autoWatchNewSessions(
 						added,
