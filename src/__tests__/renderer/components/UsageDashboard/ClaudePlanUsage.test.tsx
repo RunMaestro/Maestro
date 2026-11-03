@@ -314,6 +314,25 @@ describe('ClaudePlanUsage - exhausted account', () => {
 
 		expect(screen.getByText('Week (Sonnet only)')).toBeInTheDocument();
 	});
+
+	// claude 2.1.317 paints no 5-hour window on /usage, so the snapshot has no
+	// `session`. The row must draw the two weekly bars, not a fake 0% session.
+	it('draws no session row when the snapshot carries no session window', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				weekAllModels: { percent: 18, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.queryByText('Session window')).toBeNull();
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['18', '0']);
+	});
 });
 
 describe('ClaudePlanUsage - unauthenticated row', () => {

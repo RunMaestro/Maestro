@@ -55,7 +55,11 @@ export interface ClaudeUsageSnapshot {
 	// `resetsAt` is absent when claude's panel painted a percentage but no
 	// "Resets ..." row (it omits the row for an idle 0% window). Render the
 	// percentage anyway and drop the caption.
-	session: { percent: number; resetsAt?: string };
+	//
+	// `session` (the 5-hour window) is absent when the /usage panel painted no
+	// session block, which claude 2.1.317 does for every account. Draw no row
+	// for it rather than a 0% bar.
+	session?: { percent: number; resetsAt?: string };
 	weekAllModels: { percent: number; resetsAt?: string };
 	/**
 	 * The separately-metered premium-model weekly limit. The field name is

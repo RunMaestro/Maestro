@@ -160,12 +160,14 @@ const AccountRow = memo(function AccountRow({
 				/>
 			) : (
 				<>
-					<QuotaBarRow
-						label="Session window"
-						percent={snapshot.session.percent}
-						resetsAt={snapshot.session.resetsAt}
-						theme={theme}
-					/>
+					{snapshot.session && (
+						<QuotaBarRow
+							label="Session window"
+							percent={snapshot.session.percent}
+							resetsAt={snapshot.session.resetsAt}
+							theme={theme}
+						/>
+					)}
 					<QuotaBarRow
 						label="Week (all models)"
 						percent={snapshot.weekAllModels.percent}

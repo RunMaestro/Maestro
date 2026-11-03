@@ -1209,7 +1209,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// and that is load-bearing rather than an oversight. Both accumulate, so a
 		// retry's panel lands appended to the previous one - which is exactly the
 		// shape parseUsage already expects: sliceToFinalPanel() anchors on the LAST
-		// `Current session` header and reads forward from there, so the newest panel
+		// opening section header and reads forward from there, so the newest panel
 		// wins and the stale one is ignored. Clearing would break claude's
 		// differential repaints, where only the changed cells arrive and no fresh
 		// section header is painted: a cleared buffer would hold anchorless

@@ -35,17 +35,22 @@ import type { AgentCapabilities } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import {
+	forgetSnapshots as forgetClaudeUsageSnapshots,
 	getAllSnapshots as getAllClaudeUsageSnapshots,
 	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { getLimitResetAt } from '../../agents/limitResetEstimator';
 import {
+	forgetCodexUsageSnapshots,
 	getAllCodexUsageSnapshots,
 	getRetainedCodexUsageSnapshots,
 	resolveCodexHomeKey,
 } from '../../stores/codexUsageStore';
-import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
+import {
+	dropSnapshotsForMissingAccounts,
+	pruneMissingQuotaAccounts,
+} from '../../stores/quotaAccountsStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -1684,13 +1689,18 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// (mode selector, spawner) read the live map instead. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
-	// `sampleUsage()` may have refreshed the on-disk map).
+	// `sampleUsage()` may have refreshed the on-disk map). A snapshot whose
+	// config dir was deleted is forgotten here, or its row would outlive the
+	// account by the whole retention period.
 	ipcMain.handle(
 		'agents:getClaudeUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
-				return getRetainedClaudeUsageSnapshots();
+				return dropSnapshotsForMissingAccounts(
+					getRetainedClaudeUsageSnapshots(),
+					forgetClaudeUsageSnapshots
+				);
 			}
 		)
 	);
@@ -1774,14 +1784,17 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Snapshot mirror for the renderer: returns every RETAINED Codex quota usage
 	// snapshot keyed by canonical CODEX_HOME (expired included, same reasoning as
-	// the Claude mirror above). The auth-sensitive auth.json read and ChatGPT
+	// the Claude mirror above, deleted homes forgotten the same way). The auth-sensitive auth.json read and ChatGPT
 	// metadata request stay in the main process.
 	ipcMain.handle(
 		'agents:getCodexUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getCodexUsageSnapshots'),
 			async (): Promise<Record<string, CodexUsageSnapshot>> => {
-				return getRetainedCodexUsageSnapshots();
+				return dropSnapshotsForMissingAccounts(
+					getRetainedCodexUsageSnapshots(),
+					forgetCodexUsageSnapshots
+				);
 			}
 		)
 	);
