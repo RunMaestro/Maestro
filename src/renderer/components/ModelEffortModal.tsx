@@ -27,6 +27,11 @@
  *     wheel and a horizontal scale), and a caption naming the keys was the only
  *     thing on screen that had to be read rather than seen.
  *
+ * Cmd/Ctrl+R (or the icon beside MODEL) re-reads the model list past the
+ * cache, for a model installed since the list loaded. It is a chord rather
+ * than a bare R because every bare letter is already a type-to-jump, and the
+ * app's own Cmd+R (read-only toggle) is blocked while a modal is open.
+ *
  * Typing a letter jumps the wheel to the matching model, which is what makes a
  * thirty-model catalog usable without arrowing through it. Repeating the same
  * letter walks every model that starts with it.
@@ -47,7 +52,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Gauge, Sparkles } from 'lucide-react';
+import { Gauge, RefreshCw, Sparkles } from 'lucide-react';
 import { isCoarsePointer } from '../utils/touch';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -58,6 +63,7 @@ import {
 	resolveModelEffort,
 } from '../hooks/agent/useAgentModelEffortOptions';
 import { getModelFamily } from '../utils/modelFamily';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { readableTextOn } from '../../shared/colorContrast';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getTabDisplayName } from '../utils/tabHelpers';
@@ -113,6 +119,12 @@ const TYPEAHEAD_RESET_MS = 900;
  * to keep closing the window, and swallowing it here would trap the user
  * inside the console.
  */
+/** Cmd/Ctrl+R: re-read the model list. Shift or Alt makes it some other chord. */
+const REFRESH_KEYS = ['Meta', 'r'];
+function isRefreshKey(e: React.KeyboardEvent): boolean {
+	return (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'r';
+}
+
 function isTypeaheadKey(e: React.KeyboardEvent): boolean {
 	return e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== ' ';
 }
@@ -157,7 +169,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	const tab = activeSession?.aiTabs.find((t) => t.id === tabId);
 	const agentId = activeSession?.toolType;
 
-	const { models, efforts, defaultModel, defaultEffort, loaded } =
+	const { models, efforts, defaultModel, defaultEffort, loaded, refreshModels, refreshingModels } =
 		useAgentModelEffortOptions(agentId);
 	const { model: currentModel, effort: currentEffort } = resolveModelEffort(tab, activeSession, {
 		defaultModel,
@@ -281,6 +293,10 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				e.preventDefault();
 				e.stopPropagation();
 				handleConfirm();
+			} else if (isRefreshKey(e)) {
+				e.preventDefault();
+				e.stopPropagation();
+				if (!refreshingModels) void refreshModels();
 			} else if (isTypeaheadKey(e)) {
 				// A printable key with no command modifier is a jump, not a
 				// shortcut. Checking the modifiers matters: Cmd+W must still reach
@@ -289,7 +305,16 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				jumpToTyped(e.key);
 			}
 		},
-		[modelOptions.length, effortOptions.length, stepModel, stepEffort, handleConfirm, jumpToTyped]
+		[
+			modelOptions.length,
+			effortOptions.length,
+			stepModel,
+			stepEffort,
+			handleConfirm,
+			jumpToTyped,
+			refreshModels,
+			refreshingModels,
+		]
 	);
 
 	// Trackpad scrolling over the wheel. Deltas are accumulated so a light
@@ -524,6 +549,29 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 								>
 									<Sparkles className="w-3 h-3" style={{ color: theme.colors.accent }} />
 									<span>Model</span>
+									<button
+										type="button"
+										onClick={() => void refreshModels()}
+										// Keep focus on the console: it owns the arrow keys, and
+										// a focused button would put a ring on screen and take
+										// Space for itself.
+										onMouseDown={(e) => e.preventDefault()}
+										tabIndex={-1}
+										disabled={refreshingModels}
+										className="ml-1 flex items-center gap-1 rounded px-1 py-0.5 normal-case tracking-normal font-mono transition-opacity opacity-70 hover:opacity-100 disabled:cursor-default"
+										style={{
+											color: theme.colors.accent,
+											backgroundColor: `${theme.colors.accent}14`,
+											border: `1px solid ${theme.colors.accent}40`,
+										}}
+										title={`Re-read the model list (${formatShortcutKeys(REFRESH_KEYS)})`}
+										aria-label="Refresh model list"
+										aria-busy={refreshingModels}
+										data-testid="model-effort-refresh"
+									>
+										<RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} />
+										<span data-shortcut-hint="">{formatShortcutKeys(REFRESH_KEYS)}</span>
+									</button>
 								</div>
 
 								<div

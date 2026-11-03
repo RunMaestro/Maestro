@@ -95,7 +95,7 @@ describe('agent-definitions', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode).toBeDefined();
 			expect(opencode?.batchModePrefix).toEqual(['run']);
-			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json']);
+			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json', '--thinking']);
 			// noPromptSeparator removed: '--' separator prevents yargs from misinterpreting prompt content (#527)
 			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});

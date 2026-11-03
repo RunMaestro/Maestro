@@ -122,4 +122,7 @@ export interface InputAreaProps {
 	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	/** Re-run model discovery past the cache; omit to hide the dropdown's Refresh. */
+	onRefreshModels?: () => void;
+	refreshingModels?: boolean;
 }

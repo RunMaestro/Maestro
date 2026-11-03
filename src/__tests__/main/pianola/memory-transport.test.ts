@@ -6,7 +6,14 @@ import crypto from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MemoryDatabase } from '../../../main/pianola/memory-database';
 import { MemoryTransportScope } from '../../../main/pianola/memory-transport';
+import { execFileNoThrow } from '../../../shared/maestro-lib/launch/exec-file';
 import type { MemoryTransportActivation } from '../../../shared/pianola/memory';
+
+vi.mock('../../../shared/maestro-lib/launch/exec-file', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../shared/maestro-lib/launch/exec-file')>();
+	return { ...actual, execFileNoThrow: vi.fn() };
+});
 
 const databases: MemoryDatabase[] = [];
 const directories: string[] = [];
@@ -18,6 +25,7 @@ const proof = {
 afterEach(async () => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+	vi.mocked(execFileNoThrow).mockClear();
 	for (const db of databases.splice(0)) if (db.db.open) db.close();
 	await Promise.all(
 		directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true }))
@@ -552,4 +560,188 @@ it('requires the current runtime to own its claim and isolates unexpected sent p
 	expect(f.db.claimQueued('cannot-replay', f.runtime)).toBeUndefined();
 	expect(f.db.get('pendingExtraction')).toEqual(pending);
 	expect(() => f.db.set('pendingExtraction', null)).toThrow('immutable');
+});
+
+it('does not fabricate API charges for CLI extraction', async () => {
+	const f = await fixture(1);
+	const config = {
+		...f.db.config(),
+		mode: 'cli' as const,
+		cliProvider: 'codex' as const,
+		cliPath: 'C:\\tools\\codex.cmd',
+		inputPrice: 100,
+		outputPrice: 100,
+	};
+	f.db.reserve('cli-zero-price', 100, 50, config);
+	expect(f.db.totals().reservedDollars).toBe(0);
+	f.db.settle('cli-zero-price', 100, 50, config);
+	expect(f.db.totals().dollars).toBe(0);
+});
+
+it('records a completed CLI process as terminal transport evidence', async () => {
+	const f = await fixture(1);
+	const item = stage(f.db, f.runtime, 'cli-complete')!;
+	vi.mocked(execFileNoThrow).mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 0 });
+	await expect(
+		item.scope.cli(
+			{ command: 'C:\\tools\\claude.exe', args: [], input: '{}', contentType: 'application/json' },
+			1000,
+			'cli-extract'
+		)
+	).resolves.toBe('{}');
+	expect(
+		f.db.db
+			.prepare('SELECT state,status,terminal FROM memory_transport_requests WHERE operation=?')
+			.get('cli-extract')
+	).toEqual({ state: 'ended', status: 0, terminal: 'process-exit' });
+	const [, , workspace] = vi.mocked(execFileNoThrow).mock.calls[0];
+	expect(workspace).toMatch(/maestro-memory-cli-/);
+	await expect(fs.stat(workspace!)).rejects.toThrow();
+	release(f.db, item);
+});
+
+it.skipIf(process.platform !== 'win32')(
+	'quotes a Windows shim and escapes fixed arguments without touching stdin',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-windows-shim')!;
+		vi.mocked(execFileNoThrow).mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 0 });
+		await item.scope.cli(
+			{
+				command: 'C:\\Program Files\\Codex\\codex.cmd',
+				args: ['--flag', 'fixed value'],
+				input: '{"memories":[]}',
+				contentType: 'application/jsonl',
+			},
+			1000,
+			'cli-extract'
+		);
+		const [command, args, , options] = vi.mocked(execFileNoThrow).mock.calls[0];
+		expect(command).toBe('"C:\\Program Files\\Codex\\codex.cmd"');
+		expect(args).toEqual(['--flag', '"fixed value"']);
+		expect(options).toMatchObject({ input: '{"memories":[]}' });
+		expect(options.env?.PATH).toContain('C:\\Program Files\\Codex');
+		release(f.db, item);
+	}
+);
+
+it.skipIf(process.platform !== 'win32')(
+	'refuses prompt argv that cmd.exe cannot preserve',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-unsafe-argv')!;
+		const prompt = 'first line\nsecond line';
+		await expect(
+			item.scope.cli(
+				{
+					command: 'C:\\tools\\agy.cmd',
+					args: ['-p', prompt],
+					promptArgs: [prompt],
+					input: '',
+					contentType: 'application/jsonl',
+				},
+				1000,
+				'cli-extract'
+			)
+		).rejects.toThrow('line break');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		item.scope.finish();
+	}
+);
+
+it.skipIf(process.platform !== 'win32')(
+	'rejects an oversized positional prompt before submission',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-oversized-argv')!;
+		const prompt = 'x'.repeat(32_768);
+		await expect(
+			item.scope.cli(
+				{
+					command: 'C:\\tools\\omp.exe',
+					args: ['--', prompt],
+					promptArgs: [prompt],
+					input: '',
+					contentType: 'application/jsonl',
+				},
+				1000,
+				'cli-extract'
+			)
+		).rejects.toThrow('operating system command-line limit');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		item.scope.finish();
+	}
+);
+
+it.skipIf(process.platform === 'win32')(
+	'rejects an oversized POSIX prompt before submission',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-oversized-posix')!;
+		const prompt = 'x'.repeat(100_001);
+		await expect(
+			item.scope.cli(
+				{
+					command: '/usr/bin/omp',
+					args: ['--', prompt],
+					promptArgs: [prompt],
+					input: '',
+					contentType: 'application/jsonl',
+				},
+				1000,
+				'cli-extract'
+			)
+		).rejects.toThrow('operating system command-line limit');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		item.scope.finish();
+	}
+);
+
+it('does not launch after authority is revoked during workspace creation', async () => {
+	const f = await fixture(1);
+	let permitted = true;
+	const item = stage(f.db, f.runtime, 'cli-admission-race', 'extract', () => permitted)!;
+	const realMkdtemp = fs.mkdtemp;
+	let finishWorkspace!: () => void;
+	const created = vi.spyOn(fs, 'mkdtemp').mockImplementation(
+		(...args: Parameters<typeof fs.mkdtemp>) =>
+			new Promise((resolve) => {
+				finishWorkspace = () => resolve(realMkdtemp(...args));
+			}) as ReturnType<typeof fs.mkdtemp>
+	);
+	const outcome = item.scope.cli(
+		{ command: 'C:\\tools\\claude.exe', args: [], input: '{}', contentType: 'application/json' },
+		1000,
+		'cli-extract'
+	);
+	await vi.waitFor(() => expect(created).toHaveBeenCalled());
+	permitted = false;
+	finishWorkspace();
+	await expect(outcome).rejects.toThrow('unproven-close');
+	expect(execFileNoThrow).not.toHaveBeenCalled();
+	release(f.db, item);
+});
+
+it('keeps a timed-out CLI submission uncertain instead of releasing it for replay', async () => {
+	const f = await fixture(1);
+	const item = stage(f.db, f.runtime, 'cli-timeout')!;
+	vi.mocked(execFileNoThrow).mockResolvedValue({
+		stdout: '',
+		stderr: 'ETIMEDOUT',
+		exitCode: 'ETIMEDOUT',
+	});
+	await expect(
+		item.scope.cli(
+			{ command: 'C:\\tools\\omp.exe', args: [], input: '{}', contentType: 'application/jsonl' },
+			1000,
+			'cli-extract'
+		)
+	).rejects.toThrow('unproven-close');
+	item.scope.finish();
+	expect(f.db.transport.status().activePermits).toBe(1);
+	expect(
+		f.db.db
+			.prepare('SELECT state,terminal FROM memory_transport_requests WHERE operation=?')
+			.get('cli-extract')
+	).toEqual({ state: 'unknown', terminal: 'unproven-close' });
 });

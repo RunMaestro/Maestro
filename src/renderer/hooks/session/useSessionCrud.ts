@@ -28,6 +28,7 @@ import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -86,7 +87,8 @@ export interface UseSessionCrudReturn {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -183,7 +185,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-			codexTransport?: CodexTransport
+			codexTransport?: CodexTransport,
+			harnessControlMode?: HarnessControlMode
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -276,6 +279,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
 					// Same rule: `exec` is the default, so only the opt-in is stored.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 					claudeInteractive: newAgentClaudeInteractive(agentId),
 				};
 

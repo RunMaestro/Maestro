@@ -5,15 +5,19 @@ import crypto from 'node:crypto';
 import type { SessionMessage } from '../agents/session-storage';
 import type {
 	ContextualMemory,
+	MemoryCliProviderInfo,
 	MemoryConfig,
 	MemoryEvidence,
 	MemoryRequest,
 	MemorySource,
 } from '../../shared/pianola/memory';
+import type { MemoryCliEnvironments } from './memory-provider-discovery';
+import { resolveMemoryCliConfig } from './memory-provider-discovery';
 import {
 	buildMemoryPacket,
 	isUsableMemoryEvidence,
 	normalizeMemoryConversation,
+	MEMORY_CLI_PROVIDER_IDS,
 } from '../../shared/pianola/memory';
 import { PIANOLA_PROFILES_FILENAME, validatePianolaProfiles } from '../../shared/pianola/storage';
 import {
@@ -33,6 +37,8 @@ import { MemoryDatabase, MEMORY_SPACE } from './memory-database';
 import { MemoryModels, EXTRACTION_VERSION, ExtractionOutputError } from './memory-models';
 import { redactSecrets } from '../../shared/agent-run/redact';
 import type { MemoryTransportScope } from './memory-transport';
+import { prepareMemoryCliLaunch } from './memory-transport';
+import { memoryCliInvocation } from './memory-cli';
 import {
 	shortlistMemoryCandidates,
 	rankRelevantMemoryCandidates,
@@ -42,6 +48,13 @@ import { validateMemoryRecallIntent, memoryIsEligible } from './memory-lifecycle
 import { resolveQualification } from './memory-relevance';
 import { resolveRerank } from './memory-rerank';
 type ExtractionResult = Extract<Awaited<ReturnType<MemoryModels['extract']>>, { pending: false }>;
+/** Compare the account and processing mode that consent and queued submissions bind to. */
+function sameProcessingProvider(a: MemoryConfig, b: MemoryConfig): boolean {
+	if (a.mode !== b.mode) return false;
+	return a.mode === 'cli'
+		? a.cliProvider === b.cliProvider
+		: (a.hostedProvider ?? 'openai') === (b.hostedProvider ?? 'openai');
+}
 const EPISODE_IDENTITY_VERSIONS = [
 	EXTRACTION_VERSION,
 	'contextual-evidence-v10-housekeeping-provenance',
@@ -63,6 +76,10 @@ interface PendingExtraction {
 	verificationBatchId?: string;
 	verified?: ExtractionResult;
 }
+interface MemoryEngineCliOptions {
+	cliProviders?: () => MemoryCliProviderInfo[];
+	cliEnvironments?: () => MemoryCliEnvironments;
+}
 export class MemoryEngine {
 	readonly database: MemoryDatabase;
 	readonly models: MemoryModels;
@@ -76,6 +93,7 @@ export class MemoryEngine {
 	private policyKey = '';
 	private gating = false;
 	private visibilityWork: Promise<void> = Promise.resolve();
+	private readonly cliProviders: () => MemoryCliProviderInfo[];
 	private prepareVisibility(config?: MemoryConfig): Promise<void> {
 		const work = this.visibilityWork.then(async () => {
 			const current = config ?? this.database.config();
@@ -92,10 +110,15 @@ export class MemoryEngine {
 	}
 	constructor(
 		readonly directory: string,
-		private readonly platformEnabled: () => boolean = () => true
+		private readonly platformEnabled: () => boolean = () => true,
+		options: MemoryEngineCliOptions = {}
 	) {
+		this.cliProviders = options.cliProviders ?? (() => []);
 		this.database = new MemoryDatabase(path.join(directory, 'pianola-memory.sqlite'));
-		this.models = new MemoryModels(path.join(directory, 'pianola-models'));
+		this.models = new MemoryModels(
+			path.join(directory, 'pianola-models'),
+			(provider) => options.cliEnvironments?.()[provider] ?? {}
+		);
 		const config = this.database.config();
 		// The qualification gate follows the stored configuration from the start, so a
 		// worker that never receives a configure request still uses the chosen model.
@@ -141,16 +164,20 @@ export class MemoryEngine {
 			return !!source && this.enabledSource(source, config);
 		});
 	}
+	/** Validate provider identity, executable, budgets, ownership, and recall configuration. */
 	private validateConfig(config: MemoryConfig) {
 		if (
 			typeof config.enabled !== 'boolean' ||
 			typeof config.ongoing !== 'boolean' ||
 			typeof config.hostedConsent !== 'boolean' ||
-			!['local', 'hosted', 'batch'].includes(config.mode) ||
+			!['local', 'cli', 'hosted', 'batch'].includes(config.mode) ||
+			(config.cliProvider !== undefined && !MEMORY_CLI_PROVIDER_IDS.includes(config.cliProvider)) ||
+			(config.mode === 'cli' &&
+				(!config.cliProvider || !config.cliPath || !path.isAbsolute(config.cliPath))) ||
 			(config.hostedProvider !== undefined && !['openai', 'nan'].includes(config.hostedProvider)) ||
 			(config.mode === 'batch' && config.hostedProvider === 'nan') ||
 			typeof config.model !== 'string' ||
-			!config.model.trim() ||
+			(config.mode !== 'cli' && !config.model.trim()) ||
 			typeof config.endpoint !== 'string' ||
 			typeof config.userId !== 'string' ||
 			!config.userId ||
@@ -420,6 +447,7 @@ export class MemoryEngine {
 		);
 		return false;
 	}
+	/** Run one extraction stage while preserving permit, budget, consent, and replay invariants. */
 	private async generate(
 		job: PendingExtraction,
 		owner: string,
@@ -442,9 +470,7 @@ export class MemoryEngine {
 			return null;
 		if (
 			job.config.mode !== 'local' &&
-			(!current.hostedConsent ||
-				current.mode === 'local' ||
-				(job.config.hostedProvider ?? 'openai') !== (current.hostedProvider ?? 'openai'))
+			(!current.hostedConsent || !sameProcessingProvider(job.config, current))
 		)
 			throw new Error('Hosted consent or provider changed; queued content will not be submitted');
 		const input = verification
@@ -479,6 +505,8 @@ export class MemoryEngine {
 			!this.database.get<boolean>('paused') &&
 			this.enabledSource(job.source, this.database.config()) &&
 			this.eligibleJob(job);
+		// Deterministic CLI/Windows refusals happen before the durable sent checkpoint.
+		if (job.config.mode === 'cli') prepareMemoryCliLaunch(memoryCliInvocation(job.config, input));
 		// Permit, budget, rate and sent checkpoint commit together before provider I/O.
 		while (true) {
 			const ready = this.database.db
@@ -489,9 +517,7 @@ export class MemoryEngine {
 						return false;
 					if (
 						job.config.mode !== 'local' &&
-						(!current.hostedConsent ||
-							current.mode !== job.config.mode ||
-							(current.hostedProvider ?? 'openai') !== (job.config.hostedProvider ?? 'openai'))
+						(!current.hostedConsent || !sameProcessingProvider(job.config, current))
 					)
 						throw new Error('Hosted consent or provider changed');
 					if (
@@ -1021,6 +1047,7 @@ export class MemoryEngine {
 		if (!stored) throw new Error('Memory was not admitted or is suppressed by a previous forget');
 		return stored;
 	}
+	/** Apply one memory action through the engine's visibility and configuration lifecycle. */
 	async request(request: MemoryRequest) {
 		const config = this.database.config();
 		if (request.action === 'transport-status') return this.database.transport.status();
@@ -1043,11 +1070,16 @@ export class MemoryEngine {
 					(this.running || this.timer !== null) && !(this.database.get<boolean>('paused') ?? true);
 				await this.drain();
 				this.models.invalidateQueryCache();
-				const next = { ...config, ...request.config, userId: config.userId };
-				if (
-					(next.hostedProvider ?? 'openai') !== (config.hostedProvider ?? 'openai') &&
-					request.config.hostedConsent !== true
-				)
+				let next = { ...config, ...request.config, userId: config.userId };
+				if (next.mode === 'cli') {
+					const newProvider = config.mode !== 'cli' || next.cliProvider !== config.cliProvider;
+					const staleModel = newProvider && request.config.model === undefined;
+					next = resolveMemoryCliConfig(
+						{ ...next, model: staleModel ? '' : next.model },
+						this.cliProviders()
+					);
+				}
+				if (!sameProcessingProvider(next, config) && request.config.hostedConsent !== true)
 					next.hostedConsent = false;
 				this.validateConfig(next);
 				// The qualification gate follows the configured provider and model.

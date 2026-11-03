@@ -46,6 +46,39 @@ describe('OpenCodeOutputParser', () => {
 			expect(event?.isPartial).toBeUndefined();
 		});
 
+		it('should parse reasoning messages as partial reasoning text (Thinking stream)', () => {
+			// Shape captured from `opencode run --format json --thinking` (v2.2.5)
+			const line = JSON.stringify({
+				type: 'reasoning',
+				sessionID: 'oc-sess-123',
+				part: {
+					type: 'reasoning',
+					text: 'Need compute 17*23 = 391.',
+					time: { start: 1, end: 2 },
+				},
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('text');
+			expect(event?.text).toBe('Need compute 17*23 = 391.');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
+			expect(event?.sessionId).toBe('oc-sess-123');
+			expect(parser.isResultMessage(event!)).toBe(false);
+		});
+
+		it('should treat an empty reasoning part as a system event', () => {
+			const line = JSON.stringify({
+				type: 'reasoning',
+				sessionID: 'oc-sess-123',
+				part: { type: 'reasoning', text: '' },
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('system');
+			expect(event?.isReasoning).toBeUndefined();
+		});
+
 		it('should parse tool_use messages', () => {
 			// Actual OpenCode format: tool name in part.tool, state in part.state
 			const line = JSON.stringify({

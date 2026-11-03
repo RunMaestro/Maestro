@@ -34,7 +34,11 @@ import { notifyToast } from '../stores/notificationStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
-import { describeSteerBlocked, getSteerEligibility } from '../utils/executionQueue';
+import {
+	describeSteerBlocked,
+	getSteerEligibility,
+	recoverQueuedItem,
+} from '../utils/executionQueue';
 
 /**
  * Steers whose socket answer has not come back yet, keyed `sessionId:itemId`. The
@@ -165,7 +169,7 @@ export function returnPendingSteersToQueue(
 			next = mapTabLogs(next, p.tabId, (logs) => logs.filter((l) => l.id !== p.logEntryId));
 		}
 		if (!next.executionQueue.some((i) => i.id === p.item.id)) {
-			restored.push({ ...p.item, paused: paused || undefined });
+			restored.push(recoverQueuedItem({ ...p.item, paused: paused || undefined }));
 		}
 	}
 	return { ...next, executionQueue: [...restored, ...next.executionQueue] };

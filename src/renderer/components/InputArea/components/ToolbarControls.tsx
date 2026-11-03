@@ -78,6 +78,8 @@ export interface ToolbarControlsProps {
 	availableEfforts: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	onRefreshModels?: () => void;
+	refreshingModels?: boolean;
 	modelMenuOpen: boolean;
 	setModelMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	modelMenuRef: React.RefObject<HTMLDivElement>;
@@ -123,6 +125,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	availableEfforts,
 	onModelChange,
 	onEffortChange,
+	onRefreshModels,
+	refreshingModels,
 	modelMenuOpen,
 	setModelMenuOpen,
 	modelMenuRef,
@@ -387,6 +391,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 					availableEfforts={availableEfforts}
 					onModelChange={onModelChange}
 					onEffortChange={onEffortChange}
+					onRefreshModels={onRefreshModels}
+					refreshingModels={refreshingModels}
 					modelMenuOpen={modelMenuOpen}
 					setModelMenuOpen={setModelMenuOpen}
 					modelMenuRef={modelMenuRef}

@@ -13,6 +13,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useBatchStore } from '../../stores/batchStore';
+import { captureException } from '../../utils/sentry';
 import { countMarkdownTasks } from './batchUtils';
 
 // ============================================================================
@@ -354,7 +355,14 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 
 				await refreshAutoRunData();
 			});
-		})();
+		})().catch((error) => {
+			// The bridge can lose the acknowledgement after the host accepted
+			// this request. Report the failure without retrying the mutation.
+			console.warn('[AutoRun] Failed to watch folder', error);
+			captureException(error, {
+				extra: { operation: 'useAutoRunDocumentLoader.watchFolder' },
+			});
+		});
 
 		// Cleanup: stop watching when folder changes or unmount
 		return () => {
@@ -363,7 +371,12 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 				clearTimeout(remotePollTimeout);
 				remotePollTimeout = null;
 			}
-			window.maestro.autorun.unwatchFolder(folderPath);
+			void window.maestro.autorun.unwatchFolder(folderPath).catch((error) => {
+				console.warn('[AutoRun] Failed to unwatch folder', error);
+				captureException(error, {
+					extra: { operation: 'useAutoRunDocumentLoader.unwatchFolder' },
+				});
+			});
 			unsubscribe();
 		};
 		// Intentionally NOT depending on autoRunSelectedFile - the watcher reads

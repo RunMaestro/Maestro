@@ -108,6 +108,7 @@ describe('update_session_config', () => {
 		maestroPMode: 'dynamic',
 		maestroPPath: '/opt/bin/maestro-p',
 		codexTransport: 'app-server',
+		harnessControlMode: 'native',
 		bookmarked: true,
 	};
 

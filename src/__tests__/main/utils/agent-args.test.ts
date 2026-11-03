@@ -320,6 +320,31 @@ describe('buildAgentArgs', () => {
 		expect(result).not.toContain('--plan');
 	});
 
+	it('omits Codex batch bypass args in Standard mode', () => {
+		const codex = makeAgent({
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+			skipBatchModeArgsInStandardMode: true,
+		});
+		const result = buildAgentArgs(codex, {
+			baseArgs: ['--json'],
+			prompt: 'fix bug',
+			permissionMode: 'standard',
+		});
+		expect(result).toEqual(['--json']);
+	});
+
+	it('omits provider batch auto-approval args in Standard mode', () => {
+		for (const toolType of ['qwen3-coder', 'hermes', 'factory-droid', 'grok']) {
+			const agent = getAgentDefinition(toolType)!;
+			const result = buildAgentArgs(agent, {
+				baseArgs: [],
+				prompt: 'review this change',
+				permissionMode: 'standard',
+			});
+			for (const arg of agent.batchModeArgs ?? []) expect(result, toolType).not.toContain(arg);
+		}
+	});
+
 	it('adds readOnlyArgs when permissionMode is readonly', () => {
 		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
 		const result = buildAgentArgs(agent, {
@@ -1031,6 +1056,7 @@ describe('applyAgentConfigOverrides', () => {
 		const r1 = applyAgentConfigOverrides(agent, [], {});
 		expect(r1.args).toEqual(['--model', 'default-model']);
 		expect(r1.modelSource).toBe('default');
+		expect(r1.modelId).toBe('default-model');
 
 		// agent overrides default
 		const r2 = applyAgentConfigOverrides(agent, [], {
@@ -1038,6 +1064,7 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(r2.args).toEqual(['--model', 'agent-model']);
 		expect(r2.modelSource).toBe('agent');
+		expect(r2.modelId).toBe('agent-model');
 
 		// session overrides agent
 		const r3 = applyAgentConfigOverrides(agent, [], {
@@ -1046,6 +1073,7 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(r3.args).toEqual(['--model', 'session-model']);
 		expect(r3.modelSource).toBe('session');
+		expect(r3.modelId).toBe('session-model');
 	});
 
 	// -- effort precedence --
@@ -1072,6 +1100,7 @@ describe('applyAgentConfigOverrides', () => {
 			agentConfigValues: { effort: 'high' },
 		});
 		expect(r1.args).toEqual(['--effort', 'high']);
+		expect(r1.effort).toBe('high');
 
 		// session override wins
 		const r2 = applyAgentConfigOverrides(agent, [], {
@@ -1079,6 +1108,7 @@ describe('applyAgentConfigOverrides', () => {
 			sessionCustomEffort: 'max',
 		});
 		expect(r2.args).toEqual(['--effort', 'max']);
+		expect(r2.effort).toBe('max');
 
 		// cleared session override falls back to the agent config
 		const r3 = applyAgentConfigOverrides(agent, [], {
@@ -1086,6 +1116,7 @@ describe('applyAgentConfigOverrides', () => {
 			sessionCustomEffort: '',
 		});
 		expect(r3.args).toEqual(['--effort', 'high']);
+		expect(r3.effort).toBe('high');
 	});
 
 	it('reasoningEffort honors the session override (Codex-style agents)', () => {

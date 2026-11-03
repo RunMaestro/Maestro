@@ -60,6 +60,8 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	onCodexAutoResetChange,
 	codexTransportByAgent,
 	onCodexTransportChange,
+	harnessControlModeByAgent,
+	onHarnessControlModeChange,
 }: AgentPickerGridProps) {
 	return (
 		<div>
@@ -309,6 +311,12 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											onCodexTransportChange={
 												onCodexTransportChange
 													? (value) => onCodexTransportChange(agent.id, value)
+													: undefined
+											}
+											harnessControlMode={harnessControlModeByAgent?.[agent.id] ?? 'current'}
+											onHarnessControlModeChange={
+												onHarnessControlModeChange
+													? (value) => onHarnessControlModeChange(agent.id, value)
 													: undefined
 											}
 											maestroPMode={maestroPModeByAgent?.[agent.id] ?? 'dynamic'}
