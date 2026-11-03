@@ -23,6 +23,7 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useResizableDropdownHeight } from '../../hooks/ui/useResizableDropdownHeight';
+import { isImeComposing } from '../../utils/ime';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { aggregateFolderTaskCounts } from './documentTaskAggregation';
@@ -714,7 +715,7 @@ export const AutoRunDocumentSelector = forwardRef<
 						}
 					}}
 					onKeyDown={(e) => {
-						if (e.key === 'Escape') {
+						if (e.key === 'Escape' && !isImeComposing(e)) {
 							e.stopPropagation();
 							handleCloseCreateModal();
 						}

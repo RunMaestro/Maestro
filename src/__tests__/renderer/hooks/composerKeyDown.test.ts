@@ -4,10 +4,10 @@ import {
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
-	isImeComposing,
 	PICKER_KEYS,
 	yieldKeyToIme,
 } from '../../../renderer/hooks/input/composerKeyDown';
+import { isImeComposing } from '../../../renderer/utils/ime';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../../../renderer/hooks/ui/useOutputSearchLayer';
 

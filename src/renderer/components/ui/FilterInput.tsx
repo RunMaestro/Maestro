@@ -33,6 +33,7 @@ import React, { forwardRef, useCallback } from 'react';
 import { Search, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { GhostIconButton } from './GhostIconButton';
+import { isImeComposing } from '../../utils/ime';
 
 export interface FilterInputProps {
 	theme: Theme;
@@ -76,7 +77,7 @@ export const FilterInput = forwardRef<HTMLInputElement, FilterInputProps>(functi
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
 			// Escape clears the filter first; only an already-empty box lets the
 			// key through to whatever layer owns the surface.
-			if (e.key === 'Escape' && value) {
+			if (e.key === 'Escape' && value && !isImeComposing(e)) {
 				e.preventDefault();
 				e.stopPropagation();
 				onChange('');
