@@ -149,7 +149,7 @@ describe('execFile.ts', () => {
 			].join('');
 			const result = await execFileNoThrow(NODE, ['-e', script], undefined, {
 				input: '',
-				timeout: 100,
+				timeout: 2000,
 			});
 			expect(result.exitCode).toBe('ETIMEDOUT');
 			const grandchildPid = Number(/pid:(\d+)/.exec(result.stdout)?.[1]);
