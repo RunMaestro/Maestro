@@ -6,10 +6,12 @@
  */
 
 import React, { useRef, useEffect } from 'react';
-import { Moon, Sun, Sparkles, Check, Lightbulb } from 'lucide-react';
+import { Moon, Sun, SunMoon, Sparkles, Check, Lightbulb } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { CustomThemeBuilder } from '../../CustomThemeBuilder';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
+import { SectionCard } from './DisplayTab/components/SectionCard';
+import { ToggleSettingRow } from './DisplayTab/components/ToggleSettingRow';
 import { Slider } from '../../widgets';
 import {
 	GLOSS_LEVELS,
@@ -45,6 +47,12 @@ export function ThemeTab({
 		setCustomThemeBaseId,
 		themeGloss,
 		setThemeGloss,
+		themeFollowSystem,
+		setThemeFollowSystem,
+		lightThemeId,
+		setLightThemeId,
+		darkThemeId,
+		setDarkThemeId,
 	} = useSettings();
 
 	const themePickerRef = useRef<HTMLDivElement>(null);
@@ -65,6 +73,21 @@ export function ThemeTab({
 		const timer = setTimeout(() => themePickerRef.current?.focus({ preventScroll: true }), 50);
 		return () => clearTimeout(timer);
 	}, []);
+
+	// While following the system, a pick fills the slot matching the theme's
+	// own mode: a light theme becomes the light-appearance theme, a dark or vibe
+	// theme (and Custom, which is dark) becomes the dark-appearance theme.
+	const pickTheme = (id: ThemeId) => {
+		if (!themeFollowSystem) {
+			setActiveThemeId(id);
+		} else if (themes[id]?.mode === 'light') {
+			setLightThemeId(id);
+		} else {
+			setDarkThemeId(id);
+		}
+	};
+	const isPicked = (id: string) =>
+		themeFollowSystem ? id === lightThemeId || id === darkThemeId : id === activeThemeId;
 
 	// Group themes by mode (exclude 'custom' theme - it's handled separately)
 	const groupedThemes = Object.values(themes).reduce(
@@ -89,7 +112,10 @@ export function ThemeTab({
 			];
 			// Add 'custom' as the last item in the cycle
 			const allThemeIds = [...allThemes.map((t) => t.id), 'custom'];
-			let currentIndex = allThemeIds.findIndex((id: string) => id === activeThemeId);
+			// While following the system, start from the theme on screen: the
+			// slot the device's appearance picked, not activeThemeId.
+			const currentId = themeFollowSystem ? theme.id : activeThemeId;
+			let currentIndex = allThemeIds.findIndex((id: string) => id === currentId);
 			if (currentIndex === -1) currentIndex = 0;
 
 			let newThemeId: string;
@@ -102,7 +128,7 @@ export function ThemeTab({
 				const nextIndex = (currentIndex + 1) % allThemeIds.length;
 				newThemeId = allThemeIds[nextIndex];
 			}
-			setActiveThemeId(newThemeId as ThemeId);
+			pickTheme(newThemeId as ThemeId);
 
 			// Scroll the newly selected theme button into view
 			setTimeout(() => {
@@ -140,6 +166,27 @@ export function ThemeTab({
 				</p>
 			</div>
 
+			<div data-setting-id="theme-follow-system">
+				<SettingsSectionHeading icon={SunMoon}>Follow System Appearance</SettingsSectionHeading>
+				<SectionCard theme={theme}>
+					<ToggleSettingRow
+						theme={theme}
+						title="Match the device's light or dark setting"
+						description="Each window resolves this on its own device, so a phone on the web interface follows the phone and the desktop follows the computer."
+						checked={themeFollowSystem}
+						onChange={setThemeFollowSystem}
+						ariaLabel="Follow system appearance"
+					/>
+					{themeFollowSystem && (
+						<p className="text-xs-plus opacity-55">
+							Light: {themes[lightThemeId]?.name ?? lightThemeId}. Dark:{' '}
+							{themes[darkThemeId]?.name ?? darkThemeId}. Pick a light theme below to set the light
+							one, or a dark or vibe theme to set the dark one.
+						</p>
+					)}
+				</SectionCard>
+			</div>
+
 			<div
 				data-setting-id="theme-picker"
 				ref={themePickerRef}
@@ -161,8 +208,8 @@ export function ThemeTab({
 								<button
 									key={t.id}
 									data-theme-id={t.id}
-									onClick={() => setActiveThemeId(t.id)}
-									className={`p-3 rounded-lg border text-left transition-all ${activeThemeId === t.id ? 'ring-2' : ''}`}
+									onClick={() => pickTheme(t.id)}
+									className={`p-3 rounded-lg border text-left transition-all ${isPicked(t.id) ? 'ring-2' : ''}`}
 									style={
 										{
 											borderColor: theme.colors.border,
@@ -176,7 +223,7 @@ export function ThemeTab({
 										<span className="text-sm font-bold" style={{ color: t.colors.textMain }}>
 											{t.name}
 										</span>
-										{activeThemeId === t.id && (
+										{isPicked(t.id) && (
 											<Check className="w-4 h-4" style={{ color: t.colors.accent }} />
 										)}
 									</div>
@@ -199,8 +246,8 @@ export function ThemeTab({
 						setCustomThemeColors={setCustomThemeColors}
 						customThemeBaseId={customThemeBaseId}
 						setCustomThemeBaseId={setCustomThemeBaseId}
-						isSelected={activeThemeId === 'custom'}
-						onSelect={() => setActiveThemeId('custom')}
+						isSelected={isPicked('custom')}
+						onSelect={() => pickTheme('custom')}
 						onImportError={onThemeImportError}
 						onImportSuccess={onThemeImportSuccess}
 					/>

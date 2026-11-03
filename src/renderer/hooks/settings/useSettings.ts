@@ -121,6 +121,12 @@ export interface UseSettingsReturn {
 	// UI settings
 	activeThemeId: ThemeId;
 	setActiveThemeId: (value: ThemeId) => void;
+	themeFollowSystem: boolean;
+	setThemeFollowSystem: (value: boolean) => void;
+	lightThemeId: ThemeId;
+	setLightThemeId: (value: ThemeId) => void;
+	darkThemeId: ThemeId;
+	setDarkThemeId: (value: ThemeId) => void;
 	customThemeColors: ThemeColors;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	customThemeBaseId: ThemeId;

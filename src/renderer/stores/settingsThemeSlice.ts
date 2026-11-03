@@ -64,6 +64,15 @@ export interface ThemeState {
 	 */
 	typographySnapshot: TypographySnapshot | null;
 	activeThemeId: ThemeId;
+	/**
+	 * Follow the device's light/dark appearance instead of `activeThemeId`.
+	 * Each client resolves it against its own `prefers-color-scheme`.
+	 */
+	themeFollowSystem: boolean;
+	/** Theme shown while following the system and the device is light. */
+	lightThemeId: ThemeId;
+	/** Theme shown while following the system and the device is dark. */
+	darkThemeId: ThemeId;
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
 	colorBlindMode: boolean;
@@ -99,6 +108,9 @@ export interface ThemeActions {
 	/** Put the saved fonts and sizes back. A no-op when nothing is saved. */
 	restoreTypographySnapshot: () => void;
 	setActiveThemeId: (value: ThemeId) => void;
+	setThemeFollowSystem: (value: boolean) => void;
+	setLightThemeId: (value: ThemeId) => void;
+	setDarkThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
 	setColorBlindMode: (value: boolean) => void;
@@ -129,6 +141,9 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	fontZoom: FONT_ZOOM_DEFAULT,
 	typographySnapshot: null,
 	activeThemeId: 'dracula',
+	themeFollowSystem: false,
+	lightThemeId: 'github-light',
+	darkThemeId: 'dracula',
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 	customThemeBaseId: 'dracula',
 	colorBlindMode: false,
@@ -242,6 +257,21 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		window.maestro.settings.set('activeThemeId', value);
 	},
 
+	setThemeFollowSystem: (value) => {
+		set({ themeFollowSystem: value });
+		window.maestro.settings.set('themeFollowSystem', value);
+	},
+
+	setLightThemeId: (value) => {
+		set({ lightThemeId: value });
+		window.maestro.settings.set('lightThemeId', value);
+	},
+
+	setDarkThemeId: (value) => {
+		set({ darkThemeId: value });
+		window.maestro.settings.set('darkThemeId', value);
+	},
+
 	setCustomThemeColors: (value) => {
 		set({ customThemeColors: value });
 		window.maestro.settings.set('customThemeColors', value);
@@ -329,6 +359,15 @@ export function hydrateThemeSettings(
 	// whole app unstyled instead of falling back.
 	if (allSettings['activeThemeId'] !== undefined)
 		patch.activeThemeId = resolveThemeId(allSettings['activeThemeId']);
+
+	if (allSettings['themeFollowSystem'] !== undefined)
+		patch.themeFollowSystem = allSettings['themeFollowSystem'] === true;
+
+	if (allSettings['lightThemeId'] !== undefined)
+		patch.lightThemeId = resolveThemeId(allSettings['lightThemeId'], 'github-light');
+
+	if (allSettings['darkThemeId'] !== undefined)
+		patch.darkThemeId = resolveThemeId(allSettings['darkThemeId']);
 
 	if (allSettings['customThemeColors'] !== undefined)
 		patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
