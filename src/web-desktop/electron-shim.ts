@@ -45,6 +45,7 @@ const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission';
 // non-prefixed query methods below are explicit exceptions, not error filters.
 const READ_ONLY_CHANNELS = new Set([
 	'acappella:input-devices',
+	'cross-agent:consultBudget',
 	'plugins:contributions',
 	'agentRun:events',
 	'agentRun:show',

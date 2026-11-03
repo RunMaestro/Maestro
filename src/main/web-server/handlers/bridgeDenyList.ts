@@ -27,7 +27,7 @@ const METHODS: Record<string, string> = {
 		'cancelGrooming cleanupGroomingSession createGroomingSession getStoredSession groomContext sendGroomingPrompt',
 	contextTimeline: 'clearCaptures getCaptures',
 	coworking: 'getInstallStatus removeSession',
-	'cross-agent': 'cancel send',
+	'cross-agent': 'cancel consultBudget send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
 	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
 	cueBackup: 'create delete getDiffStatus inspect list readFile readLive restoreAll restoreFile',
