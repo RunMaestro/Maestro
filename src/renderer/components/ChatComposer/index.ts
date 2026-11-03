@@ -4,6 +4,7 @@ export {
 	useChatComposerFold,
 	type ChatComposerFold,
 	type ChatComposerFrameProps,
+	type ChatComposerToolbarProps,
 	type ChatComposerVoice,
 } from './ChatComposerFrame';
 export {

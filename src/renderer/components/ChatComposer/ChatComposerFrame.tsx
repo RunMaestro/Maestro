@@ -25,9 +25,12 @@ import React from 'react';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
-import { ComposerSendColumn } from './ComposerSendColumn';
+import { ComposerSendColumn, type ComposerSendMenu } from './ComposerSendColumn';
 import { PhoneComposerHandle } from '../InputArea/components/PhoneComposerHandle';
-import { ToolbarControls } from '../InputArea/components/ToolbarControls';
+import {
+	ToolbarControls,
+	type ToolbarControlsProps,
+} from '../InputArea/components/ToolbarControls';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { StagedImagesStrip } from '../InputArea/components/StagedImagesStrip';
 import type { Theme, Shortcut } from '../../types';
@@ -60,6 +63,32 @@ export interface ChatComposerVoice {
 	onToggle: () => void;
 }
 
+/** Toolbar props the frame sets itself; the rest pass through `toolbarProps`. */
+type FrameOwnedToolbarProp =
+	| 'theme'
+	| 'capabilities'
+	| 'enterToSend'
+	| 'setEnterToSend'
+	| 'setStagedImages'
+	| 'imageInputId'
+	| 'imageReportComponent'
+	| 'checkImageFile'
+	| 'onUploadFiles'
+	| 'voiceSupported'
+	| 'isVoiceListening'
+	| 'onToggleVoiceInput'
+	| 'onOpenPromptComposer'
+	| 'shortcuts'
+	| 'showFlashNotification'
+	| 'toolbarExtras'
+	| 'sheetExtras'
+	| 'processInput'
+	| 'sendTitle'
+	| 'sendDisabled'
+	| 'sendTone';
+
+export type ChatComposerToolbarProps = Partial<Omit<ToolbarControlsProps, FrameOwnedToolbarProp>>;
+
 export interface ChatComposerFrameProps {
 	theme: Theme;
 	capabilities: ComposerCapabilities;
@@ -69,18 +98,33 @@ export interface ChatComposerFrameProps {
 	/** Pencil on the folded phone handle. */
 	hasDraft?: boolean;
 	warningBorder?: boolean;
-	/** Register the composer as a toast avoid zone. Default true. */
+	/**
+	 * Register the composer as a toast avoid zone. Default true. The AI composer
+	 * turns it off: MainPanelContent registers one around all of InputArea,
+	 * including the overlays that replace the composer.
+	 */
 	avoidToasts?: boolean;
+	/**
+	 * The AI composer's box: the raised gloss (`chrome-raised`), free to shrink
+	 * below its content width, in a column that also carries `belowInput`.
+	 */
+	raised?: boolean;
 
 	// Slots
 	aboveComposer?: React.ReactNode;
 	overlays?: React.ReactNode;
+	/** Inside the box, above the textarea. */
+	inputHeader?: React.ReactNode;
 	textarea: React.ReactNode;
+	/** Under the box, in its column. Drawn only with `raised`. */
+	belowInput?: React.ReactNode;
 	toolbarExtras?: React.ReactNode;
 	sheetExtras?: React.ReactNode;
 
 	// Staged images
 	stagedImages?: string[];
+	/** False hides the strip without dropping what is staged. Default true. */
+	stagedImagesVisible?: boolean;
 	setStagedImages?: React.Dispatch<React.SetStateAction<string[]>>;
 	onReorderStagedImages?: (from: number, to: number) => void;
 	setLightboxImage?: (
@@ -101,11 +145,16 @@ export interface ChatComposerFrameProps {
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
+	/** Surface-specific toolbar values and callbacks (AI: permission, thinking, model, effort). */
+	toolbarProps?: ChatComposerToolbarProps;
 
 	// Send. `onSend` must be identity-stable: the toolbar and the column are
 	// memoized, and a fresh callback per keystroke re-renders both.
 	onSend: () => void;
+	/** The phone toolbar's Send title, and the column's unless `columnSendTitle` is set. */
 	sendTitle?: string;
+	columnSendTitle?: string;
+	sendMenu?: ComposerSendMenu;
 	sendDisabled?: boolean;
 	sendTone?: 'accent' | 'warning';
 	sendColumnClassName?: string;
@@ -122,12 +171,16 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	hasDraft = false,
 	warningBorder = false,
 	avoidToasts = true,
+	raised = false,
 	aboveComposer,
 	overlays,
+	inputHeader,
 	textarea,
+	belowInput,
 	toolbarExtras,
 	sheetExtras,
 	stagedImages,
+	stagedImagesVisible = true,
 	setStagedImages,
 	onReorderStagedImages,
 	setLightboxImage,
@@ -142,8 +195,11 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
+	toolbarProps,
 	onSend,
 	sendTitle,
+	columnSendTitle,
+	sendMenu,
 	sendDisabled,
 	sendTone,
 	sendColumnClassName,
@@ -154,6 +210,50 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	const zoneRef = avoidToasts ? toastAvoidRef : undefined;
 	const phone = usePhoneLayout();
 	const resolvedSetStagedImages = setStagedImages ?? NOOP_SET_STAGED_IMAGES;
+
+	const box = (
+		<div
+			className={
+				raised
+					? 'chrome-raised relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50'
+					: 'flex-1 relative border rounded-lg bg-opacity-50 flex flex-col'
+			}
+			style={{
+				borderColor: warningBorder ? theme.colors.warning : theme.colors.border,
+				backgroundColor: warningBorder ? `${theme.colors.warning}15` : theme.colors.bgMain,
+			}}
+		>
+			{inputHeader}
+
+			{textarea}
+
+			<ToolbarControls
+				isTerminalMode={false}
+				{...toolbarProps}
+				theme={theme}
+				capabilities={capabilities}
+				enterToSend={enterToSend}
+				setEnterToSend={setEnterToSend ?? NOOP_SET_ENTER_TO_SEND}
+				setStagedImages={resolvedSetStagedImages}
+				imageInputId={imageInputId}
+				imageReportComponent={imageReportComponent}
+				checkImageFile={checkImageFile}
+				onUploadFiles={onUploadFiles}
+				voiceSupported={voice?.supported}
+				isVoiceListening={voice?.listening}
+				onToggleVoiceInput={voice?.onToggle}
+				onOpenPromptComposer={onOpenPromptComposer}
+				shortcuts={shortcuts}
+				showFlashNotification={showFlashNotification}
+				toolbarExtras={toolbarExtras}
+				sheetExtras={sheetExtras}
+				processInput={onSend}
+				sendTitle={sendTitle}
+				sendDisabled={sendDisabled}
+				sendTone={sendTone}
+			/>
+		</div>
+	);
 
 	// Folded: nothing but the handle.
 	if (fold.isFolded) {
@@ -196,7 +296,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 				openAnnotator &&
 				onReorderStagedImages && (
 					<StagedImagesStrip
-						isVisible
+						isVisible={stagedImagesVisible}
 						stagedImages={stagedImages}
 						theme={theme}
 						setLightboxImage={setLightboxImage}
@@ -206,50 +306,29 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 					/>
 				)}
 
-			<div className="flex gap-3">
-				<div
-					className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
-					style={{
-						borderColor: warningBorder ? theme.colors.warning : theme.colors.border,
-						backgroundColor: warningBorder ? `${theme.colors.warning}15` : theme.colors.bgMain,
-					}}
-				>
-					{textarea}
+			<div className={raised ? 'flex min-w-0 gap-3' : 'flex gap-3'}>
+				{raised ? (
+					<div className="flex min-w-0 flex-1 flex-col">
+						{box}
+						{belowInput}
+					</div>
+				) : (
+					box
+				)}
 
-					<ToolbarControls
-						theme={theme}
-						capabilities={capabilities}
-						isTerminalMode={false}
-						enterToSend={enterToSend}
-						setEnterToSend={setEnterToSend ?? NOOP_SET_ENTER_TO_SEND}
-						setStagedImages={resolvedSetStagedImages}
-						imageInputId={imageInputId}
-						imageReportComponent={imageReportComponent}
-						checkImageFile={checkImageFile}
-						onUploadFiles={onUploadFiles}
-						voiceSupported={voice?.supported}
-						isVoiceListening={voice?.listening}
-						onToggleVoiceInput={voice?.onToggle}
-						onOpenPromptComposer={onOpenPromptComposer}
-						shortcuts={shortcuts}
-						showFlashNotification={showFlashNotification}
-						toolbarExtras={toolbarExtras}
-						sheetExtras={sheetExtras}
-						processInput={onSend}
-						sendTitle={sendTitle}
-						sendDisabled={sendDisabled}
-						sendTone={sendTone}
-					/>
-				</div>
-
+				{/* Phone: this column is gone. The notification bell opens a settings
+				    popover that has no business on a 390px composer, and Send lives in the
+				    toolbar row (ToolbarControls' phone branch), so the composer gets the
+				    full width it needs to show what is being typed. */}
 				{!phone && (
 					<ComposerSendColumn
 						theme={theme}
 						className={sendColumnClassName}
 						onSend={onSend}
-						sendTitle={sendTitle ?? 'Send message'}
+						sendTitle={columnSendTitle ?? sendTitle ?? 'Send message'}
 						sendDisabled={sendDisabled}
 						sendTone={sendTone}
+						sendMenu={sendMenu}
 					/>
 				)}
 			</div>

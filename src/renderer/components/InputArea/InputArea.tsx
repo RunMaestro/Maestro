@@ -8,7 +8,6 @@ import {
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { ConcertoCreationPipeline } from '../ConcertoCreationPipeline';
-import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
@@ -23,15 +22,17 @@ import { useThinkingItems } from '../../hooks/session/useThinkingItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
 import { InputTextarea } from './components/InputTextarea';
-import { NotificationSendControls } from './components/NotificationSendControls';
-import { PhoneComposerHandle } from './components/PhoneComposerHandle';
-import { StagedImagesStrip } from './components/StagedImagesStrip';
-import { ToolbarControls } from './components/ToolbarControls';
 import { useAiTabToolbarBinding } from './hooks/useAiTabToolbarBinding';
 import { formatTerminalCwd } from './utils/terminalPath';
-import { aiCanAttachImages, deriveAiComposerCapabilities } from '../ChatComposer';
-import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
-import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
+import {
+	ChatComposerFrame,
+	aiCanAttachImages,
+	deriveAiComposerCapabilities,
+	useChatComposerFold,
+	type ChatComposerToolbarProps,
+	type ChatComposerVoice,
+} from '../ChatComposer';
+import { useAiSendMenu } from './hooks/useAiSendMenu';
 import { useInputAreaAutosize } from './hooks/useInputAreaAutosize';
 import { useInputAreaTextChange } from './hooks/useInputAreaTextChange';
 import { useModelEffortMenus } from './hooks/useModelEffortMenus';
@@ -58,6 +59,10 @@ import {
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */
 export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
+
+// Stable fallbacks: a fresh `[]` default per render would hand the memoized
+// toolbar a new array on every keystroke.
+const NO_OPTIONS: string[] = [];
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -153,8 +158,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		// Model/Effort quick-change pills
 		currentModel,
 		currentEffort,
-		availableModels = [],
-		availableEfforts = [],
+		availableModels = NO_OPTIONS,
+		availableEfforts = NO_OPTIONS,
 		onModelChange,
 		onEffortChange,
 		onRefreshModels,
@@ -431,15 +436,56 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	voiceToggleRef.current = voice.toggleVoiceInput;
 	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
 
+	const voiceBinding = useMemo<ChatComposerVoice>(
+		() => ({
+			supported: voice.voiceSupported,
+			listening: voice.isListening,
+			onToggle: handleToggleVoiceInput,
+		}),
+		[voice.voiceSupported, voice.isListening, handleToggleVoiceInput]
+	);
+
 	// Phone: the whole composer folds away behind a slim handle so the transcript
 	// gets the screen; the user pulls it up to type. Remembered across reloads,
 	// and it starts folded - on a handheld the composer is in the way far more
 	// often than it is in use. The handle keeps a busy dot, since Stop lives in
-	// the folded thinking pill, and a pencil for an unsent draft.
-	const phone = usePhoneLayout();
-	const composerFold = usePersistedToggle(PHONE_COMPOSER_COLLAPSED_KEY, true);
+	// the folded thinking pill, and a pencil for an unsent draft. Called here,
+	// above the early returns, so the fold survives them like every other hook.
+	const composerFold = useChatComposerFold(PHONE_COMPOSER_COLLAPSED_KEY);
 	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
 	const phoneHandleHasDraft = inputValue.trim().length > 0 || stagedImages.length > 0;
+
+	const sendMenu = useAiSendMenu(theme, isTerminalMode, processInput);
+
+	// The AI-only toolbar fields. The toolbar is memoized field by field, so this
+	// bag's identity does not matter, only that each field is stable.
+	const toolbarProps: ChatComposerToolbarProps = {
+		isTerminalMode,
+		terminalCwd: isTerminalMode ? formatTerminalCwd(session) : undefined,
+		agentId: session.toolType,
+		hasStandardCapability,
+		permissionMode: toolbarBinding.permissionMode,
+		onPermissionModeChange: toolbarBinding.onPermissionModeChange,
+		onThinkingModeChange: toolbarBinding.onThinkingModeChange,
+		tabSaveToHistory,
+		onToggleTabSaveToHistory,
+		tabShowThinking,
+		onToggleTabShowThinking,
+		currentModel,
+		currentEffort,
+		availableModels,
+		availableEfforts,
+		onModelChange,
+		onEffortChange,
+		onRefreshModels,
+		refreshingModels,
+		modelMenuOpen,
+		setModelMenuOpen,
+		modelMenuRef,
+		effortMenuOpen,
+		setEffortMenuOpen,
+		effortMenuRef,
+	};
 
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {
@@ -504,312 +550,247 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		);
 	}
 
-	// Folded: nothing but the handle. Every hook above has already run, so the
-	// draft, voice, autosize, and menu state all survive the fold.
-	if (phone && composerFold.value) {
-		return (
-			<PhoneComposerHandle
-				theme={theme}
-				collapsed
-				onToggle={composerFold.toggle}
-				busy={phoneHandleBusy}
-				hasDraft={phoneHandleHasDraft}
-			/>
-		);
-	}
-
 	return (
-		<div
-			className={`relative border-t ${phone ? 'px-3 pb-3 pt-0' : 'p-4'}`}
-			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-		>
-			{phone && (
-				<PhoneComposerHandle
-					theme={theme}
-					collapsed={false}
-					onToggle={composerFold.toggle}
-					busy={phoneHandleBusy}
-				/>
-			)}
-
-			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
-			<QuitWhenIdleIndicator theme={theme} />
-
-			{/* CrossAgentResponseIndicator - "N agents responding…" while consulted
-			    agents stream replies into this tab. Only meaningful in AI mode. */}
-			{session.inputMode === 'ai' && (
-				<CrossAgentResponseIndicator
-					theme={theme}
-					sourceSessionId={session.id}
-					sourceTabId={getActiveTab(session)?.id}
-					onSessionClick={onSessionClick}
-					// A message that LEADS with a mention is answered only by the consulted
-					// agents, so this agent never goes busy and the thinking pill (the usual
-					// home of Stop) never appears - leaving the user with nothing to press
-					// while other agents work on their behalf. Carry Stop here in exactly
-					// that case, and stay out of the way when the thinking pill is already
-					// offering it: both buttons run the same agent-level interrupt, so two
-					// of them on screen is just a second copy of one control.
-					onInterrupt={
-						thinkingItems.length > 0 || autoRunState?.isRunning ? undefined : handleInterrupt
-					}
-				/>
-			)}
-
-			{/* Concerto creation tracks stay separate from the ordinary agent status. */}
-			{session.inputMode === 'ai' && thinkingItems.length > 0 && (
-				<ConcertoCreationPipeline
-					thinkingItems={thinkingItems}
-					theme={theme}
-					activeSessionId={session.id}
-					activeTabId={session.activeTabId}
-				/>
-			)}
-
-			{/* ThinkingStatusPill - AI mode only. It renders nothing when no work is running: it also
-			    watches Auto Runs on OTHER agents, which only it subscribes to. */}
-			{session.inputMode === 'ai' && (
-				<ThinkingStatusPill
-					thinkingItems={thinkingItems}
-					theme={theme}
-					onSessionClick={onSessionClick}
-					namedSessions={namedSessions}
-					autoRunState={autoRunState}
-					activeSessionId={session.id}
-					activeTabId={session.activeTabId}
-					onStopAutoRun={onStopAutoRun}
-					onInterrupt={handleInterrupt}
-				/>
-			)}
-
-			{/* ExecutionQueueIndicator - show when items are queued in AI mode */}
-			{session.inputMode === 'ai' && onOpenQueueBrowser && (
-				<ExecutionQueueIndicator
-					session={session}
-					theme={theme}
-					onClick={onOpenQueueBrowser}
-					onSwitchTab={onSessionClick}
-				/>
-			)}
-
-			{/* AgentTaskListBar - the agent's current checklist, pinned above the
-			    composer so it doesn't scroll away with the conversation. */}
-			{session.inputMode === 'ai' && <AgentTaskListBar theme={theme} logs={activeTab?.logs} />}
-
-			<StagedImagesStrip
-				isVisible={session.inputMode === 'ai'}
-				stagedImages={stagedImages}
-				theme={theme}
-				setLightboxImage={setLightboxImage}
-				setStagedImages={setStagedImages}
-				openAnnotator={openAnnotator}
-				onReorder={handleReorderStagedImages}
-			/>
-
-			<SlashCommandPopover
-				isOpen={slashCommandOpen}
-				commands={filteredSlashCommands}
-				inputValueLower={inputValueLower}
-				selectedIndex={safeSelectedIndex}
-				itemRefs={slashCommandItemRefs}
-				theme={theme}
-				setInputValue={setInputValue}
-				setSlashCommandOpen={setSlashCommandOpen}
-				setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-				inputRef={inputRef}
-			/>
-
-			<CommandHistoryPopover
-				isOpen={commandHistoryOpen}
-				isTerminalMode={isTerminalMode}
-				filter={commandHistoryFilter}
-				selectedIndex={commandHistorySelectedIndex}
-				filteredHistory={filteredCommandHistory}
-				theme={theme}
-				setFilter={setCommandHistoryFilter}
-				setOpen={setCommandHistoryOpen}
-				setSelectedIndex={setCommandHistorySelectedIndex}
-				setInputValue={setInputValue}
-				inputRef={inputRef}
-			/>
-
-			<TabCompletionPopover
-				isOpen={tabCompletionOpen}
-				isShellInput={isShellInput}
-				isGitRepo={session.isGitRepo}
-				suggestions={tabCompletionSuggestions}
-				selectedIndex={selectedTabCompletionIndex}
-				filter={tabCompletionFilter}
-				itemRefs={tabCompletionItemRefs}
-				theme={theme}
-				setInputValue={setInputValue}
-				setOpen={setTabCompletionOpen}
-				setFilter={setTabCompletionFilter}
-				setSelectedIndex={setSelectedTabCompletionIndex}
-				inputRef={inputRef}
-			/>
-
-			<AtMentionPopover
-				isOpen={atMentionOpen}
-				isTerminalMode={isTerminalMode}
-				items={atMentionItems}
-				counts={atMentionCounts}
-				category={atMentionCategory}
-				setCategory={setAtMentionCategory}
-				selectedIndex={selectedAtMentionIndex}
-				filter={atMentionFilter}
-				startIndex={atMentionStartIndex}
-				inputValue={inputValue}
-				itemRefs={atMentionItemRefs}
-				theme={theme}
-				setInputValue={setInputValue}
-				setOpen={setAtMentionOpen}
-				setFilter={setAtMentionFilter}
-				setStartIndex={setAtMentionStartIndex}
-				setSelectedIndex={setSelectedAtMentionIndex}
-				inputRef={inputRef}
-			/>
-
-			<div className="flex min-w-0 gap-3">
-				<div className="flex min-w-0 flex-1 flex-col">
-					<div
-						className="chrome-raised relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
-						style={{
-							borderColor: showQueueingBorder ? theme.colors.warning : theme.colors.border,
-							backgroundColor: showQueueingBorder
-								? `${theme.colors.warning}15`
-								: theme.colors.bgMain,
-						}}
-					>
-						{(isShellCommandDraft || isAiCommandDraft) && (
-							<CommandModeBar
-								theme={theme}
-								mode={isAiCommandDraft ? 'ai' : 'shell'}
-								cwd={resolveCommandCwd(session)}
-								remoteName={session.sshRemote?.name}
-								isGitRepo={session.isGitRepo}
-								model={aiCommandModel}
-								effort={aiCommandEffort}
-							/>
-						)}
-
-						{mentionRouting && (
-							<MentionRoutingBar
-								theme={theme}
-								routing={mentionRouting.routing}
-								inferredRouting={mentionRouting.inferredRouting}
-								explicit={mentionRouting.explicit}
-								agentNames={mentionRouting.agentNames}
-								onRoutingChange={setMentionRoutingOverride}
-							/>
-						)}
-
-						{isAiCommandDraft && aiCommandEntry && (
-							<AiCommandProposal
-								theme={theme}
-								entry={aiCommandEntry}
-								onAccept={() => acceptAiCommand(session, aiCommandEntry)}
-								onDismiss={() => {
-									// Hand the request back so the user can refine it, and put the
-									// caret where they can: declining is nearly always "that is not
-									// what I meant", not "never mind".
-									setInputValue(dismissAiCommand(aiCommandEntry));
-									inputRef.current?.focus();
-								}}
-								onChoose={(choice) =>
-									setAiCommandChoice(aiCommandKey(session.id, aiCommandEntry.tabId), choice)
-								}
-							/>
-						)}
-
-						<InputTextarea
-							agentId={session.id}
-							agentName={session.name}
-							toolType={session.toolType}
+		<ChatComposerFrame
+			theme={theme}
+			capabilities={composerCapabilities}
+			fold={composerFold}
+			isBusy={phoneHandleBusy}
+			hasDraft={phoneHandleHasDraft}
+			warningBorder={showQueueingBorder}
+			// MainPanelContent registers the toast avoid zone around all of InputArea.
+			avoidToasts={false}
+			raised
+			aboveComposer={
+				<>
+					{/* CrossAgentResponseIndicator - "N agents responding…" while consulted
+					    agents stream replies into this tab. Only meaningful in AI mode. */}
+					{session.inputMode === 'ai' && (
+						<CrossAgentResponseIndicator
 							theme={theme}
-							isTerminalMode={isTerminalMode}
-							isCommandModeDraft={isShellCommandDraft}
-							isAiCommandDraft={isAiCommandDraft}
-							awaitingAiCommand={!!aiCommandEntry}
-							inputValue={inputValue}
-							spellCheckEnabled={spellCheckEnabled}
-							inputRef={inputRef}
-							onInputFocus={onInputFocus}
-							onInputBlur={onInputBlur}
-							onChange={handleTextChange}
-							handleInputKeyDown={handleInputKeyDown}
-							handlePaste={handlePaste}
-							handleDrop={handleDrop}
-						/>
-
-						<ToolbarControls
-							theme={theme}
-							capabilities={composerCapabilities}
-							isTerminalMode={isTerminalMode}
-							terminalCwd={isTerminalMode ? formatTerminalCwd(session) : undefined}
-							agentId={session.toolType}
-							hasStandardCapability={hasStandardCapability}
-							permissionMode={toolbarBinding.permissionMode}
-							onPermissionModeChange={toolbarBinding.onPermissionModeChange}
-							onThinkingModeChange={toolbarBinding.onThinkingModeChange}
-							enterToSend={enterToSend}
-							setEnterToSend={setEnterToSend}
-							setStagedImages={setStagedImages}
-							onUploadFiles={onUploadFiles}
-							voiceSupported={voice.voiceSupported}
-							isVoiceListening={voice.isListening}
-							onToggleVoiceInput={handleToggleVoiceInput}
-							// The prompt composer is an AI-mode affordance; terminal mode offers none.
-							onOpenPromptComposer={session.inputMode === 'ai' ? onOpenPromptComposer : undefined}
-							shortcuts={shortcuts}
-							showFlashNotification={showFlashNotification}
-							tabSaveToHistory={tabSaveToHistory}
-							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-							tabShowThinking={tabShowThinking}
-							onToggleTabShowThinking={onToggleTabShowThinking}
-							currentModel={currentModel}
-							currentEffort={currentEffort}
-							availableModels={availableModels}
-							availableEfforts={availableEfforts}
-							onModelChange={onModelChange}
-							onEffortChange={onEffortChange}
-							onRefreshModels={onRefreshModels}
-							refreshingModels={refreshingModels}
-							modelMenuOpen={modelMenuOpen}
-							setModelMenuOpen={setModelMenuOpen}
-							modelMenuRef={modelMenuRef}
-							effortMenuOpen={effortMenuOpen}
-							setEffortMenuOpen={setEffortMenuOpen}
-							effortMenuRef={effortMenuRef}
-							processInput={processInput}
-						/>
-					</div>
-					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}
-					{session.inputMode === 'ai' && contextWarningsEnabled && onSummarizeAndContinue && (
-						<ContextWarningSash
-							theme={theme}
-							contextUsage={contextUsage}
-							yellowThreshold={contextWarningYellowThreshold}
-							redThreshold={contextWarningRedThreshold}
-							enabled={contextWarningsEnabled}
-							onSummarizeClick={onSummarizeAndContinue}
-							tabId={session.activeTabId}
+							sourceSessionId={session.id}
+							sourceTabId={getActiveTab(session)?.id}
+							onSessionClick={onSessionClick}
+							// A message that LEADS with a mention is answered only by the consulted
+							// agents, so this agent never goes busy and the thinking pill (the usual
+							// home of Stop) never appears - leaving the user with nothing to press
+							// while other agents work on their behalf. Carry Stop here in exactly
+							// that case, and stay out of the way when the thinking pill is already
+							// offering it: both buttons run the same agent-level interrupt, so two
+							// of them on screen is just a second copy of one control.
+							onInterrupt={
+								thinkingItems.length > 0 || autoRunState?.isRunning ? undefined : handleInterrupt
+							}
 						/>
 					)}
-				</div>
 
-				{/* Phone: this column is gone. The notification bell opens a settings
-				    popover that has no business on a 390px composer, and send has moved
-				    into the toolbar row (see ToolbarControls' phone branch) so the
-				    composer gets the full width it needs to show what is being typed. */}
-				{!phone && (
-					<NotificationSendControls
+					{/* Concerto creation tracks stay separate from the ordinary agent status. */}
+					{session.inputMode === 'ai' && thinkingItems.length > 0 && (
+						<ConcertoCreationPipeline
+							thinkingItems={thinkingItems}
+							theme={theme}
+							activeSessionId={session.id}
+							activeTabId={session.activeTabId}
+						/>
+					)}
+
+					{/* ThinkingStatusPill - AI mode only. It renders nothing when no work is running: it also
+					    watches Auto Runs on OTHER agents, which only it subscribes to. */}
+					{session.inputMode === 'ai' && (
+						<ThinkingStatusPill
+							thinkingItems={thinkingItems}
+							theme={theme}
+							onSessionClick={onSessionClick}
+							namedSessions={namedSessions}
+							autoRunState={autoRunState}
+							activeSessionId={session.id}
+							activeTabId={session.activeTabId}
+							onStopAutoRun={onStopAutoRun}
+							onInterrupt={handleInterrupt}
+						/>
+					)}
+
+					{/* ExecutionQueueIndicator - show when items are queued in AI mode */}
+					{session.inputMode === 'ai' && onOpenQueueBrowser && (
+						<ExecutionQueueIndicator
+							session={session}
+							theme={theme}
+							onClick={onOpenQueueBrowser}
+							onSwitchTab={onSessionClick}
+						/>
+					)}
+
+					{/* AgentTaskListBar - the agent's current checklist, pinned above the
+					    composer so it doesn't scroll away with the conversation. */}
+					{session.inputMode === 'ai' && <AgentTaskListBar theme={theme} logs={activeTab?.logs} />}
+				</>
+			}
+			overlays={
+				<>
+					<SlashCommandPopover
+						isOpen={slashCommandOpen}
+						commands={filteredSlashCommands}
+						inputValueLower={inputValueLower}
+						selectedIndex={safeSelectedIndex}
+						itemRefs={slashCommandItemRefs}
 						theme={theme}
-						isTerminalMode={isTerminalMode}
-						processInput={processInput}
+						setInputValue={setInputValue}
+						setSlashCommandOpen={setSlashCommandOpen}
+						setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+						inputRef={inputRef}
 					/>
-				)}
-			</div>
-		</div>
+
+					<CommandHistoryPopover
+						isOpen={commandHistoryOpen}
+						isTerminalMode={isTerminalMode}
+						filter={commandHistoryFilter}
+						selectedIndex={commandHistorySelectedIndex}
+						filteredHistory={filteredCommandHistory}
+						theme={theme}
+						setFilter={setCommandHistoryFilter}
+						setOpen={setCommandHistoryOpen}
+						setSelectedIndex={setCommandHistorySelectedIndex}
+						setInputValue={setInputValue}
+						inputRef={inputRef}
+					/>
+
+					<TabCompletionPopover
+						isOpen={tabCompletionOpen}
+						isShellInput={isShellInput}
+						isGitRepo={session.isGitRepo}
+						suggestions={tabCompletionSuggestions}
+						selectedIndex={selectedTabCompletionIndex}
+						filter={tabCompletionFilter}
+						itemRefs={tabCompletionItemRefs}
+						theme={theme}
+						setInputValue={setInputValue}
+						setOpen={setTabCompletionOpen}
+						setFilter={setTabCompletionFilter}
+						setSelectedIndex={setSelectedTabCompletionIndex}
+						inputRef={inputRef}
+					/>
+
+					<AtMentionPopover
+						isOpen={atMentionOpen}
+						isTerminalMode={isTerminalMode}
+						items={atMentionItems}
+						counts={atMentionCounts}
+						category={atMentionCategory}
+						setCategory={setAtMentionCategory}
+						selectedIndex={selectedAtMentionIndex}
+						filter={atMentionFilter}
+						startIndex={atMentionStartIndex}
+						inputValue={inputValue}
+						itemRefs={atMentionItemRefs}
+						theme={theme}
+						setInputValue={setInputValue}
+						setOpen={setAtMentionOpen}
+						setFilter={setAtMentionFilter}
+						setStartIndex={setAtMentionStartIndex}
+						setSelectedIndex={setSelectedAtMentionIndex}
+						inputRef={inputRef}
+					/>
+				</>
+			}
+			inputHeader={
+				<>
+					{(isShellCommandDraft || isAiCommandDraft) && (
+						<CommandModeBar
+							theme={theme}
+							mode={isAiCommandDraft ? 'ai' : 'shell'}
+							cwd={resolveCommandCwd(session)}
+							remoteName={session.sshRemote?.name}
+							isGitRepo={session.isGitRepo}
+							model={aiCommandModel}
+							effort={aiCommandEffort}
+						/>
+					)}
+
+					{mentionRouting && (
+						<MentionRoutingBar
+							theme={theme}
+							routing={mentionRouting.routing}
+							inferredRouting={mentionRouting.inferredRouting}
+							explicit={mentionRouting.explicit}
+							agentNames={mentionRouting.agentNames}
+							onRoutingChange={setMentionRoutingOverride}
+						/>
+					)}
+
+					{isAiCommandDraft && aiCommandEntry && (
+						<AiCommandProposal
+							theme={theme}
+							entry={aiCommandEntry}
+							onAccept={() => acceptAiCommand(session, aiCommandEntry)}
+							onDismiss={() => {
+								// Hand the request back so the user can refine it, and put the
+								// caret where they can: declining is nearly always "that is not
+								// what I meant", not "never mind".
+								setInputValue(dismissAiCommand(aiCommandEntry));
+								inputRef.current?.focus();
+							}}
+							onChoose={(choice) =>
+								setAiCommandChoice(aiCommandKey(session.id, aiCommandEntry.tabId), choice)
+							}
+						/>
+					)}
+				</>
+			}
+			textarea={
+				<InputTextarea
+					agentId={session.id}
+					agentName={session.name}
+					toolType={session.toolType}
+					theme={theme}
+					isTerminalMode={isTerminalMode}
+					isCommandModeDraft={isShellCommandDraft}
+					isAiCommandDraft={isAiCommandDraft}
+					awaitingAiCommand={!!aiCommandEntry}
+					inputValue={inputValue}
+					spellCheckEnabled={spellCheckEnabled}
+					inputRef={inputRef}
+					onInputFocus={onInputFocus}
+					onInputBlur={onInputBlur}
+					onChange={handleTextChange}
+					handleInputKeyDown={handleInputKeyDown}
+					handlePaste={handlePaste}
+					handleDrop={handleDrop}
+				/>
+			}
+			// Context Warning Sash - AI mode only, appears below input when context usage is high
+			belowInput={
+				session.inputMode === 'ai' &&
+				contextWarningsEnabled &&
+				onSummarizeAndContinue && (
+					<ContextWarningSash
+						theme={theme}
+						contextUsage={contextUsage}
+						yellowThreshold={contextWarningYellowThreshold}
+						redThreshold={contextWarningRedThreshold}
+						enabled={contextWarningsEnabled}
+						onSummarizeClick={onSummarizeAndContinue}
+						tabId={session.activeTabId}
+					/>
+				)
+			}
+			stagedImages={stagedImages}
+			stagedImagesVisible={session.inputMode === 'ai'}
+			setStagedImages={setStagedImages}
+			onReorderStagedImages={handleReorderStagedImages}
+			setLightboxImage={setLightboxImage}
+			openAnnotator={openAnnotator}
+			enterToSend={enterToSend}
+			setEnterToSend={setEnterToSend}
+			voice={voiceBinding}
+			onUploadFiles={onUploadFiles}
+			// The prompt composer is an AI-mode affordance; terminal mode offers none.
+			onOpenPromptComposer={session.inputMode === 'ai' ? onOpenPromptComposer : undefined}
+			shortcuts={shortcuts}
+			showFlashNotification={showFlashNotification}
+			toolbarProps={toolbarProps}
+			onSend={processInput}
+			columnSendTitle={isTerminalMode ? 'Run command (Enter)' : 'Send message'}
+			sendMenu={sendMenu}
+		/>
 	);
 });

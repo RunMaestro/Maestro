@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NotificationSendControls } from '../../../../../renderer/components/InputArea/components/NotificationSendControls';
+import { ComposerSendColumn } from '../../../../../renderer/components/ChatComposer';
+import { useAiSendMenu } from '../../../../../renderer/components/InputArea/hooks/useAiSendMenu';
+import type { Theme } from '../../../../../renderer/types';
 import { inputAreaTheme } from '../_fixtures';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../../../renderer/stores/composerInputStore';
@@ -10,6 +12,30 @@ import { createMockAITab, createMockSession } from '../../../../helpers';
 vi.mock('../../../../../renderer/components/InputArea/components/SendMenuPopover', () => ({
 	SendMenuPopover: vi.fn(() => <div data-testid="send-menu-popover" />),
 }));
+
+/**
+ * The AI composer's send column as ChatComposerFrame builds it for InputArea:
+ * the shared column with the AI Send menu and the terminal-mode title.
+ */
+function NotificationSendControls({
+	theme,
+	isTerminalMode,
+	processInput,
+}: {
+	theme: Theme;
+	isTerminalMode: boolean;
+	processInput: () => void;
+}) {
+	const sendMenu = useAiSendMenu(theme, isTerminalMode, processInput);
+	return (
+		<ComposerSendColumn
+			theme={theme}
+			onSend={processInput}
+			sendTitle={isTerminalMode ? 'Run command (Enter)' : 'Send message'}
+			sendMenu={sendMenu}
+		/>
+	);
+}
 
 function seedWorkingAgent(draft: string) {
 	const session = createMockSession({
@@ -29,7 +55,7 @@ vi.mock('../../../../../renderer/components/NotificationPopover', () => ({
 	)),
 }));
 
-describe('NotificationSendControls', () => {
+describe('useAiSendMenu in the send column', () => {
 	afterEach(() => {
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 		useComposerInputStore.setState({ aiValue: '' });
