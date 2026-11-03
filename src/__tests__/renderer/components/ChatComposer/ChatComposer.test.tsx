@@ -156,6 +156,66 @@ describe('ChatComposer', () => {
 			// On phone, the desktop send column with notification bell is not rendered
 			expect(screen.queryByTitle('Notification Settings')).not.toBeInTheDocument();
 		});
+
+		it('measures a saved draft to its full height on first unfold when opened folded', () => {
+			window.localStorage?.removeItem('test.composer.collapsed');
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+			try {
+				render(
+					<ChatComposer
+						{...createMinimalProps({
+							draftKey: 'test-session',
+							value: 'line 1\nline 2\nline 3\nline 4',
+						})}
+					/>
+				);
+
+				// Initially folded: textbox is unmounted
+				expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+				// Unfold
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(textarea).toBeInTheDocument();
+				expect(textarea.style.height).toBe('140px');
+			} finally {
+				scrollHeightSpy.mockRestore();
+			}
+		});
+
+		it('re-measures a multi-line draft to its full height after folding and reopening', () => {
+			window.localStorage?.setItem('test.composer.collapsed', 'false');
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+			try {
+				render(
+					<ChatComposer
+						{...createMinimalProps({
+							draftKey: 'test-session',
+							value: 'line 1\nline 2\nline 3\nline 4',
+						})}
+					/>
+				);
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(textarea.style.height).toBe('140px');
+
+				// Fold the composer
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+				expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+				// Reopen (unfold) the composer
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+				const reopenedTextarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(reopenedTextarea.style.height).toBe('140px');
+			} finally {
+				scrollHeightSpy.mockRestore();
+			}
+		});
 	});
 
 	describe('text and submit', () => {

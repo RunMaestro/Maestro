@@ -167,6 +167,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	const toastAvoidRef = useToastAvoidZone();
 	const phone = usePhoneLayout();
 	const composerFold = usePersistedToggle(phoneFoldStorageKey ?? 'phone.composer.collapsed', true);
+	const isFolded = phone && composerFold.value;
 
 	// Mention state
 	const [atMentionOpen, setAtMentionOpen] = useState(false);
@@ -237,11 +238,16 @@ export const ChatComposer = React.memo(function ChatComposer({
 		}
 	}, [draftKey, voice]);
 
-	// Auto-resize textarea
+	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
+	// the caret visible once the composer is tall enough to scroll. Passing the
+	// draftKey and fold state through resetKey ensures that reopening a folded draft
+	// (or opening a room or session whose restored draft starts folded) re-measures the
+	// newly mounted textarea to its full height instead of leaving it at one row.
 	useAutosizeTextarea({
 		textareaRef: inputRef,
 		value,
 		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+		resetKey: `${draftKey ?? ''}:${isFolded}`,
 	});
 
 	const handleSend = useCallback(() => {
@@ -359,7 +365,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	const resolvedSetStagedImages = setStagedImages ?? NOOP_SET_STAGED_IMAGES;
 
 	// Folded: nothing but the handle.
-	if (phone && composerFold.value) {
+	if (isFolded) {
 		return (
 			<div ref={toastAvoidRef}>
 				<PhoneComposerHandle
