@@ -4085,7 +4085,11 @@ describe('MainPanel', () => {
 
 			// Wait for Claude models to be applied
 			await waitFor(() => {
-				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith(
+					'claude-code',
+					false,
+					undefined
+				);
 			});
 
 			// Now resolve the stale OpenCode models (arriving late)
@@ -4094,8 +4098,16 @@ describe('MainPanel', () => {
 			});
 
 			// Both IPC calls should have fired
-			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
-			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith(
+				'opencode',
+				false,
+				undefined
+			);
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith(
+				'claude-code',
+				false,
+				undefined
+			);
 
 			// The stale OpenCode models should NOT appear - Claude models should persist.
 			// Verify via the data attribute exposed by the InputArea mock.

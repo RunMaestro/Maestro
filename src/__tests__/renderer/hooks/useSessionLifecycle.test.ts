@@ -376,6 +376,7 @@ describe('useSessionLifecycle', () => {
 					undefined,
 					undefined,
 					undefined,
+					undefined, // convertProviderHistory
 					false // boardWorker
 				);
 			});
