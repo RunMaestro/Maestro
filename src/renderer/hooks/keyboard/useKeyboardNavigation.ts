@@ -6,7 +6,7 @@ import type { GroupChatMessagesHandle } from '../../components/GroupChatMessages
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
-import { isImeComposing } from '../input/composerKeyDown';
+import { isImeComposing } from '../../utils/ime';
 
 /**
  * Minimal group-chat shape the sidebar navigation needs. Mirrors the fields

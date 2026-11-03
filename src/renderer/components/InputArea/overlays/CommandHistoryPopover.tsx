@@ -1,6 +1,7 @@
 import React, { memo, useCallback } from 'react';
 import type { Theme } from '../../../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
+import { isImeComposing } from '../../../utils/ime';
 
 interface CommandHistoryPopoverProps {
 	isOpen: boolean;
@@ -75,7 +76,7 @@ export const CommandHistoryPopover = memo(function CommandHistoryPopover({
 								setInputValue(visibleHistory[selectedIndex]);
 								closeAndFocusInput();
 							}
-						} else if (e.key === 'Escape') {
+						} else if (e.key === 'Escape' && !isImeComposing(e)) {
 							e.preventDefault();
 							e.stopPropagation();
 							closeAndFocusInput();
