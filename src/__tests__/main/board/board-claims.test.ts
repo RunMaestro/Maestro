@@ -3,12 +3,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createRequire } from 'node:module';
-import { fork, type ChildProcess } from 'node:child_process';
+import { execFileSync, fork, type ChildProcess } from 'node:child_process';
+import { BoardRegistryRevision } from '../../../main/board/board-registry-revision';
 import { build } from 'esbuild';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import { BoardStorageFacade, configureBoardCaptureHost } from '../../../main/board/board-storage';
 import {
+	listBoardWorkers,
+	setBoardWorkerOptions,
 	registerBoardWorker,
 	setBoardWorkerAccess,
 	setBoardWorkerPaused,
@@ -19,9 +22,11 @@ import type {
 	BoardClaimHostContext,
 	BoardClaimResult,
 } from '../../../main/board/board-claims';
+import { claimBoardCard, type BoardRunSpecification } from '../../../main/board/board-claims';
+import { resolveProfileSpawnOverrides } from '../../../shared/profiles/types';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
-import type { BoardCard } from '../../../shared/board/types';
+import { BOARD_SOURCE_PROJECT_PREFIX, type BoardCard } from '../../../shared/board/types';
 
 const fixtureRoot = os.tmpdir();
 let bundleDir: string;
@@ -216,7 +221,362 @@ function patchCard(patch: Record<string, unknown>) {
 	);
 }
 
+describe('fresh complete registry fence inside the real claim transaction', () => {
+	it.each([
+		'agent',
+		'membership',
+		'group',
+		'registration',
+		'worker-options',
+		'pause',
+		'pin',
+		'claim',
+		'revision',
+		'permission',
+		'approval',
+		'disabled',
+		'external-config',
+		'external-membership',
+		'external-worker',
+	] as const)('matches the original refusal after an intervening %s change', (change) => {
+		const registerFile = path.join(dir, 'live-registers.json');
+		fs.writeFileSync(
+			registerFile,
+			JSON.stringify({ agents, groups: [{ id: 'group' }, { id: 'elsewhere' }], configs: {} })
+		);
+		const readRegisters = () =>
+			JSON.parse(fs.readFileSync(registerFile, 'utf8')) as {
+				agents: typeof agents;
+				groups: { id: string }[];
+				configs: Record<string, unknown>;
+			};
+		configureBoardCaptureHost(readRegisters);
+		const inputs = () => {
+			const registers = readRegisters();
+			return {
+				catalog: facade.captureCatalog(),
+				agents: registers.agents,
+				groups: registers.groups,
+				workers: listBoardWorkers(db),
+				agentConfigs: registers.configs,
+				sshRemotes: [],
+			};
+		};
+		const tracker = new BoardRegistryRevision();
+		let oldFingerprint = '';
+		let oldRevision = 0;
+		const original = () => {
+			const fingerprint = canonicalJson(inputs());
+			if (fingerprint !== oldFingerprint) {
+				oldFingerprint = fingerprint;
+				oldRevision++;
+			}
+			return oldRevision;
+		};
+		const input = command();
+		input.readRevision.registry = original();
+		expect(tracker.observe(inputs())).toBe(input.readRevision.registry);
+		if (change === 'agent' || change === 'membership' || change === 'group') {
+			const registers = readRegisters();
+			if (change === 'agent') registers.agents = registers.agents.filter((a) => a.id !== 'worker');
+			if (change === 'membership') registers.agents[0].groupId = 'elsewhere';
+			if (change === 'group') registers.groups = [{ id: 'elsewhere' }];
+			fs.writeFileSync(registerFile, JSON.stringify(registers));
+		}
+		if (change === 'registration') db.prepare('DELETE FROM workers WHERE agent_id=?').run('worker');
+		if (change === 'pause') setBoardWorkerPaused(db, 'worker', true);
+		if (change === 'permission') setBoardWorkerAccess(db, 'worker', [], []);
+		if (change === 'worker-options') {
+			const worker = listBoardWorkers(db).find((w) => w.agentId === 'worker')!;
+			setBoardWorkerOptions(db, 'worker', canonicalJson(worker.payload), {
+				customArgs: '--changed',
+			});
+		}
+		if (change === 'pin') patchCard({ assigneeAgentId: 'foreign' });
+		if (change === 'approval')
+			patchCard({
+				capturePolicy: {
+					effectiveStartMode: 'approval',
+					dispatchApproval: 'required',
+					specificationRevision: 1,
+				},
+			});
+		if (change === 'disabled') host.dispatchEnabled = false;
+		if (change === 'revision')
+			db.prepare('UPDATE cards SET revision=revision+1 WHERE collection_key=?').run(
+				input.collectionKey
+			);
+		if (change === 'claim') {
+			expect(facade.claim({ ...input, requestId: 'competing-claim' }, () => host).ok).toBe(true);
+		}
+		if (change === 'external-config' || change === 'external-membership') {
+			// A separate OS process commits the registry edit before claim enters IMMEDIATE.
+			execFileSync(process.execPath, [
+				'-e',
+				`
+				const fs = require('node:fs'); const file = process.argv[1];
+				const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+				if (process.argv[2] === 'external-config') value.configs.codex = { customArgs: '--external' };
+				else value.agents[0].groupId = 'elsewhere';
+				fs.writeFileSync(file + '.next', JSON.stringify(value)); fs.renameSync(file + '.next', file);
+			`,
+				registerFile,
+				change,
+			]);
+		}
+		if (change === 'external-worker') {
+			const sqliteModule =
+				process.env.MAESTRO_TEST_SQLITE_MODULE ??
+				createRequire(path.resolve('package.json')).resolve('better-sqlite3');
+			execFileSync(process.execPath, [
+				'-e',
+				`
+				const db = new (require(process.argv[1]))(process.argv[2]);
+				db.prepare('UPDATE workers SET paused=1 WHERE agent_id=?').run('worker'); db.close();
+			`,
+				sqliteModule,
+				file,
+			]);
+		}
+		const before = state();
+		const context = (registry: number) => {
+			expect(db.inTransaction).toBe(true);
+			return { ...host, registryRevision: registry };
+		};
+		const oldResult = facade.claim(input, () => context(original()));
+		const newResult = facade.claim(input, () => context(tracker.observe(inputs())));
+		expect(newResult).toEqual(oldResult);
+		expect(newResult.ok).toBe(false);
+		expect(state()).toBe(before);
+	});
+
+	it.each(['original', 'incremental'] as const)(
+		'retains unchanged %s prepared RunSpecs on revalidation',
+		(mode) => {
+			const tracker = new BoardRegistryRevision();
+			const inputs = () => ({
+				catalog: facade.captureCatalog(),
+				agents,
+				groups: [{ id: 'group' }],
+				workers: listBoardWorkers(db),
+				agentConfigs: {},
+				sshRemotes: [],
+			});
+			const fingerprint = canonicalJson(inputs());
+			const observe = () =>
+				mode === 'incremental'
+					? tracker.observe(inputs())
+					: canonicalJson(inputs()) === fingerprint
+						? 1
+						: 2;
+			const input = command();
+			input.readRevision.registry = observe();
+			const result = facade.claim(input, () => ({ ...host, registryRevision: observe() }));
+			expect(result.ok).toBe(true);
+			if (!result.ok) throw new Error('Expected claim');
+			const row = db
+				.prepare('SELECT specification_json FROM runs WHERE run_id=?')
+				.get(result.runToken.runId) as { specification_json: string };
+			const spec = JSON.parse(row.specification_json) as BoardRunSpecification;
+			expect(spec.readRevision.registry).toBe(1);
+			expect(
+				claimBoardCard(
+					db,
+					input,
+					() => ({ ...host, registryRevision: observe(), catalog: facade.captureCatalog() }),
+					spec
+				).ok
+			).toBe(true);
+			expect(
+				db.prepare('SELECT specification_json FROM runs WHERE run_id=?').get(result.runToken.runId)
+			).toEqual(row);
+		}
+	);
+});
+
 describe('persistent global Board claims over real SQLite', () => {
+	it('uses a role created in an empty store, with approval, role, group and stale-read fences intact', () => {
+		db.close();
+		file = path.join(dir, 'fresh.sqlite');
+		db = openBoardDb(file);
+		facade = new BoardStorageFacade(db);
+		expect(facade.captureCatalog().profiles).toEqual([]);
+		const role = facade.createRole('Reviewer');
+		const global = facade.ensureGlobalBoard();
+		const root = BOARD_SOURCE_PROJECT_PREFIX + global.storage!.sourceKey;
+		// Explicit host repository evidence is independent of role creation/capture.
+		db.prepare('INSERT INTO repositories VALUES (?, ?)').run(
+			'repo-0',
+			canonicalJson({ id: 'repo-0', workingDirectory: projects[0], validated: true })
+		);
+		db.prepare('INSERT INTO runtime_owner VALUES (1, ?, 7, 0)').run('fixture-owner:boot:start');
+		for (const agent of agents) {
+			registerBoardWorker(db, agent.id);
+			setBoardWorkerAccess(db, agent.id, [], ['repo-0']);
+		}
+		facade.setWorkerRole('worker', role, true);
+		facade.setWorkerRole('foreign', role, true);
+		const captured = facade.capture({
+			projectRoot: root,
+			boardId: global.id,
+			expectedRevision: global.storage!.expectedRevision!,
+			card: {
+				id: 'fresh',
+				title: 'Review',
+				body: '',
+				parents: [],
+				status: 'todo',
+				createdAt: '',
+				updatedAt: '',
+				executionScope: { kind: 'group', groupId: 'group' },
+				role,
+				repositoryId: 'repo-0',
+				workingDirectory: projects[0],
+			},
+		});
+		db.close();
+		db = openBoardDb(file);
+		facade = new BoardStorageFacade(db);
+		host = hostFor(0);
+		const input = (workerAgentId: string): BoardClaimCommand => {
+			const collection = facade.workspace.readCollection(global.storage!)!;
+			return {
+				sourceKey: global.storage!.sourceKey,
+				collectionKey: global.storage!.collectionKey,
+				cardId: 'fresh',
+				workerAgentId,
+				requestId: generateUUID(),
+				readRevision: {
+					workspace: facade.workspace.readWorkspace().revision,
+					collection: collection.revision,
+					card: collection.cards[0].revision,
+					registry: registryRevision,
+				},
+			};
+		};
+		expect(facade.read(root, global.id).cards[0].role).toEqual(role);
+		expectWaiting('approval-required', input('worker'));
+		facade.capture(
+			{
+				projectRoot: root,
+				boardId: global.id,
+				expectedRevision: captured.storage!.expectedRevision!,
+				card: { ...facade.read(root, global.id).cards[0], startModeOverride: 'direct' },
+			},
+			true
+		);
+		expectWaiting('worker-role-mismatch', input('other'));
+		expectWaiting('worker-outside-scope', input('foreign'));
+		const stale = input('worker');
+		facade.setWorkerRole('worker', role, false);
+		expectWaiting('stale-revision', stale);
+		expectWaiting('worker-role-mismatch', input('worker'));
+		facade.setWorkerRole('worker', role, true);
+		setBoardWorkerPaused(db, 'worker', true);
+		expectWaiting('worker-paused', input('worker'));
+		setBoardWorkerPaused(db, 'worker', false);
+		expect(claim(input('worker')).ok).toBe(true);
+		const spec = JSON.parse(
+			(db.prepare('SELECT specification_json FROM runs').get() as { specification_json: string })
+				.specification_json
+		);
+		expect(spec).toMatchObject({
+			role,
+			workerAgentId: 'worker',
+			membership: { id: 'worker', groupId: 'group' },
+		});
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+	});
+	it('reloads a new global role requirement and claims only the exact role inside the current group', () => {
+		const global = facade.ensureGlobalBoard();
+		const root = BOARD_SOURCE_PROJECT_PREFIX + global.storage!.sourceKey;
+		const role = { namespace: namespaces[1], profileId: 'role' };
+		const profiles = db.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id').all();
+		facade.capture(
+			{
+				projectRoot: root,
+				boardId: global.id,
+				expectedRevision: global.storage!.expectedRevision!,
+				card: {
+					id: 'new-role-card',
+					title: 'Role within group',
+					body: '',
+					parents: [],
+					status: 'todo',
+					createdAt: '',
+					updatedAt: '',
+					executionScope: { kind: 'group', groupId: 'group' },
+					role,
+					assigneeProfileId: role.profileId,
+					repositoryId: 'repo-0',
+					workingDirectory: projects[0],
+					startModeOverride: 'direct',
+				},
+			},
+			true
+		);
+		db.close();
+		db = openBoardDb(file);
+		facade = new BoardStorageFacade(db);
+		expect(facade.read(root, global.id).cards[0]).toMatchObject({
+			role,
+			assigneeProfileId: 'role',
+		});
+		const key = global.storage!;
+		const input = (workerAgentId: string): BoardClaimCommand => {
+			const collection = facade.workspace.readCollection(key)!;
+			return {
+				sourceKey: key.sourceKey,
+				collectionKey: key.collectionKey,
+				cardId: 'new-role-card',
+				workerAgentId,
+				requestId: generateUUID(),
+				readRevision: {
+					workspace: facade.workspace.readWorkspace().revision,
+					collection: collection.revision,
+					card: collection.cards[0].revision,
+					registry: registryRevision,
+				},
+			};
+		};
+		// Same legacy id from another source is not the requested role.
+		setBoardWorkerAccess(
+			db,
+			'other',
+			[{ namespace: namespaces[0], profileId: 'role' }],
+			['repo-0']
+		);
+		expectWaiting('worker-role-mismatch', input('other'));
+		expectWaiting('worker-outside-scope', input('foreign'));
+		setBoardWorkerPaused(db, 'worker', true);
+		expectWaiting('worker-paused', input('worker'));
+		setBoardWorkerPaused(db, 'worker', false);
+		agents = agents.map((agent) =>
+			agent.id === 'worker' ? { ...agent, groupId: 'elsewhere' } : agent
+		);
+		expectWaiting('worker-outside-scope', input('worker'));
+		agents = agents.map((agent) =>
+			agent.id === 'worker' ? { ...agent, groupId: 'group' } : agent
+		);
+		expect(claim(input('worker')).ok).toBe(true);
+		const spec = JSON.parse(
+			(
+				db
+					.prepare('SELECT specification_json FROM runs WHERE card_id = ?')
+					.get('new-role-card') as { specification_json: string }
+			).specification_json
+		);
+		expect(spec).toMatchObject({
+			role,
+			workerAgentId: 'worker',
+			membership: { id: 'worker', groupId: 'group' },
+			executionOptions: { legacyProfile: { ...role, payload: { model: 'role-model' } } },
+		});
+		expect(db.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id').all()).toEqual(
+			profiles
+		);
+	});
+
 	it('commits a prepared run, immutable specification, token and exclusive worker together; replay is idempotent', () => {
 		const input = command();
 		const result = claim(input);
@@ -263,6 +623,155 @@ describe('persistent global Board claims over real SQLite', () => {
 		expectWaiting('card-claimed', { ...input, requestId: generateUUID(), workerAgentId: 'other' });
 		host = hostFor(1);
 		expectWaiting('worker-busy', command(1));
+	});
+
+	it('isolates worker edits from a shared profile, other workers, snapshots and historical runs; persists across reload', () => {
+		const historical = claim();
+		expect(historical.ok).toBe(true);
+		const historyBefore = db.prepare('SELECT * FROM runs').all();
+		const profilesBefore = db.prepare('SELECT * FROM profiles').all();
+		const migrationsBefore = db.prepare('SELECT * FROM migrations').all();
+		const bBefore = db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('other');
+		const a = listBoardWorkers(db).find((w) => w.agentId === 'worker')!;
+		setBoardWorkerOptions(db, 'worker', canonicalJson(a.payload), {
+			customModel: 'worker-A-model',
+			customEffort: 'high',
+			appendSystemPrompt: 'A role',
+			customArgs: '--a "quoted value"',
+		});
+		expect(db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('other')).toEqual(bBefore);
+		expect(db.prepare('SELECT * FROM profiles').all()).toEqual(profilesBefore);
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual(migrationsBefore);
+		expect(db.prepare('SELECT * FROM runs').all()).toEqual(historyBefore);
+		const stored = listBoardWorkers(db).find((w) => w.agentId === 'worker')!;
+		db.close();
+		db = openBoardDb(file);
+		facade = new BoardStorageFacade(db);
+		expect(listBoardWorkers(db).find((w) => w.agentId === 'worker')).toEqual(stored);
+		// A second card has no profile, and still receives all four worker options.
+		db.prepare('DELETE FROM reservations').run();
+		capture(1, 'no-profile', { role: undefined, assigneeProfileId: undefined });
+		host = hostFor(1);
+		const result = claim(command(1, 'worker', 'no-profile'));
+		expect(result.ok).toBe(true);
+		const spec = JSON.parse(
+			(
+				db
+					.prepare('SELECT specification_json FROM runs WHERE run_id = ?')
+					.get(result.ok ? result.runToken.runId : '') as { specification_json: string }
+			).specification_json
+		);
+		expect(spec.overrides).toEqual(stored.payload.executionOptions);
+		expect(spec.executionOptions.worker).toEqual(stored);
+		expect(spec.executionOptions.legacyProfile).toBeUndefined();
+	});
+
+	it('resolves the exact namespaced legacy source and all fields without flattening multiple granted profiles', () => {
+		const profile = {
+			id: 'role',
+			name: 'Work',
+			model: 'legacy-model',
+			effort: 'low',
+			appendSystemPrompt: 'legacy role',
+			customArgs: '--legacy',
+			future: { keep: ['unknown', 1] },
+		};
+		db.prepare('UPDATE profiles SET payload_json = ? WHERE profile_namespace = ?').run(
+			canonicalJson(profile),
+			namespaces[0]
+		);
+		patchCard({ assigneeProfileId: 'role', profileNamespace: namespaces[0] });
+		const worker = listBoardWorkers(db).find((entry) => entry.agentId === 'worker')!;
+		setBoardWorkerOptions(db, 'worker', canonicalJson(worker.payload), {
+			customModel: 'explicit-worker-model',
+		});
+		const result = claim();
+		expect(result.ok).toBe(true);
+		const spec = JSON.parse(
+			(db.prepare('SELECT specification_json FROM runs').get() as { specification_json: string })
+				.specification_json
+		);
+		expect(spec.overrides).toEqual({
+			...resolveProfileSpawnOverrides(profile, host.agentStates.worker.baseValues),
+			customModel: 'explicit-worker-model',
+		});
+		expect(spec.profile).toEqual(profile);
+		expect(spec.executionOptions.legacyProfile).toMatchObject({
+			namespace: namespaces[0],
+			profileId: 'role',
+			payload: profile,
+			sourceKey: command().sourceKey,
+		});
+		expect(spec.executionOptions.worker.payload.roleRefs).toHaveLength(2);
+	});
+
+	it.each(['worker', 'profile', 'base', 'source'] as const)(
+		'rejects changed %s provenance after Prepare even with the same registry revision',
+		(changed) => {
+			const result = claim();
+			if (!result.ok) throw new Error('claim failed');
+			const spec = JSON.parse(
+				(db.prepare('SELECT specification_json FROM runs').get() as { specification_json: string })
+					.specification_json
+			) as BoardRunSpecification;
+			if (changed === 'worker') {
+				const worker = listBoardWorkers(db).find((w) => w.agentId === 'worker')!;
+				setBoardWorkerOptions(db, 'worker', canonicalJson(worker.payload), {
+					customArgs: '--changed',
+				});
+			}
+			if (changed === 'profile')
+				db.prepare(
+					"UPDATE profiles SET payload_json=json_set(payload_json, '$.future', 'changed') WHERE profile_namespace=?"
+				).run(namespaces[0]);
+			if (changed === 'source')
+				db.prepare('UPDATE profiles SET source_key=? WHERE profile_namespace=?').run(
+					'changed-source',
+					namespaces[0]
+				);
+			if (changed === 'base')
+				host.agentStates.worker.baseValues = {
+					customModel: 'shadowed-change',
+					customEffort: 'medium',
+				};
+			const before = state();
+			expect(
+				claimBoardCard(
+					db,
+					{ ...command(), requestId: 'revalidate' },
+					() => ({ ...host, catalog: facade.captureCatalog() }),
+					spec
+				)
+			).toEqual({ ok: false, reason: 'stale-revision' });
+			expect(state()).toBe(before);
+		}
+	);
+
+	it.each([null, [], { customModel: 42 }, { customEffort: '' }, { customArgs: 'bad\0arg' }])(
+		'rejects malformed stored worker options %j without partial claims',
+		(executionOptions) => {
+			db.prepare(
+				"UPDATE workers SET payload_json=json_set(payload_json, '$.executionOptions', json(?)) WHERE agent_id=?"
+			).run(JSON.stringify(executionOptions), 'worker');
+			expectWaiting('invalid-specification');
+		}
+	);
+
+	it('preserves current scope, pause and approval gates when worker options exist', () => {
+		const a = listBoardWorkers(db).find((w) => w.agentId === 'worker')!;
+		setBoardWorkerOptions(db, 'worker', canonicalJson(a.payload), { customModel: 'A' });
+		expectWaiting('worker-outside-scope', command(0, 'foreign'));
+		setBoardWorkerPaused(db, 'worker', true);
+		expectWaiting('worker-paused');
+		setBoardWorkerPaused(db, 'worker', false);
+		patchCard({
+			capturePolicy: {
+				effectiveStartMode: 'approval',
+				dispatchApproval: 'required',
+				specificationRevision: command().readRevision.card,
+			},
+		});
+		expectWaiting('approval-required');
 	});
 
 	it.each(['workspace', 'collection', 'card', 'registry'] as const)(

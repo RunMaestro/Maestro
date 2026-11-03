@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
 	listBoardWorkers,
@@ -10,6 +11,7 @@ import {
 	setBoardWorkerPaused,
 	setBoardWorkerEnabled,
 	setBoardWorkerAccess,
+	setBoardWorkerOptions,
 } from '../../../main/board/board-workspace-storage';
 
 let dir = '';
@@ -64,7 +66,9 @@ describe('Board worker registry', () => {
 			db.prepare('INSERT INTO profiles VALUES (?, ?, ?, ?)').run('n', 'role', '{}', 'source');
 			db.prepare('INSERT INTO repositories VALUES (?, ?)').run('repo', '{}');
 			expect(listBoardWorkerAccessOptions(db)).toEqual({
-				roles: [{ namespace: 'n', profileId: 'role', name: 'role' }],
+				roles: [
+					{ namespace: 'n', profileId: 'role', name: 'role', profile: {}, sourceKey: 'source' },
+				],
 				repositories: [{ id: 'repo', name: 'repo' }],
 			});
 			db.prepare('UPDATE workers SET payload_json = ? WHERE agent_id = ?').run(
@@ -97,6 +101,89 @@ describe('Board worker registry', () => {
 			setBoardWorkerAccess(db, 'agent', [{ namespace: 'n', profileId: 'role' }], ['repo']);
 			expect(listBoardWorkers(db)[0].payload.allowedRepositoryIds).toEqual(['repo']);
 			expect(() => setBoardWorkerAccess(db, 'missing', [], [])).toThrow('not found');
+		} finally {
+			db.close();
+		}
+	});
+	it('patches options with a stale-write fence while preserving unknown options, origins, access and availability', () => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-options-'));
+		const file = path.join(dir, 'board.sqlite');
+		const db = openBoardDb(file);
+		try {
+			registerBoardWorker(db, 'a');
+			registerBoardWorker(db, 'b');
+			const payload = {
+				roleRefs: [{ namespace: 'n', profileId: 'p' }],
+				allowedRepositoryIds: ['repo'],
+				accessManaged: false,
+				futurePayload: { keep: 1 },
+				migration: { sources: { s1: { original: true }, s2: { original: false } } },
+				executionOptions: { futureOption: { keep: 2 }, customModel: 'original' },
+			};
+			db.prepare('UPDATE workers SET payload_json=?, paused=1, enabled=0 WHERE agent_id=?').run(
+				canonicalJson(payload),
+				'a'
+			);
+			const before = canonicalJson(payload);
+			setBoardWorkerOptions(db, 'a', before, {
+				customModel: 'A',
+				customEffort: 'high',
+				appendSystemPrompt: 'role',
+				customArgs: '--arg',
+			});
+			expect(() => setBoardWorkerOptions(db, 'a', before, { customModel: 'lost-update' })).toThrow(
+				'changed'
+			);
+			let a = listBoardWorkers(db)[0];
+			expect(a).toMatchObject({
+				enabled: false,
+				paused: true,
+				payload: {
+					...payload,
+					executionOptions: {
+						...payload.executionOptions,
+						customModel: 'A',
+						customEffort: 'high',
+						appendSystemPrompt: 'role',
+						customArgs: '--arg',
+					},
+				},
+			});
+			setBoardWorkerOptions(db, 'a', canonicalJson(a.payload), {
+				customModel: null,
+				customArgs: '',
+			});
+			a = listBoardWorkers(db)[0];
+			expect(a.payload.executionOptions).toEqual({
+				futureOption: { keep: 2 },
+				customEffort: 'high',
+				appendSystemPrompt: 'role',
+				customArgs: '',
+			});
+			for (const patch of [
+				{ futureOption: 3 },
+				{ customEffort: 1 },
+				{ customModel: '' },
+				{ customArgs: 'bad\0arg' },
+				[],
+			]) {
+				expect(() =>
+					setBoardWorkerOptions(db, 'a', canonicalJson(a.payload), patch as never)
+				).toThrow('Invalid');
+			}
+			expect(listBoardWorkers(db)[0]).toEqual(a);
+			expect(listBoardWorkers(db)[1]).toEqual({
+				agentId: 'b',
+				enabled: true,
+				paused: false,
+				payload: { roleRefs: [], allowedRepositoryIds: [] },
+			});
+			const reader = openBoardDb(file);
+			try {
+				expect(listBoardWorkers(reader)[0]).toEqual(a);
+			} finally {
+				reader.close();
+			}
 		} finally {
 			db.close();
 		}

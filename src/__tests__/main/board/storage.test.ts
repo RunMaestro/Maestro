@@ -283,7 +283,6 @@ describe('canceled Board execution ownership', () => {
 			const before = loadBoards(projectRoot);
 			const rows = db.prepare('SELECT * FROM runs').all();
 			const late = structuredClone(before[0]);
-			late.cards[0].status = 'done';
 			late.cards[0].runs = resetHistory
 				? []
 				: [{ attempt: 1, startedAt: 'obsolete', outcome: 'done' }];
@@ -628,11 +627,11 @@ describe('board-storage card mutations', () => {
 			expect(getBoard(projectRoot, 'b1')?.cards.map((c) => c.id)).toEqual(['a']);
 		}
 	);
-	it('permits author-owned review status without changing persisted running validation', () => {
+	it('rejects an unbound review card', () => {
 		seedBoards(projectRoot, [board([card({ id: 'a', status: 'done' })])]);
-		expect(
-			addCard(projectRoot, 'b1', card({ id: 'review', status: 'review' })).cards.at(-1)?.status
-		).toBe('review');
+		expect(() => addCard(projectRoot, 'b1', card({ id: 'review', status: 'review' }))).toThrow(
+			/bound workflow/
+		);
 	});
 	it('addCard appends and persists a card', () => {
 		seedBoards(projectRoot, [board([card({ id: 'a', status: 'done' })])]);
@@ -652,7 +651,7 @@ describe('board-storage card mutations', () => {
 	});
 
 	it('updateCardStatus changes status and stamps updatedAt', () => {
-		seedBoards(projectRoot, [board([card({ id: 'a', status: 'done' })])]);
+		seedBoards(projectRoot, [board([card({ id: 'a', status: 'todo' })])]);
 		const updated = updateCardStatus(projectRoot, 'b1', 'a', 'blocked');
 		const a = updated.cards.find((c) => c.id === 'a')!;
 		expect(a.status).toBe('blocked');
@@ -677,11 +676,19 @@ describe('board-storage card mutations', () => {
 		}
 	);
 
-	it.each(['triage', 'todo', 'review', 'blocked', 'done'] as const)(
+	it.each(['triage', 'todo', 'blocked'] as const)(
 		'updateCardStatus still accepts the author-owned status "%s"',
 		(manual) => {
-			seedBoards(projectRoot, [board([card({ id: 'a', status: 'done' })])]);
+			seedBoards(projectRoot, [board([card({ id: 'a', status: 'todo' })])]);
 			expect(updateCardStatus(projectRoot, 'b1', 'a', manual).cards[0].status).toBe(manual);
+		}
+	);
+	it.each(['review', 'ready-for-human', 'done'] as const)(
+		'rejects an unbound transition to %s',
+		(status) => {
+			seedBoards(projectRoot, [board([card({ id: 'a', status: 'todo' })])]);
+			expect(() => updateCardStatus(projectRoot, 'b1', 'a', status)).toThrow(/bound workflow/);
+			expect(loadBoards(projectRoot)[0].cards[0].status).toBe('todo');
 		}
 	);
 
@@ -787,7 +794,7 @@ describe('board-storage card mutations', () => {
 	});
 
 	it('updateCard replaces fields in place and preserves createdAt', () => {
-		seedBoards(projectRoot, [board([card({ id: 'a', status: 'done' })])]);
+		seedBoards(projectRoot, [board([card({ id: 'a', status: 'todo' })])]);
 		const updated = updateCard(projectRoot, 'b1', {
 			...getBoard(projectRoot, 'b1')!.cards[0],
 			title: 'Renamed',

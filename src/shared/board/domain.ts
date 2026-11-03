@@ -16,6 +16,7 @@ export type BoardCaptureError =
 	| 'invalid-options'
 	| 'invalid-scope'
 	| 'invalid-pin'
+	| 'invalid-reviewer'
 	| 'invalid-role'
 	| 'pin-outside-scope'
 	| 'pin-role-conflict'
@@ -102,6 +103,10 @@ export function validateCapture(raw: unknown, context: BoardCaptureContext): Boa
 		if (nonBlank(raw.assigneeAgentId)) options.assigneeAgentId = raw.assigneeAgentId;
 		else errors.push('invalid-pin');
 	}
+	if (raw.reviewerAgentId !== undefined) {
+		if (nonBlank(raw.reviewerAgentId)) options.reviewerAgentId = raw.reviewerAgentId;
+		else errors.push('invalid-reviewer');
+	}
 	if (raw.role !== undefined) {
 		if (record(raw.role) && nonBlank(raw.role.namespace) && nonBlank(raw.role.profileId)) {
 			options.role = { ...raw.role, namespace: raw.role.namespace, profileId: raw.role.profileId };
@@ -132,7 +137,9 @@ export function validateCapture(raw: unknown, context: BoardCaptureContext): Boa
 	const pin = options.assigneeAgentId;
 	if (pin && profile?.baseAgentId && pin !== profile.baseAgentId) errors.push('pin-role-conflict');
 	const scope = options.executionScope;
-	for (const candidate of new Set([pin, profile?.baseAgentId].filter((id): id is string => !!id))) {
+	for (const candidate of new Set(
+		[pin, profile?.baseAgentId, options.reviewerAgentId].filter((id): id is string => !!id)
+	)) {
 		if (scope?.kind === 'agent' && candidate !== scope.agentId) {
 			if (!errors.includes('pin-outside-scope')) errors.push('pin-outside-scope');
 		} else if (
@@ -224,6 +231,9 @@ export type BoardWorkerWaitReason =
 /** A read-only host observation; only Cue can turn it into a fenced claim. */
 export type BoardReadinessReason =
 	| BoardWorkerWaitReason
+	| 'reviewer-missing'
+	| 'review-pending'
+	| 'correction-limit'
 	| 'emptyEligibleWorkers'
 	| 'approval-required'
 	| 'held'

@@ -64,12 +64,12 @@ describe('HamburgerMenuContent - Throughput Gauge', () => {
 describe('HamburgerMenuContent - Profiles Cue independence', () => {
 	const initialEncore = useSettingsStore.getState().encoreFeatures;
 	afterEach(() => useSettingsStore.setState({ encoreFeatures: initialEncore }));
-	it('keeps Profiles accessible while Cue disables the Board surface', () => {
+	it('does not expose Profiles when Cue disables the Board surface', () => {
 		useSettingsStore.setState({
 			encoreFeatures: { ...initialEncore, board: true, maestroCue: false },
 		});
 		renderMenu();
-		expect(screen.getByRole('button', { name: /Agent Profiles/ })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Agent Profiles/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /^Board/ })).not.toBeInTheDocument();
 	});
 });

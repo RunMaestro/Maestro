@@ -6,6 +6,8 @@ import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import {
 	BoardStorageFacade,
+	configureBoardCaptureHost,
+	configureBoardReadinessHost,
 	configureBoardStorage,
 	queryBoardWorkspace,
 	updateCard,
@@ -87,11 +89,86 @@ beforeEach(() => {
 });
 afterEach(() => {
 	configureBoardStorage(null);
+	configureBoardCaptureHost(() => ({ agents: [], groups: [] }));
+	configureBoardReadinessHost(() => null);
 	db.close();
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
 describe('central Board query with real SQLite and preload/IPC transport', () => {
+	it('reads a fresh workspace revision without hydrating collections', () => {
+		const revision = facade.workspace.readWorkspace().revision;
+		const reads = vi.spyOn(facade.workspace, 'readCollection');
+		expect(facade.workspace.readRevision()).toBe(revision);
+		db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
+		expect(facade.workspace.readRevision()).toBe(revision + 1);
+		expect(reads).not.toHaveBeenCalled();
+	});
+
+	it('reads host readiness once per workspace query and refreshes it on the next query', () => {
+		const catalog = vi.fn(() => ({ agents: [], groups: [] }));
+		const readiness = vi.fn(() => null);
+		configureBoardCaptureHost(catalog);
+		configureBoardReadinessHost(readiness);
+
+		expect(facade.query().collections).toHaveLength(2);
+		expect(catalog).toHaveBeenCalledTimes(1);
+		expect(readiness).toHaveBeenCalledTimes(1);
+		expect(facade.query().collections).toHaveLength(2);
+		expect(catalog).toHaveBeenCalledTimes(2);
+		expect(readiness).toHaveBeenCalledTimes(2);
+	});
+
+	it('hydrates only the requested source while retaining the full source catalog', () => {
+		const reads = vi.spyOn(facade.workspace, 'readCollection');
+		const filtered = facade.query({ sourceKey: sources[0] });
+		expect(filtered.sources.map((entry) => entry.sourceKey).sort()).toEqual([...sources].sort());
+		expect(filtered.collections).toHaveLength(1);
+		expect(reads.mock.calls.every(([key]) => key.sourceKey === sources[0])).toBe(true);
+	});
+
+	it('fences colliding legacy cards to the displayed source, collection and revisions', async () => {
+		const api = createBoardApi();
+		const response = await api.queryWorkspace();
+		if (!response.ok) throw new Error('query failed');
+		const one = response.value.collections.find((entry) => entry.sourceKey === sources[0])!;
+		const two = response.value.collections.find((entry) => entry.sourceKey === sources[1])!;
+		const card = two.board.cards[0];
+		const read = {
+			sourceKey: two.sourceKey,
+			collectionKey: two.collectionKey,
+			revision: two.revision,
+			cardRevision: card.storageRevision!,
+		};
+		await expect(
+			api.setCardStatus(roots[1], 'same-board', 'same-card', 'blocked', {
+				...read,
+				collectionKey: one.collectionKey,
+			})
+		).rejects.toThrow(/identity changed/);
+		await expect(
+			api.setCardStatus(roots[1], 'same-board', 'same-card', 'blocked', {
+				...read,
+				cardRevision: read.cardRevision + 1,
+			})
+		).rejects.toThrow(/changed since read/);
+		const changed = await api.setCardStatus(roots[1], 'same-board', 'same-card', 'blocked', read);
+		expect(changed.cards[0].status).toBe('blocked');
+		expect(facade.read(roots[0], 'same-board').cards[0].status).toBe('todo');
+		await expect(api.deleteCard(roots[1], 'same-board', 'same-card', read)).rejects.toThrow(
+			/changed since read/
+		);
+		const fresh = facade.read(roots[1], 'same-board');
+		await api.deleteCard(roots[1], 'same-board', 'same-card', {
+			sourceKey: two.sourceKey,
+			collectionKey: two.collectionKey,
+			revision: fresh.storage!.expectedRevision!,
+			cardRevision: fresh.cards[0].storageRevision!,
+		});
+		expect(facade.read(roots[0], 'same-board').cards).toHaveLength(1);
+		expect(facade.read(roots[1], 'same-board').cards).toHaveLength(0);
+	});
+
 	it('returns distinct identities for equal legacy IDs; filtered views retain writer revisions after reopen', async () => {
 		const api = createBoardApi();
 		const response = await api.queryWorkspace();

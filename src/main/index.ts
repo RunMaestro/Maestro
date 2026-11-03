@@ -214,6 +214,7 @@ import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
+import { BoardRegistryRevision } from './board/board-registry-revision';
 import {
 	configureBoardCaptureHost,
 	configureBoardReadinessHost,
@@ -1531,11 +1532,11 @@ app
 		// One central owner, using Cue's already-held lock and existing process service.
 		const repositoryProofs = new Map<string, NonNullable<BoardClaimHostContext['repository']>>();
 		const reviewProofs = new Map<string, string>();
-		let registryFingerprint = '';
-		let registryRevision = 0;
+		const boardRegistry = new BoardRegistryRevision();
 		const boardIntakeState = (): Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> => {
 			const sessions = boardSpawnContext.getStoredSessions();
 			const flags = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			return {
 				dispatchEnabled:
 					cueEngine?.isEnabled() === true && flags.maestroCue === true && flags.board === true,
@@ -1544,7 +1545,7 @@ app
 						session.id,
 						{
 							live: !isAgentDormant(session, flags),
-							busy: isAgentBusy(session as { id: string }, processManager),
+							busy: isAgentBusy(session as { id: string }, processManager, cliBusySessionIds),
 							location: session.sessionSshRemoteConfig?.enabled
 								? { kind: 'ssh' as const, remoteId: session.sessionSshRemoteConfig.remoteId }
 								: { kind: 'local' as const },
@@ -1563,15 +1564,18 @@ app
 		const boardContext = (key: BoardCardKey): Omit<BoardClaimHostContext, 'owner'> => {
 			const storage = getBoardStorage();
 			const catalog = storage.captureCatalog();
-			const fingerprint = canonicalJson({
+			const registryRevision = boardRegistry.observe({
 				catalog,
+				// The public catalog carries scope IDs only. Retain the full live
+				// launch configuration in the prepared-run registry fence.
+				agents: sessionsStore.get('sessions', []),
+				groups: groupsStore.get('groups', []),
 				workers: listBoardWorkers(),
+				// Inherited provider settings are launch inputs too. A prepared run
+				// cannot keep its registry fence across a provider-config edit.
+				agentConfigs: agentConfigsStore.get('configs', {}),
 				sshRemotes: store.get('sshRemotes', []),
 			});
-			if (fingerprint !== registryFingerprint) {
-				registryFingerprint = fingerprint;
-				registryRevision++;
-			}
 			let repository = repositoryProofs.get(canonicalJson(key)) ?? null;
 			if (repository?.location.kind === 'local') {
 				try {

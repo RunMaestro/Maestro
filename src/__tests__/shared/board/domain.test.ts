@@ -129,3 +129,28 @@ describe('global Board capture', () => {
 		});
 	});
 });
+
+it('validates explicit reviewer IDs and prevents assignment outside the current task scope', () => {
+	expect(validateCapture({ reviewerAgentId: 7 }, context)).toEqual({
+		ok: false,
+		errors: ['invalid-reviewer'],
+	});
+	expect(
+		validateCapture(
+			{ executionScope: { kind: 'group', groupId: 'g' }, reviewerAgentId: 'b' },
+			context
+		)
+	).toEqual({ ok: false, errors: ['pin-outside-scope'] });
+	expect(
+		validateCapture(
+			{ executionScope: { kind: 'agent', agentId: 'a' }, reviewerAgentId: 'b' },
+			context
+		)
+	).toEqual({ ok: false, errors: ['pin-outside-scope'] });
+	expect(
+		validateCapture(
+			{ executionScope: { kind: 'group', groupId: 'g' }, reviewerAgentId: 'a' },
+			context
+		).ok
+	).toBe(true);
+});

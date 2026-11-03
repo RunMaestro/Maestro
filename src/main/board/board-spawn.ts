@@ -302,7 +302,7 @@ export async function spawnBoardCard(
 		// metadata). model/effort/args flow through the native override fields below.
 		const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
 		const promptText =
-			`${roleLine}${card.reviewHandoff ? `Review the host-bound artifact: ${canonicalJson(card.reviewHandoff)}\n\n` : ''}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
+			`${roleLine}${card.reviewHandoff ? `Review the host-bound artifact: ${canonicalJson(card.reviewHandoff)}\n\n` : ''}${card.workflow?.reviewResult?.verdict === 'findings' ? `Address these bound review findings in this single correction attempt: ${canonicalJson(card.workflow.reviewResult)}\n\n` : ''}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
 
 		// Phase 4: a card that opted into isolation runs in its own checkout. The
 		// worktree is created on first claim and reused by every retry.
@@ -474,7 +474,7 @@ async function runCardPrompt(
 	run?: { runId: string; controller: Pick<AbortController, 'signal'> },
 	lifecycle?: CardSpawnRequest['lifecycle']
 ): Promise<CardSpawnResult> {
-	const runCwd = worktree?.path ?? projectRoot;
+	const runCwd = card.reviewHandoff?.artifact.worktreePath ?? worktree?.path ?? projectRoot;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
 	// into both the string `toolType` config field and the enum `session.toolType`
 	// field, exactly as the Cue `onCueRun` path passes it through.
@@ -513,17 +513,24 @@ async function runCardPrompt(
 	};
 	const event = createCueEvent('cli.trigger', `board:${card.id}`, { board: true });
 
+	let baseCommit: string | undefined;
 	const result = await executeCuePrompt({
 		runId,
 		signal: run?.controller.signal,
 		beforeLaunch: lifecycle?.beforeLaunch,
-		prepareLaunch: card.reviewHandoff
+		prepareLaunch: lifecycle
 			? async () => {
-					if (baseSession.sessionSshRemoteConfig?.enabled) return false;
-					const artifact = await readBoardRunArtifact(card.reviewHandoff!.artifact.worktreePath);
-					return (
-						!!artifact && canonicalJson(artifact) === canonicalJson(card.reviewHandoff!.artifact)
+					if (baseSession.sessionSshRemoteConfig?.enabled) return !card.reviewHandoff;
+					const artifact = await readBoardRunArtifact(
+						runCwd,
+						card.reviewHandoff?.artifact.diff?.baseCommit
 					);
+					if (card.reviewHandoff)
+						return (
+							!!artifact && canonicalJson(artifact) === canonicalJson(card.reviewHandoff.artifact)
+						);
+					baseCommit = artifact?.commit;
+					return !!artifact;
 				}
 			: undefined,
 		onStarted: lifecycle?.onStarted,
@@ -579,7 +586,11 @@ async function runCardPrompt(
 		!baseSession.sessionSshRemoteConfig?.enabled
 	) {
 		try {
-			artifact = (await readBoardRunArtifact(runCwd)) ?? undefined;
+			artifact =
+				(await readBoardRunArtifact(
+					runCwd,
+					card.reviewHandoff?.artifact.diff?.baseCommit ?? baseCommit
+				)) ?? undefined;
 		} catch (error) {
 			void captureException(error, { operation: 'board:completionArtifact' });
 		}

@@ -102,6 +102,9 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 
 import {
 	boardList,
+	boardCatalog,
+	boardCreateRole,
+	boardSetWorkerRole,
 	boardCreate,
 	boardRename,
 	boardDelete,
@@ -157,7 +160,7 @@ function seedCard(
 	const { runs, ...editable } = value;
 	addCard(projectRoot, boardId, {
 		...editable,
-		status: value.status === 'running' ? 'todo' : value.status,
+		status: 'todo',
 	});
 	const board = loadBoards(projectRoot).find((entry) => entry.id === boardId)!;
 	db.prepare('UPDATE cards SET payload_json = ? WHERE collection_key = ? AND id = ?').run(
@@ -233,6 +236,49 @@ describe('maestro-cli board', () => {
 		}
 	});
 
+	it('creates roles without a root or legacy profile and assigns/removes an exact role through the host', async () => {
+		db.close();
+		db = openBoardDb(path.join(projectRoot, 'empty.sqlite'));
+		facade = new BoardStorageFacade(db);
+		configureBoardStorage(facade);
+		await boardCreateRole('Reviewer', { json: true });
+		const role = JSON.parse(logSpy.mock.calls.at(-1)![0]);
+		expect(facade.captureCatalog().profiles).toEqual([
+			{ namespace: role.namespace, profile: { id: role.profileId, name: 'Reviewer' } },
+		]);
+		registerBoardWorker(db, 'agent-1');
+		await boardSetWorkerRole(role.profileId, {
+			agent: 'Alpha',
+			namespace: role.namespace,
+			json: true,
+		});
+		expect(
+			JSON.parse(
+				(db.prepare('SELECT payload_json FROM workers').get() as { payload_json: string })
+					.payload_json
+			).roleRefs
+		).toEqual([role]);
+		await boardSetWorkerRole(role.profileId, {
+			agent: 'Alpha',
+			namespace: role.namespace,
+			remove: true,
+			json: true,
+		});
+		expect(
+			JSON.parse(
+				(db.prepare('SELECT payload_json FROM workers').get() as { payload_json: string })
+					.payload_json
+			).roleRefs
+		).toEqual([]);
+		await boardSetWorkerRole(role.profileId, { agent: 'Alpha', namespace: 'wrong', json: true });
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(JSON.parse(logSpy.mock.calls.at(-1)![0])).toMatchObject({
+			type: 'error',
+			details: { code: 'invalid-input' },
+		});
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+	});
+
 	it('routes SSH agent list, rename and tick by explicit source identity and permits closed-source mutations without local paths', async () => {
 		const remoteRoot = '/remote-only/Repo';
 		const plan = planBoardMigration({
@@ -276,6 +322,53 @@ describe('maestro-cli board', () => {
 		});
 		await boardList({ agent: 'Alpha', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('lists exact role identities and captures, reloads, replaces and clears them through the global host', async () => {
+		const before = db.prepare('SELECT revision FROM workspace').get();
+		await boardCatalog({ json: true });
+		expect(JSON.parse(logSpy.mock.calls.at(-1)![0])).toEqual(facade.captureCatalog());
+		expect(db.prepare('SELECT revision FROM workspace').get()).toEqual(before);
+		await boardAddCard(undefined, {
+			title: 'Role requirement',
+			scopeGroup: 'team',
+			role: 'p1',
+			roleNamespace: namespace,
+			json: true,
+		});
+		const global = facade.ensureGlobalBoard();
+		const root = BOARD_SOURCE_PROJECT_PREFIX + global.storage!.sourceKey;
+		const saved = new BoardStorageFacade(db).read(root, global.id).cards[0];
+		expect(saved).toMatchObject({
+			role: { namespace, profileId: 'p1' },
+			assigneeProfileId: 'p1',
+			executionScope: { kind: 'group', groupId: 'team' },
+			capturePolicy: { dispatchApproval: 'required' },
+		});
+		expect(saved.assigneeAgentId).toBeUndefined();
+		await boardUpdateCard(saved.id, { role: 'p2', roleNamespace: namespace, json: true });
+		expect(facade.read(root, global.id).cards[0]).toMatchObject({
+			role: { namespace, profileId: 'p2' },
+			assigneeProfileId: 'p2',
+		});
+		await boardUpdateCard(saved.id, { body: 'Unrelated edit', json: true });
+		expect(facade.read(root, global.id).cards[0].role).toEqual({ namespace, profileId: 'p2' });
+		await boardUpdateCard(saved.id, { role: '  ', json: true });
+		expect(facade.read(root, global.id).cards[0].role).toBeUndefined();
+		expect(facade.read(root, global.id).cards[0].assigneeProfileId).toBeUndefined();
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ role: 'p1' },
+		{ role: 'p1', roleNamespace: 'one', assignee: 'p2', profileNamespace: 'one' },
+		{ role: 'p1', roleNamespace: 'one', assignee: 'p1', profileNamespace: 'two' },
+	])('rejects incomplete or contradictory role flags without saving: %o', async (options) => {
+		facade.ensureGlobalBoard();
+		const before = facade.query({});
+		await boardAddCard(undefined, { title: 'Invalid role', ...options, json: true });
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(facade.query({})).toEqual(before);
 	});
 
 	it('board create then board list round-trips through host SQLite', async () => {
@@ -343,7 +436,7 @@ describe('maestro-cli board', () => {
 
 	it('board delete removes a board whose cards are all done', async () => {
 		const b = createBoard(projectRoot, 'Finished');
-		addCard(projectRoot, b.id, card('c1', { status: 'done' }));
+		seedCard(db, projectRoot, b.id, card('c1', { status: 'done' }));
 		await boardDelete(b.id, { agent: 'Alpha', json: true });
 		expect(loadBoards(projectRoot)).toHaveLength(0);
 	});
@@ -583,7 +676,12 @@ describe('maestro-cli board', () => {
 			db,
 			projectRoot,
 			board.id,
-			card('work', { status: 'done', runs: [run], repositoryId: 'repo' })
+			card('work', {
+				status: 'review',
+				runs: [run],
+				repositoryId: 'repo',
+				executionScope: { kind: 'agent', agentId: 'agent-1' },
+			})
 		);
 		const stored = loadBoards(projectRoot)[0];
 		db.prepare(
@@ -600,6 +698,8 @@ describe('maestro-cli board', () => {
 		await boardAddCard(board.id, {
 			agent: 'Alpha',
 			title: 'Review source',
+			scopeAgent: 'agent-1',
+			assigneeAgent: 'agent-1',
 			reviewOf: 'work',
 			reviewAttempt: '1',
 			repository: 'repo',
@@ -746,8 +846,8 @@ describe('maestro-cli board', () => {
 	it('board set-status moves a card and auto-resolves its board', async () => {
 		const b = createBoard(projectRoot, 'B');
 		addCard(projectRoot, b.id, card('c1'));
-		await boardSetStatus('c1', 'done', { agent: 'Alpha', json: true });
-		expect(loadBoards(projectRoot)[0].cards[0].status).toBe('done');
+		await boardSetStatus('c1', 'blocked', { agent: 'Alpha', json: true });
+		expect(loadBoards(projectRoot)[0].cards[0].status).toBe('blocked');
 	});
 
 	it('keeps concurrent edits and refuses unfenced decomposition completion', async () => {
@@ -797,7 +897,7 @@ describe('maestro-cli board', () => {
 				save: (board) => saveBoards(projectRoot, [board]),
 				now: () => new Date().toISOString(),
 			})
-		).rejects.toThrow('Run lifecycle requires the fenced runtime');
+		).rejects.toThrow('Review and final approval require the bound workflow');
 		expect(mockSpawnAgent.mock.calls[0][4]).toMatchObject({
 			appendSystemPrompt: expect.stringContaining(`Write only within ${projectRoot}`),
 			additionalDirectories: session.additionalDirectories,
@@ -856,7 +956,7 @@ describe('maestro-cli board', () => {
 		/** A card that satisfies every gate condition once it lands in `done`. */
 		function prReadyCard(overrides: Partial<BoardCard> = {}): BoardCard {
 			return card('c1', {
-				status: 'blocked',
+				status: 'done',
 				prOnDone: {},
 				worktree: { path: '/tmp/wt/c1', branch: 'board/b/c1' },
 				runs: [
@@ -1070,6 +1170,26 @@ describe('maestro-cli board', () => {
 			expect(exitSpy).not.toHaveBeenCalled();
 		});
 
+		it('watches the host collections without an agent selector', async () => {
+			const board = createBoard(projectRoot, 'Global watch');
+			addCard(projectRoot, board.id, card('global-watch'));
+			const watching = boardWatch({ interval: '5', json: true });
+			await vi.waitFor(() => {
+				expect(logSpy.mock.calls.some((call) => String(call[0]).includes('watch-tick'))).toBe(true);
+			});
+			process.emit('SIGINT');
+			await watching;
+			const tick = JSON.parse(
+				logSpy.mock.calls
+					.map((call) => String(call[0]))
+					.find((line) => line.includes('watch-tick'))!
+			);
+			expect(
+				tick.boards.find((entry: { boardId: string }) => entry.boardId === board.id).results
+			).toMatchObject([{ cardId: 'global-watch', ok: false, reason: 'no-workers' }]);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
 		it('exits non-zero when the central board schema is unavailable (fail-closed)', async () => {
 			fs.mkdirSync(path.join(projectRoot, '.maestro'), { recursive: true });
 			db.exec('DROP TABLE collections');
@@ -1194,7 +1314,7 @@ describe('maestro-cli board', () => {
 			expect(fs.existsSync(path.join(worktreePath, 'README.md'))).toBe(true);
 
 			const stored = loadBoards(repoRoot)[0].cards[0];
-			expect(stored.status).toBe('done');
+			expect(stored.status).toBe('review');
 			expect(stored.runs?.[0]).toMatchObject({ worktreePath, worktreeBranch: branch });
 		});
 
@@ -1267,7 +1387,7 @@ describe('maestro-cli board', () => {
 
 			expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
 			const stored = loadBoards(repoRoot).find((b) => b.id === board.id)?.cards[0];
-			expect(stored?.status).toBe('done');
+			expect(stored?.status).toBe('review');
 			expect(stored?.runs?.[0].workerAgentId).toBe('agent-2');
 		});
 

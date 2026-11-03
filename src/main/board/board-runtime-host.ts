@@ -1,3 +1,4 @@
+import { yieldToEventLoop } from '../utils/concurrency';
 import { readyCardsInDispatchOrder } from './board-dispatcher';
 /** One host entry for desktop IPC, authenticated CLI and the Cue adapter.
  * The owner installs its existing runtime; an absent owner never creates one. */
@@ -16,9 +17,13 @@ import {
 	getBoardStorage,
 } from './board-storage';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { approveBoardWork, prepareBoardReviewHandoff } from './board-review';
+import { evaluateClaimWorker } from '../../shared/board/domain';
 
-let runtimeFor: (key: BoardCardKey) => BoardRuntime | null | Promise<BoardRuntime | null> = () =>
-	null;
+let runtimeFor: (
+	key: BoardCardKey,
+	prepare?: boolean
+) => BoardRuntime | null | Promise<BoardRuntime | null> = () => null;
 export function configureBoardRuntimeHost(provider: typeof runtimeFor): void {
 	runtimeFor = provider;
 }
@@ -30,6 +35,8 @@ export async function executeBoardRuntimeCommand(
 	/** Only a validated native main-frame IPC action supplies this principal. */
 	principal?: string
 ): Promise<BoardCommandResult> {
+	if (command.action === 'control' && command.operation === 'accept' && !principal)
+		throw new BoardStorageError('protected-field', 'Final approval requires a native human action');
 	const { target } = command;
 	const sourceIdentity = getBoardStorage().sourceIdentity(target.sourceKey);
 	const requestedQuery = {
@@ -60,9 +67,62 @@ export async function executeBoardRuntimeCommand(
 				collectionKey: target.collectionKey,
 				cardId: card.id,
 			};
-			const beforePrepare = queryBoardWorkspace({ sourceKey: key.sourceKey }).collections.find(
-				(c) => c.collectionKey === key.collectionKey
-			)?.revision;
+			await yieldToEventLoop();
+			const beforePrepare = getBoardStorage().workspace.readCollection(key)?.revision;
+			// With no registered workers a card cannot be dispatched.
+			// Acquire and validate the owner without probing Git; re-read the card and
+			// registry after every async boundary before reporting this wait reason.
+			if (listBoardWorkers(getBoardStorage().db).length === 0) {
+				const waitingRuntime = await runtimeFor(key, false);
+				if (
+					canonicalJson(await prepareBoardWorkspaceQuery(requestedQuery)) !==
+						canonicalJson(query) ||
+					getBoardStorage().sourceIdentity(target.sourceKey) !== sourceIdentity
+				)
+					throw new BoardStorageError(
+						'stale-revision',
+						'Board project alias changed during runtime preparation'
+					);
+				if (!waitingRuntime) return failed('runtime-unavailable');
+				const current = waitingRuntime.storage.workspace.readCollection(key);
+				const currentCard = current?.cards.find((c) => c.cardId === card.id);
+				if (!current || !currentCard) {
+					results.push({ cardId: card.id, ok: false, reason: 'not-found' });
+					continue;
+				}
+				if (current.revision !== beforePrepare) {
+					results.push({ cardId: card.id, ok: false, reason: 'stale-revision' });
+					continue;
+				}
+				if (listBoardWorkers(waitingRuntime.storage.db).length === 0) {
+					const pin = currentCard.payload.assigneeAgentId;
+					if (typeof pin !== 'string') {
+						results.push({ cardId: card.id, ok: false, reason: 'no-workers' });
+						continue;
+					}
+					// Review handoffs need their native Git proof before evaluation.
+					if (currentCard.payload.kind !== 'review') {
+						const probe = waitingRuntime.claim(
+							{
+								...key,
+								workerAgentId: pin,
+								requestId: canonicalJson([command.operationId, key, pin]),
+								readRevision: {
+									workspace: waitingRuntime.storage.workspace.readRevision(),
+									collection: current.revision,
+									card: currentCard.revision,
+									registry: waitingRuntime.intakeRevision(),
+								},
+							},
+							true
+						);
+						if (!probe.ok && probe.reason !== 'registry-changed') {
+							results.push({ cardId: card.id, ok: false, reason: probe.reason });
+							continue;
+						}
+					}
+				}
+			}
 			const runtime = await runtimeFor(key);
 			if (
 				canonicalJson(await prepareBoardWorkspaceQuery(requestedQuery)) !== canonicalJson(query) ||
@@ -85,19 +145,41 @@ export async function executeBoardRuntimeCommand(
 				continue;
 			}
 			const workers = listBoardWorkers(storage.db);
+			const catalog = storage.captureCatalog();
+			const eligible = workers.filter(
+				(worker) =>
+					evaluateClaimWorker(fresh.payload, worker.agentId, {
+						...catalog,
+						canRelaxStartPolicy: true,
+						repositoryIds: catalog.repositories
+							.filter((repo) => repo.validated)
+							.map((repo) => repo.id),
+						workers: workers.map((entry) => ({
+							...entry,
+							roleRefs: Array.isArray(entry.payload.roleRefs) ? entry.payload.roleRefs : [],
+							allowedRepositoryIds: Array.isArray(entry.payload.allowedRepositoryIds)
+								? entry.payload.allowedRepositoryIds
+								: [],
+						})),
+					}) !== 'worker-outside-scope'
+			);
 			// A foreign pin must fail through claim validation, never fall back to the pool.
 			const candidates =
 				typeof fresh.payload.assigneeAgentId === 'string'
 					? [fresh.payload.assigneeAgentId]
-					: workers.map((w) => w.agentId);
-			let result: BoardTickResult = { cardId: card.id, ok: false, reason: 'no-workers' };
+					: eligible.map((w) => w.agentId);
+			let result: BoardTickResult = {
+				cardId: card.id,
+				ok: false,
+				reason: workers.length && !eligible.length ? 'worker-outside-scope' : 'no-workers',
+			};
 			for (const workerAgentId of candidates) {
 				const claim = runtime.dispatch({
 					...key,
 					workerAgentId,
 					requestId: canonicalJson([command.operationId, key, workerAgentId]),
 					readRevision: {
-						workspace: storage.workspace.readWorkspace().revision,
+						workspace: storage.workspace.readRevision(),
 						collection: collection.revision,
 						card: fresh.revision,
 						registry: runtime.intakeRevision(),
@@ -133,6 +215,30 @@ export async function executeBoardRuntimeCommand(
 	if (!card) throw new BoardStorageError('not-found', 'Board card not found');
 	if (card.revision !== command.cardRevision)
 		throw new BoardStorageError('stale-revision', 'Card changed since read');
+	if (command.operation === 'accept') {
+		if (!principal)
+			throw new BoardStorageError(
+				'protected-field',
+				'Final approval requires a native human action'
+			);
+		const work = card.payload as unknown as import('../../shared/board/types').BoardCard;
+		const review = runtime.storage.workspace
+			.readCollection(key)
+			?.cards.find((entry) => entry.cardId === work.workflow?.reviewCardId);
+		const handoff = (
+			review?.payload as unknown as import('../../shared/board/types').BoardCard | undefined
+		)?.reviewHandoff;
+		if (!handoff || !(await prepareBoardReviewHandoff(runtime.storage, handoff)))
+			return failed('review-artifact-unresolved');
+		approveBoardWork(
+			runtime.storage,
+			key,
+			target.expectedRevision,
+			command.cardRevision,
+			principal
+		);
+		return { ok: true, value: { accepted: true } };
+	}
 	if (command.operation === 'approve') {
 		if (!principal)
 			throw new BoardStorageError(
@@ -155,7 +261,9 @@ export async function executeBoardRuntimeCommand(
 	const attempt = token ? runtime.read(token) : null;
 	if (!token || !attempt || canonicalJson(attempt.spec.key) !== canonicalJson(key))
 		return failed('attempt-conflict');
-	const result = command.operation === 'hold' ? runtime.hold(token) : runtime.resume(token);
+	const expected = { collection: target.expectedRevision, card: command.cardRevision };
+	const result =
+		command.operation === 'hold' ? runtime.hold(token, expected) : runtime.resume(token, expected);
 	return result.ok
 		? { ok: true, value: { accepted: true, runToken: token } }
 		: failed(result.reason);
@@ -167,7 +275,8 @@ export async function controlBoardRuntimeCard(
 	projectRoot: string,
 	boardId: string,
 	cardId: string,
-	operation: 'hold' | 'resume' = 'hold'
+	operation: 'hold' | 'resume' = 'hold',
+	read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
 ) {
 	const query = await prepareBoardWorkspaceQuery({ projectRoot });
 	const entries = queryBoardWorkspace(query).collections.filter((e) => e.board.id === boardId);
@@ -175,6 +284,10 @@ export async function controlBoardRuntimeCard(
 		throw new BoardStorageError('identity-mismatch', 'Ambiguous or missing Board identity');
 	const entry = entries[0];
 	const key = { sourceKey: entry.sourceKey, collectionKey: entry.collectionKey, cardId };
+	if (read && (read.sourceKey !== key.sourceKey || read.collectionKey !== key.collectionKey))
+		throw new BoardStorageError('identity-mismatch', 'Board identity changed since read');
+	if (read && entry.revision !== read.revision)
+		throw new BoardStorageError('stale-revision', 'Board changed since read');
 	const runtime = await runtimeFor(key);
 	if (!runtime) throw new BoardStorageError('runtime-unavailable', 'Board runtime is unavailable');
 	const row = runtime.storage.db
@@ -186,6 +299,8 @@ export async function controlBoardRuntimeCard(
 	const token = row ? JSON.parse(row.specification_json).runToken : undefined;
 	const card = entry.board.cards.find((c) => c.id === cardId);
 	if (!card) throw new BoardStorageError('not-found', 'Card not found');
+	if (read && card.storageRevision !== read.cardRevision)
+		throw new BoardStorageError('stale-revision', 'Card changed since read');
 	const result = await executeBoardRuntimeCommand({
 		action: 'control',
 		operation,

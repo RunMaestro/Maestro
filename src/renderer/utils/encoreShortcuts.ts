@@ -20,7 +20,6 @@ export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureF
 	searchDirectorNotes: 'directorNotes',
 	openCue: 'maestroCue',
 	openBoard: 'board',
-	openProfiles: 'board',
 	computerHistory: 'computerHistory',
 	toggleConcerto: 'concerto',
 	toggleCadenzas: 'concerto',

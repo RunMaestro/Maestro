@@ -995,24 +995,17 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	releaseDate: '2026-09-28',
 	id: 'com.maestro.board',
 	name: 'Board',
-	description:
-		'Run a persistent card DAG: assign cards to agent profiles and drain them in dependency order on the Cue engine tick.',
+	description: 'Collect tasks centrally, assign them to workers, and let Maestro Cue process them.',
 	firstParty: true,
 	category: 'automation',
 	usage: {
-		overview: ['Dispatch a project task DAG to Agent Profiles on the Maestro Cue tick.'],
+		overview: ['Dispatch a task DAG to workers on the Maestro Cue tick.'],
 		access: [
 			{
 				label: 'Open Board',
 				shortcutId: 'openBoard',
 				commandPalette: 'Board',
 				menu: 'Left Bar hamburger > Board',
-			},
-			{
-				label: 'Manage Agent Profiles',
-				shortcutId: 'openProfiles',
-				commandPalette: 'Agent Profiles',
-				menu: 'Left Bar hamburger > Agent Profiles',
 			},
 		],
 		agentCommands: [{ label: 'List boards', command: 'maestro-cli board list --agent <agent>' }],

@@ -408,8 +408,6 @@ function MaestroConsoleInner() {
 		setPianolaModalOpen,
 		// Board Modal - boardModalOpen now self-sourced in AppStandaloneModals
 		setBoardModalOpen,
-		// Agent Profiles Modal - profilesModalOpen self-sourced in AppStandaloneModals
-		setProfilesModalOpen,
 		// Maestro Cue YAML Editor - open state, sessionId, projectRoot self-sourced in AppStandaloneModals
 		closeCueYamlEditor,
 	} = useModalActions();
@@ -580,12 +578,6 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		if (!encoreFeatures.board || !encoreFeatures.maestroCue) setBoardModalOpen(false);
 	}, [encoreFeatures.board, encoreFeatures.maestroCue, setBoardModalOpen]);
-
-	// Agent Profiles ships with Board, so it follows the Board flag alone (it has
-	// no Cue dependency of its own: profiles are editable without a running tick).
-	useEffect(() => {
-		if (!encoreFeatures.board) setProfilesModalOpen(false);
-	}, [encoreFeatures.board, setProfilesModalOpen]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
@@ -3747,7 +3739,6 @@ function MaestroConsoleInner() {
 								? () => setBoardModalOpen(true)
 								: undefined
 						}
-						onOpenProfiles={encoreFeatures.board ? () => setProfilesModalOpen(true) : undefined}
 						onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
 						onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 						onCloseTabSwitcher={handleCloseTabSwitcher}

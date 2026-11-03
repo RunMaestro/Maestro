@@ -12,6 +12,13 @@ import { BOARD_FIRST_PARTY_PLUGIN } from '../../../shared/plugins/first-party';
 const capabilities = BOARD_FIRST_PARTY_PLUGIN.permissions.map((p) => p.capability);
 
 describe('BOARD_FIRST_PARTY_PLUGIN projection', () => {
+	it('advertises Board access without a separate Profiles surface', () => {
+		expect(BOARD_FIRST_PARTY_PLUGIN.usage?.access).toEqual([
+			expect.objectContaining({ shortcutId: 'openBoard' }),
+		]);
+		expect(JSON.stringify(BOARD_FIRST_PARTY_PLUGIN.usage)).not.toContain('Profiles');
+	});
+
 	it('declares every capability the Board actually exercises', () => {
 		expect(capabilities).toEqual(
 			expect.arrayContaining([

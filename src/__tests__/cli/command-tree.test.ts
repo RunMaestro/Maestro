@@ -16,10 +16,21 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 interface CommandInfo {
 	path: string;
+	options: { flags: string; description: string }[];
 	subcommands: CommandInfo[];
 }
 
 let registered: Set<string>;
+let nodes: CommandInfo[];
+
+function findCommand(path: string, entries: CommandInfo[] = nodes): CommandInfo | undefined {
+	for (const entry of entries) {
+		if (entry.path === path) return entry;
+		const found = findCommand(path, entry.subcommands);
+		if (found) return found;
+	}
+	return undefined;
+}
 
 function collectPaths(nodes: CommandInfo[], out: Set<string>): void {
 	for (const node of nodes) {
@@ -42,10 +53,26 @@ beforeAll(async () => {
 		log.mockRestore();
 	}
 	registered = new Set();
-	collectPaths(JSON.parse(lines.join('\n')) as CommandInfo[], registered);
+	nodes = JSON.parse(lines.join('\n')) as CommandInfo[];
+	collectPaths(nodes, registered);
 }, 60_000);
 
 describe('maestro-cli command tree', () => {
+	it('registers the global Board workflow and worker options commands', () => {
+		for (const verb of ['catalog', 'add-card', 'worker-options', 'hold', 'resume', 'approve']) {
+			expect(registered).toContain(`maestro-cli board ${verb}`);
+		}
+	});
+
+	it('exposes only supported catalog options and an optional project selector', () => {
+		const catalog = findCommand('maestro-cli board catalog')!;
+		expect(catalog.options.map((option) => option.flags)).toEqual(['--json']);
+		const addCard = findCommand('maestro-cli board add-card')!;
+		expect(
+			addCard.options.find((option) => option.flags.startsWith('--project-root'))?.description
+		).toBe('Registered source project root for selecting a project');
+	});
+
 	it('registers host start, status and stop', () => {
 		expect(registered).toContain('maestro-cli host');
 		expect(registered).toContain('maestro-cli host start');

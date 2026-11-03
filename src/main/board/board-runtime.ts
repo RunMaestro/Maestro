@@ -15,6 +15,7 @@ import {
 	type BoardRunToken,
 } from './board-claims';
 import type { BoardStorageFacade } from './board-storage';
+import { applyBoardReviewResult, queueBoardReviews } from './board-review';
 
 export type BoardRunPhase =
 	| 'prepared'
@@ -101,9 +102,9 @@ export class BoardRuntime {
 			.immediate();
 	}
 
-	claim(command: BoardClaimCommand) {
+	claim(command: BoardClaimCommand, emptyRegistryProbe = false) {
 		if (!this.owns()) return { ok: false as const, reason: 'owner-conflict' as const };
-		return this.storage.claim(command, () => this.context());
+		return this.storage.claim(command, () => this.context(), emptyRegistryProbe);
 	}
 
 	/** Shared transport/Cue intake. Claim is synchronous before the native service
@@ -287,6 +288,7 @@ export class BoardRuntime {
 					card.runs = [
 						...(card.runs ?? []),
 						{
+							runId: token.runId,
 							attempt: row.spec.attempt,
 							workerAgentId: row.spec.workerAgentId,
 							startedAt: new Date().toISOString(),
@@ -299,12 +301,18 @@ export class BoardRuntime {
 	}
 
 	/** Hold is durable before Stop. A stop request is never an acknowledgement. */
-	hold(token: BoardRunToken): Verdict {
+	hold(token: BoardRunToken, expected?: { collection: number; card: number }): Verdict {
 		const result = this.storage.db
 			.transaction((): Verdict => {
 				if (!this.owns()) return { ok: false, reason: 'owner-conflict' };
 				const row = this.current(token);
 				if (!row) return { ok: false, reason: 'attempt-conflict' };
+				if (expected) {
+					const collection = this.storage.workspace.readCollection(row.spec.key);
+					const card = collection?.cards.find((entry) => entry.cardId === row.spec.key.cardId);
+					if (collection?.revision !== expected.collection || card?.revision !== expected.card)
+						return { ok: false, reason: 'stale-revision' };
+				}
 				this.updateCard(row.spec, (card) => {
 					card.heldByUser = true;
 				});
@@ -330,12 +338,18 @@ export class BoardRuntime {
 	}
 
 	/** Resume clears only a hold, after termination; never policy or human review. */
-	resume(token: BoardRunToken): Verdict {
+	resume(token: BoardRunToken, expected?: { collection: number; card: number }): Verdict {
 		return this.storage.db
 			.transaction((): Verdict => {
 				if (!this.owns()) return { ok: false, reason: 'owner-conflict' };
 				const row = this.read(token);
 				if (!row) return { ok: false, reason: 'attempt-conflict' };
+				if (expected) {
+					const collection = this.storage.workspace.readCollection(row.spec.key);
+					const card = collection?.cards.find((entry) => entry.cardId === row.spec.key.cardId);
+					if (collection?.revision !== expected.collection || card?.revision !== expected.card)
+						return { ok: false, reason: 'stale-revision' };
+				}
 				const latest = this.storage.db
 					.prepare('SELECT max(attempt) AS attempt FROM runs WHERE collection_key=? AND card_id=?')
 					.get(row.spec.key.collectionKey, row.spec.key.cardId) as { attempt: number };
@@ -489,12 +503,15 @@ export class BoardRuntime {
 				if (!this.current(token)) return { ok: false, reason: 'attempt-conflict' };
 				if (!forced && result.executionStarted !== false && !row.life.launchAuthorized)
 					return { ok: false, reason: 'launch-proof-missing' };
+				if (!forced && result.executionStarted === true && !row.life.process)
+					return { ok: false, reason: 'launch-proof-missing' };
 				let cardOutcome: unknown;
 				this.updateCard(row.spec, (card, board) => {
 					const cause = card.heldByUser ? 'canceled' : forced;
 					let run = card.runs?.find((entry) => entry.attempt === row.spec.attempt);
 					if (!run) {
 						run = {
+							runId: token.runId,
 							attempt: row.spec.attempt,
 							workerAgentId: row.spec.workerAgentId,
 							startedAt: new Date().toISOString(),
@@ -521,6 +538,59 @@ export class BoardRuntime {
 							DEFAULT_MAX_FAILURES
 						);
 					if (result.artifact && !cause) run.artifact = result.artifact;
+					// The native result records completed work; only a bound review and
+					// a later explicit human decision can complete the workflow.
+					if (
+						!cause &&
+						result.executionStarted !== false &&
+						['done', 'review'].includes(run.outcome ?? '')
+					) {
+						card.status = 'review';
+						card.workflow = {
+							...card.workflow,
+							version: 1,
+							corrections: card.workflow?.corrections ?? 0,
+							workRunId: token.runId,
+						};
+					}
+					const markers = parseCardMarkers(result.output);
+					if (
+						!cause &&
+						card.kind === 'review' &&
+						result.executionStarted === true &&
+						result.exitCode === 0 &&
+						!result.error
+					) {
+						const verdict = markers.findings
+							? 'findings'
+							: markers.complete && !markers.blocked && !markers.review
+								? 'clean'
+								: null;
+						const summary = markers.findings ?? markers.summary;
+						if (
+							verdict &&
+							summary?.trim() &&
+							result.artifact &&
+							canonicalJson(result.artifact) === canonicalJson(card.reviewHandoff?.artifact)
+						) {
+							if (
+								applyBoardReviewResult(
+									this.storage,
+									row.spec.key,
+									card,
+									token.runId,
+									verdict,
+									summary
+								)
+							) {
+								card.status = verdict === 'clean' ? 'ready-for-human' : 'blocked';
+								if (verdict === 'findings') {
+									run.outcome = 'review';
+									run.summary = summary;
+								}
+							}
+						}
+					}
 					cardOutcome = {
 						status: card.status,
 						heldByUser: card.heldByUser === true,
@@ -540,6 +610,7 @@ export class BoardRuntime {
 				this.storage.db
 					.prepare('DELETE FROM reservations WHERE run_id=? AND owner_epoch=? AND generation=?')
 					.run(token.runId, token.ownerEpoch, token.generation);
+				queueBoardReviews(this.storage);
 				queueMicrotask(() => {
 					// Re-read the committed outcome: a surrounding transaction may have rolled back.
 					try {

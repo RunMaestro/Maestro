@@ -1,21 +1,9 @@
 import { isSessionRemote } from '../utils/sessionHelpers';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-	X,
-	KanbanSquare,
-	Plus,
-	Trash2,
-	RefreshCw,
-	ChevronLeft,
-	Square,
-	Play,
-	Pencil,
-	Check,
-} from 'lucide-react';
+import { X, KanbanSquare, Plus, Trash2, RefreshCw, ChevronLeft, Square, Play } from 'lucide-react';
 import type { Theme } from '../types';
-import type { AgentProfile } from '../../shared/profiles/types';
 import type {
 	Board,
 	BoardCard,
@@ -26,20 +14,17 @@ import type {
 	BoardRoleRef,
 	BoardStartMode,
 	BoardWorkspaceCollection,
-	BoardSourceCatalogEntry,
 	CardPriority,
 	CardStatus,
 } from '../../shared/board/types';
 import type { StoredBoardWorker } from '../../main/board/board-workspace-storage';
 import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers, hasCycle } from '../../shared/board/graph';
-import { isPathWithin } from '../../shared/board/pool';
 import { buildCardWorktreeRef } from '../../shared/board/worktree';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../hooks/utils/useFocusAfterRender';
-import { ProfilesModal } from './ProfilesModal/ProfilesModal';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
@@ -50,12 +35,14 @@ import { notifyToast } from '../stores/notificationStore';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime, truncatePath } from '../../shared/formatters';
+import type { BoardReadinessReason } from '../../shared/board/domain';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch';
 import { openUrl } from '../utils/openUrl';
 import { observedWorkerRuns } from '../utils/boardWorkerStatus';
+import { BoardWorkerOptions } from './BoardWorkerOptions';
 
 export interface BoardModalProps {
 	theme: Theme;
@@ -68,41 +55,58 @@ const DELETE_DISARM_MS = 4000;
 /** Id of the modal title, referenced by `aria-labelledby` on the dialog. */
 const TITLE_ID = 'board-modal-title';
 
-/**
- * Workspace "last collection I had open" memory. A pure UI preference, so it lives
- * in localStorage next to the other view-state keys (Git diff view mode, History
- * filters) rather than becoming a real synced setting.
- */
-const LAST_BOARD_KEY_PREFIX = 'maestro.board.lastBoardId:';
-
-function readLastBoardId(projectRoot: string): string | null {
-	try {
-		return window.localStorage.getItem(LAST_BOARD_KEY_PREFIX + projectRoot);
-	} catch {
-		// localStorage can throw in private mode or when full - non-fatal here.
-		return null;
-	}
-}
-
-function writeLastBoardId(projectRoot: string, boardId: string): void {
-	try {
-		window.localStorage.setItem(LAST_BOARD_KEY_PREFIX + projectRoot, boardId);
-	} catch {
-		// Losing the preference is acceptable; failing the render is not.
-	}
-}
-
 /** Column presentation: label + which theme color keys the status. The columns
  * are a *view* of `card.status`; the DAG + dispatcher are the engine. */
 const STATUS_META: Record<CardStatus, { label: string; colorKey: keyof Theme['colors'] }> = {
 	triage: { label: 'Triage', colorKey: 'textDim' },
 	todo: { label: 'To Do', colorKey: 'textMain' },
 	ready: { label: 'Ready', colorKey: 'success' },
-	running: { label: 'Running', colorKey: 'warning' },
+	running: { label: 'In Progress', colorKey: 'warning' },
 	review: { label: 'Review', colorKey: 'warning' },
+	'ready-for-human': { label: 'Ready for Human', colorKey: 'success' },
 	blocked: { label: 'Blocked', colorKey: 'error' },
 	done: { label: 'Done', colorKey: 'success' },
 };
+
+// Host readiness codes are stable diagnostics; translate them for the card surface.
+const READINESS_LABELS: Record<BoardReadinessReason, string> = {
+	'review-artifact-unresolved': 'Review artifact is unavailable',
+	'scope-conflict': 'Assignment conflicts with the selected scope',
+	'missing-scope': 'Assign an agent or group',
+	'target-missing': 'Assigned agent is unavailable',
+	'group-missing': 'Assigned group is unavailable',
+	'role-missing': 'Required role is unavailable',
+	'repository-unresolved': 'Select a validated project',
+	'repository-unknown': 'Project availability is unknown',
+	'worker-outside-scope': 'Worker is outside the assigned scope',
+	'worker-unregistered': 'Assigned worker is not registered',
+	'worker-disabled': 'Assigned worker is disabled',
+	'worker-paused': 'Assigned worker is paused',
+	'worker-role-mismatch': 'Worker lacks the required role',
+	'worker-repository-mismatch': 'Worker cannot access the project',
+	'reviewer-missing': 'Assign an available reviewer',
+	'review-pending': 'Review is pending',
+	'correction-limit': 'Correction limit reached',
+	emptyEligibleWorkers: 'No eligible workers',
+	'approval-required': 'Approval is required',
+	held: 'Held until resumed',
+	'worker-busy': 'Assigned worker is busy',
+	'worker-dormant': 'Assigned worker is dormant',
+	'worker-location-mismatch': 'Worker is in a different location',
+	'occupancy-unknown': 'Worker availability is unknown',
+	'runtime-unknown': 'Runtime status is unknown',
+	'runtime-unavailable': 'Runtime is unavailable',
+	'awaiting-cue': 'Scheduler has not run yet',
+};
+
+// Internal intake and blocked states remain visible on their cards in To Do.
+const WORKFLOW_COLUMNS: readonly CardStatus[] = [
+	'todo',
+	'running',
+	'review',
+	'ready-for-human',
+	'done',
+];
 
 /** Priority presentation. `normal` carries no badge - only the exceptions are
  * worth pixels on a tile. */
@@ -117,6 +121,7 @@ const PRIORITY_META: Record<
 
 /** Draft shape for the card editor (before it becomes a persisted BoardCard). */
 interface CardDraft {
+	reviewerAgentId?: string;
 	kind?: BoardCardKind;
 	reviewContext?: {
 		sourceCardId: string;
@@ -170,72 +175,56 @@ interface CardDraft {
  */
 export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const activeSession = useSessionStore(selectActiveSession);
-	const activeProjectRoot = isSessionRemote(activeSession)
-		? ''
-		: (activeSession?.projectRoot ?? '');
 	const [collections, setCollections] = useState<BoardWorkspaceCollection[]>([]);
-	const [roleSource, setRoleSource] = useState<{ sourceKey: string; namespace: string } | null>(
-		null
-	);
-	const [sources, setSources] = useState<BoardSourceCatalogEntry[]>([]);
 	const [sourceRoots, setSourceRoots] = useState<Record<string, string>>({});
-	const [projectFilter, setProjectFilter] = useState('all');
 	const [groupFilter, setGroupFilter] = useState('all');
 	const [agentFilter, setAgentFilter] = useState('all');
 	const groups = useSessionStore((s) => s.groups);
 
 	const allSessions = useSessionStore((s) => s.sessions);
-	const projectRoots = useMemo(
-		() => [
-			...new Set(
-				allSessions
-					.filter((s) => !isSessionRemote(s))
-					.map((s) => s.projectRoot)
-					.filter((root): root is string => !!root)
+	// Only source membership changes require a new shared snapshot. Drafts,
+	// usage and process updates replace the sessions array on the typing path.
+	const projectRootsKey = useMemo(
+		() =>
+			canonicalJson(
+				[
+					...new Set(
+						allSessions
+							.filter((s) => !isSessionRemote(s))
+							.map((s) => s.projectRoot)
+							.filter(Boolean)
+					),
+				].sort()
 			),
-		],
 		[allSessions]
+	);
+	const catalogScopeKey = useMemo(
+		() =>
+			canonicalJson({
+				agents: allSessions.map(({ id, groupId }) => ({ id, groupId })),
+				groups: groups.map(({ id }) => id),
+			}),
+		[allSessions, groups]
 	);
 	const liveSessions = useLiveSessions();
 
-	const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+	const [globalCollectionKey, setGlobalCollectionKey] = useState<string | null>(null);
+	const globalCollectionKeyRef = useRef<string | null>(null);
 	const [draft, setDraft] = useState<CardDraft | null>(null);
-	const visibleCollections = useMemo(
-		() =>
-			collections.filter(
-				(entry) => projectFilter === 'all' || entry.projectRef.sourceKey === projectFilter
-			),
-		[collections, projectFilter]
-	);
-	const selectedCollection =
-		visibleCollections.find((entry) => entry.collectionKey === selectedBoardId) ??
-		visibleCollections[0] ??
-		null;
-	const editorCollection = draft?.collection ?? selectedCollection;
+	const [pendingNewCard, setPendingNewCard] = useState(false);
+	const globalCollection =
+		collections.find((entry) => entry.collectionKey === globalCollectionKey) ?? null;
+	const editorCollection = draft?.collection ?? globalCollection;
 	const board = editorCollection?.board ?? null;
 	const projectRoot =
 		draft?.projectRoot ??
-		(selectedCollection
-			? (sourceRoots[selectedCollection.sourceKey] ?? '')
-			: projectFilter === 'all'
-				? activeProjectRoot
-				: (sourceRoots[projectFilter] ?? ''));
-	const sourceLocation = sources.find(
-		(source) => source.sourceKey === (editorCollection?.sourceKey ?? projectFilter)
-	)?.location;
-	const projectLocationLabel =
-		sourceLocation?.location.kind === 'ssh'
-			? `${sourceLocation.location.remoteId || 'Unresolved SSH'}: ${sourceLocation.path}`
-			: projectRoot;
+		(globalCollection ? `${BOARD_SOURCE_PROJECT_PREFIX}${globalCollection.sourceKey}` : '');
 	const boards = useMemo(() => collections.map((entry) => entry.board), [collections]);
 
-	// Legacy cards display the current project worker marker until dispatch is migrated.
+	// Worker names resolve across the shared view, independent of the creator’s project.
 	const projectAgents = useMemo(
-		() =>
-			allSessions
-				.filter((s) => isPathWithin(projectRoot, s.projectRoot || s.cwd))
-				.map((s) => ({ id: s.id, name: s.name, isWorker: s.boardWorker === true })),
-		[allSessions, projectRoot]
+		() => allSessions.map((s) => ({ id: s.id, name: s.name, isWorker: s.boardWorker === true })),
+		[allSessions]
 	);
 	// Worker agents are Left Bar agents (session ids), so the name comes from the
 	// session store - NOT from getAgentDisplayName(), which maps agent *type* ids
@@ -260,6 +249,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	);
 
 	const [showWorkers, setShowWorkers] = useState(false);
+	const [workerSearch, setWorkerSearch] = useState('');
 	const [workers, setWorkers] = useState<StoredBoardWorker[]>([]);
 	const sessionById = useMemo(() => {
 		const index = new Map<string, (typeof allSessions)[number]>();
@@ -271,6 +261,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		for (const worker of workers) if (!index.has(worker.agentId)) index.set(worker.agentId, worker);
 		return index;
 	}, [workers]);
+	const editorAgents = useMemo(
+		() =>
+			allSessions.map((session) => ({
+				id: session.id,
+				name: session.name,
+				isWorker: workers.some((worker) => worker.agentId === session.id && worker.enabled),
+			})),
+		[allSessions, workers]
+	);
 	const observedRuns = useMemo(() => observedWorkerRuns(boards), [boards]);
 	const workersRevision = useRef(0);
 	const [workerBusy, setWorkerBusy] = useState(false);
@@ -303,7 +302,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		setWorkerCreationError(null);
 		useModalStore.getState().openModal('newInstance', {
 			duplicatingSessionId: null,
-			presetWorkingDir: projectRoot || undefined,
+			presetWorkingDir:
+				activeSession && !isSessionRemote(activeSession) ? activeSession.projectRoot : undefined,
 			onCreated: (agentId) => {
 				if (createdWorkerId.current) return;
 				createdWorkerId.current = agentId;
@@ -315,7 +315,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				setWorkerBusy(false);
 			},
 		});
-	}, [projectRoot, registerCreatedWorker]);
+	}, [activeSession, registerCreatedWorker]);
 	const [workerAccessOptions, setWorkerAccessOptions] = useState<
 		Awaited<ReturnType<typeof window.maestro.board.listWorkerAccessOptions>>
 	>({ roles: [], repositories: [] });
@@ -337,14 +337,18 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		setWorkerBusy(true);
 		try {
 			setWorkers(await action());
+			return true;
 		} catch (err) {
 			notifyToast({ color: 'red', title: 'Board workers', message: ipcErrorMessage(err) });
+			return false;
 		} finally {
 			setWorkerBusy(false);
 		}
 	}, []);
 
 	const [catalog, setCatalog] = useState<BoardCaptureCatalog | null>(null);
+	const [newRoleName, setNewRoleName] = useState('');
+	const [roleError, setRoleError] = useState<string | null>(null);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const catalogGeneration = useRef(0);
 	const refreshCaptureCatalog = useCallback(async () => {
@@ -361,6 +365,24 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			throw error;
 		}
 	}, []);
+	const createRole = async () => {
+		setWorkerBusy(true);
+		setRoleError(null);
+		try {
+			const result = await window.maestro.board.roleCommand({
+				action: 'create-role',
+				name: newRoleName,
+			});
+			if (!result.ok) throw new Error(result.error.message);
+			setNewRoleName('');
+			await refreshWorkers();
+			await refreshCaptureCatalog();
+		} catch (error) {
+			setRoleError(ipcErrorMessage(error));
+		} finally {
+			setWorkerBusy(false);
+		}
+	};
 	const [saveError, setSaveError] = useState<
 		Extract<BoardCaptureResponse, { ok: false }>['error'] | null
 	>(null);
@@ -370,20 +392,16 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		response: Extract<BoardCaptureResponse, { ok: true }>;
 	} | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [creatingBoard, setCreatingBoard] = useState(false);
-	const [dragCardId, setDragCardId] = useState<string | null>(null);
+	const [loadError, setLoadError] = useState<string | null>(null);
+	const [dragCard, setDragCard] = useState<{
+		cardId: string;
+		collection: BoardWorkspaceCollection;
+	} | null>(null);
 	const [dragOverStatus, setDragOverStatus] = useState<CardStatus | null>(null);
 	const [kindFilter, setKindFilter] = useState<BoardCardKind | 'all' | 'unspecified'>('all');
 	const [statusFilter, setStatusFilter] = useState<CardStatus | 'all'>('all');
 
-	// Board lifecycle UI (Phase 6): inline rename + delete confirmation.
-	const [renaming, setRenaming] = useState(false);
-	const createdRoles = useRef(new Map<string, BoardRoleRef>());
-	const [renameValue, setRenameValue] = useState('');
-	const [pendingBoardDelete, setPendingBoardDelete] = useState(false);
-
 	// Editor state: null = board view, otherwise the card editor is showing.
-	const [showNewRole, setShowNewRole] = useState(false);
 	const [cycleError, setCycleError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	/** Set when the editor was opened with `m`, so it lands on the Move to picker. */
@@ -391,19 +409,28 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	/** The draft exactly as the editor opened it, for the unsaved-changes check. */
 	const draftBaselineRef = useRef<CardDraft | null>(null);
 	/** Which close the user asked for while the editor was dirty, pending confirm. */
+	const [pendingAcceptance, setPendingAcceptance] = useState<CardDraft | null>(null);
 	const [pendingDiscard, setPendingDiscard] = useState<null | 'editor' | 'modal'>(null);
 
-	// Cheap structural compare: the draft is a flat object of primitives plus a
-	// string array, so serializing both sides is simpler (and less bug-prone) than
-	// a hand-written field-by-field diff.
-	const isDraftDirty = useMemo(
-		() => !!draft && canonicalJson(draft) !== canonicalJson(draftBaselineRef.current),
-		[draft]
-	);
+	// The collection includes a board snapshot. Compare the editable fields first
+	// so typing does not serialize that snapshot on every keystroke. Still compare
+	// it when the other fields match, including after a successful Move response.
+	const isDraftDirty = useMemo(() => {
+		if (!draft) return false;
+		const baseline = draftBaselineRef.current;
+		if (!baseline) return true;
+		const { collection, ...fields } = draft;
+		const { collection: baselineCollection, ...baselineFields } = baseline;
+		return (
+			canonicalJson(fields) !== canonicalJson(baselineFields) ||
+			canonicalJson(collection) !== canonicalJson(baselineCollection)
+		);
+	}, [draft]);
 
 	const loadGenerationRef = useRef(0);
-	const selectedBoardIdRef = useRef<string | null>(null);
-	selectedBoardIdRef.current = selectedBoardId;
+	const loadPromiseRef = useRef<Promise<void> | null>(null);
+	const loadAgainRef = useRef(false);
+	const loadSpinnerRef = useRef(false);
 
 	const profileName = useCallback(
 		(id: string) => {
@@ -413,82 +440,85 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		[catalog]
 	);
 
-	// Read the central workspace; resolve only explicit session project roots through
-	// the host for compatibility writers. Unknown sources remain visible and read-only.
-	const load = useCallback(
-		async (showSpinner = true) => {
-			const generation = ++loadGenerationRef.current;
+	// One global snapshot already carries source locations. Concurrent pushes
+	// share this read and request one trailing read, so the latest revision wins
+	// without launching a full workspace read for every project or event.
+	const load = useCallback((showSpinner = true): Promise<void> => {
+		loadAgainRef.current = true;
+		loadSpinnerRef.current ||= showSpinner;
+		loadGenerationRef.current++;
+		if (loadPromiseRef.current) return loadPromiseRef.current;
+		const promise = (async () => {
+			while (loadAgainRef.current) {
+				loadAgainRef.current = false;
+				const showSpinner = loadSpinnerRef.current;
+				loadSpinnerRef.current = false;
+				const generation = loadGenerationRef.current;
 
-			if (showSpinner) setLoading(true);
-			try {
-				const [response, mappings] = await Promise.all([
-					window.maestro.board.queryWorkspace(),
-					Promise.all(
-						projectRoots.map(async (root) => {
-							const result = await window.maestro.board
-								.queryWorkspace({ projectRoot: root })
-								.catch(() => null);
-							return { root, result };
-						})
-					),
-				]);
-				if (generation !== loadGenerationRef.current) return;
-				if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
-				const roots: Record<string, string> = {};
-				for (const source of response.value.sources) {
-					if (source.location)
-						roots[source.sourceKey] =
-							source.location.location.kind === 'local'
-								? source.location.path
-								: `${BOARD_SOURCE_PROJECT_PREFIX}${source.sourceKey}`;
-				}
-				for (const { root, result } of mappings) {
-					if (result?.ok) {
-						const keys = [...new Set(result.value.collections.map((entry) => entry.sourceKey))];
-						if (keys.length === 1 && !roots[keys[0]]) roots[keys[0]] = root;
+				if (showSpinner) setLoading(true);
+				try {
+					if (!globalCollectionKeyRef.current) {
+						const initialized = await window.maestro.board.initialize();
+						if (!initialized.ok)
+							throw new Error(`${initialized.error.code}: ${initialized.error.message}`);
+						const key = initialized.value.storage?.collectionKey;
+						if (!key) throw new Error('Global Board has no storage identity');
+						globalCollectionKeyRef.current = key;
+						setGlobalCollectionKey(key);
 					}
+					const response = await window.maestro.board.queryWorkspace();
+					if (generation !== loadGenerationRef.current) continue;
+					if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+					const roots: Record<string, string> = {};
+					for (const source of response.value.sources) {
+						if (source.location)
+							roots[source.sourceKey] =
+								source.location.location.kind === 'local'
+									? source.location.path
+									: `${BOARD_SOURCE_PROJECT_PREFIX}${source.sourceKey}`;
+					}
+
+					setSourceRoots(roots);
+					setCollections(response.value.collections);
+					setLoadError(null);
+					setCaptureResult(null);
+				} catch (err) {
+					if (generation !== loadGenerationRef.current) continue;
+					setLoadError(ipcErrorMessage(err));
+					logger.error(`Failed to load board: ${String(err)}`);
+					if (showSpinner) {
+						// A corrupt board.yaml / profiles.yaml now fails closed in the main
+						// process instead of loading as empty, so surface the real reason -
+						// the user has to repair the file by hand. Only reported on an
+						// explicit load: a push-driven refresh would otherwise re-report the
+						// same user-data problem on every write.
+						captureException(err, { tags: { operation: 'board:queryWorkspace' } });
+						notifyToast({
+							color: 'red',
+							title: 'Board',
+							message: `Failed to load board: ${ipcErrorMessage(err)}`,
+							dismissible: true,
+						});
+					}
+				} finally {
+					if (generation === loadGenerationRef.current) setLoading(false);
 				}
-				setSourceRoots(roots);
-				setSources(response.value.sources);
-				setCollections(response.value.collections);
-				setCaptureResult(null);
-				const current = selectedBoardIdRef.current;
-				const remembered = readLastBoardId('workspace');
-				const next =
-					response.value.collections.find((entry) => entry.collectionKey === current) ??
-					response.value.collections.find((entry) => entry.collectionKey === remembered) ??
-					response.value.collections[0];
-				setSelectedBoardId(next?.collectionKey ?? null);
-			} catch (err) {
-				if (generation !== loadGenerationRef.current) return;
-				logger.error(`Failed to load board: ${String(err)}`);
-				if (showSpinner) {
-					// A corrupt board.yaml / profiles.yaml now fails closed in the main
-					// process instead of loading as empty, so surface the real reason -
-					// the user has to repair the file by hand. Only reported on an
-					// explicit load: a push-driven refresh would otherwise re-report the
-					// same user-data problem on every write.
-					captureException(err, { tags: { operation: 'board:queryWorkspace' } });
-					notifyToast({
-						color: 'red',
-						title: 'Board',
-						message: `Failed to load board: ${ipcErrorMessage(err)}`,
-						dismissible: true,
-					});
-				}
-			} finally {
-				if (generation === loadGenerationRef.current) setLoading(false);
 			}
-		},
-		[projectRoots]
-	);
+		})();
+		loadPromiseRef.current = promise;
+		void promise.finally(() => {
+			loadPromiseRef.current = null;
+		});
+		return promise;
+	}, []);
 
 	useEffect(() => {
 		void load(true);
 		return () => {
 			loadGenerationRef.current++;
+			loadAgainRef.current = false;
 		};
-	}, [load]);
+	}, [load, projectRootsKey]);
 
 	useEffect(() => {
 		if (loading) return;
@@ -496,12 +526,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		return () => {
 			catalogGeneration.current++;
 		};
-	}, [collections, allSessions, groups, loading, refreshCaptureCatalog]);
-
-	// Remember the collection key, since legacy board IDs can collide across sources.
-	useEffect(() => {
-		if (selectedBoardId) writeLastBoardId('workspace', selectedBoardId);
-	}, [selectedBoardId]);
+	}, [collections, catalogScopeKey, loading, refreshCaptureCatalog]);
 
 	// Live updates: the main process pushes `board:changed` after every
 	// `.maestro/board.yaml` write (dispatcher tick, IPC mutation, auto-decompose),
@@ -522,88 +547,20 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		});
 	}, [refreshCaptureCatalog]);
 
-	const handleCreateBoard = useCallback(async () => {
-		if (!projectRoot || creatingBoard) return;
-		setCreatingBoard(true);
-		try {
-			// First board takes the agent's name; later ones are numbered and the
-			// rename field opens straight away so the user can say what it is.
-			const name =
-				boards.length > 0
-					? `Board ${boards.length + 1}`
-					: activeSession?.name
-						? `${activeSession.name} Board`
-						: 'Board';
-			const created = await window.maestro.board.create(projectRoot, name);
-			selectedBoardIdRef.current = created.storage?.collectionKey ?? null;
-			setSelectedBoardId(created.storage?.collectionKey ?? null);
-			await load(false);
-			if (boards.length > 0) {
-				setRenameValue(created.name);
-				setRenaming(true);
-			}
-		} catch (err) {
-			logger.error(`Failed to create board: ${String(err)}`);
-			captureException(err, { tags: { operation: 'board:create' } });
-			notifyToast({ color: 'red', title: 'Board', message: 'Failed to create board.' });
-		} finally {
-			setCreatingBoard(false);
-		}
-	}, [projectRoot, creatingBoard, activeSession?.name, boards.length, load]);
-
-	const startRename = useCallback(() => {
-		if (!board) return;
-		setRenameValue(board.name);
-		setRenaming(true);
-	}, [board]);
-
-	const commitRename = useCallback(async () => {
-		const name = renameValue.trim();
-		setRenaming(false);
-		if (!board || !projectRoot || !name || name === board.name) return;
-		try {
-			await window.maestro.board.rename(projectRoot, board.id, name);
-			await load(false);
-		} catch (err) {
-			logger.error(`Failed to rename board: ${String(err)}`);
-			captureException(err, { tags: { operation: 'board:rename' } });
-			notifyToast({ color: 'red', title: 'Board', message: 'Failed to rename the board.' });
-		}
-	}, [renameValue, board, projectRoot, load]);
-
-	/** Cards that would be destroyed by deleting the board (the CLI's warning). */
-	const openBoardCards = useMemo(
-		() => (board ? board.cards.filter((c) => c.status !== 'done').length : 0),
-		[board]
-	);
-
-	const handleDeleteBoard = useCallback(async () => {
-		if (!board || !projectRoot) return;
-		try {
-			// The confirm dialog IS the acknowledgment the CLI asks for with --force.
-			await window.maestro.board.delete(projectRoot, board.id, true);
-			await load(false);
-			notifyToast({ color: 'green', title: 'Board', message: `Deleted "${board.name}".` });
-		} catch (err) {
-			logger.error(`Failed to delete board: ${String(err)}`);
-			captureException(err, { tags: { operation: 'board:delete' } });
-			notifyToast({
-				color: 'red',
-				title: 'Board',
-				message: ipcErrorMessage(err),
-			});
-		}
-	}, [board, projectRoot, load]);
-
 	// --- Card editor -------------------------------------------------------
 
 	const openNewCard = useCallback(() => {
 		setCycleError(null);
 		setSaveError(null);
 		setFocusMovePicker(false);
-		if (!selectedCollection) return;
+		if (!globalCollection) {
+			setPendingNewCard(true);
+			void load(true);
+			return;
+		}
+		setPendingNewCard(false);
 		const fresh: CardDraft = {
-			collection: structuredClone(selectedCollection),
+			collection: structuredClone(globalCollection),
 			projectRoot,
 			id: null,
 			title: '',
@@ -623,17 +580,23 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		};
 		draftBaselineRef.current = fresh;
 		setDraft(fresh);
-	}, [selectedCollection, projectRoot]);
+	}, [globalCollection, projectRoot, load]);
+
+	useEffect(() => {
+		if (pendingNewCard && globalCollection && !loading && !loadError) openNewCard();
+	}, [pendingNewCard, globalCollection, loading, loadError, openNewCard]);
 
 	const openEditCard = useCallback(
-		(card: BoardCard, focusMove = false, collection = selectedCollection) => {
+		(card: BoardCard, focusMove = false, collection: BoardWorkspaceCollection) => {
 			setCycleError(null);
 			setSaveError(null);
 			setFocusMovePicker(focusMove);
 			if (!collection) return;
 			const existing: CardDraft = {
 				collection: structuredClone(collection),
-				projectRoot,
+				projectRoot:
+					sourceRoots[collection.sourceKey] ??
+					`${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`,
 				kind: card.kind,
 				id: card.id,
 				title: card.title,
@@ -653,6 +616,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				workingDirectory: card.workingDirectory ?? '',
 				startModeOverride: card.startModeOverride,
 				assigneeAgentId: card.assigneeAgentId ?? '',
+				reviewerAgentId: card.reviewerAgentId,
 				parents: [...card.parents],
 				priority: card.priority ?? 'normal',
 				worktreeEnabled: !!card.worktree,
@@ -667,7 +631,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			draftBaselineRef.current = existing;
 			setDraft(existing);
 		},
-		[selectedCollection, projectRoot]
+		[sourceRoots]
 	);
 
 	const openReview = useCallback(() => {
@@ -716,7 +680,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	}, [draft, board, isDraftDirty]);
 
 	const closeEditor = useCallback(() => {
-		setShowNewRole(false);
 		setDraft(null);
 		setSaveError(null);
 		setCycleError(null);
@@ -735,26 +698,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	}, [isDraftDirty, closeEditor]);
 
 	/**
-	 * Escape. An open rename field takes it first (the layer stack listens on
-	 * window in the capture phase, so the input cannot swallow it locally).
-	 * Otherwise it closes the whole modal, asking first when the editor holds
-	 * unsaved edits.
+	 * Escape closes the modal, asking first when the editor holds unsaved edits.
 	 */
 	const handleEscape = useCallback(() => {
-		if (showNewRole) {
-			setShowNewRole(false);
-			return;
-		}
-		if (renaming) {
-			setRenaming(false);
-			return;
-		}
 		if (isDraftDirty) {
 			setPendingDiscard('modal');
 			return;
 		}
 		onClose();
-	}, [showNewRole, renaming, isDraftDirty, onClose]);
+	}, [isDraftDirty, onClose]);
 
 	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', handleEscape);
 
@@ -806,8 +758,12 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	/** Replace one board in the list (every card mutation returns the whole board). */
 	const applyBoard = useCallback(
-		(updated: Board, readiness?: Extract<BoardCaptureResponse, { ok: true }>['readiness']) => {
-			const key = editorCollection?.collectionKey;
+		(
+			updated: Board,
+			collection: BoardWorkspaceCollection,
+			readiness?: Extract<BoardCaptureResponse, { ok: true }>['readiness']
+		) => {
+			const key = collection.collectionKey;
 			setCollections((prev) =>
 				prev.map((entry) =>
 					entry.collectionKey === key
@@ -821,7 +777,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				)
 			);
 		},
-		[editorCollection]
+		[]
 	);
 
 	const handleSaveCard = useCallback(async () => {
@@ -859,11 +815,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			createdAt: draft.createdAt ?? now,
 			updatedAt: now,
 			...(draft.storageRevision !== undefined ? { storageRevision: draft.storageRevision } : {}),
-			// Assignee: a role (profile) and/or a pinned agent. Omit blank fields so
-			// a role-only card retains its explicit scope and a pinned card carries
-			// no stale profile id.
-			assigneeProfileId: draft.assigneeProfileId || undefined,
 			assigneeAgentId: draft.assigneeAgentId || undefined,
+			reviewerAgentId: draft.reviewerAgentId || undefined,
 			// `normal` is the default and is never serialized.
 			priority: draft.priority !== 'normal' ? draft.priority : undefined,
 			...(draft.worktreeEnabled
@@ -888,6 +841,27 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					}
 				: { prOnDone: undefined }),
 		};
+		// Only an explicit role edit replaces legacy references. Unrelated edits
+		// retain unresolved IDs, namespace aliases and unknown role metadata verbatim.
+		const baseline = draftBaselineRef.current;
+		const replaceRole =
+			canonicalJson({
+				namespace: draft.role?.namespace,
+				id: draft.role?.profileId ?? draft.assigneeProfileId,
+			}) !==
+			canonicalJson({
+				namespace: baseline?.role?.namespace,
+				id: baseline?.role?.profileId ?? baseline?.assigneeProfileId,
+			});
+		if (replaceRole) {
+			delete (card as BoardCard & { profileNamespace?: string }).profileNamespace;
+			delete card.assigneeProfileId;
+			delete card.role;
+			if (draft.role) {
+				card.role = draft.role;
+				card.assigneeProfileId = draft.role.profileId;
+			}
+		}
 		// Explicit unsets repair bindings; untouched legacy nulls remain lossless.
 		for (const [key, value] of Object.entries({
 			executionScope: draft.executionScope,
@@ -903,13 +877,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					})
 			)
 				Object.assign(card, { [key]: value });
-		}
-		if (
-			!original ||
-			canonicalJson(draft.role ?? null) !== canonicalJson(draftBaselineRef.current?.role ?? null) ||
-			draft.assigneeProfileId !== draftBaselineRef.current?.assigneeProfileId
-		) {
-			Object.assign(card, { role: draft.role, profileNamespace: draft.role?.namespace });
 		}
 
 		// Client-side cycle guard: build the prospective board and reject before
@@ -933,6 +900,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				boardId: draft.collection.board.id,
 				expectedRevision: draft.collection.revision,
 				card,
+				...(replaceRole ? { replaceRole: true as const } : {}),
 				...(draft.reviewContext
 					? {
 							reviewSource: {
@@ -947,7 +915,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				if (response.error.code === 'stale-revision') await load(false);
 				return;
 			}
-			applyBoard(response.value, response.readiness);
+			applyBoard(response.value, draft.collection, response.readiness);
 			setCaptureResult({
 				collectionKey: draft.collection.collectionKey,
 				cardId: card.id,
@@ -984,73 +952,93 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		}
 	}, [draft, board, projectRoot, canSaveDraft, closeEditor, applyBoard, load, collections]);
 
-	const handleApproveStart = useCallback(async () => {
-		if (!draft?.id || isDraftDirty || saving || !draft.projectRoot) return;
-		const card = draft.collection.board.cards.find((entry) => entry.id === draft.id);
-		if (card?.capturePolicy?.dispatchApproval !== 'required' || card.storageRevision === undefined)
-			return;
-		setSaving(true);
-		setSaveError(null);
-		try {
-			const result = await window.maestro.board.runtimeCommand({
-				action: 'control',
-				operation: 'approve',
-				target: {
-					projectRoot: draft.projectRoot,
-					sourceKey: draft.collection.sourceKey,
-					collectionKey: draft.collection.collectionKey,
-					expectedRevision: draft.collection.revision,
-				},
-				cardId: draft.id,
-				cardRevision: card.storageRevision,
-			});
-			if (!result.ok) {
-				setSaveError(result.error);
-				return;
-			}
-			// Read the host state after its grant. Never manufacture a granted policy
-			// or replace the read tokens on a rejected approval.
-			const refreshed = await window.maestro.board.queryWorkspace({
-				sourceKey: draft.collection.sourceKey,
-			});
-			if (!refreshed.ok) {
-				setSaveError(refreshed.error);
-				return;
-			}
-			const collection = refreshed.value.collections.find(
-				(entry) => entry.collectionKey === draft.collection.collectionKey
-			);
-			const saved = collection?.board.cards.find((entry) => entry.id === draft.id);
-			if (!collection || !saved) {
-				setSaveError({
-					code: 'not-found',
-					message: 'Approved card is no longer available. Reload the board.',
-				});
-				return;
-			}
+	const handleApproveStart = useCallback(
+		async (operation: 'approve' | 'accept' = 'approve', selected = draft) => {
+			if (!selected?.id || isDraftDirty || saving || !selected.projectRoot) return;
+			const card = selected.collection.board.cards.find((entry) => entry.id === selected.id);
 			if (
-				draftBaselineRef.current?.collection === draft.collection &&
-				draftBaselineRef.current.id === draft.id
-			) {
-				openEditCard(saved, false, collection);
+				!card ||
+				card.storageRevision === undefined ||
+				(operation === 'approve'
+					? card.capturePolicy?.dispatchApproval !== 'required'
+					: card.status !== 'ready-for-human')
+			)
+				return;
+			setSaving(true);
+			setSaveError(null);
+			try {
+				const result = await window.maestro.board.runtimeCommand({
+					action: 'control',
+					operation,
+					target: {
+						projectRoot: selected.projectRoot,
+						sourceKey: selected.collection.sourceKey,
+						collectionKey: selected.collection.collectionKey,
+						expectedRevision: selected.collection.revision,
+					},
+					cardId: selected.id,
+					cardRevision: card.storageRevision,
+				});
+				if (!result.ok) {
+					setSaveError(result.error);
+					return;
+				}
+				// Read the host state after its grant. Never manufacture a granted policy
+				// or replace the read tokens on a rejected approval.
+				const refreshed = await window.maestro.board.queryWorkspace({
+					sourceKey: selected.collection.sourceKey,
+				});
+				if (!refreshed.ok) {
+					setSaveError(refreshed.error);
+					return;
+				}
+				const collection = refreshed.value.collections.find(
+					(entry) => entry.collectionKey === selected.collection.collectionKey
+				);
+				const saved = collection?.board.cards.find((entry) => entry.id === selected.id);
+				if (!collection || !saved) {
+					setSaveError({
+						code: 'not-found',
+						message: 'Updated card is no longer available. Reload the board.',
+					});
+					return;
+				}
+				if (
+					draftBaselineRef.current?.collection === selected.collection &&
+					draftBaselineRef.current.id === selected.id
+				) {
+					openEditCard(saved, false, collection);
+				}
+				setCaptureResult(null);
+				await load(false);
+			} catch (err) {
+				setSaveError({ code: 'transport-error', message: ipcErrorMessage(err) });
+				captureException(err, { tags: { operation: 'board:approveStart' } });
+			} finally {
+				setSaving(false);
 			}
-			setCaptureResult(null);
-			await load(false);
-		} catch (err) {
-			setSaveError({ code: 'transport-error', message: ipcErrorMessage(err) });
-			captureException(err, { tags: { operation: 'board:approveStart' } });
-		} finally {
-			setSaving(false);
-		}
-	}, [draft, isDraftDirty, saving, load, openEditCard]);
+		},
+		[draft, isDraftDirty, saving, load, openEditCard]
+	);
 
 	const handleDeleteCard = useCallback(
-		async (cardId: string) => {
-			if (!board || !projectRoot) return;
+		async (cardId: string, collection: BoardWorkspaceCollection) => {
+			const board = collection.board;
+			const projectRoot =
+				sourceRoots[collection.sourceKey] ??
+				`${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`;
 			try {
-				const updated = await window.maestro.board.deleteCard(projectRoot, board.id, cardId);
-				applyBoard(updated);
-				if (draft?.id === cardId) closeEditor();
+				const card = board.cards.find((item) => item.id === cardId);
+				if (card?.storageRevision === undefined) throw new Error('Card revision unavailable');
+				const updated = await window.maestro.board.deleteCard(projectRoot, board.id, cardId, {
+					sourceKey: collection.sourceKey,
+					collectionKey: collection.collectionKey,
+					revision: collection.revision,
+					cardRevision: card.storageRevision,
+				});
+				applyBoard(updated, collection);
+				if (draft?.id === cardId && draft.collection.collectionKey === collection.collectionKey)
+					closeEditor();
 			} catch (err) {
 				logger.error(`Failed to delete card: ${String(err)}`);
 				captureException(err, { tags: { operation: 'board:deleteCard' } });
@@ -1061,15 +1049,25 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				});
 			}
 		},
-		[board, projectRoot, draft?.id, closeEditor, applyBoard]
+		[sourceRoots, draft, closeEditor, applyBoard]
 	);
 
 	const handleCancelCard = useCallback(
-		async (cardId: string) => {
-			if (!board || !projectRoot) return;
+		async (cardId: string, collection: BoardWorkspaceCollection) => {
+			const board = collection.board;
+			const projectRoot =
+				sourceRoots[collection.sourceKey] ??
+				`${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`;
 			try {
-				const updated = await window.maestro.board.cancelCard(projectRoot, board.id, cardId);
-				applyBoard(updated);
+				const card = board.cards.find((item) => item.id === cardId);
+				if (card?.storageRevision === undefined) throw new Error('Card revision unavailable');
+				const updated = await window.maestro.board.cancelCard(projectRoot, board.id, cardId, {
+					sourceKey: collection.sourceKey,
+					collectionKey: collection.collectionKey,
+					revision: collection.revision,
+					cardRevision: card.storageRevision,
+				});
+				applyBoard(updated, collection);
 				notifyToast({
 					color: 'orange',
 					title: 'Board',
@@ -1082,18 +1080,27 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				notifyToast({ color: 'red', title: 'Board', message: 'Failed to stop the card.' });
 			}
 		},
-		[board, projectRoot, applyBoard]
+		[sourceRoots, applyBoard]
 	);
 
 	/** Release only through the owning runtime, after termination is confirmed. */
 	const handleResumeCard = useCallback(
-		async (cardId: string) => {
-			if (!board || !projectRoot) return;
+		async (cardId: string, collection: BoardWorkspaceCollection) => {
+			const board = collection.board;
+			const projectRoot =
+				sourceRoots[collection.sourceKey] ??
+				`${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`;
 			const card = board.cards.find((c) => c.id === cardId);
 			if (!card?.heldByUser) return;
 			try {
-				const updated = await window.maestro.board.resumeCard(projectRoot, board.id, cardId);
-				applyBoard(updated);
+				if (card.storageRevision === undefined) throw new Error('Card revision unavailable');
+				const updated = await window.maestro.board.resumeCard(projectRoot, board.id, cardId, {
+					sourceKey: collection.sourceKey,
+					collectionKey: collection.collectionKey,
+					revision: collection.revision,
+					cardRevision: card.storageRevision,
+				});
+				applyBoard(updated, collection);
 				notifyToast({
 					color: 'green',
 					title: 'Board',
@@ -1105,7 +1112,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				notifyToast({ color: 'red', title: 'Board', message: 'Failed to resume the card.' });
 			}
 		},
-		[board, projectRoot, applyBoard]
+		[sourceRoots, applyBoard]
 	);
 
 	// --- Moving cards (drag for pointers, "Move to" picker for keyboards) ----
@@ -1115,11 +1122,26 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	 * used to carry. Returns true when the card actually moved.
 	 */
 	const moveCard = useCallback(
-		async (cardId: string, status: CardStatus): Promise<Board | false> => {
-			if (!board || !projectRoot) return false;
+		async (
+			cardId: string,
+			status: CardStatus,
+			collection: BoardWorkspaceCollection
+		): Promise<Board | false> => {
+			const board = collection.board;
+			const projectRoot =
+				sourceRoots[collection.sourceKey] ??
+				`${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`;
 			const card = board.cards.find((c) => c.id === cardId);
 			// No-op when it is already there.
 			if (!card || card.status === status) return false;
+			if (card.storageRevision === undefined) {
+				notifyToast({
+					color: 'red',
+					title: 'Board',
+					message: 'Card revision unavailable. Reload the board.',
+				});
+				return false;
+			}
 			// Moving a running card used to rewrite the status in YAML while the agent
 			// process kept running - the card looked stopped and wasn't. Stopping a run
 			// is an explicit action now (the stop button), so refuse and say why.
@@ -1135,29 +1157,41 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			// `ready` and `running` are derived by the dispatcher, so the main
 			// process rejects them. Catch it here too, before the optimistic move,
 			// so the card doesn't visibly jump columns and snap back.
-			if (status === 'ready' || status === 'running') {
+			if (['ready', 'running', 'review', 'ready-for-human', 'done'].includes(status)) {
 				notifyToast({
 					color: 'orange',
 					title: 'Board',
-					message: `"${STATUS_META[status].label}" is set by the dispatcher. Move the card to "To Do" - it is promoted once its parents are done.`,
+					message:
+						status === 'done'
+							? 'Use Approve final result on a card in Ready for Human. Status moves cannot approve work.'
+							: `"${STATUS_META[status].label}" is controlled by the host workflow.`,
 				});
 				return false;
 			}
 			if (isCoarsePointer()) triggerHaptic(HAPTIC_PATTERNS.tap);
 			// Optimistic move so the card jumps immediately; the reload below
 			// corrects it if the write fails.
-			applyBoard({
-				...board,
-				cards: board.cards.map((c) => (c.id === cardId ? { ...c, status } : c)),
-			});
+			applyBoard(
+				{
+					...board,
+					cards: board.cards.map((c) => (c.id === cardId ? { ...c, status } : c)),
+				},
+				collection
+			);
 			try {
 				const updated = await window.maestro.board.setCardStatus(
 					projectRoot,
 					board.id,
 					cardId,
-					status
+					status,
+					{
+						sourceKey: collection.sourceKey,
+						collectionKey: collection.collectionKey,
+						revision: collection.revision,
+						cardRevision: card.storageRevision,
+					}
 				);
-				applyBoard(updated);
+				applyBoard(updated, collection);
 				return updated;
 			} catch (err) {
 				logger.error(`Failed to move card: ${String(err)}`);
@@ -1167,25 +1201,25 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				return false;
 			}
 		},
-		[board, projectRoot, load, applyBoard]
+		[sourceRoots, load, applyBoard]
 	);
 
 	const handleDrop = useCallback(
 		async (status: CardStatus) => {
-			const cardId = dragCardId;
-			setDragCardId(null);
+			const dragged = dragCard;
+			setDragCard(null);
 			setDragOverStatus(null);
-			if (!cardId) return;
-			await moveCard(cardId, status);
+			if (!dragged) return;
+			await moveCard(dragged.cardId, status, dragged.collection);
 		},
-		[dragCardId, moveCard]
+		[dragCard, moveCard]
 	);
 
 	/** Editor "Move to" picker: persists immediately, like a drop would. */
 	const handleMoveDraft = useCallback(
 		async (status: CardStatus) => {
 			if (!draft?.id) return;
-			const moved = await moveCard(draft.id, status);
+			const moved = await moveCard(draft.id, status, draft.collection);
 			if (!moved) return;
 			// Adopt the host read tokens from our own status command without rebasing
 			// unsaved specification edits onto an unrelated background refresh.
@@ -1218,38 +1252,50 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				};
 			}
 		},
-		[draft?.id, moveCard]
+		[draft, moveCard]
 	);
 
-	const inputStyle = {
-		backgroundColor: theme.colors.bgActivity,
-		border: `1px solid ${theme.colors.border}`,
-		color: theme.colors.textMain,
-	} as const;
+	const inputStyle = useMemo(
+		() => ({
+			backgroundColor: theme.colors.bgActivity,
+			border: `1px solid ${theme.colors.border}`,
+			color: theme.colors.textMain,
+		}),
+		[theme.colors.bgActivity, theme.colors.border, theme.colors.textMain]
+	);
 
 	const cardsByStatus = useMemo(() => {
-		const map = new Map<CardStatus, BoardCard[]>();
-		for (const status of CARD_STATUSES) map.set(status, []);
-		for (const card of board?.cards ?? []) {
-			if (
-				groupFilter !== 'all' &&
-				!(card.executionScope?.kind === 'group' && card.executionScope.groupId === groupFilter)
-			)
-				continue;
-			if (
-				agentFilter !== 'all' &&
-				card.assigneeAgentId !== agentFilter &&
-				!(card.executionScope?.kind === 'agent' && card.executionScope.agentId === agentFilter)
-			)
-				continue;
-			if (statusFilter !== 'all' && card.status !== statusFilter) continue;
-			if (kindFilter === 'unspecified' && card.kind !== undefined) continue;
-			if (kindFilter !== 'all' && kindFilter !== 'unspecified' && card.kind !== kindFilter)
-				continue;
-			map.get(card.status)?.push(card);
-		}
+		const map = new Map<
+			CardStatus,
+			{ card: BoardCard; collection: BoardWorkspaceCollection; key: string }[]
+		>();
+		for (const status of WORKFLOW_COLUMNS) map.set(status, []);
+		for (const collection of collections)
+			for (const card of collection.board.cards) {
+				if (
+					groupFilter !== 'all' &&
+					!(card.executionScope?.kind === 'group' && card.executionScope.groupId === groupFilter)
+				)
+					continue;
+				if (
+					agentFilter !== 'all' &&
+					card.assigneeAgentId !== agentFilter &&
+					!(card.executionScope?.kind === 'agent' && card.executionScope.agentId === agentFilter)
+				)
+					continue;
+				if (statusFilter !== 'all' && card.status !== statusFilter) continue;
+				if (kindFilter === 'unspecified' && card.kind !== undefined) continue;
+				if (kindFilter !== 'all' && kindFilter !== 'unspecified' && card.kind !== kindFilter)
+					continue;
+				const column = ['triage', 'ready', 'blocked'].includes(card.status) ? 'todo' : card.status;
+				map.get(column)?.push({
+					card,
+					collection,
+					key: JSON.stringify([collection.sourceKey, collection.collectionKey, card.id]),
+				});
+			}
 		return map;
-	}, [board, kindFilter, statusFilter, groupFilter, agentFilter]);
+	}, [collections, kindFilter, statusFilter, groupFilter, agentFilter]);
 
 	// --- Keyboard grid navigation -------------------------------------------
 
@@ -1270,16 +1316,16 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				const cards = cardsByStatus.get(fromStatus) ?? [];
 				const nextIndex = key === 'ArrowDown' ? fromIndex + 1 : fromIndex - 1;
 				const target = cards[nextIndex];
-				if (target) tileRefs.current.get(target.id)?.focus();
+				if (target) tileRefs.current.get(target.key)?.focus();
 				return;
 			}
 			const step = key === 'ArrowRight' ? 1 : -1;
-			const from = CARD_STATUSES.indexOf(fromStatus);
-			for (let i = from + step; i >= 0 && i < CARD_STATUSES.length; i += step) {
-				const cards = cardsByStatus.get(CARD_STATUSES[i]) ?? [];
+			const from = WORKFLOW_COLUMNS.indexOf(fromStatus);
+			for (let i = from + step; i >= 0 && i < WORKFLOW_COLUMNS.length; i += step) {
+				const cards = cardsByStatus.get(WORKFLOW_COLUMNS[i]) ?? [];
 				if (cards.length === 0) continue;
 				const target = cards[Math.min(fromIndex, cards.length - 1)];
-				tileRefs.current.get(target.id)?.focus();
+				tileRefs.current.get(target.key)?.focus();
 				return;
 			}
 		},
@@ -1301,18 +1347,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				if (e.target === e.currentTarget) handleEscape();
 			}}
 		>
-			{roleSource && (
-				<ProfilesModal
-					key={roleSource.sourceKey}
-					theme={theme}
-					source={roleSource}
-					onClose={() => {
-						setRoleSource(null);
-						void refreshCaptureCatalog().catch(() => {});
-					}}
-				/>
-			)}
-
 			<div className="absolute inset-0 bg-black/50" />
 
 			<div
@@ -1336,7 +1370,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				/>
 				{/* Header */}
 				<div
-					className="shrink-0 flex items-center justify-between px-5 py-4 border-b gap-3"
+					className="shrink-0 flex flex-wrap items-center justify-between px-5 py-4 border-b gap-3"
 					style={{ borderColor: theme.colors.border }}
 				>
 					<div className="flex items-center gap-2 min-w-0">
@@ -1346,45 +1380,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							className="text-base font-bold truncate"
 							style={{ color: theme.colors.textMain }}
 						>
-							{board ? board.name : 'Board'}
+							Board
 						</h2>
-						{/* Board switcher (Phase 6). Hidden while renaming, which swaps in
-						    the name field in its place. */}
-						{board && !renaming && (
-							<select
-								value={editorCollection?.collectionKey ?? ''}
-								disabled={!!draft}
-								onChange={(e) => setSelectedBoardId(e.target.value)}
-								aria-label="Select board"
-								title="Switch board"
-								className="rounded-md px-2 py-1 text-xs outline-none max-w-[180px]"
-								style={inputStyle}
-							>
-								{(draft ? [draft.collection] : visibleCollections).map((entry) => (
-									<option key={entry.collectionKey} value={entry.collectionKey}>
-										{entry.board.name}
-										{visibleCollections.some(
-											(other) =>
-												other.collectionKey !== entry.collectionKey &&
-												other.board.name === entry.board.name
-										) && ` · ${sourceRoots[entry.sourceKey] ?? entry.sourceKey}`}
-									</option>
-								))}
-							</select>
-						)}
-						{board && renaming && (
-							<input
-								value={renameValue}
-								autoFocus
-								onChange={(e) => setRenameValue(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter') void commitRename();
-								}}
-								aria-label="Board name"
-								className="rounded-md px-2 py-1 text-xs outline-none max-w-[220px]"
-								style={inputStyle}
-							/>
-						)}
 						<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 							card DAG · dispatched on the Cue tick
 						</span>
@@ -1415,65 +1412,9 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								<option value="direct">New cards: schedule directly</option>
 							</select>
 						)}
-
-						{/* Show the host-confirmed writer project for the selected collection. */}
-						{projectRoot && (
-							<span
-								className="text-xs truncate min-w-0"
-								style={{ color: theme.colors.textDim }}
-								title={projectLocationLabel}
-							>
-								{truncatePath(projectLocationLabel)}
-							</span>
-						)}
 					</div>
 					<div className="flex items-center gap-1 shrink-0">
-						{board &&
-							!draft &&
-							(renaming ? (
-								<button
-									onClick={() => void commitRename()}
-									className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.success }}
-									aria-label="Save board name"
-									title="Save board name"
-								>
-									<Check className="w-4 h-4" />
-								</button>
-							) : (
-								<button
-									onClick={startRename}
-									className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
-									aria-label="Rename board"
-									title="Rename this board"
-								>
-									<Pencil className="w-4 h-4" />
-								</button>
-							))}
-						{board && !draft && (
-							<button
-								onClick={() => setPendingBoardDelete(true)}
-								className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
-								aria-label="Delete board"
-								title="Delete this board"
-							>
-								<Trash2 className="w-4 h-4" />
-							</button>
-						)}
-						{board && !draft && (
-							<button
-								onClick={() => void handleCreateBoard()}
-								disabled={creatingBoard || !projectRoot}
-								className="rounded-md px-2.5 py-1.5 text-xs transition-colors hover:bg-white/5 disabled:opacity-40"
-								style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
-								title="Create another board for this project"
-							>
-								New board
-							</button>
-						)}
-						{board && !draft && (
+						{!draft && (!loading || board) && (
 							<button
 								onClick={openNewCard}
 								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
@@ -1523,12 +1464,57 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						<p style={{ color: theme.colors.warning }}>
 							Intake pause prevents new Board starts. Work already running continues.
 						</p>
+						<details className="my-2">
+							<summary className="cursor-pointer">Manage roles</summary>
+							<form
+								className="flex flex-wrap items-center gap-2 py-2"
+								onSubmit={(event) => {
+									event.preventDefault();
+									if (newRoleName.trim() && !workerBusy) void createRole();
+								}}
+							>
+								<label htmlFor="board-new-role-name">New role</label>
+								<input
+									id="board-new-role-name"
+									value={newRoleName}
+									disabled={workerBusy}
+									onChange={(event) => setNewRoleName(event.target.value)}
+									placeholder="e.g. Reviewer"
+									className="rounded px-2 py-1"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										color: theme.colors.textMain,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+								/>
+								<button type="submit" disabled={workerBusy || !newRoleName.trim()}>
+									Create role
+								</button>
+							</form>
+							<p className="text-xs" style={{ color: theme.colors.textDim }}>
+								Create a role here, assign it to workers below, then choose it on a card. Execution
+								options stay with each worker.
+							</p>
+							{roleError && (
+								<p role="alert" style={{ color: theme.colors.error }}>
+									{roleError}
+								</p>
+							)}
+						</details>
 						<button
+							className="inline-flex items-center gap-2 rounded-md border px-3 py-2 my-2 hover:brightness-110 focus-visible:outline focus-visible:outline-2 disabled:opacity-70"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
 							disabled={workerBusy || creatorOpen || pendingWorkerId !== null}
 							onClick={createWorker}
 						>
+							<Plus className="h-4 w-4" aria-hidden="true" />
 							Create agent and add worker
 						</button>
+						{workerBusy && (
+							<span role="status" className="ml-2">
+								Updating workers…
+							</span>
+						)}
 						{workerCreationError && (
 							<p role="alert" className="select-text" style={{ color: theme.colors.error }}>
 								{workerCreationError}
@@ -1548,6 +1534,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								</button>
 							</div>
 						)}
+						<h3 className="font-semibold mt-3">Registered workers</h3>
 						{workers
 							.filter((worker) => !sessionById.has(worker.agentId))
 							.map((worker) => (
@@ -1556,195 +1543,230 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 									{worker.paused ? ', intake paused' : ''}; occupancy unknown
 								</div>
 							))}
-						{liveSessions.map((session) => {
-							const worker = workersByAgent.get(session.id);
-							const observedRun = observedRuns.get(session.id);
-							const roles = worker?.payload.roleRefs;
-							const repos = worker?.payload.allowedRepositoryIds;
-							const validAccess =
-								Array.isArray(roles) &&
-								roles.every(
-									(role) =>
-										role && typeof role.namespace === 'string' && typeof role.profileId === 'string'
-								) &&
-								Array.isArray(repos) &&
-								repos.every((id) => typeof id === 'string');
-							return (
-								<div key={session.id} className="flex flex-col gap-2 py-2">
-									<div className="flex items-center justify-between gap-2">
-										<span>
-											{session.name}
-											{worker
-												? ` — ${worker.enabled ? 'enabled' : 'disabled'}${worker.paused ? ', intake paused' : ''}`
-												: ''}
-										</span>
-										{worker ? (
-											<div className="flex gap-2">
-												<button
-													disabled={workerBusy}
-													onClick={() =>
-														void changeWorker(() =>
-															window.maestro.board.enableWorker(session.id, !worker.enabled)
-														)
-													}
-												>
-													{worker.enabled ? 'Disable' : 'Enable'}
-												</button>
-												<button
-													disabled={workerBusy}
-													onClick={() =>
-														void changeWorker(() =>
-															window.maestro.board.pauseWorker(session.id, !worker.paused)
-														)
-													}
-												>
-													{worker.paused ? 'Resume intake' : 'Pause intake'}
-												</button>
-											</div>
-										) : (
-											<button
-												disabled={workerBusy}
-												onClick={() =>
-													void changeWorker(() => window.maestro.board.registerWorker(session.id))
-												}
-											>
-												Add worker
-											</button>
-										)}
+						{[true, false].map((registered) => (
+							<section key={String(registered)}>
+								{!registered && (
+									<div className="mt-4 space-y-2">
+										<h3 className="font-semibold">Available agents</h3>
+										<label className="block">
+											Search available agents
+											<input
+												aria-label="Search available agents"
+												value={workerSearch}
+												onChange={(event) => setWorkerSearch(event.target.value)}
+												className="block w-full rounded border px-2 py-1"
+												style={{
+													borderColor: theme.colors.border,
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textMain,
+												}}
+											/>
+										</label>
 									</div>
-									{worker && (
-										<div>
-											Agent state: {session.state}; global occupancy unknown
-											{observedRun && `; observed running card in loaded boards: ${observedRun}`}
-										</div>
-									)}
-									{worker && validAccess && (
-										<div>
-											<div>
-												Roles:{' '}
-												{workerAccessOptions.roles.map((role) => {
-													const selected = roles.some(
-														(entry) =>
-															entry.namespace === role.namespace &&
-															entry.profileId === role.profileId
-													);
-													return (
-														<label
-															key={JSON.stringify([role.namespace, role.profileId])}
-															className="ml-2"
-														>
-															<input
-																type="checkbox"
+								)}
+								{(registered ? allSessions : liveSessions)
+									.filter(
+										(session) =>
+											workersByAgent.has(session.id) === registered &&
+											(registered ||
+												`${session.name} ${session.toolType}`
+													.toLowerCase()
+													.includes(workerSearch.toLowerCase().trim()))
+									)
+									.map((session) => {
+										const worker = workersByAgent.get(session.id);
+										const observedRun = observedRuns.get(session.id);
+										const roles = worker?.payload.roleRefs;
+										const repos = worker?.payload.allowedRepositoryIds;
+										const validAccess =
+											Array.isArray(roles) &&
+											roles.every(
+												(role) =>
+													role &&
+													typeof role.namespace === 'string' &&
+													typeof role.profileId === 'string'
+											) &&
+											Array.isArray(repos) &&
+											repos.every((id) => typeof id === 'string');
+										return (
+											<div key={session.id} className="flex flex-col gap-2 py-2">
+												<div className="flex items-center justify-between gap-2">
+													<span>
+														{session.name}
+														{worker
+															? ` — ${worker.enabled ? 'enabled' : 'disabled'}${worker.paused ? ', intake paused' : ''}`
+															: ''}
+													</span>
+													{worker ? (
+														<div className="flex gap-2">
+															<button
 																disabled={workerBusy}
-																checked={selected}
-																onChange={() =>
+																onClick={() =>
 																	void changeWorker(() =>
-																		window.maestro.board.setWorkerAccess(
-																			session.id,
-																			selected
-																				? roles.filter(
-																						(entry) =>
-																							entry.namespace !== role.namespace ||
-																							entry.profileId !== role.profileId
-																					)
-																				: [
-																						...roles,
-																						{
+																		window.maestro.board.enableWorker(session.id, !worker.enabled)
+																	)
+																}
+															>
+																{worker.enabled ? 'Disable' : 'Enable'}
+															</button>
+															<button
+																disabled={workerBusy}
+																onClick={() =>
+																	void changeWorker(() =>
+																		window.maestro.board.pauseWorker(session.id, !worker.paused)
+																	)
+																}
+															>
+																{worker.paused ? 'Resume intake' : 'Pause intake'}
+															</button>
+														</div>
+													) : (
+														<button
+															disabled={workerBusy}
+															onClick={() =>
+																void changeWorker(() =>
+																	window.maestro.board.registerWorker(session.id)
+																)
+															}
+														>
+															Add worker
+														</button>
+													)}
+												</div>
+												{worker && (
+													<div>
+														Provider: {session.toolType}
+														<br />
+														Agent state: {session.state}; global occupancy unknown
+														{observedRun &&
+															`; observed running card in loaded boards: ${observedRun}`}
+													</div>
+												)}
+												{worker && (
+													<BoardWorkerOptions
+														key={canonicalJson(worker.payload)}
+														worker={worker}
+														session={session}
+														theme={theme}
+														roles={workerAccessOptions.roles}
+														workers={workers}
+														disabled={workerBusy}
+														onSave={(patch) =>
+															changeWorker(() =>
+																window.maestro.board.setWorkerOptions({
+																	agentId: session.id,
+																	expectedPayload: canonicalJson(worker.payload),
+																	patch,
+																})
+															)
+														}
+													/>
+												)}
+												{worker && validAccess && (
+													<details>
+														<summary>Roles and repositories</summary>
+														<div>
+															Roles:{' '}
+															{workerAccessOptions.roles.map((role) => {
+																const selected = roles.some(
+																	(entry) =>
+																		entry.namespace === role.namespace &&
+																		entry.profileId === role.profileId
+																);
+																return (
+																	<label
+																		key={JSON.stringify([role.namespace, role.profileId])}
+																		className="ml-2"
+																	>
+																		<input
+																			type="checkbox"
+																			disabled={workerBusy}
+																			checked={selected}
+																			onChange={() =>
+																				void changeWorker(async () => {
+																					const result = await window.maestro.board.roleCommand({
+																						action: 'set-worker-role',
+																						agentId: session.id,
+																						role: {
 																							namespace: role.namespace,
 																							profileId: role.profileId,
 																						},
-																					],
-																			repos
-																		)
-																	)
-																}
-															/>{' '}
-															{role.name} ({role.namespace})
-														</label>
-													);
-												})}
+																						enabled: !selected,
+																					});
+																					if (!result.ok) throw new Error(result.error.message);
+																					return window.maestro.board.listWorkers();
+																				})
+																			}
+																		/>{' '}
+																		{role.name} ({role.namespace} / {role.profileId})
+																	</label>
+																);
+															})}
+														</div>
+														<div>
+															Repositories:{' '}
+															{workerAccessOptions.repositories.map((repo) => (
+																<label key={repo.id} className="ml-2">
+																	<input
+																		type="checkbox"
+																		disabled={workerBusy}
+																		checked={repos.includes(repo.id)}
+																		onChange={() =>
+																			void changeWorker(() =>
+																				window.maestro.board.setWorkerAccess(
+																					session.id,
+																					roles,
+																					repos.includes(repo.id)
+																						? repos.filter((id) => id !== repo.id)
+																						: [...repos, repo.id]
+																				)
+																			)
+																		}
+																	/>{' '}
+																	{repo.name}
+																</label>
+															))}
+														</div>
+													</details>
+												)}
+												{worker && !validAccess && (
+													<span>Access data needs repair; existing values are preserved.</span>
+												)}
 											</div>
-											<div>
-												Repositories:{' '}
-												{workerAccessOptions.repositories.map((repo) => (
-													<label key={repo.id} className="ml-2">
-														<input
-															type="checkbox"
-															disabled={workerBusy}
-															checked={repos.includes(repo.id)}
-															onChange={() =>
-																void changeWorker(() =>
-																	window.maestro.board.setWorkerAccess(
-																		session.id,
-																		roles,
-																		repos.includes(repo.id)
-																			? repos.filter((id) => id !== repo.id)
-																			: [...repos, repo.id]
-																	)
-																)
-															}
-														/>{' '}
-														{repo.name}
-													</label>
-												))}
-											</div>
-										</div>
-									)}
-									{worker && !validAccess && (
-										<span>Access data needs repair; existing values are preserved.</span>
-									)}
-								</div>
-							);
-						})}
+										);
+									})}
+							</section>
+						))}
 					</div>
 				)}
 				{/* Body */}
 				<div className="flex-1 overflow-hidden flex flex-col">
-					{!projectRoot && (
-						<div className="p-5 text-sm" style={{ color: theme.colors.textDim }}>
-							Select an agent with a registered project to edit this source. All central boards
-							remain visible.
+					{loading && !draft && (
+						<div role="status" className="px-5 py-2">
+							Loading board…
 						</div>
 					)}
-
-					{!board && !loading && (
-						<div className="flex flex-col items-center justify-center gap-3 h-full">
-							<div className="text-sm" style={{ color: theme.colors.textDim }}>
-								No board yet for this project.
-							</div>
-							<button
-								onClick={() => void handleCreateBoard()}
-								disabled={creatingBoard || !projectRoot}
-								className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-opacity disabled:opacity-40"
-								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-							>
-								<Plus className="w-4 h-4" /> Create board
+					{loadError && !draft && (
+						<div
+							role="alert"
+							className="px-5 py-2 select-text"
+							style={{ color: theme.colors.error }}
+						>
+							Board could not be loaded: {loadError}.{' '}
+							<button onClick={() => void load(true)} className="underline">
+								Retry
 							</button>
 						</div>
 					)}
-
-					{!draft && (
-						<label className="px-4 pt-3">
-							Project{' '}
-							<select
-								aria-label="Filter by project"
-								value={projectFilter}
-								style={inputStyle}
-								onChange={(e) => setProjectFilter(e.target.value)}
-							>
-								<option value="all">All projects</option>
-								{sources.map((source) => (
-									<option key={source.sourceKey} value={source.projectRef.sourceKey}>
-										{source.location?.location.kind === 'ssh'
-											? `${source.location.location.remoteId || 'Unresolved SSH'}: ${source.location.path}`
-											: (sourceRoots[source.sourceKey] ?? source.sourceKey)}
-									</option>
-								))}
-							</select>
-						</label>
-					)}
-
-					{captureResult && captureResult.collectionKey === editorCollection?.collectionKey && (
+					{!loading &&
+						!loadError &&
+						!draft &&
+						collections.every((entry) => entry.board.cards.length === 0) && (
+							<div role="status" className="px-5 py-2" style={{ color: theme.colors.textDim }}>
+								No cards yet. Create a card to get started.
+							</div>
+						)}
+					{captureResult && (
 						<div
 							role="status"
 							className="px-5 py-2 text-xs"
@@ -1771,12 +1793,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					{/* Card editor (create/edit) */}
 					{board && draft && (
 						<CardEditor
-							onManageRoles={() =>
-								setRoleSource({
-									sourceKey: draft.collection.sourceKey,
-									namespace: `legacy:${draft.collection.sourceKey}`,
-								})
-							}
 							onRevalidateSource={async () => {
 								const result = await window.maestro.board.sourceCommand({
 									action: 'revalidate',
@@ -1785,8 +1801,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								await refreshCaptureCatalog();
 								if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
 							}}
-							showNewRole={showNewRole}
-							setShowNewRole={setShowNewRole}
 							theme={theme}
 							draft={draft}
 							setDraft={setDraft}
@@ -1794,24 +1808,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							catalogError={catalogError}
 							saveError={saveError}
 							onRefreshCatalog={() => void refreshCaptureCatalog().catch(() => {})}
-							onCreateRole={async (profile) => {
-								let role = createdRoles.current.get(profile.id);
-								if (!role) {
-									role = await window.maestro.board.upsertRole(projectRoot, profile);
-									createdRoles.current.set(profile.id, role);
-								}
-								const updated = await refreshCaptureCatalog();
-								if (
-									!updated.profiles.some(
-										(entry) =>
-											entry.namespace === role!.namespace && entry.profile.id === role!.profileId
-									)
-								)
-									throw new Error(
-										'Role created, but its Board namespace is not available in the host catalog.'
-									);
-								setDraft((p) => (p ? { ...p, role, assigneeProfileId: profile.id } : p));
-							}}
 							board={board}
 							cycleError={cycleError}
 							saving={saving}
@@ -1822,17 +1818,13 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							canAddReview={!isDraftDirty}
 							canApproveStart={!isDraftDirty && !!draft.projectRoot}
 							onApproveStart={() => void handleApproveStart()}
+							onAccept={() => setPendingAcceptance(draft)}
 							onSave={() => void handleSaveCard()}
 							onCancel={requestCloseEditor}
 							onMove={(status) => void handleMoveDraft(status)}
 							autoFocusMove={focusMovePicker}
 							profileName={profileName}
-							projectAgents={allSessions.map((session) => ({
-								id: session.id,
-								name: session.name,
-								isWorker: workers.some((worker) => worker.agentId === session.id && worker.enabled),
-							}))}
-							activeAgentId={activeSession?.id ?? ''}
+							projectAgents={editorAgents}
 						/>
 					)}
 
@@ -1909,7 +1901,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					{board && !draft && (
 						<div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
 							<div className="flex gap-3 h-full" style={{ minWidth: 'min-content' }}>
-								{CARD_STATUSES.map((status) => {
+								{WORKFLOW_COLUMNS.map((status) => {
 									const meta = STATUS_META[status];
 									const cards = cardsByStatus.get(status) ?? [];
 									const isDropTarget = dragOverStatus === status;
@@ -1961,30 +1953,33 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 												</span>
 											</div>
 											<div className="flex-1 overflow-y-auto p-2 space-y-2">
-												{cards.map((card, index) => (
+												{cards.map(({ card, collection, key }, index) => (
 													<BoardCardTile
-														key={card.id}
+														key={key}
 														theme={theme}
 														card={card}
-														readiness={selectedCollection?.readiness?.[card.id]}
-														board={board}
+														readiness={collection.readiness?.[card.id]}
+														board={collection.board}
 														profileName={profileName}
 														agentName={agentName}
 														projectAgents={projectAgents}
 														onJumpToAgent={handleJumpToAgent}
-														dragging={dragCardId === card.id}
-														registerTile={registerTile}
-														onDragStart={() => setDragCardId(card.id)}
+														dragging={
+															dragCard?.cardId === card.id &&
+															dragCard.collection.collectionKey === collection.collectionKey
+														}
+														registerTile={(_id, el) => registerTile(key, el)}
+														onDragStart={() => setDragCard({ cardId: card.id, collection })}
 														onDragEnd={() => {
-															setDragCardId(null);
+															setDragCard(null);
 															setDragOverStatus(null);
 														}}
-														onClick={() => openEditCard(card)}
-														onMoveRequest={() => openEditCard(card, true)}
+														onClick={() => openEditCard(card, false, collection)}
+														onMoveRequest={() => openEditCard(card, true, collection)}
 														onNavigate={(key) => navigateTiles(status, index, key)}
-														onDelete={() => void handleDeleteCard(card.id)}
-														onCancelRun={() => void handleCancelCard(card.id)}
-														onResume={() => void handleResumeCard(card.id)}
+														onDelete={() => void handleDeleteCard(card.id, collection)}
+														onCancelRun={() => void handleCancelCard(card.id, collection)}
+														onResume={() => void handleResumeCard(card.id, collection)}
 													/>
 												))}
 												{cards.length === 0 && (
@@ -2019,6 +2014,21 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 			{/* Unsaved-changes gate for Escape / backdrop / "Back to board". One
 			    confirm step, no draft persistence. */}
+			{pendingAcceptance && (
+				<ConfirmModal
+					theme={theme}
+					title="Approve final result?"
+					message={`Mark "${pendingAcceptance.title}" and its bound review Done? This records your final decision for the reviewed work and does not merge or deploy it.`}
+					confirmLabel="Approve final result"
+					onConfirm={() => {
+						const selected = pendingAcceptance;
+						setPendingAcceptance(null);
+						void handleApproveStart('accept', selected);
+					}}
+					onClose={() => setPendingAcceptance(null)}
+				/>
+			)}
+
 			{pendingDiscard && (
 				<ConfirmModal
 					theme={theme}
@@ -2027,26 +2037,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					confirmLabel="Discard"
 					onConfirm={handleConfirmDiscard}
 					onClose={() => setPendingDiscard(null)}
-				/>
-			)}
-
-			{/* Board deletion: same warning the CLI prints before --force. */}
-			{pendingBoardDelete && board && (
-				<ConfirmModal
-					theme={theme}
-					title="Delete board?"
-					message={
-						openBoardCards > 0
-							? `"${board.name}" has ${openBoardCards} card${
-									openBoardCards === 1 ? '' : 's'
-								} that ${openBoardCards === 1 ? 'is' : 'are'} not done. Deleting the board deletes ${
-									openBoardCards === 1 ? 'it' : 'them'
-								} too. This cannot be undone.`
-							: `Delete "${board.name}" and all of its cards? This cannot be undone.`
-					}
-					confirmLabel="Delete board"
-					onConfirm={() => void handleDeleteBoard()}
-					onClose={() => setPendingBoardDelete(false)}
 				/>
 			)}
 		</div>,
@@ -2139,6 +2129,7 @@ function BoardCardTile({
 	// Delete is armed by the first click and fires on the second, mirroring the
 	// "click again to confirm" idiom the browser tab's clear-data button uses.
 	// It disarms itself so a stray click never leaves a live trigger sitting there.
+	const projectDescriptionId = useId();
 	const [deleteArmed, setDeleteArmed] = useState(false);
 	const [focused, setFocused] = useState(false);
 	const disarmTimerRef = useRef<number | null>(null);
@@ -2248,6 +2239,7 @@ function BoardCardTile({
 	const isHeld = !!card.heldByUser;
 	const workerAgentId = latestRun?.workerAgentId ?? null;
 	const workerText = workerAgentId ? agentName(workerAgentId) : null;
+	const showWaitReason = !['running', 'ready-for-human', 'done'].includes(card.status);
 	// The worker chip is a jump affordance only while the worker agent still
 	// exists; a deleted agent renders a non-interactive span instead.
 	const workerAgentExists = workerAgentId
@@ -2272,6 +2264,7 @@ function BoardCardTile({
 			role="button"
 			tabIndex={0}
 			aria-label={`${card.title}, ${STATUS_META[card.status].label}`}
+			aria-describedby={projectDescriptionId}
 			onDragStart={onDragStart}
 			onDragEnd={onDragEnd}
 			onClick={onClick}
@@ -2354,15 +2347,35 @@ function BoardCardTile({
 					</span>
 				)}
 				<span
-					className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full"
+					className="text-2xs rounded px-1.5 py-0.5 break-words min-w-0 max-w-full"
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					title={assigneeText}
 				>
 					{assigneeText}
 				</span>
-				{(card.status === 'todo' || card.status === 'ready') && (
+				<div className="text-2xs min-w-0 w-full" style={{ color: theme.colors.textDim }}>
+					<div>{STATUS_META[card.status].label}</div>
+					<div className="truncate" title={card.workingDirectory || card.repositoryId || 'not set'}>
+						<span id={projectDescriptionId} className="sr-only">
+							Project: {card.workingDirectory || card.repositoryId || 'not set'}
+						</span>
+						<span aria-hidden="true">
+							Project: {truncatePath(card.workingDirectory || card.repositoryId || 'not set', 30)}
+						</span>
+					</div>
+					<div className="break-words">
+						Reviewer: {card.reviewerAgentId ? agentName(card.reviewerAgentId) : 'not assigned'}
+					</div>
+				</div>
+				{((showWaitReason && readiness?.length) ||
+					!workerText ||
+					['triage', 'todo', 'ready', 'blocked'].includes(card.status)) && (
 					<div className="text-2xs" style={{ color: theme.colors.textDim }}>
-						Waiting: {readiness?.length ? readiness.join(', ') : 'host diagnosis unknown'}
+						{showWaitReason && readiness?.length
+							? `Waiting: ${readiness.map((reason) => READINESS_LABELS[reason as BoardReadinessReason] ?? reason).join(', ')}`
+							: ['triage', 'todo', 'ready', 'blocked'].includes(card.status)
+								? 'Waiting: host diagnosis unknown'
+								: 'Worker: not recorded'}
 					</div>
 				)}
 				{isHeld && (
@@ -2534,10 +2547,7 @@ function BoardCardTile({
 // ---------------------------------------------------------------------------
 
 interface CardEditorProps {
-	onManageRoles: () => void;
 	onRevalidateSource: () => Promise<void>;
-	showNewRole: boolean;
-	setShowNewRole: React.Dispatch<React.SetStateAction<boolean>>;
 	theme: Theme;
 	draft: CardDraft;
 	setDraft: React.Dispatch<React.SetStateAction<CardDraft | null>>;
@@ -2545,7 +2555,6 @@ interface CardEditorProps {
 	catalogError: string | null;
 	saveError: Extract<BoardCaptureResponse, { ok: false }>['error'] | null;
 	onRefreshCatalog: () => void;
-	onCreateRole: (profile: AgentProfile) => Promise<void>;
 	board: Board;
 	cycleError: string | null;
 	saving: boolean;
@@ -2556,6 +2565,7 @@ interface CardEditorProps {
 	canAddReview: boolean;
 	canApproveStart: boolean;
 	onApproveStart: () => void;
+	onAccept: () => void;
 	onSave: () => void;
 	onCancel: () => void;
 	/** Persist a column change immediately (existing cards only). */
@@ -2564,18 +2574,13 @@ interface CardEditorProps {
 	autoFocusMove: boolean;
 	profileName: (id: string) => string;
 	projectAgents: { id: string; name: string; isWorker: boolean }[];
-	/** Active Left Bar agent id; seeds the inline "+ New role" base-agent default. */
-	activeAgentId: string;
 }
 
 /** Inline create/edit form for a card. Replaces the board view while open, the
  * same grid-vs-details pattern the Extensions pane uses. Content-driven, so its
  * root opts back into text selection. */
 function CardEditor({
-	onManageRoles,
 	onRevalidateSource,
-	showNewRole,
-	setShowNewRole,
 	theme,
 	draft,
 	setDraft,
@@ -2583,7 +2588,6 @@ function CardEditor({
 	catalogError,
 	saveError,
 	onRefreshCatalog,
-	onCreateRole,
 	board,
 	cycleError,
 	saving,
@@ -2594,13 +2598,13 @@ function CardEditor({
 	canAddReview,
 	canApproveStart,
 	onApproveStart,
+	onAccept,
 	onSave,
 	onCancel,
 	onMove,
 	autoFocusMove,
 	profileName,
 	projectAgents,
-	activeAgentId,
 }: CardEditorProps) {
 	const [repairMessage, setRepairMessage] = useState<string | null>(null);
 	// Candidate parents are every other card (a card cannot depend on itself).
@@ -2609,13 +2613,74 @@ function CardEditor({
 	const scope = draft.executionScope;
 	const agents = catalog?.agents ?? [];
 	const agentLabel = (id: string) => projectAgents.find((entry) => entry.id === id)?.name ?? id;
-	const roles = catalog?.profiles ?? [];
-	const selectedRole = draft.role
-		? canonicalJson(draft.role)
-		: draft.assigneeProfileId
-			? 'legacy-unresolved'
-			: '';
+	const agentOptions = useMemo(
+		() =>
+			(catalog?.agents ?? []).map((agent) => (
+				<option key={agent.id} value={agent.id}>
+					{projectAgents.find((entry) => entry.id === agent.id)?.name ?? agent.id}
+				</option>
+			)),
+		[catalog?.agents, projectAgents]
+	);
+	const scopeAgentOptions = useMemo(
+		() =>
+			(catalog?.agents ?? []).map((agent) => (
+				<option key={agent.id} value={canonicalJson({ kind: 'agent', agentId: agent.id })}>
+					Agent: {projectAgents.find((entry) => entry.id === agent.id)?.name ?? agent.id}
+				</option>
+			)),
+		[catalog?.agents, projectAgents]
+	);
+	// A controlled select updates its options on every React commit. Keep these
+	// large, unrelated selectors stable while the user edits the instructions.
+	const assigneeAgentId = draft.assigneeAgentId;
+	const reviewerAgentId = draft.reviewerAgentId;
+	const pinnedAgentSelect = useMemo(
+		() => (
+			<select
+				value={assigneeAgentId}
+				onChange={(e) => setDraft((p) => (p ? { ...p, assigneeAgentId: e.target.value } : p))}
+				className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+				style={inputStyle}
+			>
+				{/* Empty = not pinned: a role-only card is auto-assigned to any free
+						    opt-in worker. Pinning runs the card on exactly this agent. */}
+				<option value="">Any worker within scope</option>
+				{assigneeAgentId && !agents.some((agent) => agent.id === assigneeAgentId) && (
+					<option value={assigneeAgentId}>Missing agent: {assigneeAgentId}</option>
+				)}
+				{agentOptions}
+			</select>
+		),
+		[assigneeAgentId, agents, agentOptions, inputStyle, setDraft]
+	);
+	const reviewerAgentSelect = useMemo(
+		() => (
+			<select
+				value={reviewerAgentId ?? ''}
+				onChange={(e) => setDraft((p) => (p ? { ...p, reviewerAgentId: e.target.value } : p))}
+				className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+				style={inputStyle}
+			>
+				<option value="">Wait for an assigned reviewer</option>
+				{reviewerAgentId && !agents.some((agent) => agent.id === reviewerAgentId) && (
+					<option value={reviewerAgentId}>Missing agent: {reviewerAgentId}</option>
+				)}
+				{agentOptions}
+			</select>
+		),
+		[reviewerAgentId, agents, agentOptions, inputStyle, setDraft]
+	);
 	const scopeValue = scope ? canonicalJson(scope) : '';
+	const roleValue = draft.role
+		? canonicalJson({ namespace: draft.role.namespace, profileId: draft.role.profileId })
+		: draft.assigneeProfileId
+			? 'unresolved-legacy-role'
+			: '';
+	const roleChoices = (catalog?.profiles ?? []).map(({ namespace, profile }) => ({
+		ref: { namespace, profileId: profile.id },
+		profile,
+	}));
 	const moveRef = useRef<HTMLSelectElement>(null);
 	// One-shot, like the dialog's initial focus: without it every later render
 	// (a `board:changed` push, a keystroke) would yank focus back to the picker.
@@ -2625,60 +2690,11 @@ function CardEditor({
 		moveFocusDone.current = true;
 	}, []);
 
-	// Inline "+ New role" quick-create. The modal owns open state for capture-phase
-	// Escape; the editor keeps scratch values local so the mini-form's
-	// name/base-agent scratch state and its async saving flag never touch the card
-	// `draft` (and so never trip the dirty-check). Only a successful create mutates
-	// the draft, via the host catalog selecting its explicit role namespace.
-	const [newRoleName, setNewRoleName] = useState('');
-	const [newRoleBaseAgent, setNewRoleBaseAgent] = useState('');
-	const [creatingRole, setCreatingRole] = useState(false);
-	const pendingRole = useRef<AgentProfile | null>(null);
-	const [roleError, setRoleError] = useState<string | null>(null);
-	const newRoleNameRef = useRef<HTMLInputElement>(null);
-	useFocusAfterRender(newRoleNameRef, showNewRole);
-
-	const openNewRole = useCallback(() => {
-		// Default the base agent to the active agent (mirrors ProfilesModal's one-shot
-		// default), but only when it is a known agent in the host catalog.
-		setNewRoleBaseAgent(agents.some((a) => a.id === activeAgentId) ? activeAgentId : '');
-		setNewRoleName('');
-		setRoleError(null);
-		pendingRole.current = null;
-		setShowNewRole(true);
-	}, [catalog, activeAgentId]);
-
-	const handleCreateRole = useCallback(async () => {
-		const name = newRoleName.trim();
-		if (!name || creatingRole) return;
-		const profile: AgentProfile = pendingRole.current ?? {
-			id: generateUUID(),
-			name,
-			// Omit baseAgentId entirely for a pool role ("None") so it floats to any
-			// free opt-in worker at spawn time.
-			...(newRoleBaseAgent ? { baseAgentId: newRoleBaseAgent } : {}),
-		};
-		pendingRole.current = profile;
-		setCreatingRole(true);
-		setRoleError(null);
-		try {
-			await onCreateRole(profile);
-			setShowNewRole(false);
-			setNewRoleName('');
-		} catch (err) {
-			// Keep the mini-form open and leave the draft's assigneeProfileId untouched
-			// so the user can retry without losing their typed name.
-			logger.error(`Failed to create role inline: ${String(err)}`);
-			captureException(err, { tags: { operation: 'profiles:upsert' } });
-			setRoleError(ipcErrorMessage(err));
-			notifyToast({ color: 'red', title: 'Roles', message: ipcErrorMessage(err) });
-		} finally {
-			setCreatingRole(false);
-		}
-	}, [newRoleName, newRoleBaseAgent, creatingRole, onCreateRole]);
-
 	return (
-		<div className="flex-1 overflow-y-auto p-5 space-y-4 select-text">
+		<div
+			className="flex-1 overflow-y-auto p-5 space-y-4 select-text"
+			style={{ color: theme.colors.textMain }}
+		>
 			<button
 				type="button"
 				onClick={onCancel}
@@ -2738,6 +2754,17 @@ function CardEditor({
 			{isExisting && (draft.kind === 'work' || draft.kind === undefined) && (
 				<button type="button" disabled={!canAddReview || saving} onClick={onAddReview}>
 					Add review
+				</button>
+			)}
+			{draft.status === 'ready-for-human' && draft.kind !== 'review' && (
+				<button
+					type="button"
+					disabled={!canApproveStart || saving}
+					onClick={onAccept}
+					className="rounded-md px-3 py-2 text-sm"
+					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+				>
+					Approve final result
 				</button>
 			)}
 			<fieldset disabled={saving} className="space-y-4">
@@ -2829,16 +2856,7 @@ function CardEditor({
 										Missing {scope.kind}: {scope.kind === 'agent' ? scope.agentId : scope.groupId}
 									</option>
 								)}
-							<optgroup label="Agents">
-								{agents.map((agent) => (
-									<option
-										key={agent.id}
-										value={canonicalJson({ kind: 'agent', agentId: agent.id })}
-									>
-										Agent: {agentLabel(agent.id)}
-									</option>
-								))}
-							</optgroup>
+							<optgroup label="Agents">{scopeAgentOptions}</optgroup>
 							<optgroup label="Groups">
 								{catalog?.groups.map((group) => (
 									<option
@@ -2989,183 +3007,55 @@ function CardEditor({
 				</label>
 
 				<div className="flex gap-3 flex-wrap">
-					<div className="block space-y-1 flex-1 min-w-[180px]">
-						<div className="flex items-center justify-between gap-2">
-							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								Role (profile)
-							</span>
-							{!showNewRole && (
-								<div className="flex items-center gap-2">
-									{/* Advanced editing (model / effort / role prompt) stays in the
-								    ProfilesModal; the inline mini-form is name + base agent only. */}
-									<button
-										type="button"
-										onClick={onManageRoles}
-										className="text-xs opacity-60 hover:opacity-100 underline"
-										style={{ color: theme.colors.textDim }}
-									>
-										Manage roles
-									</button>
-									<button
-										type="button"
-										onClick={openNewRole}
-										className="flex items-center gap-0.5 text-xs opacity-70 hover:opacity-100"
-										style={{ color: theme.colors.accent }}
-									>
-										<Plus className="w-3 h-3" /> New role
-									</button>
-								</div>
-							)}
-						</div>
-						{showNewRole ? (
-							// Inline quick-create: name + base agent only. Advanced fields
-							// (model / effort / role prompt) live in the ProfilesModal.
-							<div
-								className="space-y-1.5 rounded-md p-2"
-								style={{ border: `1px solid ${theme.colors.border}` }}
-							>
-								{roleError && (
-									<div role="alert" style={{ color: theme.colors.error }}>
-										{roleError}
-									</div>
-								)}
-								<input
-									ref={newRoleNameRef}
-									value={newRoleName}
-									onChange={(e) => setNewRoleName(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter') {
-											e.preventDefault();
-											void handleCreateRole();
-										} else if (e.key === 'Escape') {
-											e.preventDefault();
-											setShowNewRole(false);
-										}
-									}}
-									placeholder="Role name, e.g. Reviewer"
-									className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-									style={inputStyle}
-								/>
-								<select
-									value={newRoleBaseAgent}
-									onChange={(e) => setNewRoleBaseAgent(e.target.value)}
-									className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-									style={inputStyle}
-								>
-									{/* Empty = a pool role that floats to any free opt-in worker. */}
-									<option value="">None (pool role - any free worker)</option>
-									{agents.map((a) => (
-										<option key={a.id} value={a.id}>
-											{agentLabel(a.id)}
-										</option>
-									))}
-								</select>
-								<div className="flex items-center gap-2">
-									<button
-										type="button"
-										onClick={() => void handleCreateRole()}
-										disabled={!newRoleName.trim() || creatingRole}
-										className="rounded-md px-2 py-1 text-xs font-medium transition-opacity disabled:opacity-40"
-										style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-									>
-										{creatingRole ? 'Creating...' : 'Create'}
-									</button>
-									<button
-										type="button"
-										onClick={() => setShowNewRole(false)}
-										disabled={creatingRole}
-										className="rounded-md px-2 py-1 text-xs opacity-70 hover:opacity-100 disabled:opacity-40"
-										style={{ color: theme.colors.textMain }}
-									>
-										Cancel
-									</button>
-								</div>
-							</div>
-						) : (
-							<select
-								aria-label="Role (profile)"
-								value={selectedRole}
-								onChange={(e) => {
-									const role = roles.find(
-										(entry) =>
-											canonicalJson({ namespace: entry.namespace, profileId: entry.profile.id }) ===
-											e.target.value
-									);
-									setDraft((p) =>
-										p
-											? {
-													...p,
-													role: role
-														? { namespace: role.namespace, profileId: role.profile.id }
-														: undefined,
-													assigneeProfileId: role?.profile.id ?? '',
-												}
-											: p
-									);
-								}}
-								className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-								style={inputStyle}
-							>
-								<option value="">No role</option>
-								{draft.assigneeProfileId && !draft.role && (
-									<option value="legacy-unresolved">
-										Unresolved legacy role: {draft.assigneeProfileId}
+					<label className="block space-y-1 flex-1 min-w-[180px]">
+						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+							Required role (optional)
+						</span>
+						<select
+							aria-label="Required role (optional)"
+							value={roleValue}
+							onChange={(e) => {
+								const role = roleChoices.find(
+									(choice) => canonicalJson(choice.ref) === e.target.value
+								)?.ref;
+								setDraft((p) => (p ? { ...p, role, assigneeProfileId: role?.profileId ?? '' } : p));
+							}}
+							className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+							style={inputStyle}
+						>
+							<option value="">Any role within scope</option>
+							{roleValue &&
+								!roleChoices.some((choice) => canonicalJson(choice.ref) === roleValue) && (
+									<option value={roleValue}>
+										Unresolved role:{' '}
+										{draft.role
+											? `${draft.role.namespace} / ${draft.role.profileId}`
+											: draft.assigneeProfileId}
 									</option>
 								)}
-								{draft.role &&
-									!roles.some(
-										(entry) =>
-											entry.namespace === draft.role!.namespace &&
-											entry.profile.id === draft.role!.profileId
-									) && (
-										<option value={selectedRole}>
-											Missing role: {draft.role.namespace} / {draft.role.profileId}
-										</option>
-									)}
-								{roles.map(({ namespace, profile }) => (
-									<option
-										key={canonicalJson({ namespace, profileId: profile.id })}
-										value={canonicalJson({ namespace, profileId: profile.id })}
-									>
-										{profile.name} ({namespace})
-									</option>
-								))}
-							</select>
-						)}
-						{!showNewRole && roles.length === 0 && (
-							// First-run helper: both valid paths (inline role, or pin to an
-							// existing agent) satisfy the assignee model, so spell them out.
-							<span className="block text-xs" style={{ color: theme.colors.textDim }}>
-								No roles yet. Scope and repository can be saved independently; missing references
-								wait for repair.
-							</span>
-						)}
-					</div>
+							{roleChoices.map(({ ref, profile }) => (
+								<option key={canonicalJson(ref)} value={canonicalJson(ref)}>
+									{profile.name} ({ref.namespace} / {ref.profileId})
+									{profile.baseAgentId ? ` [agent: ${agentLabel(profile.baseAgentId)}]` : ''}
+								</option>
+							))}
+						</select>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							Uses existing worker role access. Only a worker in scope with this exact role can run;
+							unavailable or conflicting assignments wait for repair.
+						</p>
+					</label>
 					<label className="block space-y-1 flex-1 min-w-[180px]">
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
 							Pin to agent (optional)
 						</span>
-						<select
-							value={draft.assigneeAgentId}
-							onChange={(e) => setDraft((p) => (p ? { ...p, assigneeAgentId: e.target.value } : p))}
-							className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-							style={inputStyle}
-						>
-							{/* Empty = not pinned: a role-only card is auto-assigned to any free
-						    opt-in worker. Pinning runs the card on exactly this agent. */}
-							<option value="">Any worker within scope</option>
-							{draft.assigneeAgentId &&
-								!agents.some((agent) => agent.id === draft.assigneeAgentId) && (
-									<option value={draft.assigneeAgentId}>
-										Missing agent: {draft.assigneeAgentId}
-									</option>
-								)}
-							{agents.map((a) => (
-								<option key={a.id} value={a.id}>
-									{agentLabel(a.id)}
-								</option>
-							))}
-						</select>
+						{pinnedAgentSelect}
+					</label>
+					<label className="block space-y-1 flex-1 min-w-[180px]">
+						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+							Reviewer within task scope
+						</span>
+						{reviewerAgentSelect}
 					</label>
 					<label className="block space-y-1 w-40">
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>

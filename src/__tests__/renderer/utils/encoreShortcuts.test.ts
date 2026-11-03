@@ -63,12 +63,9 @@ describe('encoreShortcuts', () => {
 		expect(isShortcutAvailable(id, ALL_ON)).toBe(true);
 	});
 
-	it('keeps Profiles discoverable and rebindable with Board on and Cue off', () => {
-		expect(isShortcutAvailable('openProfiles', { ...ALL_ON, maestroCue: false })).toBe(true);
-		expect(isShortcutAvailable('openProfiles', { ...ALL_ON, board: false })).toBe(false);
-		expect(
-			availableShortcuts(DEFAULT_SHORTCUTS, { ...ALL_ON, maestroCue: false }).openProfiles
-		).toBe(DEFAULT_SHORTCUTS.openProfiles);
+	it('does not expose the removed Profiles shortcut', () => {
+		expect(DEFAULT_SHORTCUTS).not.toHaveProperty('openProfiles');
+		expect(availableShortcuts(DEFAULT_SHORTCUTS, ALL_ON)).not.toHaveProperty('openProfiles');
 	});
 
 	it('treats a missing flag map as everything off', () => {

@@ -44,66 +44,54 @@ export interface AgentModelEffortOptions {
  * `opencode models` subprocess) from the previous agent overwrite the current
  * agent's list.
  *
- * @param agentId - The agent's tool type, or undefined when no agent is active.
+ * @param agentId - The effective tab provider, or undefined when no agent is active.
+ * @param sshRemoteId - Model discovery host; config and effort remain provider-scoped.
  */
-export function useAgentModelEffortOptions(agentId?: string): AgentModelEffortOptions {
-	const [models, setModels] = useState<string[]>([]);
-	const [efforts, setEfforts] = useState<string[]>([]);
-	const [defaultModel, setDefaultModel] = useState('');
-	const [defaultEffort, setDefaultEffort] = useState('');
-	const [loaded, setLoaded] = useState(false);
+export function useAgentModelEffortOptions(
+	agentId?: string,
+	sshRemoteId?: string
+): AgentModelEffortOptions {
+	const [result, setResult] = useState<
+		AgentModelEffortOptions & {
+			agentId?: string;
+			sshRemoteId?: string;
+		}
+	>({ models: [], efforts: [], defaultModel: '', defaultEffort: '', loaded: false });
 
 	useEffect(() => {
 		if (!agentId) return;
 		let stale = false;
-		setLoaded(false);
-
-		const modelsDone = window.maestro.agents
-			.getModels(agentId)
-			.then((fetched) => {
-				if (!stale) setModels(fetched);
-			})
-			.catch(() => {
-				if (!stale) setModels([]);
-			});
-
-		const effortsDone = Promise.all([
+		// Only model discovery is host-specific. Config and effort are provider
+		// definitions, and their existing APIs deliberately take no host.
+		Promise.all([
+			window.maestro.agents.getModels(agentId, false, sshRemoteId).catch(() => [] as string[]),
 			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
 			window.maestro.agents
 				.getConfigOptions(agentId, 'reasoningEffort')
 				.catch(() => [] as string[]),
-		])
-			.then(([effortOpts, reasoningOpts]) => {
-				if (stale) return;
-				setEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
-			})
-			.catch(() => {
-				if (!stale) setEfforts([]);
+			window.maestro.agents.getConfig(agentId).catch(() => undefined),
+		]).then(([models, effortOpts, reasoningOpts, config]) => {
+			if (stale) return;
+			setResult({
+				agentId,
+				sshRemoteId,
+				models,
+				efforts: effortOpts.length > 0 ? effortOpts : reasoningOpts,
+				defaultModel: config?.model || '',
+				defaultEffort: readEffortFromConfig(config) ?? '',
+				loaded: true,
 			});
-
-		const defaultsDone = window.maestro.agents
-			.getConfig(agentId)
-			.then((config) => {
-				if (stale) return;
-				setDefaultModel(config?.model || '');
-				setDefaultEffort(readEffortFromConfig(config) ?? '');
-			})
-			.catch(() => {
-				if (stale) return;
-				setDefaultModel('');
-				setDefaultEffort('');
-			});
-
-		Promise.all([modelsDone, effortsDone, defaultsDone]).then(() => {
-			if (!stale) setLoaded(true);
 		});
-
 		return () => {
 			stale = true;
 		};
-	}, [agentId]);
+	}, [agentId, sshRemoteId]);
 
-	return { models, efforts, defaultModel, defaultEffort, loaded };
+	// Hide the previous scope synchronously, including the render before the
+	// effect runs. A slow response must never offer another provider's knobs.
+	return agentId && result.agentId === agentId && result.sshRemoteId === sshRemoteId
+		? result
+		: { models: [], efforts: [], defaultModel: '', defaultEffort: '', loaded: false };
 }
 
 /**

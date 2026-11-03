@@ -81,16 +81,6 @@ export const UI_SURFACES: UiSurface[] = [
 		encore: 'board',
 	},
 	{
-		id: 'profiles',
-		label: 'Agent Profiles',
-		modal: 'profilesModal',
-		description: 'Project profiles used to assign Board cards.',
-		shortcutId: 'openProfiles',
-		commandPalette: 'Agent Profiles',
-		click: 'Left Bar hamburger > Agent Profiles',
-		encore: 'board',
-	},
-	{
 		id: 'notification-center',
 		shortcutId: 'openNotificationCenter',
 		label: 'Notification Center',

@@ -126,6 +126,21 @@ describe('parseCardMarkers', () => {
 		expect(markers.blocked).toBe(false);
 		expect(markers.blockReason).toBeUndefined();
 	});
+
+	it('preserves the final findings report alongside completion evidence for the host verdict', () => {
+		const markers = parseCardMarkers(
+			[
+				'<!-- maestro:card-findings: preliminary report -->',
+				'<!-- maestro:card-complete | checked the bound diff -->',
+				'<!-- maestro:card-findings: Scope validation is missing.\nMembership regression failed. -->',
+			].join('\n')
+		);
+		expect(markers.findings).toBe('Scope validation is missing.\nMembership regression failed.');
+		expect(markers.complete).toBe(true);
+		expect(markers.summary).toBe('checked the bound diff');
+		expect(markers.review).toBe(false);
+		expect(markers.blocked).toBe(false);
+	});
 });
 
 describe('CARD_HANDOFF_REMINDER', () => {
@@ -135,7 +150,10 @@ describe('CARD_HANDOFF_REMINDER', () => {
 		expect(CARD_HANDOFF_REMINDER).toContain('maestro:card-block');
 	});
 
-	it('tells the worker that review parks the card until a person approves it', () => {
-		expect(CARD_HANDOFF_REMINDER).toContain('Review column');
+	it('requires assigned artifact review followed by a separate final human decision', () => {
+		expect(CARD_HANDOFF_REMINDER).toContain('explicitly assigned artifact review');
+		expect(CARD_HANDOFF_REMINDER).toContain('separate final human decision');
+		expect(CARD_HANDOFF_REMINDER).toContain('maestro:card-findings');
+		expect(CARD_HANDOFF_REMINDER).toContain('A completion never grants final human approval');
 	});
 });

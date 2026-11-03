@@ -39,6 +39,10 @@ vi.mock('../../../main/board/board-storage', () => ({
 	setBoardWorkerAccess: () => {
 		throw new Error('Board worker role not found');
 	},
+	setBoardWorkerOptions: (command: { agentId: string; patch: unknown }) => {
+		state.workers.find((w) => w.agentId === command.agentId).payload.executionOptions =
+			command.patch;
+	},
 }));
 vi.mock('../../../main/board/board-dispatcher', () => ({ applyCardCancel: vi.fn() }));
 vi.mock('../../../main/board/board-pr', () => ({ startCardPr: vi.fn() }));
@@ -66,5 +70,19 @@ describe('Board worker IPC bridge', () => {
 		await expect(
 			api.setWorkerAccess('agent', [{ namespace: 'n', profileId: 'bad' }], [])
 		).rejects.toThrow('role not found');
+		expect(
+			await api.setWorkerOptions({
+				agentId: 'agent',
+				expectedPayload: '{}',
+				patch: { customArgs: '--quoted "a b"' },
+			})
+		).toMatchObject([{ payload: { executionOptions: { customArgs: '--quoted "a b"' } } }]);
+		for (const input of [
+			{ agentId: 'missing', expectedPayload: '{}', patch: {} },
+			{ agentId: 'agent', expectedPayload: '{}', patch: { roleRefs: [] } },
+			{ agentId: 'agent', expectedPayload: '{}', patch: { customModel: 3 } },
+			{ agentId: 'agent', expectedPayload: '{}', patch: {}, paused: false },
+		])
+			await expect(api.setWorkerOptions(input as never)).rejects.toThrow();
 	});
 });

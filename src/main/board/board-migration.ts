@@ -4,6 +4,8 @@ import * as yaml from 'js-yaml';
 import { isPathAtOrUnderRoot } from '../../shared/worktreePaths';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { validateBoard, validateBoardCard } from '../../shared/board/types';
+import type { BoardExecutionScope } from '../../shared/board/types';
+import { validateCapture } from '../../shared/board/domain';
 import { validateAgentProfile } from '../../shared/profiles/types';
 import type Database from 'better-sqlite3';
 import { selectPoolAgentIds } from '../../shared/board/pool';
@@ -30,7 +32,7 @@ export interface MigrationEntry {
 }
 
 export interface MigrationCard extends MigrationEntry {
-	executionScope: { kind: 'agent'; agentId: string } | null;
+	executionScope: BoardExecutionScope | null;
 	profileNamespace: string | null;
 	intent:
 		| 'approval-required'
@@ -98,6 +100,24 @@ export function boardMigrationSourceKey(source: BoardMigrationInput['source']): 
 	return hash(canonicalJson(source));
 }
 
+/** Read older imported intent without rewriting its ledger or granting over an
+ * explicit original approval policy. Later board defaults do not revoke intent. */
+export function hasLegacyDirectStart(
+	card: Record<string, unknown>,
+	collection: Record<string, unknown>
+): boolean {
+	const migration = record(card.migration);
+	if (migration?.intent !== 'legacy-direct' || card.capturePolicy !== undefined) return false;
+	const original = record(migration.raw);
+	const originalBoard = record(record(collection.migration)?.raw);
+	const mode = original?.startModeOverride ?? originalBoard?.defaultStartMode;
+	return (
+		original?.capturePolicy === undefined &&
+		card.startModeOverride !== 'approval' &&
+		(mode === undefined || mode === 'direct')
+	);
+}
+
 export function planBoardMigration(input: BoardMigrationInput): BoardMigrationPlan {
 	if (
 		!input.source.path ||
@@ -136,8 +156,17 @@ export function planBoardMigration(input: BoardMigrationInput): BoardMigrationPl
 		const cards = rawCards.map((cardRaw, cardIndex): MigrationCard => {
 			const card = record(cardRaw);
 			const cardId = id(cardRaw);
-			const role = typeof card?.assigneeProfileId === 'string' ? card.assigneeProfileId : null;
-			const matchingProfiles = profiles.filter((p) => p.legacyId === role);
+			const roleRef = record(card?.role);
+			const role =
+				typeof card?.assigneeProfileId === 'string'
+					? card.assigneeProfileId
+					: typeof roleRef?.profileId === 'string'
+						? roleRef.profileId
+						: null;
+			const namespace = card?.profileNamespace ?? roleRef?.namespace ?? profileNamespace;
+			const matchingProfiles = profiles.filter(
+				(p) => p.legacyId === role && namespace === profileNamespace
+			);
 			const base =
 				matchingProfiles.length === 1 && matchingProfiles[0].conflicts.length === 0
 					? record(matchingProfiles[0].raw)?.baseAgentId
@@ -154,15 +183,40 @@ export function planBoardMigration(input: BoardMigrationInput): BoardMigrationPl
 				blockers.push('profile-unresolved');
 			if (pin && basePin && pin !== basePin) blockers.push('pin-role-conflict');
 			const agentId = pin || basePin;
-			if (!agentId) blockers.push('missing-scope');
+			// Explicit global-model fields are authoritative input, never replaced by
+			// a legacy pin, same-named local profile or the source's repository root.
+			const capture = validateCapture(
+				{
+					...card,
+					...(card?.executionScope === undefined && agentId
+						? { executionScope: { kind: 'agent', agentId } }
+						: {}),
+					...(role && card?.profileNamespace === undefined && !roleRef ? { profileNamespace } : {}),
+				},
+				{
+					agents: [],
+					groups: [],
+					profiles: [],
+					defaultStartMode: 'approval',
+					canRelaxStartPolicy: true,
+				}
+			);
+			if (!capture.ok) blockers.push(...capture.errors);
+			const executionScope = capture.ok ? (capture.options.executionScope ?? null) : null;
+			if (!executionScope) blockers.push('missing-scope');
 			if (!input.repository?.validated) blockers.push('repository-unresolved');
+			const startMode = card?.startModeOverride ?? board?.defaultStartMode;
+			if (startMode !== undefined && startMode !== 'approval' && startMode !== 'direct')
+				blockers.push('invalid-start-mode');
 			const status = card?.status;
 			const intent =
 				status === 'triage'
 					? 'approval-required'
 					: status === 'todo' || status === 'ready'
-						? 'legacy-direct'
-						: status === 'review'
+						? startMode === 'approval' || card?.capturePolicy !== undefined
+							? 'approval-required'
+							: 'legacy-direct'
+						: status === 'review' || status === 'ready-for-human'
 							? 'human-review'
 							: status === 'running'
 								? 'reconciliation-required'
@@ -177,8 +231,8 @@ export function planBoardMigration(input: BoardMigrationInput): BoardMigrationPl
 				raw: cardRaw,
 				conflicts: blockers,
 				blockers,
-				executionScope: agentId ? { kind: 'agent', agentId } : null,
-				profileNamespace: role ? profileNamespace : null,
+				executionScope,
+				profileNamespace: role && typeof namespace === 'string' ? namespace : null,
 				intent,
 			};
 		});
@@ -246,7 +300,16 @@ export interface BoardMigrationMapping {
 		index: number;
 		legacyId: string | null;
 		collectionKey: string | null;
-		cards: { index: number; legacyId: string | null; id: string | null; runIds: string[] }[];
+		cards: {
+			index: number;
+			legacyId: string | null;
+			id: string | null;
+			runIds: string[];
+			/** Original IDs stay in raw workflow/handoff history; this maps their
+			 * source-local identities to ledger rows without inventing native evidence.
+			 * Optional so older immutable mapping receipts remain readable. */
+			runReferences?: { legacyRunId: string | null; runId: string; attempt: number }[];
+		}[];
 	}[];
 	profiles: { index: number; legacyId: string | null; id: string | null }[];
 }
@@ -275,12 +338,12 @@ export function applyBoardMigration(
 			const previous = db
 				.prepare('SELECT hashes_json, mapping_json, snapshot FROM migrations WHERE source_key = ?')
 				.get(plan.sourceKey) as
-				| { hashes_json: string; mapping_json: string; snapshot: Buffer }
+				| { hashes_json: string; mapping_json: string; snapshot: Uint8Array }
 				| undefined;
 			if (previous) {
 				applyMigrationWorkerAccess(
 					db,
-					JSON.parse(previous.snapshot.toString()) as BoardMigrationPlan
+					JSON.parse(Buffer.from(previous.snapshot).toString('utf8')) as BoardMigrationPlan
 				);
 				return {
 					status: previous.hashes_json === hashesJson ? 'already-imported' : 'source-changed',
@@ -361,6 +424,9 @@ export function applyBoardMigration(
 						legacyId: card.legacyId,
 						id: cardId,
 						runIds: [] as string[],
+						runReferences: [] as NonNullable<
+							BoardMigrationMapping['boards'][number]['cards'][number]['runReferences']
+						>,
 					};
 					boardMapping.cards.push(cardMapping);
 					if (cardBlockers.length)
@@ -371,10 +437,22 @@ export function applyBoardMigration(
 							cardId,
 							canonicalJson({
 								...raw,
-								executionScope: card.executionScope,
-								profileNamespace: card.profileNamespace,
-								repositoryId: plan.repository?.validated ? plan.repository.id : null,
-								workingDirectory: plan.repository?.workingDirectory ?? null,
+								executionScope:
+									raw?.executionScope === undefined ? card.executionScope : raw.executionScope,
+								profileNamespace:
+									raw?.profileNamespace === undefined
+										? card.profileNamespace
+										: raw.profileNamespace,
+								repositoryId:
+									raw?.repositoryId === undefined
+										? plan.repository?.validated
+											? plan.repository.id
+											: null
+										: raw.repositoryId,
+								workingDirectory:
+									raw?.workingDirectory === undefined
+										? (plan.repository?.workingDirectory ?? null)
+										: raw.workingDirectory,
 								migration: {
 									raw: card.raw,
 									intent: card.intent,
@@ -399,6 +477,12 @@ export function applyBoardMigration(
 									record(run)?.endedAt ? canonicalJson(run) : null
 								);
 								cardMapping.runIds.push(runId);
+								cardMapping.runReferences.push({
+									legacyRunId:
+										typeof record(run)?.runId === 'string' ? (record(run)!.runId as string) : null,
+									runId,
+									attempt: record(run)!.attempt as number,
+								});
 							}
 					}
 					// Preserve every uncertain claim, including archived duplicate/invalid cards.

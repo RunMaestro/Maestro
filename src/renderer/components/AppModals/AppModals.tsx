@@ -345,7 +345,6 @@ export interface AppModalsProps {
 	onOpenMaestroCue?: () => void;
 	// Board (task DAG kanban; depends on Maestro Cue)
 	onOpenBoard?: () => void;
-	onOpenProfiles?: () => void;
 	// Pianola
 	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
@@ -829,7 +828,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenMaestroCue,
 		// Board (task DAG kanban; depends on Maestro Cue)
 		onOpenBoard,
-		onOpenProfiles,
 		// Pianola
 		onOpenPianola,
 		onConfigureCue,
@@ -1174,7 +1172,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
 				onOpenBoard={onOpenBoard}
-				onOpenProfiles={onOpenProfiles}
 				onOpenPianola={onOpenPianola}
 				onConfigureCue={onConfigureCue}
 				lightboxImage={lightboxImage}

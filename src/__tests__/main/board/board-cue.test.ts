@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import { BoardStorageFacade, configureBoardCaptureHost } from '../../../main/board/board-storage';
@@ -48,6 +49,11 @@ let settle: (result: CardSpawnResult) => void;
 let lockValid: boolean;
 let createPr: ReturnType<typeof vi.fn<(request: CardPrRequest) => Promise<CardPrResult>>>;
 let completionTasks: Promise<unknown>[];
+let prepare: ReturnType<
+	typeof vi.fn<
+		(key: import('../../../main/board/board-workspace-storage').BoardCardKey) => Promise<void>
+	>
+>;
 const good: CardSpawnResult = {
 	output: '<!-- maestro:card-complete -->',
 	exitCode: 0,
@@ -149,6 +155,7 @@ beforeEach(() => {
 	createPr = vi.fn(async () => ({ success: true, prUrl: 'https://example.test/pr/1' }));
 	completionTasks = [];
 	changed = [];
+	prepare = vi.fn(async () => {});
 	cue = new BoardCueHost({
 		storage: () => storage,
 		lock: () => ({
@@ -168,7 +175,7 @@ beforeEach(() => {
 				},
 			};
 		},
-		prepare: async () => {},
+		prepare,
 		service,
 		ownerLiveness: () => 'unknown',
 		onChanged: () => changed.push(storage.query().collections.map((c) => c.board.cards[0].status)),
@@ -208,6 +215,23 @@ function reserved() {
 }
 
 describe('global Cue intake on the shared persistent runtime', () => {
+	it('checks the current collection revision without projecting the workspace for every card', async () => {
+		edit({ heldByUser: true });
+		const entry = storage.query().collections[0];
+		const reads = vi.spyOn(storage, 'query');
+		await executeBoardRuntimeCommand({
+			action: 'tick',
+			operationId: 'bounded-read',
+			target: {
+				sourceKey: entry.sourceKey,
+				collectionKey: entry.collectionKey,
+				expectedRevision: entry.revision,
+			},
+		});
+		expect(service.spawn).not.toHaveBeenCalled();
+		expect(reads).toHaveBeenCalledTimes(1);
+	});
+
 	it('enumerates both sources without open project agents, shares one worker and never double spawns on retry', async () => {
 		await tick();
 		expect(service.spawn).toHaveBeenCalledTimes(1);
@@ -217,8 +241,8 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		expect(service.spawn).toHaveBeenCalledTimes(1);
 		settle(good);
 		await cue.settle();
-		expect(storage.query().collections[0].board.cards[0].status).toBe('done');
-		await vi.waitFor(() => expect(changed.some((statuses) => statuses[0] === 'done')).toBe(true));
+		expect(storage.query().collections[0].board.cards[0].status).toBe('review');
+		await vi.waitFor(() => expect(changed.some((statuses) => statuses[0] === 'review')).toBe(true));
 		expect(changed.some((statuses) => statuses[0] === 'running')).toBe(true);
 		await tick();
 		expect(service.spawn).toHaveBeenCalledTimes(2);
@@ -226,42 +250,36 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		await cue.settle();
 		expect(reserved()).toHaveLength(0);
 	});
-	it('opens an opted-in global PR once for the exact completed run and source', async () => {
+	it('reports the busy authorized worker when a foreign registered worker is free', async () => {
+		agents.push({ id: 'foreign', groupId: 'other' });
+		registerBoardWorker(db, 'foreign');
+		setBoardWorkerAccess(db, 'foreign', [], ['repo0', 'repo1']);
+		host.agentStates = {
+			worker: { ...host.agentStates.worker, busy: true },
+			foreign: { live: true, busy: false, location: { kind: 'local' } },
+		};
+		await tick();
+		expect(service.spawn).not.toHaveBeenCalled();
+		expect(waits).toContainEqual({ cardId: 'same', reason: 'worker-busy' });
+		expect(reserved()).toHaveLength(0);
+	});
+	it('keeps an opted-in PR inert until the final human decision, even after native success or duplicate callbacks', async () => {
 		edit({ prOnDone: {} });
 		edit({ heldByUser: true }, 1);
 		await tick();
 		const spec = vi.mocked(service.spawn).mock.calls[0][0];
 		settle({ ...good, worktreePath: roots[0], worktreeBranch: 'board/completed' });
 		await cue.settle();
-		await vi.waitFor(() => expect(createPr).toHaveBeenCalledOnce());
 		await Promise.all(completionTasks);
-		expect(createPr.mock.calls[0][0]).toMatchObject({
-			worktreePath: roots[0],
-			worktreeBranch: 'board/completed',
-		});
-		const first = storage.query({ sourceKey: roots[0] }).collections[0].board.cards[0];
-		expect(first.runs?.[0].prUrl).toBe('https://example.test/pr/1');
-		expect(
-			storage.query({ sourceKey: roots[1] }).collections[0].board.cards[0].runs
-		).toBeUndefined();
+		expect(storage.query({ sourceKey: roots[0] }).collections[0].board.cards[0].status).toBe(
+			'review'
+		);
+		expect(createPr).not.toHaveBeenCalled();
 		expect(runtime.complete(spec.runToken, good)).toMatchObject({ ok: true, duplicate: true });
 		await startBoardRunPr(spec, { createPr });
-		expect(createPr).toHaveBeenCalledOnce();
+		expect(createPr).not.toHaveBeenCalled();
 	});
-	it('contains a failed global PR and records a retryable error without changing done', async () => {
-		edit({ prOnDone: {} });
-		edit({ heldByUser: true }, 1);
-		createPr.mockRejectedValue(new Error('synthetic offline'));
-		await tick();
-		settle({ ...good, worktreePath: roots[0], worktreeBranch: 'board/completed' });
-		await cue.settle();
-		await vi.waitFor(() => expect(createPr).toHaveBeenCalledOnce());
-		await Promise.all(completionTasks);
-		const card = storage.query({ sourceKey: roots[0] }).collections[0].board.cards[0];
-		expect(card.status).toBe('done');
-		expect(card.runs?.[0].prError).toBe('synthetic offline');
-		expect(card.runs?.[0].prUrl).toBeUndefined();
-	});
+
 	it.each([
 		['paused', () => setBoardWorkerPaused(db, 'worker', true), 'worker-paused'],
 		['disabled', () => db.prepare('UPDATE workers SET enabled=0').run(), 'worker-disabled'],
@@ -389,7 +407,7 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		settle(good);
 		await cue.settle();
 		expect(reserved()).toHaveLength(0);
-		expect(storage.query().collections[0].board.cards[0].status).toBe('done');
+		expect(storage.query().collections[0].board.cards[0].status).toBe('review');
 	});
 	it('rejects collection changes during asynchronous native preparation', async () => {
 		const entry = storage.query().collections[0];
@@ -488,6 +506,200 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		await tick();
 		expect(waits).toContainEqual({ cardId: 'same', reason: 'no-workers' });
 		expect(service.spawn).not.toHaveBeenCalled();
+	});
+	it('avoids repository preparation only while the unpinned worker registry remains empty', async () => {
+		db.prepare('DELETE FROM workers').run();
+		await tick();
+		expect(waits).toContainEqual({ cardId: 'same', reason: 'no-workers' });
+		expect(prepare).not.toHaveBeenCalled();
+		expect(reserved()).toHaveLength(0);
+
+		// A worker registered across the async owner lookup must take the full
+		// preparation and claim path, not the earlier empty-registry shortcut.
+		configureBoardRuntimeHost(async (key, shouldPrepare) => {
+			const result = await cue.runtimeFor(key, shouldPrepare);
+			if (shouldPrepare === false && !db.prepare('SELECT 1 FROM workers').get()) {
+				registerBoardWorker(db, 'worker');
+				setBoardWorkerAccess(db, 'worker', [], ['repo0', 'repo1']);
+			}
+			return result;
+		});
+		await tick();
+		expect(prepare).toHaveBeenCalled();
+		expect(service.spawn).toHaveBeenCalled();
+	});
+	it.each([
+		['registered agent', { assigneeAgentId: 'worker' }, 'worker-unregistered'],
+		['missing agent', { assigneeAgentId: 'foreign' }, 'target-missing'],
+		['held card', { assigneeAgentId: 'worker', heldByUser: true }, 'held'],
+		['blocked dependency', { assigneeAgentId: 'worker', parents: ['missing'] }, 'dependency'],
+		[
+			'missing role',
+			{ assigneeAgentId: 'worker', role: { namespace: 'missing', profileId: 'missing' } },
+			'role-missing',
+		],
+	] as const)(
+		'preserves the full claim reason for an empty registry and %s',
+		async (_name, changes, reason) => {
+			edit(changes);
+			edit({ heldByUser: true }, 1);
+			db.prepare('DELETE FROM workers').run();
+			const entry = storage.query().collections[0];
+			const card = storage.workspace.readCollection(entry)!.cards[0];
+			const command = {
+				sourceKey: entry.sourceKey,
+				collectionKey: entry.collectionKey,
+				cardId: card.cardId,
+				workerAgentId: changes.assigneeAgentId,
+				requestId: 'empty-registry-differential',
+				readRevision: {
+					workspace: storage.workspace.readRevision(),
+					collection: entry.revision,
+					card: card.revision,
+					registry: runtime.intakeRevision(),
+				},
+			};
+			const normal = runtime.claim(command);
+			expect(normal).toEqual({ ok: false, reason });
+			expect(runtime.claim(command, true)).toEqual(normal);
+			await tick();
+			expect(waits).toContainEqual({ cardId: 'same', reason });
+			expect(prepare).not.toHaveBeenCalled();
+			expect(service.spawn).not.toHaveBeenCalled();
+			expect(reserved()).toHaveLength(0);
+			expect(db.prepare('SELECT * FROM runs').all()).toHaveLength(0);
+		}
+	);
+	it('uses full preparation if a separate SQLite connection registers the pinned worker during owner lookup', async () => {
+		edit({ assigneeAgentId: 'worker' });
+		edit({ heldByUser: true }, 1);
+		db.prepare('DELETE FROM workers').run();
+		const other = openBoardDb(path.join(dir, 'fixture.sqlite'));
+		try {
+			configureBoardRuntimeHost(async (key, shouldPrepare) => {
+				const result = await cue.runtimeFor(key, shouldPrepare);
+				if (shouldPrepare === false && !other.prepare('SELECT 1 FROM workers').get()) {
+					registerBoardWorker(other, 'worker');
+					setBoardWorkerAccess(other, 'worker', [], ['repo0', 'repo1']);
+				}
+				return result;
+			});
+			await tick();
+			expect(prepare).toHaveBeenCalled();
+			expect(service.spawn).toHaveBeenCalledOnce();
+		} finally {
+			other.close();
+		}
+	});
+	it('does not allocate from the empty-registry probe when the worker has appeared', () => {
+		const entry = storage.query().collections[0];
+		const card = storage.workspace.readCollection(entry)!.cards[0];
+		const result = runtime.claim(
+			{
+				sourceKey: entry.sourceKey,
+				collectionKey: entry.collectionKey,
+				cardId: card.cardId,
+				workerAgentId: 'worker',
+				requestId: 'registry-appeared',
+				readRevision: {
+					workspace: storage.workspace.readRevision(),
+					collection: entry.revision,
+					card: card.revision,
+					registry: runtime.intakeRevision(),
+				},
+			},
+			true
+		);
+		expect(result).toEqual({ ok: false, reason: 'registry-changed' });
+		expect(reserved()).toHaveLength(0);
+		expect(db.prepare('SELECT * FROM runs').all()).toHaveLength(0);
+	});
+	it('falls back to normal preparation for a previously used request id', () => {
+		edit({ assigneeAgentId: 'worker' });
+		db.prepare('DELETE FROM workers').run();
+		const entry = storage.query().collections[0];
+		const card = storage.workspace.readCollection(entry)!.cards[0];
+		db.prepare(
+			'INSERT INTO commands (request_id, principal, result_json, revision) VALUES (?, ?, ?, ?)'
+		).run('previous-request', 'some-principal', '{}', 1);
+		const result = runtime.claim(
+			{
+				sourceKey: entry.sourceKey,
+				collectionKey: entry.collectionKey,
+				cardId: card.cardId,
+				workerAgentId: 'worker',
+				requestId: 'previous-request',
+				readRevision: {
+					workspace: storage.workspace.readRevision(),
+					collection: entry.revision,
+					card: card.revision,
+					registry: runtime.intakeRevision(),
+				},
+			},
+			true
+		);
+		expect(result).toEqual({ ok: false, reason: 'registry-changed' });
+		expect(reserved()).toHaveLength(0);
+	});
+	it('rechecks the registry inside the probe after a separate process registers the pin', async () => {
+		edit({ assigneeAgentId: 'worker' });
+		edit({ heldByUser: true }, 1);
+		db.prepare('DELETE FROM workers').run();
+		const cueRuntime = await cue.runtimeFor(
+			{ sourceKey: roots[0], collectionKey: 'collection0', cardId: 'same' },
+			false
+		);
+		expect(cueRuntime).not.toBeNull();
+		const originalRevision = cueRuntime!.intakeRevision.bind(cueRuntime);
+		let changed = false;
+		vi.spyOn(cueRuntime!, 'intakeRevision').mockImplementation(() => {
+			const revision = originalRevision();
+			if (!changed) {
+				changed = true;
+				execFileSync(process.execPath, [
+					'-e',
+					`
+					const db = new (require('better-sqlite3'))(process.argv[1]);
+					db.transaction(() => {
+						db.prepare('INSERT INTO workers VALUES (?, 1, 0, ?)').run('worker', JSON.stringify({roleRefs: [], allowedRepositoryIds: ['repo0', 'repo1']}));
+						db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+					}).immediate();
+					db.close();
+				`,
+					path.join(dir, 'fixture.sqlite'),
+				]);
+			}
+			return revision;
+		});
+		await tick();
+		expect(changed).toBe(true);
+		expect(prepare).toHaveBeenCalled();
+		expect(service.spawn).toHaveBeenCalledOnce();
+	});
+	it('rejects a changed card revision during the empty-registry owner lookup', async () => {
+		edit({ assigneeAgentId: 'worker' });
+		edit({ heldByUser: true }, 1);
+		db.prepare('DELETE FROM workers').run();
+		let changed = false;
+		configureBoardRuntimeHost(async (key, shouldPrepare) => {
+			const result = await cue.runtimeFor(key, shouldPrepare);
+			if (shouldPrepare === false && !changed) {
+				changed = true;
+				edit({ assigneeAgentId: 'foreign' });
+				db.prepare('UPDATE cards SET revision=revision+1 WHERE collection_key=? AND id=?').run(
+					'collection0',
+					'same'
+				);
+				db.prepare('UPDATE collections SET revision=revision+1 WHERE collection_key=?').run(
+					'collection0'
+				);
+			}
+			return result;
+		});
+		await tick();
+		expect(waits).toContainEqual({ cardId: 'same', reason: 'stale-revision' });
+		expect(service.spawn).not.toHaveBeenCalled();
+		expect(reserved()).toHaveLength(0);
 	});
 	it('honors global WIP and lost ownership', async () => {
 		db.prepare('UPDATE workspace SET global_wip_limit=0').run();

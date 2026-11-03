@@ -12,7 +12,12 @@ import {
 } from '../services/maestro-client';
 import { requestBoardCommand } from '../../shared/maestro-lib/client/board';
 import type { BoardCommand, BoardCommandTarget } from '../../shared/board/commands';
-import type { BoardWorkspaceQueryResult, BoardWorkspaceCollection } from '../../shared/board/types';
+import type {
+	BoardWorkspaceQueryResult,
+	BoardWorkspaceCollection,
+	BoardCaptureCatalog,
+	BoardRoleRef,
+} from '../../shared/board/types';
 import { generateUUID } from '../../shared/uuid';
 import type { CardPrResult } from '../../main/board/board-pr';
 import type { Board, BoardCard, CardPrOnDone, CardStatus } from '../../shared/board/types';
@@ -22,8 +27,12 @@ import { getBlockers } from '../../shared/board/graph';
 import { getSessionById, resolveAgentId } from '../services/storage';
 import { formatError, formatSuccess, formatWarning } from '../output/formatter';
 import type { SessionInfo } from '../../shared/types';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { parseBoardWorkerOptionsPatch } from '../../shared/board/worker-options';
+import type { StoredBoardWorker } from '../../shared/board/worker-options';
 
 interface BoardCommonOptions {
+	reviewerAgent?: string;
 	kind?: string;
 	reviewOf?: string;
 	reviewAttempt?: string;
@@ -36,6 +45,8 @@ interface BoardCommonOptions {
 	scopeAgent?: string;
 	scopeGroup?: string;
 	profileNamespace?: string;
+	role?: string;
+	roleNamespace?: string;
 	repository?: string;
 	workingDirectory?: string;
 	startMode?: string;
@@ -168,6 +179,107 @@ function resolveAssigneeAgentId(value: string): string {
 	const session = getSessionById(id);
 	if (!session) throw new Error(`Agent "${value}" not found (--assignee-agent).`);
 	return session.id;
+}
+
+/** Read the same host choices the card editor uses, without initializing storage. */
+export async function boardCatalog(options: BoardCommonOptions): Promise<void> {
+	try {
+		const catalog = await hostCommand<BoardCaptureCatalog>({ action: 'catalog' });
+		if (options.json) console.log(JSON.stringify(catalog, null, 2));
+		else {
+			for (const { namespace, profile } of catalog.profiles) {
+				console.log(
+					`${profile.name} (${namespace} / ${profile.id})${profile.baseAgentId ? ` [agent: ${profile.baseAgentId}]` : ''}`
+				);
+			}
+			if (!catalog.profiles.length)
+				console.log('No stored worker roles. Cards can omit a role requirement.');
+		}
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/** Create a Board role using the same host command as the Workers form. */
+export async function boardCreateRole(name: string, options: { json?: boolean }): Promise<void> {
+	try {
+		const role = await hostCommand<BoardRoleRef>({ action: 'create-role', name });
+		console.log(
+			options.json
+				? JSON.stringify(role, null, 2)
+				: `Role created: ${role.namespace} / ${role.profileId}`
+		);
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/** Change one role grant without replacing this worker's other access or options. */
+export async function boardSetWorkerRole(
+	roleId: string,
+	options: { agent: string; namespace: string; remove?: boolean; json?: boolean }
+): Promise<void> {
+	try {
+		const agentId = resolveAgentSession(options.agent).id;
+		await hostCommand({
+			action: 'set-worker-role',
+			agentId,
+			role: { namespace: options.namespace, profileId: roleId },
+			enabled: !options.remove,
+		});
+		console.log(
+			options.json
+				? JSON.stringify({
+						agentId,
+						namespace: options.namespace,
+						profileId: roleId,
+						enabled: !options.remove,
+					})
+				: `Worker role ${options.remove ? 'removed' : 'assigned'}: ${agentId}`
+		);
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/** Read or compare-and-patch the same worker-local options used by the Board UI. */
+export async function boardWorkerOptions(options: {
+	agent: string;
+	set?: string;
+	json?: boolean;
+}): Promise<void> {
+	try {
+		const agentId = resolveAgentSession(options.agent).id;
+		const workers = await hostCommand<StoredBoardWorker[]>({ action: 'list-workers' });
+		const worker = workers.find((entry) => entry.agentId === agentId);
+		if (!worker) throw new Error('Board worker not found');
+		if (options.set !== undefined) {
+			let input: unknown;
+			try {
+				input = JSON.parse(options.set);
+			} catch {
+				throw new Error('--set must be a JSON object');
+			}
+			const patch = parseBoardWorkerOptionsPatch(input);
+			if (!patch || Object.keys(patch).length === 0)
+				throw new Error('Invalid or empty worker options patch');
+			const updated = await hostCommand<StoredBoardWorker[]>({
+				action: 'set-worker-options',
+				command: { agentId, expectedPayload: canonicalJson(worker.payload), patch },
+			});
+			console.log(
+				JSON.stringify(
+					updated.find((entry) => entry.agentId === agentId),
+					null,
+					2
+				)
+			);
+		} else {
+			console.log(JSON.stringify(worker, null, 2));
+		}
+	} catch (error) {
+		reportError(error, options.json);
+	}
 }
 
 /** `board list --agent <id>` - list boards in the agent's project. */
@@ -358,18 +470,21 @@ export async function boardShow(boardId: string, options: BoardShowOptions): Pro
 	}
 }
 
-/** `board add-card <boardId> --title ... --assignee ...` - append a card. */
-export async function boardAddCard(boardId: string, options: BoardAddCardOptions): Promise<void> {
+/** Capture globally by default, or append to an explicitly selected board. */
+export async function boardAddCard(
+	boardId: string | undefined,
+	options: BoardAddCardOptions
+): Promise<void> {
 	try {
-		const board = (await selectHostBoard(boardId, options)).board;
+		if (!boardId && (options.agent || options.projectRoot || options.source || options.collection))
+			throw new Error('Use a board ID with source or project selectors.');
+		const board = boardId
+			? (await selectHostBoard(boardId, options)).board
+			: await hostCommand<Board>({ action: 'initialize' });
 
 		const title = (options.title ?? '').trim();
 		if (!title) throw new Error('A card title is required (--title <title>).');
-		// Board Phase 6: a card names a role (--assignee <profileId>) and/or pins a
-		// specific agent (--assignee-agent <agentId>). At least one is required. A
-		// role-only card floats to the free opt-in worker pool; an agent-only card
-		// runs on that agent with its own settings.
-		const assignee = (options.assignee ?? '').trim();
+		// A draft may omit an assignee; the host reports execution readiness later.
 		const assigneeAgent = (options.assigneeAgent ?? '').trim();
 
 		const parents = parseParents(options.parents);
@@ -394,7 +509,6 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 			createdAt: now,
 			updatedAt: now,
 		};
-		if (assignee) card.assigneeProfileId = assignee;
 		// Store the RESOLVED id so a prefix behaves like `--agent` does.
 		if (assigneeAgent) card.assigneeAgentId = resolveAssigneeAgentId(assigneeAgent);
 		// `normal` is the default and is never serialized.
@@ -464,12 +578,6 @@ export async function boardUpdateCard(
 		}
 		if (options.body !== undefined) {
 			next.body = options.body;
-			changed = true;
-		}
-		if (options.assignee !== undefined) {
-			const value = options.assignee.trim();
-			if (value) next.assigneeProfileId = value;
-			else delete next.assigneeProfileId;
 			changed = true;
 		}
 		if (options.assigneeAgent !== undefined) {
@@ -584,11 +692,8 @@ export async function boardRemoveCard(
 /**
  * `board set-status <cardId> <status> --agent <id>` - move a card.
  *
- * A move into `done` fires the same PR-on-done flow the `board:setCardStatus` IPC
- * handler fires, so a headless board behaves like the desktop one. It is AWAITED
- * rather than fire-and-forget (`startCardPr`): this process exits as soon as the
- * command returns, which would kill the push mid-flight. The opt-in gate lives in
- * `maybeCreateCardPr`, so a card without `prOnDone` costs one board read.
+ * Workflow transitions are validated by the host. A final human decision is
+ * required to move a reviewed card to `done`.
  */
 export async function boardSetStatus(
 	cardId: string,
@@ -647,14 +752,14 @@ export async function boardSetStatus(
 	}
 }
 
-/** `board tick --agent <id> [--board <id>]` - run one dispatcher pass headlessly. */
+/** Request one host dispatch pass, globally unless a source is selected. */
 export async function boardTick(options: BoardTickOptions): Promise<void> {
 	requireEncore('board', options.json);
 	requireEncore('maestroCue', options.json);
 	try {
-		resolveAgentSession(options.agent);
+		if (options.agent) resolveAgentSession(options.agent);
 		const summaries = await tickBoardsOnce(
-			selectedProjectRoot(options)!,
+			selectedProjectRoot(options),
 			options.board,
 			options.json,
 			options
@@ -697,11 +802,11 @@ export async function boardTick(options: BoardTickOptions): Promise<void> {
 export async function boardWatch(options: BoardWatchOptions): Promise<void> {
 	requireEncore('board', options.json);
 	requireEncore('maestroCue', options.json);
-	let projectRoot: string;
+	let projectRoot: string | undefined;
 	let intervalMs: number;
 	try {
-		resolveAgentSession(options.agent);
-		projectRoot = selectedProjectRoot(options)!;
+		if (options.agent) resolveAgentSession(options.agent);
+		projectRoot = selectedProjectRoot(options);
 		intervalMs = parseWatchInterval(options.interval) * 1000;
 	} catch (error) {
 		return reportError(error, options.json);
@@ -784,7 +889,7 @@ function printWatchTick(summaries: TickSummary[], json: boolean | undefined): vo
 
 /** Request the owner; CLI never claims, reclaims, decomposes or spawns locally. */
 async function tickBoardsOnce(
-	projectRoot: string,
+	projectRoot: string | undefined,
 	boardHint: string | undefined,
 	json: boolean | undefined,
 	options: BoardTickOptions = {}
@@ -1002,13 +1107,9 @@ function readRevision(raw: string | undefined, fallback?: number): number {
 }
 function hostTarget(board: Board, options: BoardCommonOptions): BoardCommandTarget {
 	const projectRoot = selectedProjectRoot(options);
-	if (!projectRoot)
-		throw new Error(
-			'Mutation requires --project-root or --agent; no working directory is inferred.'
-		);
 	if (!board.storage) throw new Error('Host returned a board without central identity.');
 	return {
-		projectRoot,
+		projectRoot: projectRoot ?? BOARD_SOURCE_PROJECT_PREFIX + board.storage.sourceKey,
 		sourceKey: board.storage.sourceKey,
 		collectionKey: board.storage.collectionKey,
 		expectedRevision: readRevision(options.revision, board.storage.expectedRevision ?? undefined),
@@ -1017,7 +1118,7 @@ function hostTarget(board: Board, options: BoardCommonOptions): BoardCommandTarg
 async function captureHost(
 	board: Board,
 	card: BoardCard,
-	options: BoardCommonOptions
+	options: BoardCommonOptions & { assignee?: string }
 ): Promise<Board> {
 	const target = hostTarget(board, options);
 	return hostCommand({
@@ -1028,6 +1129,12 @@ async function captureHost(
 			boardId: board.id,
 			expectedRevision: target.expectedRevision,
 			card,
+			...(options.role !== undefined ||
+			options.roleNamespace !== undefined ||
+			options.assignee !== undefined ||
+			options.profileNamespace !== undefined
+				? { replaceRole: true as const }
+				: {}),
 			...(options.reviewOf
 				? {
 						reviewSource: {
@@ -1044,6 +1151,10 @@ function applyCaptureOptions(
 	options: BoardCommonOptions & { assignee?: string }
 ): boolean {
 	let changed = false;
+	if (options.reviewerAgent !== undefined) {
+		card.reviewerAgentId = options.reviewerAgent.trim() || undefined;
+		changed = true;
+	}
 	if (options.kind !== undefined || options.reviewOf) {
 		const kind = options.kind ?? 'review';
 		if (!['work', 'review', 'test', 'documentation'].includes(kind))
@@ -1062,15 +1173,39 @@ function applyCaptureOptions(
 				: { kind: 'group', groupId: options.scopeGroup! };
 		changed = true;
 	}
-	if (options.profileNamespace !== undefined || options.assignee !== undefined) {
-		const namespace = options.profileNamespace ?? card.role?.namespace;
+	if (
+		options.profileNamespace !== undefined ||
+		options.assignee !== undefined ||
+		options.roleNamespace !== undefined ||
+		options.role !== undefined
+	) {
+		if (
+			(options.role !== undefined &&
+				options.assignee !== undefined &&
+				options.role.trim() !== options.assignee.trim()) ||
+			(options.roleNamespace !== undefined &&
+				options.profileNamespace !== undefined &&
+				options.roleNamespace !== options.profileNamespace)
+		)
+			throw new Error(
+				'Conflicting role and legacy assignee flags. Specify one exact role identity.'
+			);
+		const namespace = options.roleNamespace ?? options.profileNamespace ?? card.role?.namespace;
+		const requestedId = options.role ?? options.assignee;
 		const profileId =
-			options.assignee !== undefined
-				? options.assignee.trim()
+			requestedId !== undefined
+				? requestedId.trim()
 				: (card.role?.profileId ?? card.assigneeProfileId);
-		if (profileId && namespace) card.role = { namespace, profileId };
-		else if (options.assignee === '') delete card.role;
-		else throw new Error('--assignee requires an explicit --profile-namespace.');
+		if (profileId && namespace) {
+			card.role = { namespace, profileId };
+			card.assigneeProfileId = profileId;
+		} else if (requestedId?.trim() === '') {
+			delete card.role;
+			delete card.assigneeProfileId;
+		} else
+			throw new Error(
+				'--role requires an explicit --role-namespace (--assignee / --profile-namespace also supported).'
+			);
 		Reflect.deleteProperty(card, 'profileNamespace');
 		changed = true;
 	}

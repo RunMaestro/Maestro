@@ -6,7 +6,8 @@ vi.mock('electron', () => ({
 		handle: (name: string, callback: (...args: any[]) => any) => ipcHandlers.set(name, callback),
 	},
 }));
-vi.mock('../../../main/stores/getters', () => ({ getLiveSessions: () => [] }));
+const liveSessions = vi.hoisted(() => [{ id: 'a' }, { id: 'foreign' }]);
+vi.mock('../../../main/stores/getters', () => ({ getLiveSessions: () => liveSessions }));
 import { BoardRuntime, type BoardRunService } from '../../../main/board/board-runtime';
 import {
 	configureBoardRuntimeHost,
@@ -42,7 +43,11 @@ import { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-conn
 import { writeCliServerInfoTo } from '../../../shared/maestro-lib/client/discovery';
 import { requestBoardCommand } from '../../../shared/maestro-lib/client/board';
 import type { BoardCommand, BoardCommandReply } from '../../../shared/board/commands';
-import type { Board, BoardCard } from '../../../shared/board/types';
+import {
+	BOARD_SOURCE_PROJECT_PREFIX,
+	type Board,
+	type BoardCard,
+} from '../../../shared/board/types';
 import { CLI_SECRET_HEADER } from '../../../shared/webLogin';
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -218,6 +223,113 @@ afterEach(async () => {
 });
 
 describe('Board through native runtime/WebSocket and real SQLite', () => {
+	it('reads and patches one worker through the CLI, preserving other workers and profiles', async () => {
+		registerBoardWorker(db, 'a');
+		registerBoardWorker(db, 'foreign');
+		const otherBefore = db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('foreign');
+		const profilesBefore = db
+			.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id')
+			.all();
+		const initial = await cli('worker-options', '--agent', 'a', '--json');
+		expect(initial.code).toBe(0);
+		const changed = await cli(
+			'worker-options',
+			'--agent',
+			'a',
+			'--set',
+			JSON.stringify({
+				customModel: 'fixture-model',
+				customEffort: 'high',
+				appendSystemPrompt: 'fixture',
+				customArgs: '--fixture',
+			}),
+			'--json'
+		);
+		expect(changed).toMatchObject({
+			code: 0,
+			value: {
+				agentId: 'a',
+				payload: {
+					executionOptions: {
+						customModel: 'fixture-model',
+						customEffort: 'high',
+						appendSystemPrompt: 'fixture',
+						customArgs: '--fixture',
+					},
+				},
+			},
+		});
+		const stale = await send({
+			action: 'set-worker-options',
+			command: {
+				agentId: 'a',
+				expectedPayload: '{}',
+				patch: { customModel: 'stale' },
+			},
+		});
+		expect(stale).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
+		expect(
+			(await cli('worker-options', '--agent', 'a', '--set', '{"customEffort":null}', '--json')).code
+		).toBe(0);
+		expect(
+			(await cli('worker-options', '--agent', 'a', '--json')).value.payload.executionOptions
+		).toEqual({
+			customModel: 'fixture-model',
+			appendSystemPrompt: 'fixture',
+			customArgs: '--fixture',
+		});
+		expect(
+			(await cli('worker-options', '--agent', 'a', '--set', '{"customModel":""}', '--json')).code
+		).toBe(1);
+		expect(db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('foreign')).toEqual(
+			otherBefore
+		);
+		expect(db.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id').all()).toEqual(
+			profilesBefore
+		);
+	});
+	it('initializes the global destination over the authenticated bridge and captures root-free through the same host', async () => {
+		const original = facade.query();
+		const board = result<Board>(await send({ action: 'initialize' }));
+		const ref = board.storage!;
+		const projectRoot = BOARD_SOURCE_PROJECT_PREFIX + ref.sourceKey;
+		const reply = await send({
+			action: 'capture',
+			target: {
+				projectRoot,
+				sourceKey: ref.sourceKey,
+				collectionKey: ref.collectionKey,
+				expectedRevision: ref.expectedRevision!,
+			},
+			capture: {
+				projectRoot,
+				boardId: board.id,
+				expectedRevision: ref.expectedRevision!,
+				card: {
+					id: 'first-global',
+					title: 'Global draft',
+					body: '',
+					parents: [],
+					status: 'todo',
+					createdAt: '',
+					updatedAt: '',
+				},
+			},
+		});
+		const saved = result<Board>(reply);
+		expect(saved.cards[0].capturePolicy!.dispatchApproval).toBe('required');
+		expect(reply).toMatchObject({
+			readiness: { 'first-global': expect.arrayContaining(['repository-unresolved']) },
+		});
+		expect(result<Board>(await send({ action: 'initialize' }))).toEqual(saved);
+		expect(facade.query().collections.filter((entry) => entry.sourceKey !== ref.sourceKey)).toEqual(
+			original.collections
+		);
+		expect(
+			db.prepare('SELECT * FROM board_source_locations WHERE source_key=?').all(ref.sourceKey)
+		).toEqual([]);
+	});
+
 	it('keeps migrated physical source identities through the host and a real CLI child', async () => {
 		for (const [index, root] of roots.entries()) {
 			expect(await fs.promises.realpath(root)).toBe(root);
@@ -374,7 +486,7 @@ describe('Board through native runtime/WebSocket and real SQLite', () => {
 				status: 'ready',
 			})
 		).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
-		saved = result<Board>(
+		expect(
 			await send({
 				action: 'status',
 				target: target(),
@@ -382,7 +494,7 @@ describe('Board through native runtime/WebSocket and real SQLite', () => {
 				cardRevision: saved.cards[0].storageRevision!,
 				status: 'done',
 			})
-		);
+		).toMatchObject({ ok: false, error: { code: 'protected-field' } });
 		expect(saved.cards[0].capturePolicy!.dispatchApproval).toBe('required');
 	});
 
@@ -555,6 +667,78 @@ describe('Board through native runtime/WebSocket and real SQLite', () => {
 });
 
 describe('actual CLI parser, commands, authenticated host and SQLite', () => {
+	it('passes a native review source to host validation without accepting foreign authority', async () => {
+		const selected = target();
+		const contents = { mainFrame: {} };
+		registerBoardHandlers({
+			getCueEngine: () => null,
+			getMainWindow: () => ({ isDestroyed: () => false, webContents: contents }) as never,
+		});
+		const input = {
+			projectRoot: selected.projectRoot,
+			boardId: 'b',
+			expectedRevision: selected.expectedRevision,
+			card: card({ kind: 'review', parents: ['work'] }),
+			reviewSource: { cardId: 'work', attempt: 0 },
+		};
+		const handler = ipcHandlers.get('board:captureCard')!;
+		const native = { sender: contents, senderFrame: contents.mainFrame };
+		expect(await handler(native, input)).toMatchObject({
+			ok: false,
+			error: { code: 'invalid-input', message: 'Invalid review source attempt' },
+		});
+		expect(await handler(native, { ...input, unexpected: true })).toMatchObject({
+			ok: false,
+			error: { code: 'invalid-input', message: 'Invalid capture command' },
+		});
+		expect(await handler({ sender: {}, senderFrame: {} }, input)).toMatchObject({
+			ok: false,
+			error: { code: 'protected-field' },
+		});
+	});
+
+	it('captures globally without a project and shares cards with the host', async () => {
+		const added = await cli('add-card', '--title', 'CLI global', '--json');
+		expect(added.code).toBe(0);
+		const global = result<Board>(await send({ action: 'initialize' }));
+		expect(global.cards.map((item) => item.id)).toContain(added.value.id);
+		const identity = global.storage!;
+		const projectRoot = BOARD_SOURCE_PROJECT_PREFIX + identity.sourceKey;
+		const hostCard = card({
+			id: 'host-card',
+			title: 'Host global',
+			executionScope: undefined,
+			assigneeAgentId: undefined,
+			repositoryId: undefined,
+			workingDirectory: undefined,
+		});
+		const contents = { mainFrame: {} };
+		registerBoardHandlers({
+			getCueEngine: () => null,
+			getMainWindow: () => ({ isDestroyed: () => false, webContents: contents }) as never,
+		});
+		const hostCapture = await ipcHandlers.get('board:captureCard')!(
+			{ sender: contents, senderFrame: contents.mainFrame },
+			{
+				projectRoot,
+				boardId: global.id,
+				expectedRevision: identity.expectedRevision!,
+				card: hostCard,
+			}
+		);
+		expect(hostCapture.ok).toBe(true);
+		const shown = await cli('show', global.id, '--json');
+		expect(shown.code).toBe(0);
+		expect(shown.value.cards.map((item: BoardCard) => item.title)).toEqual([
+			'CLI global',
+			'Host global',
+		]);
+		const stale = await cli('add-card', '--title', 'Stale', '--revision', '0', '--json');
+		expect(stale.code).toBe(1);
+		expect(
+			(await cli('add-card', '--title', 'Ambiguous', '--agent', 'creator', '--json')).code
+		).toBe(1);
+	});
 	it('captures as an unregistered creator and round-trips explicit identity, revision, scope, role and repository', async () => {
 		const selected = target();
 		const common = [
@@ -694,7 +878,7 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 		expect((await cli('set-status', 'c', 'ready', ...common)).value.details.code).toBe(
 			'invalid-input'
 		);
-		expect((await cli('set-status', 'c', 'done', ...common)).code).toBe(0);
+		expect((await cli('set-status', 'c', 'done', ...common)).code).toBe(1);
 		expect(facade.read(roots[0], 'b').cards[0].capturePolicy!.dispatchApproval).toBe('required');
 		expect(facade.read(roots[1], 'b').cards[0].title).toBe('Work');
 		db.prepare(
@@ -742,7 +926,11 @@ it('updates canonical roles without legacy aliases and refuses CLI human review 
 		(await cli('update-card', 'c', '--profile-namespace', namespaces[0], ...common)).code
 	).toBe(0);
 	expect(facade.read(roots[0], 'b').cards[0].role).toEqual(saved.cards[0].role);
-	await cli('set-status', 'c', 'review', ...common);
+	expect((await cli('set-status', 'c', 'review', ...common)).code).toBe(1);
+	// Trusted legacy/runtime fixture, outside caller authority.
+	db.prepare(
+		"UPDATE cards SET payload_json=json_set(payload_json, '$.status', 'review') WHERE id='c'"
+	).run();
 	expect((await cli('set-status', 'c', 'done', ...common)).value.details.code).toBe(
 		'protected-field'
 	);
@@ -758,10 +946,12 @@ it('updates canonical roles without legacy aliases and refuses CLI human review 
 	});
 });
 
-function installBoardOwner(direct = true) {
-	const request = capture(card({ startModeOverride: direct ? 'direct' : 'approval' }));
-	if (request.action !== 'capture') throw new Error('capture required');
-	facade.capture(request.capture, true);
+function installBoardOwner(direct = true, captureProjectCard = true) {
+	if (captureProjectCard) {
+		const request = capture(card({ startModeOverride: direct ? 'direct' : 'approval' }));
+		if (request.action !== 'capture') throw new Error('capture required');
+		facade.capture(request.capture, true);
+	}
 	registerBoardWorker(db, 'a');
 	setBoardWorkerAccess(db, 'a', [], ['repo0', 'repo1']);
 	let settle!: (result: CardSpawnResult) => void;
@@ -828,6 +1018,104 @@ function control(operation: 'hold' | 'resume' | 'approve', runToken?: BoardRunti
 }
 
 describe('fenced host intake shared by desktop and real CLI', () => {
+	it('races native IPC and real CLI against a globally captured card without an agent project', async () => {
+		const fixture = installBoardOwner(true, false);
+		const global = result<Board>(await send({ action: 'initialize' }));
+		const identity = global.storage!;
+		const projectRoot = BOARD_SOURCE_PROJECT_PREFIX + identity.sourceKey;
+		let saved = facade.capture(
+			{
+				projectRoot,
+				boardId: global.id,
+				expectedRevision: identity.expectedRevision!,
+				card: card({
+					id: 'global-run',
+					startModeOverride: 'direct',
+					workingDirectory: undefined,
+				}),
+			},
+			true
+		);
+		const missingCwd = await cli('tick', '--json');
+		expect(missingCwd.code).toBe(0);
+		expect(
+			missingCwd.value.boards.find((entry: { boardId: string }) => entry.boardId === global.id)
+				.results
+		).toMatchObject([{ cardId: 'global-run', ok: false, reason: 'repository-unresolved' }]);
+		expect(db.prepare('SELECT * FROM runs').all()).toHaveLength(0);
+		saved = facade.capture(
+			{
+				projectRoot,
+				boardId: global.id,
+				expectedRevision: saved.storage!.expectedRevision!,
+				card: {
+					...saved.cards[0],
+					workingDirectory: roots[0],
+					executionScope: { kind: 'group', groupId: 'other' },
+					assigneeAgentId: undefined,
+				},
+			},
+			true
+		);
+		const noWorker = result<{ collections: { readiness: Record<string, string[]> }[] }>(
+			await send({ action: 'query', query: { sourceKey: identity.sourceKey } })
+		);
+		expect(noWorker.collections[0].readiness['global-run']).toContain('emptyEligibleWorkers');
+		const wrongGroup = await cli('tick', '--source', identity.sourceKey, '--json');
+		expect(wrongGroup.value.boards[0].results).toMatchObject([
+			{ cardId: 'global-run', ok: false, reason: 'worker-outside-scope' },
+		]);
+		expect(db.prepare('SELECT * FROM runs').all()).toHaveLength(0);
+		saved = facade.capture(
+			{
+				projectRoot,
+				boardId: global.id,
+				expectedRevision: saved.storage!.expectedRevision!,
+				card: {
+					...saved.cards[0],
+					executionScope: { kind: 'group', groupId: 'g' },
+					assigneeAgentId: 'a',
+				},
+			},
+			true
+		);
+		const target = {
+			projectRoot,
+			sourceKey: saved.storage!.sourceKey,
+			collectionKey: saved.storage!.collectionKey,
+			expectedRevision: saved.storage!.expectedRevision!,
+		};
+		const contents = { mainFrame: {} };
+		registerBoardHandlers({
+			getCueEngine: () => null,
+			getMainWindow: () => ({ isDestroyed: () => false, webContents: contents }) as never,
+		});
+		const [desktop, command] = await Promise.all([
+			ipcHandlers.get('board:runtimeCommand')!(
+				{ sender: contents, senderFrame: contents.mainFrame },
+				{ action: 'tick', target, operationId: 'global-ipc' }
+			),
+			cli('tick', '--source', target.sourceKey, '--collection', target.collectionKey, '--json'),
+		]);
+		expect(desktop.ok || command.code === 0).toBe(true);
+		expect(fixture.service.spawn).toHaveBeenCalledTimes(1);
+		expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(1);
+		const rows = db.prepare('SELECT specification_json FROM runs').all() as {
+			specification_json: string;
+		}[];
+		expect(rows).toHaveLength(1);
+		expect(JSON.parse(rows[0].specification_json)).toMatchObject({
+			key: {
+				sourceKey: target.sourceKey,
+				collectionKey: target.collectionKey,
+				cardId: 'global-run',
+			},
+			workerAgentId: 'a',
+			repository: { id: 'repo0', workingDirectory: roots[0] },
+		});
+		fixture.finish();
+		await vi.waitFor(() => expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0));
+	});
 	it('holds and resumes an unstarted card through the same host without inventing a token or approval', async () => {
 		installBoardOwner();
 		const before = facade.read(roots[0], 'b').cards[0].capturePolicy;
@@ -893,7 +1181,25 @@ describe('fenced host intake shared by desktop and real CLI', () => {
 		const fixture = installBoardOwner();
 		const reply = await send(tick());
 		const token = result<{ runToken: BoardRuntimeToken }[]>(reply)[0].runToken;
-		const stopped = await cancelBoardRuntimeCard(roots[0], 'b', 'c');
+		const selected = target();
+		const observed = facade.read(roots[0], 'b').cards[0];
+		const read = {
+			sourceKey: selected.sourceKey,
+			collectionKey: selected.collectionKey,
+			revision: selected.expectedRevision,
+			cardRevision: observed.storageRevision!,
+		};
+		await expect(
+			cancelBoardRuntimeCard(roots[0], 'b', 'c', 'hold', { ...read, revision: read.revision + 1 })
+		).rejects.toThrow(/changed since read/);
+		await expect(
+			cancelBoardRuntimeCard(roots[0], 'b', 'c', 'hold', {
+				...read,
+				cardRevision: read.cardRevision + 1,
+			})
+		).rejects.toThrow(/changed since read/);
+		expect(fixture.service.stop).not.toHaveBeenCalled();
+		const stopped = await cancelBoardRuntimeCard(roots[0], 'b', 'c', 'hold', read);
 		expect(stopped.cards[0].heldByUser).toBe(true);
 		expect(fixture.service.stop).toHaveBeenCalledWith(expect.objectContaining({ runToken: token }));
 		expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(1);
@@ -906,6 +1212,62 @@ describe('fenced host intake shared by desktop and real CLI', () => {
 		expect(await send(control('resume', token))).toMatchObject({ ok: true });
 		expect(facade.read(roots[0], 'b').cards[0].heldByUser).not.toBe(true);
 	});
+	it.each([
+		['hold', 'collection'],
+		['hold', 'card'],
+		['resume', 'collection'],
+		['resume', 'card'],
+	] as const)(
+		'rejects %s when another SQLite connection changes the %s revision after host preparation',
+		async (operation, changed) => {
+			const fixture = installBoardOwner();
+			const token = result<{ runToken: BoardRuntimeToken }[]>(await send(tick()))[0].runToken;
+			if (operation === 'resume') {
+				expect(await send(control('hold', token))).toMatchObject({ ok: true });
+				fixture.finish();
+				await vi.waitFor(() =>
+					expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0)
+				);
+			}
+			const request = control(operation, token);
+			const beforeCard = facade.read(roots[0], 'b').cards[0];
+			const beforeRuns = db.prepare('SELECT * FROM runs').all();
+			const beforeReservations = db.prepare('SELECT * FROM reservations').all();
+			const stopCount = vi.mocked(fixture.service.stop).mock.calls.length;
+			const original = fixture.owner[operation].bind(fixture.owner);
+			const other = openBoardDb(path.join(dir, 'board.sqlite'));
+			const spy = vi
+				.spyOn(fixture.owner, operation)
+				.mockImplementationOnce((runToken, expected) => {
+					if (changed === 'collection')
+						other
+							.prepare('UPDATE collections SET revision=revision+1 WHERE collection_key=?')
+							.run(request.target.collectionKey);
+					else
+						other
+							.prepare('UPDATE cards SET revision=revision+1 WHERE collection_key=? AND id=?')
+							.run(request.target.collectionKey, request.cardId);
+					return original(runToken, expected);
+				});
+			try {
+				expect(await send(request)).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
+				expect(facade.read(roots[0], 'b').cards[0].heldByUser).toBe(beforeCard.heldByUser);
+				expect(db.prepare('SELECT * FROM runs').all()).toEqual(beforeRuns);
+				expect(db.prepare('SELECT * FROM reservations').all()).toEqual(beforeReservations);
+				expect(fixture.service.stop).toHaveBeenCalledTimes(stopCount);
+				expect(await send(control(operation, token))).toMatchObject({ ok: true });
+				if (operation === 'hold') {
+					fixture.finish();
+					await vi.waitFor(() =>
+						expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0)
+					);
+				}
+			} finally {
+				spy.mockRestore();
+				other.close();
+			}
+		}
+	);
 	it('rejects authority forgery and required approval across native host/CLI/status', async () => {
 		const fixture = installBoardOwner(false);
 		expect(await send(tick())).toMatchObject({

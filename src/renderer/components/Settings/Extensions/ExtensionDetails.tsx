@@ -176,12 +176,13 @@ export function ExtensionDetails({
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
 
 	// The Settings sub-tab exists when there's something to configure: a
-	// first-party config body, a configurable plugin, or Pianola's modal entry.
+	// first-party config body, a configurable plugin, or a modal entry.
 	const hasSettingsTab =
 		Boolean(settingsBody) ||
 		canConfigurePlugin ||
 		Boolean(declared?.settings.length) ||
 		isPianola ||
+		isBoard ||
 		isWebLogin ||
 		settingsPanels.length > 0;
 
@@ -768,7 +769,7 @@ export function ExtensionDetails({
 							<button
 								type="button"
 								data-testid="extension-open-board"
-								onClick={() => getModalActions().setBoardModalOpen(true)}
+								onClick={() => launchFromSettings(() => getModalActions().setBoardModalOpen(true))}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>

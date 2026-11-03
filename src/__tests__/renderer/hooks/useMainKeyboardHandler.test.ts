@@ -5481,9 +5481,9 @@ describe('useMainKeyboardHandler - Profiles Cue independence', () => {
 		useSettingsStore.setState({ encoreFeatures: initialEncore });
 	});
 	it.each([
-		{ board: true, expected: true },
+		{ board: true, expected: false },
 		{ board: false, expected: false },
-	])('opens Profiles with Cue off only when Board is enabled ($board)', ({ board, expected }) => {
+	])('does not open Profiles with Cue off regardless of Board ($board)', ({ board, expected }) => {
 		useSettingsStore.setState({ encoreFeatures: { ...initialEncore, board, maestroCue: false } });
 		const { result } = renderHook(() => useMainKeyboardHandler());
 		result.current.keyboardHandlerRef.current = createMockContext({
@@ -5496,6 +5496,6 @@ describe('useMainKeyboardHandler - Profiles Cue independence', () => {
 				new KeyboardEvent('keydown', { key: 'P', metaKey: true, shiftKey: true, bubbles: true })
 			)
 		);
-		expect(useModalStore.getState().modals.has('profilesModal')).toBe(expected);
+		expect(useModalStore.getState().modals.has('profilesModal' as never)).toBe(expected);
 	});
 });

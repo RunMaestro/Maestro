@@ -23,12 +23,21 @@ function indexById(board: Board): Map<string, BoardCard> {
  * with no matching card) counts as a blocker: the card cannot proceed until the
  * dependency exists and completes. Order matches the card's `parents` list.
  */
-export function getBlockers(card: BoardCard, board: Board): BoardCard['id'][] {
-	const byId = indexById(board);
+export function getBlockers(
+	card: BoardCard,
+	board: Board,
+	byId: ReadonlyMap<string, BoardCard> = indexById(board)
+): BoardCard['id'][] {
 	const blockers: string[] = [];
 	for (const parentId of card.parents) {
 		const parent = byId.get(parentId);
-		if (!parent || parent.status !== 'done') {
+		const handoff = card.kind === 'review' ? card.reviewHandoff : undefined;
+		const reviewingParent =
+			parent?.status === 'review' &&
+			handoff?.cardId === parentId &&
+			parent.workflow?.workRunId === handoff.runId &&
+			parent.workflow?.reviewCardId === card.id;
+		if (!parent || (parent.status !== 'done' && !reviewingParent)) {
 			blockers.push(parentId);
 		}
 	}
@@ -53,7 +62,7 @@ export function getEligibleCards(board: Board): BoardCard[] {
 	return board.cards.filter((card) => {
 		if (card.status !== 'todo') return false;
 		if (card.heldByUser) return false;
-		return card.parents.every((parentId) => byId.get(parentId)?.status === 'done');
+		return getBlockers(card, board, byId).length === 0;
 	});
 }
 

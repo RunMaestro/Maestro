@@ -1,4 +1,8 @@
-import type { BoardRuntimeCommand, BoardCommandResult } from '../../shared/board/commands';
+import type {
+	BoardRuntimeCommand,
+	BoardCommandResult,
+	BoardRoleCommand,
+} from '../../shared/board/commands';
 /**
  * Preload API for Board operations
  *
@@ -8,6 +12,7 @@ import type { BoardRuntimeCommand, BoardCommandResult } from '../../shared/board
  */
 
 import { ipcRenderer } from 'electron';
+import type { BoardWorkerOptionsCommand } from '../../shared/board/worker-options';
 import type { StoredBoardWorker } from '../board/board-workspace-storage';
 import type {
 	BoardCaptureCatalog,
@@ -27,6 +32,8 @@ export type { Board, BoardCard, CardStatus } from '../../shared/board/types';
  */
 export function createBoardApi() {
 	return {
+		/** Explicitly bootstrap global capture before querying; reads never create a board. */
+		initialize: (): Promise<BoardCaptureResponse> => ipcRenderer.invoke('board:initialize'),
 		sourceCommand: (
 			command: import('../../shared/board/types').BoardSourceCommand
 		): Promise<import('../../shared/board/types').BoardSourceResponse> =>
@@ -45,6 +52,8 @@ export function createBoardApi() {
 		): Promise<BoardCaptureResponse> =>
 			ipcRenderer.invoke('board:setStartPolicy', { projectRoot, boardId, expectedRevision, mode }),
 		captureCatalog: (): Promise<BoardCaptureCatalog> => ipcRenderer.invoke('board:captureCatalog'),
+		roleCommand: (command: BoardRoleCommand): Promise<BoardCommandResult> =>
+			ipcRenderer.invoke('board:roleCommand', command),
 		runtimeCommand: (command: BoardRuntimeCommand): Promise<BoardCommandResult> =>
 			ipcRenderer.invoke('board:runtimeCommand', command),
 		captureCard: (command: BoardCaptureCommand): Promise<BoardCaptureResponse> =>
@@ -55,6 +64,8 @@ export function createBoardApi() {
 			ReturnType<typeof import('../board/board-workspace-storage').listBoardWorkerAccessOptions>
 		> => ipcRenderer.invoke('board:listWorkerAccessOptions'),
 		listWorkers: (): Promise<StoredBoardWorker[]> => ipcRenderer.invoke('board:listWorkers'),
+		setWorkerOptions: (command: BoardWorkerOptionsCommand): Promise<StoredBoardWorker[]> =>
+			ipcRenderer.invoke('board:setWorkerOptions', command),
 		registerWorker: (agentId: string): Promise<StoredBoardWorker[]> =>
 			ipcRenderer.invoke('board:registerWorker', { agentId }),
 		setWorkerAccess: (
@@ -101,20 +112,36 @@ export function createBoardApi() {
 			projectRoot: string,
 			boardId: string,
 			cardId: string,
-			status: CardStatus
+			status: CardStatus,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
 		): Promise<Board> =>
-			ipcRenderer.invoke('board:setCardStatus', { projectRoot, boardId, cardId, status }),
+			ipcRenderer.invoke('board:setCardStatus', { projectRoot, boardId, cardId, status, read }),
 
 		// Delete a card by id. Returns the updated board.
-		deleteCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
-			ipcRenderer.invoke('board:deleteCard', { projectRoot, boardId, cardId }),
+		deleteCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		): Promise<Board> =>
+			ipcRenderer.invoke('board:deleteCard', { projectRoot, boardId, cardId, read }),
 
 		// Cancel a running card: kills the agent process and returns the card to
 		// `todo` with a `canceled` run. Returns the updated board.
-		resumeCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
-			ipcRenderer.invoke('board:resumeCard', { projectRoot, boardId, cardId }),
-		cancelCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
-			ipcRenderer.invoke('board:cancelCard', { projectRoot, boardId, cardId }),
+		resumeCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		): Promise<Board> =>
+			ipcRenderer.invoke('board:resumeCard', { projectRoot, boardId, cardId, read }),
+		cancelCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		): Promise<Board> =>
+			ipcRenderer.invoke('board:cancelCard', { projectRoot, boardId, cardId, read }),
 
 		// Subscribe to board persistence pushes. Fires whenever `.maestro/board.yaml`
 		// is written for any project (dispatcher tick, IPC mutation, auto-decompose);

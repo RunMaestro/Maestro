@@ -83,6 +83,10 @@ import {
 } from './commands/cue-pipeline';
 import {
 	boardList,
+	boardCatalog,
+	boardCreateRole,
+	boardSetWorkerRole,
+	boardWorkerOptions,
 	boardCreate,
 	boardRename,
 	boardDelete,
@@ -95,13 +99,6 @@ import {
 	boardControl,
 	boardWatch,
 } from './commands/board';
-import {
-	profileList,
-	profileCreate,
-	profileShow,
-	profileUpdate,
-	profileDelete,
-} from './commands/profile';
 import {
 	cueEngineStart,
 	cueEngineCheck,
@@ -1598,14 +1595,11 @@ board
 	.action(boardShow);
 
 board
-	.command('add-card <boardId>')
-	.description('Add a card to a board')
+	.command('add-card [boardId]')
+	.description('Add a card to the global Board, or to an explicitly selected legacy board')
 	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
 	.requiredOption('-t, --title <title>', 'Card title')
-	.option(
-		'--assignee <profileId>',
-		'Agent Profile (role) id that runs this card; floats to the free worker pool'
-	)
+	.option('--assignee <profileId>', 'Legacy alias for --role; requires an explicit role namespace')
 	.option(
 		'--assignee-agent <agentId>',
 		'Pin the card to a specific agent (runs with its own settings)'
@@ -1628,7 +1622,7 @@ board
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('-t, --title <title>', 'New card title')
 	.option('-b, --body <body>', 'New card body / instructions')
-	.option('--assignee <profileId>', 'New Agent Profile (role) id; pass "" to clear')
+	.option('--assignee <profileId>', 'Legacy alias for --role; pass "" to clear')
 	.option('--assignee-agent <agentId>', 'Pin the card to a specific agent; pass "" to clear')
 	.option('--parents <ids>', 'Comma-separated parent card ids; pass "" to clear')
 	.option('--priority <level>', 'Dispatch priority: high|normal|low ("normal" clears it)')
@@ -1654,7 +1648,7 @@ board
 board
 	.command('set-status <cardId> <status>')
 	.description(
-		`Set a card's status (${CARD_STATUS_LIST}). Moving to done opens the card's PR when it opted in`
+		`Request a card status (${CARD_STATUS_LIST}); final completion requires an explicit human decision in the UI`
 	)
 	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
@@ -1678,13 +1672,42 @@ for (const operation of ['hold', 'resume', 'approve'] as const) {
 		.action((cardId, options) => boardControl(cardId, { ...options, operation }));
 }
 
+board
+	.command('catalog')
+	.description('Read current Board scope, role and repository choices from the host')
+	.option('--json', 'Output the exact host catalog as JSON')
+	.action(boardCatalog);
+
+board
+	.command('create-role <name>')
+	.description('Create a role in the global Board; assign it to workers in the Workers tab')
+	.option('--json', 'Output the exact role identity as JSON')
+	.action(boardCreateRole);
+board
+	.command('worker-role <roleId>')
+	.description('Assign or remove one exact role for a registered worker')
+	.requiredOption('-a, --agent <id-or-name>', 'Registered worker agent')
+	.requiredOption('--namespace <key>', 'Exact role namespace (see board catalog)')
+	.option('--remove', 'Remove this role grant')
+	.option('--json', 'Output the assigned role as JSON')
+	.action(boardSetWorkerRole);
+board
+	.command('worker-options')
+	.description('Read or update a registered worker’s local execution overrides')
+	.requiredOption('-a, --agent <id-or-name>', 'Registered worker agent')
+	.option(
+		'--set <json>',
+		'Patch customModel, customEffort, appendSystemPrompt or customArgs; null clears an override'
+	)
+	.option('--json', 'Output errors as JSON')
+	.action(boardWorkerOptions);
+
 // Central identity and capture flags are registered on the actual Commander commands.
 for (const command of board.commands) {
+	if (['catalog', 'create-role', 'worker-role', 'worker-options'].includes(command.name()))
+		continue;
 	command
-		.option(
-			'--project-root <path>',
-			'Registered source project root (required for mutations without --agent)'
-		)
+		.option('--project-root <path>', 'Registered source project root for selecting a project')
 		.option('--source <key>', 'Canonical source identity; list without filters queries all sources')
 		.option('--collection <key>', 'Canonical collection identity')
 		.option('--revision <n>', 'Expected collection revision')
@@ -1696,7 +1719,10 @@ for (const command of board.commands) {
 			.option('--review-attempt <n>', 'Exact completed source attempt for --review-of')
 			.option('--scope-agent <id>', 'Execute only on this agent')
 			.option('--scope-group <id>', 'Execute only within this group')
-			.option('--profile-namespace <key>', 'Namespace for --assignee role')
+			.option('--reviewer-agent <id>', 'Explicit reviewer within the task scope; pass "" to clear')
+			.option('--role <id>', 'Require this exact worker role id within scope; pass "" to clear')
+			.option('--role-namespace <key>', 'Exact namespace for --role (see board catalog)')
+			.option('--profile-namespace <key>', 'Legacy alias for --role-namespace')
 			.option('--repository <id>', 'Registered repository identity')
 			.option('--working-directory <path>', 'Explicit execution directory')
 			.option(
@@ -1709,7 +1735,7 @@ for (const command of board.commands) {
 board
 	.command('tick')
 	.description('Request one fenced Board dispatch pass from the running host')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.option('-a, --agent <id-or-name>', 'Limit to boards belonging to this agent’s project')
 	.option('--board <boardId>', 'Tick only a specific board')
 	.option('--request-id <id>', 'Stable operation identity for retry')
 	.option('--source <key>', 'Canonical source identity')
@@ -1721,7 +1747,7 @@ board
 board
 	.command('watch')
 	.description('Request fenced host ticks until Ctrl-C; the host owns every run.')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.option('-a, --agent <id-or-name>', 'Limit to boards belonging to this agent’s project')
 	.option('--board <boardId>', 'Watch only a specific board')
 	.option('--source <key>', 'Canonical source identity')
 	.option('--collection <key>', 'Canonical collection identity')
@@ -1730,59 +1756,6 @@ board
 	.option('--json', 'Output one JSON object per tick (for scripting)')
 	.action(boardWatch);
 
-// Profile commands - manage Agent Profiles (.maestro/profiles.yaml), mirroring
-// the profiles:* IPC surface via the same Electron-free storage module.
-const profile = encoreCommand(program, 'profile', 'board', encoreFlags).description(
-	'Manage Agent Profiles'
-);
-
-profile
-	.command('list')
-	.description("List all profiles in an agent's project")
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profiles')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action(profileList);
-
-profile
-	.command('create')
-	.description('Create a profile layered on a base agent')
-	.requiredOption('--base <agentId>', 'Base Left Bar agent (also locates the project)')
-	.requiredOption('-n, --name <name>', 'Profile name')
-	.option('--pool', 'Create a base-agent-less role that floats to the free worker pool')
-	.option('--model <model>', 'Model override (falls back to the running agent)')
-	.option('--effort <level>', 'Reasoning effort override')
-	.option('--role <text>', 'Role system-prompt appended for this profile')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action(profileCreate);
-
-profile
-	.command('show <profileId>')
-	.description('Show a profile and the spawn overrides it resolves to')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profile')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action(profileShow);
-
-profile
-	.command('update <profileId>')
-	.description('Edit a profile in place, keeping its id (and every card that references it)')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profile')
-	.option('-n, --name <name>', 'New profile name')
-	.option('--model <model>', 'Model override; pass "" to fall back to the running agent')
-	.option('--effort <level>', 'Reasoning effort override; pass "" to clear')
-	.option('--role-prompt <text>', 'Role system-prompt appended for this profile; pass "" to clear')
-	.option('--role <text>', 'Alias for --role-prompt (matches `profile create`)')
-	.option('--args <args>', 'Extra CLI args for spawns wearing this role; pass "" to clear')
-	.option('--base <agentId>', 'Pin the role to a different base agent')
-	.option('--pool', 'Drop the base agent so the role floats to the free worker pool')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action(profileUpdate);
-
-profile
-	.command('delete <profileId>')
-	.description('Delete a profile by id')
-	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profile')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action(profileDelete);
 // Cue engine subcommands - run Maestro Cue unattended, without the desktop
 // app, and inspect/control that runner. See `cue-engine.ts` for what the
 // standalone engine can and cannot do relative to the desktop app's own

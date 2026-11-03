@@ -5,6 +5,7 @@ import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
 import { isPathAtOrUnderRoot } from '../../shared/worktreePaths';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { validateAgentProfile, type AgentProfile } from '../../shared/profiles/types';
 import {
@@ -44,7 +45,7 @@ import {
 	type BoardClaimCommand,
 	type BoardClaimHostContext,
 } from './board-claims';
-import { boardMigrationSourceKey } from './board-migration';
+import { boardMigrationSourceKey, hasLegacyDirectStart } from './board-migration';
 import {
 	BoardWorkspaceStorage,
 	listBoardWorkers as listStoredBoardWorkers,
@@ -53,6 +54,7 @@ import {
 	setBoardWorkerPaused as setStoredBoardWorkerPaused,
 	setBoardWorkerEnabled as setStoredBoardWorkerEnabled,
 	setBoardWorkerAccess as setStoredBoardWorkerAccess,
+	setBoardWorkerOptions as setStoredBoardWorkerOptions,
 	BoardWorkspaceStorageError,
 	BOARD_CARD_EDITABLE_FIELDS,
 	BOARD_COLLECTION_EDITABLE_FIELDS,
@@ -70,6 +72,7 @@ const BOARD_CAPTURE_SPEC_FIELDS = [
 	'kind',
 	'executionScope',
 	'assigneeAgentId',
+	'reviewerAgentId',
 	'assigneeProfileId',
 	'profileNamespace',
 	'role',
@@ -79,6 +82,14 @@ const BOARD_CAPTURE_SPEC_FIELDS = [
 	'worktree',
 	'prOnDone',
 ] as const;
+
+// A host-owned namespace, independent of repositories, agents and installation paths.
+// Keep these identities stable across restarts; legacy sources are never rekeyed.
+const GLOBAL_BOARD_KEY = {
+	sourceKey: createHash('sha256').update('maestro:global-board:v1').digest('hex'),
+	collectionKey: 'maestro:global-board:v1',
+};
+const GLOBAL_BOARD_ID = 'maestro-global';
 
 export { BoardWorkspaceStorageError as BoardStorageError } from './board-workspace-storage';
 export type BoardSavedListener = (projectRoot: string, boards: Board[]) => void;
@@ -148,11 +159,21 @@ export interface PreparedDiagnosticObservations {
 export class BoardStorageFacade {
 	readonly workspace: BoardWorkspaceStorage;
 	/** No transport authority is accepted here; runtime liveness/owner evidence is injected. */
-	claim(command: BoardClaimCommand, currentHost: () => BoardClaimHostContext) {
-		return claimBoardCard(this.db, command, () => ({
-			...currentHost(),
-			catalog: this.captureCatalog(),
-		}));
+	claim(
+		command: BoardClaimCommand,
+		currentHost: () => BoardClaimHostContext,
+		emptyRegistryProbe = false
+	) {
+		return claimBoardCard(
+			this.db,
+			command,
+			() => ({
+				...currentHost(),
+				catalog: this.captureCatalog(),
+			}),
+			undefined,
+			emptyRegistryProbe
+		);
 	}
 	constructor(
 		readonly db: Database.Database,
@@ -161,6 +182,40 @@ export class BoardStorageFacade {
 		) => readonly string[] = resolveLocalBoardSourceKeys
 	) {
 		this.workspace = new BoardWorkspaceStorage(db);
+	}
+
+	/** Explicit writer entry, never called by query/queryAsync or inside their snapshots. */
+	ensureGlobalBoard(): Board {
+		if (this.db.inTransaction)
+			throw new BoardWorkspaceStorageError(
+				'invalid-input',
+				'Global Board initialization requires its own transaction'
+			);
+		let snapshot = this.workspace.readCollection(GLOBAL_BOARD_KEY);
+		if (!snapshot) {
+			try {
+				snapshot = this.workspace.createCollection({
+					...GLOBAL_BOARD_KEY,
+					legacyBoardId: GLOBAL_BOARD_ID,
+					expectedRevision: null,
+					// An absent start override uses the existing conservative approval default.
+					set: { name: 'Board' },
+				});
+			} catch (error) {
+				// Another process can initialize between the read and IMMEDIATE write.
+				// createCollection still asserts absence and rolls back its entire loser write.
+				if (!(error instanceof BoardWorkspaceStorageError) || error.code !== 'already-exists')
+					throw error;
+				snapshot = this.workspace.readCollection(GLOBAL_BOARD_KEY);
+				if (!snapshot) throw error;
+			}
+		}
+		if (snapshot.archived || snapshot.legacyBoardId !== GLOBAL_BOARD_ID)
+			throw new BoardWorkspaceStorageError(
+				'identity-mismatch',
+				'Global Board identity changed or archived'
+			);
+		return this.project(snapshot);
 	}
 
 	captureCatalog(): BoardCaptureCatalog {
@@ -185,7 +240,8 @@ export class BoardStorageFacade {
 			.prepare('SELECT id, payload_json FROM repositories ORDER BY id')
 			.all() as { id: string; payload_json: string }[];
 		return {
-			...registers,
+			agents: registers.agents.map(({ id, groupId }) => ({ id, groupId })),
+			groups: registers.groups.map(({ id }) => ({ id })),
 			profiles: profiles.map((row) => ({
 				namespace: row.profile_namespace,
 				profile: JSON.parse(row.payload_json),
@@ -219,7 +275,7 @@ export class BoardStorageFacade {
 				'invalid-input',
 				'Diagnostics require no open transaction'
 			);
-		const workspaceRevision = this.workspace.readWorkspace().revision;
+		const workspaceRevision = this.workspace.readRevision();
 		const catalog = this.captureCatalog();
 		// Capture every identity/revision before yielding, including the original repository reference.
 		const inputs = structuredClone(boards).flatMap((board) =>
@@ -272,10 +328,18 @@ export class BoardStorageFacade {
 	}
 
 	/** Pure path projection; absent or stale observations cannot assert repository readiness. */
-	captureReadiness(board: Board, observations?: PreparedDiagnosticObservations) {
-		const catalog = this.captureCatalog();
-		const host = readinessHost();
-		const workers = listStoredBoardWorkers(this.db).map((worker) => ({
+	captureReadiness(
+		board: Board,
+		observations?: PreparedDiagnosticObservations,
+		snapshot?: {
+			catalog: BoardCaptureCatalog;
+			host: ReturnType<typeof readinessHost>;
+			workers: ReturnType<typeof listStoredBoardWorkers>;
+		}
+	) {
+		const catalog = snapshot?.catalog ?? this.captureCatalog();
+		const host = snapshot ? snapshot.host : readinessHost();
+		const workers = (snapshot?.workers ?? listStoredBoardWorkers(this.db)).map((worker) => ({
 			...worker,
 			roleRefs: Array.isArray(worker.payload.roleRefs) ? worker.payload.roleRefs : [],
 			allowedRepositoryIds: Array.isArray(worker.payload.allowedRepositoryIds)
@@ -283,7 +347,10 @@ export class BoardStorageFacade {
 				: [],
 		}));
 		const context = {
-			...this.captureContext(board),
+			...catalog,
+			defaultStartMode:
+				board.defaultStartMode === 'direct' ? ('direct' as const) : ('approval' as const),
+			canRelaxStartPolicy: false,
 			workers,
 			repositoryIds: catalog.repositories.filter((repo) => repo.validated).map((repo) => repo.id),
 		};
@@ -325,16 +392,35 @@ export class BoardStorageFacade {
 					reasons.push('repository-unresolved');
 				if (card.kind === 'review' && !card.reviewHandoff)
 					reasons.push('review-artifact-unresolved');
+				if (card.kind !== 'review' && card.status === 'review' && card.workflow?.workRunId) {
+					if (!card.reviewerAgentId) reasons.push('reviewer-missing');
+					else {
+						const reviewOptions = {
+							...card,
+							role: undefined,
+							assigneeProfileId: undefined,
+							assigneeAgentId: card.reviewerAgentId,
+						};
+						const reason = evaluateClaimWorker(reviewOptions, card.reviewerAgentId, context);
+						if (reason) reasons.push(reason);
+						else if (host?.agentStates[card.reviewerAgentId]?.busy) reasons.push('worker-busy');
+						else
+							reasons.push(
+								card.workflow.reviewCardId ? 'review-pending' : 'review-artifact-unresolved'
+							);
+					}
+				}
+				if (card.workflow?.correctionLimitReached) reasons.push('correction-limit');
 				if (card.capturePolicy?.dispatchApproval === 'required') reasons.push('approval-required');
 				if (card.heldByUser) reasons.push('held');
+				const captureInput = persistedCaptureInput(card, { ...card });
+				// evaluateClaimWorker returns this same first capture failure for every
+				// agent. Compute it once; a ready card still checks each worker normally.
+				const captureFailure = evaluateCaptureReadiness(captureInput, context).at(0);
 				const candidates = catalog.agents
 					.map((agent) => ({
 						agentId: agent.id,
-						reason: evaluateClaimWorker(
-							persistedCaptureInput(card, { ...card }),
-							agent.id,
-							context
-						),
+						reason: captureFailure ?? evaluateClaimWorker(captureInput, agent.id, context),
 					}))
 					.filter((entry) => entry.reason !== 'worker-outside-scope');
 				const eligible = candidates.filter((entry) => entry.reason === null);
@@ -374,6 +460,8 @@ export class BoardStorageFacade {
 	/** Atomic host mutation using the caller's collection AND card read revisions. */
 	capture(command: BoardCaptureCommand, human = false, recordHostState?: () => void): Board {
 		return (() => {
+			if (command.replaceRole !== undefined && command.replaceRole !== true)
+				throw new BoardWorkspaceStorageError('invalid-input', 'Invalid role replacement intent');
 			const board = this.read(command.projectRoot, command.boardId);
 			if (board.storage!.expectedRevision !== command.expectedRevision)
 				throw new BoardWorkspaceStorageError('stale-revision', 'Board changed since read');
@@ -388,8 +476,36 @@ export class BoardStorageFacade {
 				throw new BoardWorkspaceStorageError('runtime-unavailable', 'Capture cannot start a run');
 			if (previous && previous.status !== command.card.status)
 				throw new BoardWorkspaceStorageError('invalid-input', 'Use the separate status command');
+			const input = { ...command.card } as BoardCard & { profileNamespace?: string };
+			if (command.replaceRole) {
+				// Validate conflicting/malformed references before replacing their aliases.
+				// Final policy, scope and revision validation still runs in the normal save.
+				if (
+					!input.role &&
+					(input.assigneeProfileId !== undefined || input.profileNamespace !== undefined)
+				)
+					throw new BoardWorkspaceStorageError(
+						'invalid-input',
+						'Role replacement requires card.role or cleared aliases'
+					);
+				const validation = validateCapture(
+					{
+						role: input.role,
+						assigneeProfileId: input.assigneeProfileId,
+						profileNamespace: input.profileNamespace,
+					},
+					this.captureContext(board, human)
+				);
+				if (!validation.ok)
+					throw new BoardWorkspaceStorageError('invalid-input', 'Invalid role replacement', {
+						captureErrors: validation.errors,
+					});
+				input.role = command.card.role;
+				input.assigneeProfileId = command.card.role?.profileId;
+				input.profileNamespace = undefined;
+			}
 			const card = validateBoardCard({
-				...command.card,
+				...input,
 				createdAt: previous?.createdAt ?? nowIso(),
 				updatedAt: nowIso(),
 			});
@@ -481,6 +597,87 @@ export class BoardStorageFacade {
 					.prepare('UPDATE collections SET revision=revision+1 WHERE collection_key=?')
 					.run(key.collectionKey);
 				this.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+			})
+			.immediate();
+	}
+
+	/** Create a pure role in the existing host-owned global source. */
+	createRole(name: string): import('../../shared/board/types').BoardRoleRef {
+		if (typeof name !== 'string' || !name.trim() || name.includes('\0'))
+			throw new BoardWorkspaceStorageError('invalid-input', 'Role name is required');
+		// Bootstrap owns its transaction and must remain outside all read/write callers.
+		const board = this.ensureGlobalBoard();
+		return this.db
+			.transaction(() => {
+				const sourceKey = board.storage!.sourceKey;
+				const namespace = `legacy:${sourceKey}`;
+				// A new host-generated identity cannot replace an existing shared profile.
+				const profile = { id: generateUUID(), name: name.trim() };
+				this.db
+					.prepare('INSERT INTO profiles VALUES (?, ?, ?, ?)')
+					.run(namespace, profile.id, canonicalJson(profile), sourceKey);
+				this.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+				return { namespace, profileId: profile.id };
+			})
+			.immediate();
+	}
+
+	/** Patch one exact grant using the current payload inside the write transaction. */
+	setWorkerRole(
+		agentId: string,
+		role: import('../../shared/board/types').BoardRoleRef,
+		enabled: boolean
+	): void {
+		this.db
+			.transaction(() => {
+				if (!this.captureCatalog().agents.some((agent) => agent.id === agentId))
+					throw new BoardWorkspaceStorageError('not-found', 'Live agent not found');
+				const worker = listStoredBoardWorkers(this.db).find((entry) => entry.agentId === agentId);
+				if (!worker)
+					throw new BoardWorkspaceStorageError(
+						'not-found',
+						'Board worker not found; add worker first'
+					);
+				const { roleRefs, allowedRepositoryIds } = worker.payload;
+				if (
+					!Array.isArray(roleRefs) ||
+					!Array.isArray(allowedRepositoryIds) ||
+					!roleRefs.every(
+						(ref) => ref && typeof ref.namespace === 'string' && typeof ref.profileId === 'string'
+					) ||
+					!allowedRepositoryIds.every((id) => typeof id === 'string')
+				)
+					throw new BoardWorkspaceStorageError(
+						'invalid-input',
+						'Access data needs repair; existing values are preserved'
+					);
+				if (
+					typeof enabled !== 'boolean' ||
+					!role ||
+					typeof role.namespace !== 'string' ||
+					typeof role.profileId !== 'string' ||
+					!this.db
+						.prepare('SELECT 1 FROM profiles WHERE profile_namespace=? AND id=?')
+						.get(role.namespace, role.profileId)
+				)
+					throw new BoardWorkspaceStorageError(
+						'invalid-input',
+						'Exact Board worker role not found'
+					);
+				const selected = roleRefs.some(
+					(ref) => ref.namespace === role.namespace && ref.profileId === role.profileId
+				);
+				if (selected === enabled) return;
+				setStoredBoardWorkerAccess(
+					this.db,
+					agentId,
+					enabled
+						? [...roleRefs, role]
+						: roleRefs.filter(
+								(ref) => ref.namespace !== role.namespace || ref.profileId !== role.profileId
+							),
+					allowedRepositoryIds
+				);
 			})
 			.immediate();
 	}
@@ -656,15 +853,27 @@ export class BoardStorageFacade {
 			projectSource = keys[0];
 		}
 		return this.db.transaction(() => {
-			const snapshot = this.workspace.readWorkspace();
 			const filters = [query.sourceKey, query.projectRef?.sourceKey, projectSource].filter(
 				(key): key is string => key !== undefined
 			);
+			const snapshot = this.workspace.readWorkspace(filters[0]);
 			if (filters.some((key) => !snapshot.sourceKeys.includes(key)))
 				throw new BoardWorkspaceStorageError(
 					'legacy-mapping-missing',
 					'Board source is not registered'
 				);
+			// Diagnostic readiness for all collections shares one fresh, synchronous
+			// host snapshot. Claim and start still revalidate independently.
+			const selected = snapshot.collections.filter((entry) =>
+				filters.every((key) => key === entry.sourceKey)
+			);
+			const readinessSnapshot = selected.length
+				? {
+						catalog: this.captureCatalog(),
+						host: readinessHost(),
+						workers: listStoredBoardWorkers(this.db),
+					}
+				: undefined;
 			return {
 				revision: snapshot.revision,
 				sources: snapshot.sourceKeys.map((sourceKey) => {
@@ -674,9 +883,11 @@ export class BoardStorageFacade {
 					const imported = !row
 						? (this.db
 								.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-								.get(sourceKey) as { snapshot: Buffer } | undefined)
+								.get(sourceKey) as { snapshot: Uint8Array } | undefined)
 						: undefined;
-					const plan = imported ? JSON.parse(imported.snapshot.toString()) : null;
+					const plan = imported
+						? JSON.parse(Buffer.from(imported.snapshot).toString('utf8'))
+						: null;
 					const candidate = plan?.repository
 						? { location: { kind: 'local' as const }, path: plan.repository.workingDirectory }
 						: undefined;
@@ -690,16 +901,14 @@ export class BoardStorageFacade {
 								: undefined));
 					return { sourceKey, projectRef: { sourceKey }, ...(location ? { location } : {}) };
 				}),
-				collections: snapshot.collections
-					.filter((entry) => filters.every((key) => key === entry.sourceKey))
-					.map((entry) => ({
-						sourceKey: entry.sourceKey,
-						collectionKey: entry.collectionKey,
-						revision: entry.revision,
-						projectRef: { sourceKey: entry.sourceKey },
-						board: this.project(entry),
-						readiness: this.captureReadiness(this.project(entry), observations),
-					})),
+				collections: selected.map((entry) => ({
+					sourceKey: entry.sourceKey,
+					collectionKey: entry.collectionKey,
+					revision: entry.revision,
+					projectRef: { sourceKey: entry.sourceKey },
+					board: this.project(entry),
+					readiness: this.captureReadiness(this.project(entry), observations, readinessSnapshot),
+				})),
 			};
 		})();
 	}
@@ -852,6 +1061,29 @@ export class BoardStorageFacade {
 			throw new BoardWorkspaceStorageError('invalid-payload', 'Invalid Board; no data written');
 		const cards: BoardCardWrite[] = board.cards.map((card) => {
 			const original = stored?.cards.find((entry) => entry.cardId === card.id);
+			if (
+				card.status !== original?.payload.status &&
+				['review', 'ready-for-human', 'done'].includes(card.status)
+			)
+				throw new BoardWorkspaceStorageError(
+					'protected-field',
+					'Review and final approval require the bound workflow, not a status edit'
+				);
+			if (
+				original &&
+				['review', 'ready-for-human', 'done'].includes(original.payload.status as string) &&
+				(card.status !== original.payload.status ||
+					BOARD_CAPTURE_SPEC_FIELDS.some(
+						(field) =>
+							(field !== 'reviewerAgentId' || original.payload.status !== 'review') &&
+							canonicalJson({ v: original.payload[field] }) !==
+								canonicalJson({ v: (card as unknown as Record<string, unknown>)[field] })
+					))
+			)
+				throw new BoardWorkspaceStorageError(
+					'protected-field',
+					'Completed work specifications are immutable'
+				);
 			if (original?.archived)
 				throw new BoardWorkspaceStorageError('protected-field', 'Cannot reuse an archived card ID');
 			if (card.status === 'running' && original?.payload.status !== 'running')
@@ -903,8 +1135,7 @@ export class BoardStorageFacade {
 						human ||
 						(original?.payload.capturePolicy as { effectiveStartMode?: string } | undefined)
 							?.effectiveStartMode === 'direct' ||
-						(original?.payload.migration as { intent?: string } | undefined)?.intent ===
-							'legacy-direct',
+						(!!original && hasLegacyDirectStart(original.payload, stored!.payload)),
 				});
 				const repository = this.captureCatalog().repositories.find(
 					(repo) => repo.id === card.repositoryId
@@ -1051,8 +1282,7 @@ export class BoardStorageFacade {
 								card.payload.startModeOverride ??
 								(previous?.payload.capturePolicy as { effectiveStartMode?: string } | undefined)
 									?.effectiveStartMode ??
-								((previous?.payload.migration as { intent?: string } | undefined)?.intent ===
-								'legacy-direct'
+								(previous && hasLegacyDirectStart(previous.payload, before[i]!.payload)
 									? 'direct'
 									: context.defaultStartMode);
 							this.workspace.recordCapturePolicy(snapshot, card.cardId, {
@@ -1060,6 +1290,17 @@ export class BoardStorageFacade {
 								specificationRevision: card.revision,
 								dispatchApproval: effectiveStartMode === 'direct' ? 'not-required' : 'required',
 							});
+						}
+						if (!previous && !card.archived) {
+							this.db
+								.prepare(
+									"UPDATE cards SET payload_json=json_set(payload_json, '$.workflow', json(?)) WHERE collection_key=? AND id=?"
+								)
+								.run(
+									canonicalJson({ version: 1, corrections: 0 }),
+									snapshot.collectionKey,
+									card.cardId
+								);
 						}
 					})
 				);
@@ -1094,6 +1335,12 @@ export function closeBoardStorage(): void {
 
 export function getBoardCaptureCatalog(): BoardCaptureCatalog {
 	return storage().captureCatalog();
+}
+/** Host bootstrap returns the ordinary source/collection/revision capture envelope.
+ * Its source reference is opaque; no repository, migration or location is invented.
+ */
+export function initializeBoardWorkspace(): Board {
+	return storage().ensureGlobalBoard();
 }
 export async function captureBoardCard(
 	command: BoardCaptureCommand,
@@ -1131,6 +1378,17 @@ export function setBoardWorkerAccess(
 	allowedRepositoryIds: string[]
 ) {
 	return setStoredBoardWorkerAccess(storage().db, agentId, roleRefs, allowedRepositoryIds);
+}
+
+export function setBoardWorkerOptions(
+	command: import('../../shared/board/worker-options').BoardWorkerOptionsCommand
+) {
+	return setStoredBoardWorkerOptions(
+		storage().db,
+		command.agentId,
+		command.expectedPayload,
+		command.patch
+	);
 }
 
 const boardWriteQueue = createKeyedWriteQueue();

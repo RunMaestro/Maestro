@@ -209,7 +209,6 @@ export interface QuickActionsModalProps {
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
 	onOpenBoard?: () => void;
-	onOpenProfiles?: () => void;
 	onOpenPianola?: () => void;
 	setAgentRunDashboardOpen?: (open: boolean) => void;
 	onConfigureCue?: (session: Session) => void;

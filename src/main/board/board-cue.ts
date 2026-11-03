@@ -1,6 +1,8 @@
 /** The existing Cue heartbeat owns central intake. Desktop and CLI attach to
  * these same per-card runtime adapters; storage, owner and run service are shared. */
+import { yieldToEventLoop } from '../utils/concurrency';
 import { refreshBoardSources } from './board-source-host';
+import { queueBoardReviews } from './board-review';
 import type { DataDirLock } from '../../shared/maestro-lib/runtime/data-dir-lock';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
@@ -29,10 +31,10 @@ export class BoardCueHost {
 	private tasks = new Set<Promise<unknown>>();
 	constructor(private readonly deps: BoardCueHostDeps) {}
 
-	readonly runtimeFor = async (key: BoardCardKey): Promise<BoardRuntime | null> => {
+	readonly runtimeFor = async (key: BoardCardKey, prepare = true): Promise<BoardRuntime | null> => {
 		const lock = this.deps.lock();
 		if (!lock || !lock.verify().ok) return null;
-		await this.deps.prepare(key);
+		if (prepare) await this.deps.prepare(key);
 		const id = canonicalJson([key, lock.info]);
 		let runtime = this.runtimes.get(id);
 		if (!runtime) {
@@ -67,11 +69,11 @@ export class BoardCueHost {
 		await refreshBoardSources();
 		// All registered sources, including projects without an open Left Bar agent.
 		const storage = this.deps.storage();
+		queueBoardReviews(storage);
 		for (const initial of storage.query().collections) {
-			const entry = storage
-				.query({ sourceKey: initial.sourceKey })
-				.collections.find((c) => c.collectionKey === initial.collectionKey);
-			if (!entry) continue;
+			await yieldToEventLoop();
+			const entry = storage.workspace.readCollection(initial);
+			if (!entry || entry.archived) continue;
 			const result = await executeBoardRuntimeCommand({
 				action: 'tick',
 				operationId: generateUUID(),

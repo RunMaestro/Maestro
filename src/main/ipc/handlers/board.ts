@@ -11,6 +11,7 @@
  */
 
 import { captureBoardCardFromHost } from '../../board/board-review';
+import { executeBoardCommand } from '../../board/board-command-host';
 import { refreshBoardSources, executeBoardSourceCommand } from '../../board/board-source-host';
 import { ipcMain, type BrowserWindow } from 'electron';
 import { getLiveSessions } from '../../stores/getters';
@@ -18,6 +19,7 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import {
 	getBoardCaptureCatalog,
 	getBoardStorage,
+	initializeBoardWorkspace,
 	listBoards,
 	queryBoardWorkspaceAsync,
 	BoardStorageError,
@@ -36,6 +38,7 @@ import {
 	setBoardWorkerPaused,
 	setBoardWorkerEnabled,
 	setBoardWorkerAccess,
+	setBoardWorkerOptions,
 } from '../../board/board-storage';
 import {
 	executeBoardRuntimeCommand,
@@ -43,6 +46,7 @@ import {
 	controlBoardRuntimeCard,
 } from '../../board/board-runtime-host';
 import { parseBoardCommand, type BoardCommandResult } from '../../../shared/board/commands';
+import { parseBoardWorkerOptionsCommand } from '../../../shared/board/worker-options';
 import { startCardPr } from '../../board/board-pr';
 import type { BoardCardToastPayload } from '../../board/board-toast';
 import type {
@@ -62,6 +66,28 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	context: LOG_CONTEXT,
 	operation,
 });
+
+/** Fence a UI mutation to the exact snapshot displayed to the user. */
+function assertCardRead(
+	projectRoot: string,
+	boardId: string,
+	cardId: string,
+	read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+): void {
+	if (!read) return;
+	const board = getBoard(projectRoot, boardId);
+	if (
+		!board ||
+		board.storage?.sourceKey !== read.sourceKey ||
+		board.storage.collectionKey !== read.collectionKey
+	)
+		throw new BoardStorageError('identity-mismatch', 'Board identity changed since read');
+	if (
+		board.storage.expectedRevision !== read.revision ||
+		board.storage.cardRevisions[cardId] !== read.cardRevision
+	)
+		throw new BoardStorageError('stale-revision', 'Board card changed since read');
+}
 
 /** Dependencies required for Board handler registration. */
 export interface BoardHandlerDependencies {
@@ -98,10 +124,19 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 					!window.isDestroyed() &&
 					event.sender === window.webContents &&
 					event.senderFrame === window.webContents.mainFrame;
-				return await executeBoardRuntimeCommand(
+				const result = await executeBoardRuntimeCommand(
 					command,
 					native ? 'native-desktop-main-frame' : undefined
 				);
+				if (result.ok && native && command.action === 'control' && command.operation === 'accept') {
+					const collection = getBoardStorage().workspace.readCollection(command.target);
+					if (collection)
+						startCardPr(command.target.projectRoot, collection.legacyBoardId, command.cardId, {
+							notify: deps.notifyToast,
+							onLog: deps.onLog,
+						});
+				}
+				return result;
 			} catch (error) {
 				if (!(error instanceof BoardStorageError)) throw error;
 				return { ok: false, error: { code: error.code, message: error.message } };
@@ -203,6 +238,35 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			);
 		}
 	);
+	ipcMain.handle(
+		'board:roleCommand',
+		async (event, input: unknown): Promise<BoardCommandResult> => {
+			const window = deps.getMainWindow?.();
+			if (
+				!window ||
+				window.isDestroyed() ||
+				event?.sender !== window.webContents ||
+				event.senderFrame !== window.webContents.mainFrame
+			)
+				return {
+					ok: false,
+					error: {
+						code: 'protected-field',
+						message: 'Board role editing requires the desktop main frame',
+					},
+				};
+			const command =
+				input && typeof input === 'object' && !Array.isArray(input)
+					? parseBoardCommand(input as Record<string, unknown>)
+					: undefined;
+			if (!command || (command.action !== 'create-role' && command.action !== 'set-worker-role'))
+				return {
+					ok: false,
+					error: { code: 'invalid-input', message: 'Invalid Board role command' },
+				};
+			return executeBoardCommand(command);
+		}
+	);
 
 	ipcMain.handle(
 		'board:captureCatalog',
@@ -231,7 +295,15 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 				if (
 					!command ||
 					Object.keys(command).some(
-						(key) => !['projectRoot', 'boardId', 'expectedRevision', 'card'].includes(key)
+						(key) =>
+							![
+								'projectRoot',
+								'boardId',
+								'expectedRevision',
+								'card',
+								'replaceRole',
+								'reviewSource',
+							].includes(key)
 					)
 				)
 					throw new BoardStorageError('invalid-input', 'Invalid capture command');
@@ -253,6 +325,23 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	ipcMain.handle(
+		'board:initialize',
+		withIpcErrorLogging(handlerOpts('initialize'), async (): Promise<BoardCaptureResponse> => {
+			try {
+				const board = initializeBoardWorkspace();
+				return {
+					ok: true,
+					value: board,
+					readiness: await getBoardStorage().captureReadinessAsync(board),
+				};
+			} catch (error) {
+				if (!(error instanceof BoardStorageError)) throw error;
+				return { ok: false, error: { code: error.code, message: error.message } };
+			}
+		})
+	);
+
+	ipcMain.handle(
 		'board:queryWorkspace',
 		withIpcErrorLogging(
 			handlerOpts('queryWorkspace'),
@@ -271,6 +360,17 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	ipcMain.handle(
 		'board:listWorkers',
 		withIpcErrorLogging(handlerOpts('listWorkers'), async () => listBoardWorkers())
+	);
+	ipcMain.handle(
+		'board:setWorkerOptions',
+		withIpcErrorLogging(handlerOpts('setWorkerOptions'), async (input: unknown) => {
+			const command = parseBoardWorkerOptionsCommand(input);
+			if (!command) throw new Error('Invalid Board worker options command');
+			if (!getLiveSessions().some((session) => session.id === command.agentId))
+				throw new Error('Live agent not found');
+			setBoardWorkerOptions(command);
+			return listBoardWorkers();
+		})
 	);
 	ipcMain.handle(
 		'board:listWorkerAccessOptions',
@@ -436,7 +536,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		)
 	);
 
-	// Set a card's status (manual drag-to-move overrides later). Returns the board.
+	// Status requests never grant final human approval, including desktop drags.
 	ipcMain.handle(
 		'board:setCardStatus',
 		withIpcErrorLogging(
@@ -446,22 +546,18 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 				boardId: string;
 				cardId: string;
 				status: CardStatus;
-			}): Promise<Board> => {
-				const board = await enqueueBoardWrite(options.projectRoot, () =>
-					updateCardStatus(options.projectRoot, options.boardId, options.cardId, options.status)
-				);
-				// Board F3: approving a `review` card (or any manual move into Done) is
-				// the OTHER transition into `done`, so it opens the card's pull request
-				// too. Fire-and-forget: the opt-in gate and every failure path live in
-				// `startCardPr`, and the IPC reply must not wait on git/gh.
-				if (options.status === 'done') {
-					startCardPr(options.projectRoot, options.boardId, options.cardId, {
-						notify: deps.notifyToast,
-						onLog: deps.onLog,
-					});
-				}
-				return board;
-			}
+				read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number };
+			}): Promise<Board> =>
+				enqueueBoardWrite(options.projectRoot, () => {
+					assertCardRead(options.projectRoot, options.boardId, options.cardId, options.read);
+					return updateCardStatus(
+						options.projectRoot,
+						options.boardId,
+						options.cardId,
+						options.status,
+						options.read?.revision
+					);
+				})
 		)
 	);
 
@@ -473,8 +569,19 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		'board:cancelCard',
 		withIpcErrorLogging(
 			handlerOpts('cancelCard'),
-			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> => {
-				return cancelBoardRuntimeCard(options.projectRoot, options.boardId, options.cardId);
+			async (options: {
+				projectRoot: string;
+				boardId: string;
+				cardId: string;
+				read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number };
+			}): Promise<Board> => {
+				return cancelBoardRuntimeCard(
+					options.projectRoot,
+					options.boardId,
+					options.cardId,
+					'hold',
+					options.read
+				);
 			}
 		)
 	);
@@ -483,8 +590,19 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		'board:resumeCard',
 		withIpcErrorLogging(
 			handlerOpts('resumeCard'),
-			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> =>
-				controlBoardRuntimeCard(options.projectRoot, options.boardId, options.cardId, 'resume')
+			async (options: {
+				projectRoot: string;
+				boardId: string;
+				cardId: string;
+				read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number };
+			}): Promise<Board> =>
+				controlBoardRuntimeCard(
+					options.projectRoot,
+					options.boardId,
+					options.cardId,
+					'resume',
+					options.read
+				)
 		)
 	);
 
@@ -493,10 +611,21 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		'board:deleteCard',
 		withIpcErrorLogging(
 			handlerOpts('deleteCard'),
-			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> => {
-				return enqueueBoardWrite(options.projectRoot, () =>
-					deleteCard(options.projectRoot, options.boardId, options.cardId)
-				);
+			async (options: {
+				projectRoot: string;
+				boardId: string;
+				cardId: string;
+				read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number };
+			}): Promise<Board> => {
+				return enqueueBoardWrite(options.projectRoot, () => {
+					assertCardRead(options.projectRoot, options.boardId, options.cardId, options.read);
+					return deleteCard(
+						options.projectRoot,
+						options.boardId,
+						options.cardId,
+						options.read?.revision
+					);
+				});
 			}
 		)
 	);

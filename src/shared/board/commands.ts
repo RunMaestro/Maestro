@@ -2,11 +2,14 @@
  * Authority is never part of the wire contract. Domain validation stays in the host facade.
  */
 import { CARD_STATUSES } from './types';
+import { parseBoardWorkerOptionsCommand } from './worker-options';
+import type { BoardWorkerOptionsCommand, StoredBoardWorker } from './worker-options';
 import type {
 	Board,
 	BoardCaptureCatalog,
 	BoardCaptureCommand,
 	BoardCaptureResponse,
+	BoardRoleRef,
 	BoardWorkspaceQuery,
 	BoardWorkspaceQueryResult,
 	CardStatus,
@@ -30,7 +33,7 @@ export type BoardRuntimeCommand =
 			target: BoardCommandTarget;
 			cardId: string;
 			cardRevision: number;
-			operation: 'hold' | 'resume' | 'approve';
+			operation: 'hold' | 'resume' | 'approve' | 'accept';
 			runToken?: BoardRuntimeToken;
 	  };
 export interface BoardTickResult {
@@ -41,8 +44,12 @@ export interface BoardTickResult {
 }
 export type BoardCommand =
 	| BoardRuntimeCommand
+	| BoardRoleCommand
 	| { action: 'query'; query: BoardWorkspaceQuery }
 	| { action: 'catalog' }
+	| { action: 'list-workers' }
+	| { action: 'set-worker-options'; command: BoardWorkerOptionsCommand }
+	| { action: 'initialize' }
 	| { action: 'capture'; target: BoardCommandTarget; capture: BoardCaptureCommand }
 	| {
 			action: 'create';
@@ -63,12 +70,18 @@ export type BoardCommand =
 			cardRevision: number;
 			status: CardStatus;
 	  };
+/** Board-context role creation and a single additive/removal worker grant. */
+export type BoardRoleCommand =
+	| { action: 'create-role'; name: string }
+	| { action: 'set-worker-role'; agentId: string; role: BoardRoleRef; enabled: boolean };
 export type BoardCommandResult =
 	| {
 			ok: true;
 			value:
 				| BoardWorkspaceQueryResult
 				| BoardCaptureCatalog
+				| BoardRoleRef
+				| StoredBoardWorker[]
 				| Board
 				| Board[]
 				| { success: boolean; prUrl?: string; error?: string }
@@ -98,6 +111,11 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 	const fields: Record<string, string[]> = {
 		query: ['query'],
 		catalog: [],
+		'list-workers': [],
+		'set-worker-options': ['command'],
+		initialize: [],
+		'create-role': ['name'],
+		'set-worker-role': ['agentId', 'role', 'enabled'],
 		capture: ['target', 'capture'],
 		create: ['projectRoot', 'sourceKey', 'name', 'maxInProgress', 'autoDecompose'],
 		'card-pr': ['target', 'cardId'],
@@ -118,7 +136,28 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 		return record(message.query)
 			? { action, query: message.query as BoardWorkspaceQuery }
 			: undefined;
-	if (action === 'catalog') return { action };
+	if (action === 'catalog' || action === 'initialize' || action === 'list-workers')
+		return { action };
+	if (action === 'set-worker-options') {
+		const command = parseBoardWorkerOptionsCommand(message.command);
+		return command ? { action, command } : undefined;
+	}
+	if (action === 'create-role')
+		return text(message.name) ? { action, name: message.name } : undefined;
+	if (action === 'set-worker-role')
+		return text(message.agentId) &&
+			record(message.role) &&
+			keys(message.role, ['namespace', 'profileId']) &&
+			text(message.role.namespace) &&
+			text(message.role.profileId) &&
+			typeof message.enabled === 'boolean'
+			? {
+					action,
+					agentId: message.agentId,
+					role: { namespace: message.role.namespace, profileId: message.role.profileId },
+					enabled: message.enabled,
+				}
+			: undefined;
 	if (action === 'create')
 		return (message.maxInProgress === undefined ||
 			(Number.isSafeInteger(message.maxInProgress) && (message.maxInProgress as number) > 0)) &&
@@ -150,7 +189,7 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 		if (
 			!text(message.cardId) ||
 			!revision(message.cardRevision) ||
-			!['hold', 'resume', 'approve'].includes(message.operation as string)
+			!['hold', 'resume', 'approve', 'accept'].includes(message.operation as string)
 		)
 			return;
 		if (message.runToken !== undefined) {
@@ -172,7 +211,15 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 		const command = message.capture;
 		if (
 			!record(command) ||
-			!keys(command, ['projectRoot', 'boardId', 'expectedRevision', 'card', 'reviewSource']) ||
+			!keys(command, [
+				'projectRoot',
+				'boardId',
+				'expectedRevision',
+				'card',
+				'reviewSource',
+				'replaceRole',
+			]) ||
+			(command.replaceRole !== undefined && command.replaceRole !== true) ||
 			command.projectRoot !== target.projectRoot ||
 			!text(command.boardId) ||
 			command.expectedRevision !== target.expectedRevision ||

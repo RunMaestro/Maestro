@@ -66,9 +66,9 @@ export async function discoverBoardSources(
 	for (const [sourceKey, source] of remoteSources) {
 		const existing = storage.db
 			.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-			.get(sourceKey) as { snapshot: Buffer } | undefined;
+			.get(sourceKey) as { snapshot: Uint8Array } | undefined;
 		if (existing) {
-			applyBoardMigration(storage.db, JSON.parse(existing.snapshot.toString()));
+			applyBoardMigration(storage.db, JSON.parse(Buffer.from(existing.snapshot).toString('utf8')));
 			continue;
 		}
 		let diagnostic: string | undefined;
@@ -126,9 +126,9 @@ export async function discoverBoardSources(
 		// An import is a point-in-time transfer, never a YAML synchronization loop.
 		const existing = storage.db
 			.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-			.get(sourceKey) as { snapshot: Buffer } | undefined;
+			.get(sourceKey) as { snapshot: Uint8Array } | undefined;
 		if (existing) {
-			applyBoardMigration(storage.db, JSON.parse(existing.snapshot.toString()));
+			applyBoardMigration(storage.db, JSON.parse(Buffer.from(existing.snapshot).toString('utf8')));
 			continue;
 		}
 		if (
@@ -253,10 +253,10 @@ export async function executeBoardSourceCommand(
 			throw new BoardStorageError('identity-mismatch', 'Persisted source identity changed');
 		const migration = storage.db
 			.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-			.get(command.sourceKey) as { snapshot: Buffer } | undefined;
+			.get(command.sourceKey) as { snapshot: Uint8Array } | undefined;
 		const importedRepository = migration
 			? (
-					JSON.parse(migration.snapshot.toString()) as {
+					JSON.parse(Buffer.from(migration.snapshot).toString('utf8')) as {
 						repository?: { id: string; workingDirectory: string };
 					}
 				).repository

@@ -1086,14 +1086,8 @@ describe('Board + Agent Profiles palette entries', () => {
 		expect(close).toHaveBeenCalledWith(false);
 	});
 
-	it('opens Agent Profiles and closes the palette', () => {
-		const onOpenProfiles = vi.fn();
-		const profiles = buildFeatureCommands({ ...baseArgs, onOpenProfiles }).find(
-			(a) => a.id === 'agent-profiles'
-		);
-		expect(profiles).toBeDefined();
-		profiles!.action();
-		expect(onOpenProfiles).toHaveBeenCalled();
-		expect(close).toHaveBeenCalledWith(false);
+	it('does not expose Agent Profiles', () => {
+		const ids = buildFeatureCommands(baseArgs).map((a) => a.id);
+		expect(ids).not.toContain('agent-profiles');
 	});
 });

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { BoardRegistryRevision } from '../../../main/board/board-registry-revision';
 import {
 	readBoardRunArtifact,
 	captureBoardCardFromHost,
 	prepareBoardReviewHandoff,
+	approveBoardWork,
+	queueBoardReviews,
 } from '../../../main/board/board-review';
 import { configureBoardStorage } from '../../../main/board/board-storage';
 import * as path from 'node:path';
@@ -12,6 +15,8 @@ import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import { BoardStorageFacade, configureBoardCaptureHost } from '../../../main/board/board-storage';
 import {
+	listBoardWorkers,
+	setBoardWorkerOptions,
 	registerBoardWorker,
 	setBoardWorkerAccess,
 	setBoardWorkerPaused,
@@ -264,6 +269,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			reviewSource: { cardId: 'same', attempt: 1 },
 			card: {
 				id: 'review',
+				assigneeAgentId: 'worker',
 				title: 'Review work',
 				body: '',
 				kind: 'review' as const,
@@ -808,7 +814,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		const token = claim();
 		expect(await runtime.start(token)).toEqual({ ok: true });
 		expect(runtime.read(token)!.life.process!.pid).toBeGreaterThan(0);
-		expect(card().status).toBe('done');
+		expect(card().status).toBe('review');
 		expect(reservations()).toHaveLength(0);
 	});
 	it('keeps a prepared claim distinct from a process and starts exactly once, even across adapter instances', async () => {
@@ -832,7 +838,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		settle(good);
 		expect(await pending).toEqual({ ok: true });
 		expect(reservations()).toEqual([]);
-		expect(card().status).toBe('done');
+		expect(card().status).toBe('review');
 		expect(runtime.read(token)!.spec).toEqual(initial);
 		const before = persisted();
 		expect(runtime.complete(token, good)).toEqual({ ok: true, duplicate: true });
@@ -905,6 +911,34 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		expect(runtime.complete(token, good)).toEqual({ ok: false, reason: 'launch-proof-missing' });
 		expect(persisted()).toBe(before);
 	});
+	it('passes persisted worker options through the real runtime run-service seam', async () => {
+		const worker = listBoardWorkers(db)[0];
+		const overrides = {
+			customModel: 'configured',
+			customEffort: 'high',
+			appendSystemPrompt: 'role prompt',
+			customArgs: '--quoted "value with spaces"',
+		};
+		setBoardWorkerOptions(db, worker.agentId, canonicalJson(worker.payload), overrides);
+		const token = claim();
+		const pending = runtime.start(token);
+		expect(service.spawn).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overrides,
+				executionOptions: expect.objectContaining({
+					worker: expect.objectContaining({
+						agentId: worker.agentId,
+						payload: expect.objectContaining({ executionOptions: overrides }),
+					}),
+				}),
+			}),
+			expect.anything()
+		);
+		settle(good);
+		await pending;
+		expect(card().status).toBe('review');
+	});
+
 	it('invalidates a prepared claim after fresh membership changes without launching', async () => {
 		const token = claim();
 		agents[0].groupId = 'elsewhere';
@@ -913,6 +947,56 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		expect(reservations()).toEqual([]);
 		expect(runtime.read(token)!.life.phase).toBe('finished');
 	});
+	it.each(['original', 'incremental'] as const)(
+		'preserves %s registry and RunSpec fences across an external edit at the final launch gate',
+		async (mode) => {
+			const file = path.join(dir, 'launch-configs.json');
+			fs.writeFileSync(file, JSON.stringify({ codex: { args: '--original' } }));
+			const tracker = new BoardRegistryRevision();
+			let fingerprint = '';
+			let revision = 0;
+			Object.defineProperty(host, 'registryRevision', {
+				get: () => {
+					const input = {
+						catalog: storage.captureCatalog(),
+						agents,
+						groups: [{ id: 'group' }],
+						workers: listBoardWorkers(db),
+						agentConfigs: JSON.parse(fs.readFileSync(file, 'utf8')),
+						sshRemotes: [],
+					};
+					if (mode === 'incremental') return tracker.observe(input);
+					const current = canonicalJson(input);
+					if (current !== fingerprint) {
+						fingerprint = current;
+						revision++;
+					}
+					return revision;
+				},
+			});
+			const token = claim();
+			const specification = runtime.read(token)!.spec;
+			expect(specification.readRevision.registry).toBe(1);
+			vi.mocked(service.spawn).mockImplementation(async (_spec, callbacks) => {
+				await Promise.resolve();
+				execFileSync(process.execPath, [
+					'-e',
+					`
+					const fs = require('node:fs'); const file = process.argv[1];
+					fs.writeFileSync(file, JSON.stringify({ codex: { args: '--external' } }));
+				`,
+					file,
+				]);
+				expect(callbacks.beforeLaunch()).toBe(false);
+				return { output: '', exitCode: null, executionStarted: false };
+			});
+			await runtime.start(token);
+			expect(reservations()).toEqual([]);
+			expect(card().status).toBe('todo');
+			expect(runtime.read(token)!.spec).toEqual(specification);
+			expect(runtime.read(token)!.life.phase).toBe('finished');
+		}
+	);
 	it.each([
 		'pause',
 		'membership',
@@ -921,6 +1005,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		'repository',
 		'disabled',
 		'overrides',
+		'worker-options',
 		'approval',
 	] as const)('rechecks %s after async preparation at the final native gate', async (change) => {
 		vi.mocked(service.spawn).mockImplementation(async (_spec, callbacks) => {
@@ -932,6 +1017,12 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 			if (change === 'repository') host.repository!.identity = 'different-repository';
 			if (change === 'disabled') host.dispatchEnabled = false;
 			if (change === 'overrides') host.agentStates.worker.baseValues = { customModel: 'changed' };
+			if (change === 'worker-options') {
+				const worker = listBoardWorkers(db)[0];
+				setBoardWorkerOptions(db, worker.agentId, canonicalJson(worker.payload), {
+					customArgs: '--changed-after-prepare',
+				});
+			}
 			if (change === 'approval')
 				db.prepare(
 					"UPDATE cards SET payload_json=json_set(payload_json, '$.capturePolicy.dispatchApproval', 'required') WHERE collection_key=?"
@@ -1125,7 +1216,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		expect(persisted()).toBe(before);
 		settle(good);
 		await pending;
-		expect(card().status).toBe('done');
+		expect(card().status).toBe('review');
 	});
 	it('fences forged generation and epoch without partial writes', async () => {
 		const token = claim();
@@ -1162,5 +1253,243 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		});
 		expect(card().status).toBe('todo');
 		expect(reservations()).toHaveLength(1);
+	});
+});
+
+// Real SQLite, Git artifacts and the existing native Cue process lifecycle.
+// This scoped contract test is not the final rendered-host acceptance.
+describe('work, linked review and explicit final human decision', () => {
+	function setupWorkflow() {
+		agents.push({ id: 'reviewer', groupId: 'group' }, { id: 'foreign', groupId: 'other' });
+		for (const id of ['reviewer', 'foreign']) {
+			registerBoardWorker(db, id);
+			setBoardWorkerAccess(db, id, [], ['repo0']);
+			host.agentStates = {
+				...host.agentStates,
+				[id]: { live: true, busy: false, location: { kind: 'local' } },
+			};
+		}
+		const board = storage.read(roots[0], 'board');
+		storage.capture({
+			projectRoot: roots[0],
+			boardId: 'board',
+			expectedRevision: board.storage!.expectedRevision!,
+			card: { ...board.cards[0], reviewerAgentId: 'reviewer' },
+		});
+		const git = (...args: string[]) =>
+			execFileSync('git', args, { cwd: roots[0], encoding: 'utf8' }).trim();
+		git('init', '--quiet');
+		git('config', 'user.name', 'Fixture');
+		git('config', 'user.email', 'fixture@example.test');
+		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'initial');
+		git('add', 'work.txt');
+		git('commit', '--quiet', '-m', 'initial');
+		return git;
+	}
+	function claimFor(cardId: string, workerAgentId = 'worker') {
+		const input = command();
+		const collection = storage.workspace.readCollection(input)!;
+		return runtime.claim({
+			...input,
+			cardId,
+			workerAgentId,
+			readRevision: {
+				...input.readRevision,
+				card: collection.cards.find((card) => card.cardId === cardId)!.revision,
+			},
+		});
+	}
+	function nativeService(
+		reviewOutput = '<!-- maestro:card-complete | Diff checked; fixture checks passed -->'
+	) {
+		vi.mocked(service.spawn).mockImplementation(async (spec, callbacks) => {
+			if (!callbacks.canPrepare()) return { output: '', exitCode: null, executionStarted: false };
+			const before = await readBoardRunArtifact(roots[0]);
+			const isReview = spec.card.kind === 'review';
+			const handoff = spec.card.reviewHandoff as
+				| import('../../../shared/board/types').BoardReviewHandoff
+				| undefined;
+			const script = isReview
+				? `require('node:child_process').execFileSync('git', ['diff', '--check', ${JSON.stringify(handoff?.artifact.diff?.baseCommit)}, 'HEAD']); process.stdout.write(${JSON.stringify(reviewOutput)})`
+				: `
+				const fs = require('node:fs'); const cp = require('node:child_process');
+				fs.writeFileSync('work.txt', ${JSON.stringify('corrected work: ')} + ${spec.attempt});
+				require('node:assert/strict').equal(fs.readFileSync('work.txt', 'utf8'), ${JSON.stringify('corrected work: ')} + ${spec.attempt});
+				cp.execFileSync('git', ['add', 'work.txt']); cp.execFileSync('git', ['commit', '--quiet', '-m', 'work']);
+				process.stdout.write('<!-- maestro:card-complete | Work committed; fixture check passed -->');`;
+			const result = await runProcess(
+				spec.runToken.runId,
+				{
+					command: process.execPath,
+					args: ['-e', script],
+					cwd: roots[0],
+					env: process.env as Record<string, string>,
+				},
+				{
+					agentId: spec.workerAgentId,
+					toolType: 'opencode',
+					timeoutMs: 5000,
+					onLog: () => {},
+					beforeLaunch: callbacks.beforeLaunch,
+					onStarted: callbacks.onStarted,
+				}
+			);
+			return {
+				output: result.stdout,
+				exitCode: result.exitCode,
+				executionStarted: result.executionStarted,
+				terminationConfirmed: result.terminationConfirmed,
+				artifact:
+					(await readBoardRunArtifact(
+						roots[0],
+						handoff?.artifact.diff?.baseCommit ?? before!.commit
+					)) ?? undefined,
+			};
+		});
+	}
+	async function runWork() {
+		const claim = claimFor('same');
+		if (!claim.ok) throw new Error(claim.reason);
+		expect(card().status).toBe('todo');
+		expect(await runtime.start(claim.runToken)).toEqual({ ok: true });
+		expect(card().status).toBe('review');
+		return claim.runToken;
+	}
+	async function runReview() {
+		const board = storage.read(roots[0], 'board');
+		const work = board.cards.find((card) => card.id === 'same')!;
+		const review = board.cards.find((card) => card.id === work.workflow!.reviewCardId)!;
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		expect(host.reviewArtifact).toBeTruthy();
+		expect(claimFor(review.id, 'foreign')).toMatchObject({ ok: false });
+		const claim = claimFor(review.id, 'reviewer');
+		if (!claim.ok) throw new Error(claim.reason);
+		expect(await runtime.start(claim.runToken)).toEqual({ ok: true });
+		return claim.runToken;
+	}
+	it('uses native work and review run IDs, binds the actual diff and waits for a separate human decision', async () => {
+		setupWorkflow();
+		nativeService();
+		const work = await runWork();
+		expect((card().runs as { runId: string }[])[0].runId).toBe(work.runId);
+		queueBoardReviews(storage);
+		queueBoardReviews(storage);
+		expect(storage.read(roots[0], 'board').cards).toHaveLength(2);
+		const review = await runReview();
+		expect(card().status).toBe('ready-for-human');
+		expect(card().workflow).toMatchObject({
+			reviewResult: { workRunId: work.runId, reviewRunId: review.runId, verdict: 'clean' },
+		});
+		let board = storage.read(roots[0], 'board');
+		expect(() =>
+			storage.save(
+				roots[0],
+				[{ ...board, cards: board.cards.map((card) => ({ ...card, status: 'done' })) }],
+				true
+			)
+		).toThrow('workflow');
+		const key = { ...command(), cardId: 'same' };
+		expect(() =>
+			approveBoardWork(
+				storage,
+				key,
+				board.storage!.expectedRevision!,
+				board.cards[0].storageRevision!,
+				''
+			)
+		).toThrow('clean bound review');
+		const proof = db
+			.prepare('SELECT lifecycle_json FROM runs WHERE run_id=?')
+			.get(review.runId) as { lifecycle_json: string };
+		db.prepare('UPDATE runs SET lifecycle_json=NULL WHERE run_id=?').run(review.runId);
+		expect(() =>
+			approveBoardWork(
+				storage,
+				key,
+				board.storage!.expectedRevision!,
+				board.cards[0].storageRevision!,
+				'native-desktop-main-frame'
+			)
+		).toThrow('native work and review evidence');
+		db.prepare('UPDATE runs SET lifecycle_json=? WHERE run_id=?').run(
+			proof.lifecycle_json,
+			review.runId
+		);
+		board = storage.read(roots[0], 'board');
+		approveBoardWork(
+			storage,
+			key,
+			board.storage!.expectedRevision!,
+			board.cards[0].storageRevision!,
+			'native-desktop-main-frame'
+		);
+		expect(card().status).toBe('done');
+		expect((card().workflow as { humanDecision: unknown }).humanDecision).toMatchObject({
+			workRunId: work.runId,
+			reviewRunId: review.runId,
+		});
+		expect(reservations()).toHaveLength(0);
+	});
+	it('bounds findings to one traceable correction and retains every work and review attempt', async () => {
+		setupWorkflow();
+		nativeService('<!-- maestro:card-findings: Incorrect fixture value; check failed -->');
+		await runWork();
+		await runReview();
+		expect(card()).toMatchObject({
+			status: 'todo',
+			workflow: { corrections: 1, reviewResult: { verdict: 'findings' } },
+		});
+		await runWork();
+		await runReview();
+		expect(card()).toMatchObject({
+			status: 'blocked',
+			workflow: { corrections: 1, correctionLimitReached: true },
+		});
+		expect(db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 4 });
+		expect(claimFor('same')).toMatchObject({ ok: false, reason: 'card-not-ready' });
+	});
+	it('waits for a missing reviewer and prevents completion-status and forged-run bypasses', async () => {
+		const board = storage.read(roots[0], 'board');
+		for (const status of ['review', 'ready-for-human', 'done'] as const)
+			expect(() =>
+				storage.capture({
+					projectRoot: roots[0],
+					boardId: 'board',
+					expectedRevision: board.storage!.expectedRevision!,
+					card: { ...board.cards[0], status },
+				})
+			).toThrow();
+		const token = claim();
+		const pending = runtime.start(token);
+		settle(good);
+		await pending;
+		expect(card().status).toBe('review');
+		expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+	});
+	it('rejects reviewer membership and pause changes between prepare and native start', async () => {
+		setupWorkflow();
+		nativeService();
+		await runWork();
+		const board = storage.read(roots[0], 'board');
+		const review = board.cards[1];
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		let result = claimFor(review.id, 'reviewer');
+		if (!result.ok) throw new Error(result.reason);
+		agents = agents.map((agent) =>
+			agent.id === 'reviewer' ? { ...agent, groupId: 'other' } : agent
+		);
+		expect(await runtime.start(result.runToken)).toMatchObject({ ok: false });
+		expect(card().status).toBe('review');
+		agents = agents.map((agent) =>
+			agent.id === 'reviewer' ? { ...agent, groupId: 'group' } : agent
+		);
+		result = claimFor(review.id, 'reviewer');
+		if (!result.ok) throw new Error(result.reason);
+		setBoardWorkerPaused(db, 'reviewer', true);
+		expect(await runtime.start(result.runToken)).toMatchObject({
+			ok: false,
+			reason: 'worker-paused',
+		});
+		expect(reservations()).toHaveLength(0);
 	});
 });

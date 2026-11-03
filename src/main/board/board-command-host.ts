@@ -6,6 +6,7 @@ import { maybeCreateCardPr } from './board-pr';
 import type { CardPrResult } from './board-pr';
 import { getBoard, stampBoardRunPr } from './board-storage';
 import type { BoardCommandHost } from '../../shared/board/commands';
+import { getLiveSessions } from '../stores/getters';
 import {
 	BoardStorageError,
 	createBoard,
@@ -14,6 +15,9 @@ import {
 	enqueueBoardWrite,
 	getBoardCaptureCatalog,
 	getBoardStorage,
+	initializeBoardWorkspace,
+	listBoardWorkers,
+	setBoardWorkerOptions,
 	queryBoardWorkspace,
 	queryBoardWorkspaceAsync,
 	prepareBoardWorkspaceQuery,
@@ -29,6 +33,31 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 		if (command.action === 'query')
 			return { ok: true, value: await queryBoardWorkspaceAsync(command.query) };
 		if (command.action === 'catalog') return { ok: true, value: getBoardCaptureCatalog() };
+		if (command.action === 'list-workers') return { ok: true, value: listBoardWorkers() };
+		if (command.action === 'set-worker-options') {
+			if (!getLiveSessions().some((session) => session.id === command.command.agentId))
+				throw new BoardStorageError('not-found', 'Live agent not found');
+			try {
+				setBoardWorkerOptions(command.command);
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					error.message === 'Board worker changed; refresh before saving'
+				)
+					throw new BoardStorageError('stale-revision', error.message);
+				if (error instanceof Error && error.message === 'Board worker not found')
+					throw new BoardStorageError('not-found', error.message);
+				throw error;
+			}
+			return { ok: true, value: listBoardWorkers() };
+		}
+		if (command.action === 'initialize') return { ok: true, value: initializeBoardWorkspace() };
+		if (command.action === 'create-role')
+			return { ok: true, value: getBoardStorage().createRole(command.name) };
+		if (command.action === 'set-worker-role') {
+			getBoardStorage().setWorkerRole(command.agentId, command.role, command.enabled);
+			return { ok: true, value: null };
+		}
 		const sourceIdentity =
 			command.action === 'create'
 				? undefined

@@ -34,12 +34,14 @@ export const CARD_HANDOFF_REMINDER = [
 	'`<!-- maestro:card-complete | <one-line summary> -->`',
 	'In your summary, briefly cover the four handoff questions: what changed, how you verified it, what this unblocks, and any residual risk.',
 	'Fix whatever you can safely fix yourself and card-complete it.',
-	'If the work is finished but needs human judgment or verification before it counts, emit `<!-- maestro:card-review: <reason> -->` instead - the card waits in the Review column until a person approves it.',
+	'If finished work needs further verification, emit `<!-- maestro:card-review: <reason> -->`. Work completion waits for its explicitly assigned artifact review and then a separate final human decision.',
 	'Use `<!-- maestro:card-block: <reason> -->` only when you are genuinely stuck and cannot finish.',
+	'For an assigned artifact review, report confirmed defects with `<!-- maestro:card-findings: <findings and checks> -->`. Emit card-complete with your checks only when the bound diff has no open findings. A completion never grants final human approval.',
 ].join('\n');
 
 /** The parsed result of scanning one card run's output for completion markers. */
 export interface CardMarkers {
+	findings?: string;
 	/** True when a `card-complete` marker is present. */
 	complete: boolean;
 	/** Optional human-facing summary captured after `card-complete |`. */
@@ -80,6 +82,7 @@ const CARD_BLOCK_RE = /<!--\s*maestro:card-block\s*(?::\s*([\s\S]*?))?\s*-->/g;
  * captured into `reviewReason`.
  */
 const CARD_REVIEW_RE = /<!--\s*maestro:card-review\s*(?::\s*([\s\S]*?))?\s*-->/g;
+const CARD_FINDINGS_RE = /<!--\s*maestro:card-findings\s*:\s*([\s\S]*?)\s*-->/g;
 
 /**
  * Return the last regex match in `text`, or `null` if there are none.
@@ -119,6 +122,7 @@ export function parseCardMarkers(output: string): CardMarkers {
 	const blockMatch = lastMatch(CARD_BLOCK_RE, output);
 
 	return {
+		findings: trimToUndefined(lastMatch(CARD_FINDINGS_RE, output)?.[1]),
 		complete: completeMatch !== null,
 		summary: completeMatch ? trimToUndefined(completeMatch[1]) : undefined,
 		review: reviewMatch !== null,

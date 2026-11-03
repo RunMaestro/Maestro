@@ -3,7 +3,7 @@
  * SQLite checks and writes share one IMMEDIATE transaction. A prepared claim is
  * capacity reserved, not evidence that a process started or work succeeded. */
 import type Database from 'better-sqlite3';
-import { hasUnresolvedMigrationBlockers } from './board-migration';
+import { hasLegacyDirectStart, hasUnresolvedMigrationBlockers } from './board-migration';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -17,11 +17,12 @@ import {
 	type BoardCaptureCatalog,
 	type BoardCapturePolicy,
 } from '../../shared/board/types';
-import {
-	resolveProfileSpawnOverrides,
-	type AgentProfile,
-	type ProfileBaseAgentValues,
+import type {
+	AgentProfile,
+	ProfileBaseAgentValues,
+	ProfileSpawnOverrides,
 } from '../../shared/profiles/types';
+import { resolveBoardWorkerExecution } from './board-worker-options';
 import { DEFAULT_MAX_IN_PROGRESS } from './board-dispatcher';
 import {
 	BoardWorkspaceStorage,
@@ -54,8 +55,9 @@ export interface BoardRunSpecification {
 	workerAgentId: string;
 	owner: BoardClaimHostContext['owner'];
 	repository: NonNullable<BoardClaimHostContext['repository']>;
-	overrides: ProfileBaseAgentValues;
+	overrides: ProfileSpawnOverrides;
 	profile?: AgentProfile;
+	executionOptions?: NonNullable<ReturnType<typeof resolveBoardWorkerExecution>>['provenance'];
 }
 type ExecutionLocation = { kind: 'local' } | { kind: 'ssh'; remoteId: string };
 
@@ -110,6 +112,7 @@ export type BoardClaimWaitReason =
 	| 'card-not-ready'
 	| 'global-wip'
 	| 'collection-wip'
+	| 'registry-changed'
 	| 'storage-busy';
 export type BoardClaimResult =
 	| { ok: false; reason: BoardClaimWaitReason }
@@ -122,7 +125,8 @@ const waiting = (reason: BoardClaimWaitReason): BoardClaimResult => ({ ok: false
 function approvedPolicy(
 	payload: Record<string, unknown>,
 	cardRevision: number,
-	migrated: boolean
+	migrated: boolean,
+	collection: Record<string, unknown>
 ): BoardCapturePolicy | null {
 	const policy = payload.capturePolicy as BoardCapturePolicy | undefined;
 	if (policy) {
@@ -145,8 +149,7 @@ function approvedPolicy(
 		}
 		return null;
 	}
-	const migration = payload.migration as { intent?: string } | undefined;
-	return migrated && migration?.intent === 'legacy-direct'
+	return migrated && hasLegacyDirectStart(payload, collection)
 		? {
 				effectiveStartMode: 'direct',
 				dispatchApproval: 'not-required',
@@ -163,7 +166,9 @@ export function claimBoardCard(
 	command: BoardClaimCommand,
 	currentHost: () => BoardClaimHostContext & { catalog: BoardCaptureCatalog },
 	/** Internal revalidation only. Never allocates, replays a receipt or grants a spawn. */
-	prepared?: BoardRunSpecification
+	prepared?: BoardRunSpecification,
+	/** A read-only rejection probe: never allocate without repository preparation. */
+	emptyRegistryProbe = false
 ): BoardClaimResult {
 	if (db.inTransaction && !prepared)
 		throw new BoardWorkspaceStorageError('invalid-input', 'Claim requires its own transaction');
@@ -188,6 +193,8 @@ export function claimBoardCard(
 	try {
 		return db
 			.transaction((): BoardClaimResult => {
+				if (emptyRegistryProbe && db.prepare('SELECT 1 FROM workers LIMIT 1').get())
+					return waiting('registry-changed');
 				const host = currentHost();
 				if (host.dispatchEnabled !== true) return waiting('runtime-unavailable');
 				const owner = db
@@ -203,7 +210,9 @@ export function claimBoardCard(
 				const receipt = db
 					.prepare('SELECT principal, result_json FROM commands WHERE request_id = ?')
 					.get(command.requestId) as { principal: string; result_json: string } | undefined;
-				if (receipt && !prepared) {
+				// A replay must use the ordinary prepared path and its receipt semantics.
+				if (receipt && emptyRegistryProbe) return waiting('registry-changed');
+				if (receipt && !prepared && !emptyRegistryProbe) {
 					const stored = JSON.parse(receipt.result_json) as {
 						command: BoardClaimCommand;
 						result: BoardClaimResult;
@@ -290,11 +299,23 @@ export function claimBoardCard(
 					return waiting('invalid-specification');
 				const selected = board.cards.find((entry) => entry.id === command.cardId);
 				if (!selected) return waiting('invalid-specification');
+				if (selected.workflow?.correctionLimitReached) return waiting('card-not-ready');
 				if (
 					selected.kind === 'review' &&
 					(!selected.reviewHandoff || host.reviewArtifact !== canonicalJson(selected.reviewHandoff))
 				)
 					return waiting('review-artifact-unresolved');
+				if (selected.kind === 'review' && selected.reviewHandoff) {
+					const source = board.cards.find((card) => card.id === selected.reviewHandoff!.cardId);
+					if (
+						source?.workflow?.version === 1 &&
+						(source.workflow.reviewCardId !== selected.id ||
+							source.workflow.workRunId !== selected.reviewHandoff.runId ||
+							source.reviewerAgentId !== command.workerAgentId ||
+							source.status !== 'review')
+					)
+						return waiting('review-artifact-unresolved');
+				}
 				if (selected.heldByUser) return waiting('held');
 				if (selected.status !== 'todo' && selected.status !== 'ready')
 					return waiting('card-not-ready');
@@ -302,7 +323,7 @@ export function claimBoardCard(
 				const migrated =
 					!!db.prepare('SELECT 1 FROM migrations WHERE source_key = ?').get(command.sourceKey) &&
 					migration?.sourceKey === command.sourceKey;
-				const policy = approvedPolicy(card.payload, card.revision, migrated);
+				const policy = approvedPolicy(card.payload, card.revision, migrated, collection.payload);
 				if (!policy) return waiting('approval-required');
 				const workers = listBoardWorkers(db).map((worker) => ({
 					...worker,
@@ -324,6 +345,9 @@ export function claimBoardCard(
 					}
 				);
 				if (reason) return waiting(reason);
+				// Defensive boundary even if a future eligibility rule changes: this
+				// probe can never reserve a worker or authorize an unprepared run.
+				if (emptyRegistryProbe) return waiting('registry-changed');
 				const agent = host.agentStates[command.workerAgentId];
 				if (agent?.live !== true) return waiting('worker-dormant');
 				if (agent.busy !== false) return waiting('worker-busy');
@@ -380,18 +404,22 @@ export function claimBoardCard(
 					(typeof card.payload.profileNamespace === 'string' && selected.assigneeProfileId
 						? { namespace: card.payload.profileNamespace, profileId: selected.assigneeProfileId }
 						: undefined);
-				const profile =
-					role &&
-					host.catalog.profiles.find(
-						(entry) => entry.namespace === role.namespace && entry.profile.id === role.profileId
-					)?.profile;
-				const overrides = profile
-					? resolveProfileSpawnOverrides(profile, agent.baseValues)
-					: (agent.baseValues ?? {});
+				const execution = resolveBoardWorkerExecution(
+					db,
+					command.workerAgentId,
+					card.payload,
+					agent.baseValues
+				);
+				if (!execution) return waiting('invalid-specification');
+				const { profile, overrides, provenance: executionOptions } = execution;
 				if (prepared) {
 					if (
-						canonicalJson({ profile, overrides }) !==
-						canonicalJson({ profile: prepared.profile, overrides: prepared.overrides })
+						canonicalJson({ profile, overrides, executionOptions }) !==
+						canonicalJson({
+							profile: prepared.profile,
+							overrides: prepared.overrides,
+							executionOptions: prepared.executionOptions,
+						})
 					)
 						return waiting('stale-revision');
 					return { ok: true, runToken: prepared.runToken, attempt: prepared.attempt, readRevision };
@@ -416,6 +444,7 @@ export function claimBoardCard(
 					role,
 					profile,
 					overrides,
+					executionOptions,
 				};
 				db.prepare(
 					'INSERT INTO runs (run_id, collection_key, card_id, attempt, specification_json) VALUES (?, ?, ?, ?, ?)'

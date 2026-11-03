@@ -186,11 +186,6 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'o'],
 	},
 	openBoard: { id: 'openBoard', label: 'Board', keys: ['Alt', 'Meta', 'Shift', 'b'] },
-	openProfiles: {
-		id: 'openProfiles',
-		label: 'Agent Profiles',
-		keys: ['Alt', 'Meta', 'Shift', 'p'],
-	},
 	openCue: {
 		id: 'openCue',
 		label: 'Maestro Cue',

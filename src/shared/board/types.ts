@@ -26,23 +26,45 @@
  *               hand-write it (see {@link getEligibleCards}).
  * - `running` - a dispatcher has spawned an agent for this card and it is in
  *               flight.
- * - `review`  - the run reached a deliberate conclusion but needs a HUMAN to
- *               approve or verify it before it counts. Not a failure: nothing
- *               went wrong, the work simply requires human judgment. Like
- *               `blocked` it does NOT unblock children (only `done` does), and
- *               it is never auto-retried. A person approves by moving the card
- *               `review` -> `done`, which is the only approval path.
+ * - `review`  - completed work waiting for its explicitly assigned artifact review.
+ * - `ready-for-human` - a clean bound review, awaiting the final native human decision.
  * - `blocked` - a run finished without completing (agent reported a blocker) or
  *               a parent regressed; needs attention before it can retry.
  * - `done`    - completed successfully; unblocks children that depend on it.
  */
-export type CardStatus = 'triage' | 'todo' | 'ready' | 'running' | 'review' | 'blocked' | 'done';
+export type CardStatus =
+	| 'triage'
+	| 'todo'
+	| 'ready'
+	| 'running'
+	| 'review'
+	| 'ready-for-human'
+	| 'blocked'
+	| 'done';
+
+/** Host-owned progress. A successful process is work evidence, never human approval. */
+export interface BoardWorkflow {
+	version: 1;
+	corrections: number;
+	correctionLimitReached?: true;
+	workRunId?: string;
+	reviewCardId?: string;
+	reviewResult?: {
+		workRunId: string;
+		reviewRunId: string;
+		reviewCardId: string;
+		verdict: 'clean' | 'findings';
+		summary: string;
+	};
+	humanDecision?: { principal: string; decidedAt: string; workRunId: string; reviewRunId: string };
+}
 
 /** Host-observed clean Git artifact at native completion. */
 export interface BoardRunArtifact {
 	worktreePath: string;
 	branch: string;
 	commit: string;
+	diff?: { baseCommit: string; sha256: string; stat: string };
 }
 /** Immutable reference to a completed source attempt, with reported check evidence. */
 export interface BoardReviewHandoff {
@@ -143,6 +165,8 @@ export function cardPriorityRank(card: Pick<BoardCard, 'priority'>): number {
  * {@link CardRun} per attempt so retries after a `blocked`/`error` are auditable.
  */
 export interface CardRun {
+	/** Exact durable runtime identity, present on native attempts. */
+	runId?: string;
 	artifact?: BoardRunArtifact;
 	/** 1-based attempt counter for this card. */
 	attempt: number;
@@ -208,6 +232,7 @@ export interface CardRun {
  * single worker; otherwise the free project pool is used.
  */
 export interface BoardCard extends BoardCaptureOptions {
+	workflow?: BoardWorkflow;
 	/** Host-owned. CRUD may retain this snapshot but never replace it. */
 	reviewHandoff?: BoardReviewHandoff;
 	/** Host-owned snapshot; CRUD cannot create or change grants. */
@@ -343,6 +368,7 @@ export const CARD_STATUSES: readonly CardStatus[] = [
 	'ready',
 	'running',
 	'review',
+	'ready-for-human',
 	'blocked',
 	'done',
 ];
@@ -570,6 +596,8 @@ export interface BoardRoleRef {
 
 /** Capture-time fields for the global Board; missing fields represent an incomplete draft. */
 export interface BoardCaptureOptions {
+	/** Explicit reviewer, subject to the same current scope and registry checks. */
+	reviewerAgentId?: string;
 	kind?: BoardCardKind;
 	executionScope?: BoardExecutionScope;
 	assigneeAgentId?: string;
@@ -594,8 +622,11 @@ export interface BoardCaptureCatalog {
 	defaultStartMode: BoardStartMode;
 }
 export interface BoardCaptureCommand {
+	/** Replace all role aliases with card.role, or clear them if absent. Omission preserves legacy input. */
+	replaceRole?: true;
 	/** Request a host-resolved handoff; never an artifact supplied by a caller. */
 	reviewSource?: { cardId: string; attempt: number };
+	/** Legacy root or BOARD_SOURCE_PROJECT_PREFIX + sourceKey; never an execution CWD. */
 	projectRoot: string;
 	boardId: string;
 	expectedRevision: number;

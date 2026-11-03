@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import path from 'node:path';
+import os from 'node:os';
 import {
 	getEligibleCards,
 	getBlockers,
@@ -298,4 +300,40 @@ describe('countActiveCards', () => {
 	it('is zero for no boards (the indicator hides on a zero total)', () => {
 		expect(countActiveCards([])).toEqual({ running: 0, ready: 0 });
 	});
+});
+
+it('unblocks only the exact host-linked review while ordinary dependents wait for human completion', () => {
+	const work = card({
+		id: 'work',
+		status: 'review',
+		workflow: { version: 1, corrections: 0, workRunId: 'work-run', reviewCardId: 'review' },
+	});
+	const review = card({
+		id: 'review',
+		kind: 'review',
+		parents: ['work'],
+		reviewHandoff: {
+			repositoryId: 'repo',
+			sourceKey: 'source',
+			collectionKey: 'collection',
+			cardId: 'work',
+			runId: 'work-run',
+			attempt: 1,
+			artifact: {
+				branch: 'branch',
+				commit: 'a'.repeat(40),
+				worktreePath: path.join(os.tmpdir(), 'fixture'),
+			},
+			checks: 'passed',
+		},
+	});
+	const ordinary = card({ id: 'child', parents: ['work'] });
+	const b = board([work, review, ordinary]);
+	expect(getEligibleCards(b).map((entry) => entry.id)).toEqual(['review']);
+	review.reviewHandoff!.runId = 'older-run';
+	expect(getBlockers(review, b)).toEqual(['work']);
+	work.status = 'ready-for-human';
+	expect(getEligibleCards(b)).toEqual([]);
+	work.status = 'done';
+	expect(getBlockers(ordinary, b)).toEqual([]);
 });

@@ -139,13 +139,10 @@ describe('formatShortcutKeysFor', () => {
 	});
 });
 
-it('allows Profiles with Board on and Cue off, while Board itself still requires Cue', () => {
+it('removes Profiles and requires Cue to open Board', () => {
 	const flags = { board: true, maestroCue: false };
-	expect(uiSurfaceRefusal(resolveUiSurface('profiles')!, null, flags)).toBeNull();
+	expect(resolveUiSurface('profiles')).toBeNull();
 	expect(uiSurfaceRefusal(resolveUiSurface('board')!, null, flags)).toContain(
 		'requires Maestro Cue'
 	);
-	expect(
-		uiSurfaceRefusal(resolveUiSurface('profiles')!, null, { ...flags, board: false })
-	).toContain('turned off');
 });

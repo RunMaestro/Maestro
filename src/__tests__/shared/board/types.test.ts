@@ -148,15 +148,14 @@ describe('validateCardRun worktree fields (Phase 4)', () => {
 });
 
 describe('status and outcome enums', () => {
-	it('lists every card status, with review parked between running and blocked', () => {
-		// Column order in BoardModal follows this list, so the position matters:
-		// Review sits after Running and before Blocked.
+	it('lists every card status, including the explicit human review state', () => {
 		expect(CARD_STATUSES).toEqual([
 			'triage',
 			'todo',
 			'ready',
 			'running',
 			'review',
+			'ready-for-human',
 			'blocked',
 			'done',
 		]);

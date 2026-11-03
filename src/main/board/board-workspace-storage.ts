@@ -5,14 +5,12 @@
  */
 import type Database from 'better-sqlite3';
 import { canonicalJson } from '../../shared/canonicalJson';
-
-/** A Board-owned worker and its preserved migration metadata. */
-export interface StoredBoardWorker {
-	agentId: string;
-	enabled: boolean;
-	paused: boolean;
-	payload: Record<string, unknown>;
-}
+import {
+	parseBoardWorkerOptionsPatch,
+	readBoardWorkerOptions,
+} from '../../shared/board/worker-options';
+import type { BoardWorkerOptionsPatch, StoredBoardWorker } from '../../shared/board/worker-options';
+export type { StoredBoardWorker } from '../../shared/board/worker-options';
 
 /** Read the machine-wide registry, including disabled and paused workers. */
 export function listBoardWorkers(db: Database.Database): StoredBoardWorker[] {
@@ -42,9 +40,9 @@ export function listBoardWorkers(db: Database.Database): StoredBoardWorker[] {
 export function listBoardWorkerAccessOptions(db: Database.Database) {
 	const roles = db
 		.prepare(
-			'SELECT profile_namespace, id, payload_json FROM profiles ORDER BY profile_namespace, id'
+			'SELECT profile_namespace, id, payload_json, source_key FROM profiles ORDER BY profile_namespace, id'
 		)
-		.all() as { profile_namespace: string; id: string; payload_json: string }[];
+		.all() as { profile_namespace: string; id: string; payload_json: string; source_key: string }[];
 	const repositories = db
 		.prepare('SELECT id, payload_json FROM repositories ORDER BY id')
 		.all() as { id: string; payload_json: string }[];
@@ -53,12 +51,45 @@ export function listBoardWorkerAccessOptions(db: Database.Database) {
 			namespace: row.profile_namespace,
 			profileId: row.id,
 			name: String(JSON.parse(row.payload_json).name || row.id),
+			profile: JSON.parse(row.payload_json) as Record<string, unknown>,
+			sourceKey: row.source_key,
 		})),
 		repositories: repositories.map((row) => ({
 			id: row.id,
 			name: String(JSON.parse(row.payload_json).workingDirectory || row.id),
 		})),
 	};
+}
+
+/** Compare-and-patch only this worker. Shared profiles and historical runs are immutable here. */
+export function setBoardWorkerOptions(
+	db: Database.Database,
+	agentId: string,
+	expectedPayload: string,
+	input: BoardWorkerOptionsPatch
+): void {
+	const patch = parseBoardWorkerOptionsPatch(input);
+	if (!patch || typeof expectedPayload !== 'string')
+		throw new Error('Invalid Board worker options');
+	db.transaction(() => {
+		const worker = listBoardWorkers(db).find((entry) => entry.agentId === agentId);
+		if (!worker) throw new Error('Board worker not found');
+		if (canonicalJson(worker.payload) !== expectedPayload)
+			throw new Error('Board worker changed; refresh before saving');
+		const existing = Object.prototype.hasOwnProperty.call(worker.payload, 'executionOptions')
+			? worker.payload.executionOptions
+			: {};
+		if (!readBoardWorkerOptions(existing)) throw new Error('Invalid stored Board worker options');
+		const executionOptions = { ...(existing as Record<string, unknown>) };
+		for (const [field, value] of Object.entries(patch)) {
+			if (value === null) delete executionOptions[field];
+			else executionOptions[field] = value;
+		}
+		const next = canonicalJson({ ...worker.payload, executionOptions });
+		if (next === expectedPayload) return;
+		db.prepare('UPDATE workers SET payload_json = ? WHERE agent_id = ?').run(next, agentId);
+		db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
+	}).immediate();
 }
 
 /** Register once; repeated registration cannot reset a migrated pause or restrictions. */
@@ -293,6 +324,7 @@ export const BOARD_CARD_EDITABLE_FIELDS: ReadonlySet<string> = new Set([
 	'kind',
 	'executionScope',
 	'assigneeAgentId',
+	'reviewerAgentId',
 	'assigneeProfileId',
 	'profileNamespace',
 	'role',
@@ -505,23 +537,36 @@ export class BoardWorkspaceStorage {
 		).map((row) => row.source_key);
 	}
 
+	/** Read the current revision without projecting every collection and card. */
+	readRevision(): number {
+		return (
+			this.db.prepare('SELECT revision FROM workspace WHERE id = 1').get() as {
+				revision: number;
+			}
+		).revision;
+	}
+
 	/** All collections and card revisions share one read transaction. */
-	readWorkspace(): {
+	/** Keep the complete source catalog but hydrate only a requested source's cards. */
+	readWorkspace(sourceKey?: string): {
 		revision: number;
 		sourceKeys: string[];
 		collections: BoardCollectionSnapshot[];
 	} {
-		return this.db.transaction(() => ({
-			revision: (
-				this.db.prepare('SELECT revision FROM workspace WHERE id = 1').get() as { revision: number }
-			).revision,
-			sourceKeys: this.listSourceKeys(),
-			collections: this.listSourceKeys().flatMap((sourceKey) =>
-				this.listCollections(sourceKey)
-					.filter((entry) => !entry.archived)
-					.map((entry) => this.readCollection(entry)!)
-			),
-		}))();
+		return this.db.transaction(() => {
+			const sourceKeys = this.listSourceKeys();
+			return {
+				revision: this.readRevision(),
+				sourceKeys,
+				collections: sourceKeys
+					.filter((key) => sourceKey === undefined || key === sourceKey)
+					.flatMap((key) =>
+						this.listCollections(key)
+							.filter((entry) => !entry.archived)
+							.map((entry) => this.readCollection(entry)!)
+					),
+			};
+		})();
 	}
 
 	listCollections(sourceKey: string): StoredBoardCollection[] {

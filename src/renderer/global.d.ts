@@ -4907,6 +4907,10 @@ interface MaestroAPI {
 
 	// Board API (persistent task DAG stored in .maestro/board.yaml)
 	board: {
+		roleCommand: (
+			command: import('../shared/board/commands').BoardRoleCommand
+		) => Promise<import('../shared/board/commands').BoardCommandResult>;
+		initialize: () => Promise<import('../shared/board/types').BoardCaptureResponse>;
 		captureCatalog: () => Promise<import('../shared/board/types').BoardCaptureCatalog>;
 		runtimeCommand: (
 			command: import('../shared/board/commands').BoardRuntimeCommand
@@ -4937,6 +4941,9 @@ interface MaestroAPI {
 			>
 		>;
 		listWorkers: () => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		setWorkerOptions: (
+			command: import('../shared/board/worker-options').BoardWorkerOptionsCommand
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
 		registerWorker: (
 			agentId: string
 		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
@@ -4985,24 +4992,28 @@ interface MaestroAPI {
 			projectRoot: string,
 			boardId: string,
 			cardId: string,
-			status: import('../shared/board/types').CardStatus
+			status: import('../shared/board/types').CardStatus,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
 		) => Promise<import('../shared/board/types').Board>;
 		deleteCard: (
 			projectRoot: string,
 			boardId: string,
-			cardId: string
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
 		) => Promise<import('../shared/board/types').Board>;
 		// Cancel a running card: kills the agent process and returns the card to
 		// `todo` with a `canceled` run (excluded from the failure circuit breaker).
 		resumeCard: (
 			projectRoot: string,
 			boardId: string,
-			cardId: string
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
 		) => Promise<import('../shared/board/types').Board>;
 		cancelCard: (
 			projectRoot: string,
 			boardId: string,
-			cardId: string
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
 		) => Promise<import('../shared/board/types').Board>;
 		// Push notification that board.yaml was persisted (dispatcher tick, IPC
 		// mutation, auto-decompose). Payload carries the project root only - the

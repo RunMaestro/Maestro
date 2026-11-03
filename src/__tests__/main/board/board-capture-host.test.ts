@@ -16,11 +16,17 @@ import {
 } from '../../../main/board/board-storage';
 import {
 	registerBoardWorker,
+	listBoardWorkers,
+	setBoardWorkerOptions,
 	setBoardWorkerAccess,
 	setBoardWorkerPaused,
 } from '../../../main/board/board-workspace-storage';
 import { canonicalJson } from '../../../shared/canonicalJson';
-import type { BoardCaptureCommand, BoardCard } from '../../../shared/board/types';
+import {
+	BOARD_SOURCE_PROJECT_PREFIX,
+	type BoardCaptureCommand,
+	type BoardCard,
+} from '../../../shared/board/types';
 
 // Preserve real IO while making native ESM exports spyable at the diagnostic boundary.
 vi.mock('node:fs', async (importOriginal) => ({
@@ -125,6 +131,240 @@ afterEach(() => {
 });
 
 describe('authoritative host capture over real SQLite and preload/IPC', () => {
+	it('creates and assigns a root-free role through real IPC in an empty store and reloads it', async () => {
+		db.close();
+		const file = path.join(dir, 'empty.sqlite');
+		db = openBoardDb(file);
+		facade = new BoardStorageFacade(db);
+		configureBoardStorage(facade);
+		expect(facade.captureCatalog().profiles).toEqual([]);
+		const response = await api.roleCommand({ action: 'create-role', name: ' Reviewer ' });
+		expect(response).toMatchObject({ ok: true });
+		if (!response.ok) throw new Error(response.error.message);
+		const role = response.value as { namespace: string; profileId: string };
+		expect(role.profileId).toMatch(/^[a-f0-9-]{36}$/);
+		registerBoardWorker(db, 'a');
+		registerBoardWorker(db, 'foreign');
+		setBoardWorkerOptions(db, 'a', canonicalJson(listBoardWorkers(db)[0].payload), {
+			customModel: 'worker-model',
+		});
+		expect(
+			await api.roleCommand({ action: 'set-worker-role', agentId: 'a', role, enabled: true })
+		).toMatchObject({ ok: true });
+		const global = facade.ensureGlobalBoard();
+		const root = BOARD_SOURCE_PROJECT_PREFIX + global.storage!.sourceKey;
+		const saved = await api.captureCard({
+			projectRoot: root,
+			boardId: global.id,
+			expectedRevision: global.storage!.expectedRevision!,
+			card: card({
+				id: 'fresh',
+				role,
+				assigneeAgentId: undefined,
+				repositoryId: undefined,
+				workingDirectory: undefined,
+			}),
+		});
+		expect(saved).toMatchObject({
+			ok: true,
+			value: {
+				cards: [
+					{
+						role,
+						executionScope: { kind: 'group', groupId: 'g' },
+						capturePolicy: { effectiveStartMode: 'approval' },
+					},
+				],
+			},
+		});
+		for (const table of ['migrations', 'board_source_locations', 'repositories'])
+			expect(db.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
+		db.close();
+		db = openBoardDb(file);
+		facade = new BoardStorageFacade(db);
+		configureBoardStorage(facade);
+		expect((await api.captureCatalog()).profiles).toEqual([
+			{ namespace: role.namespace, profile: { id: role.profileId, name: 'Reviewer' } },
+		]);
+		expect(facade.read(root, global.id).cards[0].role).toEqual(role);
+		expect(listBoardWorkers(db)[0].payload).toMatchObject({
+			roleRefs: [role],
+			executionOptions: { customModel: 'worker-model' },
+		});
+		expect(listBoardWorkers(db)[1].payload.roleRefs).toEqual([]);
+	});
+
+	it('preserves legacy bytes, unknown references, other grants and worker options when changing one role', async () => {
+		const profiles = db.prepare('SELECT * FROM profiles').all();
+		const migrations = db.prepare('SELECT * FROM migrations').all();
+		registerBoardWorker(db, 'a');
+		const payload = {
+			roleRefs: [{ namespace, profileId: 'role', future: 'keep' }],
+			allowedRepositoryIds: ['repo'],
+			executionOptions: { customModel: 'keep-model' },
+			provenance: { keep: true },
+		};
+		db.prepare('UPDATE workers SET payload_json=? WHERE agent_id=?').run(
+			canonicalJson(payload),
+			'a'
+		);
+		const first = await api.roleCommand({ action: 'create-role', name: 'Reviewer' });
+		if (!first.ok) throw new Error(first.error.message);
+		const role = first.value as { namespace: string; profileId: string };
+		// Another process updates options after the UI read. A single-role patch
+		// must retain that newer payload instead of writing the old UI snapshot.
+		const peer = openBoardDb(path.join(dir, 'board.sqlite'));
+		try {
+			payload.executionOptions.customModel = 'newer-model';
+			peer
+				.prepare('UPDATE workers SET payload_json=? WHERE agent_id=?')
+				.run(canonicalJson(payload), 'a');
+		} finally {
+			peer.close();
+		}
+		await api.roleCommand({ action: 'set-worker-role', agentId: 'a', role, enabled: true });
+		expect(listBoardWorkers(db)[0].payload).toEqual({
+			...payload,
+			roleRefs: [...payload.roleRefs, role],
+			accessManaged: true,
+		});
+		const snapshot = canonicalJson(listBoardWorkers(db));
+		expect(
+			await api.roleCommand({
+				action: 'set-worker-role',
+				agentId: 'a',
+				role: { ...role, namespace: 'wrong' },
+				enabled: true,
+			})
+		).toMatchObject({ ok: false });
+		expect(
+			await api.roleCommand({ action: 'set-worker-role', agentId: 'gone', role, enabled: true })
+		).toMatchObject({ ok: false });
+		expect(canonicalJson(listBoardWorkers(db))).toBe(snapshot);
+		await api.roleCommand({ action: 'set-worker-role', agentId: 'a', role, enabled: false });
+		expect(listBoardWorkers(db)[0].payload).toEqual({ ...payload, accessManaged: true });
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual(migrations);
+		expect(db.prepare('SELECT * FROM profiles WHERE profile_namespace=?').all(namespace)).toEqual(
+			profiles
+		);
+	});
+
+	it('rejects non-native role commands and malformed or authority-bearing inputs without writes', async () => {
+		const before = db.prepare('SELECT * FROM profiles').all();
+		transport.event = { ...transport.event, senderFrame: {} };
+		expect(await api.roleCommand({ action: 'create-role', name: 'No' })).toMatchObject({
+			ok: false,
+			error: { code: 'protected-field' },
+		});
+		transport.event.senderFrame = transport.event.sender.mainFrame;
+		for (const input of [
+			null,
+			{ action: 'create-role', name: ' ' },
+			{ action: 'create-role', name: 'No', human: true },
+			{ action: 'initialize' },
+		])
+			expect(
+				await transport.handlers.get('board:roleCommand')!(transport.event, input)
+			).toMatchObject({ ok: false });
+		expect(db.prepare('SELECT * FROM profiles').all()).toEqual(before);
+	});
+	it('explicitly replaces and clears role aliases across serialized IPC while omission preserves legacy references', async () => {
+		const first = await api.captureCard(
+			command({
+				...card(),
+				assigneeProfileId: 'role',
+				profileNamespace: namespace,
+			} as BoardCard)
+		);
+		expect(first.ok).toBe(true);
+		const saved = facade.read(dir, 'b').cards[0];
+		const { role: _originalRole, ...withoutRole } = saved;
+		expect(await api.captureCard(command(withoutRole))).toMatchObject({
+			ok: true,
+		});
+		expect(facade.read(dir, 'b').cards[0].role).toEqual(saved.role);
+		const legacy = facade.read(dir, 'b').cards[0];
+		const { profileNamespace: _oldNamespace, ...replacement } = legacy as BoardCard & {
+			profileNamespace?: string;
+		};
+		expect(await api.captureCard({ ...command(replacement), replaceRole: true })).toMatchObject({
+			ok: true,
+		});
+		const current = facade.read(dir, 'b').cards[0];
+		expect(current).not.toHaveProperty('profileNamespace');
+		expect(current.role).toEqual(saved.role);
+		const {
+			role: _role,
+			assigneeProfileId: _id,
+			profileNamespace: _namespace,
+			...unassigned
+		} = current as BoardCard & { profileNamespace?: string };
+		const input = { ...command(unassigned), replaceRole: true as const };
+		expect(
+			await api.captureCard({
+				...command({ ...unassigned, assigneeProfileId: 'role' }),
+				replaceRole: true,
+			})
+		).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
+		expect(await api.captureCard({ ...input, replaceRole: 'yes' } as any)).toMatchObject({
+			ok: false,
+			error: { code: 'invalid-input' },
+		});
+		expect(await api.captureCard(input)).toMatchObject({ ok: true });
+		const cleared = new BoardStorageFacade(db).read(dir, 'b').cards[0];
+		for (const field of ['role', 'assigneeProfileId', 'profileNamespace'])
+			expect(cleared).not.toHaveProperty(field);
+		expect(cleared.executionScope).toEqual(saved.executionScope);
+		expect(cleared.capturePolicy?.dispatchApproval).toBe('required');
+		expect(await api.captureCard(input)).toMatchObject({
+			ok: false,
+			error: { code: 'stale-revision' },
+		});
+	});
+
+	it('explicitly initializes an empty global destination and captures without any project or agent', async () => {
+		db.close();
+		db = openBoardDb(path.join(dir, 'empty-global.sqlite'));
+		facade = new BoardStorageFacade(db);
+		configureBoardStorage(facade);
+		configureBoardCaptureHost(() => ({ agents: [], groups: [] }));
+		expect(await api.queryWorkspace()).toMatchObject({ ok: true, value: { collections: [] } });
+		const initialized = await api.initialize();
+		if (!initialized.ok) throw new Error(initialized.error.message);
+		const board = initialized.value;
+		const input = {
+			projectRoot: BOARD_SOURCE_PROJECT_PREFIX + board.storage!.sourceKey,
+			boardId: board.id,
+			expectedRevision: board.storage!.expectedRevision!,
+			card: {
+				id: 'first',
+				title: 'First global task',
+				body: '',
+				parents: [],
+				status: 'todo' as const,
+				createdAt: '',
+				updatedAt: '',
+			},
+		};
+		const captured = await api.captureCard(input);
+		expect(captured).toMatchObject({
+			ok: true,
+			value: { cards: [{ id: 'first', capturePolicy: { dispatchApproval: 'required' } }] },
+			readiness: { first: expect.arrayContaining(['repository-unresolved', 'missing-scope']) },
+		});
+		for (const table of ['repositories', 'board_source_locations', 'migrations', 'runs'])
+			expect(db.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
+		expect(await api.captureCard(input)).toMatchObject({
+			ok: false,
+			error: { code: 'stale-revision' },
+		});
+		db.close();
+		db = openBoardDb(path.join(dir, 'empty-global.sqlite'));
+		facade = new BoardStorageFacade(db);
+		configureBoardStorage(facade);
+		expect(await api.initialize()).toEqual(captured);
+	});
+
 	it('persists a separate dependent review and leaves work and human review unchanged', async () => {
 		const work = await api.captureCard(command(card({ kind: 'work' })));
 		if (!work.ok) throw new Error(work.error.message);
@@ -455,7 +695,7 @@ describe('authoritative host capture over real SQLite and preload/IPC', () => {
 			capturePolicy: { dispatchApproval: 'required', specificationRevision: saved.storageRevision },
 			humanReview: { state: 'pending' },
 		});
-		updateCardStatus(dir, 'b', 'c', 'done');
+		expect(() => updateCardStatus(dir, 'b', 'c', 'done')).toThrow('bound workflow');
 		expect(facade.read(dir, 'b').cards[0]).toMatchObject({
 			capturePolicy: { dispatchApproval: 'required' },
 			humanReview: { state: 'pending' },
@@ -1022,4 +1262,47 @@ describe('asynchronous revision-bound read diagnostics', () => {
 		})();
 		await expect(result).rejects.toThrow('no open transaction');
 	});
+});
+
+it('rejects final approval from foreign or child frames and refuses native Done status requests', async () => {
+	await api.captureCard(command());
+	const board = facade.read(dir, 'b');
+	const target = {
+		projectRoot: dir,
+		sourceKey: board.storage!.sourceKey,
+		collectionKey: board.storage!.collectionKey,
+		expectedRevision: board.storage!.expectedRevision!,
+	};
+	const action = {
+		action: 'control' as const,
+		operation: 'accept' as const,
+		target,
+		cardId: 'c',
+		cardRevision: board.cards[0].storageRevision!,
+	};
+	const native = transport.event;
+	for (const event of [
+		{ sender: {}, senderFrame: {} },
+		{ sender: native.sender, senderFrame: {} },
+	]) {
+		transport.event = event;
+		expect(await api.runtimeCommand(action)).toMatchObject({
+			ok: false,
+			error: { code: 'protected-field' },
+		});
+	}
+	transport.event = native;
+	await expect(api.setCardStatus(dir, 'b', 'c', 'done')).rejects.toThrow('bound workflow');
+	expect(facade.read(dir, 'b').cards[0].status).toBe('todo');
+});
+
+it('projects catalog identities without copying unrelated session drafts and logs', () => {
+	const agent = { id: 'worker', groupId: 'g', inputValue: 'private draft', aiLogs: ['large log'] };
+	const group = { id: 'g', name: 'Group', collapsed: false };
+	configureBoardCaptureHost(() => ({ agents: [agent], groups: [group] }));
+	const catalog = facade.captureCatalog();
+	expect(catalog.agents).toEqual([{ id: 'worker', groupId: 'g' }]);
+	expect(catalog.groups).toEqual([{ id: 'g' }]);
+	agent.groupId = 'other';
+	expect(facade.captureCatalog().agents[0].groupId).toBe('other');
 });
