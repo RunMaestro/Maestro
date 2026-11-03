@@ -497,14 +497,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[setStagedImages]
 	);
 
-	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
-	// the caret visible once the composer is tall enough to scroll.
-	useAutosizeTextarea({
-		textareaRef: inputRef,
-		value: message,
-		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
-	});
-
 	const isBusy = state !== 'idle';
 	// Phone: the whole composer folds away behind a slim handle so the room's
 	// transcript gets the screen, remembered under the room's own key and
@@ -513,6 +505,19 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const phone = usePhoneLayout();
 	const composerFold = usePersistedToggle(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY, true);
 	const phoneHandleHasDraft = message.trim().length > 0 || stagedImages.length > 0;
+	const isFolded = phone && composerFold.value;
+
+	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
+	// the caret visible once the composer is tall enough to scroll. Passing the
+	// room id and fold state through resetKey ensures that reopening a folded draft
+	// (or opening a room whose restored draft starts folded) re-measures the
+	// newly mounted textarea to its full height instead of leaving it at one row.
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: message,
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+		resetKey: `${groupChatId}:${isFolded}`,
+	});
 
 	// The room's Read-Only toggle (one flag for every room, sent per message to
 	// main). The toolbar draws it in its toggle group on desktop and as a sheet
@@ -597,7 +602,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	// Folded: nothing but the handle. Every hook above has already run, so the
 	// draft, staged images, voice and autosize all survive the fold, and the
 	// wrapper keeps the toast-avoid zone measured at the handle's height.
-	if (phone && composerFold.value) {
+	if (isFolded) {
 		return (
 			<div ref={toastAvoidRef}>
 				<PhoneComposerHandle
