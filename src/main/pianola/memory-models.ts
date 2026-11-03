@@ -533,10 +533,18 @@ export class MemoryModels {
 				...invocation.env,
 			};
 			const stdout = await transport.cli(invocation, LOCAL_EXTRACTION_TIMEOUT_MS, 'cli-extract');
-			const cli = parseMemoryCliOutput(config.cliProvider, stdout, input);
-			content = cli.content;
-			inputTokens = cli.inputTokens;
-			outputTokens = cli.outputTokens;
+			try {
+				const cli = parseMemoryCliOutput(config.cliProvider, stdout, input);
+				content = cli.content;
+				inputTokens = cli.inputTokens;
+				outputTokens = cli.outputTokens;
+			} catch (error) {
+				throw new ExtractionOutputError(
+					error instanceof SyntaxError ? new Error('Invalid memory extraction JSON') : error,
+					input.tokens,
+					input.output
+				);
+			}
 		} else {
 			if (!config.hostedConsent)
 				throw new Error('Hosted transcript processing requires explicit consent');

@@ -620,6 +620,7 @@ it.skipIf(process.platform !== 'win32')(
 		expect(command).toBe('"C:\\Program Files\\Codex\\codex.cmd"');
 		expect(args).toEqual(['--flag', '"fixed value"']);
 		expect(options).toMatchObject({ input: '{"memories":[]}' });
+		expect(options.env?.PATH).toContain('C:\\Program Files\\Codex');
 		release(f.db, item);
 	}
 );

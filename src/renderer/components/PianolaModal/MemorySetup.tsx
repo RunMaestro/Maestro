@@ -37,6 +37,7 @@ interface MemorySetupProps {
 	onPause: () => void;
 }
 
+/** Present the provider, privacy, and history choices needed to start learning safely. */
 export function MemorySetup({
 	theme,
 	config,

@@ -49,6 +49,7 @@ function modelArgs(config: MemoryConfig, flag: string): string[] {
 	return model ? [flag, model] : [];
 }
 
+/** Build one invocation with fixed safety arguments separated from prompt delivery. */
 function invocation(
 	config: MemoryConfig,
 	args: string[],
@@ -145,22 +146,29 @@ const BUILDERS: Record<MemoryCliProvider, Builder> = {
 			['-p', '--mode=json', '--no-tools', ...modelArgs(config, '--model')],
 			combinedPrompt(input)
 		),
-	omp: (config, input) =>
-		invocation(
-			config,
-			[
-				'--print',
-				'--mode=json',
-				'--no-session',
-				'--no-tools',
-				'--no-extensions',
-				'--no-skills',
-				'--no-rules',
-				'--no-context-files',
-				...(config.model.trim() ? [`--model=${config.model.trim()}`] : []),
-			],
-			combinedPrompt(input)
-		),
+	omp: (config, input) => {
+		const prompt = combinedPrompt(input);
+		return {
+			...invocation(
+				config,
+				[
+					'--print',
+					'--mode=json',
+					'--no-session',
+					'--no-tools',
+					'--no-extensions',
+					'--no-skills',
+					'--no-rules',
+					'--no-context-files',
+					...(config.model.trim() ? [`--model=${config.model.trim()}`] : []),
+					'--',
+					prompt,
+				],
+				''
+			),
+			promptArgs: [prompt],
+		};
+	},
 	opencode: (config, input) =>
 		invocation(
 			config,
@@ -177,35 +185,50 @@ const BUILDERS: Record<MemoryCliProvider, Builder> = {
 			['exec', '-o', 'stream-json', ...modelArgs(config, '-m')],
 			combinedPrompt(input)
 		),
-	'copilot-cli': (config, input) =>
-		invocation(
-			config,
-			[
-				'--output-format',
-				'json',
-				'--allow-tool=read,url',
-				'--deny-tool=write,shell,memory,github',
-				'--no-ask-user',
-				...modelArgs(config, '--model'),
-			],
-			combinedPrompt(input)
-		),
-	grok: (config, input) =>
-		invocation(
-			config,
-			[
-				'--output-format',
-				'streaming-json',
-				'--permission-mode',
-				'plan',
-				'--deny',
-				'Bash(*)',
-				...modelArgs(config, '-m'),
-			],
-			combinedPrompt(input)
-		),
+	'copilot-cli': (config, input) => {
+		const prompt = combinedPrompt(input);
+		return {
+			...invocation(
+				config,
+				[
+					'--output-format',
+					'json',
+					'--deny-tool=write,shell,memory,github',
+					'--deny-tool=read,url',
+					'--no-ask-user',
+					...modelArgs(config, '--model'),
+					'-p',
+					prompt,
+				],
+				''
+			),
+			promptArgs: [prompt],
+		};
+	},
+	grok: (config, input) => {
+		const prompt = combinedPrompt(input);
+		return {
+			...invocation(
+				config,
+				[
+					'--output-format',
+					'streaming-json',
+					'--permission-mode',
+					'plan',
+					'--deny',
+					'Bash(*)',
+					...modelArgs(config, '-m'),
+					'-p',
+					prompt,
+				],
+				''
+			),
+			promptArgs: [prompt],
+		};
+	},
 };
 
+/** Select a registered provider adapter and build its no-write extraction command. */
 export function memoryCliInvocation(
 	config: MemoryConfig,
 	input: MemoryCliInput
@@ -214,6 +237,7 @@ export function memoryCliInvocation(
 	return BUILDERS[config.cliProvider](config, input);
 }
 
+/** Read Claude's structured envelope and include cache tokens in total input usage. */
 function parseClaude(stdout: string, input: MemoryCliInput): MemoryCliResult {
 	const envelope: unknown = JSON.parse(stdout);
 	if (!record(envelope) || envelope.is_error === true)
@@ -234,6 +258,7 @@ function parseClaude(stdout: string, input: MemoryCliInput): MemoryCliResult {
 	};
 }
 
+/** Extract the final assistant message and usage from OMP's JSONL event stream. */
 function parseOmp(stdout: string, input: MemoryCliInput): MemoryCliResult {
 	let content: string | undefined;
 	let usage: Record<string, unknown> = {};
@@ -265,6 +290,7 @@ function parseOmp(stdout: string, input: MemoryCliInput): MemoryCliResult {
 	};
 }
 
+/** Normalize final or streamed text and usage through Maestro's provider parser registry. */
 function parseWithSharedParser(
 	provider: MemoryCliProvider,
 	stdout: string,
@@ -307,6 +333,7 @@ function parseWithSharedParser(
 	};
 }
 
+/** Parse a completed provider response into extraction JSON and bounded token usage. */
 export function parseMemoryCliOutput(
 	provider: MemoryConfig['cliProvider'],
 	stdout: string,

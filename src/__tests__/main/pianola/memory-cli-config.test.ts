@@ -47,11 +47,20 @@ it('resolves the effective CLI configuration for partial provider and path updat
 		cliPath: CODEX_PATH,
 		model: 'gpt-test',
 	});
+	await engine.request({
+		action: 'configure',
+		config: { cliProvider: 'claude-code', model: 'custom-model' },
+	});
+	expect(engine.database.config()).toMatchObject({
+		cliProvider: 'claude-code',
+		cliPath: CLAUDE_PATH,
+		model: 'custom-model',
+	});
 	await engine.request({ action: 'configure', config: { cliPath: FAKE_PATH } });
 	expect(engine.database.config()).toMatchObject({
-		cliProvider: 'codex',
-		cliPath: CODEX_PATH,
-		model: 'gpt-test',
+		cliProvider: 'claude-code',
+		cliPath: CLAUDE_PATH,
+		model: 'custom-model',
 	});
 });
 

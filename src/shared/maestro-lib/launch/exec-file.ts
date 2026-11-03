@@ -44,6 +44,7 @@ export interface ExecResult {
  *   to prevent percent-sign escaping issues in arguments
  * - Executables (.exe, .com) can run directly
  */
+/** Return whether Windows must use a shell, including quoted npm shim paths. */
 export function needsWindowsShell(command: string): boolean {
 	const lowerCommand = command.toLowerCase();
 	const commandForDetection =
@@ -373,6 +374,7 @@ export function execFileStreaming(
  * Execute a command with input written to stdin
  * Uses spawn to allow writing to the process stdin
  */
+/** Spawn with stdin, handle early closure, and terminate the whole tree on timeout. */
 async function execFileWithInput(
 	command: string,
 	args: string[],

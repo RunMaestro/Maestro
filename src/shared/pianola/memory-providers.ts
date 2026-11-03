@@ -94,12 +94,14 @@ export const MEMORY_PROVIDER_PRESETS: readonly MemoryProviderPreset[] = [
 	},
 ];
 
+/** Find a local, CLI, or API preset or reject an unsupported provider id. */
 export function memoryProviderPreset(id: MemoryProviderId): MemoryProviderPreset {
 	const preset = MEMORY_PROVIDER_PRESETS.find((candidate) => candidate.id === id);
 	if (!preset) throw new Error('Unknown memory provider: ' + id);
 	return preset;
 }
 
+/** Derive the picker id from saved local, CLI, hosted, or batch configuration. */
 export function memoryProviderId(
 	config: Pick<MemoryConfig, 'mode' | 'hostedProvider' | 'cliProvider'>
 ): MemoryProviderId {
@@ -109,6 +111,7 @@ export function memoryProviderId(
 	return config.hostedProvider ?? 'openai';
 }
 
+/** Apply detected provider defaults while preserving unrelated settings and valid consent. */
 export function withMemoryProvider(
 	config: MemoryConfig,
 	id: MemoryProviderId,

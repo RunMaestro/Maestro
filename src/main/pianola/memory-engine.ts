@@ -48,6 +48,7 @@ import { validateMemoryRecallIntent, memoryIsEligible } from './memory-lifecycle
 import { resolveQualification } from './memory-relevance';
 import { resolveRerank } from './memory-rerank';
 type ExtractionResult = Extract<Awaited<ReturnType<MemoryModels['extract']>>, { pending: false }>;
+/** Compare the account and processing mode that consent and queued submissions bind to. */
 function sameProcessingProvider(a: MemoryConfig, b: MemoryConfig): boolean {
 	if (a.mode !== b.mode) return false;
 	return a.mode === 'cli'
@@ -163,6 +164,7 @@ export class MemoryEngine {
 			return !!source && this.enabledSource(source, config);
 		});
 	}
+	/** Validate provider identity, executable, budgets, ownership, and recall configuration. */
 	private validateConfig(config: MemoryConfig) {
 		if (
 			typeof config.enabled !== 'boolean' ||
@@ -445,6 +447,7 @@ export class MemoryEngine {
 		);
 		return false;
 	}
+	/** Run one extraction stage while preserving permit, budget, consent, and replay invariants. */
 	private async generate(
 		job: PendingExtraction,
 		owner: string,
@@ -1044,6 +1047,7 @@ export class MemoryEngine {
 		if (!stored) throw new Error('Memory was not admitted or is suppressed by a previous forget');
 		return stored;
 	}
+	/** Apply one memory action through the engine's visibility and configuration lifecycle. */
 	async request(request: MemoryRequest) {
 		const config = this.database.config();
 		if (request.action === 'transport-status') return this.database.transport.status();
@@ -1069,8 +1073,9 @@ export class MemoryEngine {
 				let next = { ...config, ...request.config, userId: config.userId };
 				if (next.mode === 'cli') {
 					const newProvider = config.mode !== 'cli' || next.cliProvider !== config.cliProvider;
+					const staleModel = newProvider && request.config.model === undefined;
 					next = resolveMemoryCliConfig(
-						{ ...next, model: newProvider ? '' : next.model },
+						{ ...next, model: staleModel ? '' : next.model },
 						this.cliProviders()
 					);
 				}

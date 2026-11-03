@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it, vi } from 'vitest';
-import { MemoryModels } from '../../../main/pianola/memory-models';
+import { ExtractionOutputError, MemoryModels } from '../../../main/pianola/memory-models';
 import { memoryCliInvocation, parseMemoryCliOutput } from '../../../main/pianola/memory-cli';
 import { resolveMemoryCliConfig } from '../../../main/pianola/memory-provider-discovery';
 import { withMemoryProvider } from '../../../shared/pianola/memory-providers';
@@ -88,7 +88,13 @@ it.each(['claude-code', 'omp'] as const)(
 		});
 		const [invocation, timeout, operation] = cli.mock.calls[0];
 		expect(invocation.command).toBe(current.cliPath);
-		expect(invocation.input).toContain(input.user);
+		if (provider === 'omp') {
+			expect(invocation.input).toBe('');
+			expect(invocation.promptArgs?.[0]).toContain(input.user);
+			expect(invocation.args.at(-1)).toBe(invocation.promptArgs?.[0]);
+		} else {
+			expect(invocation.input).toContain(input.user);
+		}
 		expect(timeout).toBe(600000);
 		expect(operation).toBe('cli-extract');
 		expect(invocation.args).toContain(provider === 'claude-code' ? '--tools' : '--no-tools');
@@ -108,6 +114,25 @@ it('passes Maestro account environments while preserving native Codex configurat
 	expect(invocation.env).toMatchObject({ CODEX_HOME: 'D:\\codex-account' });
 	expect(invocation.args).toContain('mcp_servers={}');
 	expect(invocation.args).not.toContain('--ignore-user-config');
+});
+
+it('classifies unusable completed CLI output as an extraction output error', async () => {
+	const models = new MemoryModels('unused-cli-invalid-output-cache');
+	const cli = vi.fn().mockResolvedValue('not JSON');
+	const outcome = models.extract(
+		{ ...config, cliProvider: 'codex' },
+		input,
+		'job',
+		vi.fn(),
+		undefined,
+		{ cli } as unknown as MemoryTransportScope
+	);
+	await expect(outcome).rejects.toMatchObject({
+		name: 'ExtractionOutputError',
+		inputTokens: input.tokens,
+		outputTokens: input.output,
+	});
+	await expect(outcome).rejects.toBeInstanceOf(ExtractionOutputError);
 });
 
 it('uses the detected executable and configured model instead of renderer-supplied paths', () => {
@@ -145,7 +170,7 @@ const SAFETY_CONTRACTS: Record<MemoryCliProvider, string[]> = {
 	omp: ['--no-tools'],
 	opencode: ['--agent', 'plan'],
 	'factory-droid': ['exec'],
-	'copilot-cli': ['--deny-tool=write,shell,memory,github', '--no-ask-user'],
+	'copilot-cli': ['--deny-tool=write,shell,memory,github', '--deny-tool=read,url', '--no-ask-user'],
 	grok: ['--permission-mode', 'plan', '--deny', 'Bash(*)'],
 };
 
@@ -162,6 +187,11 @@ it.each(MEMORY_CLI_PROVIDER_IDS)(
 			/dangerously|skip-permissions-unsafe|--allow-all(?:\s|$)|--yolo(?:\s|$)/
 		);
 		for (const required of SAFETY_CONTRACTS[provider]) expect(result.args).toContain(required);
+		if (provider === 'copilot-cli' || provider === 'grok') {
+			expect(result.args).toContain('-p');
+			expect(result.promptArgs?.[0]).toContain(input.user);
+		}
+		if (provider === 'copilot-cli') expect(result.args).not.toContain('--allow-tool=read,url');
 		if (provider === 'opencode')
 			expect(result.env?.OPENCODE_CONFIG_CONTENT).toContain('"question":false');
 	}

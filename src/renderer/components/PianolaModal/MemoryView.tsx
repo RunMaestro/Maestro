@@ -16,6 +16,7 @@ import { FilterInput } from '../ui/FilterInput';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { MemorySetup } from './MemorySetup';
 
+/** Coordinate configuration, learning progress, recall, and bank mutation workflows. */
 export function MemoryView({ theme }: { theme: Theme }) {
 	const [state, setState] = useState<MemoryState | null>(null);
 	const [draft, setDraft] = useState<MemoryConfig | null>(null);

@@ -7,6 +7,7 @@ import { threadId } from 'node:worker_threads';
 import { execFileNoThrow, needsWindowsShell } from '../utils/execFile';
 import { isWindows } from '../../shared/platformDetection';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { buildSpawnPath } from '../../shared/maestro-lib/launch/spawn-path';
 import { escapeCmdArgs } from '../../shared/maestro-lib/launch/windows-shell-escape';
 import {
 	cmdShellArgsRefusal,
@@ -666,6 +667,7 @@ export class MemoryTransport {
 	}
 }
 
+/** Validate and escape a CLI launch without allowing prompt text to become shell syntax. */
 export function prepareMemoryCliLaunch(invocation: MemoryCliInvocation): {
 	command: string;
 	args: string[];
@@ -680,9 +682,12 @@ export function prepareMemoryCliLaunch(invocation: MemoryCliInvocation): {
 	};
 }
 
-function memoryCliEnvironment(overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+/** Build the expanded spawn PATH and apply account overrides and blank unsets in order. */
+function memoryCliEnvironment(invocation: MemoryCliInvocation): NodeJS.ProcessEnv {
 	const env = { ...process.env };
-	for (const [key, value] of Object.entries(overrides ?? {})) {
+	const executable = invocation.command.replace(/^"(.*)"$/, '$1');
+	env.PATH = buildSpawnPath([path.dirname(executable)]);
+	for (const [key, value] of Object.entries(invocation.env ?? {})) {
 		if (isBlankEnvValue(value)) delete env[key];
 		else env[key] = value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 	}
@@ -699,6 +704,7 @@ export class MemoryTransportScope {
 		readonly id: string,
 		private readonly authority: () => boolean
 	) {}
+	/** Execute a CLI under an owned permit and record exit, timeout, or unknown-outcome evidence. */
 	async cli(
 		invocation: MemoryCliInvocation,
 		timeoutMs: number,
@@ -714,7 +720,7 @@ export class MemoryTransportScope {
 			const result = await execFileNoThrow(launch.command, launch.args, workspace, {
 				input: invocation.input,
 				timeout: timeoutMs,
-				env: memoryCliEnvironment(invocation.env),
+				env: memoryCliEnvironment(invocation),
 			});
 			if (typeof result.exitCode !== 'number')
 				throw new MemoryTransportError(

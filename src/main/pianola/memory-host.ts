@@ -60,6 +60,7 @@ export class PianolaMemoryHost {
 		this.worker = worker;
 		return worker;
 	}
+	/** Forward private requests with request-scoped CLI discovery and environment metadata. */
 	async request(request: MemoryRequest): Promise<unknown> {
 		// The desktop owns this bank. Authenticated browser accounts cannot read or change another person's history.
 		if (getActingUser()) throw new Error('This memory bank is private to the desktop owner');
@@ -119,6 +120,7 @@ export class PianolaMemoryHost {
 		}
 		return result;
 	}
+	/** Send one ordered worker request with a bounded response wait and optional CLI metadata. */
 	private send(
 		request: MemoryRequest,
 		cli?: {

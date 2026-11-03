@@ -11,6 +11,7 @@ import {
 
 export type MemoryCliEnvironments = Partial<Record<MemoryCliProvider, Record<string, string>>>;
 
+/** Resolve provider launch environments for the private worker channel, never renderer status. */
 export function readMemoryCliEnvironments(
 	store: ReturnType<typeof getAgentConfigsStore>
 ): MemoryCliEnvironments {
@@ -30,6 +31,7 @@ export function readMemoryCliEnvironments(
 	return environments;
 }
 
+/** Return installed memory-capable CLIs with their detected executable and model default. */
 export async function discoverMemoryCliProviders(
 	detector: AgentDetector,
 	store: ReturnType<typeof getAgentConfigsStore>
@@ -50,6 +52,7 @@ export async function discoverMemoryCliProviders(
 	return providers;
 }
 
+/** Replace caller executable paths and stale API pricing with detected CLI configuration. */
 export function resolveMemoryCliConfig<T extends Partial<MemoryConfig>>(
 	config: T,
 	providers: MemoryCliProviderInfo[]
@@ -66,6 +69,7 @@ export function resolveMemoryCliConfig<T extends Partial<MemoryConfig>>(
 	};
 }
 
+/** Report only which supported API credentials exist, never their values. */
 export function memoryApiCredentialPresence(
 	env: NodeJS.ProcessEnv = process.env
 ): Record<string, boolean> {
