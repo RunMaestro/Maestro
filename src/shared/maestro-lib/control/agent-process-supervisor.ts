@@ -67,7 +67,10 @@ export function superviseAgentProcess(
 	let exitDrain: IdleWatchdog | undefined;
 	let forced = false;
 	let warned = false;
-	let lastProgress = Date.now();
+	const startupStartedAt = Date.now();
+	let startupPhase = 'no provider lifecycle observed';
+	let startupPhaseAt: number | undefined;
+	let lastProgress = startupStartedAt;
 	// A correlated tool allowance may follow new model work; an ID-less
 	// declaration has its own original fixed deadline. Neither owns the other.
 	let correlatedToolDeadline: number | undefined;
@@ -171,6 +174,26 @@ export function superviseAgentProcess(
 		if (!event.raw || typeof event.raw !== 'object') return;
 		const parent = event.parentToolUseId ?? '';
 		if (parent && !tools.get(parent)) return;
+		// Diagnostics only: root lifecycle notices never renew or disarm a budget.
+		// Whitelist the existing exec/parser shapes; retain no provider records or IDs.
+		if (options.startupMs && !parent) {
+			const raw = event.raw as { type?: unknown; payload?: { type?: unknown } };
+			const phase =
+				event.type === 'init' &&
+				event.sessionId &&
+				(raw.type === 'thread.started' || raw.type === 'session_meta')
+					? 'thread created'
+					: event.type === 'system' &&
+						  (raw.type === 'turn.started' ||
+								(raw.type === 'event_msg' && raw.payload?.type === 'task_started'))
+						? 'turn started'
+						: undefined;
+			// Replayed or earlier phases must not replace the observed transition time.
+			if (phase && phase !== startupPhase && startupPhase !== 'turn started') {
+				startupPhase = phase;
+				startupPhaseAt = Date.now() - startupStartedAt;
+			}
+		}
 		let fresh = false;
 		if ((event.type === 'text' || event.type === 'result') && event.text?.trim()) {
 			// Store digests only. Equal deltas without a stable provider event ID
@@ -259,7 +282,7 @@ export function superviseAgentProcess(
 			idleMs: options.startupMs,
 			onIdle: () =>
 				stop(
-					`Codex produced no model activity within ${options.startupMs! / 1000} seconds. A resumed conversation may still be performing context compaction. Startup or authentication may be blocked, for example by an interactive keyring prompt. Check Codex login and the credential store on the agent host; after fixing them, retry the request. For a host already using file credentials, verify both cli_auth_credentials_store=file and mcp_oauth_credentials_store=file in the agent's effective Codex configuration.`
+					`Codex produced no model activity within ${options.startupMs! / 1000} seconds (host startup deadline). Last observed startup phase: ${startupPhase}${startupPhaseAt === undefined ? '' : ` at +${startupPhaseAt / 1000}s`}. Cause unknown: exec can be silent during context compaction; a turn start alone cannot distinguish compaction, provider waiting or other pre-output work.`
 				),
 		});
 	}

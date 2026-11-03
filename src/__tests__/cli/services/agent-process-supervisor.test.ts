@@ -19,60 +19,181 @@ afterEach(() => {
 });
 
 describe('headless process supervision', () => {
-	it('allows resumed Codex compaction to finish before the first model output', async () => {
+	it.each([
+		{ events: [], phase: 'no provider lifecycle observed' },
+		{
+			events: [{ type: 'thread.started', thread_id: 'private-id' }],
+			phase: 'thread created at +10s',
+		},
+		{
+			events: [{ type: 'session_meta', payload: { id: 'private-id' } }],
+			phase: 'thread created at +10s',
+		},
+		{
+			events: [{ type: 'thread.started', thread_id: 'private-id' }, { type: 'turn.started' }],
+			phase: 'turn started at +20s',
+		},
+		{
+			events: [{ type: 'event_msg', payload: { type: 'task_started' } }],
+			phase: 'turn started at +10s',
+		},
+	])(
+		'reports the observed startup phase at the unchanged 120s deadline: $phase',
+		async ({ events, phase }) => {
+			vi.useFakeTimers();
+			const child = Object.assign(new EventEmitter(), {
+				kill: vi.fn(),
+				exitCode: null,
+				signalCode: null,
+			}) as unknown as ChildProcess;
+			const onStop = vi.fn();
+			const supervision = superviseAgentProcess(child, {
+				startupMs: CODEX_STARTUP_TIMEOUT_MS,
+				onStop,
+				onForcedStop: vi.fn(),
+			});
+			const parser = createOutputParser('codex')!;
+			try {
+				expect(CODEX_STARTUP_TIMEOUT_MS).toBe(120_000);
+				for (const event of events) {
+					await vi.advanceTimersByTimeAsync(10_000);
+					supervision.observe(parser.parseJsonLine(JSON.stringify(event))!);
+				}
+				await vi.advanceTimersByTimeAsync(119_999 - events.length * 10_000);
+				expect(onStop).not.toHaveBeenCalled();
+				await vi.advanceTimersByTimeAsync(1);
+				expect(onStop).toHaveBeenCalledExactlyOnceWith(
+					expect.stringContaining(`Last observed startup phase: ${phase}.`)
+				);
+				const reason = onStop.mock.calls[0][0];
+				expect(reason).toContain('120 seconds (host startup deadline)');
+				expect(reason).toContain('Cause unknown');
+				expect(reason).toContain('exec can be silent during context compaction');
+				expect(reason).toContain(
+					'cannot distinguish compaction, provider waiting or other pre-output work'
+				);
+				expect(reason).not.toContain('private-id');
+				expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGTERM');
+			} finally {
+				supervision.dispose();
+			}
+		}
+	);
+
+	it('keeps startup bounded despite lifecycle, retry and unknown chatter', async () => {
 		vi.useFakeTimers();
-		const child = Object.assign(new EventEmitter(), {
-			kill: vi.fn(),
-			exitCode: null,
-			signalCode: null,
-		}) as unknown as ChildProcess;
 		const onStop = vi.fn();
-		const supervision = superviseAgentProcess(child, {
+		const onStatus = vi.fn();
+		const supervision = superviseAgentProcess(
+			Object.assign(new EventEmitter(), {
+				kill: vi.fn(),
+				exitCode: null,
+				signalCode: null,
+			}) as unknown as ChildProcess,
+			{
+				startupMs: CODEX_STARTUP_TIMEOUT_MS,
+				idle: { warnMs: 150_000, idleMs: 200_000, toolMs: 300_000 },
+				onStop,
+				onStatus,
+				onForcedStop: vi.fn(),
+			}
+		);
+		const parser = createOutputParser('codex')!;
+		try {
+			await vi.advanceTimersByTimeAsync(1_000);
+			supervision.observe(parser.parseJsonLine('{"type":"turn.started"}')!);
+			for (let step = 0; step < 11; step++) {
+				await vi.advanceTimersByTimeAsync(10_000);
+				for (const raw of [
+					{ type: 'thread.started', thread_id: 'private-id' },
+					{ type: 'turn.started' },
+					{ type: 'event_msg', payload: { type: 'task_started' } },
+					{ type: 'turn_context', payload: {} },
+					{ type: 'error', message: 'Reconnecting... 1/5' },
+					{ type: 'event_msg', payload: { type: 'stream_error', message: 'retrying' } },
+					{
+						type: 'unknown',
+						text: 'private-prompt',
+						path: 'private-path',
+						secret: 'private-secret',
+					},
+				])
+					supervision.observe(parser.parseJsonLine(JSON.stringify(raw))!);
+			}
+			await vi.advanceTimersByTimeAsync(8_999);
+			expect(onStop).not.toHaveBeenCalled();
+			expect(onStatus).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(onStop).toHaveBeenCalledExactlyOnceWith(
+				expect.stringContaining('Last observed startup phase: turn started at +1s.')
+			);
+			expect(onStatus).toHaveBeenCalledExactlyOnceWith(onStop.mock.calls[0][0]);
+			expect(onStop.mock.calls[0][0]).not.toContain('private-');
+		} finally {
+			supervision.dispose();
+		}
+	});
+
+	it('does not invent a root startup phase from unknown or child-agent events', async () => {
+		vi.useFakeTimers();
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess(
+			Object.assign(new EventEmitter(), {
+				kill: vi.fn(),
+				exitCode: null,
+				signalCode: null,
+			}) as unknown as ChildProcess,
+			{
+				startupMs: CODEX_STARTUP_TIMEOUT_MS,
+				onStop,
+				onForcedStop: vi.fn(),
+			}
+		);
+		const parser = createOutputParser('codex')!;
+		try {
+			for (const raw of [
+				{ type: 'unknown', payload: { type: 'task_started' } },
+				{ type: 'event_msg', payload: { type: 'unknown' } },
+				{ type: 'unknown', phase: 'compacting' },
+			])
+				supervision.observe(parser.parseJsonLine(JSON.stringify(raw))!);
+			for (const raw of [
+				{ type: 'thread.started', thread_id: 'child-id' },
+				{ type: 'turn.started' },
+				{ type: 'event_msg', payload: { type: 'task_started' } },
+			])
+				supervision.observe({
+					...parser.parseJsonLine(JSON.stringify(raw))!,
+					parentToolUseId: 'child-owner',
+				});
+			await vi.advanceTimersByTimeAsync(120_000);
+			expect(onStop).toHaveBeenCalledExactlyOnceWith(
+				expect.stringContaining('Last observed startup phase: no provider lifecycle observed.')
+			);
+		} finally {
+			supervision.dispose();
+		}
+	});
+
+	it.each([
+		{ type: 'item.completed', item: { id: 'answer', type: 'agent_message', text: 'OK' } },
+		{ type: 'response_item', payload: { type: 'reasoning', summary: ['Thinking'] } },
+		{ type: 'item.started', item: { id: 'cmd', type: 'command_execution', command: 'echo ok' } },
+	])('disarms startup on real parsed model or tool activity: $type', async (raw) => {
+		vi.useFakeTimers();
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess({} as ChildProcess, {
 			startupMs: CODEX_STARTUP_TIMEOUT_MS,
 			onStop,
 			onForcedStop: vi.fn(),
 		});
 		const parser = createOutputParser('codex')!;
 		try {
-			// Exec stays silent during pre-turn compaction. Real resumed turns
-			// completed it after 152-159 seconds, beyond the former 120s bound.
 			supervision.observe(parser.parseJsonLine('{"type":"turn.started"}')!);
-			await vi.advanceTimersByTimeAsync(160_000);
+			await vi.advanceTimersByTimeAsync(119_999);
+			supervision.observe(parser.parseJsonLine(JSON.stringify(raw))!);
+			await vi.advanceTimersByTimeAsync(180_000);
 			expect(onStop).not.toHaveBeenCalled();
-			supervision.observe(
-				parser.parseJsonLine(
-					JSON.stringify({
-						type: 'item.completed',
-						item: { id: 'answer', type: 'agent_message', text: 'OK' },
-					})
-				)!
-			);
-			await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS);
-			expect(onStop).not.toHaveBeenCalled();
-		} finally {
-			supervision.dispose();
-		}
-	});
-
-	it('still bounds a silent Codex startup and identifies compaction as a possible cause', async () => {
-		vi.useFakeTimers();
-		const child = Object.assign(new EventEmitter(), {
-			kill: vi.fn(),
-			exitCode: null,
-			signalCode: null,
-		}) as unknown as ChildProcess;
-		const onStop = vi.fn();
-		const supervision = superviseAgentProcess(child, {
-			startupMs: CODEX_STARTUP_TIMEOUT_MS,
-			onStop,
-			onForcedStop: vi.fn(),
-		});
-		try {
-			await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS - 1);
-			expect(onStop).not.toHaveBeenCalled();
-			await vi.advanceTimersByTimeAsync(1);
-			expect(onStop).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('context compaction'));
-			expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 		} finally {
 			supervision.dispose();
 		}
@@ -174,7 +295,7 @@ describe('headless process supervision', () => {
 				expect(onStop).toHaveBeenCalledExactlyOnceWith(
 					expect.stringContaining(
 						kind === 'startup'
-							? 'Startup or authentication'
+							? 'host startup deadline'
 							: kind === 'idle'
 								? 'semantic inactivity'
 								: 'tool or wait budget'

@@ -196,6 +196,11 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 				1
 			);
 			expect(errors).toHaveLength(1);
+			expect(errors[0]).toMatchObject({
+				type: 'agent_crashed',
+				source: 'host-supervision',
+				recoverable: true,
+			});
 			expect(consultEnd?.error).toBe(errors[0].message);
 			expect(consultEnd?.exitCode).toBe(1);
 			expect(consultEnd?.readText()).toBe(
@@ -210,7 +215,7 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			expect(deliveryOrder).toEqual(phase === 'startup' ? ['error'] : ['data', 'error']);
 			expect(errors[0].message).toMatch(
 				phase === 'startup' || phase === 'late-output'
-					? /Startup or authentication/
+					? /host startup deadline/
 					: phase === 'mcp-tool'
 						? /tool or wait budget/
 						: /semantic inactivity/
@@ -251,6 +256,11 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			await vi.waitFor(() => expect(emitter.listenerCount('exit')).toBe(0));
 			expect(processes.has('auth-fixture')).toBe(false);
 			expect(errors).toHaveLength(1);
+			expect(errors[0]).toMatchObject({
+				type: 'agent_crashed',
+				source: 'host-supervision',
+				recoverable: true,
+			});
 		}
 	);
 });

@@ -2165,7 +2165,7 @@ Some text with [x] in it that's not a checkbox
 						success: false,
 						outcome: 'crashed',
 						agentSessionId: 'waiting',
-						error: expect.stringContaining('Startup or authentication may be blocked'),
+						error: expect.stringContaining('Last observed startup phase: turn started at +0s.'),
 					});
 					expect(mockSpawn.mock.calls[0][1]).toContain('cli_auth_credentials_store=file');
 					expect(vi.getTimerCount()).toBe(0);
