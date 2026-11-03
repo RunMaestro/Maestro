@@ -45,12 +45,16 @@ describe('useAgentExecution', () => {
 		onSessionId: vi.fn(),
 		onUsage: vi.fn(),
 		onExit: vi.fn(),
+		onToolExecution: vi.fn(),
+		onThinkingChunk: vi.fn(),
 	};
 
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
 	let onSessionIdHandler: ((sid: string, sessionId: string) => void) | undefined;
 	let onUsageHandler: ((sid: string, usage: UsageStats) => void) | undefined;
 	let onExitHandler: ((sid: string) => void) | undefined;
+	let onToolExecutionHandler: ((sid: string, toolEvent: unknown) => void) | undefined;
+	let onThinkingChunkHandler: ((sid: string, content: string) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -59,6 +63,8 @@ describe('useAgentExecution', () => {
 		onSessionIdHandler = undefined;
 		onUsageHandler = undefined;
 		onExitHandler = undefined;
+		onToolExecutionHandler = undefined;
+		onThinkingChunkHandler = undefined;
 
 		mockProcess.spawn.mockResolvedValue(undefined);
 		mockProcess.onData.mockImplementation((handler: (sid: string, data: string) => void) => {
@@ -79,6 +85,18 @@ describe('useAgentExecution', () => {
 			onExitHandler = handler;
 			return () => {};
 		});
+		mockProcess.onToolExecution.mockImplementation(
+			(handler: (sid: string, toolEvent: unknown) => void) => {
+				onToolExecutionHandler = handler;
+				return () => {};
+			}
+		);
+		mockProcess.onThinkingChunk.mockImplementation(
+			(handler: (sid: string, content: string) => void) => {
+				onThinkingChunkHandler = handler;
+				return () => {};
+			}
+		);
 
 		window.maestro = {
 			...window.maestro,
@@ -923,6 +941,61 @@ describe('useAgentExecution', () => {
 			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
 
 			// No output at all → silence crosses the 1-minute inactivity threshold.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(75 * 1000);
+			});
+
+			const res = await spawnPromise;
+			expect(mockKill).toHaveBeenCalledWith(targetSessionId);
+			expect(res.errorKind).toBe('watchdog-stalled');
+		});
+
+		// #1962: stream-json providers (Claude Code) emit `data` only for the final
+		// result, so mid-turn tool calls, thinking and usage must count as activity
+		// or the silence watchdog becomes a wall-clock limit on busy tasks.
+		it('treats tool executions, thinking chunks and usage as activity for the inactivity watchdog', async () => {
+			vi.useFakeTimers();
+			const mockKill = vi.fn().mockResolvedValue(true);
+			window.maestro.process.kill = mockKill;
+			useSettingsStore.setState({
+				autoRunInactivityTimeoutMin: 1,
+				autoRunMaxTaskDurationMin: 0,
+			} as any);
+
+			const session = createMockSession({ state: 'busy' });
+			const { result } = renderForWatchdog(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			// No `data` at all, but a non-data event every 45s for 4.5 minutes,
+			// far past the 1-minute silence threshold measured from the start.
+			const pulses = [
+				() =>
+					onToolExecutionHandler?.(targetSessionId, { toolName: 'Bash', timestamp: Date.now() }),
+				() => onThinkingChunkHandler?.(targetSessionId, 'thinking...'),
+				() => onUsageHandler?.(targetSessionId, baseUsage),
+			];
+			for (let i = 0; i < 6; i++) {
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(45 * 1000);
+					pulses[i % pulses.length]();
+				});
+			}
+			expect(mockKill).not.toHaveBeenCalled();
+
+			// Events stop: silence now crosses the threshold and the watchdog fires.
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(75 * 1000);
 			});
