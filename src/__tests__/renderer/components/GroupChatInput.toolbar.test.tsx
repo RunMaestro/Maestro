@@ -382,6 +382,72 @@ describe('GroupChatInput toolbar', () => {
 			expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeInTheDocument();
 		});
 
+		it('measures a saved draft to its full height on first unfold when opened folded', () => {
+			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
+			useSessionStore.setState({ sessions: [] });
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+			try {
+				render(
+					<GroupChatInput
+						theme={theme}
+						state="idle"
+						onSend={vi.fn()}
+						participants={[]}
+						groupChatId="room-1"
+						draftMessage={'line 1\nline 2\nline 3\nline 4'}
+					/>
+				);
+
+				// Initially folded: textbox is unmounted
+				expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+				// Unfold
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(textarea).toBeInTheDocument();
+				expect(textarea.style.height).toBe('140px');
+			} finally {
+				scrollHeightSpy.mockRestore();
+			}
+		});
+
+		it('re-measures a multi-line draft to its full height after folding and reopening', () => {
+			window.localStorage?.setItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY, 'false');
+			useSessionStore.setState({ sessions: [] });
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+			try {
+				render(
+					<GroupChatInput
+						theme={theme}
+						state="idle"
+						onSend={vi.fn()}
+						participants={[]}
+						groupChatId="room-1"
+						draftMessage={'line 1\nline 2\nline 3\nline 4'}
+					/>
+				);
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(textarea.style.height).toBe('140px');
+
+				// Fold the composer
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+				expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+				// Reopen (unfold) the composer
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+				const reopenedTextarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(reopenedTextarea.style.height).toBe('140px');
+			} finally {
+				scrollHeightSpy.mockRestore();
+			}
+		});
+
 		it('marks the folded handle when only staged images are waiting', () => {
 			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
 			useSessionStore.setState({ sessions: [] });
