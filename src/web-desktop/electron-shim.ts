@@ -353,6 +353,7 @@ class BridgeClient {
 		socket.addEventListener('message', (ev: MessageEvent) => {
 			if (this.ws !== socket) return;
 			this.notePong();
+			let messageLength = String(ev.data).length;
 			let msg: { type?: string; [key: string]: unknown };
 			try {
 				msg = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data));
@@ -380,6 +381,7 @@ class BridgeClient {
 					if (!final) return;
 					const assembled = this.messageChunks.parts.join('');
 					this.messageChunks = undefined;
+					messageLength = assembled.length;
 					msg = JSON.parse(assembled);
 				}
 			} catch (error) {
@@ -446,7 +448,7 @@ class BridgeClient {
 			if (!channel) return;
 			if (this.invalidState) {
 				// Snapshot first, then events that arrived while it was being read.
-				this.recoveryEventBytes += String(ev.data).length * 2;
+				this.recoveryEventBytes += messageLength * 2;
 				if (this.recoveryEventBytes > 8 * 1024 * 1024) {
 					this.invalidateState('recovery event backlog exceeded');
 					return;

@@ -449,6 +449,62 @@ describe('web-desktop electron-shim chunked transfers', () => {
 		expect(socket.closeCodes).toEqual([]);
 	});
 
+	it('charges the assembled event against the recovery backlog while host restoration is stalled', async () => {
+		const { chunkBrowserRelayText } = await import('../../shared/browserRelay');
+		let recoverySignal: AbortSignal | undefined;
+		let finishRecovery!: () => void;
+		const stalled = new Promise<void>((resolve) => {
+			finishRecovery = resolve;
+		});
+		const holdRecovery = (event: Event) => {
+			const detail = (event as CustomEvent).detail;
+			if (!detail?.authoritative) return;
+			recoverySignal = detail.signal;
+			detail.waitUntil(stalled);
+		};
+		window.addEventListener('maestro:webBridgeReconcile', holdRecovery);
+		try {
+			const first = InertWebSocket.instances[0];
+			first.readyState = InertWebSocket.OPEN;
+			first.emit('open');
+			first.emit('close');
+			await vi.advanceTimersByTimeAsync(1000);
+			const socket = InertWebSocket.instances.at(-1)!;
+			socket.readyState = InertWebSocket.OPEN;
+			socket.emit('open');
+			socket.emit('message', frame({ type: 'connected', resumed: false }));
+			expect(recoverySignal?.aborted).toBe(false);
+			const listener = vi.fn();
+			ipcRenderer.on('test:recovery-backlog', listener);
+			const event = JSON.stringify({
+				type: 'bridge.event',
+				channel: 'test:recovery-backlog',
+				args: ['x'.repeat(4 * 1024 * 1024)],
+			});
+			let offset = 0;
+			for (const data of chunkBrowserRelayText(event)) {
+				socket.emit(
+					'message',
+					frame({
+						type: 'bridge.chunk',
+						data,
+						offset,
+						total: event.length,
+						final: offset + data.length === event.length,
+					})
+				);
+				offset += data.length;
+			}
+			// The last envelope is tiny, but the retained event exceeds 8 MiB.
+			expect(recoverySignal?.aborted).toBe(true);
+			expect(listener).not.toHaveBeenCalled();
+		} finally {
+			window.removeEventListener('maestro:webBridgeReconcile', holdRecovery);
+			finishRecovery();
+			await Promise.resolve();
+		}
+	});
+
 	it.each([
 		{ name: 'nonzero initial offset', start: false, data: '{', offset: 1, total: 5, final: false },
 		{ name: 'changed total', start: true, data: '}', offset: 1, total: 6, final: false },
