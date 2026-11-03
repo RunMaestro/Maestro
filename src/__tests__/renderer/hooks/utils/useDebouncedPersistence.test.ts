@@ -3021,6 +3021,7 @@ describe('useDebouncedPersistence', () => {
 					seedSessions([{ ...local, executionQueue: [] }]);
 					cancellation = view.result.current.flushNow();
 				});
+				expect(rebasePendingSessionChanges([host])[0].executionQueue).toEqual([]);
 				await act(async () => {
 					releaseSave();
 					await first;
@@ -3078,6 +3079,38 @@ describe('useDebouncedPersistence', () => {
 			await second;
 		});
 		expect(stored()[0].executionQueue).toEqual([]);
+	});
+
+	it('rebases only later cancellations, without replaying an uncertain submitted removal', async () => {
+		const item = {
+			id: 'uncertain-removal',
+			type: 'message' as const,
+			text: 'work',
+			timestamp: 1,
+			tabId: 'default-tab',
+			dispatchRecoveryGeneration: 1,
+		};
+		const original = makeSession({ id: 'uncertain-removal', executionQueue: [item] });
+		seedSessions([original]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([original]);
+		});
+		vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+			new Error('Submission uncertainty: removal response lost')
+		);
+		await act(async () => {
+			seedSessions([{ ...original, executionQueue: [] }]);
+			await view.result.current.flushNow();
+		});
+		// The attempted mutation is not safe to replay from an unknown outcome.
+		expect(rebasePendingSessionChanges([original])[0].executionQueue).toEqual([item]);
+		act(() => {
+			seedSessions([original]);
+			seedSessions([{ ...original, executionQueue: [] }]);
+		});
+		// A later explicit cancellation is new work, even for the same object.
+		expect(rebasePendingSessionChanges([original])[0].executionQueue).toEqual([]);
 	});
 
 	it('saves an agent created on the host after an empty bootstrap with its unmodified observed baseline', async () => {

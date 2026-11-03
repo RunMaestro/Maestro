@@ -374,6 +374,24 @@ export interface SessionPersistenceBaseline {
 	recovered?: boolean;
 }
 
+type QueueRemovalIntent = { item: QueuedItem };
+type QueueRemovalObservations = Map<string, Map<string, QueueRemovalIntent>>;
+
+/** Use only queue IDs this client actually removed, without rebasing unrelated edits. */
+function withObservedQueueRemovals(
+	baseline: Session,
+	outgoing: Session,
+	removals: ReadonlyMap<string, QueueRemovalIntent> | undefined
+): Session {
+	if (!removals?.size) return baseline;
+	const queue = new Map((baseline.executionQueue ?? []).map((item) => [item.id, item]));
+	const present = new Set((outgoing.executionQueue ?? []).map((item) => item.id));
+	for (const [itemId, removal] of removals) {
+		if (!present.has(itemId)) queue.set(itemId, removal.item);
+	}
+	return { ...baseline, executionQueue: [...queue.values()] };
+}
+
 /**
  * Diff two sessions arrays by reference identity per element.
  *
@@ -469,7 +487,10 @@ export function useDebouncedPersistence(
 	const peerBaselinesRef = useRef(new Map<string, Session>());
 	// Capture the incarnation actually removed from this client's visible queue.
 	// Its saved snapshot can lag behind a peer recovery while a save is in flight.
-	const queueRemovalsRef = useRef(new Map<string, Map<string, { item: QueuedItem }>>());
+	const queueRemovalsRef = useRef<QueueRemovalObservations>(new Map());
+	// Unknown submissions are discarded on reconnect; only later removal intents
+	// may be rebased. Keep the exact intent identities sent by that attempt.
+	const submittedQueueRemovalsRef = useRef<QueueRemovalObservations | null>(null);
 	const recoveryGenerationRef = useRef(0);
 	// A submitted write may have reached the host even if its reply was lost.
 	// Recovery must discard that attempted diff and retain only later local edits.
@@ -516,6 +537,7 @@ export function useDebouncedPersistence(
 		const queueRemovals = new Map(
 			[...queueRemovalsRef.current].map(([id, items]) => [id, new Map(items)])
 		);
+		submittedQueueRemovalsRef.current = queueRemovals;
 		const forgetSavedQueueRemovals = () => {
 			for (const [id, items] of queueRemovals) {
 				const pending = queueRemovalsRef.current.get(id);
@@ -538,15 +560,9 @@ export function useDebouncedPersistence(
 			}
 			for (const [id, items] of queueRemovals) {
 				const baseline = byId.get(id);
-				if (!baseline) continue;
-				const queue = new Map((baseline.executionQueue ?? []).map((item) => [item.id, item]));
-				const present = new Set(
-					(sessionsById.get(id)?.executionQueue ?? []).map((item) => item.id)
-				);
-				for (const [itemId, removal] of items) {
-					if (!present.has(itemId)) queue.set(itemId, removal.item);
-				}
-				byId.set(id, { ...baseline, executionQueue: [...queue.values()] });
+				const outgoing = sessionsById.get(id);
+				if (baseline && outgoing)
+					byId.set(id, withObservedQueueRemovals(baseline, outgoing, items));
 			}
 			return [...byId.values()];
 		};
@@ -655,6 +671,8 @@ export function useDebouncedPersistence(
 			// beforeunload can retry once the bridge is ready.
 		} finally {
 			if (attemptedSessionsRef.current === snapshot) attemptedSessionsRef.current = null;
+			if (!uncertainBaselineRef.current && recoveryGeneration === recoveryGenerationRef.current)
+				submittedQueueRemovalsRef.current = null;
 			flushingRef.current = false;
 			const waiters = rerunWaitersRef.current;
 			rerunWaitersRef.current = [];
@@ -723,10 +741,16 @@ export function useDebouncedPersistence(
 			const observed = before.get(host.id) ?? peerBaselinesRef.current.get(host.id);
 			if (!current) return before.has(host.id) ? [] : [host];
 			if (!observed) return [host];
+			const submitted = submittedQueueRemovalsRef.current?.get(host.id);
+			const laterRemovals = new Map(
+				[...(queueRemovalsRef.current.get(host.id) ?? [])].filter(
+					([id, intent]) => submitted?.get(id) !== intent
+				)
+			);
 			const rebased = mergeSessionPersistenceChanges(
 				prepareSessionForPersistence(current),
 				host,
-				prepareSessionForPersistence(observed),
+				prepareSessionForPersistence(withObservedQueueRemovals(observed, current, laterRemovals)),
 				true,
 				true
 			);
@@ -763,6 +787,7 @@ export function useDebouncedPersistence(
 			flushRequestedRef.current = false;
 			peerBaselinesRef.current.clear();
 			queueRemovalsRef.current.clear();
+			submittedQueueRemovalsRef.current = null;
 			sessionsRef.current = useSessionStore.getState().sessions;
 			previouslyPersistedRef.current = sessions;
 			uncertainBaselineRef.current = null;
