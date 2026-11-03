@@ -742,6 +742,18 @@ export class WebServer {
 		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId, undefined, true);
 	}
 
+	/**
+	 * Open a new AI tab in an agent with `prompt` as its first turn, from the main
+	 * process. Always background, for the same reason as
+	 * {@link enqueueCommandFromMain}: no user gesture is behind it.
+	 */
+	newAITabWithPromptFromMain(
+		sessionId: string,
+		prompt: string
+	): ReturnType<CallbackRegistry['newAITabWithPrompt']> {
+		return this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, true);
+	}
+
 	setListQueueCallback(callback: ListQueueCallback): void {
 		this.callbackRegistry.setListQueueCallback(callback);
 	}

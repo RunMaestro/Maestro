@@ -44,7 +44,10 @@ export interface DispatchCallbackRegistration {
 	targetName?: string;
 	/** Agent to wake when the dispatch finishes. */
 	callerAgentId: string;
-	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	/**
+	 * Specific caller tab to wake. Without one, the callback opens a new tab in
+	 * the caller agent (never its active tab, which may be unrelated work).
+	 */
 	callerTabId?: string;
 	/** Overrides the whole default callback prompt body. */
 	callbackPrompt?: string;

@@ -635,7 +635,7 @@ program
 	)
 	.option(
 		'--callback-tab <id>',
-		'Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else its active AI tab)'
+		'Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else a new tab)'
 	)
 	.option(
 		'--callback-prompt <text>',

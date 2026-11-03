@@ -1321,8 +1321,9 @@ app
 
 		// dispatch --notify-on-complete. Wired here because it needs the same
 		// web-server handle the CLI round-trips through: the callback is
-		// delivered as a real turn in the caller's live tab via the renderer's
-		// execution queue, not as a fresh headless process.
+		// delivered as a real turn in the caller's tab via the renderer's
+		// execution queue (or in a new tab when it has none), not as a fresh
+		// headless process.
 		initDispatchCallbacks({
 			enqueue: async (agentId, prompt, tabId) => {
 				const server = webServer;
@@ -1335,6 +1336,14 @@ app
 					// from every other failure and retried at agent level.
 					...(result.reason ? { reason: result.reason } : {}),
 				};
+			},
+			openTab: async (agentId, prompt) => {
+				const server = webServer;
+				if (!server) return { success: false, error: 'Desktop web server unavailable' };
+				const result = await server.newAITabWithPromptFromMain(agentId, prompt);
+				return result.success
+					? { success: true }
+					: { success: false, error: 'Could not open a new tab in the caller agent' };
 			},
 			getTargetOutput: async (agentId, since) => {
 				// Best-effort: the newest history entry the target wrote after the
