@@ -390,10 +390,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// restore, slash/template insertion) that never fire onChange.
 	const keystrokeResizeScheduledRef = useRef(false);
 
+	// Phone: the whole composer folds away behind a slim handle so the transcript
+	// gets the screen; the user pulls it up to type. Remembered across reloads,
+	// and it starts folded - on a handheld the composer is in the way far more
+	// often than it is in use. The handle keeps a busy dot, since Stop lives in
+	// the folded thinking pill, and a pencil for an unsent draft. Called here,
+	// above the early returns, so the fold survives them like every other hook,
+	// and above the autosize, which re-measures the textarea an unfold mounts.
+	const composerFold = useChatComposerFold(PHONE_COMPOSER_COLLAPSED_KEY);
+
 	useInputAreaAutosize({
 		inputRef,
 		inputValue,
 		activeTabId: session.activeTabId,
+		isFolded: composerFold.isFolded,
 		keystrokeResizeScheduledRef,
 	});
 
@@ -445,13 +455,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		[voice.voiceSupported, voice.isListening, handleToggleVoiceInput]
 	);
 
-	// Phone: the whole composer folds away behind a slim handle so the transcript
-	// gets the screen; the user pulls it up to type. Remembered across reloads,
-	// and it starts folded - on a handheld the composer is in the way far more
-	// often than it is in use. The handle keeps a busy dot, since Stop lives in
-	// the folded thinking pill, and a pencil for an unsent draft. Called here,
-	// above the early returns, so the fold survives them like every other hook.
-	const composerFold = useChatComposerFold(PHONE_COMPOSER_COLLAPSED_KEY);
 	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
 	const phoneHandleHasDraft = inputValue.trim().length > 0 || stagedImages.length > 0;
 
