@@ -20,6 +20,7 @@ import { jumpToMessageEdge, isTextInputTarget } from '../../utils/messageScrollN
 import { QueuedItemsList } from '../QueuedItemsList';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { Spinner } from '../ui/Spinner';
+import { isImeComposing } from '../../utils/ime';
 import {
 	TerminalSelectionContextMenu,
 	type TerminalSelectionContextMenuState,
@@ -485,7 +486,7 @@ export const TerminalOutput = memo(
 					}
 					// Escape handling removed - delegated to layer stack for search
 					// When search is not open, Escape should still focus back to input
-					if (e.key === 'Escape' && !outputSearchOpen) {
+					if (e.key === 'Escape' && !outputSearchOpen && !isImeComposing(e)) {
 						e.preventDefault();
 						e.stopPropagation();
 						// Focus back to text input

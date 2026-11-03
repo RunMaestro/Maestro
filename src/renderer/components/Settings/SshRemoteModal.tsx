@@ -41,6 +41,7 @@ import {
 import { validateSshOption } from '../../../shared/sshOptions';
 import { useSaveShortcut } from '../../hooks';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { isImeComposing } from '../../utils/ime';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -210,7 +211,7 @@ export function SshRemoteModal({
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Escape') {
+		if (e.key === 'Escape' && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
 			setShowSshConfigDropdown(false);
