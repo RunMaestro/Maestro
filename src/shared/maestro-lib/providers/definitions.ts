@@ -646,11 +646,14 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'opencode',
 		args: [], // Base args (none for OpenCode - batch mode uses 'run' subcommand)
 		// OpenCode CLI argument builders
-		// Batch mode: opencode run --format json [--model provider/model] [--session <id>] [--agent plan] "prompt"
+		// Batch mode: opencode run --format json --thinking [--model provider/model] [--session <id>] [--agent plan] "prompt"
 		// YOLO mode (auto-approve all permissions) is enabled via OPENCODE_CONFIG_CONTENT env var.
 		// This prevents OpenCode from prompting for permission on external_directory access, which would hang in batch mode.
 		batchModePrefix: ['run'], // OpenCode uses 'run' subcommand for batch mode
-		jsonOutputArgs: ['--format', 'json'], // JSON output format
+		// JSON output format. `--thinking` makes `run` emit `reasoning` events; without
+		// it OpenCode drops reasoning parts and the Thinking toggle has nothing to show.
+		// It rides here rather than batchModeArgs so read-only (plan) runs keep it too.
+		jsonOutputArgs: ['--format', 'json', '--thinking'],
 		resumeArgs: (sessionId: string) => ['--session', sessionId], // Resume with session ID
 		readOnlyArgs: ['--agent', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --agent plan

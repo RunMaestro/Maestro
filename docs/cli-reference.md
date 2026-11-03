@@ -289,6 +289,16 @@ List agent sessions (most recent first)
 | `-s, --search <keyword>` | Filter sessions by keyword in name or first message    | -       |
 | `--json`                 | Output as JSON (for scripting)                         | -       |
 
+## `maestro-cli list models`
+
+List the models a provider offers (e.g. opencode, claude-code), as the model pickers see them
+
+| Option              | Description                                                        | Default |
+| ------------------- | ------------------------------------------------------------------ | ------- |
+| `--refresh`         | Re-run discovery past the cache and update every open model picker | -       |
+| `--ssh-remote <id>` | Discover on this SSH remote instead of this machine                | -       |
+| `--json`            | Output as JSON (for scripting)                                     | -       |
+
 ## `maestro-cli list ssh-remotes`
 
 List all configured SSH remotes

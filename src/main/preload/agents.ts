@@ -28,6 +28,10 @@ import type {
 } from '../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../shared/authPaths';
 import type { KnownEnvVarKeys } from '../../shared/envVarCatalog';
+import {
+	MODELS_REFRESHED_CHANNEL,
+	type ModelsRefreshedPayload,
+} from '../../shared/agentModelsRefresh';
 
 // Re-export for consumers that import from preload. `AgentStatus` is
 // re-exported only (no local usage in this file); TypeScript's
@@ -193,6 +197,17 @@ export function createAgentsApi() {
 		 */
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string): Promise<string[]> =>
 			ipcRenderer.invoke('agents:getModels', agentId, forceRefresh, sshRemoteId),
+
+		/**
+		 * Subscribe to forced model discoveries from ANY surface (Settings, a
+		 * picker's refresh button, `maestro-cli models --refresh`). The payload
+		 * carries the fresh list. Returns an unsubscribe fn.
+		 */
+		onModelsRefreshed: (callback: (payload: ModelsRefreshedPayload) => void): (() => void) => {
+			const handler = (_: unknown, payload: ModelsRefreshedPayload) => callback(payload);
+			ipcRenderer.on(MODELS_REFRESHED_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(MODELS_REFRESHED_CHANNEL, handler);
+		},
 
 		/**
 		 * Discover available values for a dynamic select config option

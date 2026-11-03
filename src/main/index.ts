@@ -245,6 +245,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 // Phase 2 refactoring - dependency injection
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
+import { setModelsRefreshedBroadcaster } from './agents/model-discovery';
 import { createWebServerFactory } from './web-server/web-server-factory';
 import { registerBrowserRelayHandlers } from './browser/browser-relay';
 import { isHostBrowserPageWindow } from './browser/browser-pages';
@@ -643,6 +644,9 @@ const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.
 capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeSend));
+
+// A forced model discovery pushes the fresh list to every open model picker.
+setModelsRefreshedBroadcaster(safeSend);
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({

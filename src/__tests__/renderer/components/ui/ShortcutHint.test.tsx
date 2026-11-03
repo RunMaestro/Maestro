@@ -63,6 +63,43 @@ describe('ShortcutHint', () => {
 			expect(row).not.toHaveAttribute('tabindex');
 			expect(row.className).toContain('select-none');
 		});
+
+		// The trailing control must survive on a phone, where every element
+		// carrying data-shortcut-hint is hidden - so only the chord carries it.
+		it('pins a trailing control at the right end without hiding it with the chord', () => {
+			const { container } = render(
+				<ShortcutHint
+					theme={mockTheme}
+					keys={KEYS}
+					label="Try:"
+					variant="row"
+					trailing={<button type="button">Refresh</button>}
+				/>
+			);
+			const row = container.firstElementChild as HTMLElement;
+			const button = screen.getByRole('button', { name: 'Refresh' });
+
+			expect(row).not.toHaveAttribute('data-shortcut-hint');
+			// rc draws the chord as separate key caps, so read the hint's text
+			// content rather than matching one text node.
+			const hint = row.querySelector('[data-shortcut-hint]');
+			expect(hint).not.toBeNull();
+			expect(hint).toHaveTextContent(`Try: ${CHORD}`);
+			expect(button.closest('[data-shortcut-hint]')).toBeNull();
+		});
+
+		it('still draws the row for a trailing control when the action is unbound', () => {
+			render(
+				<ShortcutHint
+					theme={mockTheme}
+					keys={[]}
+					variant="row"
+					trailing={<button type="button">Refresh</button>}
+				/>
+			);
+			expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+			expect(document.querySelector('[data-shortcut-hint]')).toBeNull();
+		});
 	});
 });
 
