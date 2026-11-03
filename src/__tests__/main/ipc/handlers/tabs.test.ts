@@ -80,3 +80,52 @@ describe('tabs IPC handlers', () => {
 		expect(() => listener({}, 'agent-1', 'tab-7')).not.toThrow();
 	});
 });
+
+// Agent Resilience tells main when it holds a tab's failed turn for a resend, so
+// a dispatch callback armed on that tab waits for the resend instead of
+// reporting the first refusal.
+describe('tabs:aiTabRetryState', () => {
+	type RetryStateListener = (
+		event: unknown,
+		agentId: unknown,
+		tabId: unknown,
+		pending: unknown
+	) => void;
+	let listener: RetryStateListener;
+	let noteRetryState: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		noteRetryState = vi.fn();
+		vi.mocked(getDispatchCallbackRegistry).mockReturnValue({
+			noteRetryState,
+		} as unknown as ReturnType<typeof getDispatchCallbackRegistry>);
+		registerTabsHandlers();
+		const registration = vi
+			.mocked(ipcMain.on)
+			.mock.calls.find(([channel]) => channel === 'tabs:aiTabRetryState');
+		expect(registration).toBeDefined();
+		listener = registration?.[1] as unknown as RetryStateListener;
+	});
+
+	it('passes the retry state for that exact agent and tab to the registry', () => {
+		listener({}, 'agent-1', 'tab-7', true);
+		listener({}, 'agent-1', 'tab-7', false);
+		expect(noteRetryState.mock.calls).toEqual([
+			['agent-1', 'tab-7', true],
+			['agent-1', 'tab-7', false],
+		]);
+	});
+
+	it('ignores a malformed notification', () => {
+		listener({}, 'agent-1', 'tab-7', 'yes');
+		listener({}, '', 'tab-7', true);
+		listener({}, 'agent-1', 42, true);
+		expect(noteRetryState).not.toHaveBeenCalled();
+	});
+
+	it('is a no-op when dispatch callbacks are not wired yet', () => {
+		vi.mocked(getDispatchCallbackRegistry).mockReturnValue(null);
+		expect(() => listener({}, 'agent-1', 'tab-7', true)).not.toThrow();
+	});
+});

@@ -43,7 +43,11 @@ import { resilienceEnabled } from '../../shared/agentConstants';
 import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quotaLimitDetail';
 import { generateId } from '../utils/ids';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
-import { applyReplayDispatch, type ReplayBlockedReason } from '../utils/executionQueue';
+import {
+	applyReplayDispatch,
+	recoverQueuedItem,
+	type ReplayBlockedReason,
+} from '../utils/executionQueue';
 import { settleTabThinkingState } from '../utils/tabHelpers';
 import { getContextCompactCommand } from '../../shared/contextCompaction';
 import {
@@ -197,16 +201,25 @@ export type RetryStore = RetryStoreState & RetryStoreActions;
 // Store
 // ============================================================================
 
-export const useRetryStore = create<RetryStore>()((set) => ({
+export const useRetryStore = create<RetryStore>()((set, get) => ({
 	retries: {},
 	outages: {},
-	setEntry: (key, entry) =>
+	setEntry: (key, entry) => {
+		const target = entry ?? get().retries[key];
 		set((state) => {
 			const next = { ...state.retries };
 			if (entry) next[key] = entry;
 			else delete next[key];
 			return { retries: next };
-		}),
+		});
+		// Every write of the retry map passes here, so this is the one place main
+		// hears whether a tab's failed turn is being held for a resend. A dispatch
+		// callback armed on that tab then waits for the resend instead of reporting
+		// the first refusal (see DispatchCallbackRegistry.noteRetryState).
+		if (target) {
+			window.maestro?.tabs?.notifyAiTabRetryState?.(target.sessionId, target.tabId, !!entry);
+		}
+	},
 	patchOutage: (outageId, patch) =>
 		set((state) => {
 			const next = { ...state.outages };
@@ -767,8 +780,11 @@ function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
 function holdFailedItemInQueue(sessionId: string, tabId: string, item: QueuedItem): void {
 	updateSessionWith(sessionId, (s) => {
 		const queue = s.executionQueue ?? [];
-		if (queue.some((queued) => queued.id === item.id)) return s;
-		const held: QueuedItem = { ...item, tabId };
+		const existing = queue.find((queued) => queued.id === item.id);
+		const held = existing ?? recoverQueuedItem({ ...item, tabId });
+		const snapshot = snapshots.get(keyFor(sessionId, tabId));
+		if (snapshot?.item.id === item.id) snapshot.item = held;
+		if (existing) return s;
 		const firstForTab = queue.findIndex((queued) => queued.tabId === tabId);
 		const insertAt = firstForTab === -1 ? 0 : firstForTab;
 		return {
@@ -780,15 +796,19 @@ function holdFailedItemInQueue(sessionId: string, tabId: string, item: QueuedIte
 
 /**
  * Take the failed turn back out of the queue at the moment we resend it.
- * Returns nothing: the dispatch uses the snapshot (which also carries the
- * dispatch deps), and the queue copy exists to hold the slot, not to be a
- * second source of the prompt.
+ * Return its recovery incarnation so the replay snapshot cannot reset its
+ * generation. The queue copy holds the slot until the snapshot is dispatched.
  */
-function releaseHeldItemFromQueue(sessionId: string, itemId: string): void {
-	updateSessionWith(sessionId, (s) => ({
-		...s,
-		executionQueue: (s.executionQueue ?? []).filter((queued) => queued.id !== itemId),
-	}));
+function releaseHeldItemFromQueue(sessionId: string, itemId: string): QueuedItem | undefined {
+	let held: QueuedItem | undefined;
+	updateSessionWith(sessionId, (s) => {
+		held = s.executionQueue?.find((queued) => queued.id === itemId);
+		return {
+			...s,
+			executionQueue: (s.executionQueue ?? []).filter((queued) => queued.id !== itemId),
+		};
+	});
+	return held;
 }
 
 /**
@@ -948,7 +968,8 @@ async function fireRetry(key: string): Promise<void> {
 		}
 		// Take the held copy out of the queue in the same beat as the resend, so
 		// the prompt exists in exactly one place at a time.
-		releaseHeldItemFromQueue(entry.sessionId, snapshot.item.id);
+		const held = releaseHeldItemFromQueue(entry.sessionId, snapshot.item.id);
+		if (held) snapshot.item = held;
 
 		// Mark the tab running BEFORE the spawn, and before the await: a queue
 		// drain that read this tab as free while the resend was in flight would

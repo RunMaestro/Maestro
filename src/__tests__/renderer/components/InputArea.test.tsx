@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
@@ -768,6 +769,93 @@ describe('InputArea', () => {
 
 			const toggle = screen.getByTitle(/Full Access/);
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.accent });
+		});
+	});
+
+	describe('Standard approval channel selection', () => {
+		it('skips Standard on a current transport without approvals', () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				toolType: 'qwen3-coder',
+				harnessControlMode: 'current',
+			});
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			fireEvent.click(screen.getByTitle(/Full Access/));
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updated = updater(session);
+			expect(updated.aiTabs[0].permissionMode).toBe('readonly');
+		});
+
+		it('offers Standard on the same provider in native mode', () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				toolType: 'qwen3-coder',
+				harnessControlMode: 'native',
+			});
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			fireEvent.click(screen.getByTitle(/Full Access/));
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updated = updater(session);
+			expect(updated.aiTabs[0].permissionMode).toBe('standard');
+		});
+
+		it('offers Standard for the saved Codex app-server transport', () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				toolType: 'codex',
+				codexTransport: 'app-server',
+			});
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			fireEvent.click(screen.getByTitle(/Full Access/));
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updated = updater(session);
+			expect(updated.aiTabs[0].permissionMode).toBe('standard');
+		});
+
+		it('offers Standard for local OpenCode server turns', () => {
+			const previous = useSettingsStore.getState().encoreFeatures;
+			useSettingsStore.setState({
+				encoreFeatures: { ...previous, opencodeServer: true },
+			});
+			try {
+				const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' });
+				render(<InputArea {...createDefaultProps({ session })} />);
+
+				fireEvent.click(screen.getByTitle(/Full Access/));
+				const updater = mockUpdateSessionWith.mock.calls[0][1];
+				const updated = updater(session);
+				expect(updated.aiTabs[0].permissionMode).toBe('standard');
+			} finally {
+				useSettingsStore.setState({ encoreFeatures: previous });
+			}
+		});
+
+		it('skips Standard for OpenCode turns with staged images', () => {
+			const previous = useSettingsStore.getState().encoreFeatures;
+			useSettingsStore.setState({
+				encoreFeatures: { ...previous, opencodeServer: true },
+			});
+			try {
+				const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' });
+				render(
+					<InputArea
+						{...createDefaultProps({
+							session,
+							stagedImages: ['data:image/png;base64,abc'],
+						})}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle(/Full Access/));
+				const updater = mockUpdateSessionWith.mock.calls[0][1];
+				const updated = updater(session);
+				expect(updated.aiTabs[0].permissionMode).toBe('readonly');
+			} finally {
+				useSettingsStore.setState({ encoreFeatures: previous });
+			}
 		});
 	});
 

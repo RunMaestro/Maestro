@@ -49,7 +49,7 @@ describe.skipIf(process.platform !== 'linux')(
 					expect(result?.outcome).toBe('crashed');
 					expect(result?.error).toMatch(
 						phase === 'startup'
-							? /Startup or authentication/
+							? /host startup deadline/
 							: phase === 'mcp-tool'
 								? /tool or wait budget/
 								: /semantic inactivity/

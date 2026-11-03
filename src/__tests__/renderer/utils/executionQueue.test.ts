@@ -25,6 +25,7 @@ import {
 	mergeQueuedItemIntoPrevious,
 	applyReplayDispatch,
 } from '../../../renderer/utils/executionQueue';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -553,6 +554,40 @@ describe('applyQueuedItemDispatchFailure', () => {
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
 	});
 
+	it.each([false, true])(
+		'retains recovered work against a stale peer dequeue (collision=%s)',
+		(collision) => {
+			const baseline = sessionWithCard({ executionQueue: [failed] });
+			const recovered = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision });
+			// A peer persisted the original dequeue before hearing about spawn failure.
+			const stored = mergeSessionPersistenceChanges(
+				{ ...baseline, executionQueue: [] },
+				recovered,
+				baseline,
+				true
+			);
+			expect(stored.executionQueue).toEqual(recovered.executionQueue);
+			const mirrored = mergeSessionPersistenceChanges(
+				{ ...baseline, executionQueue: [] },
+				recovered,
+				baseline,
+				true,
+				true
+			);
+			expect(mirrored.executionQueue).toEqual(recovered.executionQueue);
+			// Once the recovered attempt really runs, its own removal must win.
+			expect(
+				mergeSessionPersistenceChanges(
+					{ ...recovered, executionQueue: [] },
+					recovered,
+					recovered,
+					true,
+					true
+				).executionQueue
+			).toEqual([]);
+		}
+	);
+
 	it('holds the item when the failure is not a transient collision', () => {
 		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision: false });
 
@@ -810,6 +845,19 @@ describe('getSteerEligibility', () => {
 		expect(shouldOfferSteer(eligibility)).toBe(true);
 	});
 
+	// A dispatch callback is another agent's report. Typing it into the running
+	// turn would land it mid-thread as if the user wrote it, so the control is
+	// not offered at all; the callback runs as its own turn once the tab is idle.
+	it('refuses and hides Steer for a queued dispatch callback', () => {
+		const eligibility = getSteerEligibility(steerableSession(), {
+			...item,
+			dispatchCallback: true,
+		});
+		expect(eligibility).toEqual({ canSteer: false, blockedReason: 'dispatch-callback' });
+		expect(shouldOfferSteer(eligibility)).toBe(false);
+		expect(describeSteerBlocked('dispatch-callback')).toMatch(/own turn/);
+	});
+
 	it('refuses when the target tab is not working', () => {
 		// There is no turn in flight to steer, and this message is about to become
 		// that turn anyway.
@@ -864,6 +912,41 @@ describe('getSteerEligibility', () => {
 	it('refuses a provider that has no steering channel', () => {
 		const session = steerableSession({ toolType: 'opencode' });
 		expect(getSteerEligibility(session, item).blockedReason).toBe('not-claude');
+	});
+
+	it('offers steering only for native adapters with an in-turn channel', () => {
+		for (const toolType of ['claude-code', 'copilot-cli', 'hermes', 'pi', 'omp'] as const) {
+			const session = steerableSession({
+				toolType,
+				harnessControlMode: 'native',
+				claudeInteractive: undefined,
+			});
+			expect(getSteerEligibility(session, item).canSteer, toolType).toBe(true);
+		}
+		const acpSession = steerableSession({
+			toolType: 'qwen3-coder',
+			harnessControlMode: 'native',
+			claudeInteractive: undefined,
+		});
+		expect(getSteerEligibility(acpSession, item).blockedReason).toBe('not-claude');
+	});
+
+	it('allows native steering after Claude publishes API transport mode', () => {
+		const session = steerableSession({
+			harnessControlMode: 'native',
+			claudeInteractive: { mode: 'api', modeReason: 'auto' },
+		});
+		expect(getSteerEligibility(session, { ...item, text: '/clear' }).canSteer).toBe(true);
+	});
+
+	it('keeps the TUI prefix guard when native startup resolves to interactive fallback', () => {
+		const session = steerableSession({
+			harnessControlMode: 'native',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		});
+		expect(getSteerEligibility(session, { ...item, text: '/clear' }).blockedReason).toBe(
+			'tui-command-prefix'
+		);
 	});
 
 	it('allows a Codex agent on the app-server transport', () => {

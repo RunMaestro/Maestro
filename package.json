@@ -116,7 +116,8 @@
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
 			"node_modules/bindings/**/*",
-			"node_modules/file-uri-to-path/**/*"
+			"node_modules/file-uri-to-path/**/*",
+			"node_modules/@github/copilot-sdk-*/**/*"
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
@@ -393,6 +394,8 @@
 		}
 	},
 	"dependencies": {
+		"@agentclientprotocol/sdk": "^2.0.2",
+		"@anthropic-ai/claude-agent-sdk": "^0.3.310",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",
@@ -423,6 +426,7 @@
 		"@gitgraph/core": "^1.5.0",
 		"@gitgraph/react": "^1.6.0",
 		"@huggingface/transformers": "3.8.1",
+		"@github/copilot-sdk": "^1.0.26",
 		"@lezer/highlight": "^1.2.3",
 		"@napi-rs/keyring": "2.0.0",
 		"@opencode-ai/sdk": "^1.17.13",

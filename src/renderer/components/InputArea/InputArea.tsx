@@ -46,6 +46,7 @@ import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import { hasStandardApprovalChannel } from '../../../shared/agentMetadata';
 import {
 	buildSlotRemap,
 	moveStagedImage,
@@ -153,6 +154,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		availableEfforts = [],
 		onModelChange,
 		onEffortChange,
+		onRefreshModels,
+		refreshingModels,
 	} = props;
 
 	// Self-source thinking items with a narrow store equality so App/MainPanel
@@ -161,6 +164,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const thinkingItems = useThinkingItems(ownsSession);
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
+	const encoreFeatures = useSettingsStore((state) => state.encoreFeatures);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 	const {
 		modelMenuOpen,
@@ -173,6 +177,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Get agent capabilities for conditional feature rendering
 	const { hasCapability } = useAgentCapabilities(session.toolType);
+	const hasStandardCapability =
+		hasCapability('supportsStandardPermissionMode') &&
+		hasStandardApprovalChannel({
+			toolType: session.toolType,
+			harnessControlMode: session.harnessControlMode,
+			codexTransport: session.codexTransport,
+			opencodeServer: encoreFeatures.opencodeServer === true,
+			sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
+			hasImages: stagedImages.length > 0,
+		});
 
 	// PERF: Memoize activeTab lookup to avoid O(n) search on every render
 	const activeTab = useMemo(
@@ -721,7 +735,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							isTerminalMode={isTerminalMode}
 							canAttachImages={canAttachImages}
 							hasReadOnlyCapability={hasCapability('supportsReadOnlyMode')}
-							hasStandardCapability={hasCapability('supportsStandardPermissionMode')}
+							hasStandardCapability={hasStandardCapability}
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
@@ -743,6 +757,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							availableEfforts={availableEfforts}
 							onModelChange={onModelChange}
 							onEffortChange={onEffortChange}
+							onRefreshModels={onRefreshModels}
+							refreshingModels={refreshingModels}
 							modelMenuOpen={modelMenuOpen}
 							setModelMenuOpen={setModelMenuOpen}
 							modelMenuRef={modelMenuRef}

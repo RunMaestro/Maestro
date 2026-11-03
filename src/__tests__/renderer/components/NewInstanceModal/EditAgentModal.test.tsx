@@ -710,7 +710,7 @@ describe('EditAgentModal', () => {
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		const args = onSave.mock.calls[0];
 		// acceptTranslationLimitations, resources, plan id, convert flag
-		expect(args.slice(23)).toEqual([true, [], 'plan', true]);
+		expect(args.slice(24)).toEqual([true, [], 'plan', true]);
 	});
 
 	it('switches provider without converting by default', async () => {

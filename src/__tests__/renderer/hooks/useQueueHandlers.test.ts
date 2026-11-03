@@ -1003,7 +1003,7 @@ describe('useQueueHandlers', () => {
 			expect(updated.executionQueue).toEqual([]);
 		});
 
-		it('keeps a refused item queued exactly as it was', async () => {
+		it('keeps a refused item queued with a newer recovery generation', async () => {
 			// Nothing was typed, so the message is still ours and sends normally later.
 			steer.mockResolvedValue({
 				type: 'steering',
@@ -1017,7 +1017,7 @@ describe('useQueueHandlers', () => {
 
 			const updated = await steerItem('item-a');
 
-			expect(updated.executionQueue).toEqual([item]);
+			expect(updated.executionQueue).toEqual([{ ...item, dispatchRecoveryGeneration: 1 }]);
 		});
 
 		it('pauses an item whose outcome is unknown rather than dropping or resending it', async () => {
@@ -1027,7 +1027,9 @@ describe('useQueueHandlers', () => {
 
 			const updated = await steerItem('item-a');
 
-			expect(updated.executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(updated.executionQueue).toEqual([
+				{ ...item, paused: true, dispatchRecoveryGeneration: 1 },
+			]);
 		});
 
 		it('does not steer an item the live state says is not steerable', async () => {

@@ -1228,17 +1228,12 @@ describe('GitDiffViewer', () => {
 	});
 
 	describe('Tab scroll behavior', () => {
-		it('scrolls to active tab when changed', async () => {
+		it('marks the active file tab for the strip to reveal', () => {
 			const onClose = vi.fn();
-			const scrollIntoViewMock = vi.fn();
 			mockParseGitDiff.mockReturnValue([
 				createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
 				createMockParsedFile({ oldPath: 'src/file2.ts', newPath: 'src/file2.ts' }),
 			]);
-
-			// Mock scrollIntoView on button elements
-			const originalScrollIntoView = Element.prototype.scrollIntoView;
-			Element.prototype.scrollIntoView = scrollIntoViewMock;
 
 			render(
 				<GitDiffViewer
@@ -1249,14 +1244,15 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// Change tab
-			fireEvent.click(screen.getByText('file2.ts'));
+			// Exactly one tab carries the marker, and it follows the selection.
+			const activeTabs = () => document.querySelectorAll('[data-reveal-active="true"]');
+			expect(activeTabs()).toHaveLength(1);
+			expect(activeTabs()[0]).toHaveTextContent('file1.ts');
 
-			await waitFor(() => {
-				expect(scrollIntoViewMock).toHaveBeenCalled();
-			});
+			fireEvent.click(screen.getAllByText('file2.ts')[0]);
 
-			Element.prototype.scrollIntoView = originalScrollIntoView;
+			expect(activeTabs()).toHaveLength(1);
+			expect(activeTabs()[0]).toHaveTextContent('file2.ts');
 		});
 	});
 

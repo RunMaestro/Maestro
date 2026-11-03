@@ -76,6 +76,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -509,6 +510,8 @@ export interface MentionHandoff {
 
 export interface QueuedItem {
 	id: string; // Unique item ID
+	/** Increases only when a failed dispatch restores this ID. Older removals must not erase it. */
+	dispatchRecoveryGeneration?: number;
 	timestamp: number; // When it was queued (for ordering)
 	tabId: string; // Target tab for this item
 	type: QueuedItemType; // 'message' or 'command'
@@ -565,6 +568,11 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// A `dispatch --notify-on-complete` wake that main queued because this tab was
+	// mid-turn: another agent reporting back, not the user's message. It runs as
+	// its own turn when the tab goes idle and is never steered into the running
+	// one (see getSteerEligibility).
+	dispatchCallback?: boolean;
 	// Model/effort captured when the user queued this item. Both the spawn and
 	// the transcript pills read it, so a queued turn runs under - and is labeled
 	// with - the configuration it was queued with, not whatever is selected by
@@ -1616,6 +1624,8 @@ export interface Session {
 	// Absent means 'exec'. Experimental. Always read it through
 	// `resolveCodexTransport` in shared/codexTransport, never directly.
 	codexTransport?: CodexTransport;
+	/** Optional native protocol control mode. Absent means the current transport. */
+	harnessControlMode?: HarnessControlMode;
 	/**
 	 * Parked agent-level overrides (the per-session fields above that belong to
 	 * one provider: path, args, env, model, effort, context window, token

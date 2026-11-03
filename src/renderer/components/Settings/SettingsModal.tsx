@@ -18,6 +18,7 @@ import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
+import { revealActiveProps, useRevealActiveItem } from '../../hooks/ui/useRevealActiveItem';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { jumpToElement } from '../../utils/jumpHighlight';
@@ -104,6 +105,7 @@ function SettingsTabButton({
 	const inactiveEdge = '2px solid transparent';
 	return (
 		<button
+			{...revealActiveProps(isActive)}
 			onClick={onClick}
 			className={`flex items-center gap-2.5 px-4 py-2 text-sm text-left transition-colors cursor-pointer ${orientation === 'vertical' ? 'w-full' : 'flex-shrink-0'} ${isActive ? 'font-bold' : 'opacity-70 hover:opacity-100'}`}
 			style={{
@@ -253,6 +255,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const [activeTab, setActiveTab] = useState<SettingsTabId>(
 		() => initialTab || lastOpenSettingsTab || 'general'
 	);
+	// Both tab navs scroll (the sidebar on a short window, the strip on a
+	// phone), and Settings reopens on the last tab, which can sit past the fold.
+	// Only one nav is mounted at a time, so they share the one ref.
+	const tabNavRef = useRevealActiveItem<HTMLElement>(activeTab);
 	const resizableModal = useResizableModal({
 		resizeKey: 'settings',
 		defaultSize: { width: 1200, height: 900 },
@@ -546,6 +552,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					{isXs ? (
 						/* Horizontal tab strip above content (xs phones) */
 						<nav
+							ref={tabNavRef}
 							className="flex-shrink-0 flex border-b overflow-x-auto scrollbar-thin"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 							aria-label="Settings tabs"
@@ -564,6 +571,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					) : (
 						/* Left Sidebar Tabs (sm and up) */
 						<nav
+							ref={tabNavRef}
 							className="w-[248px] flex-shrink-0 border-r py-2 overflow-y-auto scrollbar-thin"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 							aria-label="Settings tabs"

@@ -1958,6 +1958,7 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -1980,7 +1981,43 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				true,
 				false,
-				'handoff'
+				'handoff',
+				undefined
+			);
+		});
+
+		// main's own dispatch-callback delivery marks the item so the renderer never
+		// offers Steer on it; the flag has to survive the hop to the renderer.
+		it('setEnqueueCommandCallback forwards the dispatch-callback mark to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const callback = (server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+
+			void callback(
+				'session-1',
+				'[Maestro dispatch callback]',
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				undefined,
+				undefined,
+				true
+			);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:enqueueCommand',
+				'session-1',
+				'[Maestro dispatch callback]',
+				expect.any(String),
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				undefined,
+				undefined,
+				true
 			);
 		});
 

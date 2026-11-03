@@ -59,7 +59,8 @@ export function registerQueueCallbacks(
 			images?: string[],
 			background?: boolean,
 			held?: boolean,
-			mentionRouting?: MentionRouting
+			mentionRouting?: MentionRouting,
+			dispatchCallback?: boolean
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -109,7 +110,8 @@ export function registerQueueCallbacks(
 					images,
 					background,
 					held,
-					mentionRouting
+					mentionRouting,
+					dispatchCallback
 				);
 
 				const timeoutId = setTimeout(() => {
