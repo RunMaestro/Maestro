@@ -510,6 +510,8 @@ export interface MentionHandoff {
 
 export interface QueuedItem {
 	id: string; // Unique item ID
+	/** Increases only when a failed dispatch restores this ID. Older removals must not erase it. */
+	dispatchRecoveryGeneration?: number;
 	timestamp: number; // When it was queued (for ordering)
 	tabId: string; // Target tab for this item
 	type: QueuedItemType; // 'message' or 'command'
