@@ -8,6 +8,7 @@ import { execFileNoThrow, needsWindowsShell } from '../utils/execFile';
 import { isWindows } from '../../shared/platformDetection';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
 import { buildSpawnPath } from '../../shared/maestro-lib/launch/spawn-path';
+import { windowsCommandLineLength } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { escapeCmdArgs } from '../../shared/maestro-lib/launch/windows-shell-escape';
 import {
 	cmdShellArgsRefusal,
@@ -672,6 +673,8 @@ export function prepareMemoryCliLaunch(invocation: MemoryCliInvocation): {
 	command: string;
 	args: string[];
 } {
+	if (isWindows() && windowsCommandLineLength(invocation.command, invocation.args) > 32_767)
+		throw new Error('Windows command line exceeds the 32767-character limit');
 	if (!isWindows() || !needsWindowsShell(invocation.command))
 		return { command: invocation.command, args: invocation.args };
 	const refusal = cmdShellArgsRefusal(invocation.args, new Set(invocation.promptArgs ?? []));

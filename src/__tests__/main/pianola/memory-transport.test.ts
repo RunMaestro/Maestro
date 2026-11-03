@@ -649,6 +649,30 @@ it.skipIf(process.platform !== 'win32')(
 	}
 );
 
+it.skipIf(process.platform !== 'win32')(
+	'rejects an oversized positional prompt before submission',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-oversized-argv')!;
+		const prompt = 'x'.repeat(32_768);
+		await expect(
+			item.scope.cli(
+				{
+					command: 'C:\\tools\\omp.exe',
+					args: ['--', prompt],
+					promptArgs: [prompt],
+					input: '',
+					contentType: 'application/jsonl',
+				},
+				1000,
+				'cli-extract'
+			)
+		).rejects.toThrow('32767-character limit');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		item.scope.finish();
+	}
+);
+
 it('does not launch after authority is revoked during workspace creation', async () => {
 	const f = await fixture(1);
 	let permitted = true;
