@@ -189,6 +189,67 @@ describe('useDebouncedPersistence', () => {
 	// initialLoadComplete is set in a finally, so it is true either way, and
 	// flushNow with a snapshot skips it altogether. persistInternal is the one
 	// gate every flush path shares, so the refusal lives there.
+	describe('queue synchronization during streaming', () => {
+		it('persists a dequeue promptly while another agent keeps streaming', async () => {
+			const item = { id: 'consumed', type: 'message' as const, text: 'Ja bitte', timestamp: 1 };
+			const owner = makeSession({ id: 'owner', executionQueue: [item] });
+			const other = makeSession({ id: 'streaming' });
+			seedSessions([owner, other]);
+			const stored = mockPersistedSessions([owner, other]);
+			renderPersistence(makeInitialLoadRef(true));
+			act(() => seedSessions([{ ...owner, executionQueue: [] }, other]));
+			for (let i = 0; i < 4; i++) {
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+				act(() =>
+					useSessionStore
+						.getState()
+						.setSessions((prev) =>
+							prev.map((session) =>
+								session.id === other.id ? { ...session, contextUsage: i + 1 } : session
+							)
+						)
+				);
+			}
+			expect(stored().find((session) => session.id === owner.id)?.executionQueue).toEqual([]);
+		});
+
+		it('bounds persistence delay even when ordinary session updates never stop', async () => {
+			const session = makeSession({ id: 'streaming' });
+			seedSessions([session]);
+			const stored = mockPersistedSessions([session]);
+			renderPersistence(makeInitialLoadRef(true));
+			for (let i = 1; i <= 20; i++) {
+				act(() => seedSessions([{ ...session, contextUsage: i }]));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+			}
+			expect(stored()[0].contextUsage).toBeGreaterThan(0);
+		});
+
+		it('coalesces a synchronous queue burst into one save of the final queue', async () => {
+			const session = makeSession({ id: 'queue' });
+			seedSessions([session]);
+			const stored = mockPersistedSessions([session]);
+			renderPersistence(makeInitialLoadRef(true));
+			const item = { id: 'queued', type: 'message' as const, text: 'new work', timestamp: 1 };
+			act(() => {
+				seedSessions([{ ...session, executionQueue: [item] }]);
+				seedSessions([{ ...session, executionQueue: [{ ...item, paused: true }] }]);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(stored()[0].executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(
+				vi.mocked(window.maestro.sessions.setAll).mock.calls.length +
+					vi.mocked(window.maestro.sessions.setMany).mock.calls.length
+			).toBe(1);
+		});
+	});
+
 	describe('sessionsReadOk gate', () => {
 		it('does not persist on the debounce timer when the read never came back', () => {
 			useSessionStore.setState({ sessionsReadOk: false });
@@ -2887,6 +2948,169 @@ describe('useDebouncedPersistence', () => {
 			expect(reported).toBeInstanceOf(Error);
 			expect(reported.message).toBe('boom');
 		});
+	});
+
+	it.each([true, false])(
+		'saves removal of an observed recovery despite an older in-flight save (initially queued=%s)',
+		async (initiallyQueued) => {
+			const item = {
+				id: 'recovered',
+				type: 'message' as const,
+				text: 'work',
+				timestamp: 1,
+				tabId: 'default-tab',
+			};
+			const original = makeSession({
+				id: 'observed-removal',
+				executionQueue: initiallyQueued ? [item] : [],
+			});
+			seedSessions([original]);
+			useSessionStore.setState({ initialLoadComplete: true });
+			let host = structuredClone(original);
+			let releaseSave!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				releaseSave = resolve;
+			});
+			let calls = 0;
+			const save = async (updates: Session[], _removedIds: string[], baselines?: Session[]) => {
+				if (++calls === 1) await gate;
+				for (const update of updates)
+					host = mergeSessionPersistenceChanges(
+						update,
+						host,
+						baselines?.find((s) => s.id === update.id),
+						true
+					);
+				return true;
+			};
+			vi.mocked(window.maestro.sessions.setMany).mockImplementation(save);
+			vi.mocked(window.maestro.sessions.setAll).mockImplementation((updates, baselines) =>
+				save(updates, [], baselines)
+			);
+			const previousListener = window.maestro.sessions.onLifecycleSync;
+			const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
+			window.maestro.sessions.onLifecycleSync = (callback) => {
+				listeners.add(callback);
+				return () => listeners.delete(callback);
+			};
+			const initialLoad = makeInitialLoadRef(true);
+			const view = renderHook(() => {
+				const persistence = useDebouncedPersistence(initialLoad);
+				useSessionLifecycleSync(async (session) => session);
+				return persistence;
+			});
+			try {
+				let first!: Promise<void>;
+				await act(async () => {
+					first = view.result.current.flushNow([{ ...original, name: 'older save' }]);
+				});
+				host = {
+					...host,
+					executionQueue: [{ ...item, paused: true, dispatchRecoveryGeneration: 1 }],
+				};
+				await act(async () => {
+					for (const listener of listeners)
+						listener({ updated: [structuredClone(host)], baselines: [original] });
+				});
+				expect(
+					useSessionStore.getState().sessions[0].executionQueue[0].dispatchRecoveryGeneration
+				).toBe(1);
+				let cancellation!: Promise<void>;
+				await act(async () => {
+					const local = useSessionStore.getState().sessions[0];
+					seedSessions([{ ...local, executionQueue: [] }]);
+					cancellation = view.result.current.flushNow();
+				});
+				expect(rebasePendingSessionChanges([host])[0].executionQueue).toEqual([]);
+				await act(async () => {
+					releaseSave();
+					await first;
+					await cancellation;
+				});
+				expect(host.executionQueue).toEqual([]);
+				expect(view.result.current.isPending).toBe(false);
+			} finally {
+				view.unmount();
+				window.maestro.sessions.onLifecycleSync = previousListener;
+			}
+		}
+	);
+
+	it('does not discard a newer cancellation of the same object when an older save acknowledges', async () => {
+		const item = {
+			id: 'same-object',
+			type: 'message' as const,
+			text: 'work',
+			timestamp: 1,
+			tabId: 'default-tab',
+		};
+		const original = makeSession({ id: 'successive-removals', executionQueue: [item] });
+		seedSessions([original]);
+		const stored = mockPersistedSessions([original]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([original]);
+		});
+		let acknowledge!: (ok: boolean) => void;
+		vi.mocked(window.maestro.sessions.setMany).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					acknowledge = resolve;
+				})
+		);
+		let first!: Promise<void>;
+		await act(async () => {
+			seedSessions([{ ...original, executionQueue: [] }]);
+			first = view.result.current.flushNow();
+		});
+		// Its first cancellation was accepted, but another event restored the same
+		// object before the acknowledgement reached the browser. Cancel again.
+		act(() => {
+			seedSessions([original]);
+			seedSessions([{ ...original, executionQueue: [] }]);
+		});
+		let second!: Promise<void>;
+		await act(async () => {
+			second = view.result.current.flushNow();
+		});
+		await act(async () => {
+			acknowledge(true);
+			await first;
+			await second;
+		});
+		expect(stored()[0].executionQueue).toEqual([]);
+	});
+
+	it('rebases only later cancellations, without replaying an uncertain submitted removal', async () => {
+		const item = {
+			id: 'uncertain-removal',
+			type: 'message' as const,
+			text: 'work',
+			timestamp: 1,
+			tabId: 'default-tab',
+			dispatchRecoveryGeneration: 1,
+		};
+		const original = makeSession({ id: 'uncertain-removal', executionQueue: [item] });
+		seedSessions([original]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([original]);
+		});
+		vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+			new Error('Submission uncertainty: removal response lost')
+		);
+		await act(async () => {
+			seedSessions([{ ...original, executionQueue: [] }]);
+			await view.result.current.flushNow();
+		});
+		// The attempted mutation is not safe to replay from an unknown outcome.
+		expect(rebasePendingSessionChanges([original])[0].executionQueue).toEqual([item]);
+		act(() => {
+			seedSessions([original]);
+			seedSessions([{ ...original, executionQueue: [] }]);
+		});
+		// A later explicit cancellation is new work, even for the same object.
+		expect(rebasePendingSessionChanges([original])[0].executionQueue).toEqual([]);
 	});
 
 	it('saves an agent created on the host after an empty bootstrap with its unmodified observed baseline', async () => {
