@@ -68,6 +68,7 @@ import {
 	submitSteeringNote,
 } from '../services/autoRunSteering';
 import { MAX_STEERING_NOTE_LENGTH, type AutoRunSteeringNote } from '../../shared/autorunSteering';
+import { isImeComposing } from '../utils/ime';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -803,7 +804,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 									// layer handler would see the same key and reach the same
 									// branch, but stopping here keeps the panel's Escape from
 									// depending on which element happened to have focus.
-									if (e.key === 'Escape') {
+									if (e.key === 'Escape' && !isImeComposing(e)) {
 										e.preventDefault();
 										e.stopPropagation();
 										setBarMode('buttons');
@@ -853,7 +854,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 							onKeyDown={(e) => {
 								// Same reasoning as the note box: while a run can be
 								// steered, Escape here means "back to the buttons".
-								if (e.key === 'Escape' && canSteer) {
+								if (e.key === 'Escape' && canSteer && !isImeComposing(e)) {
 									e.preventDefault();
 									e.stopPropagation();
 									leaveSearch();

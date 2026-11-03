@@ -46,6 +46,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { closeTab } from '../../utils/tabHelpers';
 import { displayImageSrc } from '../../utils/sessionImageSrc';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
+import { isImeComposing } from '../../utils/ime';
 
 /** Height cap for the wizard composer; past it the textarea scrolls. */
 const WIZARD_TEXTAREA_MAX_HEIGHT = 112;
@@ -184,7 +185,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	// history still looks empty - silently threw the whole wizard away.
 	const handleEscapeKey = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key === 'Escape') {
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				e.stopPropagation();
 				if (isBusy && onStopTurn) {

@@ -20,6 +20,7 @@ import { EmojiPickerOverlay } from '../ui';
 import { LongPressable } from '../shared/LongPressable';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import { TabOverlayPortal } from './TabOverlayPortal';
+import { isImeComposing } from '../../utils/ime';
 
 export interface GroupTabChipProps {
 	group: TabGroup;
@@ -153,7 +154,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 			if (e.key === 'Enter') {
 				e.preventDefault();
 				commitRename();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				cancelRename();
 			}

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, ReactNode } from 'react';
 import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks/ui/useLayerStack';
 import { useLayerSwipeDismiss } from '../hooks/ui/useLayerSwipeDismiss';
+import { isImeComposing } from '../utils/ime';
 
 // Create context with null as default (will throw if used outside provider)
 const LayerStackContext = createContext<LayerStackAPI | null>(null);
@@ -32,7 +33,7 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 
 	useEffect(() => {
 		const handleEscape = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				const stack = layerStackRef.current;
 				const topLayer = stack.getTopLayer();
 				if (topLayer) {

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
+import { isImeComposing } from '../../utils/ime';
 import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
@@ -1124,7 +1125,7 @@ const NativeBrowserTabView = React.memo(
 										onFocus={handleAddressFocus}
 										onBlur={handleAddressBlur}
 										onKeyDown={(event) => {
-											if (event.key === 'Escape') {
+											if (event.key === 'Escape' && !isImeComposing(event)) {
 												// Revert any edits, then hand focus to the webview so
 												// the user can immediately use arrow keys to scroll.
 												event.preventDefault();
@@ -1235,7 +1236,7 @@ const NativeBrowserTabView = React.memo(
 								value={findQuery}
 								onChange={(event) => setFindQuery(event.target.value)}
 								onKeyDown={(event) => {
-									if (event.key === 'Escape') {
+									if (event.key === 'Escape' && !isImeComposing(event)) {
 										event.preventDefault();
 										event.stopPropagation();
 										closeFind();
