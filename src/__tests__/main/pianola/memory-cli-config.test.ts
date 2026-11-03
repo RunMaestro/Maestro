@@ -17,9 +17,12 @@ afterEach(async () => {
 	);
 });
 
+const CLAUDE_PATH = path.resolve('tools/claude.exe');
+const CODEX_PATH = path.resolve('tools/codex.cmd');
+const FAKE_PATH = path.resolve('fake.exe');
 const providers: MemoryCliProviderInfo[] = [
-	{ id: 'claude-code', name: 'Claude Code', path: 'C:\\tools\\claude.exe', model: 'sonnet' },
-	{ id: 'codex', name: 'Codex', path: 'C:\\tools\\codex.cmd', model: 'gpt-test' },
+	{ id: 'claude-code', name: 'Claude Code', path: CLAUDE_PATH, model: 'sonnet' },
+	{ id: 'codex', name: 'Codex', path: CODEX_PATH, model: 'gpt-test' },
 ];
 
 it('resolves the effective CLI configuration for partial provider and path updates', async () => {
@@ -29,11 +32,11 @@ it('resolves the effective CLI configuration for partial provider and path updat
 	engines.push(engine);
 	await engine.request({
 		action: 'configure',
-		config: { enabled: false, mode: 'cli', cliProvider: 'claude-code', cliPath: 'C:\\fake.exe' },
+		config: { enabled: false, mode: 'cli', cliProvider: 'claude-code', cliPath: FAKE_PATH },
 	});
 	expect(engine.database.config()).toMatchObject({
 		cliProvider: 'claude-code',
-		cliPath: 'C:\\tools\\claude.exe',
+		cliPath: CLAUDE_PATH,
 		model: 'sonnet',
 		inputPrice: 0,
 		outputPrice: 0,
@@ -41,13 +44,13 @@ it('resolves the effective CLI configuration for partial provider and path updat
 	await engine.request({ action: 'configure', config: { cliProvider: 'codex' } });
 	expect(engine.database.config()).toMatchObject({
 		cliProvider: 'codex',
-		cliPath: 'C:\\tools\\codex.cmd',
+		cliPath: CODEX_PATH,
 		model: 'gpt-test',
 	});
-	await engine.request({ action: 'configure', config: { cliPath: 'C:\\fake.exe' } });
+	await engine.request({ action: 'configure', config: { cliPath: FAKE_PATH } });
 	expect(engine.database.config()).toMatchObject({
 		cliProvider: 'codex',
-		cliPath: 'C:\\tools\\codex.cmd',
+		cliPath: CODEX_PATH,
 		model: 'gpt-test',
 	});
 });
