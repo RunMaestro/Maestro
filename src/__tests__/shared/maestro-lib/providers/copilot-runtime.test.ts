@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { resolveCopilotRuntimeExecutable } from '../../../../shared/maestro-lib/providers/copilot-runtime';
 import { findPackagedAppHost } from '../../../../shared/maestro-lib/launch/interactive-mode';
 
@@ -78,6 +78,9 @@ describe('resolveCopilotRuntimeExecutable', () => {
 				: process.platform === 'darwin'
 					? 'MacOS/Maestro'
 					: 'maestro';
+		// The macOS host binary sits one folder down (MacOS/Maestro), which has to
+		// exist before the file can be written.
+		mkdirSync(dirname(join(root, binary)), { recursive: true });
 		writeFileSync(join(root, binary), '');
 
 		expect(findPackagedAppHost(resources)?.resourcesPath).toBe(resources);
