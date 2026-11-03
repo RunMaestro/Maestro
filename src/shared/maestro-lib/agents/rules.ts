@@ -19,6 +19,7 @@ import { stripBlankEnvVars } from '../../agentEnvironment';
 import { isValidAgentId } from '../../agentIds';
 import { isSameDirectory, rebasePathOntoRoot } from '../../agentWorkingDirectory';
 import { isCodexTransport } from '../../codexTransport';
+import { isHarnessControlMode } from '../providers/native-control';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { canCreateGroupInside, removeGroupAndPromoteChildren } from '../../groupHierarchy';
 import { PLAYBOOKS_DIR } from '../../maestro-paths';
@@ -801,6 +802,7 @@ export const AGENT_EDITABLE_KEYS: ReadonlySet<string> = new Set([
 	'maestroPPath',
 	// Validated in `applyAgentConfigPatch`: an unknown transport must never reach the spawner.
 	'codexTransport',
+	'harnessControlMode',
 	'bookmarked',
 ]);
 
@@ -844,6 +846,8 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
 	if (patch.codexTransport !== undefined) {
 		put('codexTransport', 'codexTransport', patch.codexTransport);
 	}
+	if (patch.harnessControlMode !== undefined)
+		put('harnessControlMode', 'harnessControlMode', patch.harnessControlMode);
 	return { fields, patch: out };
 }
 
@@ -866,6 +870,10 @@ export function applyAgentConfigPatch(
 	if (transport !== undefined && transport !== null && !isCodexTransport(transport)) {
 		return invalid("Invalid value for field 'codexTransport'");
 	}
+	const controlMode = patch.harnessControlMode;
+	if (controlMode !== undefined && controlMode !== null && !isHarnessControlMode(controlMode)) {
+		return invalid("Invalid value for field 'harnessControlMode'");
+	}
 	const next: AgentRecord = { ...agent };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {
@@ -874,6 +882,7 @@ export function applyAgentConfigPatch(
 		let value = patch[key];
 		if (key === 'customEffort' && typeof value === 'string') value = value.trim() || null;
 		if (key === 'codexTransport' && value === 'exec') value = null;
+		if (key === 'harnessControlMode' && value === 'current') value = null;
 		if (value === null) delete next[key];
 		else next[key] = value;
 	}

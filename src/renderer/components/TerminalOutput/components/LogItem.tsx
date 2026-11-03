@@ -15,7 +15,7 @@ import {
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
-import type { LogEntry, Session } from '../../../types';
+import type { LogEntry } from '../../../types';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -34,7 +34,6 @@ import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
 import { DispatchCallbackCard } from '../../DispatchCallbackCard';
 import { parseDispatchCallbackPrompt } from '../../../../shared/dispatchCallbackCard';
-import { useSessionStore } from '../../../stores/sessionStore';
 import { ContextCompactionCard } from '../../ContextCompactionCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
@@ -450,9 +449,6 @@ export const LogItem = memo(
 		const dispatchCallback =
 			log.source === 'user' ? parseDispatchCallbackPrompt(log.text ?? '') : null;
 		if (dispatchCallback) {
-			const targetToolType = useSessionStore
-				.getState()
-				.sessions.find((s: Session) => s.id === dispatchCallback.targetAgentId)?.toolType;
 			return (
 				<div
 					ref={logItemRef}
@@ -468,11 +464,7 @@ export const LogItem = memo(
 						<LogTimestamp timestamp={log.timestamp} />
 					</div>
 					<div className="flex-1 min-w-0">
-						<DispatchCallbackCard
-							parsed={dispatchCallback}
-							theme={theme}
-							targetToolType={targetToolType}
-						/>
+						<DispatchCallbackCard parsed={dispatchCallback} theme={theme} />
 					</div>
 				</div>
 			);

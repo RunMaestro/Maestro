@@ -424,7 +424,9 @@ describe('portfolio CLI commands', () => {
 			bundle: true,
 			platform: 'node',
 			format: 'cjs',
-			external: ['electron'],
+			// fsevents is a macOS-only native addon (a .node file esbuild cannot
+			// bundle). It is absent on Linux and Windows, so only a Mac hit this.
+			external: ['electron', 'fsevents'],
 		});
 		fs.writeFileSync(
 			path.join(dir, 'maestro-settings.json'),

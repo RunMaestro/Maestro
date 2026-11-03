@@ -23,8 +23,8 @@ import {
 	type FirstPartyEncoreFlag,
 } from '../../../../shared/plugins/first-party';
 import type { PermissionRequest } from '../../../../shared/plugins/permissions';
-import { joinPath } from '../../../../shared/formatters';
 import { buildExtensions, type UnifiedExtension } from './extensionModel';
+import { selectPluginSource } from '../../../services/pluginSource';
 import { hostPlatform } from '../../../utils/platformUtils';
 
 /** Is this Encore flag one of the five first-party plugin-backed features? */
@@ -57,7 +57,7 @@ export interface UseExtensionsResult {
 	cancelPendingEnable: () => void;
 	enablePluginsSubsystem: () => void;
 	togglePlugin: (record: PluginRecord) => Promise<void>;
-	installPlugin: () => Promise<void>;
+	installPlugin: (fromFolder?: boolean) => Promise<void>;
 	updatePlugin: (record: PluginRecord) => Promise<void>;
 	uninstallPlugin: (record: PluginRecord) => Promise<void>;
 	revokePlugin: (id: string) => Promise<void>;
@@ -225,63 +225,59 @@ export function useExtensions(): UseExtensionsResult {
 		}
 	}, []);
 
-	const installPlugin = useCallback(async () => {
-		const dir = await window.maestro.dialog.selectFolder();
-		if (!dir) return;
-		setLoading(true);
-		try {
-			const result = await window.maestro.plugins.install(dir);
-			if (result.success) {
+	const installPlugin = useCallback(
+		async (fromFolder = false) => {
+			const sourcePath = await selectPluginSource(
+				'Install plugin: archive or plugin.json',
+				fromFolder
+			);
+			if (!sourcePath) return;
+			setLoading(true);
+			try {
+				const result = await window.maestro.plugins.install(sourcePath);
+				if (result.success) {
+					notifyToast({
+						color: 'green',
+						title: 'Extensions',
+						message: `Installed ${result.record?.manifest?.name ?? result.record?.id ?? 'plugin'}`,
+					});
+					await reload();
+				} else {
+					notifyToast({
+						color: 'orange',
+						title: 'Extensions',
+						message: `Install failed: ${result.error ?? 'unknown error'}`,
+					});
+				}
+			} catch (err) {
 				notifyToast({
-					color: 'green',
+					color: 'red',
 					title: 'Extensions',
-					message: `Installed ${result.record?.manifest?.name ?? result.record?.id ?? 'plugin'}`,
+					message: `Install failed: ${String(err)}`,
 				});
-				await reload();
-			} else {
-				notifyToast({
-					color: 'orange',
-					title: 'Extensions',
-					message: `Install failed: ${result.error ?? 'unknown error'}`,
-				});
+			} finally {
+				setLoading(false);
 			}
-		} catch (err) {
-			notifyToast({ color: 'red', title: 'Extensions', message: `Install failed: ${String(err)}` });
-		} finally {
-			setLoading(false);
-		}
-	}, [reload]);
+		},
+		[reload]
+	);
 
 	const updatePlugin = useCallback(
 		async (record: PluginRecord) => {
 			setBusyId(record.id);
 			try {
-				const dir = await window.maestro.dialog.selectFolder();
-				if (!dir) return;
-				let manifestText: string | null;
-				try {
-					manifestText = await window.maestro.fs.readFile(joinPath(dir, 'plugin.json'));
-				} catch {
-					throw new Error('Could not read plugin.json in the selected folder');
-				}
-				if (!manifestText) throw new Error('Selected folder has no plugin.json');
-				let manifest: { id?: unknown };
-				try {
-					manifest = JSON.parse(manifestText) as { id?: unknown };
-				} catch {
-					throw new Error('Selected folder has an invalid plugin.json');
-				}
-				if (manifest.id !== record.id) {
-					throw new Error(`Selected folder is not for ${record.id}`);
-				}
+				const sourcePath = await selectPluginSource(
+					`Update ${record.manifest?.name ?? record.id}: archive or plugin.json`
+				);
+				if (!sourcePath) return;
 				// The host validates the source manifest, version, signature, and
-				// existing consent. Updating must never run uninstall/install.
-				const snap = await window.maestro.plugins.update(dir);
+				// expected id, including inside archives. Updating never uninstalls.
+				const snap = await window.maestro.plugins.update(sourcePath, record.id);
 				const updated = snap.plugins.find((plugin) => plugin.id === record.id);
 				const updateMessage =
 					updated?.manifest && updated.manifest.version !== record.manifest?.version
 						? `Updated ${updated.manifest.name} to v${updated.manifest.version}`
-						: 'Plugin updated from folder';
+						: 'Plugin updated';
 				notifyToast({
 					color: updated?.enabled === false ? 'orange' : 'green',
 					title: 'Extensions',

@@ -14,6 +14,7 @@ export const initialState: WizardState = {
 	maestroPMode: undefined,
 	maestroPPath: undefined,
 	codexTransport: undefined,
+	harnessControlMode: undefined,
 	plannerModel: undefined,
 	sessionSshRemoteConfig: undefined,
 	directoryPath: '',
@@ -78,6 +79,8 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return { ...state, maestroPPath: action.path };
 		case 'SET_CODEX_TRANSPORT':
 			return { ...state, codexTransport: action.transport };
+		case 'SET_HARNESS_CONTROL_MODE':
+			return { ...state, harnessControlMode: action.mode };
 		case 'SET_PLANNER_MODEL':
 			return { ...state, plannerModel: action.model };
 		case 'SET_SESSION_SSH_REMOTE_CONFIG':

@@ -23,6 +23,7 @@ const mockProcess = {
 	write: vi.fn(),
 	interrupt: vi.fn(),
 	kill: vi.fn(),
+	closeAgent: vi.fn(),
 	resize: vi.fn(),
 	onData: vi.fn(),
 	onExit: vi.fn(),
@@ -696,6 +697,7 @@ describe('killAgentAiProcesses', () => {
 
 		const killed = mockProcess.kill.mock.calls.map(([id]) => id).sort();
 		expect(killed).toEqual(['agent-1-ai', 'agent-1-ai-tab-a', 'agent-1-ai-tab-b-fp-1700000000000']);
+		expect(mockProcess.closeAgent).toHaveBeenCalledWith('agent-1');
 	});
 
 	test('still kills the legacy id when the process table cannot be read', async () => {
@@ -706,5 +708,6 @@ describe('killAgentAiProcesses', () => {
 		await killAgentAiProcesses('agent-1');
 
 		expect(mockProcess.kill).toHaveBeenCalledWith('agent-1-ai');
+		expect(mockProcess.closeAgent).toHaveBeenCalledWith('agent-1');
 	});
 });

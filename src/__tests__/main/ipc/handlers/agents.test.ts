@@ -119,6 +119,8 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
+import { setModelsRefreshedBroadcaster } from '../../../../main/agents/model-discovery';
+import { MODELS_REFRESHED_CHANNEL } from '../../../../shared/agentModelsRefresh';
 import * as fs from 'fs';
 import { getCodexSkillDirs, getCodexPromptDirs } from '../../../../main/agents/codex-config';
 
@@ -1377,6 +1379,47 @@ describe('agents IPC handlers', () => {
 			await handler!({} as any, 'opencode', true);
 
 			expect(mockAgentDetector.discoverModels).toHaveBeenCalledWith('opencode', true);
+		});
+
+		describe('refreshed-models broadcast', () => {
+			const broadcast = vi.fn();
+			beforeEach(() => {
+				broadcast.mockReset();
+				setModelsRefreshedBroadcaster(broadcast);
+			});
+			afterEach(() => setModelsRefreshedBroadcaster(undefined));
+
+			it('pushes the fresh list to every open picker on a forced refresh', async () => {
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b', 'ollama/new']);
+
+				const handler = handlers.get('agents:getModels');
+				await handler!({} as any, 'opencode', true);
+
+				expect(broadcast).toHaveBeenCalledWith(MODELS_REFRESHED_CHANNEL, {
+					agentId: 'opencode',
+					sshRemoteId: null,
+					models: ['ollama/qwen3:8b', 'ollama/new'],
+				});
+			});
+
+			it('stays quiet on a cached read', async () => {
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b']);
+
+				const handler = handlers.get('agents:getModels');
+				await handler!({} as any, 'opencode', false);
+
+				expect(broadcast).not.toHaveBeenCalled();
+			});
+
+			it('still returns the list when the broadcast throws', async () => {
+				broadcast.mockImplementation(() => {
+					throw new Error('window gone');
+				});
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b']);
+
+				const handler = handlers.get('agents:getModels');
+				await expect(handler!({} as any, 'opencode', true)).resolves.toEqual(['ollama/qwen3:8b']);
+			});
 		});
 
 		it('should return empty array when agent does not support model selection', async () => {

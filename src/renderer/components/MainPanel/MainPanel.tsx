@@ -422,6 +422,8 @@ export const MainPanel = React.memo(
 			efforts: pillEfforts,
 			defaultModel: agentDefaultModel,
 			defaultEffort: agentDefaultEffort,
+			refreshModels: refreshPillModels,
+			refreshingModels: refreshingPillModels,
 		} = useAgentModelEffortOptions(activeSession?.toolType);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
@@ -1534,6 +1536,8 @@ export const MainPanel = React.memo(
 									availableEfforts={pillEfforts}
 									onModelChange={handleModelChange}
 									onEffortChange={handleEffortChange}
+									onRefreshModels={refreshPillModels}
+									refreshingModels={refreshingPillModels}
 								/>
 							</>
 						)}

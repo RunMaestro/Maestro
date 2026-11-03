@@ -739,7 +739,31 @@ export class WebServer {
 		command: string,
 		tabId?: string
 	): ReturnType<CallbackRegistry['enqueueCommand']> {
-		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId, undefined, true);
+		// Marked as a dispatch callback so the queued card never offers Steer: it is
+		// another agent's report, delivered as its own turn once the tab is idle.
+		return this.callbackRegistry.enqueueCommand(
+			sessionId,
+			command,
+			'ai',
+			tabId,
+			undefined,
+			true,
+			undefined,
+			undefined,
+			true
+		);
+	}
+
+	/**
+	 * Open a new AI tab in an agent with `prompt` as its first turn, from the main
+	 * process. Always background, for the same reason as
+	 * {@link enqueueCommandFromMain}: no user gesture is behind it.
+	 */
+	newAITabWithPromptFromMain(
+		sessionId: string,
+		prompt: string
+	): ReturnType<CallbackRegistry['newAITabWithPrompt']> {
+		return this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, true);
 	}
 
 	setListQueueCallback(callback: ListQueueCallback): void {

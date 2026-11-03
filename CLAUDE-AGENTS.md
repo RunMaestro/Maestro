@@ -19,6 +19,10 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                                                                  |
 | `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                                                                 |
 
+## Native control transports
+
+The current CLI/PTY transport remains the default. Qualified providers can opt into native ACP, SDK, HTTP/SSE, or JSON-RPC control per agent; capabilities and steering semantics differ by transport. See [Native Harness Control](docs/agent-guides/NATIVE-HARNESS-CONTROL.md) for the support matrix, ownership rules, runtime requirements, and live-verification status.
+
 ## Agent Capabilities
 
 Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (24 boolean flags + 1 optional). The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.

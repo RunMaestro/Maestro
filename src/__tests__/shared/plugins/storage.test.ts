@@ -7,6 +7,32 @@ import {
 } from '../../../shared/plugins/storage';
 
 describe('validatePluginStateFile', () => {
+	it('preserves an optional publisher while legacy entries remain unanchored', () => {
+		expect(
+			validatePluginStateFile({
+				schemaVersion: 1,
+				plugins: {
+					legacy: { enabled: true },
+					anchored: { enabled: false, trustedPublisher: 'verified-publisher' },
+				},
+			}).plugins
+		).toEqual({
+			legacy: { enabled: true },
+			anchored: { enabled: false, trustedPublisher: 'verified-publisher' },
+		});
+	});
+
+	it.each([null, 42, {}, '', '   ', 'x'.repeat(4097)])(
+		'preserves a malformed-present publisher as blocked: %j',
+		(trustedPublisher) => {
+			expect(
+				validatePluginStateFile({
+					plugins: { damaged: { enabled: 'invalid', trustedPublisher } },
+				}).plugins.damaged
+			).toEqual({ enabled: false, trustedPublisher: null });
+		}
+	);
+
 	it('returns an empty, versioned state for junk input', () => {
 		expect(validatePluginStateFile(null)).toEqual({
 			schemaVersion: PLUGIN_STATE_SCHEMA_VERSION,
