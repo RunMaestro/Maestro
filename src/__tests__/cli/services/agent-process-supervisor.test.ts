@@ -8,7 +8,10 @@ import {
 	superviseAgentProcess,
 	assertHeadlessIdleProfile,
 } from '../../../cli/services/agent-process-supervisor';
-import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	HEADLESS_PROCESS_CLOSE_TIMEOUT_MS,
+} from '../../../shared/plugins/headless-agent-timeouts';
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -16,6 +19,65 @@ afterEach(() => {
 });
 
 describe('headless process supervision', () => {
+	it('allows resumed Codex compaction to finish before the first model output', async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), {
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+		}) as unknown as ChildProcess;
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess(child, {
+			startupMs: CODEX_STARTUP_TIMEOUT_MS,
+			onStop,
+			onForcedStop: vi.fn(),
+		});
+		const parser = createOutputParser('codex')!;
+		try {
+			// Exec stays silent during pre-turn compaction. Real resumed turns
+			// completed it after 152-159 seconds, beyond the former 120s bound.
+			supervision.observe(parser.parseJsonLine('{"type":"turn.started"}')!);
+			await vi.advanceTimersByTimeAsync(160_000);
+			expect(onStop).not.toHaveBeenCalled();
+			supervision.observe(
+				parser.parseJsonLine(
+					JSON.stringify({
+						type: 'item.completed',
+						item: { id: 'answer', type: 'agent_message', text: 'OK' },
+					})
+				)!
+			);
+			await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS);
+			expect(onStop).not.toHaveBeenCalled();
+		} finally {
+			supervision.dispose();
+		}
+	});
+
+	it('still bounds a silent Codex startup and identifies compaction as a possible cause', async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), {
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+		}) as unknown as ChildProcess;
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess(child, {
+			startupMs: CODEX_STARTUP_TIMEOUT_MS,
+			onStop,
+			onForcedStop: vi.fn(),
+		});
+		try {
+			await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS - 1);
+			expect(onStop).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(onStop).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('context compaction'));
+			expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+		} finally {
+			supervision.dispose();
+		}
+	});
+
 	it('does not confuse a failed kill with process exit, and observes a late exit after forced stop', async () => {
 		vi.useFakeTimers();
 		const child = Object.assign(new EventEmitter(), {

@@ -9,8 +9,12 @@ export const HEADLESS_RUN_CLEANUP_MARGIN_MS = 60_000;
 export const HEADLESS_RUN_COMPLETION_TIMEOUT_MS =
 	HEADLESS_RUN_TIMEOUT_MS + HEADLESS_RUN_CLEANUP_MARGIN_MS;
 
-/** Codex auth/startup must produce model activity before the long run budget. */
-export const CODEX_STARTUP_TIMEOUT_MS = 120_000;
+/**
+ * Codex may compact a resumed conversation before exec emits any model output.
+ * Healthy compactions have taken 152-159 seconds, exceeding the former 120s
+ * bound. Allow five minutes while keeping blocked startup/authentication bounded.
+ */
+export const CODEX_STARTUP_TIMEOUT_MS = 5 * 60_000;
 
 /** Bound the wait for close after force-killing a headless provider tree. */
 export const HEADLESS_PROCESS_CLOSE_TIMEOUT_MS = 5_000;

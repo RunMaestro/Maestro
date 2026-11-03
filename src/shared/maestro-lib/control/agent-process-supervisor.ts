@@ -259,7 +259,7 @@ export function superviseAgentProcess(
 			idleMs: options.startupMs,
 			onIdle: () =>
 				stop(
-					`Codex produced no model activity within ${options.startupMs! / 1000} seconds. Startup or authentication may be blocked, for example by an interactive keyring prompt. Check Codex login and the credential store on the agent host; after fixing them, retry the request. For a host already using file credentials, verify both cli_auth_credentials_store=file and mcp_oauth_credentials_store=file in the agent's effective Codex configuration.`
+					`Codex produced no model activity within ${options.startupMs! / 1000} seconds. A resumed conversation may still be performing context compaction. Startup or authentication may be blocked, for example by an interactive keyring prompt. Check Codex login and the credential store on the agent host; after fixing them, retry the request. For a host already using file credentials, verify both cli_auth_credentials_store=file and mcp_oauth_credentials_store=file in the agent's effective Codex configuration.`
 				),
 		});
 	}
