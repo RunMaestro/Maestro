@@ -18,6 +18,7 @@ import type { Theme } from '../../types';
 import { searchSettings, type SearchableSetting } from './searchableSettings';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isImeComposing } from '../../utils/ime';
 
 export interface SettingsSearchProps {
 	theme: Theme;
@@ -86,7 +87,7 @@ export function useSettingsSearch({
 
 			const inputFocused = document.activeElement === inputRef.current;
 
-			if (e.key === 'Escape' && inputFocused) {
+			if (e.key === 'Escape' && inputFocused && !isImeComposing(e)) {
 				e.preventDefault();
 				e.stopPropagation();
 				if (query) {

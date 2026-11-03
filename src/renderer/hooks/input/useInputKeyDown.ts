@@ -30,11 +30,11 @@ import {
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { isImeComposing } from '../../utils/ime';
 import {
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
-	isImeComposing,
 	PICKER_KEYS,
 	yieldKeyToIme,
 } from './composerKeyDown';
