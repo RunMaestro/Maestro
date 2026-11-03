@@ -1,7 +1,23 @@
 import type Database from 'better-sqlite3';
 import crypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import fs from 'node:fs';
 import { threadId } from 'node:worker_threads';
+import { execFileNoThrow, needsWindowsShell } from '../utils/execFile';
+import { isWindows } from '../../shared/platformDetection';
+import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { buildSpawnPath } from '../../shared/maestro-lib/launch/spawn-path';
+import {
+	windowsCommandLineLength,
+	promptExceedsArgvLimit,
+} from '../../shared/maestro-lib/launch/prompt-delivery';
+import { escapeCmdArgs } from '../../shared/maestro-lib/launch/windows-shell-escape';
+import {
+	cmdShellArgsRefusal,
+	quoteCommandForCmdShell,
+} from '../../shared/maestro-lib/launch/windows-command';
+import type { MemoryCliInvocation } from './memory-cli';
 import type {
 	MemoryTransportActivation,
 	MemoryTransportEligibility,
@@ -655,6 +671,38 @@ export class MemoryTransport {
 	}
 }
 
+/** Validate and escape a CLI launch without allowing prompt text to become shell syntax. */
+export function prepareMemoryCliLaunch(invocation: MemoryCliInvocation): {
+	command: string;
+	args: string[];
+} {
+	for (const prompt of invocation.promptArgs ?? [])
+		if (promptExceedsArgvLimit(prompt, isWindows()))
+			throw new Error('Prompt exceeds the operating system command-line limit');
+	if (isWindows() && windowsCommandLineLength(invocation.command, invocation.args) > 32_767)
+		throw new Error('Windows command line exceeds the 32767-character limit');
+	if (!isWindows() || !needsWindowsShell(invocation.command))
+		return { command: invocation.command, args: invocation.args };
+	const refusal = cmdShellArgsRefusal(invocation.args, new Set(invocation.promptArgs ?? []));
+	if (refusal) throw new Error(refusal);
+	return {
+		command: quoteCommandForCmdShell(invocation.command),
+		args: escapeCmdArgs(invocation.args),
+	};
+}
+
+/** Build the expanded spawn PATH and apply account overrides and blank unsets in order. */
+function memoryCliEnvironment(invocation: MemoryCliInvocation): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	const executable = invocation.command.replace(/^"(.*)"$/, '$1');
+	env.PATH = buildSpawnPath([path.dirname(executable)]);
+	for (const [key, value] of Object.entries(invocation.env ?? {})) {
+		if (isBlankEnvValue(value)) delete env[key];
+		else env[key] = value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
+	}
+	return env;
+}
+
 /** Mandatory owned I/O seam; errors never contain provider/private body text. */
 export class MemoryTransportScope {
 	private open = false;
@@ -665,6 +713,55 @@ export class MemoryTransportScope {
 		readonly id: string,
 		private readonly authority: () => boolean
 	) {}
+	/** Execute a CLI under an owned permit and record exit, timeout, or unknown-outcome evidence. */
+	async cli(
+		invocation: MemoryCliInvocation,
+		timeoutMs: number,
+		operation: string
+	): Promise<string> {
+		if (this.open || this.ended) throw new Error('Transport scope is not available');
+		const launch = prepareMemoryCliLaunch(invocation);
+		const workspace = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'maestro-memory-cli-'));
+		let request: string | undefined;
+		try {
+			request = this.controller.startRequest(this.id, operation, this.authority);
+			this.open = true;
+			const result = await execFileNoThrow(launch.command, launch.args, workspace, {
+				input: invocation.input,
+				timeout: timeoutMs,
+				env: memoryCliEnvironment(invocation),
+			});
+			if (typeof result.exitCode !== 'number')
+				throw new MemoryTransportError(
+					'cli-unproven-close',
+					null,
+					invocation.contentType,
+					'unproven-close'
+				);
+			this.controller.response(this.id, request!, result.exitCode, invocation.contentType);
+			this.controller.terminal(this.id, request!, 'process-exit');
+			this.open = false;
+			if (result.exitCode !== 0)
+				throw new MemoryTransportError(
+					'cli-exit',
+					result.exitCode,
+					invocation.contentType,
+					'process-exit'
+				);
+			return result.stdout;
+		} catch (error) {
+			if (this.open) {
+				this.controller.unknown(this.id, request!);
+				this.open = false;
+				this.uncertain = true;
+			}
+			if (error instanceof MemoryTransportError) throw error;
+			throw new MemoryTransportError('cli-failed', null, invocation.contentType, 'unproven-close');
+		} finally {
+			if (workspace)
+				await fs.promises.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+		}
+	}
 	async json(
 		url: string,
 		init: RequestInit,

@@ -121,10 +121,40 @@ describe('execFile.ts', () => {
 				NODE,
 				['-e', 'process.stdout.write(process.env.MAESTRO_TEST_VAR || "MISSING")'],
 				undefined,
-				{ input: 'unused stdin content', env: { MAESTRO_TEST_VAR: 'present' } }
+				{ input: 'unused stdin content', env: { ...process.env, MAESTRO_TEST_VAR: 'present' } }
 			);
 
 			expect(result.stdout).toBe('present');
+		});
+
+		it('reports early stdin closure instead of crashing on EPIPE', async () => {
+			const { execFileNoThrow } = await import('../../../main/utils/execFile');
+			const result = await execFileNoThrow(
+				NODE,
+				['-e', 'process.stdin.destroy(); process.exit(0)'],
+				undefined,
+				{ input: 'x'.repeat(1_000_000), timeout: 5000 }
+			);
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).toMatch(/EPIPE|EOF/);
+		});
+
+		it('kills the process tree and resolves on timeout', async () => {
+			const { execFileNoThrow } = await import('../../../main/utils/execFile');
+			const script = [
+				'const { spawn } = require("child_process");',
+				'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });',
+				'process.stdout.write("pid:" + child.pid + "\\n");',
+				'setInterval(() => {}, 1000);',
+			].join('');
+			const result = await execFileNoThrow(NODE, ['-e', script], undefined, {
+				input: '',
+				timeout: 2000,
+			});
+			expect(result.exitCode).toBe('ETIMEDOUT');
+			const grandchildPid = Number(/pid:(\d+)/.exec(result.stdout)?.[1]);
+			expect(grandchildPid).toBeGreaterThan(0);
+			await vi.waitFor(() => expect(() => process.kill(grandchildPid, 0)).toThrow());
 		});
 	});
 

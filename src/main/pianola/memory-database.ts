@@ -607,7 +607,7 @@ export class MemoryDatabase {
 			.transaction(() => {
 				const totals = this.totals();
 				const cost =
-					config.mode === 'local'
+					config.mode === 'local' || config.mode === 'cli'
 						? 0
 						: ((input * config.inputPrice + output * config.outputPrice) / 1000000) *
 							(config.mode === 'batch' ? 0.5 : 1);
@@ -627,7 +627,7 @@ export class MemoryDatabase {
 		if (!Number.isSafeInteger(input) || !Number.isSafeInteger(output) || input < 0 || output < 0)
 			throw new Error('Provider returned invalid token usage; reservation retained');
 		const dollars =
-			config.mode === 'local'
+			config.mode === 'local' || config.mode === 'cli'
 				? 0
 				: ((input * config.inputPrice + output * config.outputPrice) / 1000000) *
 					(config.mode === 'batch' ? 0.5 : 1);
