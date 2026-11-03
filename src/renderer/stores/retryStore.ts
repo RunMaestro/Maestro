@@ -201,16 +201,25 @@ export type RetryStore = RetryStoreState & RetryStoreActions;
 // Store
 // ============================================================================
 
-export const useRetryStore = create<RetryStore>()((set) => ({
+export const useRetryStore = create<RetryStore>()((set, get) => ({
 	retries: {},
 	outages: {},
-	setEntry: (key, entry) =>
+	setEntry: (key, entry) => {
+		const target = entry ?? get().retries[key];
 		set((state) => {
 			const next = { ...state.retries };
 			if (entry) next[key] = entry;
 			else delete next[key];
 			return { retries: next };
-		}),
+		});
+		// Every write of the retry map passes here, so this is the one place main
+		// hears whether a tab's failed turn is being held for a resend. A dispatch
+		// callback armed on that tab then waits for the resend instead of reporting
+		// the first refusal (see DispatchCallbackRegistry.noteRetryState).
+		if (target) {
+			window.maestro?.tabs?.notifyAiTabRetryState?.(target.sessionId, target.tabId, !!entry);
+		}
+	},
 	patchOutage: (outageId, patch) =>
 		set((state) => {
 			const next = { ...state.outages };

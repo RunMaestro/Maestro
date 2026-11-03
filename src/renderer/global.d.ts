@@ -4648,6 +4648,7 @@ interface MaestroAPI {
 		// running as an orphan). Main retires anything scoped to that tab, e.g. an
 		// armed dispatch callback that would otherwise time out an hour later.
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
+		notifyAiTabRetryState: (agentId: string, tabId: string, pending: boolean) => void;
 	};
 
 	// User Journey API (per-agent log of user actions inside Maestro). Record
