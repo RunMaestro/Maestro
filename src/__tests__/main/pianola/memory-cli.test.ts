@@ -263,6 +263,18 @@ it('does not add Codex cached input tokens twice', () => {
 	expect(result.inputTokens).toBe(1000);
 });
 
+it('rejects malformed OMP JSONL instead of accepting incomplete output', () => {
+	const valid = JSON.stringify({
+		type: 'message_end',
+		message: {
+			role: 'assistant',
+			content: [{ type: 'text', text: '{"memories":[]}' }],
+			usage: { input: 10, output: 4 },
+		},
+	});
+	expect(() => parseMemoryCliOutput('omp', valid + '\nnot-json', input)).toThrow(SyntaxError);
+});
+
 it('recognizes quoted Windows command shims', () => {
 	expect(needsWindowsShell('"C:\\Program Files\\Codex\\codex.cmd"')).toBe(true);
 	expect(needsWindowsShell('"C:\\Program Files\\Claude\\claude.exe"')).toBe(false);

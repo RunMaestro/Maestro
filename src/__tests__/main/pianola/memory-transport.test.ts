@@ -667,7 +667,31 @@ it.skipIf(process.platform !== 'win32')(
 				1000,
 				'cli-extract'
 			)
-		).rejects.toThrow('32767-character limit');
+		).rejects.toThrow('operating system command-line limit');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		item.scope.finish();
+	}
+);
+
+it.skipIf(process.platform === 'win32')(
+	'rejects an oversized POSIX prompt before submission',
+	async () => {
+		const f = await fixture(1);
+		const item = stage(f.db, f.runtime, 'cli-oversized-posix')!;
+		const prompt = 'x'.repeat(100_001);
+		await expect(
+			item.scope.cli(
+				{
+					command: '/usr/bin/omp',
+					args: ['--', prompt],
+					promptArgs: [prompt],
+					input: '',
+					contentType: 'application/jsonl',
+				},
+				1000,
+				'cli-extract'
+			)
+		).rejects.toThrow('operating system command-line limit');
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 		item.scope.finish();
 	}

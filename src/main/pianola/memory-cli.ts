@@ -264,12 +264,7 @@ function parseOmp(stdout: string, input: MemoryCliInput): MemoryCliResult {
 	let usage: Record<string, unknown> = {};
 	for (const line of stdout.split(/\r?\n/)) {
 		if (!line.trim()) continue;
-		let event: unknown;
-		try {
-			event = JSON.parse(line);
-		} catch {
-			continue;
-		}
+		const event: unknown = JSON.parse(line);
 		if (!record(event) || event.type !== 'message_end' || !record(event.message)) continue;
 		const message = event.message;
 		if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
