@@ -95,6 +95,30 @@ function writeCodePlugin(
 	signPluginDir(dir, keys);
 }
 
+/**
+ * Start the manager's hot-reload watcher and return `nudge()`, which delivers the
+ * event the plugins-root watcher is owed for a change the test just made.
+ *
+ * macOS FSEvents can drop an event that lands right after a watch starts, and
+ * every test here changes the tree microseconds after `startWatching()`. Waiting
+ * on the OS alone failed a random case on most macOS runs (a scan promise that
+ * never resolved, or no `onChange`). The real watcher stays in place: `nudge()`
+ * calls the listener the manager registered, so the refresh still runs through
+ * its own debounce and discovery. A real event arriving too only re-arms that
+ * debounce, exactly as several real events for one change already do.
+ */
+function startWatchingWithNudge(manager: PluginManager, debounceMs?: number): () => void {
+	const callsBefore = vi.mocked(fs.watch).mock.calls.length;
+	manager.startWatching(debounceMs);
+	const listeners = vi
+		.mocked(fs.watch)
+		.mock.calls.slice(callsBefore)
+		.filter(([target]) => String(target) === pluginsDir())
+		.map(([, ...rest]) => rest.find((arg) => typeof arg === 'function') as () => void);
+	expect(listeners).toHaveLength(1);
+	return () => listeners[0]();
+}
+
 function makeSandbox(): PluginSandboxLifecycle {
 	const running = new Set<string>();
 	return {
@@ -375,10 +399,11 @@ describe('PluginManager hot reload reconciliation', () => {
 				if (dir === path.join(pluginsDir(), 'other')) otherScanned.resolve();
 				return result;
 			});
-			manager.startWatching(30);
+			const nudge = startWatchingWithNudge(manager, 30);
 			let uninstall: Promise<unknown> | undefined;
 			try {
 				signPluginDir(source, keys);
+				nudge();
 				await scanned.promise;
 				if (phase === 'waiting') {
 					uninstall = manager.uninstall('other').catch((error: unknown) => error);
@@ -440,10 +465,11 @@ describe('PluginManager hot reload reconciliation', () => {
 			}
 			return result;
 		});
-		manager.startWatching(30);
+		const nudge = startWatchingWithNudge(manager, 30);
 		let manual: Promise<unknown> | undefined;
 		try {
 			signPluginDir(source, keys);
+			nudge();
 			await oldScanned.promise;
 			manager.stopWatching();
 			manual = manager.refresh();
@@ -562,10 +588,11 @@ describe('PluginManager hot reload reconciliation', () => {
 			}
 			return result;
 		});
-		manager.startWatching(30);
+		const nudge = startWatchingWithNudge(manager, 30);
 		let uninstall: Promise<unknown> | undefined;
 		try {
 			writeCodePlugin('demo', { version: '1.0.1' });
+			nudge();
 			await scanned.promise;
 			uninstall = manager.uninstall('other').catch((error: unknown) => error);
 			await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('other'));
@@ -838,20 +865,7 @@ describe('PluginManager hot reload reconciliation', () => {
 				return actual.scanPluginFiles(dir, trustedKeys);
 			});
 			onChange.mockClear();
-			// Keep the real fs.watch, but hold on to the listener the manager puts on
-			// the plugins root. FSEvents on macOS can drop an event that lands right
-			// after a watch starts, and the staging dir below is created microseconds
-			// later, so waiting on the OS alone failed a random case on most runs.
-			const rootListeners: Array<() => void> = [];
-			const watchCallsBefore = vi.mocked(fs.watch).mock.calls.length;
-			manager.startWatching();
-			for (const [target, ...rest] of vi.mocked(fs.watch).mock.calls.slice(watchCallsBefore)) {
-				const listener = rest.find((arg) => typeof arg === 'function');
-				if (listener && String(target) === pluginsDir()) {
-					rootListeners.push(listener as () => void);
-				}
-			}
-			expect(rootListeners).toHaveLength(1);
+			const nudge = startWatchingWithNudge(manager);
 			const update = manager.update(source, 'demo');
 			const queued = condition === 'queued-rejection' ? manager.update(source, 'demo') : null;
 			const rejected = Promise.all([
@@ -881,9 +895,8 @@ describe('PluginManager hot reload reconciliation', () => {
 					manager.reconcileServiceDependencies();
 				}
 				// Deliver the staging-dir event the watcher is owed, then wait for its
-				// normal 150 ms debounced refresh. A real event arriving as well only
-				// re-arms the same debounce.
-				for (const listener of rootListeners) listener();
+				// normal 150 ms debounced refresh.
+				nudge();
 				await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3000 });
 				if (condition === 'unchanged' || condition === 'queued-rejection') {
 					expect(sandbox.stop).not.toHaveBeenCalled();
