@@ -249,9 +249,16 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 	// Get the default branch name (main or master)
 	ipcMain.handle(
 		'git:getDefaultBranch',
-		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string) => {
+		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string, sshRemoteId?: string) => {
+			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			if (sshRemoteId && !sshRemote) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+			const git = (args: string[]) =>
+				sshRemote ? execGit(args, cwd, sshRemote, cwd) : execFileNoThrow('git', args, cwd);
+
 			// First try to get the default branch from remote
-			const remoteResult = await execFileNoThrow('git', ['remote', 'show', 'origin'], cwd);
+			const remoteResult = await git(['remote', 'show', 'origin']);
 			if (remoteResult.exitCode === 0) {
 				// Parse "HEAD branch: main" from the output
 				const match = remoteResult.stdout.match(/HEAD branch:\s*(\S+)/);
@@ -261,12 +268,12 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 			}
 
 			// Fallback: check if main or master exists locally
-			const mainResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd);
+			const mainResult = await git(['rev-parse', '--verify', 'main']);
 			if (mainResult.exitCode === 0) {
 				return { branch: 'main' };
 			}
 
-			const masterResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd);
+			const masterResult = await git(['rev-parse', '--verify', 'master']);
 			if (masterResult.exitCode === 0) {
 				return { branch: 'master' };
 			}
