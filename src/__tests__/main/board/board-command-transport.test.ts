@@ -739,6 +739,16 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 			(await cli('add-card', '--title', 'Ambiguous', '--agent', 'creator', '--json')).code
 		).toBe(1);
 	});
+	it('lists explicit identities and rejects ambiguous selection', async () => {
+		const selected = target();
+		expect((await cli('list', '--json')).value).toHaveLength(2);
+		expect((await cli('list', '--source', selected.sourceKey, '--json')).value).toHaveLength(1);
+		expect(
+			(await cli('list', '--collection', selected.collectionKey, '--json')).value
+		).toHaveLength(1);
+		expect((await cli('show', 'b', '--json')).value.details.message).toContain('ambiguous');
+	});
+
 	it('captures as an unregistered creator and round-trips explicit identity, revision, scope, role and repository', async () => {
 		const selected = target();
 		const common = [
@@ -750,12 +760,6 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 			selected.collectionKey,
 			'--json',
 		];
-		expect((await cli('list', '--json')).value).toHaveLength(2);
-		expect((await cli('list', '--source', selected.sourceKey, '--json')).value).toHaveLength(1);
-		expect(
-			(await cli('list', '--collection', selected.collectionKey, '--json')).value
-		).toHaveLength(1);
-		expect((await cli('show', 'b', '--json')).value.details.message).toContain('ambiguous');
 		expect(
 			(
 				await cli(
@@ -821,6 +825,19 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 			).code
 		).toBe(0);
 		expect(facade.read(roots[0], 'b').cards).toEqual([]);
+	});
+
+	it('creates and deletes a collection without touching a foreign source', async () => {
+		const selected = target();
+		const common = [
+			'--agent',
+			'creator',
+			'--source',
+			selected.sourceKey,
+			'--collection',
+			selected.collectionKey,
+			'--json',
+		];
 		const created = await cli(
 			'create',
 			'Created',
@@ -852,6 +869,12 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 			expect(reply.code).toBe(1);
 			expect(reply.value.details).toMatchObject({ code: expect.any(String) });
 		}
+		expect(facade.read(roots[0], 'b').cards).toEqual([]);
+	});
+
+	it('rejects forged authority and changed group membership without writes', async () => {
+		const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
+		const captureArgs = ['add-card', 'b', '--title', 'Invalid', '--scope-group', 'g'];
 		for (const flag of ['--human', '--actor-authority'])
 			expect((await cli(...captureArgs, flag, 'true', ...common)).code).toBe(1);
 		expect(facade.read(roots[0], 'b').cards).toEqual([]);
@@ -1415,7 +1438,7 @@ it('invalidates native grants on specification edits and rejects stale approvals
 
 describe('source-owned canonical alias compatibility', () => {
 	it.each(['canonical', 'trailingSlash', 'symlink', 'relative'])(
-		'%s list/get and subsequent CLI mutations/control/tick keep the same source',
+		'%s list/get and subsequent CLI mutations keep the same source',
 		async (kind) => {
 			const foreign = facade.read(roots[1], 'b');
 			const link = path.join(dir, 'alias');
@@ -1462,19 +1485,6 @@ describe('source-owned canonical alias compatibility', () => {
 			expect((await cli('update-card', id, '--title', 'Updated alias', ...common)).code).toBe(0);
 			expect((await cli('rename', 'b', 'Alias board', ...common)).code).toBe(0);
 			expect((await cli('set-status', id, 'todo', ...common)).code).toBe(0);
-			// Install the existing real owner without changing this captured card.
-			const fixture = installBoardOwner(false);
-			expect((await cli('hold', id, ...common)).code).toBe(0);
-			expect((await cli('resume', id, ...common)).code).toBe(0);
-			const sessionsFile = path.join(dir, 'maestro-sessions.json');
-			const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-			sessions.sessions[0].projectRoot = root;
-			sessions.sessions[0].cwd = root;
-			fs.writeFileSync(sessionsFile, JSON.stringify(sessions));
-			expect(await cli('tick', '--agent', 'creator', ...common.slice(2))).toMatchObject({
-				code: 0,
-			});
-			expect(fixture.service.spawn).not.toHaveBeenCalled();
 			board = facade.read(roots[0], 'b');
 			expect(board.name).toBe('Alias board');
 			expect(board.cards.find((c) => c.id === id)).toMatchObject({
@@ -1489,6 +1499,48 @@ describe('source-owned canonical alias compatibility', () => {
 					name: 'Wrong',
 				})
 			).toMatchObject({ ok: false });
+			expect(facade.read(roots[1], 'b')).toEqual(foreign);
+		}
+	);
+	it.each(['canonical', 'trailingSlash', 'symlink', 'relative'])(
+		'%s runtime control and tick keep the same source',
+		async (kind) => {
+			const foreign = facade.read(roots[1], 'b');
+			const link = path.join(dir, 'alias');
+			fs.symlinkSync(roots[0], link, 'junction');
+			const root =
+				kind === 'canonical'
+					? roots[0]
+					: kind === 'trailingSlash'
+						? roots[0] + path.sep
+						: kind === 'symlink'
+							? link
+							: path.relative(process.cwd(), roots[0]);
+			const common = [
+				'--project-root',
+				root,
+				'--source',
+				target().sourceKey,
+				'--collection',
+				target().collectionKey,
+				'--json',
+			];
+			result<Board>(await send(capture(card({ id: 'alias-work' }))));
+			const id = 'alias-work';
+			// Install the existing real owner without changing this captured card.
+			const fixture = installBoardOwner(false);
+			expect((await cli('hold', id, ...common)).code).toBe(0);
+			expect((await cli('resume', id, ...common)).code).toBe(0);
+			const sessionsFile = path.join(dir, 'maestro-sessions.json');
+			const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+			sessions.sessions[0].projectRoot = root;
+			sessions.sessions[0].cwd = root;
+			fs.writeFileSync(sessionsFile, JSON.stringify(sessions));
+			expect(await cli('tick', '--agent', 'creator', ...common.slice(2))).toMatchObject({
+				code: 0,
+			});
+			expect(fixture.service.spawn).not.toHaveBeenCalled();
+			expect(facade.read(roots[0], 'b').storage!.sourceKey).toBe(target().sourceKey);
 			expect(facade.read(roots[1], 'b')).toEqual(foreign);
 		}
 	);
