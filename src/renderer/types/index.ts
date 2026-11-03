@@ -568,6 +568,11 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// A `dispatch --notify-on-complete` wake that main queued because this tab was
+	// mid-turn: another agent reporting back, not the user's message. It runs as
+	// its own turn when the tab goes idle and is never steered into the running
+	// one (see getSteerEligibility).
+	dispatchCallback?: boolean;
 	// Model/effort captured when the user queued this item. Both the spawn and
 	// the transcript pills read it, so a queued turn runs under - and is labeled
 	// with - the configuration it was queued with, not whatever is selected by

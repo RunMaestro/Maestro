@@ -512,6 +512,8 @@ A steered message is headed with the Steer button's arrow in the transcript, and
 
 Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
 
+A result that comes back from `maestro-cli dispatch --notify-on-complete` while its tab is mid-turn waits in the queue and never offers Steer. It is another agent's report, not your message, so it runs as its own turn once the tab is idle instead of being typed into the turn already running.
+
 |                     | Force Send                                                                                              | Steer                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Use it when         | The message's tab is idle and the queue is holding it                                                   | The message's tab is working                                                  |

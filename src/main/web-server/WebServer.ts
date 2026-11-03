@@ -739,7 +739,19 @@ export class WebServer {
 		command: string,
 		tabId?: string
 	): ReturnType<CallbackRegistry['enqueueCommand']> {
-		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId, undefined, true);
+		// Marked as a dispatch callback so the queued card never offers Steer: it is
+		// another agent's report, delivered as its own turn once the tab is idle.
+		return this.callbackRegistry.enqueueCommand(
+			sessionId,
+			command,
+			'ai',
+			tabId,
+			undefined,
+			true,
+			undefined,
+			undefined,
+			true
+		);
 	}
 
 	/**

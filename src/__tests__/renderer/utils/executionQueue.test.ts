@@ -845,6 +845,19 @@ describe('getSteerEligibility', () => {
 		expect(shouldOfferSteer(eligibility)).toBe(true);
 	});
 
+	// A dispatch callback is another agent's report. Typing it into the running
+	// turn would land it mid-thread as if the user wrote it, so the control is
+	// not offered at all; the callback runs as its own turn once the tab is idle.
+	it('refuses and hides Steer for a queued dispatch callback', () => {
+		const eligibility = getSteerEligibility(steerableSession(), {
+			...item,
+			dispatchCallback: true,
+		});
+		expect(eligibility).toEqual({ canSteer: false, blockedReason: 'dispatch-callback' });
+		expect(shouldOfferSteer(eligibility)).toBe(false);
+		expect(describeSteerBlocked('dispatch-callback')).toMatch(/own turn/);
+	});
+
 	it('refuses when the target tab is not working', () => {
 		// There is no turn in flight to steer, and this message is about to become
 		// that turn anyway.

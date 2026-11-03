@@ -726,7 +726,8 @@ export type SteerBlockedReason =
 	| 'ssh-remote'
 	| 'steer-in-flight'
 	| 'tui-command-prefix'
-	| 'read-only';
+	| 'read-only'
+	| 'dispatch-callback';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -816,12 +817,19 @@ export function getSteerEligibility(
 		| 'paused'
 		| 'waitingForConnection'
 		| 'readOnlyMode'
+		| 'dispatchCallback'
 	>
 ): SteerEligibility {
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) {
 		return { canSteer: false, blockedReason: 'no-target-tab' };
 	}
+	// A dispatch callback is another agent reporting back. Steering TYPES text
+	// into the running turn as if the user wrote it, so the report (and the
+	// untrusted output fenced inside it) would land mid-thread in a turn about
+	// something else. It waits and runs as its own turn when the tab is idle,
+	// which is the delivery dispatch callbacks were built around.
+	if (item.dispatchCallback) return { canSteer: false, blockedReason: 'dispatch-callback' };
 	// Busy-ness comes from the SAME helper Force Send reads, so the two controls
 	// cannot disagree about whether a tab is mid-turn - which would let a card offer
 	// both, or neither.
@@ -974,6 +982,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'tui-command-prefix':
 		'A message that starts with / or ! would run as a command in the running turn.',
 	'read-only': 'The message is read-only and the running turn is not.',
+	'dispatch-callback':
+		'A dispatch result runs as its own turn once this tab is idle, never inside the running one.',
 };
 
 const STEER_BLOCKED_FALLBACK = 'The running turn cannot take this message right now.';

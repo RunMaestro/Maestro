@@ -619,7 +619,12 @@ export type EnqueueCommandCallback = (
 	/** Queue Held: always queue, paused, even on an idle agent. */
 	held?: boolean,
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
-	mentionRouting?: MentionRouting
+	mentionRouting?: MentionRouting,
+	/**
+	 * The prompt is a `dispatch --notify-on-complete` wake, sent by main. The
+	 * queued item is marked so it can never be steered into a running turn.
+	 */
+	dispatchCallback?: boolean
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI

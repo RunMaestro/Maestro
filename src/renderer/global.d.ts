@@ -983,7 +983,8 @@ interface MaestroAPI {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				dispatchCallback?: boolean
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

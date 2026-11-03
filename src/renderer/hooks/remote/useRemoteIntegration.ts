@@ -1221,7 +1221,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1297,6 +1298,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							mentionRouting,
 						}),
 						...(held && { paused: true }),
+						...(dispatchCallback && { dispatchCallback: true }),
 					};
 
 					// Position is deterministic from the snapshot we already read: the item
