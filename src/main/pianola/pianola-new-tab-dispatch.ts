@@ -20,7 +20,7 @@ class NewTabSpawnFences {
 	private readonly held = new Map<
 		string,
 		{
-			guard?: () => void;
+			guard?: (boundaryId?: string) => void;
 			started?: (runId?: string) => void;
 			claimed?: boolean;
 			capturedRunId?: string;
@@ -44,7 +44,7 @@ class NewTabSpawnFences {
 	arm(
 		agentId: string,
 		tabId: string,
-		guard: () => void,
+		guard: (boundaryId?: string) => void,
 		started: (runId?: string) => void,
 		dispatchId?: string,
 		lifecycle?: { captured(runId: string): void; notStarted(): void; queueOnly?: boolean }
@@ -58,16 +58,17 @@ class NewTabSpawnFences {
 		entry.guard = guard;
 		entry.started = started;
 	}
-	assertReady(processId: string) {
+	assertReady(processId: string, boundaryId?: string) {
 		const entry = this.held.get(processId);
 		if (!entry) return;
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
-		entry.guard();
+		entry.guard(boundaryId);
 	}
 	claim(
 		processId: string,
 		dispatchId?: string,
-		queueItemId?: string
+		queueItemId?: string,
+		boundaryId?: string
 	): (() => void) & { notStarted(): void } {
 		const entry = this.held.get(processId);
 		if (!entry) {
@@ -81,7 +82,7 @@ class NewTabSpawnFences {
 		if (entry.claimed) throw new Error('DispatchAlreadyStarting');
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
 		try {
-			this.assertReady(processId);
+			this.assertReady(processId, boundaryId);
 		} catch (error) {
 			// An armed dispatch refused before claiming cannot have started.
 			if (this.held.get(processId) === entry) {
@@ -94,7 +95,7 @@ class NewTabSpawnFences {
 		return Object.assign(
 			() => {
 				if (this.held.get(processId) !== entry) throw new Error('DispatchTargetUnavailable');
-				this.assertReady(processId);
+				this.assertReady(processId, boundaryId);
 			},
 			{
 				notStarted: () => {

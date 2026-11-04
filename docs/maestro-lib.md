@@ -38,7 +38,7 @@ It is not:
 | `windows-shell` | On Windows, the provider is installed as a `.cmd` shim that only starts through cmd.exe, and an argument cannot pass through cmd.exe intact (a line break, a `%NAME%` pair or `^`; for the prompt, only when the provider cannot read it from stdin). See [Windows](#windows). |
 | `launch`        | The launch could not be planned. The message says why.                                                                                                                                                                                                                         |
 
-What each provider supports in maestro-lib `0.5.0`:
+What each provider supports in maestro-lib `0.6.0`:
 
 | Agent id        | Name            | Runs a turn | Resume | Read-only |
 | --------------- | --------------- | ----------- | ------ | --------- |
@@ -450,3 +450,19 @@ Since `0.3.0` the entry also exports what lets Maestro run with no desktop. This
 - [Running Cue on a Server](./maestro-cue-server) for unattended pipelines.
 - [`examples/maestro-lib-tui`](https://github.com/RunMaestro/Maestro/tree/main/examples/maestro-lib-tui), an interactive terminal chat built on the built entry alone: provider choice, streaming, resume, Ctrl+C to stop. Its README says how to run it.
 - `maestro-lib-run`, a small program in the Maestro build that runs one turn with these same calls and prints JSON lines. Its source, `src/shared/maestro-lib/bin/run-turn.ts`, is a complete example.
+
+### Desktop current-turn observations
+
+The exported `CurrentTurnRead` type describes the additive desktop observation
+wire protocol (version 1). The scope worker requests `get_session_history` with
+`currentTurn: true` and the census's exact `expectedCursor`. The response is a
+complete native current turn, independent of the persisted history window.
+Ordinary history requests retain their existing behavior.
+
+A worker with a complete base can supply `deltaBase`. A `mode: 'delta'` response
+contains changed rows, the exact base cursor, and the complete ordered ID list;
+the worker reconstructs the entire turn before classification. A different run,
+host generation, or lost base requires a full refresh. Incomplete, gap, reset,
+and unknown observations never authorize an answer. Observation revisions are
+separate from scope ownership, enrollment epochs, and answer rules. The final
+native spawn fence rechecks those guards after asynchronous preparation.

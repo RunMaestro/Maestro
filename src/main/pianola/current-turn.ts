@@ -13,6 +13,7 @@ type State = {
 	cursor: CurrentTurnCursor;
 	source: string;
 	sequence: number;
+	rowRevisions: Map<string, number>;
 	rows: Map<string, CurrentTurnMessage>;
 	order: string[];
 	bytes: number;
@@ -79,6 +80,7 @@ export class NativeCurrentTurns {
 				source: meta.sourceGeneration,
 				sequence: meta.sequence - 1,
 				rows: new Map(),
+				rowRevisions: new Map(),
 				order: [],
 				bytes: 0,
 				reason: replaced ? 'renderer-or-binding-reset' : 'missing-native-boundary',
@@ -109,6 +111,7 @@ export class NativeCurrentTurns {
 		if (patch.removedIds.some((id) => state!.rows.has(id))) state.reason = 'current-turn-trimmed';
 		if (patch.snapshot) {
 			state.rows.clear();
+			state.rowRevisions.clear();
 			state.order = [];
 			state.bytes = 0;
 		}
@@ -116,6 +119,7 @@ export class NativeCurrentTurns {
 			const old = state.rows.get(id);
 			if (old) state.bytes -= Buffer.byteLength(canonicalJson(old));
 			state.rows.delete(id);
+			state.rowRevisions.delete(id);
 			state.order = state.order.filter((entry) => entry !== id);
 		}
 		for (const raw of patch.upserts) {
@@ -147,11 +151,13 @@ export class NativeCurrentTurns {
 			) {
 				state.reason = 'current-turn-overflow';
 				state.rows.clear();
+				state.rowRevisions.clear();
 				state.order = [];
 				state.bytes = 0;
 				break;
 			}
 			state.rows.set(row.id, value);
+			state.rowRevisions.set(row.id, state.cursor.revision);
 			state.bytes += bytes;
 		}
 		if (patch.orderIds.length || patch.snapshot) {
@@ -172,6 +178,7 @@ export class NativeCurrentTurns {
 				for (const id of state.order.slice(0, user)) {
 					state.bytes -= Buffer.byteLength(canonicalJson(state.rows.get(id)));
 					state.rows.delete(id);
+					state.rowRevisions.delete(id);
 				}
 				state.order = state.order.slice(user);
 			}
@@ -231,11 +238,40 @@ export class NativeCurrentTurns {
 		if (valid) {
 			state.freshBoundaryId = undefined;
 			state.rows = new Map([[boundaryId!, boundary]]);
+			state.rowRevisions = new Map([[boundaryId!, state.cursor.revision]]);
 			state.order = [boundaryId!];
 			const bytes = Buffer.byteLength(canonicalJson(boundary));
 			this.retainedBytes += bytes - state.bytes;
 			state.bytes = bytes;
 		}
+	}
+
+	/** Final spawn fence: only the owner renderer's specifically submitted reply row
+	 * may extend the classified turn during asynchronous spawn preparation. */
+	assertDelivery(
+		cursor: CurrentTurnCursor,
+		count: number,
+		boundaryId: string | undefined,
+		text: string
+	): boolean {
+		const state = this.states.get(this.key(cursor.agentId, cursor.tabId));
+		if (!state) throw new Error('Native delivery base lost');
+		if (canonicalJson(state.cursor) === canonicalJson(cursor) && !state.reason) return false;
+		if (
+			!boundaryId ||
+			state.reason !== 'new-user-boundary' ||
+			canonicalJson({ ...state.cursor, revision: cursor.revision }) !== canonicalJson(cursor) ||
+			state.order.length !== count + 1 ||
+			state.order.at(-1) !== boundaryId ||
+			state.order
+				.slice(0, count)
+				.some((id) => (state.rowRevisions.get(id) ?? Infinity) > cursor.revision)
+		)
+			throw new Error('Native turn changed during delivery');
+		const reply = state.rows.get(boundaryId);
+		if (reply?.source !== 'user' || reply.text !== text)
+			throw new Error('Native reply boundary mismatch');
+		return true;
 	}
 
 	read(
@@ -248,7 +284,8 @@ export class NativeCurrentTurns {
 			open: boolean;
 		},
 		expected?: CurrentTurnCursor,
-		includeMessages = true
+		includeMessages = true,
+		deltaBase?: CurrentTurnCursor
 	): CurrentTurnRead {
 		const state = this.states.get(this.key(binding.agentId, binding.tabId));
 		const cursor: CurrentTurnCursor = state
@@ -300,12 +337,27 @@ export class NativeCurrentTurns {
 			return result('incomplete', 'native-provider-announcement-unconfirmed');
 		if (state.reason || !cursor.runId || !cursor.turnId)
 			return result('incomplete', state.reason ?? 'missing-native-boundary');
+		const delta =
+			includeMessages &&
+			deltaBase &&
+			deltaBase.revision <= cursor.revision &&
+			canonicalJson({ ...deltaBase, revision: cursor.revision }) === canonicalJson(cursor);
 		return {
 			version: 1,
 			cursor,
 			status: 'complete',
+			entryCount: state.order.length,
+			lastEntry: state.order.length
+				? { id: state.order.at(-1)!, textLength: state.rows.get(state.order.at(-1)!)!.text.length }
+				: undefined,
+			mode: delta ? 'delta' : 'full',
+			...(delta ? { baseCursor: deltaBase, orderIds: [...state.order] } : {}),
 			messages: includeMessages
-				? state.order.map((id) => structuredClone(state.rows.get(id)!))
+				? state.order
+						.filter(
+							(id) => !delta || (state.rowRevisions.get(id) ?? Infinity) > deltaBase!.revision
+						)
+						.map((id) => structuredClone(state.rows.get(id)!))
 				: [],
 		};
 	}

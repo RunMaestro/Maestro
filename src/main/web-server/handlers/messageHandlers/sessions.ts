@@ -574,8 +574,10 @@ export function handleGetSessionHistory(
 
 	const currentTurn = message.currentTurn === true;
 	let expectedCursor: import('../../../../shared/currentTurn').CurrentTurnCursor | undefined;
-	if (message.expectedCursor !== undefined) {
-		const value = message.expectedCursor as Record<string, unknown> | null;
+	let deltaBase: typeof expectedCursor;
+	for (const field of ['expectedCursor', 'deltaBase'] as const) {
+		if (message[field] === undefined) continue;
+		const value = message[field] as Record<string, unknown> | null;
 		const valid =
 			value &&
 			typeof value === 'object' &&
@@ -597,11 +599,14 @@ export function handleGetSessionHistory(
 			});
 			return;
 		}
-		expectedCursor = value as unknown as import('../../../../shared/currentTurn').CurrentTurnCursor;
+		if (field === 'expectedCursor')
+			expectedCursor =
+				value as unknown as import('../../../../shared/currentTurn').CurrentTurnCursor;
+		else deltaBase = value as unknown as import('../../../../shared/currentTurn').CurrentTurnCursor;
 	}
 	const result = ctx.callbacks.getSessionHistory(
 		tabId,
-		currentTurn ? { currentTurn, expectedCursor } : { sinceMs, tail }
+		currentTurn ? { currentTurn, expectedCursor, deltaBase } : { sinceMs, tail }
 	);
 	if (!result) {
 		ctx.send(client, {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
 import type { AgentRun } from '../../../shared/agent-run';
-import type { CurrentTurnMessage } from '../../../shared/currentTurn';
+import { composeCurrentTurn, type CurrentTurnMessage } from '../../../shared/currentTurn';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 
 const binding = {
@@ -338,4 +338,54 @@ describe('native current-turn revision and completeness', () => {
 			reason: 'native-tool-output-truncated',
 		});
 	});
+});
+
+describe('native current-turn delta and final spawn revision fence', () => {
+	it('reconstructs append and same-length replacement deltas without losing earlier risk', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('risk', 'Delete production')]);
+		const base = f.read();
+		f.commit([row('question', 'Use count?')]);
+		const read = f.index.read(binding, f.read().cursor, true, base.cursor);
+		expect(read).toMatchObject({
+			mode: 'delta',
+			baseCursor: base.cursor,
+			messages: [{ id: 'question' }],
+		});
+		const next = composeCurrentTurn(read, base);
+		expect(next.messages.map((row) => row.id)).toEqual(['user', 'risk', 'question']);
+		f.commit([row('risk', 'Delete customers')]);
+		const delta = f.index.read(binding, f.read().cursor, true, next.cursor);
+		expect(delta.messages).toMatchObject([{ id: 'risk', text: 'Delete customers' }]);
+		expect(composeCurrentTurn(delta, next).messages[1].text).toBe('Delete customers');
+		expect(() => composeCurrentTurn(delta, base)).toThrow('base lost');
+	});
+	it.each(['own-reply', 'human-reply', 'rewrite', 'extra-row', 'reset', 'pause'] as const)(
+		'fences %s during spawn preparation',
+		(mode) => {
+			const f = fixture();
+			f.begin('user');
+			f.commit([row('question', 'Use count?')]);
+			const cursor = f.read().cursor;
+			if (mode === 'own-reply' || mode === 'human-reply' || mode === 'extra-row')
+				f.commit([row(mode === 'human-reply' ? 'human' : 'submitted', 'Use count.', 'user')]);
+			if (mode === 'rewrite') f.commit([row('question', 'Use total?')]);
+			if (mode === 'extra-row') f.commit([row('tool', 'Extra tool output', 'tool')]);
+			if (mode === 'reset') f.index.spawning('agent-ai-tab');
+			if (mode === 'pause')
+				f.commit([], {
+					observation: {
+						sourceGeneration: 'renderer',
+						sequence: 3,
+						createdAt: 7,
+						provider: 'codex',
+						closed: true,
+					},
+				});
+			if (mode === 'own-reply')
+				expect(f.index.assertDelivery(cursor, 2, 'submitted', 'Use count.')).toBe(true);
+			else expect(() => f.index.assertDelivery(cursor, 2, 'submitted', 'Use count.')).toThrow();
+		}
+	);
 });

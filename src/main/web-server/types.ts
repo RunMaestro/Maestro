@@ -1058,6 +1058,7 @@ export interface GetSessionHistoryOptions {
 	/** Explicit full native current-turn observation; legacy filters do not apply. */
 	currentTurn?: boolean;
 	expectedCursor?: import('../../shared/currentTurn').CurrentTurnCursor;
+	deltaBase?: import('../../shared/currentTurn').CurrentTurnCursor;
 	/** Drop messages with timestamp ≤ this epoch ms. Use for poll-friendly cursoring. */
 	sinceMs?: number;
 	/** After other filters, keep only the last N messages. */

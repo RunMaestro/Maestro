@@ -179,7 +179,7 @@ function classifyHeuristic(message: PianolaMessage): PianolaClassification {
 }
 
 /**
- * Max risk across EVERY assistant message since the last user turn (the whole
+ * Max risk across EVERY assistant, tool and system message since the last user turn (the whole
  * current turn), not just the single message we classify. An agent can split a
  * destructive intent ("I'll drop the prod database.") into an earlier assistant
  * message and leave only an innocuous awaiting question ("Ready to continue?") in
@@ -194,7 +194,8 @@ function currentTurnMaxRisk(messages: readonly PianolaMessage[]): PianolaRisk {
 	for (let i = messages.length - 1; i >= 0; i -= 1) {
 		const m = messages[i];
 		if (m.role === 'user') break;
-		if (isAssistant(m)) risk = maxRisk(risk, rateRisk(m.content ?? ''));
+		if (isAssistant(m) || m.role === 'tool' || m.role === 'system')
+			risk = maxRisk(risk, rateRisk(m.content ?? ''));
 	}
 	return risk;
 }

@@ -737,6 +737,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					// Spawn agent with the prompt
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
+						transcriptBoundaryId: userLogEntry.id,
 						pianolaDispatchId,
 						toolType: session.toolType,
 						cwd: session.cwd,

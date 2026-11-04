@@ -138,7 +138,8 @@ export async function handleProcessSpawn(
 	const admissionGuard = pianolaNewTabSpawns.claim(
 		config.sessionId,
 		config.pianolaDispatchId,
-		config.pianolaQueueItemId
+		config.pianolaQueueItemId,
+		config.transcriptBoundaryId
 	);
 	const proofCleanup: { release?: () => void; notStarted: boolean } = { notStarted: true };
 	const controller = new AbortController();

@@ -22,8 +22,12 @@ import {
 } from '../../shared/pianola/pianola-scope-cycle';
 import type { WatchTarget } from '../../shared/pianola/pianola-watcher';
 import { pausePianolaScopeDecisions } from '../../shared/pianola/pianola-decision-lifecycle';
-import type { PianolaMessage } from '../../shared/pianola/types';
-import { MAX_PERSISTED_SESSION_LOGS } from '../../shared/deferredSessionContent';
+import {
+	composeCurrentTurn,
+	currentTurnMessages,
+	sameCurrentTurnCursor,
+	type CurrentTurnRead,
+} from '../../shared/currentTurn';
 import {
 	ensurePianolaEnabled,
 	pianolaEnabledNow,
@@ -42,6 +46,7 @@ export interface PianolaScopeWatchOptions {
 export function createPianolaScopeWorkerDeps(
 	client: Pick<MaestroClient, 'sendCommand'>
 ): PianolaScopeCycleDeps {
+	const turns = new Map<string, CurrentTurnRead>();
 	const deliver = async (
 		target: WatchTarget,
 		answer: string,
@@ -98,28 +103,68 @@ export function createPianolaScopeWorkerDeps(
 				throw error;
 			}
 		},
-		readTranscript: async (target) => {
-			// No tail: the cycle checks the complete cursor and retains current-turn risk.
-			const response = await client.sendCommand<{
-				success?: boolean;
-				error?: string;
-				agentId?: string;
-				tabId?: string;
-				messages?: PianolaMessage[];
-			}>({ type: 'get_session_history', tabId: target.tabId }, 'session_history_result');
-			if (
-				response.success !== true ||
-				response.agentId !== target.agentId ||
-				response.tabId !== target.tabId ||
-				!Array.isArray(response.messages)
-			)
-				throw new Error(response.error ?? 'Incomplete scope transcript');
-			// The persisted window may already have discarded earlier entries in
-			// this turn. At the limit, completeness cannot be established from the
-			// history API, so do not classify or deliver from that window.
-			if (response.messages.length >= MAX_PERSISTED_SESSION_LOGS)
-				throw new Error('Scope transcript may be truncated; complete current turn unavailable');
-			return { agentId: response.agentId, tabId: response.tabId, messages: response.messages };
+		readTranscript: async (target, expected) => {
+			if (!expected || expected.agentId !== target.agentId || expected.tabId !== target.tabId)
+				throw new Error('Native current-turn cursor required');
+			const key = JSON.stringify([target.agentId, target.tabId]);
+			const base = turns.get(key);
+			if (base && sameCurrentTurnCursor(base.cursor, expected))
+				return {
+					agentId: target.agentId,
+					tabId: target.tabId,
+					messages: currentTurnMessages(base),
+					currentTurn: base,
+				};
+			const fetchTurn = async (delta: boolean) => {
+				const response = await client.sendCommand<{
+					success?: boolean;
+					agentId?: string;
+					tabId?: string;
+					currentTurn?: CurrentTurnRead;
+				}>(
+					{
+						type: 'get_session_history',
+						tabId: target.tabId,
+						currentTurn: true,
+						expectedCursor: expected,
+						...(delta && base ? { deltaBase: base.cursor } : {}),
+					},
+					'session_history_result'
+				);
+				if (
+					response.success !== true ||
+					response.agentId !== target.agentId ||
+					response.tabId !== target.tabId ||
+					!response.currentTurn ||
+					!sameCurrentTurnCursor(response.currentTurn.cursor, expected)
+				)
+					throw new Error('Current-turn binding changed');
+				return response.currentTurn;
+			};
+			try {
+				let read = await fetchTurn(!!base);
+				let turn: CurrentTurnRead;
+				try {
+					turn = composeCurrentTurn(read, base);
+				} catch (error) {
+					if (read.mode !== 'delta') throw error;
+					read = await fetchTurn(false);
+					turn = composeCurrentTurn(read);
+				}
+				turns.delete(key);
+				turns.set(key, turn);
+				// A reconnect or eviction costs a full refresh, never authority or a second watcher.
+				while (turns.size > 20) turns.delete(turns.keys().next().value!);
+				return {
+					agentId: target.agentId,
+					tabId: target.tabId,
+					messages: currentTurnMessages(turn),
+					currentTurn: turn,
+				};
+			} catch (error) {
+				turns.delete(key);
+				throw error;
+			}
 		},
 		watch: {
 			resolveProfile: (projectPath) => getPianolaProfile(projectPath).entry,

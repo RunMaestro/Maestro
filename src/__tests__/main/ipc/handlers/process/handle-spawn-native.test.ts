@@ -231,6 +231,22 @@ describe('native spawn configuration', () => {
 		}
 	);
 
+	it('carries the native submitted boundary into both scope admission checks', async () => {
+		const tabId = generateUUID();
+		const dispatchId = generateUUID();
+		const boundaryId = generateUUID();
+		const guard = vi.fn();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm('worker', tabId, guard, vi.fn(), dispatchId);
+		await spawnNativeWithResult('copilot-cli', {
+			sessionId: 'worker-ai-' + tabId,
+			pianolaDispatchId: dispatchId,
+			transcriptBoundaryId: boundaryId,
+		});
+		expect(guard).toHaveBeenCalledTimes(2);
+		expect(guard.mock.calls).toEqual([[boundaryId], [boundaryId]]);
+	});
+
 	it('blocks an unadmitted new tab before any spawn preflight', async () => {
 		const tabId = generateUUID();
 		pianolaNewTabSpawns.hold('worker', tabId);

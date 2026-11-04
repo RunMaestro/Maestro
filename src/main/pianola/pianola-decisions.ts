@@ -1,4 +1,9 @@
 /** Native admission and receipt handling shared by the CLI and explicit human answers. */
+import { getSettingsStore } from '../stores';
+import { requireEncoreFeature } from '../../shared/encoreFeatureDefaults';
+import { nativeCurrentTurns } from './current-turn';
+import { pianolaNewTabSpawns } from './pianola-new-tab-dispatch';
+import { decide } from '../../shared/pianola/pianola-policy';
 import * as defaultStore from './pianola-store-main';
 import type { MessageHandlerCallbacks } from '../web-server/handlers/messageHandlers/types';
 import {
@@ -19,6 +24,11 @@ import {
 	type PianolaDecisionRecord,
 } from '../../shared/pianola/storage';
 import { generateUUID } from '../../shared/uuid';
+import {
+	composeCurrentTurn,
+	currentTurnMessages,
+	sameCurrentTurnCursor,
+} from '../../shared/currentTurn';
 import { canonicalJson } from '../../shared/canonicalJson';
 
 type NativeCallbacks = Partial<
@@ -30,15 +40,23 @@ type NativeCallbacks = Partial<
 type DecisionStore = Parameters<typeof validatePianolaScopeDelivery>[2];
 
 function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
-	const history = callbacks.getSessionHistory?.(record.tabId);
 	const cursor = record.lifecycle!.guard.cursor;
+	const history = callbacks.getSessionHistory?.(
+		record.tabId,
+		cursor.native ? { currentTurn: true, expectedCursor: cursor.native } : undefined
+	);
+	if (cursor.native) {
+		if (!history?.currentTurn || !sameCurrentTurnCursor(history.currentTurn.cursor, cursor.native))
+			throw new Error('Requesting native turn changed');
+		history.messages = currentTurnMessages(composeCurrentTurn(history.currentTurn));
+	}
 	if (
 		!history ||
 		history.agentId !== record.agentId ||
 		history.tabId !== record.tabId ||
 		history.messages.length !== cursor.count ||
 		history.messages.at(-1)?.id !== cursor.id ||
-		history.messages.at(-1)?.content.length !== cursor.textLength
+		(!cursor.native && history.messages.at(-1)?.content.length !== cursor.textLength)
 	)
 		throw new Error('Requesting transcript no longer matches the pending ask');
 	const classification = classifyMessages(enrichWithAwaitingInput(history.messages));
@@ -62,6 +80,80 @@ async function sendClaimedDecision(
 	let result: PianolaScopeDeliveryResult;
 	try {
 		if (!callbacks.executeCommand) throw new Error('Native send callback unavailable');
+		const guard = record.lifecycle!.guard;
+		const native = guard.cursor.native;
+		if (native) {
+			if (pianolaNewTabSpawns.isHeld(destination.agentId, destination.tabId))
+				throw new Error('Decision destination already held');
+			pianolaNewTabSpawns.hold(destination.agentId, destination.tabId);
+			pianolaNewTabSpawns.arm(
+				destination.agentId,
+				destination.tabId,
+				(boundaryId) => {
+					requireEncoreFeature(getSettingsStore(), 'pianola', 'PianolaDisabled');
+					if (!boundaryId) throw new Error('Native decision reply boundary required');
+					const snapshot = pianolaScopeSnapshotFromDesktop({
+						success: true,
+						...callbacks.listDesktopSessions?.(),
+					});
+					const recipient = snapshot.tabs.find(
+						(tab) => tab.agentId === destination.agentId && tab.tabId === destination.tabId
+					);
+					if (
+						!recipient ||
+						recipient.paused ||
+						recipient.busy ||
+						recipient.consult ||
+						recipient.ephemeral
+					)
+						throw new Error('Decision destination unavailable');
+					const current = store.readDecisions().find((row) => row.id === record.id);
+					if (
+						!current?.lifecycle ||
+						current.lifecycle.phase !== phase ||
+						(current.lifecycle.delivery !== 'intent' &&
+							current.lifecycle.delivery !== 'accepted') ||
+						current.deliveryStatus !== 'admitted' ||
+						canonicalJson(current.lifecycle.source) !== canonicalJson(record.lifecycle!.source)
+					)
+						throw new Error('Decision authority changed during delivery');
+					const appended = nativeCurrentTurns.assertDelivery(
+						native,
+						guard.cursor.count,
+						destination.agentId === record.agentId && destination.tabId === record.tabId
+							? boundaryId
+							: undefined,
+						command
+					);
+					if (appended) {
+						const tab = snapshot.tabs.find(
+							(tab) => tab.agentId === record.agentId && tab.tabId === record.tabId
+						);
+						if (!tab) throw new Error('Decision tab closed');
+						tab.cursor = guard.cursor;
+						tab.cursorAvailable = true;
+					}
+					validatePianolaScopeDelivery(guard, snapshot, store, false);
+					if (phase === 'answer' && record.decision.matchedRuleId) {
+						const owner = snapshot.owners.find((owner) => owner.id === record.agentId)!;
+						const allowed = decide(record.classification, store.readRules(), {
+							agentId: record.agentId,
+							tabId: record.tabId,
+							projectPath: owner.cwd,
+							groupId: owner.groupId,
+						});
+						if (
+							allowed.action !== 'auto_answer' ||
+							allowed.answer !== command ||
+							allowed.matchedRuleId !== record.decision.matchedRuleId
+						)
+							throw new Error('Answer rule revoked during delivery');
+					}
+				},
+				() => {},
+				record.id
+			);
+		}
 		const accepted = await callbacks.executeCommand(
 			destination.agentId,
 			command,
@@ -71,8 +163,10 @@ async function sendClaimedDecision(
 			undefined,
 			true,
 			undefined,
-			true
+			true,
+			...(native ? [record.id] : [])
 		);
+		if (!accepted && native) pianolaNewTabSpawns.cancelHold(destination.agentId, destination.tabId);
 		result = accepted
 			? { status: 'accepted' }
 			: { status: 'rejected', error: 'Renderer refused the decision message' };

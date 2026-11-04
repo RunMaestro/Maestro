@@ -303,7 +303,9 @@ export function registerSessionCallbacks(
 						agentSessionId: tab.agentSessionId ?? null,
 						open: s.aiTabs?.some((open: { id: string }) => open.id === tabId) === true,
 					},
-					options.expectedCursor
+					options.expectedCursor,
+					true,
+					options.deltaBase
 				);
 				return {
 					tabId,

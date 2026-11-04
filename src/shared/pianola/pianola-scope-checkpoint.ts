@@ -1,5 +1,6 @@
 /** Durable cursors for a single scope worker. An invalid checkpoint is never a
  * fresh enrollment: callers must suspend and surface the error instead. */
+import { isCurrentTurnCursor } from '../currentTurn';
 import { isValidClassification } from './storage';
 import { isPianolaScopeId } from './pianola-scope';
 import type { WatchState } from './pianola-watcher';
@@ -8,6 +9,7 @@ export interface PianolaScopeCursor {
 	id: string;
 	count: number;
 	textLength: number;
+	native?: import('../currentTurn').CurrentTurnCursor;
 }
 
 /** Metadata coverage is an observation, never a delivery/acknowledgment receipt. */
@@ -103,7 +105,8 @@ export function isPianolaScopeCursor(value: unknown): value is PianolaScopeCurso
 			id(value.id) &&
 			nonnegativeInteger(value.count) &&
 			value.count > 0 &&
-			nonnegativeInteger(value.textLength))
+			nonnegativeInteger(value.textLength) &&
+			(value.native === undefined || isCurrentTurnCursor(value.native)))
 	);
 }
 

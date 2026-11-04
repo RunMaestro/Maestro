@@ -5,6 +5,7 @@
  * unguarded fallback, including for a delayed manager reply.
  */
 import { createHash } from 'crypto';
+import { sameCurrentTurnCursor, type CurrentTurnRead } from '../currentTurn';
 import { canonicalJson } from '../canonicalJson';
 import type { DesktopSessionsSnapshot } from '../desktopTabs';
 import type { PianolaFsStore } from './fs-store';
@@ -84,10 +85,14 @@ export interface PianolaScopeCycleDeps {
 	/** Unavailable/incomplete metadata must throw or return complete:false. */
 	readSnapshot: () => Promise<PianolaScopeSnapshot>;
 	/** All log entries in native order, with stable IDs. A bounded fetch may refuse. */
-	readTranscript: (target: WatchTarget) => Promise<{
+	readTranscript: (
+		target: WatchTarget,
+		expected?: import('../currentTurn').CurrentTurnCursor
+	) => Promise<{
 		agentId: string;
 		tabId: string;
 		messages: PianolaMessage[];
+		currentTurn?: CurrentTurnRead;
 	}>;
 	watch: Omit<WatchDeps, 'dispatch' | 'requestJudgment'>;
 	dispatch: (
@@ -271,8 +276,18 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 			busy: info.busy,
 			consult: info.consult,
 			ephemeral: info.ephemeral,
-			cursorAvailable: info.cursorAvailable,
-			cursor: info.cursor,
+			cursorAvailable: info.currentTurn
+				? info.currentTurn.status === 'complete' && !!info.currentTurn.lastEntry
+				: info.cursorAvailable,
+			cursor: info.currentTurn
+				? info.currentTurn.status === 'complete' && info.currentTurn.lastEntry
+					? {
+							...info.currentTurn.lastEntry,
+							count: info.currentTurn.entryCount!,
+							native: info.currentTurn.cursor,
+						}
+					: null
+				: info.cursor,
 		};
 	});
 	const snapshot = {
@@ -316,7 +331,13 @@ export function pianolaScopeBindingFingerprint(
 
 function sameCursor(a: PianolaScopeCursor | null, b: PianolaScopeCursor | null): boolean {
 	return (
-		a === b || (!!a && !!b && a.id === b.id && a.count === b.count && a.textLength === b.textLength)
+		a === b ||
+		(!!a &&
+			!!b &&
+			a.id === b.id &&
+			a.count === b.count &&
+			a.textLength === b.textLength &&
+			sameCurrentTurnCursor(a.native, b.native))
 	);
 }
 
@@ -574,7 +595,23 @@ export async function runPianolaScopeCycle(
 			firstActivation ||
 			resume ||
 			saved?.status !== 'active' ||
-			saved.bindingFingerprint !== binding;
+			saved.bindingFingerprint !== binding ||
+			(!!tab.cursor?.native &&
+				(!saved?.lastSeen?.native ||
+					canonicalJson({
+						...saved.lastSeen.native,
+						revision: 0,
+						runId: null,
+						turnId: null,
+						agentSessionId: null,
+					}) !==
+						canonicalJson({
+							...tab.cursor.native,
+							revision: 0,
+							runId: null,
+							turnId: null,
+							agentSessionId: null,
+						})));
 		if (!saved) {
 			// Only a genuinely new host-created tab may expose its first ask. An
 			// old/unknown timestamp, re-enrollment or ownership change baselines it.
@@ -590,7 +627,7 @@ export async function runPianolaScopeCycle(
 				tabId: tab.tabId,
 				bindingFingerprint: binding,
 				baseline: createdAfterActivation && !tab.paused ? null : tab.cursor,
-				baselineBusy: tab.busy && !tab.paused && !historicalAtHandover,
+				baselineBusy: !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover,
 				lastSeen: createdAfterActivation && !tab.paused ? null : tab.cursor,
 				state:
 					createdAfterActivation && !tab.paused
@@ -606,7 +643,7 @@ export async function runPianolaScopeCycle(
 			savedByKey.set(key, saved);
 		} else if (needsBaseline || tab.paused) {
 			saved.baseline = tab.cursor;
-			saved.baselineBusy = tab.busy && !tab.paused && !historicalAtHandover;
+			saved.baselineBusy = !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover;
 			saved.lastSeen = tab.cursor;
 			saved.bindingFingerprint = binding;
 			saved.state = initialWatchState();
@@ -677,7 +714,7 @@ export async function runPianolaScopeCycle(
 				projectPath: snapshot.owners.find((owner) => owner.id === tab.agentId)!.cwd,
 				groupId: snapshot.owners.find((owner) => owner.id === tab.agentId)!.groupId,
 			};
-			const history = await deps.readTranscript(target);
+			const history = await deps.readTranscript(target, tab.cursor?.native);
 			const messages = history.messages;
 			if (
 				history.agentId !== tab.agentId ||
@@ -685,16 +722,32 @@ export async function runPianolaScopeCycle(
 				messages.length !== (tab.cursor?.count ?? 0) ||
 				new Set(messages.map((message) => message.id)).size !== messages.length ||
 				messages.some((message) => !message.id) ||
-				!atCursor(messages, tab.cursor) ||
-				!atCursor(messages, saved.baseline) ||
-				!atCursor(messages, saved.lastSeen) ||
-				(tab.cursor && messages[messages.length - 1]?.content.length !== tab.cursor.textLength)
+				(!tab.cursor?.native && !atCursor(messages, tab.cursor)) ||
+				(!tab.cursor?.native && !atCursor(messages, saved.baseline)) ||
+				(!tab.cursor?.native && !atCursor(messages, saved.lastSeen)) ||
+				(tab.cursor?.native &&
+					!sameCurrentTurnCursor(history.currentTurn?.cursor, tab.cursor.native)) ||
+				(!tab.cursor?.native &&
+					tab.cursor &&
+					messages[messages.length - 1]?.content.length !== tab.cursor.textLength)
 			)
 				throw new Error('Transcript cursor gap or changed snapshot');
 			// Classify the full transcript so earlier assistant intent in the current
 			// turn still raises risk. Eligibility is separate: unchanged history must
 			// never become actionable just because a tool/system entry was appended.
-			const offset = saved.baseline?.count ?? 0;
+			const offset =
+				tab.cursor?.native &&
+				saved.baseline?.native &&
+				tab.cursor.native.turnId !== saved.baseline.native.turnId
+					? 0
+					: (saved.baseline?.count ?? 0);
+			if (
+				tab.cursor?.native &&
+				saved.baseline?.native &&
+				tab.cursor.native.turnId === saved.baseline.native.turnId &&
+				messages[saved.baseline.count - 1]?.id !== saved.baseline.id
+			)
+				throw new Error('Enrollment boundary lost in current turn');
 			const actionableIds = new Set(messages.slice(offset).map((message) => message.id));
 			if (saved.baselineBusy && saved.baseline) {
 				const streamed = messages[offset - 1];
@@ -1099,7 +1152,8 @@ export function validatePianolaScopeDelivery(
 		(requireIntent &&
 			!saved.baselineBusy &&
 			saved.baseline !== null &&
-			guard.cursor.count <= saved.baseline.count) ||
+			guard.cursor.count <= saved.baseline.count &&
+			(!guard.cursor.native || guard.cursor.native.turnId === saved.baseline.native?.turnId)) ||
 		saved.status !== 'active' ||
 		saved.bindingFingerprint !== guard.bindingFingerprint ||
 		(requireIntent &&
