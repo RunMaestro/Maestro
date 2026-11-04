@@ -273,7 +273,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
-- **Which optional controls a composer toolbar offers:** `ComposerCapabilities`, `deriveAiComposerCapabilities()`, `aiCanAttachImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
+- **Which optional controls a composer toolbar offers:** `ComposerCapabilities`, `deriveAiComposerCapabilities()`, `deriveGroupChatComposerCapabilities()`, `aiCanAttachImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
 - **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
 - **The chat composer shell both surfaces render:** `<ChatComposerFrame>`, `useChatComposerFold()` in `src/renderer/components/ChatComposer/ChatComposerFrame.tsx`
 - **Detecting an active IME composition:** `isImeComposing()` in `src/renderer/utils/ime.ts`

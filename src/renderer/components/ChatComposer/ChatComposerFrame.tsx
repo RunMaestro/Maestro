@@ -136,6 +136,8 @@ export interface ChatComposerFrameProps {
 	checkImageFile?: (file: File) => string | null;
 	imageInputId?: string;
 	imageReportComponent?: string;
+	/** Optional visible warning badge beside the staged images strip. */
+	stagedImagesWarning?: string;
 
 	// Toolbar
 	enterToSend?: boolean;
@@ -188,6 +190,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	checkImageFile,
 	imageInputId,
 	imageReportComponent,
+	stagedImagesWarning,
 	enterToSend = false,
 	setEnterToSend,
 	voice,
@@ -303,6 +306,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 						setStagedImages={resolvedSetStagedImages}
 						openAnnotator={openAnnotator}
 						onReorder={onReorderStagedImages}
+						warning={stagedImagesWarning}
 					/>
 				)}
 

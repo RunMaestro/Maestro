@@ -47,6 +47,7 @@ import { useAtMentionCompletion } from './useAtMentionCompletion';
 import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing, type ProcessInputOptions } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import {
 	useCrossAgentDispatch,
 	type SpawnBackgroundSynopsisFn,
@@ -848,6 +849,21 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				return;
 			}
 
+			if (isGroupChatActive) {
+				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+				const canAttach = chat?.moderatorAgentId
+					? hasCapabilityCached(chat.moderatorAgentId, 'supportsImageInput')
+					: false;
+				if (!canAttach) {
+					e.preventDefault();
+					notifyCenterFlash({
+						message: "This room's moderator can't read images",
+						color: 'yellow',
+					});
+					return;
+				}
+			}
+
 			for (let i = 0; i < items.length; i++) {
 				if (items[i].type.indexOf('image') !== -1) {
 					e.preventDefault();
@@ -1186,6 +1202,19 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			for (let i = 0; i < files.length; i++) {
 				const file = files[i];
 				if (file.type.startsWith('image/')) {
+					if (isGroupChatActive) {
+						const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+						const canAttach = chat?.moderatorAgentId
+							? hasCapabilityCached(chat.moderatorAgentId, 'supportsImageInput')
+							: false;
+						if (!canAttach) {
+							notifyCenterFlash({
+								message: "This room's moderator can't read images",
+								color: 'yellow',
+							});
+							continue;
+						}
+					}
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						if (event.target?.result) {

@@ -20,6 +20,8 @@ interface StagedImagesStripProps {
 	openAnnotator: (image: string, onSave: (newDataUrl: string) => void) => void;
 	/** Move an image, renumbering any `Screenshot N` references in the draft. */
 	onReorder: (from: number, to: number) => void;
+	/** Optional visible warning badge when the current agent cannot read images. */
+	warning?: string;
 }
 
 export const StagedImagesStrip = memo(function StagedImagesStrip({
@@ -30,6 +32,7 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 	setStagedImages,
 	openAnnotator,
 	onReorder,
+	warning,
 }: StagedImagesStripProps) {
 	const [organizerOpen, setOrganizerOpen] = useState(false);
 	const dnd = useStagedImageDnd(stagedImages.length, onReorder);
@@ -69,6 +72,20 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 					>
 						<Maximize2 className="w-4 h-4" />
 					</button>
+				)}
+
+				{warning && (
+					<div
+						data-testid="staged-images-warning"
+						className="flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium shrink-0 self-center border"
+						style={{
+							backgroundColor: `${theme.colors.warning ?? '#eab308'}1a`,
+							borderColor: `${theme.colors.warning ?? '#eab308'}40`,
+							color: theme.colors.warning ?? '#eab308',
+						}}
+					>
+						<span>{warning}</span>
+					</div>
 				)}
 
 				<div

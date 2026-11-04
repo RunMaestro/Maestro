@@ -28,7 +28,9 @@ export {
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
 	aiCanAttachImages,
 	deriveAiComposerCapabilities,
+	deriveGroupChatComposerCapabilities,
 	type AiComposerCapabilitiesInput,
 	type AiImageAttachInput,
 	type ComposerCapabilities,
+	type GroupChatComposerCapabilitiesInput,
 } from './capabilities';

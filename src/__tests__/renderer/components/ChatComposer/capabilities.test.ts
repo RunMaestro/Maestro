@@ -3,6 +3,7 @@ import {
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
 	aiCanAttachImages,
 	deriveAiComposerCapabilities,
+	deriveGroupChatComposerCapabilities,
 	type AiComposerCapabilitiesInput,
 } from '../../../../renderer/components/ChatComposer';
 import type { AgentCapabilities } from '../../../../shared/types';
@@ -127,5 +128,27 @@ describe('GROUP_CHAT_COMPOSER_CAPABILITIES', () => {
 
 	it('cannot be changed by a caller', () => {
 		expect(Object.isFrozen(GROUP_CHAT_COMPOSER_CAPABILITIES)).toBe(true);
+	});
+});
+
+describe('deriveGroupChatComposerCapabilities', () => {
+	it('enables imageAttach when moderator supportsImageInput', () => {
+		const caps = deriveGroupChatComposerCapabilities({
+			hasCapability: capabilitiesOf('supportsImageInput'),
+		});
+		expect(caps.imageAttach).toBe(true);
+		expect(caps.upload).toBe(true);
+		expect(caps.voice).toBe(true);
+		expect(caps.saveToHistory).toBe(false);
+	});
+
+	it('disables imageAttach when moderator lacks supportsImageInput', () => {
+		const caps = deriveGroupChatComposerCapabilities({
+			hasCapability: capabilitiesOf(),
+		});
+		expect(caps.imageAttach).toBe(false);
+		expect(caps.upload).toBe(true);
+		expect(caps.voice).toBe(true);
+		expect(caps.saveToHistory).toBe(false);
 	});
 });

@@ -602,6 +602,12 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   CLI verb, and none is planned: an agent runs on the host, so the files it
   would upload are already there, and it can mention them in `dispatch` or
   `group-chat` text directly.
+- **Attach images to a Group Chat room** (the Attach button, paste, and drag-and-drop
+  in the Group Chat composer). The room gates image attach on whether its
+  moderator's provider supports image input (`supportsImageInput`). The CLI's
+  `group-chat send` verb accepts text only (`<message>` or `--message-file`) and
+  has no image attachment flag, so the moderator capability gate is not needed
+  on the CLI send path.
 
 ### Backstage plugin updates
 

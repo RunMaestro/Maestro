@@ -33,10 +33,10 @@ export interface ComposerCapabilities {
 }
 
 /**
- * Group Chat's composer. Every per-tab agent setting is off: a room has no tab
- * to save history from, mixes providers, and keeps its own Read-Only toggle.
- * `imageAttach` stays on because the room offers Attach today; deriving it from
- * the moderator's provider is a later step.
+ * Group Chat's composer baseline. Every per-tab agent setting is off: a room
+ * has no tab to save history from, mixes providers, and keeps its own Read-Only
+ * toggle. `imageAttach` defaults to true on the frozen baseline; call
+ * `deriveGroupChatComposerCapabilities` to gate on the moderator's provider.
  */
 export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = Object.freeze({
 	imageAttach: true,
@@ -47,6 +47,23 @@ export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = 
 	thinking: false,
 	modelEffort: false,
 });
+
+export interface GroupChatComposerCapabilitiesInput {
+	hasCapability: (capability: keyof AgentCapabilities) => boolean;
+}
+
+/**
+ * Group Chat's composer capabilities, with `imageAttach` gated on whether
+ * the moderator's provider can read images.
+ */
+export function deriveGroupChatComposerCapabilities(
+	input: GroupChatComposerCapabilitiesInput
+): ComposerCapabilities {
+	return {
+		...GROUP_CHAT_COMPOSER_CAPABILITIES,
+		imageAttach: input.hasCapability('supportsImageInput'),
+	};
+}
 
 export interface AiImageAttachInput {
 	/** The AI composer's command-mode rung. */
