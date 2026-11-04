@@ -22,6 +22,8 @@ describe('permission relay server request and native lifetime activity', () => {
 		close: ReturnType<typeof vi.fn>;
 	};
 	let listening: () => void;
+	let accept: (socket: net.Socket) => void;
+	let sockets: EventEmitter[];
 	let releases: Array<() => void>;
 	let active: number;
 	async function reserve(root = target) {
@@ -46,11 +48,22 @@ describe('permission relay server request and native lifetime activity', () => {
 		listening();
 		return request;
 	}
+	function connect(configure?: (socket: net.Socket) => void) {
+		const socket = Object.assign(new EventEmitter(), {
+			setEncoding: vi.fn(),
+			write: vi.fn(),
+		});
+		sockets.push(socket);
+		configure?.(socket as unknown as net.Socket);
+		accept(socket as unknown as net.Socket);
+		return socket;
+	}
 	beforeEach(async () => {
 		vi.resetModules();
 		vi.clearAllMocks();
 		releases = [];
 		active = 0;
+		sockets = [];
 		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 		vi.spyOn(process, 'umask').mockReturnValue(0o022);
 		endpoint = Object.assign(new EventEmitter(), { listen: vi.fn(), close: vi.fn() });
@@ -58,7 +71,10 @@ describe('permission relay server request and native lifetime activity', () => {
 			listening = callback;
 			return endpoint;
 		});
-		vi.mocked(net.createServer).mockReturnValue(endpoint as unknown as net.Server);
+		vi.mocked(net.createServer).mockImplementation((...args: unknown[]) => {
+			accept = args[0] as (socket: net.Socket) => void;
+			return endpoint as unknown as net.Server;
+		});
 		gate = await import('../../../main/git/worktreeActivity');
 		const admit = gate.beginGlobalWorktreeActivity;
 		vi.spyOn(gate, 'beginGlobalWorktreeActivity').mockImplementation(() => {
@@ -75,6 +91,7 @@ describe('permission relay server request and native lifetime activity', () => {
 	});
 	afterEach(() => {
 		for (const release of releases) release();
+		for (const socket of sockets) socket.emit('close');
 		server.stop();
 		endpoint.emit('close');
 		expect(active).toBe(0);
@@ -321,6 +338,216 @@ describe('permission relay server request and native lifetime activity', () => {
 		});
 		await expect(start()).rejects.toBe(error);
 		expect(active).toBe(0);
+		await idle();
+	});
+
+	it.each([target, path.join(target, 'child'), path.resolve('unrelated-repository')])(
+		'refuses accepted sockets before encoding/listener setup under %s',
+		async (root) => {
+			await start();
+			endpoint.emit('close');
+			const hold = await idle(root);
+			const setup = vi.fn();
+			expect(() => connect((socket) => (socket.setEncoding = setup))).toThrow(/reserved/);
+			expect(setup).not.toHaveBeenCalled();
+			expect(sockets[0].eventNames()).toEqual([]);
+			hold.release();
+			const socket = connect();
+			expect(socket.setEncoding).toHaveBeenCalledWith('utf8');
+			await busy();
+			socket.emit('close');
+			await idle();
+		}
+	);
+
+	it('blocks a pending reservation admitted before socket setup', async () => {
+		await start();
+		endpoint.emit('close');
+		let canonicalized!: (value: string) => void;
+		vi.mocked(fs.realpath).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					canonicalized = resolve;
+				})
+		);
+		const reservation = reserve();
+		const socket = connect();
+		canonicalized(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		socket.emit('close');
+		await idle();
+	});
+
+	it('owns every accepted socket independently of server shutdown, end and error', async () => {
+		await start();
+		const first = connect();
+		const second = connect();
+		expect(active).toBe(3);
+		server.stop();
+		endpoint.emit('close');
+		expect(active).toBe(2);
+		first.emit('end');
+		first.emit('error', new Error('connection failed'));
+		expect(active).toBe(2);
+		await busy();
+		first.emit('close');
+		first.emit('close');
+		expect(active).toBe(1);
+		await busy();
+		second.emit('close');
+		expect(active).toBe(0);
+		await idle();
+	});
+
+	it.each(['encoding', 'data listener', 'error listener'])(
+		'preserves %s setup failure and holds the socket until observed close',
+		async (stage) => {
+			await start();
+			endpoint.emit('close');
+			const error = new Error(stage);
+			expect(() =>
+				connect((socket) => {
+					if (stage === 'encoding')
+						vi.mocked(socket.setEncoding).mockImplementationOnce(() => {
+							expect(active).toBe(1);
+							throw error;
+						});
+					else {
+						const emitter: EventEmitter = socket;
+						const on = emitter.on.bind(emitter);
+						vi.spyOn(emitter, 'on').mockImplementation((event, listener) => {
+							if (event === (stage === 'data listener' ? 'data' : 'error')) throw error;
+							return on(event, listener);
+						});
+					}
+				})
+			).toThrow(error);
+			await busy();
+			sockets[0].emit('close');
+			await idle();
+		}
+	);
+
+	it.each([false, true])('holds setup after reentrant socket close, throwing=%s', async (fail) => {
+		await start();
+		endpoint.emit('close');
+		const error = new Error('encoding failed after close');
+		const setup = () =>
+			connect((socket) => {
+				vi.mocked(socket.setEncoding).mockImplementationOnce(() => {
+					socket.emit('close');
+					expect(active).toBe(1);
+					if (fail) throw error;
+					return socket;
+				});
+			});
+		if (fail) expect(setup).toThrow(error);
+		else setup();
+		expect(active).toBe(0);
+		await idle();
+	});
+
+	it.each([target, path.join(target, 'child'), path.resolve('unrelated-repository')])(
+		'refuses retained data before chunk inspection or buffer changes under %s',
+		async (root) => {
+			await start();
+			const socket = connect();
+			socket.emit('data', '  \n {"type":"hello",');
+			endpoint.emit('close');
+			socket.emit('close');
+			const hold = await idle(root);
+			const inspect = vi.fn(() => '"token":"missing"}\n');
+			expect(() => socket.emit('data', { [Symbol.toPrimitive]: inspect })).toThrow(/reserved/);
+			expect(inspect).not.toHaveBeenCalled();
+			expect(socket.write).not.toHaveBeenCalled();
+			hold.release();
+			socket.emit('data', '"token":"missing"}\n\n{"type":"hello","token":"other"}\n');
+			expect(socket.write).toHaveBeenCalledTimes(2);
+			for (const [line] of socket.write.mock.calls)
+				expect(JSON.parse(line)).toEqual({ type: 'hello-ack', ok: false, error: 'unknown token' });
+			await idle();
+		}
+	);
+
+	it('refuses retained errors before reading payloads or reporting and permits retry', async () => {
+		await start();
+		const socket = connect();
+		endpoint.emit('close');
+		socket.emit('close');
+		const hold = await idle();
+		const inspect = vi.fn(() => 'original error');
+		const error = {
+			get message() {
+				return inspect();
+			},
+		};
+		expect(() => socket.emit('error', error)).toThrow(/reserved/);
+		expect(inspect).not.toHaveBeenCalled();
+		expect(logger.debug).not.toHaveBeenCalled();
+		hold.release();
+		vi.mocked(logger.debug).mockImplementationOnce(() => expect(active).toBe(1));
+		socket.emit('error', error);
+		expect(logger.debug).toHaveBeenCalledWith(
+			'Relay socket connection error',
+			'[PermissionRelay]',
+			{
+				error: 'original error',
+			}
+		);
+		await idle();
+	});
+
+	it.each(['data', 'error'])(
+		'holds retained %s through reentrant native close and reporting failure',
+		async (event) => {
+			await start();
+			const socket = connect();
+			endpoint.emit('close');
+			const error = new Error('reporting failed');
+			const report = event === 'data' ? logger.warn : logger.debug;
+			vi.mocked(report).mockImplementationOnce(() => {
+				expect(active).toBe(2);
+				socket.emit('close');
+				expect(active).toBe(1);
+				throw error;
+			});
+			expect(() => socket.emit(event, event === 'data' ? 'invalid\n' : error)).toThrow(error);
+			expect(active).toBe(0);
+			await idle();
+		}
+	);
+
+	it('holds nested data and error dispatch until both callbacks settle', async () => {
+		await start();
+		const socket = connect();
+		endpoint.emit('close');
+		socket.emit('close');
+		vi.mocked(logger.warn).mockImplementationOnce(() => {
+			expect(active).toBe(1);
+			vi.mocked(logger.debug).mockImplementationOnce(() => expect(active).toBe(2));
+			socket.emit('error', new Error('nested'));
+			expect(active).toBe(1);
+		});
+		socket.emit('data', 'invalid\n');
+		expect(active).toBe(0);
+		await idle();
+	});
+
+	it('releases a failed retained chunk conversion without losing a live socket hold', async () => {
+		await start();
+		const socket = connect();
+		endpoint.emit('close');
+		const error = new Error('conversion failed');
+		expect(() =>
+			socket.emit('data', {
+				[Symbol.toPrimitive]() {
+					throw error;
+				},
+			})
+		).toThrow(error);
+		expect(active).toBe(1);
+		await busy();
+		socket.emit('close');
 		await idle();
 	});
 

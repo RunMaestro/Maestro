@@ -164,25 +164,51 @@ export class PermissionRelayServer {
 	}
 
 	private handleConnection(socket: net.Socket): void {
-		let buffer = '';
-		socket.setEncoding('utf8');
+		const release = beginGlobalWorktreeActivity();
+		let closed = false;
+		let setupSettled = false;
+		const releaseIfSettled = (): void => {
+			if (closed && setupSettled) release();
+		};
+		try {
+			// A close request, error or server shutdown does not prove socket closure.
+			socket.once('close', () => {
+				closed = true;
+				releaseIfSettled();
+			});
+			let buffer = '';
+			socket.setEncoding('utf8');
 
-		socket.on('data', (chunk: string) => {
-			buffer += chunk;
-			let newlineIndex: number;
-			while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-				const line = buffer.slice(0, newlineIndex).trim();
-				buffer = buffer.slice(newlineIndex + 1);
-				if (line.length === 0) {
-					continue;
+			socket.on('data', (chunk: string) => {
+				const releaseData = beginGlobalWorktreeActivity();
+				try {
+					buffer += chunk;
+					let newlineIndex: number;
+					while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+						const line = buffer.slice(0, newlineIndex).trim();
+						buffer = buffer.slice(newlineIndex + 1);
+						if (line.length === 0) {
+							continue;
+						}
+						this.handleLine(socket, line);
+					}
+				} finally {
+					releaseData();
 				}
-				this.handleLine(socket, line);
-			}
-		});
+			});
 
-		socket.on('error', (err) => {
-			logger.debug('Relay socket connection error', LOG_CONTEXT, { error: err.message });
-		});
+			socket.on('error', (err) => {
+				const releaseError = beginGlobalWorktreeActivity();
+				try {
+					logger.debug('Relay socket connection error', LOG_CONTEXT, { error: err.message });
+				} finally {
+					releaseError();
+				}
+			});
+		} finally {
+			setupSettled = true;
+			releaseIfSettled();
+		}
 	}
 
 	private handleLine(socket: net.Socket, line: string): void {
