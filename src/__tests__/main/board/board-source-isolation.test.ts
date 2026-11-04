@@ -72,24 +72,4 @@ describe('isolated Board source host', () => {
 		).rejects.toThrow();
 		expect(storage.db.prepare).not.toHaveBeenCalled();
 	});
-	it('rejects real SSH and source roots outside the admitted registry before discovery', async () => {
-		const isolation = await vi.importActual<typeof import('../../../main/board/board-isolation')>(
-			'../../../main/board/board-isolation'
-		);
-		const contract = isolation.requireBoardIsolation();
-		const prepare = vi.spyOn(storage.db, 'prepare');
-		expect(() =>
-			isolation.assertBoardIsolationRegistrations(contract, {
-				sessions: [{ id: 'remote', dir: contract.sourceRoot, sshRemoteId: 'real-ssh' }],
-				sources: [],
-			})
-		).toThrow();
-		expect(() =>
-			isolation.assertBoardIsolationRegistrations(contract, {
-				sessions: [],
-				sources: [{ id: 'outside', root: contract.worktree }],
-			})
-		).toThrow();
-		expect(prepare).not.toHaveBeenCalled();
-	});
 });

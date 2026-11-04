@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 
@@ -11,16 +11,21 @@ import {
 	setBoardWorkerPaused,
 } from '../../../main/board/board-workspace-storage';
 
-const root = os.tmpdir();
+const fixture = createBoardIsolationFixture();
+const root = fixture.contract.root;
+beforeAll(() => fixture.install());
+afterAll(async () => fixture.cleanup());
 let dir: string;
 afterEach(() => {
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(fixture.contract.db + suffix, { force: true });
 });
 
 describe('central board migration with SQLite', () => {
 	it('rolls back atomically, preserves central state on retry and fences uncertain runs', () => {
 		dir = fs.mkdtempSync(path.join(root, 'migration-test-'));
-		const file = path.join(dir, 'board.sqlite');
+		const file = fixture.contract.db;
 		const input = (name: string, running = false) => {
 			const project = path.join(dir, name);
 			const card = {
@@ -114,7 +119,7 @@ describe('cross-source legacy worker access', () => {
 		['b', 'a'],
 	])('aggregates migration grants in order %s, %s', (first, second) => {
 		dir = fs.mkdtempSync(path.join(root, 'migration-order-'));
-		const db = openBoardDb(path.join(dir, 'board.sqlite'));
+		const db = openBoardDb(fixture.contract.db);
 		try {
 			const workers = ['a', 'b'].map((name) => ({
 				id: name,
@@ -152,7 +157,7 @@ describe('cross-source legacy worker access', () => {
 
 	it('preserves intentional empty access and central registration during later imports', () => {
 		dir = fs.mkdtempSync(path.join(root, 'migration-access-'));
-		const db = openBoardDb(path.join(dir, 'board.sqlite'));
+		const db = openBoardDb(fixture.contract.db);
 		try {
 			const workers = [
 				{ id: 'worker', dir: dir, boardWorker: true },
@@ -193,7 +198,7 @@ describe('cross-source legacy worker access', () => {
 
 it('does not expand older unmarked central restrictions when their intent cannot be reconstructed', () => {
 	dir = fs.mkdtempSync(path.join(root, 'migration-unmarked-'));
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+	const db = openBoardDb(fixture.contract.db);
 	try {
 		const payload = {
 			roleRefs: [],

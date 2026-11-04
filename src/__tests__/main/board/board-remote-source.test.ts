@@ -3,7 +3,6 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { findPortableShell } from '../../helpers/portableShell';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
 	BoardStorageFacade,
@@ -12,10 +11,15 @@ import {
 	resolveLocalBoardSourceKeys,
 } from '../../../main/board/board-storage';
 import {
+	configureIsolatedBoardSourceHost,
+	refreshBoardSources,
 	discoverBoardSources,
-	configureBoardSourceHost,
 	executeBoardSourceCommand,
 } from '../../../main/board/board-source-host';
+import {
+	discoverRemoteBoardSources,
+	executeBoardSourceOperation,
+} from '../../../main/board/board-source-core';
 import { boardMigrationSourceKey } from '../../../main/board/board-migration';
 import {
 	probeBoardRemoteRepository,
@@ -25,16 +29,17 @@ import {
 import { listBoardWorkers } from '../../../main/board/board-workspace-storage';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../../shared/board/types';
 import type { SshRemoteConfig } from '../../../shared/types';
-import { readBinaryFileRemoteAsBase64 } from '../../../main/utils/remote-fs';
-import { execFileNoThrow } from '../../../main/utils/execFile';
-import { execGitReadOnly } from '../../../main/utils/remote-git';
+import { assertBoardIsolationRegistrations } from '../../../main/board/board-isolation';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
 vi.mock('node:fs', { spy: true });
 
 const isolation = createBoardIsolationFixture();
 let dir = '';
-beforeAll(() => isolation.install());
+beforeAll(() => {
+	isolation.install();
+	configureIsolatedBoardSourceHost(isolation.contract);
+});
 afterAll(async () => isolation.cleanup());
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -89,7 +94,7 @@ it('imports two remote hosts with the same path separately, retains immutable sn
 			boardWorker: true,
 			sessionSshRemoteConfig: { enabled: true, remoteId },
 		}));
-		await discoverBoardSources(
+		await discoverRemoteBoardSources(
 			storage,
 			[...workers, { id: 'local', dir: '/missing-local', boardWorker: true }],
 			remote
@@ -107,16 +112,25 @@ it('imports two remote hosts with the same path separately, retains immutable sn
 			expect(
 				listBoardWorkers(db).find((w) => w.agentId === worker.id)?.payload.allowedRepositoryIds
 			).toEqual([`source:${sourceKey}`]);
+			expect(listBoardWorkers(db).find((w) => w.agentId === worker.id)?.payload.roleRefs).toEqual([
+				{ namespace: `legacy:${sourceKey}`, profileId: 'role' },
+			]);
 			expect(
 				storage.query({ projectRoot: `${BOARD_SOURCE_PROJECT_PREFIX}${sourceKey}` }).collections
 			).toHaveLength(1);
 		}
 		expect(read.mock.calls.some((args) => String(args[0]).startsWith(root))).toBe(false);
 		expect(real.mock.calls.some((args) => String(args[0]).startsWith(root))).toBe(false);
+		expect(listBoardWorkers(db).find((w) => w.agentId === 'local')?.payload).toMatchObject({
+			allowedRepositoryIds: [],
+			roleRefs: [],
+		});
 		const before = db.prepare('SELECT * FROM migrations ORDER BY source_key').all();
+		const probes = vi.mocked(remote.shell).mock.calls.length;
 		vi.mocked(remote.read).mockRejectedValue(new Error('No reimport allowed'));
-		await discoverBoardSources(storage, workers.reverse(), remote);
+		await discoverRemoteBoardSources(storage, workers.reverse(), remote);
 		expect(db.prepare('SELECT * FROM migrations ORDER BY source_key').all()).toEqual(before);
+		expect(remote.shell).toHaveBeenCalledTimes(probes);
 		expect(storage.captureCatalog().repositories.every((r) => r.location?.kind === 'ssh')).toBe(
 			true
 		);
@@ -168,9 +182,9 @@ it('imports two remote hosts with the same path separately, retains immutable sn
 					collectionKey: key.collectionKey,
 					expectedRevision: captured.storage!.expectedRevision!,
 				},
-				name: 'Renamed remote source through native host',
+				name: 'Renamed remote source through command host',
 			})
-		).toMatchObject({ ok: true, value: { name: 'Renamed remote source through native host' } });
+		).toMatchObject({ ok: true, value: { name: 'Renamed remote source through command host' } });
 		expect(
 			await executeBoardCommand({
 				action: 'query',
@@ -239,12 +253,11 @@ it('exposes missing config/input as unresolved and explicitly repairs only the s
 			boardWorker: true,
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'one' },
 		};
-		configureBoardSourceHost(() => [worker]);
 		remote.config = () => undefined;
-		await discoverBoardSources(storage, [worker], remote);
+		await discoverRemoteBoardSources(storage, [worker], remote);
 		const sourceKey = storage.query().sources[0].sourceKey;
 		const revision = storage.query().revision;
-		await discoverBoardSources(storage, [worker], remote);
+		await discoverRemoteBoardSources(storage, [worker], remote);
 		expect(storage.query().revision).toBe(revision);
 		expect(storage.captureCatalog().repositories[0]).toMatchObject({
 			validated: false,
@@ -252,7 +265,12 @@ it('exposes missing config/input as unresolved and explicitly repairs only the s
 		});
 		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage, remote)
+			await executeBoardSourceOperation(
+				{ action: 'revalidate', sourceKey },
+				storage,
+				[worker],
+				remote
+			)
 		).toMatchObject({ ok: false, error: { code: 'legacy-mapping-missing' } });
 		remote.config = () => config;
 		vi.mocked(remote.read).mockResolvedValueOnce({
@@ -260,7 +278,12 @@ it('exposes missing config/input as unresolved and explicitly repairs only the s
 			error: 'Permission denied: input',
 		});
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage, remote)
+			await executeBoardSourceOperation(
+				{ action: 'revalidate', sourceKey },
+				storage,
+				[worker],
+				remote
+			)
 		).toMatchObject({ ok: false });
 		expect(storage.captureCatalog().repositories[0].validated).toBe(false);
 		vi.mocked(remote.read).mockImplementation(async (file) => ({
@@ -291,7 +314,12 @@ it('exposes missing config/input as unresolved and explicitly repairs only the s
 			).toString('base64'),
 		}));
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage, remote)
+			await executeBoardSourceOperation(
+				{ action: 'revalidate', sourceKey },
+				storage,
+				[worker],
+				remote
+			)
 		).toEqual({ ok: true });
 		expect(storage.query().collections).toHaveLength(1);
 		const run = db.prepare('SELECT run_id, collection_key, card_id FROM runs').get() as {
@@ -327,12 +355,22 @@ it('exposes missing config/input as unresolved and explicitly repairs only the s
 			exitCode: 0,
 		});
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage, remote)
+			await executeBoardSourceOperation(
+				{ action: 'revalidate', sourceKey },
+				storage,
+				[worker],
+				remote
+			)
 		).toMatchObject({ ok: false, error: { code: 'identity-mismatch' } });
 		expect(storage.captureCatalog().repositories[0].validated).toBe(false);
 		expect(frozen()).toEqual(before);
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage, remote)
+			await executeBoardSourceOperation(
+				{ action: 'revalidate', sourceKey },
+				storage,
+				[worker],
+				remote
+			)
 		).toEqual({ ok: true });
 		expect(frozen()).toEqual(before);
 	} finally {
@@ -369,7 +407,7 @@ it('refuses to relabel another remote repository and fences concurrent source ch
 	try {
 		const root = '/remote-only/repo';
 		const remote = transport(root);
-		await discoverBoardSources(
+		await discoverRemoteBoardSources(
 			storage,
 			[{ id: 'worker', dir: root, sessionSshRemoteConfig: { enabled: true, remoteId: 'one' } }],
 			remote
@@ -383,9 +421,10 @@ it('refuses to relabel another remote repository and fences concurrent source ch
 			JSON.stringify({ ...repository, location: { kind: 'ssh', remoteId: 'other' } })
 		);
 		expect(
-			await executeBoardSourceCommand(
+			await executeBoardSourceOperation(
 				{ action: 'revalidate', sourceKey: source.sourceKey },
 				storage,
+				[],
 				remote
 			)
 		).toMatchObject({ ok: false, error: { code: 'identity-mismatch' } });
@@ -397,9 +436,10 @@ it('refuses to relabel another remote repository and fences concurrent source ch
 			return { stdout: root, stderr: '', exitCode: 0 };
 		});
 		expect(
-			await executeBoardSourceCommand(
+			await executeBoardSourceOperation(
 				{ action: 'revalidate', sourceKey: source.sourceKey },
 				storage,
+				[],
 				remote
 			)
 		).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
@@ -426,93 +466,244 @@ it('types transport exceptions and rejects mid-probe remote config changes', asy
 	});
 });
 
-it('uses existing SSH file adapter and real local child/Git processes with quoted paths, preserving original bytes', async () => {
-	const { db } = fixture();
+it('captures worker identities and grants before asynchronous discovery transport can mutate the provider', async () => {
+	const { db, storage } = fixture();
 	try {
-		const localRoot = path.join(dir, "repo 'quoted' $literal");
-		fs.mkdirSync(path.join(localRoot, '.maestro'), { recursive: true });
-		execFileSync('git', ['init', '--quiet', localRoot]);
-		const original = Buffer.concat([Buffer.from('boards: []\n'), Buffer.from([255])]);
-		const input = path.join(localRoot, '.maestro/board.yaml');
-		fs.writeFileSync(input, original);
-		// Git for Windows supplies the POSIX shell. Ask it for its own physical
-		// path instead of passing a native drive path as an SSH source identity.
-		const shell = findPortableShell();
-		expect(shell).toBeDefined();
-		const physical = await execFileNoThrow(shell!, ['-c', 'pwd -P'], localRoot);
-		expect(physical.exitCode, physical.stderr).toBe(0);
-		const root = physical.stdout.trim();
-		expect(path.posix.isAbsolute(root)).toBe(true);
-		expect(path.posix.basename(root)).toBe("repo 'quoted' $literal");
-		const sshCalls: string[][] = [];
-		const remote: BoardRemoteTransport = {
-			config: (id) => (id === config.id ? config : undefined),
-			read: (file, cfg) => {
-				expect(file).toBe(path.posix.join(root, '.maestro/board.yaml'));
-				expect(cfg).toBe(config);
-				return readBinaryFileRemoteAsBase64(file, cfg, {
-					buildSshArgs: (sshConfig) => {
-						expect(sshConfig).toBe(config);
-						return [`${sshConfig.username}@${sshConfig.host}`];
-					},
-					execSsh: (binary, args, stdin) => {
-						expect(binary).toBeTruthy();
-						expect(args).toHaveLength(2);
-						expect(args[0]).toBe('fixture@fixture.invalid');
-						expect(stdin).toBeUndefined();
-						sshCalls.push([...args]);
-						// Execute the adapter's actual command, including its quoting.
-						return execFileNoThrow(shell!, ['-c', args[1]], localRoot);
-					},
-				});
+		const root = '/remote-only/repo';
+		const remote = transport(root);
+		const workers = [
+			{
+				id: 'original-worker',
+				dir: root,
+				boardWorker: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'one' },
 			},
-			shell: (command, cfg, options) => {
-				expect(command).toBe('pwd -P');
-				expect(cfg).toBe(config);
-				expect(options?.cwd).toBe(root);
-				return execFileNoThrow(shell!, ['-c', command], localRoot);
-			},
-			git: async (args, localCwd, cfg, cwd) => {
-				expect(args).toEqual(['rev-parse', '--show-toplevel', '--absolute-git-dir']);
-				expect(localCwd).toBe('');
-				expect(cfg).toBe(config);
-				expect(cwd).toBe(root);
-				const result = await execGitReadOnly(args, localRoot);
-				expect(result.exitCode, result.stderr).toBe(0);
-				const gitPaths = result.stdout.trim().split(/\r?\n/);
-				expect(gitPaths).toHaveLength(2);
-				// Native Git reports drive paths on Windows. Resolve each actual
-				// reported directory through the shell, as a POSIX SSH host would.
-				const physicalPaths = [];
-				for (const gitPath of gitPaths) {
-					const resolved = await execFileNoThrow(
-						shell!,
-						['-c', 'cd -P -- "$1" && pwd -P', 'board-git-path', gitPath],
-						localRoot
-					);
-					expect(resolved.exitCode, resolved.stderr).toBe(0);
-					physicalPaths.push(resolved.stdout.trim());
-				}
-				return { ...result, stdout: physicalPaths.join('\n') + '\n' };
-			},
-		};
-		expect(await readBoardRemoteInput('one', root, '.maestro/board.yaml', remote)).toEqual(
-			original
-		);
-		expect(sshCalls).toEqual([
-			[
-				'fixture@fixture.invalid',
-				`base64 < '${path.posix.join(root, '.maestro/board.yaml').replaceAll("'", "'\\''")}'`,
-			],
-		]);
-		expect(JSON.parse(await probeBoardRemoteRepository('one', root, root, remote))).toEqual({
-			remoteId: 'one',
-			root,
-			cwd: root,
-			physical: root,
-			git: `${root}\n${root}/.git`,
+		];
+		vi.mocked(remote.shell).mockImplementationOnce(async () => {
+			expect(db.inTransaction).toBe(false);
+			workers[0].id = 'forged-worker';
+			workers[0].sessionSshRemoteConfig.remoteId = 'two';
+			workers.push({ ...workers[0], id: 'late-worker' });
+			return { stdout: root, stderr: '', exitCode: 0 };
 		});
-		expect(fs.readFileSync(input)).toEqual(original);
+		await discoverRemoteBoardSources(storage, workers, remote);
+		const sourceKey = boardMigrationSourceKey({
+			location: { kind: 'ssh', remoteId: 'one' },
+			path: root,
+		});
+		expect(listBoardWorkers(db)).toMatchObject([
+			{
+				agentId: 'original-worker',
+				payload: {
+					allowedRepositoryIds: [`source:${sourceKey}`],
+					roleRefs: [{ namespace: `legacy:${sourceKey}`, profileId: 'role' }],
+				},
+			},
+		]);
+		expect(listBoardWorkers(db)).toHaveLength(1);
+		expect(storage.query().sources.map((source) => source.sourceKey)).toEqual([sourceKey]);
+	} finally {
+		db.close();
+	}
+});
+
+it('snapshots the selected repair command and workers before awaiting transport', async () => {
+	const { db, storage } = fixture();
+	try {
+		const root = '/remote-only/repo';
+		const remote = transport(root);
+		const worker = { id: 'worker', dir: root, boardWorker: true, sshRemoteId: 'one' };
+		remote.config = () => undefined;
+		await discoverRemoteBoardSources(storage, [worker], remote);
+		const sourceKey = storage.query().sources[0].sourceKey;
+		remote.config = () => config;
+		const command = { action: 'revalidate' as const, sourceKey };
+		vi.mocked(remote.shell).mockImplementationOnce(async () => {
+			worker.id = 'forged';
+			worker.sshRemoteId = 'two';
+			command.sourceKey = 'forged-source';
+			return { stdout: root, stderr: '', exitCode: 0 };
+		});
+		expect(await executeBoardSourceOperation(command, storage, [worker], remote)).toEqual({
+			ok: true,
+		});
+		expect(listBoardWorkers(db).map((row) => row.agentId)).toEqual(['worker']);
+		expect(storage.captureCatalog().repositories[0]).toMatchObject({
+			id: `source:${sourceKey}`,
+			validated: true,
+		});
+	} finally {
+		db.close();
+	}
+});
+
+it('keeps suppressed sources absent from discovery and refuses explicit repair without transport', async () => {
+	const { db, storage } = fixture();
+	try {
+		const root = '/remote-only/repo';
+		const remote = transport(root);
+		const sourceKey = boardMigrationSourceKey({
+			location: { kind: 'ssh', remoteId: 'one' },
+			path: root,
+		});
+		db.prepare('INSERT INTO board_source_suppressions VALUES (?)').run(sourceKey);
+		const before = storage.query().revision;
+		await discoverRemoteBoardSources(
+			storage,
+			[{ id: 'worker', dir: root, sshRemoteId: 'one' }],
+			remote
+		);
+		expect(
+			await executeBoardSourceOperation({ action: 'revalidate', sourceKey }, storage, [], remote)
+		).toMatchObject({
+			ok: false,
+			error: { code: 'invalid-input', message: 'Board source is suppressed' },
+		});
+		expect(storage.query().sources).toEqual([]);
+		expect(storage.query().revision).toBe(before);
+		for (const method of [remote.read, remote.git, remote.shell])
+			expect(method).not.toHaveBeenCalled();
+	} finally {
+		db.close();
+	}
+});
+
+it('does not commit a source suppressed while its import is awaiting transport', async () => {
+	const { db, storage } = fixture();
+	try {
+		const root = '/remote-only/repo';
+		const remote = transport(root);
+		const sourceKey = boardMigrationSourceKey({
+			location: { kind: 'ssh', remoteId: 'one' },
+			path: root,
+		});
+		const before = storage.query().revision;
+		vi.mocked(remote.shell).mockImplementationOnce(async () => {
+			db.prepare('INSERT INTO board_source_suppressions VALUES (?)').run(sourceKey);
+			return { stdout: root, stderr: '', exitCode: 0 };
+		});
+		await expect(
+			discoverRemoteBoardSources(storage, [{ id: 'worker', dir: root, sshRemoteId: 'one' }], remote)
+		).rejects.toThrow('Board source is suppressed');
+		expect(storage.query().sources).toEqual([]);
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+		expect(storage.query().revision).toBe(before);
+	} finally {
+		db.close();
+	}
+});
+
+it.each(['repository', 'suppression'] as const)(
+	'fences a concurrent %s change during revalidation',
+	async (change) => {
+		const { db, storage } = fixture();
+		try {
+			const root = '/remote-only/repo';
+			const remote = transport(root);
+			await discoverRemoteBoardSources(
+				storage,
+				[{ id: 'worker', dir: root, sshRemoteId: 'one' }],
+				remote
+			);
+			const sourceKey = storage.query().sources[0].sourceKey;
+			const row = db.prepare('SELECT payload_json FROM repositories').get() as {
+				payload_json: string;
+			};
+			let retained = row;
+			const before = storage.query().revision;
+			vi.mocked(remote.shell).mockImplementationOnce(async () => {
+				if (change === 'suppression')
+					db.prepare('INSERT INTO board_source_suppressions VALUES (?)').run(sourceKey);
+				else {
+					retained = {
+						payload_json: JSON.stringify({
+							...JSON.parse(row.payload_json),
+							diagnostic: 'concurrent edit',
+						}),
+					};
+					db.prepare('UPDATE repositories SET payload_json=?').run(retained.payload_json);
+				}
+				return { stdout: root, stderr: '', exitCode: 0 };
+			});
+			expect(
+				await executeBoardSourceOperation({ action: 'revalidate', sourceKey }, storage, [], remote)
+			).toMatchObject({
+				ok: false,
+				error: { code: change === 'suppression' ? 'invalid-input' : 'stale-revision' },
+			});
+			expect(db.prepare('SELECT payload_json FROM repositories').get()).toEqual(retained);
+			expect(storage.query().revision).toBe(before);
+		} finally {
+			db.close();
+		}
+	}
+);
+
+it('retains real host admission: synthetic SSH discovery and persisted SSH revalidation are refused', async () => {
+	const { db, storage } = fixture();
+	try {
+		const root = '/remote-only/repo';
+		const remote = transport(root);
+		const workers = [{ id: 'worker', dir: root, sshRemoteId: 'one' }];
+		await expect(discoverBoardSources(storage, workers, remote)).rejects.toThrow('not admitted');
+		expect(storage.query().sources).toEqual([]);
+		expect(remote.shell).not.toHaveBeenCalled();
+		await discoverRemoteBoardSources(storage, workers, remote);
+		const sourceKey = storage.query().sources[0].sourceKey;
+		const before = db.prepare('SELECT * FROM repositories').all();
+		const probes = vi.mocked(remote.shell).mock.calls.length;
+		await expect(
+			executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage)
+		).rejects.toThrow('source identity is not registered');
+		await expect(
+			executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage, remote)
+		).rejects.toThrow('not admitted');
+		expect(db.prepare('SELECT * FROM repositories').all()).toEqual(before);
+		expect(remote.shell).toHaveBeenCalledTimes(probes);
+		expect(
+			await executeBoardSourceCommand({ action: 'revalidate', sourceKey: 'unknown' }, storage)
+		).toMatchObject({ ok: false, error: { code: 'legacy-mapping-missing' } });
+	} finally {
+		db.close();
+	}
+});
+
+it('rejects real SSH registrations and roots outside the actual owned isolation contract', () => {
+	const contract = isolation.contract;
+	expect(() =>
+		assertBoardIsolationRegistrations(contract, {
+			sessions: [{ id: 'remote', dir: contract.sourceRoot, sshRemoteId: 'real-ssh' }],
+			sources: [],
+		})
+	).toThrow('remote registration');
+	expect(() =>
+		assertBoardIsolationRegistrations(contract, {
+			sessions: [],
+			sources: [{ id: 'outside', root: contract.worktree }],
+		})
+	).toThrow();
+});
+
+it('retains local repository revalidation through the admitted host wrapper', async () => {
+	const { db, storage } = fixture();
+	configureBoardStorage(storage);
+	try {
+		await refreshBoardSources();
+		const root = isolation.sources.one;
+		const sourceKey = boardMigrationSourceKey({ location: { kind: 'local' }, path: root });
+		expect(
+			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage)
+		).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
+		execFileSync('git', ['init', '--quiet', root]);
+		expect(await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage)).toEqual({
+			ok: true,
+		});
+		expect(storage.captureCatalog().repositories).toContainEqual({
+			id: `source:${sourceKey}`,
+			workingDirectory: root,
+			validated: true,
+		});
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
 	} finally {
 		db.close();
 	}
