@@ -38,52 +38,67 @@ export function initPermissionRelay(
 	getMainWindow: () => BrowserWindow | null,
 	processManager: EventEmitter | null
 ): void {
-	if (initialized) {
-		return;
-	}
-	initialized = true;
-
-	const send = createSafeSend(() => BrowserWindow.getAllWindows());
-	subscribePendingPermissions((snapshot) => {
-		// Status only: prompt bodies and per-spawn authentication tokens stay private.
-		send('process:pending-permissions', snapshot);
-	});
-
-	permissionRelayServer.setOnRequest((request) => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
-			// No window to prompt: deny so the agent gets a clear answer instead
-			// of hanging until the timeout.
-			resolvePending(request.requestId, {
-				behavior: 'deny',
-				message: 'Maestro window unavailable to prompt for permission.',
-			});
+	const release = beginGlobalWorktreeActivity();
+	try {
+		if (initialized) {
 			return;
 		}
-		try {
-			win.webContents.send(PERMISSION_REQUEST_CHANNEL, request);
-		} catch (e) {
-			// The destroyed-window guard above covers the realistic case; this
-			// catches a rare teardown race between the check and the send. Deny so
-			// the awaiting bridge call unblocks instead of waiting on the timeout.
-			logger.warn('Failed to deliver permission request to renderer; denying', LOG_CONTEXT, {
-				requestId: request.requestId,
-				error: e instanceof Error ? e.message : String(e),
-			});
-			resolvePending(request.requestId, {
-				behavior: 'deny',
-				message: 'Failed to deliver permission request to the Maestro window.',
+		initialized = true;
+
+		const send = createSafeSend(() => BrowserWindow.getAllWindows());
+		subscribePendingPermissions((snapshot) => {
+			const releaseSnapshot = beginGlobalWorktreeActivity();
+			try {
+				// Status only: prompt bodies and per-spawn authentication tokens stay private.
+				send('process:pending-permissions', snapshot);
+			} finally {
+				releaseSnapshot();
+			}
+		});
+
+		permissionRelayServer.setOnRequest((request) => {
+			const releaseRequest = beginGlobalWorktreeActivity();
+			try {
+				const win = getMainWindow();
+				if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+					// No window to prompt: deny so the agent gets a clear answer instead
+					// of hanging until the timeout.
+					resolvePending(request.requestId, {
+						behavior: 'deny',
+						message: 'Maestro window unavailable to prompt for permission.',
+					});
+					return;
+				}
+				try {
+					win.webContents.send(PERMISSION_REQUEST_CHANNEL, request);
+				} catch (e) {
+					// The destroyed-window guard above covers the realistic case; this
+					// catches a rare teardown race between the check and the send. Deny so
+					// the awaiting bridge call unblocks instead of waiting on the timeout.
+					logger.warn('Failed to deliver permission request to renderer; denying', LOG_CONTEXT, {
+						requestId: request.requestId,
+						error: e instanceof Error ? e.message : String(e),
+					});
+					resolvePending(request.requestId, {
+						behavior: 'deny',
+						message: 'Failed to deliver permission request to the Maestro window.',
+					});
+				}
+			} finally {
+				releaseRequest();
+			}
+		});
+
+		// Best-effort per-spawn cleanup on process exit. Not fatal if the emitter
+		// isn't ready yet: the registry auto-denies pending requests on timeout and
+		// each new spawn clears its session's prior binding.
+		if (processManager && typeof processManager.on === 'function') {
+			processManager.on('exit', (sessionId: string) => {
+				cleanupSessionRelay(sessionId);
 			});
 		}
-	});
-
-	// Best-effort per-spawn cleanup on process exit. Not fatal if the emitter
-	// isn't ready yet: the registry auto-denies pending requests on timeout and
-	// each new spawn clears its session's prior binding.
-	if (processManager && typeof processManager.on === 'function') {
-		processManager.on('exit', (sessionId: string) => {
-			cleanupSessionRelay(sessionId);
-		});
+	} finally {
+		release();
 	}
 }
 
