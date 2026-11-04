@@ -17,6 +17,7 @@ import { registerSpawn, resolvePending, subscribePendingPermissions } from './re
 import { createSafeSend } from '../utils/safe-send';
 import { buildRelayArgs, resolveBridgeScriptPath } from './spawn-args';
 import type { PermissionDecision } from './types';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[PermissionRelay]';
 
@@ -96,10 +97,15 @@ export function resolvePermissionResponse(
 
 /** Clean up a spawn's relay binding (on process exit or re-spawn). */
 export function cleanupSessionRelay(sessionId: string): void {
-	const cleanup = sessionCleanups.get(sessionId);
-	if (cleanup) {
-		sessionCleanups.delete(sessionId);
-		cleanup();
+	const release = beginGlobalWorktreeActivity();
+	try {
+		const cleanup = sessionCleanups.get(sessionId);
+		if (cleanup) {
+			sessionCleanups.delete(sessionId);
+			cleanup();
+		}
+	} finally {
+		release();
 	}
 }
 
@@ -116,42 +122,47 @@ export async function preparePermissionRelayArgs(params: {
 	userDataDir: string;
 	execPath: string;
 }): Promise<string[]> {
-	const bridgeScriptPath = resolveBridgeScriptPath();
-	if (!bridgeScriptPath) {
-		throw new Error('permission relay bridge script not found');
-	}
-
-	const socketPath = await permissionRelayServer.ensureStarted(params.userDataDir);
-
-	// Replace any stale binding for this session before registering a new one.
-	cleanupSessionRelay(params.sessionId);
-	const { token, cleanup } = registerSpawn({
-		sessionId: params.sessionId,
-		tabId: params.tabId,
-	});
-
-	const { args, configPath } = buildRelayArgs(
-		params.execPath,
-		bridgeScriptPath,
-		socketPath,
-		token,
-		params.userDataDir
-	);
-
-	// Wrap the registry cleanup so process exit also deletes the temp MCP config.
-	sessionCleanups.set(params.sessionId, () => {
-		cleanup();
-		try {
-			fs.unlinkSync(configPath);
-		} catch {
-			// Already gone - fine.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		const bridgeScriptPath = resolveBridgeScriptPath();
+		if (!bridgeScriptPath) {
+			throw new Error('permission relay bridge script not found');
 		}
-	});
 
-	logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
-		sessionId: params.sessionId,
-		socketPath,
-	});
+		const socketPath = await permissionRelayServer.ensureStarted(params.userDataDir);
 
-	return args;
+		// Replace any stale binding for this session before registering a new one.
+		cleanupSessionRelay(params.sessionId);
+		const { token, cleanup } = registerSpawn({
+			sessionId: params.sessionId,
+			tabId: params.tabId,
+		});
+
+		const { args, configPath } = buildRelayArgs(
+			params.execPath,
+			bridgeScriptPath,
+			socketPath,
+			token,
+			params.userDataDir
+		);
+
+		// Wrap the registry cleanup so process exit also deletes the temp MCP config.
+		sessionCleanups.set(params.sessionId, () => {
+			cleanup();
+			try {
+				fs.unlinkSync(configPath);
+			} catch {
+				// Already gone - fine.
+			}
+		});
+
+		logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
+			sessionId: params.sessionId,
+			socketPath,
+		});
+
+		return args;
+	} finally {
+		release();
+	}
 }
