@@ -204,10 +204,12 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 
 			const suggestions: AtMentionSuggestion[] = [];
 			const filterLower = filter.toLowerCase();
-			const compare = (a: AtMentionSuggestion, b: AtMentionSuggestion) => {
-				if (b.score !== a.score) return b.score - a.score;
-				if (a.type !== b.type) return a.type === 'file' ? -1 : 1;
-				return a.displayText.localeCompare(b.displayText);
+			// Compare before materializing a suggestion: most broad-query matches
+			// cannot enter the full selection. Exact ties keep the earlier candidate.
+			const compare = (score: number, file: MentionCandidate, b: AtMentionSuggestion) => {
+				if (b.score !== score) return b.score - score;
+				if (file.type !== b.type) return file.type === 'file' ? -1 : 1;
+				return file.name.localeCompare(b.displayText);
 			};
 
 			for (const file of allFiles) {
@@ -224,22 +226,30 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 				const bestMatch = nameMatch.score > pathMatch.score ? nameMatch : pathMatch;
 
 				if (bestMatch.matches) {
-					const suggestion: AtMentionSuggestion = {
+					if (
+						suggestions.length === MAX_SUGGESTION_RESULTS &&
+						compare(bestMatch.score, file, suggestions[MAX_SUGGESTION_RESULTS - 1]) >= 0
+					)
+						continue;
+
+					// Upper-bound insertion preserves stable input order for equal scores,
+					// types and locale names, including ties across project/Auto Run files.
+					let low = 0;
+					let high = suggestions.length;
+					while (low < high) {
+						const middle = (low + high) >>> 1;
+						if (compare(bestMatch.score, file, suggestions[middle]) < 0) high = middle;
+						else low = middle + 1;
+					}
+					suggestions.splice(low, 0, {
 						value: file.path,
 						type: file.type,
 						displayText: file.name,
 						fullPath: file.path,
 						score: bestMatch.score,
 						source: file.source,
-					};
-					// Insert after equal entries to preserve stable input-order ties.
-					let index = 0;
-					while (index < suggestions.length && compare(suggestions[index], suggestion) <= 0)
-						index++;
-					if (index < MAX_SUGGESTION_RESULTS) {
-						suggestions.splice(index, 0, suggestion);
-						if (suggestions.length > MAX_SUGGESTION_RESULTS) suggestions.pop();
-					}
+					});
+					if (suggestions.length > MAX_SUGGESTION_RESULTS) suggestions.pop();
 				}
 			}
 
