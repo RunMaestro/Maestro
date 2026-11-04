@@ -6188,3 +6188,286 @@ describe.each(retainedStopTransports)('retained %s stop controller activity', (t
 		(await reserve()).release();
 	});
 });
+
+describe('Codex steering helper activity', () => {
+	let steer: typeof import('../../../main/codex-app-server/steering').steerCodexAppServerTurn;
+	let handle: import('../../../main/codex-app-server/protocol').CodexAppServerProcessHandle;
+	let messages: Parameters<typeof handle.onUserMessage>[0][];
+	let endings: Array<() => void>;
+	let offMessage: ReturnType<typeof vi.fn<() => void>>;
+	let offEnd: ReturnType<typeof vi.fn<() => void>>;
+	const request = { id: 'steer', text: 'adjust' };
+	const echo = (index = 0) => messages[index]({ turnId: 'turn', itemId: 'echo', text: 'adjust' });
+	beforeEach(async () => {
+		({ steerCodexAppServerTurn: steer } = await import('../../../main/codex-app-server/steering'));
+		messages = [];
+		endings = [];
+		offMessage = vi.fn();
+		offEnd = vi.fn();
+		handle = {
+			threadId: 'thread',
+			activeTurnId: 'turn',
+			sendRequest: probes.request,
+			onUserMessage: vi.fn<typeof handle.onUserMessage>((listener) => {
+				messages.push(listener);
+				return offMessage;
+			}),
+			onTurnEnd: vi.fn<typeof handle.onTurnEnd>((listener) => {
+				endings.push(listener);
+				return offEnd;
+			}),
+		};
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses standalone steering before request or handle lookup under %s',
+		async (root) => {
+			const lookup = vi.fn(() => 'steer');
+			const input = {
+				get id() {
+					return lookup();
+				},
+				text: 'adjust',
+			};
+			Object.defineProperty(handle, 'threadId', { get: lookup });
+			const hold = await reserve(root);
+			try {
+				await expect(steer(handle, input, probes.output)).rejects.toThrow('reserved');
+				for (const probe of [
+					lookup,
+					handle.onUserMessage,
+					probes.request,
+					probes.output,
+					captureException,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each([true, false])(
+		'retains concurrent steering requests independently, reject=%s',
+		async (reject) => {
+			const first = Promise.withResolvers<unknown>();
+			const second = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			const a = steer(handle, request, probes.output);
+			const b = steer(handle, { ...request, id: 'second' }, probes.output);
+			await blocked();
+			first.resolve({});
+			expect(await a).toMatchObject({ verdict: 'delivered' });
+			await drain();
+			await blocked();
+			if (reject) second.reject(new Error('lost transport'));
+			else second.resolve({});
+			expect(await b).toMatchObject({ verdict: reject ? 'unknown' : 'delivered' });
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('blocks a pending reservation when standalone steering is freshly admitted', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const response = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(response.promise);
+		const pending = steer(handle, request, probes.output);
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+		response.reject(new Error('cancelled'));
+		expect(await pending).toMatchObject({ verdict: 'unknown' });
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains an early-echo timer after native close and replacement, with delivered before verdict', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		boundary.withWorktreeTurnActivity(
+			(start) =>
+				start(
+					{ command: 'fixture', args: [], cwd: target, env: {} },
+					{},
+					{ keepStdinOpen: true, stopGraceMs: 1000 }
+				),
+			vi.fn()
+		);
+		const response = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(response.promise);
+		const order: string[] = [];
+		const pending = steer(handle, request, () => {
+			order.push('verdict');
+		});
+		echo();
+		response.resolve({});
+		expect(await pending).toMatchObject({ verdict: 'delivered' });
+		order.push('delivered');
+		await close();
+		processes.clear();
+		processes.set('rpc-session', { pid: 67890 } as ManagedProcess);
+		await blocked();
+		expect(order).toEqual(['delivered']);
+		vi.runOnlyPendingTimers();
+		await drain();
+		expect(order).toEqual(['delivered', 'verdict']);
+		expect(offMessage).toHaveBeenCalledOnce();
+		expect(offEnd).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+	it('retains two deferred verdicts until each timer runs', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const timers = vi.spyOn(globalThis, 'setTimeout');
+		const response = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValue(response.promise);
+		const a = steer(handle, request, probes.output);
+		const other = { ...handle, onUserMessage: handle.onUserMessage, onTurnEnd: handle.onTurnEnd };
+		const b = steer(other, { ...request, id: 'second' }, probes.output);
+		echo(0);
+		echo(1);
+		response.resolve({});
+		await Promise.all([a, b]);
+		await blocked();
+		(timers.mock.calls[0][0] as () => void)();
+		await drain();
+		expect(probes.output).toHaveBeenCalledTimes(1);
+		await blocked();
+		(timers.mock.calls[1][0] as () => void)();
+		vi.clearAllTimers();
+		await drain();
+		expect(probes.output).toHaveBeenCalledTimes(2);
+		(await reserve()).release();
+	});
+	it.each(['message', 'end'] as const)(
+		'refuses a retained %s callback before state lookup or recovery',
+		async (kind) => {
+			await steer(handle, request, probes.output);
+			await drain();
+			const lookup = vi.fn(() => 'turn');
+			const hold = await reserve();
+			try {
+				const callback =
+					kind === 'message'
+						? () =>
+								messages[0]({
+									get turnId() {
+										return lookup();
+									},
+									itemId: 'echo',
+									text: 'adjust',
+								})
+						: endings[0];
+				expect(callback).toThrow('reserved');
+				for (const probe of [lookup, offMessage, offEnd, probes.output, captureException])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			if (kind === 'message') echo();
+			else endings[0]();
+			expect(probes.output).toHaveBeenCalledWith(
+				expect.objectContaining({ verdict: kind === 'message' ? 'absorbed' : 'dropped' })
+			);
+		}
+	);
+	it.each(['message', 'end'] as const)(
+		'allows reservation after a synchronous late %s callback completes',
+		async (kind) => {
+			await steer(handle, request, probes.output);
+			await drain();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const pending = gate.reserveWorktreeCleanup(target);
+			probes.output.mockImplementationOnce(() => {
+				canonical.resolve(target);
+			});
+			if (kind === 'message') echo();
+			else endings[0]();
+			// Canonicalization resumes after the synchronous callback has completed.
+			const hold = await pending;
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status === 'reserved-partially') hold.release();
+		}
+	);
+	it('credits one echo once for identical concurrent steers', async () => {
+		await steer(handle, request, probes.output);
+		await steer(handle, { ...request, id: 'second' }, probes.output);
+		echo(0);
+		echo(1);
+		endings[1]();
+		expect(probes.output.mock.calls.map(([v]) => v.verdict)).toEqual(['absorbed', 'dropped']);
+		echo(0);
+		endings[0]();
+		expect(probes.output).toHaveBeenCalledTimes(2);
+	});
+	it('returns immediate not-running when subscription reports the turn already ended', async () => {
+		vi.mocked(handle.onTurnEnd).mockImplementationOnce((listener) => {
+			listener();
+			return offEnd;
+		});
+		expect(await steer(handle, request, probes.output)).toMatchObject({
+			verdict: 'refused',
+			refusal: 'not-running',
+		});
+		expect(probes.request).not.toHaveBeenCalled();
+		expect(probes.output).not.toHaveBeenCalled();
+		expect(offMessage).toHaveBeenCalledOnce();
+		expect(offEnd).toHaveBeenCalledOnce();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['verdict', 'unsubscribe'] as const)(
+		'preserves deferred %s failure and releases its timer hold despite failed diagnostics',
+		async (kind) => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			const response = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(response.promise);
+			const pending = steer(handle, request, probes.output);
+			echo();
+			response.resolve({});
+			await pending;
+			const failure = new Error(`${kind} failed`);
+			(kind === 'verdict' ? probes.output : offMessage).mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				throw new Error('diagnostic failed');
+			});
+			expect(() => vi.runOnlyPendingTimers()).toThrow(failure);
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('releases an unscheduled timer hold and preserves scheduler failure', async () => {
+		const response = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(response.promise);
+		const pending = steer(handle, request, probes.output);
+		echo();
+		const failure = new Error('schedule failed');
+		vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce(() => {
+			throw failure;
+		});
+		response.resolve({});
+		await expect(pending).rejects.toBe(failure);
+		await drain();
+		(await reserve()).release();
+	});
+	it('releases setup failure without replacing it when diagnostics throw', async () => {
+		const failure = new Error('handle failed');
+		Object.defineProperty(handle, 'threadId', {
+			get() {
+				throw failure;
+			},
+		});
+		vi.mocked(captureException).mockImplementationOnce(() => {
+			throw new Error('diagnostic failed');
+		});
+		await expect(steer(handle, request, probes.output)).rejects.toBe(failure);
+		await drain();
+		(await reserve()).release();
+	});
+});
