@@ -27,6 +27,7 @@ import { CodexRpcRequestError, CodexRpcTransportError } from '../../codex-app-se
 import { buildChildProcessEnv } from '../../process-manager/utils/envBuilder';
 import { effectiveAgentCustomEnvVars } from '../../../shared/providerProfiles';
 import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -1509,130 +1510,138 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Discover available slash commands for an agent by spawning it briefly
 	// This allows the UI to show available commands before the user sends their first message
-	ipcMain.handle(
-		'agents:discoverSlashCommands',
-		withIpcErrorLogging(
-			handlerOpts('discoverSlashCommands'),
-			async (
-				agentId: string,
-				cwd: string,
-				customPath?: string,
-				sshRemoteId?: string,
-				customEnvVars?: Record<string, string>
-			) => {
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
-				logger.info(`Discovering slash commands for agent: ${agentId} in ${cwd}`, LOG_CONTEXT);
+	const discoverSlashCommands = withIpcErrorLogging(
+		handlerOpts('discoverSlashCommands'),
+		async (
+			agentId: string,
+			cwd: string,
+			customPath?: string,
+			sshRemoteId?: string,
+			customEnvVars?: Record<string, string>
+		) => {
+			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+			logger.info(`Discovering slash commands for agent: ${agentId} in ${cwd}`, LOG_CONTEXT);
 
-				// SSH remote: discover OpenCode commands from remote host
-				if (agentId === 'opencode' && sshRemoteId) {
-					const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
-					if (!sshRemote) {
-						logger.warn(
-							`SSH remote ${sshRemoteId} not found for slash command discovery`,
-							LOG_CONTEXT
-						);
-						return null;
-					}
-					return discoverOpenCodeSlashCommandsRemote(sshRemote, cwd);
-				}
-
-				const agent = await agentDetector.getAgent(agentId);
-				if (agentId === 'codex') {
-					// Codex skills/prompts live on the machine that runs the CLI.
-					// For an SSH-remote agent that is the remote host, so return
-					// nothing rather than offering this machine's commands - a
-					// command the remote Codex has never heard of is worse than none.
-					if (sshRemoteId) {
-						logger.debug(
-							'Skipping Codex slash command discovery for SSH remote agent',
-							LOG_CONTEXT
-						);
-						return null;
-					}
-					let commandPath = agent?.available ? agent.path || agent.command : undefined;
-					if (customPath) {
-						const detection = await checkCustomPath(customPath);
-						if (detection.exists && detection.path) commandPath = detection.path;
-					}
-					if (!commandPath) {
-						logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
-						return null;
-					}
-					const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
-					const env = buildChildProcessEnv(
-						effectiveAgentCustomEnvVars(customEnvVars, providerEnv),
-						false,
-						settingsStore?.get('shellEnvVars', {})
+			// SSH remote: discover OpenCode commands from remote host
+			if (agentId === 'opencode' && sshRemoteId) {
+				const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
+				if (!sshRemote) {
+					logger.warn(
+						`SSH remote ${sshRemoteId} not found for slash command discovery`,
+						LOG_CONTEXT
 					);
-					return discoverCodexSlashCommands(cwd, commandPath, env);
+					return null;
 				}
-				if (!agent?.available) {
+				return discoverOpenCodeSlashCommandsRemote(sshRemote, cwd);
+			}
+
+			const agent = await agentDetector.getAgent(agentId);
+			if (agentId === 'codex') {
+				// Codex skills/prompts live on the machine that runs the CLI.
+				// For an SSH-remote agent that is the remote host, so return
+				// nothing rather than offering this machine's commands - a
+				// command the remote Codex has never heard of is worse than none.
+				if (sshRemoteId) {
+					logger.debug('Skipping Codex slash command discovery for SSH remote agent', LOG_CONTEXT);
+					return null;
+				}
+				let commandPath = agent?.available ? agent.path || agent.command : undefined;
+				if (customPath) {
+					const detection = await checkCustomPath(customPath);
+					if (detection.exists && detection.path) commandPath = detection.path;
+				}
+				if (!commandPath) {
 					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
 					return null;
 				}
-
-				// Agent-specific discovery paths
-				if (agentId === 'opencode') {
-					return discoverOpenCodeSlashCommands(cwd);
-				}
-
-				if (agentId === 'copilot-cli') {
-					return discoverCopilotSlashCommands();
-				}
-
-				// Only Claude Code supports slash command discovery via init message
-				if (agentId !== 'claude-code') {
-					logger.debug(`Agent ${agentId} does not support slash command discovery`, LOG_CONTEXT);
-					return null;
-				}
-
-				try {
-					// Use custom path if provided, otherwise use detected path
-					const commandPath = customPath || agent.path || agent.command;
-
-					// Check if the command path exists before attempting to spawn
-					if (!fs.existsSync(commandPath)) {
-						logger.warn(
-							`Command path does not exist for slash command discovery: ${commandPath}`,
-							LOG_CONTEXT
-						);
-						return null;
-					}
-
-					// The init message of a `/help` probe names every command; see
-					// claude-slash-command-probe.ts.
-					const names = await probeClaudeSlashCommands(commandPath, cwd);
-					if (!names) return null;
-					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
-					// Description enrichment is best-effort: a permission/IO
-					// error on the skills dir shouldn't lose the user's
-					// entire slash-command list. Capture the exception for
-					// Sentry and fall back to names-only.
-					let skillDescriptions = new Map<string, string>();
-					try {
-						skillDescriptions = await readClaudeSkillDescriptions(cwd);
-					} catch (err) {
-						void captureException(err);
-						logger.warn(
-							`Skill description enrichment failed; returning slash commands without descriptions`,
-							LOG_CONTEXT,
-							{ error: String(err) }
-						);
-					}
-					return names.map((name: string) => {
-						const lookupKey = name.startsWith('/') ? name.slice(1) : name;
-						const description = skillDescriptions.get(lookupKey);
-						return description ? { name, description } : { name };
-					});
-				} catch (error) {
-					void captureException(error);
-					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {
-						error: String(error),
-					});
-					return null;
-				}
+				const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
+				const env = buildChildProcessEnv(
+					effectiveAgentCustomEnvVars(customEnvVars, providerEnv),
+					false,
+					settingsStore?.get('shellEnvVars', {})
+				);
+				return discoverCodexSlashCommands(cwd, commandPath, env);
 			}
-		)
+			if (!agent?.available) {
+				logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+				return null;
+			}
+
+			// Agent-specific discovery paths
+			if (agentId === 'opencode') {
+				return discoverOpenCodeSlashCommands(cwd);
+			}
+
+			if (agentId === 'copilot-cli') {
+				return discoverCopilotSlashCommands();
+			}
+
+			// Only Claude Code supports slash command discovery via init message
+			if (agentId !== 'claude-code') {
+				logger.debug(`Agent ${agentId} does not support slash command discovery`, LOG_CONTEXT);
+				return null;
+			}
+
+			try {
+				// Use custom path if provided, otherwise use detected path
+				const commandPath = customPath || agent.path || agent.command;
+
+				// Check if the command path exists before attempting to spawn
+				if (!fs.existsSync(commandPath)) {
+					logger.warn(
+						`Command path does not exist for slash command discovery: ${commandPath}`,
+						LOG_CONTEXT
+					);
+					return null;
+				}
+
+				// The init message of a `/help` probe names every command; see
+				// claude-slash-command-probe.ts.
+				const names = await probeClaudeSlashCommands(commandPath, cwd);
+				if (!names) return null;
+				logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
+				// Description enrichment is best-effort: a permission/IO
+				// error on the skills dir shouldn't lose the user's
+				// entire slash-command list. Capture the exception for
+				// Sentry and fall back to names-only.
+				let skillDescriptions = new Map<string, string>();
+				try {
+					skillDescriptions = await readClaudeSkillDescriptions(cwd);
+				} catch (err) {
+					void captureException(err);
+					logger.warn(
+						`Skill description enrichment failed; returning slash commands without descriptions`,
+						LOG_CONTEXT,
+						{ error: String(err) }
+					);
+				}
+				return names.map((name: string) => {
+					const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+					const description = skillDescriptions.get(lookupKey);
+					return description ? { name, description } : { name };
+				});
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {
+					error: String(error),
+				});
+				return null;
+			}
+		}
+	);
+	// Discovery can touch provider/global paths and start probes before their own
+	// native admission. Keep setup, disk fallback and IPC error reporting busy;
+	// child/SSH close and descendant coverage remain separate cleanup blockers.
+	ipcMain.handle(
+		'agents:discoverSlashCommands',
+		async (...args: Parameters<typeof discoverSlashCommands>) => {
+			const release = beginGlobalWorktreeActivity();
+			try {
+				return await discoverSlashCommands(...args);
+			} finally {
+				release();
+			}
+		}
 	);
 
 	// Get the persisted capability snapshot for a single agent in a given

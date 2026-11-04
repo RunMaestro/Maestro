@@ -19,6 +19,14 @@ import {
 	CodexRpcTransportError,
 } from '../../../../main/codex-app-server/rpc-client';
 import { captureException } from '../../../../main/utils/sentry';
+import nativeFs from 'fs/promises';
+import { reserveWorktreeCleanup } from '../../../../main/git/worktreeActivity';
+import { logger } from '../../../../main/utils/logger';
+
+vi.mock('fs/promises', async (original) => {
+	const actual = await original<typeof import('fs/promises')>();
+	return { ...actual, default: { ...actual, realpath: vi.fn() } };
+});
 
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
@@ -1544,6 +1552,229 @@ describe('agents IPC handlers', () => {
 				expect(buildSshCommand).not.toHaveBeenCalled();
 			});
 		});
+	});
+
+	describe('slash-command discovery activity', () => {
+		const target = path.resolve('discovery-target');
+		const agent = { id: 'codex', available: true, path: 'codex' };
+		let releases: Array<() => void>;
+		const discover = (agentId = 'codex', remote?: string) =>
+			(handlers.get('agents:discoverSlashCommands') as (...args: unknown[]) => Promise<unknown>)(
+				{},
+				agentId,
+				target,
+				'custom-binary',
+				remote
+			);
+		const reserve = async (root = target) => {
+			const hold = await reserveWorktreeCleanup(root);
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status !== 'reserved-partially') throw new Error('Expected partial reservation');
+			expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
+			releases.push(hold.release);
+			return hold;
+		};
+		const blocked = async () => {
+			const hold = await reserveWorktreeCleanup(target);
+			if (hold.status === 'reserved-partially') releases.push(hold.release);
+			expect(hold).toMatchObject({
+				status: 'blocked',
+				blockers: [{ code: 'mutation-busy' }],
+			});
+		};
+		beforeEach(() => {
+			releases = [];
+			vi.mocked(nativeFs.realpath)
+				.mockReset()
+				.mockImplementation(async (p) => String(p));
+			mockAgentDetector.getAgent.mockReset().mockResolvedValue(agent);
+			vi.mocked(fs.promises.readdir).mockReset().mockResolvedValue([]);
+			vi.mocked(fs.promises.readFile).mockReset();
+		});
+		afterEach(() => {
+			for (const release of releases) release();
+			vi.restoreAllMocks();
+			vi.useRealTimers();
+		});
+
+		it.each(['codex', 'claude-code', 'opencode', 'copilot-cli', 'terminal'])(
+			'refuses %s before dependency/setup/SSH lookup or recovery',
+			async (agentId) => {
+				const lookup = vi.fn(() => mockAgentDetector as unknown as agentCapabilities.AgentDetector);
+				registerAgentsHandlers({ ...deps, getAgentDetector: lookup });
+				const hold = await reserve();
+				await expect(discover(agentId, 'remote')).rejects.toThrow(/reserved/);
+				for (const probe of [
+					lookup,
+					mockAgentDetector.getAgent,
+					checkCustomPath,
+					discoverCodexSkills,
+					buildSshCommand,
+					execFileNoThrow,
+					fs.promises.readdir,
+					mockAgentConfigsStore.get,
+					captureException,
+					logger.info,
+					logger.error,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				hold.release();
+			}
+		);
+
+		it.each([path.join(target, 'descendant'), path.resolve('other-repository')])(
+			'conservatively refuses local setup under reservation of %s',
+			async (root) => {
+				await reserve(root);
+				await expect(discover()).rejects.toThrow(/reserved/);
+				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+			}
+		);
+
+		it('admits before pending provider detection and releases an unavailable result', async () => {
+			const detection = Promise.withResolvers<undefined>();
+			mockAgentDetector.getAgent.mockReturnValueOnce(detection.promise);
+			const result = discover('terminal');
+			await blocked();
+			detection.resolve(undefined);
+			await expect(result).resolves.toBeNull();
+			(await reserve()).release();
+		});
+
+		it('counts setup admitted while cleanup canonicalization is pending', async () => {
+			const canonical = Promise.withResolvers<string>();
+			const detection = Promise.withResolvers<undefined>();
+			vi.mocked(nativeFs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = reserveWorktreeCleanup(target);
+			mockAgentDetector.getAgent.mockReturnValueOnce(detection.promise);
+			const result = discover();
+			canonical.resolve(target);
+			const hold = await reservation;
+			if (hold.status === 'reserved-partially') releases.push(hold.release);
+			expect(hold).toMatchObject({ status: 'blocked' });
+			detection.resolve(undefined);
+			await result;
+			(await reserve()).release();
+		});
+
+		it('holds custom-path resolution and preserves its failure without fallback', async () => {
+			const customPath = Promise.withResolvers<{ exists: boolean }>();
+			vi.mocked(checkCustomPath).mockReturnValueOnce(customPath.promise);
+			const failure = new Error('custom-path failed');
+			const result = expect(discover()).rejects.toBe(failure);
+			await vi.waitFor(() => expect(checkCustomPath).toHaveBeenCalledOnce());
+			await blocked();
+			customPath.reject(failure);
+			await result;
+			expect(discoverCodexSkills).not.toHaveBeenCalled();
+			expect(fs.promises.readdir).not.toHaveBeenCalled();
+			(await reserve()).release();
+		});
+
+		it('retains the legacy disk fallback after native discovery rejects', async () => {
+			const disk = Promise.withResolvers<never[]>();
+			vi.mocked(fs.promises.readdir).mockReturnValueOnce(disk.promise);
+			const result = discover();
+			await vi.waitFor(() => expect(fs.promises.readdir).toHaveBeenCalledOnce());
+			expect(discoverCodexSkills).toHaveBeenCalledOnce();
+			await blocked();
+			disk.resolve([]);
+			await expect(result).resolves.toEqual([]);
+			(await reserve()).release();
+		});
+
+		it('owns concurrent native discovery and prompt reads independently', async () => {
+			const native = Promise.withResolvers<never[]>();
+			const prompt = Promise.withResolvers<string>();
+			vi.mocked(discoverCodexSkills).mockReturnValueOnce(native.promise).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockResolvedValueOnce(['custom.md'] as never[]);
+			vi.mocked(fs.promises.readFile).mockReturnValueOnce(prompt.promise);
+			const first = discover();
+			await vi.waitFor(() => expect(discoverCodexSkills).toHaveBeenCalledOnce());
+			const second = discover();
+			await vi.waitFor(() => expect(fs.promises.readFile).toHaveBeenCalledOnce());
+			native.resolve([]);
+			await expect(first).resolves.toEqual([]);
+			await blocked();
+			prompt.resolve('Custom prompt body');
+			await expect(second).resolves.toEqual([{ name: 'custom', prompt: 'Custom prompt body' }]);
+			const hold = await reserve();
+			await expect(discover()).rejects.toThrow(/reserved/);
+			expect(discoverCodexSkills).toHaveBeenCalledTimes(2);
+			hold.release();
+			await expect(discover('codex', 'remote')).resolves.toBeNull();
+		});
+
+		it('preserves disk failures and releases after IPC error logging', async () => {
+			const failure = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			vi.mocked(fs.promises.readdir).mockRejectedValueOnce(failure);
+			await expect(discover()).rejects.toBe(failure);
+			expect(logger.error).toHaveBeenCalledWith(
+				'discoverSlashCommands error',
+				expect.anything(),
+				expect.objectContaining({ message: 'EACCES' })
+			);
+			(await reserve()).release();
+		});
+
+		it('releases even when IPC error diagnostics throw', async () => {
+			mockAgentDetector.getAgent.mockRejectedValueOnce(new Error('detection failed'));
+			vi.mocked(logger.error).mockImplementationOnce(() => {
+				throw new Error('diagnostic failed');
+			});
+			await expect(discover()).rejects.toThrow('diagnostic failed');
+			(await reserve()).release();
+		});
+
+		it('holds Claude enrichment after the probe result and returns names on enrichment failure', async () => {
+			const disk = Promise.withResolvers<never[]>();
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.promises.readdir).mockReturnValueOnce(disk.promise);
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stderr: '',
+				stdout: JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/help'] }),
+			});
+			const result = discover('claude-code');
+			await vi.waitFor(() => expect(fs.promises.readdir).toHaveBeenCalledOnce());
+			await blocked();
+			disk.reject(new Error('enrichment failed'));
+			await expect(result).resolves.toEqual([{ name: '/help' }]);
+			expect(captureException).toHaveBeenCalled();
+			(await reserve()).release();
+		});
+
+		it.each(['SSH setup', 'SSH result'])(
+			'retains %s without local remote-cwd reads',
+			async (phase) => {
+				vi.useFakeTimers();
+				const setup = Promise.withResolvers<Awaited<ReturnType<typeof buildSshCommand>>>();
+				const command = Promise.withResolvers<Awaited<ReturnType<typeof execFileNoThrow>>>();
+				const invocation = { command: 'ssh', args: ['remote-probe'] };
+				vi.mocked(buildSshCommand).mockResolvedValue(invocation);
+				vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+				if (phase === 'SSH setup') vi.mocked(buildSshCommand).mockReturnValueOnce(setup.promise);
+				else vi.mocked(execFileNoThrow).mockReturnValueOnce(command.promise);
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: {
+						get: vi.fn(() => [{ id: 'remote', host: 'example.invalid', remoteEnv: {} }]),
+					} as unknown as NonNullable<AgentsHandlerDependencies['settingsStore']>,
+				});
+				const result = discover('opencode', 'remote');
+				await vi.waitFor(() =>
+					expect(phase === 'SSH setup' ? buildSshCommand : execFileNoThrow).toHaveBeenCalledOnce()
+				);
+				await blocked();
+				setup.resolve(invocation);
+				command.resolve({ exitCode: 0, stdout: '', stderr: '' });
+				await expect(result).resolves.toEqual([]);
+				expect(fs.promises.readdir).not.toHaveBeenCalled();
+				expect(fs.promises.readFile).not.toHaveBeenCalled();
+				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+				(await reserve()).release();
+			}
+		);
 	});
 
 	describe('agents:discoverSlashCommands', () => {
