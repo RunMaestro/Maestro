@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import type { EventEmitter } from 'events';
 import { InteractionBroker } from './InteractionBroker';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import {
 	broadcastBridgeEventToSessionSubscribers,
 	isBridgeSessionOwner,
@@ -87,12 +88,18 @@ export function initHarnessControl(
 	deps: HarnessControlIntegrationDependencies,
 	processManager: EventEmitter | null
 ): void {
-	dependencies = deps;
-	if (initialized) return;
-	initialized = true;
-	processManager?.on?.('exit', (sessionId: string) => {
-		harnessInteractionBroker.closeSession(sessionId);
-	});
+	const release = beginGlobalWorktreeActivity();
+	try {
+		dependencies = deps;
+		if (initialized) return;
+		initialized = true;
+		processManager?.on?.('exit', (sessionId: string) => {
+			// The broker admits each retained callback before cancellation effects.
+			harnessInteractionBroker.closeSession(sessionId);
+		});
+	} finally {
+		release();
+	}
 }
 
 /** Resolve a response only when its desktop window or browser client owns the request. */
@@ -100,14 +107,19 @@ export function resolveHarnessInteractionResponse(
 	raw: unknown,
 	owner?: HarnessInteractionOwner
 ): HarnessInteractionResolveResult {
-	if (owner !== undefined && raw && typeof raw === 'object' && 'requestId' in raw) {
-		const requestId = raw.requestId;
-		const pending = harnessInteractionBroker
-			.pendingRequests()
-			.find((request) => request.requestId === requestId);
-		if (!pending || !isOwner(pending.sessionId, owner)) return 'not-found';
+	const release = beginGlobalWorktreeActivity();
+	try {
+		if (owner !== undefined && raw && typeof raw === 'object' && 'requestId' in raw) {
+			const requestId = raw.requestId;
+			const pending = harnessInteractionBroker
+				.pendingRequests()
+				.find((request) => request.requestId === requestId);
+			if (!pending || !isOwner(pending.sessionId, owner)) return 'not-found';
+		}
+		return harnessInteractionBroker.resolve(raw);
+	} finally {
+		release();
 	}
-	return harnessInteractionBroker.resolve(raw);
 }
 
 /** List pending requests visible to this owner; omitted owner is main-process-only access. */
