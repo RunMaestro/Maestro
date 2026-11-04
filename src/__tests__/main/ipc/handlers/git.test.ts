@@ -17,6 +17,7 @@ import {
 import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { reserveWorktreeCleanup } from '../../../../main/git/worktreeActivity';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -1375,6 +1376,105 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 	});
 
 	describe('git:runCommand', () => {
+		it.each([0, 1])(
+			'releases activity after a completed Git run with exit code %s',
+			async (exitCode) => {
+				const cwd = path.resolve('cleanup-streaming-fixture');
+				mockStreaming([], { exitCode });
+				const result = await handlers.get('git:runCommand')!({} as any, {
+					runId: 'cleanup-complete',
+					operation: 'fetch',
+					cwd,
+				});
+				expect(result.success).toBe(exitCode === 0);
+				const hold = await reserveWorktreeCleanup(cwd);
+				expect(hold.status).toBe('reserved-partially');
+				if (hold.status === 'reserved-partially') hold.release();
+			}
+		);
+
+		it.each(['push', 'pull', 'fetch'])(
+			'excludes cleanup during %s and cancellation until exit',
+			async (operation) => {
+				const cwd = path.resolve('cleanup-streaming-fixture');
+				let finish!: (value: { stdout: string; stderr: string; exitCode: string }) => void;
+				const cancel = vi.fn();
+				vi.mocked(execFile.execFileStreaming).mockReturnValue({
+					result: new Promise((resolve) => {
+						finish = resolve;
+					}),
+					cancel,
+				});
+				const running = handlers.get('git:runCommand')!({} as any, {
+					runId: 'cleanup-race',
+					operation,
+					cwd,
+				});
+				try {
+					await vi.waitFor(() => expect(execFile.execFileStreaming).toHaveBeenCalled());
+					expect(await reserveWorktreeCleanup(cwd)).toMatchObject({ status: 'blocked' });
+					await handlers.get('git:cancelCommand')!({} as any, 'cleanup-race');
+					expect(cancel).toHaveBeenCalled();
+					expect(await reserveWorktreeCleanup(cwd)).toMatchObject({ status: 'blocked' });
+				} finally {
+					finish({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
+					await running;
+				}
+				const hold = await reserveWorktreeCleanup(cwd);
+				expect(hold.status).toBe('reserved-partially');
+				if (hold.status === 'reserved-partially') hold.release();
+			}
+		);
+
+		it('refuses a new native Git run before branch or process setup under reservation', async () => {
+			const cwd = path.resolve('cleanup-streaming-fixture');
+			const hold = await reserveWorktreeCleanup(cwd);
+			expect(hold.status).toBe('reserved-partially');
+			try {
+				const result = await handlers.get('git:runCommand')!({} as any, {
+					runId: 'cleanup-blocked',
+					operation: 'push',
+					cwd,
+					setUpstream: true,
+				});
+				expect(result).toMatchObject({
+					success: false,
+					error: expect.stringContaining('reserved'),
+				});
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				expect(execFile.execFileStreaming).not.toHaveBeenCalled();
+			} finally {
+				if (hold.status === 'reserved-partially') hold.release();
+			}
+		});
+
+		it('holds activity across async branch setup and releases when setup throws', async () => {
+			const cwd = path.resolve('cleanup-streaming-fixture');
+			let fail!: (reason: Error) => void;
+			vi.mocked(execFile.execFileNoThrow).mockImplementationOnce(
+				() =>
+					new Promise((_resolve, reject) => {
+						fail = reject;
+					})
+			);
+			const running = handlers.get('git:runCommand')!({} as any, {
+				runId: 'cleanup-setup',
+				operation: 'push',
+				cwd,
+				setUpstream: true,
+			});
+			try {
+				await vi.waitFor(() => expect(execFile.execFileNoThrow).toHaveBeenCalled());
+				expect(await reserveWorktreeCleanup(cwd)).toMatchObject({ status: 'blocked' });
+			} finally {
+				fail(new Error('branch setup failed'));
+				await running;
+			}
+			const hold = await reserveWorktreeCleanup(cwd);
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status === 'reserved-partially') hold.release();
+		});
+
 		/** Fake streaming handle: emits chunks, then resolves with the result. */
 		function mockStreaming(
 			chunks: Array<[string, 'stdout' | 'stderr']>,
@@ -1583,6 +1683,8 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 
 		it('fails loudly when the requested SSH remote cannot be resolved', async () => {
 			mockStreaming([], { exitCode: 0 });
+			const fs = await import('fs/promises');
+			vi.mocked(fs.default.realpath).mockClear();
 
 			const handler = handlers.get('git:runCommand');
 			const result = await handler!(mockEvent(), {
@@ -1596,6 +1698,7 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			expect(result.error).toContain('missing-remote');
 			// Never silently falls back to the local repo.
 			expect(execFile.execFileStreaming).not.toHaveBeenCalled();
+			expect(fs.default.realpath).not.toHaveBeenCalled();
 		});
 	});
 
