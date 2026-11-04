@@ -45,6 +45,7 @@ vi.mock('../../../main/stores/getters', () => ({
 }));
 vi.mock('../../../main/agent-run/producers', () => ({ buildEnrichHook: () => () => ({}) }));
 
+import { nativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { setupAgentRunCapture } from '../../../main/agent-run/setup-capture-listener';
 
 function spawn(manager: EventEmitter, sessionId = 'worker-ai-tab') {
@@ -56,6 +57,46 @@ describe('ProcessManager -> AgentRun capture', () => {
 	beforeEach(() => {
 		runs.clear();
 		events.length = 0;
+	});
+
+	it('binds an owner transcript boundary through the actual native spawn listener and retains it after exit', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		nativeCurrentTurns.commit({
+			sessionId: 'worker',
+			tabId: 'tab',
+			field: 'logs',
+			snapshot: true,
+			upserts: [{ id: 'submitted', text: 'Inspect', source: 'user', timestamp: 1 }],
+			removedIds: [],
+			orderIds: ['submitted'],
+			observation: {
+				sourceGeneration: 'capture-test',
+				sequence: 1,
+				createdAt: 7,
+				provider: 'codex',
+			},
+		});
+		manager.emit('spawn', {
+			sessionId: 'worker-ai-tab',
+			toolType: 'codex',
+			cwd: '/fixture',
+			transcriptBoundaryId: 'submitted',
+		});
+		const run = [...runs.values()][0];
+		expect(run.metadata).toHaveProperty('transcriptBoundaryId', 'submitted');
+		manager.emit('exit', 'worker-ai-tab', 0);
+		await vi.waitFor(() => expect(runs.get(run.id)?.status).toBe('completed'));
+		expect(
+			nativeCurrentTurns.read({
+				agentId: 'worker',
+				tabId: 'tab',
+				createdAt: 7,
+				provider: 'codex',
+				agentSessionId: null,
+				open: true,
+			})
+		).toMatchObject({ status: 'complete', cursor: { runId: run.id, turnId: 'submitted' } });
 	});
 
 	it('persists first native session announcement on the exact captured tab generation', async () => {

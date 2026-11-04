@@ -258,6 +258,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
 	const persistenceHandlers = registerPersistenceHandlers({
+		getWindowForSession: (sessionId) => resolveSessionWindow(sessionId, deps),
 		settingsStore: deps.settingsStore,
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,

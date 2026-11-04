@@ -597,6 +597,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				}
 				if (managedQueue) await flushSessionPersistenceNow(useSessionStore.getState().sessions);
 				const spawnResult = await window.maestro.process.spawn({
+					transcriptBoundaryId: useSessionStore
+						.getState()
+						.sessions.find((agent) => agent.id === sessionId)
+						?.aiTabs.find((tab) => tab.id === targetTab.id)
+						?.logs.slice()
+						.reverse()
+						.find((log) => log.source === 'user' && log.queuedItemId === item.id)?.id,
 					...(managedQueue
 						? { pianolaDispatchId: item.pendingAdmissionId, pianolaQueueItemId: item.id }
 						: {}),

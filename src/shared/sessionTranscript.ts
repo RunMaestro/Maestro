@@ -1,4 +1,6 @@
 export interface SessionTranscriptPatch<T extends { id: string } = { id: string }> {
+	/** Native observation metadata; omitted by older renderers and browser clients. */
+	observation?: import('./currentTurn').TranscriptObservation;
 	sessionId: string;
 	tabId?: string;
 	field: 'logs' | 'aiLogs' | 'shellLogs';

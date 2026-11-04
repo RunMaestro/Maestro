@@ -8,6 +8,8 @@ import type { HarnessControlMode } from '../../../../shared/maestro-lib/provider
  * resume, read-only mode, and YOLO mode.
  */
 export interface SpawnProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
 	pianolaDispatchId?: string;
 	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */

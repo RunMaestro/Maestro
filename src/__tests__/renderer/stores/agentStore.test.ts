@@ -1332,6 +1332,26 @@ describe('agentStore', () => {
 			useSessionStore.getState().setSessions([session]);
 
 			const item = createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' });
+			useSessionStore.getState().setSessions([
+				{
+					...session,
+					aiTabs: [
+						{
+							...session.aiTabs[0],
+							logs: [
+								{ id: 'historical', source: 'user', text: item.text!, timestamp: 1 },
+								{
+									id: 'submitted',
+									source: 'user',
+									text: item.text!,
+									timestamp: 2,
+									queuedItemId: item.id,
+								},
+							],
+						},
+					],
+				},
+			]);
 
 			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
 
@@ -1339,6 +1359,7 @@ describe('agentStore', () => {
 			expect(mockSpawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					sessionId: 'session-1-ai-tab-1',
+					transcriptBoundaryId: 'submitted',
 					toolType: 'claude-code',
 					prompt: 'Build the feature',
 					cwd: '/test',

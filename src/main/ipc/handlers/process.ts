@@ -198,6 +198,26 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
+		// A web/CLI caller cannot assert the native renderer's submitted log boundary.
+		if ('clientId' in event || (event as { type?: string }).type === 'bridge')
+			config = { ...config, transcriptBoundaryId: undefined };
+		if (config.transcriptBoundaryId) {
+			const agent = deps.sessionsStore
+				.get('sessions', [])
+				.find((session) =>
+					session.aiTabs?.some(
+						(tab: { id: string }) => `${session.id}-ai-${tab.id}` === config.sessionId
+					)
+				);
+			const owner = agent && deps.getWindowForSession?.(agent.id);
+			if (
+				!owner ||
+				!event.sender ||
+				event.sender.id !== owner.webContents.id ||
+				event.sender.isDestroyed()
+			)
+				config = { ...config, transcriptBoundaryId: undefined };
+		}
 		const assertOwner = () => {
 			const agent = deps.sessionsStore
 				.get('sessions', [])

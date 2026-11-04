@@ -1,3 +1,8 @@
+import { nativeCurrentTurns } from '../../../../main/pianola/current-turn';
+import { registerSessionCallbacks } from '../../../../main/web-server/callbacks/sessionCallbacks';
+import { handleGetSessionHistory } from '../../../../main/web-server/handlers/messageHandlers/sessions';
+import { classifyMessages } from '../../../../shared/pianola/pianola-classifier';
+import type { CurrentTurnRead } from '../../../../shared/currentTurn';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import type { AgentRun } from '../../../../shared/agent-run';
 import { handleEnqueueCommand } from '../../../../main/web-server/handlers/messageHandlers/queue';
@@ -220,6 +225,138 @@ describe('persistence IPC handlers', () => {
 
 	afterEach(() => {
 		handlers.clear();
+	});
+
+	describe('native transcript commit -> captured turn -> host -> history wire', () => {
+		it('reads the entire native current turn over 100 entries, keeping early risk before a harmless question', () => {
+			const agentId = generateUUID();
+			const owner = {
+				isDestroyed: () => false,
+				webContents: { id: 42, isDestroyed: () => false },
+			} as BrowserWindow;
+			registerPersistenceHandlers({ ...deps, getWindowForSession: () => owner });
+			let sequence = 0;
+			const user = { id: 'user', source: 'user', text: 'Inspect the naming', timestamp: 1 };
+			const all = [user];
+			const publish = (upserts: typeof all, sender = 42) =>
+				handlers.get('sessions:publishTranscript')!(
+					{ sender: { id: sender } },
+					{
+						sessionId: agentId,
+						tabId: 'tab',
+						field: 'logs',
+						upserts,
+						orderIds: all.map((row) => row.id),
+						removedIds: [],
+						observation: {
+							sourceGeneration: agentId,
+							sequence: ++sequence,
+							createdAt: 7,
+							provider: 'codex',
+						},
+					}
+				);
+			publish([user]);
+			const capture = new AgentRunCaptureService({
+				getAgentRun: () => undefined,
+				upsertAgentRun: (run) => run,
+				appendAgentRunEvent: (event) => event,
+				findActiveRunBySession: () => undefined,
+			});
+			const run = capture.captureSpawn({
+				sessionId: `${agentId}-ai-tab`,
+				toolType: 'codex',
+				cwd: '/project',
+				nativeTabSession: { agentId, tabId: 'tab', createdAt: 7 },
+			})!;
+			nativeCurrentTurns.begin(run, user.id);
+			const output = [
+				{ id: 'risk', source: 'ai', text: 'I will delete the production database.', timestamp: 2 },
+				...Array.from({ length: 150 }, (_, i) => ({
+					id: `progress-${i}`,
+					source: 'ai',
+					text: 'Working',
+					timestamp: i + 3,
+				})),
+				{ id: 'question', source: 'ai', text: 'Should I call it count or total?', timestamp: 200 },
+			];
+			all.push(...output);
+			publish(output);
+			const sessions = [
+				{
+					id: agentId,
+					name: 'Worker',
+					cwd: '/project',
+					toolType: 'codex',
+					aiTabs: [{ id: 'tab', createdAt: 7, state: 'idle', logs: all.slice(-100) }],
+				},
+			];
+			mockSessionsStore.get.mockReturnValue(sessions);
+			const callbacks: Record<string, Function> = {};
+			const server = new Proxy(
+				{},
+				{
+					get: (_target, key: string) => (callback: Function) => {
+						callbacks[key] = callback;
+					},
+				}
+			);
+			registerSessionCallbacks(server as WebServer, {
+				sessionsStore: deps.sessionsStore,
+				groupsStore: deps.groupsStore,
+				getProcessManager: () => ({ get: () => undefined }) as never,
+			});
+			const send = vi.fn();
+			const ctx = {
+				send,
+				callbacks: { getSessionHistory: callbacks.setGetSessionHistoryCallback },
+			} as unknown as MessageHandlerContext;
+			const request = (extra = {}) => {
+				handleGetSessionHistory(ctx, {} as WebClient, {
+					type: 'get_session_history',
+					tabId: 'tab',
+					currentTurn: true,
+					tail: 1,
+					requestId: 'read',
+					...extra,
+				});
+				return send.mock.calls.at(-1)![1] as { currentTurn: CurrentTurnRead; messages: unknown[] };
+			};
+			const read = request();
+			expect(read.currentTurn.status).toBe('complete');
+			expect(read.currentTurn.messages).toHaveLength(153);
+			expect(read.currentTurn.cursor).toMatchObject({
+				agentId,
+				tabId: 'tab',
+				runId: run.id,
+				turnId: 'user',
+			});
+			expect(
+				classifyMessages(
+					read.currentTurn.messages.map((row) => ({
+						id: row.id,
+						role: row.source === 'user' ? 'user' : 'assistant',
+						source: row.source,
+						content: row.text,
+						timestamp: new Date(row.timestamp).toISOString(),
+					}))
+				)
+			).toMatchObject({ kind: 'question', risk: 'high' });
+			const census = callbacks.setListDesktopSessionsCallback();
+			expect(census.sessions[0].supervision.currentTurn.cursor).toEqual(read.currentTurn.cursor);
+			expect(census.sessions[0].supervision.currentTurn).not.toHaveProperty('messages');
+			// Legacy callers still get the same persisted window and tail semantics.
+			expect(callbacks.setGetSessionHistoryCallback('tab', { tail: 1 }).messages).toHaveLength(1);
+			// A non-owning native renderer cannot revise this observation.
+			publish([{ ...output.at(-1)!, text: 'Foreign' }], 43);
+			expect(request().currentTurn.cursor).toEqual(read.currentTurn.cursor);
+			publish([{ ...output.at(-1)!, text: 'Which variable should I choose?' }]);
+			expect(request({ expectedCursor: read.currentTurn.cursor }).currentTurn).toMatchObject({
+				status: 'gap',
+				messages: [],
+			});
+			expect(request({ expectedCursor: {} })).toHaveProperty('code', 'INVALID_CURSOR');
+		});
 	});
 
 	describe('host queue-item durable readback composition', () => {

@@ -55,6 +55,7 @@ import {
 	projectWebSession,
 	readDeferredContent,
 } from '../../stores/deferred-session-content';
+import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { canonicalJson } from '../../../shared/canonicalJson';
@@ -203,6 +204,7 @@ function senderWebContentsIdOf(event: unknown): number | undefined {
  * Dependencies required for persistence handlers
  */
 export interface PersistenceHandlerDependencies {
+	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 	cancelQueueItem?: (agentId: string, tabId: string, itemId: string) => void;
 	settingsStore: Store<MaestroSettings>;
 	sessionsStore: Store<SessionsData>;
@@ -794,6 +796,13 @@ export function registerPersistenceHandlers(
 				// Request replies are private, including expired or mismatched replies.
 				return false;
 			}
+			const owner = deps.getWindowForSession?.(patch.sessionId);
+			if (
+				owner &&
+				isWebContentsAvailable(owner) &&
+				owner.webContents.id === senderWebContentsIdOf(event)
+			)
+				nativeCurrentTurns.commit(patch);
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win) && win.webContents.id !== senderWebContentsIdOf(event)) {
 					win.webContents.send('sessions:transcriptSync', patch);

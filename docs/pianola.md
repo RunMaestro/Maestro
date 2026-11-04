@@ -316,3 +316,41 @@ Pianola declares its permissions up front, and the Plugins tile shows them befor
 | `background:service`  | Keep supervised watchers running while the app is open                 |
 
 The `settings:read` entry matters more than it looks. Pianola re-reads your consent flag before every supervised action, so turning the feature off takes effect on the next action rather than whenever a long-running watcher happens to notice.
+
+## Native current-turn observation protocol
+
+The desktop host exposes an additive, versioned read contract for observation
+clients. Send `get_session_history` with `tabId` and `currentTurn: true` to receive
+`currentTurn.version: 1`. Optional `expectedCursor` pins the read to a census
+revision. `list_desktop_sessions` includes the same cursor and completeness state
+under each tab's `supervision.currentTurn`, without copying transcript content.
+Legacy history reads retain their existing `sinceMs` and `tail` behavior.
+
+A cursor identifies the host generation, native renderer incarnation, agent,
+tab creation, provider session, captured AgentRun, submitted user-log boundary,
+and monotone revision. Equal-length rewrites and streaming updates advance the
+revision. A host restart creates a new generation. This cursor is evidence about
+data, and grants no authority to reply; enrollment, ownership, pause, policy,
+and delivery guards remain separate.
+
+A `complete` read contains the entire observed current turn from its submitted
+user row, including earlier assistant, system, thinking, and tool rows and their
+native payloads. It reads ordered commits from the owning desktop renderer,
+independently of the 100-entry persisted history window. Direct composer sends
+and queued sends carry their actual submitted row ID to native AgentRun capture.
+Other spawn paths without that boundary, pre-existing turns after host restart,
+missing commits, transcript trimming/reset, provider replacement, snoozed tabs,
+and upstream truncated tool output cannot produce a complete risk context.
+
+The host returns `incomplete`, `gap`, `reset`, or `unknown` with a concrete reason
+and no actionable message subset when that proof is unavailable. Clients must
+refresh or suspend observation in those cases. A supplied cursor must match
+exactly. This version returns complete refreshes; delta consumption and worker
+send fencing are separate integration work.
+
+The in-memory projection retains at most 8,192 rows and 2 MiB per tab, 2,048 tabs,
+and 32 MiB of serialized row payloads across the host. Eviction and overflow are
+explicitly unavailable, never successful truncated reads. Completed turns remain
+readable until a new native turn or those bounds require eviction. These limits
+bound retained payloads; they are not measured process RSS limits or a claim of
+live provider acceptance.

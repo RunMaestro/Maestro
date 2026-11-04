@@ -1,3 +1,4 @@
+import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import type { StoredSession } from '../../stores/types';
@@ -238,6 +239,21 @@ export function registerSessionCallbacks(
 						busy: managedProcessActive || cliBusy,
 						consult: !!tab.consultOrigin,
 						ephemeral: tab.quickChat === true && tab.hidden === true,
+						currentTurn: (() => {
+							const { messages: _messages, ...observation } = nativeCurrentTurns.read(
+								{
+									agentId: s.id,
+									tabId: tab.id,
+									createdAt: tab.createdAt,
+									provider: s.toolType,
+									agentSessionId: tab.agentSessionId ?? null,
+									open: true,
+								},
+								undefined,
+								false
+							);
+							return observation;
+						})(),
 						cursorAvailable:
 							Array.isArray(tab.logs) &&
 							(!lastLog || (typeof lastLog.id === 'string' && lastLog.id.length > 0)),
@@ -277,6 +293,28 @@ export function registerSessionCallbacks(
 			// TAB_NOT_FOUND for it would make a Pianola watcher retire the target.
 			const tab = findStoredAiTab(s, tabId) as Record<string, any> | undefined;
 			if (!tab) continue;
+			if (options?.currentTurn) {
+				const currentTurn = nativeCurrentTurns.read(
+					{
+						agentId: s.id,
+						tabId,
+						createdAt: tab.createdAt,
+						provider: s.toolType,
+						agentSessionId: tab.agentSessionId ?? null,
+						open: s.aiTabs?.some((open: { id: string }) => open.id === tabId) === true,
+					},
+					options.expectedCursor
+				);
+				return {
+					tabId,
+					sessionId: tabId,
+					agentId: s.id,
+					agentSessionId: tab.agentSessionId ?? null,
+					projectPath: s.cwd,
+					messages: [],
+					currentTurn,
+				};
+			}
 			const rawLogs = (tab.logs as Array<Record<string, any>> | undefined) ?? [];
 			let logs = rawLogs;
 			if (options?.sinceMs !== undefined) {

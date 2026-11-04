@@ -34,6 +34,8 @@ export interface SdkProcessController {
  * Configuration for spawning a new process
  */
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	pianolaDispatchId?: string;
 	pianolaQueueItemId?: string;
 	sessionId: string;

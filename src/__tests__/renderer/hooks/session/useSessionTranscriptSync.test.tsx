@@ -86,6 +86,70 @@ beforeEach(() => {
 });
 
 describe('owning host transcript identities', () => {
+	it('publishes ordered native observation commits for same-length rewrites and snooze', async () => {
+		const { unmount } = renderHook(() => useSessionTranscriptSync(ready));
+		const session = createMockSession({
+			id: 'ordered',
+			aiTabs: [
+				createMockAITab({
+					id: 'tab',
+					createdAt: 7,
+					logs: [{ id: 'user', source: 'user', text: 'Inspect', timestamp: 1 }],
+				}),
+			],
+		});
+		await act(async () => {
+			useSessionStore.setState({ sessions: [session] });
+		});
+		const first = published.find((patch) => patch.tabId === 'tab')!;
+		expect(first).toMatchObject({
+			snapshot: true,
+			observation: { sequence: 1, createdAt: 7, provider: session.toolType },
+		});
+		await act(async () => {
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						aiTabs: [
+							{ ...session.aiTabs[0], logs: [{ ...session.aiTabs[0].logs[0], text: 'Revised' }] },
+						],
+					},
+				],
+			});
+		});
+		const second = published.filter((patch) => patch.tabId === 'tab').at(-1)!;
+		expect(second.observation).toMatchObject({
+			sourceGeneration: first.observation!.sourceGeneration,
+			sequence: 2,
+		});
+		expect(second.upserts[0].text).toBe('Revised');
+		await act(async () => {
+			useSessionStore.setState({ sessions: [{ ...session, aiTabs: [] }] });
+		});
+		expect(published.at(-1)).toMatchObject({ observation: { sequence: 3, closed: true } });
+		unmount();
+	});
+
+	it('publishes a provider binding change even when logs and runtime references stay equal', async () => {
+		const { unmount } = renderHook(() => useSessionTranscriptSync(ready));
+		const session = createMockSession({
+			id: 'switch',
+			toolType: 'codex',
+			aiTabs: [createMockAITab({ id: 'tab', createdAt: 7 })],
+		});
+		await act(async () => {
+			useSessionStore.setState({ sessions: [session] });
+		});
+		await act(async () => {
+			useSessionStore.setState({ sessions: [{ ...session, toolType: 'claude-code' }] });
+		});
+		expect(published.filter((patch) => patch.tabId === 'tab').at(-1)).toMatchObject({
+			observation: { sequence: 2, provider: 'claude-code' },
+		});
+		unmount();
+	});
+
 	it.each([
 		{ error: new Error('Host hydration failed'), reports: true },
 		{

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { generateUUID } from '../../../shared/uuid';
 import type { AITab, LogEntry, Session } from '../../types';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useOwnedSideEffectGate } from '../agent/internal/useOwnedSessionGate';
@@ -157,6 +158,8 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 				unsubscribeSync();
 			};
 
+		const sourceGeneration = generateUUID();
+		const sequences = new Map<string, number>();
 		let pendingVersion = -1;
 		let pendingAgents = new Set<string>();
 		const projectPendingPermissions = () => {
@@ -206,7 +209,8 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 			field: SessionTranscriptPatch['field'],
 			tabId?: string,
 			requestId?: string,
-			metadataOnly = false
+			metadataOnly = false,
+			forceBinding = false
 		) => {
 			const logs = metadataOnly
 				? []
@@ -223,7 +227,7 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 						(row as unknown as Record<string, unknown>)[field] !==
 						(previous as unknown as Record<string, unknown> | undefined)?.[field]
 				);
-			if (!requestId && logs === previousLogs && !runtimeChanged) return;
+			if (!requestId && logs === previousLogs && !runtimeChanged && !forceBinding) return;
 			const previousById = requestId
 				? undefined
 				: new Map(previousLogs.map((log) => [log.id, log]));
@@ -232,6 +236,16 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 				sessionId: session.id,
 				tabId,
 				field,
+				...(!requestId &&
+					tabId && {
+						observation: {
+							sourceGeneration,
+							sequence: (sequences.get(tabId) ?? 0) + 1,
+							createdAt: (row as AITab).createdAt,
+							provider: session.toolType,
+						},
+						...(!previous && { snapshot: true }),
+					}),
 				upserts: requestId ? logs : logs.filter((log) => previousById!.get(log.id) !== log),
 				removedIds: requestId
 					? []
@@ -268,6 +282,7 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 					clearRuntimeFields: fieldsFor(row).filter((key) => !(key in runtime)),
 				}),
 			};
+			if (patch.observation) sequences.set(tabId!, patch.observation.sequence);
 			void api
 				.publishTranscript(patch, requestId)
 				.catch((error) =>
@@ -310,9 +325,43 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 				publish(session, session, previous, 'aiLogs');
 				publish(session, session, previous, 'shellLogs');
 				const previousTabs = new Map(previous?.aiTabs.map((tab) => [tab.id, tab]));
+				const openTabIds = new Set(session.aiTabs.map((tab) => tab.id));
+				for (const old of previous?.aiTabs ?? []) {
+					if (openTabIds.has(old.id)) continue;
+					const sequence = (sequences.get(old.id) ?? 0) + 1;
+					sequences.set(old.id, sequence);
+					void api
+						.publishTranscript({
+							sessionId: session.id,
+							tabId: old.id,
+							field: 'logs',
+							upserts: [],
+							removedIds: [],
+							orderIds: [],
+							observation: {
+								sourceGeneration,
+								sequence,
+								createdAt: old.createdAt,
+								provider: session.toolType,
+								closed: true,
+							},
+						})
+						.catch((error) =>
+							logger.error('Failed to publish closed transcript', 'Sessions', error)
+						);
+				}
 				for (const tab of session.aiTabs) {
-					if (tab !== previousTabs.get(tab.id))
-						publish(session, tab, previousTabs.get(tab.id), 'logs', tab.id);
+					if (tab !== previousTabs.get(tab.id) || session.toolType !== previous?.toolType)
+						publish(
+							session,
+							tab,
+							previousTabs.get(tab.id),
+							'logs',
+							tab.id,
+							undefined,
+							false,
+							session.toolType !== previous?.toolType
+						);
 				}
 			}
 		});

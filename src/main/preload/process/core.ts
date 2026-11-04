@@ -15,6 +15,8 @@ import type {
  * Configuration for spawning a process
  */
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
 	pianolaDispatchId?: string;
 	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */

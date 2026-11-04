@@ -71,6 +71,7 @@ export interface DesktopTabEntry {
 		consult: boolean;
 		ephemeral: boolean;
 		/** False when the persisted tab has no available transcript snapshot. */
+		currentTurn?: Omit<import('./currentTurn').CurrentTurnRead, 'messages'>;
 		cursorAvailable: boolean;
 		cursor: { id: string; count: number; textLength: number } | null;
 	};

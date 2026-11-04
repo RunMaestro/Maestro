@@ -24,6 +24,8 @@ import { broadcastRunUpdated, broadcastEventAppended } from './broadcast';
 import { redactPrompt } from '../../shared/agent-run';
 import { buildEnrichHook } from './producers';
 
+import { nativeCurrentTurns } from '../pianola/current-turn';
+
 const LOG_CONTEXT = '[AgentRunCapture]';
 
 export interface CaptureListenerOptions {
@@ -79,8 +81,10 @@ export function setupAgentRunCapture(
 	});
 
 	processManager.on('spawn', (config: ProcessConfig) => {
+		nativeCurrentTurns.spawning(config.sessionId);
 		const run = service.captureSpawn({
 			sessionId: config.sessionId,
+			transcriptBoundaryId: config.transcriptBoundaryId,
 			toolType: config.toolType,
 			cwd: config.cwd,
 			tabId: config.tabId,
@@ -88,6 +92,7 @@ export function setupAgentRunCapture(
 			prompt: config.prompt,
 			worktreePath: config.projectPath,
 		});
+		if (run) nativeCurrentTurns.begin(run, config.transcriptBoundaryId);
 		if (run)
 			pianolaNewTabSpawns.captured(
 				config.sessionId,
@@ -99,6 +104,7 @@ export function setupAgentRunCapture(
 
 	processManager.on('session-id', (sessionId: string, agentSessionId: string) => {
 		service.captureSessionAnnouncement(sessionId, agentSessionId);
+		nativeCurrentTurns.announce(sessionId, agentSessionId);
 	});
 
 	processManager.on('agent-error', (sessionId: string, error: AgentError) => {

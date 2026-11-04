@@ -1,0 +1,341 @@
+import { describe, expect, it } from 'vitest';
+import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
+import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
+import type { AgentRun } from '../../../shared/agent-run';
+import type { CurrentTurnMessage } from '../../../shared/currentTurn';
+import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
+
+const binding = {
+	agentId: 'agent',
+	tabId: 'tab',
+	createdAt: 7,
+	provider: 'codex',
+	agentSessionId: null,
+	open: true,
+};
+const row = (id: string, text = id, source = 'ai'): CurrentTurnMessage => ({
+	id,
+	text,
+	source,
+	timestamp: 10,
+});
+function fixture(index = new NativeCurrentTurns()) {
+	let sequence = 0;
+	let order: string[] = [];
+	const runs = new Map<string, AgentRun>();
+	const capture = new AgentRunCaptureService({
+		getAgentRun: (id) => runs.get(id),
+		upsertAgentRun: (run) => {
+			runs.set(run.id, run);
+			return run;
+		},
+		appendAgentRunEvent: (event) => event,
+		findActiveRunBySession: (id) =>
+			[...runs.values()].find((run) => run.sessionId === id && run.status === 'running'),
+	});
+	const commit = (rows: CurrentTurnMessage[], rest: Partial<SessionTranscriptPatch> = {}) => {
+		for (const row of rows) if (!order.includes(row.id)) order.push(row.id);
+		const patch = {
+			sessionId: 'agent',
+			tabId: 'tab',
+			field: 'logs' as const,
+			upserts: rows,
+			removedIds: [],
+			orderIds: order,
+			observation: {
+				sourceGeneration: 'renderer',
+				sequence: ++sequence,
+				createdAt: 7,
+				provider: 'codex',
+			},
+			...rest,
+		};
+		index.commit(patch);
+	};
+	const begin = (boundaryId?: string) => {
+		const run = capture.captureSpawn({
+			sessionId: 'agent-ai-tab',
+			toolType: 'codex',
+			cwd: '/fixture',
+			transcriptBoundaryId: boundaryId,
+			nativeTabSession: { agentId: 'agent', tabId: 'tab', createdAt: 7 },
+		})!;
+		index.begin(run, boundaryId);
+		return run;
+	};
+	commit([row('user', 'Inspect the project', 'user')], { snapshot: true });
+	return { index, commit, begin, capture, read: () => index.read(binding) };
+}
+
+describe('native current-turn revision and completeness', () => {
+	it('retains all 2000 entries and native tool inputs across terminal capture', async () => {
+		const f = fixture();
+		const run = f.begin('user');
+		f.commit([row('risk', 'I will delete the production database.')]);
+		f.commit([
+			{
+				...row('tool', 'Shell', 'tool'),
+				metadata: { toolState: { input: { command: 'rm -rf /data' } } },
+			},
+		]);
+		f.commit(Array.from({ length: 2000 }, (_, i) => row(`stream-${i}`, 'Progress')));
+		f.commit([row('question', 'Should I call it count or total?')]);
+		await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+		const result = f.read();
+		expect(result.status).toBe('complete');
+		expect(result.cursor).toMatchObject({ runId: run.id, turnId: 'user' });
+		expect(result.messages).toHaveLength(2004);
+		expect(result.messages[1].text).toContain('delete the production');
+		expect(result.messages[2].metadata).toMatchObject({
+			toolState: { input: { command: 'rm -rf /data' } },
+		});
+		result.messages[2].metadata!.toolState = 'mutation';
+		expect(f.read().messages[2].metadata).not.toHaveProperty('toolState', 'mutation');
+	});
+
+	it('revises same-length rewrites, chunk growth and runtime changes; fences stale expected cursors', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('answer', 'safe')]);
+		const first = f.read().cursor;
+		f.commit([row('answer', 'risk')]);
+		expect(f.read().cursor.revision).toBeGreaterThan(first.revision);
+		expect(f.index.read(binding, first)).toMatchObject({ status: 'gap', messages: [] });
+		f.commit([row('answer', 'risk expanded')]);
+		const second = f.read().cursor;
+		f.commit([], { runtime: { state: 'idle' } });
+		expect(f.read().cursor.revision).toBeGreaterThan(second.revision);
+		expect(f.index.read(binding, f.read().cursor).messages.at(-1)?.text).toBe('risk expanded');
+	});
+
+	it.each(['missing', 'wrong', 'reused'] as const)('does not invent a boundary: %s', (mode) => {
+		const f = fixture();
+		if (mode === 'reused') f.begin('user');
+		f.begin(mode === 'missing' ? undefined : mode === 'wrong' ? 'old' : 'user');
+		f.commit([row('question', 'Which name?')]);
+		expect(f.read()).toMatchObject({
+			status: 'incomplete',
+			reason: 'missing-native-boundary',
+			messages: [],
+		});
+	});
+
+	it.each([
+		'trim',
+		'reset',
+		'missing-order',
+		'gap',
+		'renderer-reset',
+		'snooze',
+		'provider',
+	] as const)('fails closed after %s', (mode) => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('risk', 'Delete production')]);
+		const before = f.read().cursor;
+		if (mode === 'trim') f.commit([], { removedIds: ['risk'], orderIds: ['user'] });
+		if (mode === 'reset')
+			f.commit([row('user', 'Inspect', 'user')], { snapshot: true, orderIds: ['user'] });
+		if (mode === 'missing-order') f.commit([], { orderIds: ['user'] });
+		if (mode === 'gap')
+			f.commit([], {
+				observation: {
+					sourceGeneration: 'renderer',
+					sequence: 55,
+					createdAt: 7,
+					provider: 'codex',
+				},
+			});
+		if (mode === 'renderer-reset')
+			f.commit([], {
+				observation: {
+					sourceGeneration: 'replacement',
+					sequence: 1,
+					createdAt: 7,
+					provider: 'codex',
+				},
+			});
+		if (mode === 'snooze')
+			f.commit([], {
+				observation: {
+					sourceGeneration: 'renderer',
+					sequence: 3,
+					createdAt: 7,
+					provider: 'codex',
+					closed: true,
+				},
+			});
+		if (mode === 'provider')
+			f.commit([], {
+				observation: {
+					sourceGeneration: 'renderer',
+					sequence: 3,
+					createdAt: 7,
+					provider: 'claude-code',
+				},
+			});
+		expect(f.read().status).not.toBe('complete');
+		expect(f.read().messages).toEqual([]);
+		expect(f.read().cursor.revision).toBeGreaterThan(before.revision);
+	});
+
+	it('requires a fresh native spawn after human input and never treats a new user as the old turn', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('question')]);
+		const old = f.read().cursor;
+		f.commit([row('new-user', 'Continue', 'user')]);
+		expect(f.read().status).toBe('incomplete');
+		const run = f.begin('new-user');
+		f.commit([row('new-answer')]);
+		expect(f.read()).toMatchObject({
+			status: 'complete',
+			cursor: { runId: run.id, turnId: 'new-user' },
+		});
+		expect(f.read().messages.map((message) => message.id)).toEqual(['new-user', 'new-answer']);
+		expect(f.index.read(binding, old).status).toBe('reset');
+	});
+
+	it.each(['agentId', 'createdAt', 'provider', 'agentSessionId', 'open'] as const)(
+		'rejects changed binding %s',
+		(key) => {
+			const f = fixture();
+			f.begin('user');
+			const changed = {
+				...binding,
+				[key]: key === 'createdAt' ? 8 : key === 'open' ? false : 'foreign',
+			};
+			expect(f.index.read(changed).status).not.toBe('complete');
+		}
+	);
+
+	it('uses a new generation on host restart, never disk history as a full-turn substitute', () => {
+		const f = fixture();
+		f.begin('user');
+		const restarted = fixture();
+		restarted.begin('user');
+		expect(restarted.index.read(binding, f.read().cursor)).toMatchObject({
+			status: 'reset',
+			messages: [],
+		});
+		expect(new NativeCurrentTurns().read(binding).status).toBe('unknown');
+	});
+
+	it('keeps a replaced renderer incomplete until a fresh submitted boundary starts a native turn', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('user', 'Inspect', 'user')], {
+			snapshot: true,
+			observation: { sourceGeneration: 'new-owner', sequence: 1, createdAt: 7, provider: 'codex' },
+		});
+		f.begin('user');
+		expect(f.read().status).toBe('incomplete');
+		f.commit([row('fresh', 'New task', 'user')], {
+			observation: { sourceGeneration: 'new-owner', sequence: 2, createdAt: 7, provider: 'codex' },
+		});
+		f.begin('fresh');
+		expect(f.read()).toMatchObject({
+			status: 'complete',
+			cursor: { sourceGeneration: 'new-owner', turnId: 'fresh' },
+		});
+	});
+
+	it('rejects a new native row without its order commit', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('unplaced-risk', 'rm -rf /data')], { orderIds: [] });
+		expect(f.read()).toMatchObject({ status: 'incomplete', reason: 'commit-order-gap' });
+	});
+
+	it('bounds the fleet projection and reports eviction as unknown', () => {
+		const f = fixture(
+			new NativeCurrentTurns({ tabs: 1, messages: 10, bytes: 4096, totalBytes: 8192 })
+		);
+		f.begin('user');
+		f.index.commit({
+			sessionId: 'other',
+			tabId: 'other',
+			field: 'logs',
+			upserts: [row('other')],
+			orderIds: ['other'],
+			removedIds: [],
+			observation: { sourceGeneration: 'other', sequence: 1, createdAt: 7, provider: 'codex' },
+		});
+		expect(f.read()).toMatchObject({
+			status: 'unknown',
+			reason: 'native-transcript-unavailable-or-evicted',
+			messages: [],
+		});
+	});
+
+	it('waits for persisted provider binding to catch up with the native announcement without inventing continuity on replacement', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([], { runtime: { agentSessionId: 'announced' } });
+		expect(f.read()).toMatchObject({ status: 'reset', reason: 'native-provider-binding-pending' });
+		expect(f.index.read({ ...binding, agentSessionId: 'announced' }).status).toBe('complete');
+		f.commit([], { runtime: { agentSessionId: 'replacement' } });
+		expect(f.index.read({ ...binding, agentSessionId: 'replacement' })).toMatchObject({
+			status: 'incomplete',
+			reason: 'provider-session-reset',
+		});
+	});
+
+	it('invalidates old native reads at spawn even if capture cannot certify the new run', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('question')]);
+		f.index.spawning('agent-ai-tab');
+		expect(f.read()).toMatchObject({
+			status: 'incomplete',
+			reason: 'native-spawn-unbound',
+			messages: [],
+		});
+	});
+
+	it('consumes actual native provider announcements before their renderer and disk projections', () => {
+		const f = fixture();
+		f.begin('user');
+		f.index.announce('foreign-ai-tab', 'ignored');
+		expect(f.read().status).toBe('complete');
+		f.index.announce('agent-ai-tab', 'native');
+		expect(f.read().status).toBe('reset');
+		f.commit([], { runtime: { agentSessionId: null } });
+		expect(f.index.read({ ...binding, agentSessionId: 'native' })).toMatchObject({
+			status: 'incomplete',
+			reason: 'native-provider-announcement-unconfirmed',
+		});
+		f.commit([], { runtime: { agentSessionId: 'native' } });
+		expect(f.index.read({ ...binding, agentSessionId: 'native' }).status).toBe('complete');
+		f.index.announce('agent-ai-tab', 'foreign');
+		expect(f.index.read({ ...binding, agentSessionId: 'foreign' }).status).toBe('incomplete');
+	});
+
+	it('bounds per-turn buffers and reports overflow explicitly', () => {
+		const f = fixture(
+			new NativeCurrentTurns({ tabs: 2, messages: 3, bytes: 4096, totalBytes: 8192 })
+		);
+		f.begin('user');
+		f.commit([row('a'), row('b'), row('c')]);
+		expect(f.read()).toMatchObject({
+			status: 'incomplete',
+			reason: 'current-turn-overflow',
+			messages: [],
+		});
+	});
+
+	it('reports upstream tool truncation instead of certifying a full risk context', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([
+			{
+				...row('tool', 'Shell', 'tool'),
+				metadata: { toolState: { output: '... [tool output truncated, 5000 chars total]' } },
+			},
+		]);
+		expect(f.read()).toMatchObject({
+			status: 'incomplete',
+			reason: 'native-tool-output-truncated',
+		});
+	});
+});

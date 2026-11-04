@@ -39,6 +39,7 @@ const GROUP_CHAT_PREFIX = 'group-chat-';
 
 /** Minimal shape of a spawn we capture, projected from ProcessConfig. */
 export interface CaptureSpawnInput {
+	transcriptBoundaryId?: string;
 	nativeTabSession?: NativeTabSession;
 	agentSessionId?: string;
 	sessionId: string;
@@ -147,7 +148,16 @@ export class AgentRunCaptureService {
 				baseBranch: input.baseBranch,
 				prompt: prepared,
 				source: input.source,
-				...(nativeIdentity ? { metadata: { nativeTabSession: nativeIdentity } } : {}),
+				...(nativeIdentity
+					? {
+							metadata: {
+								nativeTabSession: nativeIdentity,
+								...(input.transcriptBoundaryId && {
+									transcriptBoundaryId: input.transcriptBoundaryId,
+								}),
+							},
+						}
+					: {}),
 				artifacts: [],
 				touchedFiles: [],
 				checks: [],

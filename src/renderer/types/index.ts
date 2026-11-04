@@ -1675,6 +1675,8 @@ export interface Session {
 
 // Process spawning configuration
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
 	pianolaDispatchId?: string;
 	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */

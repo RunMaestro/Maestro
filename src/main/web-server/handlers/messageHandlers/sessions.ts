@@ -572,7 +572,37 @@ export function handleGetSessionHistory(
 			? Math.floor(message.tail)
 			: undefined;
 
-	const result = ctx.callbacks.getSessionHistory(tabId, { sinceMs, tail });
+	const currentTurn = message.currentTurn === true;
+	let expectedCursor: import('../../../../shared/currentTurn').CurrentTurnCursor | undefined;
+	if (message.expectedCursor !== undefined) {
+		const value = message.expectedCursor as Record<string, unknown> | null;
+		const valid =
+			value &&
+			typeof value === 'object' &&
+			['generation', 'sourceGeneration', 'agentId', 'tabId', 'provider'].every(
+				(key) => typeof value[key] === 'string'
+			) &&
+			['createdAt', 'revision'].every(
+				(key) => Number.isSafeInteger(value[key]) && (value[key] as number) >= 0
+			) &&
+			['agentSessionId', 'runId', 'turnId'].every(
+				(key) => value[key] === null || typeof value[key] === 'string'
+			);
+		if (!currentTurn || !valid) {
+			ctx.send(client, {
+				type: 'session_history_result',
+				success: false,
+				code: 'INVALID_CURSOR',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		expectedCursor = value as unknown as import('../../../../shared/currentTurn').CurrentTurnCursor;
+	}
+	const result = ctx.callbacks.getSessionHistory(
+		tabId,
+		currentTurn ? { currentTurn, expectedCursor } : { sinceMs, tail }
+	);
 	if (!result) {
 		ctx.send(client, {
 			type: 'session_history_result',
@@ -593,6 +623,7 @@ export function handleGetSessionHistory(
 		agentSessionId: result.agentSessionId,
 		projectPath: result.projectPath,
 		messages: result.messages,
+		...(result.currentTurn && { currentTurn: result.currentTurn }),
 		requestId: message.requestId,
 	});
 }

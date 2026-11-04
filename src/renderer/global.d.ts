@@ -62,6 +62,8 @@ type LocalFileScanNode = {
 };
 
 interface ProcessConfig {
+	/** Native submitted transcript boundary, checked against owner commits by the host. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
 	pianolaDispatchId?: string;
 	toolType: string;
