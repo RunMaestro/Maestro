@@ -62,6 +62,7 @@ import {
 import {
 	CodexAppServerEventTranslator,
 	type CodexExecLine,
+	type CodexAppServerUserMessage,
 } from '../../codex-app-server/event-translator';
 import {
 	isCodexNotification,
@@ -257,6 +258,12 @@ class CodexAppServerTurn {
 		const { sessionId, toolType, cwd, command, args } = config;
 		const translator = this.translator;
 		const rpc = this.rpc;
+		// Keep Set identity semantics across duplicate subscriptions and old unsubscribes.
+		const messageListeners = new WeakMap<
+			(message: CodexAppServerUserMessage) => void,
+			(message: CodexAppServerUserMessage) => void
+		>();
+		const endListeners = new WeakMap<() => void, () => void>();
 		this.managedProcess = {
 			sessionId,
 			toolType,
@@ -294,9 +301,42 @@ class CodexAppServerTurn {
 					method: string,
 					params?: unknown,
 					options?: { timeoutMs?: number }
-				) => this.observeCompletion(rpc.request<T>(method, params, options)),
-				onUserMessage: (listener) => translator.onUserMessage(listener),
-				onTurnEnd: (listener) => this.onTurnEnd(listener),
+				) =>
+					withWorktreeTurnActivity(
+						(_start, observe) => observe(rpc.request<T>(method, params, options)),
+						(error) => void captureException(error)
+					),
+				onUserMessage: (listener) =>
+					withWorktreeTurnActivity(
+						() => {
+							let admitted = messageListeners.get(listener);
+							if (!admitted) {
+								admitted = (message) =>
+									withWorktreeTurnActivity(
+										() => listener(message),
+										(error) => void captureException(error)
+									);
+								messageListeners.set(listener, admitted);
+							}
+							const off = translator.onUserMessage(admitted);
+							return () => withWorktreeTurnActivity(off, (error) => void captureException(error));
+						},
+						(error) => void captureException(error)
+					),
+				onTurnEnd: (listener) =>
+					withWorktreeTurnActivity(
+						() => {
+							let admitted = endListeners.get(listener);
+							if (!admitted) {
+								admitted = () =>
+									withWorktreeTurnActivity(listener, (error) => void captureException(error));
+								endListeners.set(listener, admitted);
+							}
+							const off = this.onTurnEnd(admitted);
+							return () => withWorktreeTurnActivity(off, (error) => void captureException(error));
+						},
+						(error) => void captureException(error)
+					),
 			},
 			harnessControl: {
 				getCapabilities: () => ({
@@ -311,11 +351,18 @@ class CodexAppServerTurn {
 					imagePrompts: false,
 					resume: true,
 				}),
-				steer: ({ id, text }) =>
-					this.observeCompletion(
-						steerCodexAppServerTurn(this.managedProcess.codexAppServer!, { id, text }, (verdict) =>
-							this.ctx.emitter.emit('steering-verdict', sessionId, verdict)
-						)
+				steer: (request) =>
+					withWorktreeTurnActivity(
+						(_start, observe) =>
+							observe(
+								steerCodexAppServerTurn(this.managedProcess.codexAppServer!, request, (verdict) =>
+									withWorktreeTurnActivity(
+										() => this.ctx.emitter.emit('steering-verdict', sessionId, verdict),
+										(error) => void captureException(error)
+									)
+								)
+							),
+						(error) => void captureException(error)
 					),
 				interrupt: async () => this.interrupt(),
 				close: async (options) => this.kill(options),

@@ -1800,6 +1800,7 @@ describe('standalone ACP activity', () => {
 });
 
 describe('standalone Codex app-server activity', () => {
+	let emitter: EventEmitter;
 	let codex: import('../../../main/process-manager/spawners/CodexAppServerSpawner').CodexAppServerSpawner;
 	const replies: Record<string, unknown> = {
 		initialize: {},
@@ -1815,12 +1816,8 @@ describe('standalone Codex app-server activity', () => {
 		probes.request.mockImplementation(async (method: string) => replies[method]);
 		const { CodexAppServerSpawner } =
 			await import('../../../main/process-manager/spawners/CodexAppServerSpawner');
-		codex = new CodexAppServerSpawner(
-			processes,
-			new EventEmitter(),
-			{} as DataBufferManager,
-			fallback
-		);
+		emitter = new EventEmitter();
+		codex = new CodexAppServerSpawner(processes, emitter, {} as DataBufferManager, fallback);
 	});
 	describe('retained Codex protocol callbacks', () => {
 		beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
@@ -2143,6 +2140,280 @@ describe('standalone Codex app-server activity', () => {
 				}
 			}
 		);
+		describe('retained Codex direct handles', () => {
+			it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+				'refuses requests, steering, subscriptions and removal before lookup under %s',
+				async (root) => {
+					const managed = await finishedControls();
+					const handle = managed.codexAppServer!;
+					const listener = vi.fn();
+					const offMessage = handle.onUserMessage(listener);
+					const offEnd = handle.onTurnEnd(listener);
+					const lookup = vi.fn(() => 'late');
+					const request = {
+						get id() {
+							return lookup();
+						},
+						text: 'late',
+					};
+					const hold = await reserve(root);
+					vi.clearAllMocks();
+					try {
+						expect(() => handle.sendRequest('late', request)).toThrow('reserved');
+						expect(() => managed.harnessControl!.steer!(request)).toThrow('reserved');
+						expect(() => handle.onUserMessage(listener)).toThrow('reserved');
+						expect(() => handle.onTurnEnd(listener)).toThrow('reserved');
+						expect(offMessage).toThrow('reserved');
+						expect(offEnd).toThrow('reserved');
+						for (const probe of [lookup, listener, probes.request, fallback, captureException])
+							expect(probe).not.toHaveBeenCalled();
+					} finally {
+						hold.release();
+					}
+					offMessage();
+					offEnd();
+				}
+			);
+			it.each(['resolve', 'reject'] as const)(
+				'owns parallel late requests independently across replacement on %s',
+				async (outcome) => {
+					const { codexAppServer: handle } = await finishedControls();
+					const first = Promise.withResolvers<string>();
+					const second = Promise.withResolvers<string>();
+					probes.request.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+					const a = handle!.sendRequest<string>('one', { value: 1 }, { timeoutMs: 42 });
+					const b = handle!.sendRequest<string>('two');
+					await blocked();
+					native = makeNative();
+					codex.spawn(input());
+					await drain();
+					await close();
+					processes.clear();
+					first.resolve('first');
+					expect(await a).toBe('first');
+					await drain();
+					await blocked();
+					if (outcome === 'reject') {
+						const result = expect(b).rejects.toThrow('late failure');
+						second.reject(new Error('late failure'));
+						await result;
+					} else {
+						second.resolve('second');
+						expect(await b).toBe('second');
+					}
+					await drain();
+					expect(probes.request).toHaveBeenCalledWith('one', { value: 1 }, { timeoutMs: 42 });
+					expect(fallback).not.toHaveBeenCalled();
+					(await reserve()).release();
+				}
+			);
+			it.each(['request', 'steering'] as const)(
+				'owns late request and steering independently when %s settles first',
+				async (first) => {
+					const managed = await finishedControls();
+					const steering = await import('../../../main/codex-app-server/steering');
+					const steer =
+						Promise.withResolvers<import('../../../shared/chatSteering').SteeringResultFrame>();
+					const request = Promise.withResolvers<unknown>();
+					vi.spyOn(steering, 'steerCodexAppServerTurn').mockReturnValueOnce(steer.promise);
+					probes.request.mockReturnValueOnce(request.promise);
+					const a = managed.codexAppServer!.sendRequest('late');
+					const b = managed.harnessControl!.steer!({ id: 'late', text: 'more' });
+					await blocked();
+					if (first === 'request') request.resolve({ ok: true });
+					else steer.resolve({ type: 'steering', id: 'late', verdict: 'delivered' });
+					await drain();
+					await blocked();
+					if (first === 'request')
+						steer.resolve({ type: 'steering', id: 'late', verdict: 'delivered' });
+					else request.resolve({ ok: true });
+					expect(await a).toEqual({ ok: true });
+					expect(await b).toMatchObject({ verdict: 'delivered' });
+					await drain();
+					(await reserve()).release();
+				}
+			);
+			it('admits a late request ahead of pending reservation canonicalization', async () => {
+				const managed = await finishedControls();
+				const canonical = Promise.withResolvers<string>();
+				vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+				const reservation = gate.reserveWorktreeCleanup(target);
+				const pending = Promise.withResolvers<unknown>();
+				probes.request.mockReturnValueOnce(pending.promise);
+				const response = managed.codexAppServer!.sendRequest('late');
+				canonical.resolve(target);
+				expect(await reservation).toMatchObject({ status: 'blocked' });
+				pending.resolve('done');
+				await response;
+				await drain();
+				(await reserve()).release();
+			});
+			it.each(['request', 'steering'] as const)(
+				'preserves synchronous %s failure even if diagnostics throw',
+				async (operation) => {
+					const managed = await finishedControls();
+					const error = new Error('direct failure');
+					const fail = () => {
+						throw error;
+					};
+					vi.mocked(captureException).mockImplementation(() => {
+						throw new Error('capture failed');
+					});
+					if (operation === 'request') probes.request.mockImplementationOnce(fail);
+					else
+						vi.spyOn(
+							await import('../../../main/codex-app-server/steering'),
+							'steerCodexAppServerTurn'
+						).mockImplementationOnce(fail);
+					expect(() =>
+						operation === 'request'
+							? managed.codexAppServer!.sendRequest('late')
+							: managed.harnessControl!.steer!({ id: 'late', text: 'more' })
+					).toThrow(error);
+					(await reserve()).release();
+				}
+			);
+			it('admits retained message callbacks and unsubscribe without changing synchronous delivery', async () => {
+				const managed = await finishedControls();
+				const { CodexAppServerEventTranslator } =
+					await import('../../../main/codex-app-server/event-translator');
+				const subscribe = vi.spyOn(CodexAppServerEventTranslator.prototype, 'onUserMessage');
+				const received: string[] = [];
+				const listener = vi.fn((message: { text: string }) => {
+					received.push(message.text);
+				});
+				const off = managed.codexAppServer!.onUserMessage(listener);
+				const callback = subscribe.mock.calls[0][0];
+				const message = { turnId: 'turn', itemId: 'late', text: 'one' };
+				const hold = await reserve();
+				try {
+					expect(() => callback(message)).toThrow('reserved');
+					expect(off).toThrow('reserved');
+					expect(listener).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+				callback(message);
+				callback({ ...message, text: 'two' });
+				expect(received).toEqual(['one', 'two']);
+				listener.mockImplementationOnce(() => {
+					throw new Error('listener failed');
+				});
+				expect(() => callback(message)).toThrow('listener failed');
+				off();
+				off();
+				(await reserve()).release();
+			});
+			it('preserves duplicate listener identity, removal during delivery and old unsubscribes', async () => {
+				codex.spawn(input());
+				await drain();
+				line('turn/started', { threadId: 'thread', turn: { id: 'turn' } });
+				const handle = processes.get('rpc-session')!.codexAppServer!;
+				const received: string[] = [];
+				const listener = () => {
+					received.push('message');
+				};
+				const end = () => {
+					received.push('end');
+				};
+				const off = handle.onUserMessage(listener);
+				handle.onUserMessage(listener);
+				const offEnd = handle.onTurnEnd(end);
+				handle.onTurnEnd(end);
+				const message = {
+					threadId: 'thread',
+					turnId: 'turn',
+					item: { id: 'echo', type: 'userMessage', content: [{ type: 'inputText', text: 'more' }] },
+				};
+				line('item/completed', message);
+				expect(received).toEqual(['message']);
+				off();
+				handle.onUserMessage(listener);
+				off();
+				line('item/completed', message);
+				expect(received).toEqual(['message']);
+				offEnd();
+				handle.onTurnEnd(end);
+				offEnd();
+				const later = vi.fn();
+				let offLater = () => {};
+				handle.onUserMessage(() => {
+					received.push('first');
+					offLater();
+				});
+				offLater = handle.onUserMessage(later);
+				handle.onTurnEnd(end);
+				handle.onTurnEnd(end);
+				line('item/completed', message);
+				expect(received).toEqual(['message', 'first']);
+				expect(later).not.toHaveBeenCalled();
+				await close();
+				expect(received).toEqual(['message', 'first', 'end']);
+				(await reserve()).release();
+			});
+			it('retains a rejected late steering promise without masking the error', async () => {
+				const managed = await finishedControls();
+				const pending =
+					Promise.withResolvers<import('../../../shared/chatSteering').SteeringResultFrame>();
+				vi.spyOn(
+					await import('../../../main/codex-app-server/steering'),
+					'steerCodexAppServerTurn'
+				).mockReturnValueOnce(pending.promise);
+				const response = managed.harnessControl!.steer!({ id: 'late', text: 'more' });
+				await blocked();
+				vi.mocked(captureException).mockImplementation(() => {
+					throw new Error('capture failed');
+				});
+				const result = expect(response).rejects.toThrow('steering failed');
+				pending.reject(new Error('steering failed'));
+				await result;
+				await drain();
+				(await reserve()).release();
+			});
+			it('preserves immediate ended-turn delivery, unsubscribe and listener errors', async () => {
+				const managed = await finishedControls();
+				const received: string[] = [];
+				const off = managed.codexAppServer!.onTurnEnd(() => {
+					received.push('ended');
+				});
+				received.push('returned');
+				expect(received).toEqual(['ended', 'returned']);
+				off();
+				off();
+				expect(() =>
+					managed.codexAppServer!.onTurnEnd(() => {
+						throw new Error('listener failed');
+					})
+				).toThrow('listener failed');
+				(await reserve()).release();
+			});
+			it('admits a retained steering verdict before emitter lookup and preserves failures', async () => {
+				const managed = await finishedControls();
+				const steering = await import('../../../main/codex-app-server/steering');
+				const spy = vi
+					.spyOn(steering, 'steerCodexAppServerTurn')
+					.mockResolvedValueOnce({ type: 'steering', id: 'late', verdict: 'delivered' });
+				await managed.harnessControl!.steer!({ id: 'late', text: 'more' });
+				await drain();
+				const verdict = spy.mock.calls[0][2];
+				const emit = vi.spyOn(emitter, 'emit');
+				const frame = { type: 'steering', id: 'late', verdict: 'absorbed' } as const;
+				const hold = await reserve();
+				try {
+					expect(() => verdict(frame)).toThrow('reserved');
+					expect(emit).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+				verdict(frame);
+				expect(emit).toHaveBeenCalledWith('steering-verdict', 'rpc-session', frame);
+				emit.mockImplementationOnce(() => {
+					throw new Error('emit failed');
+				});
+				expect(() => verdict(frame)).toThrow('emit failed');
+				(await reserve()).release();
+			});
+		});
 		it('retains one deduplicated timer after native close and registration removal', async () => {
 			const managed = await finishedControls();
 			const timer = vi.spyOn(globalThis, 'setTimeout');
