@@ -3539,6 +3539,269 @@ describe('Claude SDK native activity', () => {
 		await drain();
 		(await reserve()).release();
 	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses retained Claude callbacks before lookup or recovery under %s',
+		async (root) => {
+			claude.spawn(input);
+			const managed = processes.get(input.sessionId)!;
+			const { prompt, options } = probes.query.mock.calls[0][0];
+			if (typeof prompt === 'string') throw new Error('Expected streaming input');
+			const messages = prompt[Symbol.asyncIterator]();
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			const hold = await reserve(root);
+			const lookup = vi.fn(() => {
+				throw new Error('lookup before admission');
+			});
+			Object.defineProperty(input, 'prompt', { get: lookup });
+			Object.defineProperty(managed, 'spawnGeneration', { get: lookup });
+			const permissionOptions = {
+				get signal() {
+					return lookup();
+				},
+			};
+			vi.mocked(captureException).mockClear();
+			probes.stderr.mockClear();
+			try {
+				await expect(options!.canUseTool!('Bash', {}, permissionOptions as never)).rejects.toThrow(
+					'reserved'
+				);
+				await expect(messages.next()).rejects.toThrow('reserved');
+				await expect(messages.return!()).rejects.toThrow('reserved');
+				await expect(messages.throw!(new Error('input throw'))).rejects.toThrow('reserved');
+				expect(() => native.stderr.emit('data', 'late diagnostic')).toThrow('reserved');
+				expect(lookup).not.toHaveBeenCalled();
+				expect(probes.interaction).not.toHaveBeenCalled();
+				expect(probes.stderr).not.toHaveBeenCalled();
+				expect(captureException).not.toHaveBeenCalled();
+				expect(fallback).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each(['standard', 'full', 'readonly'] as const)(
+		'preserves late Claude %s permission decisions and refuses policy lookup under reservation',
+		async (permissionMode) => {
+			claude.spawn({ ...input, permissionMode });
+			const approve = probes.query.mock.calls[0][0].options!.canUseTool!;
+			next.resolve({ done: true, value: undefined });
+			await close();
+			probes.interaction.mockResolvedValue({ outcome: 'selected', optionId: 'allow' });
+			const opts = { signal, toolUseID: 'tool', requestId: 'request' };
+			await expect(approve('Read', {}, opts)).resolves.toMatchObject({ behavior: 'allow' });
+			await expect(approve('Bash', {}, opts)).resolves.toMatchObject({
+				behavior: permissionMode === 'readonly' ? 'deny' : 'allow',
+			});
+			const hold = await reserve();
+			try {
+				await expect(approve('Read', {}, opts)).rejects.toThrow('reserved');
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each([false, true])(
+		'owns parallel late Claude permissions through replacement (rejected: %s)',
+		async (rejected) => {
+			claude.spawn(input);
+			const approve = probes.query.mock.calls[0][0].options!.canUseTool!;
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			const first = Promise.withResolvers<unknown>();
+			const last = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
+			const opts = { signal, toolUseID: 'tool', requestId: 'request' };
+			const firstDecision = approve('Bash', { command: 'fixture' }, opts);
+			const lastDecision = approve('Read', {}, opts);
+			await blocked();
+			native = makeNative();
+			next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+			claude.spawn(input);
+			processes.clear();
+			next.resolve({ done: true, value: undefined });
+			await close();
+			last.resolve({ outcome: 'cancelled' });
+			await expect(lastDecision).resolves.toMatchObject({ behavior: 'deny' });
+			await drain();
+			await blocked();
+			if (rejected) {
+				const error = new Error('late permission failed');
+				const checked = expect(firstDecision).rejects.toBe(error);
+				first.reject(error);
+				await checked;
+				expect(captureException).toHaveBeenCalledWith(error);
+			} else {
+				first.resolve({ outcome: 'selected', optionId: 'allow' });
+				await expect(firstDecision).resolves.toMatchObject({ behavior: 'allow' });
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('admits a late Claude permission before pending reservation canonicalization', async () => {
+		claude.spawn(input);
+		const approve = probes.query.mock.calls[0][0].options!.canUseTool!;
+		next.resolve({ done: true, value: undefined });
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const permission = Promise.withResolvers<unknown>();
+		probes.interaction.mockReturnValueOnce(permission.promise);
+		const decision = approve('Bash', {}, { signal, toolUseID: 'tool', requestId: 'request' });
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await blocked();
+		permission.resolve({ outcome: 'selected', optionId: 'allow' });
+		await decision;
+		await drain();
+		(await reserve()).release();
+	});
+	it.each([false, true])(
+		'owns late Claude input return/queued calls (rejected: %s)',
+		async (rejected) => {
+			claude.spawn(input);
+			const prompt = probes.query.mock.calls[0][0].prompt;
+			if (typeof prompt === 'string') throw new Error('Expected streaming input');
+			const messages = prompt[Symbol.asyncIterator]();
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			const returning = Promise.withResolvers<undefined>();
+			const result = messages.return!(returning.promise);
+			const queued = messages.next();
+			const error = new Error('queued input throw');
+			const thrown = expect(messages.throw!(error)).rejects.toBe(error);
+			const checked = rejected
+				? expect(result).rejects.toThrow('return failed')
+				: expect(result).resolves.toMatchObject({ done: true });
+			await blocked();
+			native = makeNative();
+			next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+			claude.spawn(input);
+			processes.clear();
+			next.resolve({ done: true, value: undefined });
+			await close();
+			await blocked();
+			if (rejected) returning.reject(new Error('return failed'));
+			else returning.resolve(undefined);
+			await checked;
+			await expect(queued).resolves.toMatchObject({ done: true });
+			await thrown;
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('preserves admitted late Claude input order and question mapping', async () => {
+		claude.spawn(input);
+		const { prompt, options } = probes.query.mock.calls[0][0];
+		if (typeof prompt === 'string') throw new Error('Expected streaming input');
+		const messages = prompt[Symbol.asyncIterator]();
+		next.resolve({ done: true, value: undefined });
+		await close();
+		await expect(messages.next()).resolves.toMatchObject({
+			value: { message: { content: 'fixture' } },
+		});
+		await expect(messages.next()).resolves.toMatchObject({ done: true });
+		probes.interaction.mockResolvedValueOnce({
+			outcome: 'answers',
+			answers: { 'question-0': ['Yes'] },
+		});
+		await expect(
+			options!.canUseTool!(
+				'AskUserQuestion',
+				{
+					questions: [
+						{
+							question: 'Continue?',
+							header: 'Next',
+							options: [{ label: 'Yes', description: 'Continue' }],
+						},
+					],
+				},
+				{ signal, toolUseID: 'tool', requestId: 'request' }
+			)
+		).resolves.toMatchObject({ behavior: 'deny', message: expect.stringContaining('Yes') });
+		const aborted = new AbortController();
+		aborted.abort();
+		await expect(
+			options!.canUseTool!(
+				'Bash',
+				{},
+				{ signal: aborted.signal, toolUseID: 'tool', requestId: 'request' }
+			)
+		).resolves.toMatchObject({ behavior: 'deny', message: 'Permission request was interrupted.' });
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['input', 'permission'] as const)(
+		'observes late Claude %s lookup failures even when diagnostics fail',
+		async (kind) => {
+			claude.spawn(input);
+			const { prompt, options } = probes.query.mock.calls[0][0];
+			if (typeof prompt === 'string') throw new Error('Expected streaming input');
+			const messages = prompt[Symbol.asyncIterator]();
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			const error = new Error('late lookup failed');
+			const lookup = () => {
+				throw error;
+			};
+			Object.defineProperty(input, 'prompt', { get: lookup });
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				throw new Error('diagnostics failed');
+			});
+			const pending =
+				kind === 'input'
+					? messages.next()
+					: options!.canUseTool!('Bash', {}, {
+							get signal() {
+								return lookup();
+							},
+						} as never);
+			await expect(pending).rejects.toBe(error);
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(error);
+			expect(probes.interaction).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it('preserves synchronous late Claude stderr ordering, errors and replacement filtering', async () => {
+		claude.spawn(input);
+		const old = native;
+		next.resolve({ done: true, value: undefined });
+		await close();
+		processes.clear();
+		probes.stderr.mockClear();
+		old.stderr.emit('data', 'first');
+		old.stderr.emit('data', 'second');
+		expect(probes.stderr.mock.calls).toEqual([
+			[input.sessionId, 'first'],
+			[input.sessionId, 'second'],
+		]);
+		const error = new Error('stderr output failed');
+		probes.stderr.mockImplementationOnce(() => {
+			throw error;
+		});
+		vi.mocked(captureException).mockImplementationOnce(() => {
+			throw new Error('diagnostics failed');
+		});
+		expect(() => old.stderr.emit('data', 'bad')).toThrow(error);
+		(await reserve()).release();
+		native = makeNative();
+		next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+		claude.spawn(input);
+		next.resolve({ done: true, value: undefined });
+		await close();
+		probes.stderr.mockClear();
+		old.stderr.emit('data', 'superseded');
+		expect(probes.stderr).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
 	it.each([false, true])(
 		'retains permission completion and failure after query and native close (failure: %s)',
 		async (fail) => {

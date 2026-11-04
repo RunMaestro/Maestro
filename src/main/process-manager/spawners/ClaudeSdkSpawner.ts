@@ -237,9 +237,10 @@ class ClaudeTurn {
 		this.query = query({
 			prompt: {
 				[Symbol.asyncIterator]: () => ({
-					next: () => this.observeCompletion(input.next()),
-					return: (value) => this.observeCompletion(input.return(value)),
-					throw: (error) => this.observeCompletion(input.throw(error)),
+					// The SDK can retain input operations after the original turn settles.
+					next: () => this.withActivity(() => input.next()),
+					return: (value) => this.withActivity(() => input.return(value)),
+					throw: (error) => this.withActivity(() => input.throw(error)),
 				}),
 			},
 			options: {
@@ -247,7 +248,12 @@ class ClaudeTurn {
 					const child = this.spawnChild(command, args, { cwd, env, signal, windowsHide: true });
 					child.stderr.setEncoding('utf8');
 					child.stderr.on('data', (data: string) => {
-						if (!this.isSuperseded()) this.ctx.stderrHandler.handleData(config.sessionId, data);
+						withWorktreeTurnActivity(
+							() => {
+								if (!this.isSuperseded()) this.ctx.stderrHandler.handleData(config.sessionId, data);
+							},
+							(error) => void captureException(error)
+						);
 					});
 					return child;
 				},
@@ -261,7 +267,7 @@ class ClaudeTurn {
 						: config.permissionMode === 'readonly'
 							? 'plan'
 							: 'default',
-				canUseTool: (...args) => this.observeCompletion(canUseTool(...args)),
+				canUseTool: (...args) => this.withActivity(() => canUseTool(...args)),
 				additionalDirectories: config.sessionAdditionalDirectories?.map((item) => item.path),
 				pathToClaudeCodeExecutable: config.command,
 				allowDangerouslySkipPermissions: config.permissionMode === 'full',
@@ -445,7 +451,7 @@ class ClaudeTurn {
 
 	private withActivity<T>(operation: () => Promise<T>): Promise<T> {
 		try {
-			// Observe the actual returned control promise, including fire-and-forget
+			// Observe the actual callback/control promise, including fire-and-forget
 			// SDK callers, independently of the original turn's settled observer.
 			return withWorktreeTurnActivity(
 				(_start, observe) => observe(operation()),
