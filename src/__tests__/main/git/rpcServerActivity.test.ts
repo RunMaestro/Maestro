@@ -10,6 +10,7 @@ import type {
 } from '../../../main/process-manager/types';
 import type { DataBufferManager } from '../../../main/process-manager/handlers/DataBufferManager';
 import type { NdJsonConnection } from '../../../shared/maestro-lib/harness/rpc/connection';
+import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const probes = vi.hoisted(() => ({
 	request: vi.fn(),
@@ -21,7 +22,10 @@ const probes = vi.hoisted(() => ({
 	acpClient: vi.fn(),
 	notify: vi.fn(),
 	respond: vi.fn(),
+	query: vi.fn<typeof import('@anthropic-ai/claude-agent-sdk').query>(),
+	stderr: vi.fn(),
 }));
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: probes.query }));
 vi.mock('../../../main/codex-app-server/rpc-client', async (original) => ({
 	...(await original<typeof import('../../../main/codex-app-server/rpc-client')>()),
 	CodexAppServerRpc: class {
@@ -64,7 +68,7 @@ vi.mock('../../../main/process-manager/handlers/StdoutHandler', () => ({
 }));
 vi.mock('../../../main/process-manager/handlers/StderrHandler', () => ({
 	StderrHandler: class {
-		handleData = vi.fn();
+		handleData = probes.stderr;
 	},
 }));
 vi.mock('../../../main/process-manager/handlers/ExitHandler', () => ({
@@ -1670,5 +1674,326 @@ describe('standalone Hermes gateway activity', () => {
 		await blocked();
 		await close();
 		(await reserve()).release();
+	});
+});
+
+describe('Claude SDK native activity', () => {
+	let claude: import('../../../main/process-manager/spawners/ClaudeSdkSpawner').ClaudeSdkSpawner;
+	let input: ProcessConfig;
+	let next: ReturnType<typeof Promise.withResolvers<IteratorResult<SDKMessage>>>;
+	let sdk: Query;
+	const signal = new AbortController().signal;
+	beforeEach(async () => {
+		const { ClaudeSdkSpawner } =
+			await import('../../../main/process-manager/spawners/ClaudeSdkSpawner');
+		claude = new ClaudeSdkSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
+		input = config({ toolType: 'claude-code', harnessControlMode: 'native' });
+		next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+		sdk = {
+			[Symbol.asyncIterator]: () => ({ next: () => next.promise }),
+			interrupt: vi.fn().mockResolvedValue(undefined),
+			close: vi.fn(),
+		} as unknown as Query;
+		native.on('error', vi.fn());
+		probes.query.mockImplementation(({ options }) => {
+			options!.spawnClaudeCodeProcess!({
+				command: 'sdk-command',
+				args: ['sdk-arg'],
+				cwd: target,
+				env: { SDK_ENV: 'sdk-env' },
+				signal,
+			});
+			return sdk;
+		});
+	});
+	it.each([target, path.join(target, 'nested'), path.resolve('unrelated')])(
+		'refuses every setup and fallback under reservation %s',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				for (const overrides of [{}, { harnessControlMode: undefined }, { cwd: '/remote' }])
+					expect(claude.spawn({ ...input, ...overrides })).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+				for (const probe of [
+					createOutputParser,
+					buildChildProcessEnv,
+					probes.query,
+					spawn,
+					fallback,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it('admission precedes pending canonicalization and environment setup', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		let duringSetup!: Promise<void>;
+		vi.mocked(buildChildProcessEnv).mockImplementationOnce(() => {
+			duringSetup = blocked();
+			return {};
+		});
+		expect(claude.spawn(input).success).toBe(true);
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await duringSetup;
+		next.resolve({ done: true, value: undefined });
+		await drain();
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('preserves SDK native options and stderr without a second stdout reader', async () => {
+		claude.spawn(input);
+		expect(spawn).toHaveBeenCalledWith('sdk-command', ['sdk-arg'], {
+			cwd: target,
+			env: { SDK_ENV: 'sdk-env' },
+			signal,
+			windowsHide: true,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		});
+		expect(native.stdout.listenerCount('data')).toBe(0);
+		native.stderr.emit('data', 'diagnostic');
+		expect(probes.stderr).toHaveBeenCalledWith(input.sessionId, 'diagnostic');
+		next.resolve({ done: true, value: undefined });
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['exit', 'error', 'interrupt', 'kill', 'result'])(
+		'%s does not prove independent child close',
+		async (event) => {
+			claude.spawn(input);
+			const managed = processes.get(input.sessionId)!;
+			if (event === 'exit') native.emit('exit', 0, null);
+			if (event === 'error') native.emit('error', new Error('native error'));
+			if (event === 'interrupt') await managed.sdkController!.interrupt();
+			if (event === 'kill') await managed.sdkController!.kill();
+			if (event === 'result') {
+				const result = next;
+				next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+				result.resolve({
+					done: false,
+					value: { type: 'result', subtype: 'success', result: 'fixture' } as SDKMessage,
+				});
+				await drain();
+			}
+			next.resolve({ done: true, value: undefined });
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('holds pending query iteration after Stop, unregister and native close', async () => {
+		claude.spawn(input);
+		await processes.get(input.sessionId)!.sdkController!.interrupt();
+		processes.clear();
+		await close();
+		await blocked();
+		next.resolve({ done: true, value: undefined });
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['interrupt', 'close'] as const)(
+		'tracks harness %s completion and failure after query and child close',
+		async (method) => {
+			const pending = Promise.withResolvers<Awaited<ReturnType<Query['interrupt']>>>();
+			if (method === 'interrupt') vi.mocked(sdk.interrupt).mockReturnValueOnce(pending.promise);
+			else
+				vi.mocked(sdk.close).mockImplementationOnce(() => {
+					throw new Error('close failure');
+				});
+			claude.spawn(input);
+			const control = processes.get(input.sessionId)!.harnessControl!;
+			if (method === 'close') {
+				await expect(control.close()).rejects.toThrow('close failure');
+			} else {
+				const completion = control.interrupt();
+				next.resolve({ done: true, value: undefined });
+				await close();
+				await blocked();
+				pending.reject(new Error('interrupt failure'));
+				await completion;
+			}
+			next.resolve({ done: true, value: undefined });
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'retains permission completion and failure after query and native close (failure: %s)',
+		async (fail) => {
+			const permission = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(permission.promise);
+			claude.spawn(input);
+			const decision = probes.query.mock.calls[0][0].options!.canUseTool!(
+				'Bash',
+				{},
+				{ signal, toolUseID: 'tool', requestId: 'request' }
+			);
+			next.resolve({ done: true, value: undefined });
+			await close();
+			await blocked();
+			if (fail) {
+				const rejected = expect(decision).rejects.toThrow('permission failed');
+				permission.reject(new Error('permission failed'));
+				await rejected;
+			} else {
+				permission.resolve({ outcome: 'selected', optionId: 'allow' });
+				await expect(decision).resolves.toMatchObject({ behavior: 'allow' });
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('holds an outstanding input pull through SDK error and pending exit reporting', async () => {
+		const reporting = Promise.withResolvers<void>();
+		probes.exit.mockReturnValueOnce(reporting.promise);
+		claude.spawn(input);
+		const prompt = probes.query.mock.calls[0][0].prompt;
+		if (typeof prompt === 'string') throw new Error('Expected streaming input');
+		const messages = prompt[Symbol.asyncIterator]();
+		await messages.next();
+		const waiting = messages.next();
+		next.reject(new Error('SDK failed'));
+		await close();
+		await waiting;
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['parser', 'env', 'query', 'nonstart'])(
+		'releases proven prestart %s failures without invoking recovery',
+		async (stage) => {
+			const fail = () => {
+				throw new Error('prestart');
+			};
+			if (stage === 'parser') vi.mocked(createOutputParser).mockImplementationOnce(fail);
+			if (stage === 'env') vi.mocked(buildChildProcessEnv).mockImplementationOnce(fail);
+			if (stage === 'query') probes.query.mockImplementationOnce(fail);
+			if (stage === 'nonstart') vi.mocked(spawn).mockImplementationOnce(fail);
+			claude.spawn(input);
+			await drain();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['lost-handle', 'observer', 'postspawn'])(
+		'keeps uncertain %s state blocked',
+		async (stage) => {
+			if (stage === 'lost-handle') vi.mocked(spawn).mockReturnValueOnce(undefined as never);
+			if (stage === 'observer')
+				vi.spyOn(native, 'on').mockImplementationOnce(() => {
+					throw new Error('observer failed');
+				});
+			if (stage === 'postspawn')
+				native.stderr.setEncoding.mockImplementationOnce(() => {
+					throw new Error('decoder failed');
+				});
+			claude.spawn(input);
+			await drain();
+			expect(fallback).not.toHaveBeenCalled();
+			if (stage !== 'postspawn') await close();
+			await blocked();
+		}
+	);
+	it('retains every replaced generation even after its process registration is removed', async () => {
+		claude.spawn(input);
+		const old = native;
+		native = makeNative();
+		next.resolve({ done: true, value: undefined });
+		next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+		claude.spawn(input);
+		old.stderr.emit('data', 'superseded diagnostic');
+		expect(probes.stderr).not.toHaveBeenCalled();
+		processes.clear();
+		next.resolve({ done: true, value: undefined });
+		await close();
+		await blocked();
+		await close(old);
+		(await reserve()).release();
+	});
+	it.each([false, true])(
+		'composes CLI fallback lifetime (setup failure: %s)',
+		async (failSetup) => {
+			fallback.mockImplementationOnce((fallbackInput) =>
+				spawner.spawn(
+					config({
+						...fallbackInput,
+						nativeRpcArgs: ['--mode', 'rpc-ui'],
+						nativeRpcProtocol: 'omp-rpc',
+					})
+				)
+			);
+			if (failSetup)
+				vi.mocked(createOutputParser).mockImplementationOnce(() => {
+					throw new Error('parser failed');
+				});
+			claude.spawn({
+				...input,
+				permissionMode: 'full',
+				harnessControlMode: failSetup ? 'native' : undefined,
+			});
+			expect(fallback).toHaveBeenCalledOnce();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])('rejects an escaped SDK launch (previous launch: %s)', async (launch) => {
+		if (!launch) probes.query.mockImplementationOnce(() => sdk);
+		claude.spawn(input);
+		const escaped = probes.query.mock.calls[0][0].options!.spawnClaudeCodeProcess!;
+		next.resolve({ done: true, value: undefined });
+		await close();
+		const hold = await reserve();
+		try {
+			vi.mocked(spawn).mockClear();
+			expect(() => escaped({ command: 'late', args: [], env: {}, signal })).toThrow('one launch');
+			expect(spawn).not.toHaveBeenCalled();
+		} finally {
+			hold.release();
+		}
+	});
+	it.each(['sdk', 'turn'])('shares the one-launch limit after %s launch', async (first) => {
+		boundary.withWorktreeTurnActivity((start, observe, spawnChild) => {
+			if (first === 'sdk') spawnChild('sdk', [], {});
+			else
+				observe(
+					start({ command: 'first', args: [], cwd: target, env: {} }, {}, { stopGraceMs: 1 }).done
+				);
+			expect(() => spawnChild('second-sdk', [], {})).toThrow('one launch');
+			expect(() =>
+				start({ command: 'second', args: [], cwd: target, env: {} }, {}, { stopGraceMs: 1 })
+			).toThrow('one launch');
+			observe(Promise.resolve());
+		}, vi.fn());
+		expect(spawn).toHaveBeenCalledOnce();
+		await close();
+		(await reserve()).release();
+	});
+	it('verifies the lockfile SDK invokes its custom spawn hook synchronously', async () => {
+		const actual = await vi.importActual<typeof import('@anthropic-ai/claude-agent-sdk')>(
+			'@anthropic-ai/claude-agent-sdk'
+		);
+		const sentinel = new Error('hook reached');
+		const hook = vi.fn(() => {
+			throw sentinel;
+		});
+		expect(() =>
+			actual.query({
+				prompt: 'fixture',
+				options: { pathToClaudeCodeExecutable: 'owned-fixture', spawnClaudeCodeProcess: hook },
+			})
+		).toThrow(sentinel);
+		expect(hook).toHaveBeenCalledOnce();
+		expect(spawn).not.toHaveBeenCalled();
 	});
 });

@@ -22,6 +22,10 @@ import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import { parseQuestionRequest } from '../../permission-relay/question-request';
 import { encodeQuestionAnswer } from '../../../renderer/components/PermissionPrompt/questionAnswer';
 import { isClaudeReadOnlyTool } from '../../../shared/maestro-lib/providers/claude-permissions';
+import {
+	withWorktreeTurnActivity,
+	type WorktreeChildSpawner,
+} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'ClaudeSdk';
 
@@ -54,11 +58,29 @@ export class ClaudeSdkSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(_start, observe, spawnChild) => this.spawnAdmitted(config, spawnChild, observe),
+				(error) => {
+					void captureException(error);
+					logger.error('[ClaudeTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				}
+			);
+		} catch (error) {
+			return { pid: -1, success: false, error: String(error) };
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		spawnChild: WorktreeChildSpawner,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		if (config.toolType !== 'claude-code' || config.harnessControlMode !== 'native') {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new ClaudeTurn(this.context, config).start();
+			return new ClaudeTurn(this.context, config, spawnChild, observeCompletion).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -102,7 +124,9 @@ class ClaudeTurn {
 
 	constructor(
 		private readonly ctx: ClaudeTurnContext,
-		private readonly config: ProcessConfig
+		private readonly config: ProcessConfig,
+		private readonly spawnChild: WorktreeChildSpawner,
+		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -126,15 +150,15 @@ class ClaudeTurn {
 			projectPath: config.projectPath,
 			agentSessionId: config.agentSessionId,
 			sdkController: {
-				interrupt: () => this.interrupt(),
-				kill: () => this.close(),
+				interrupt: () => this.observeCompletion(this.interrupt()),
+				kill: () => this.observeCompletion(this.close()),
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
 				closed: this.closed.promise,
-				steer: (request) => this.steer(request),
-				interrupt: async () => this.interrupt(),
-				close: async () => this.close(),
+				steer: (request) => this.observeCompletion(this.steer(request)),
+				interrupt: () => this.observeCompletion(this.interrupt()),
+				close: () => this.observeCompletion(this.close()),
 			},
 		};
 	}
@@ -143,7 +167,7 @@ class ClaudeTurn {
 		const { sessionId } = this.config;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.run().catch((error) => this.handleRunError(error));
+		this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
 		return { pid: -1, success: true };
 	}
 
@@ -209,9 +233,24 @@ class ClaudeTurn {
 			}
 			return { behavior: 'deny', message: 'Denied by user.' };
 		};
+		const input = this.inputMessages();
 		this.query = query({
-			prompt: this.inputMessages(),
+			prompt: {
+				[Symbol.asyncIterator]: () => ({
+					next: () => this.observeCompletion(input.next()),
+					return: (value) => this.observeCompletion(input.return(value)),
+					throw: (error) => this.observeCompletion(input.throw(error)),
+				}),
+			},
 			options: {
+				spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }) => {
+					const child = this.spawnChild(command, args, { cwd, env, signal, windowsHide: true });
+					child.stderr.setEncoding('utf8');
+					child.stderr.on('data', (data: string) => {
+						if (!this.isSuperseded()) this.ctx.stderrHandler.handleData(config.sessionId, data);
+					});
+					return child;
+				},
 				cwd: config.cwd,
 				resume: config.agentSessionId,
 				model: config.modelId,
@@ -222,7 +261,7 @@ class ClaudeTurn {
 						: config.permissionMode === 'readonly'
 							? 'plan'
 							: 'default',
-				canUseTool,
+				canUseTool: (...args) => this.observeCompletion(canUseTool(...args)),
 				additionalDirectories: config.sessionAdditionalDirectories?.map((item) => item.path),
 				pathToClaudeCodeExecutable: config.command,
 				allowDangerouslySkipPermissions: config.permissionMode === 'full',
@@ -394,14 +433,14 @@ class ClaudeTurn {
 		this.queueWaiter = undefined;
 		this.query?.close();
 		this.closed.resolve();
-		void this.ctx.exitHandler
-			.handleExit(this.config.sessionId, code, this.managedProcess)
-			.catch((error) => {
-				logger.error('[ClaudeTurn] handleExit failed', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
+		this.observeCompletion(
+			this.ctx.exitHandler.handleExit(this.config.sessionId, code, this.managedProcess)
+		).catch((error) => {
+			logger.error('[ClaudeTurn] handleExit failed', LOG_CONTEXT, {
+				sessionId: this.config.sessionId,
+				error: String(error),
 			});
+		});
 	}
 
 	private isSuperseded(): boolean {

@@ -1,5 +1,17 @@
 import { beginGlobalWorktreeActivity } from './worktreeActivity';
 import { startTurn, TurnNotStartedError } from '../../shared/maestro-lib/run/start-turn';
+import {
+	spawn,
+	type ChildProcess,
+	type ChildProcessWithoutNullStreams,
+	type SpawnOptionsWithoutStdio,
+} from 'child_process';
+
+export type WorktreeChildSpawner = (
+	command: string,
+	args: readonly string[],
+	options: SpawnOptionsWithoutStdio
+) => ChildProcessWithoutNullStreams;
 
 /**
  * Run one synchronous native-turn setup under conservative global admission.
@@ -14,7 +26,8 @@ import { startTurn, TurnNotStartedError } from '../../shared/maestro-lib/run/sta
 export function withWorktreeTurnActivity<T>(
 	operation: (
 		start: typeof startTurn,
-		observe: <Result>(completion: Promise<Result>) => Promise<Result>
+		observe: <Result>(completion: Promise<Result>) => Promise<Result>,
+		spawnChild: WorktreeChildSpawner
 	) => T,
 	reportError: (error: unknown) => void
 ): T {
@@ -43,27 +56,48 @@ export function withWorktreeTurnActivity<T>(
 		});
 		return completion;
 	};
-	const start: typeof startTurn = (spec, handlers, options) => {
+	const launch = <Handle>(
+		create: () => Handle,
+		childOf: (handle: Handle) => ChildProcess
+	): Handle => {
 		if (setupSettled || launchAttempted)
 			throw new Error('Native turn activity permits one launch during synchronous setup.');
 		launchAttempted = true;
 		nativeMayExist = true;
-		let turn;
+		let handle: Handle;
 		try {
-			turn = startTurn(spec, handlers, options);
+			handle = create();
 		} catch (error) {
 			if (error instanceof TurnNotStartedError) nativeMayExist = false;
 			throw error;
 		}
 		// done may settle on error; only close proves the child/stdio ended.
-		turn.child.on('close', () => {
+		childOf(handle).on('close', () => {
 			closed = true;
 			releaseIfSettled();
 		});
-		return turn;
+		return handle;
 	};
+	const start: typeof startTurn = (spec, handlers, options) =>
+		launch(
+			() => startTurn(spec, handlers, options),
+			(turn) => turn.child
+		);
+	// SDKs own their stream decoding and cancellation. Preserve their native
+	// options without attaching a second reader or changing their stop behavior.
+	const spawnChild: WorktreeChildSpawner = (command, args, options) =>
+		launch(
+			() => {
+				try {
+					return spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
+				} catch (error) {
+					throw new TurnNotStartedError(error);
+				}
+			},
+			(child) => child
+		);
 	try {
-		return operation(start, observe);
+		return operation(start, observe, spawnChild);
 	} catch (error) {
 		reportFailure(error);
 		throw error;
