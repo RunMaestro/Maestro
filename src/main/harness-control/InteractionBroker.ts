@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import {
 	parseHarnessInteractionRequest,
 	parseHarnessInteractionResponse,
@@ -20,6 +21,7 @@ interface PendingInteraction {
 	request: HarnessInteractionRequest;
 	timer: NodeJS.Timeout;
 	resolve: (resolution: HarnessInteractionResolution) => void;
+	release: () => void;
 }
 
 export interface HarnessInteractionOpenResult {
@@ -51,33 +53,69 @@ export class InteractionBroker {
 		raw: HarnessInteractionOpenRequest,
 		timeoutMs = this.defaultTimeoutMs
 	): HarnessInteractionOpenResult {
-		const request = parseHarnessInteractionRequest({
-			...raw,
-			requestId: randomUUID(),
-			createdAt: Date.now(),
-		});
-		if (!request) throw new TypeError('Invalid harness interaction request');
-
-		const { promise: completion, resolve: resolveCompletion } =
-			Promise.withResolvers<HarnessInteractionResolution>();
-		const timer = setTimeout(() => {
-			this.settle(request.requestId, { outcome: 'cancelled', reason: 'timeout' });
-		}, timeoutMs);
-		timer.unref?.();
-		this.pending.set(request.requestId, { request, timer, resolve: resolveCompletion });
-
+		const release = beginGlobalWorktreeActivity();
+		let setupSettled = false;
+		let timerMayExist = false;
+		let settled = false;
+		let released = false;
+		const releaseIfSettled = () => {
+			if (setupSettled && (!timerMayExist || settled) && !released) {
+				released = true;
+				release();
+			}
+		};
 		try {
-			if (this.handlers.onRequest(request) === false) {
+			const request = parseHarnessInteractionRequest({
+				...raw,
+				requestId: randomUUID(),
+				createdAt: Date.now(),
+			});
+			if (!request) throw new TypeError('Invalid harness interaction request');
+
+			const { promise: completion, resolve: resolveCompletion } =
+				Promise.withResolvers<HarnessInteractionResolution>();
+			// A throwing timer/registration setup may already have retained work.
+			// Keep unknown state busy rather than equating a failed open with completion.
+			timerMayExist = true;
+			const timer = setTimeout(() => {
+				this.settle(request.requestId, { outcome: 'cancelled', reason: 'timeout' });
+			}, timeoutMs);
+			timer.unref?.();
+			this.pending.set(request.requestId, {
+				request,
+				timer,
+				resolve: resolveCompletion,
+				release: () => {
+					settled = true;
+					releaseIfSettled();
+				},
+			});
+
+			try {
+				if (this.handlers.onRequest(request) === false) {
+					this.settle(request.requestId, { outcome: 'cancelled', reason: 'owner-unavailable' });
+				}
+			} catch {
 				this.settle(request.requestId, { outcome: 'cancelled', reason: 'owner-unavailable' });
 			}
-		} catch {
-			this.settle(request.requestId, { outcome: 'cancelled', reason: 'owner-unavailable' });
+			return { request, completion };
+		} finally {
+			setupSettled = true;
+			releaseIfSettled();
 		}
-		return { request, completion };
 	}
 
 	/** Validate and settle a user response exactly once, including option membership checks. */
 	resolve(raw: unknown): HarnessInteractionResolveResult {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return this.resolveAdmitted(raw);
+		} finally {
+			release();
+		}
+	}
+
+	private resolveAdmitted(raw: unknown): HarnessInteractionResolveResult {
 		const response = parseHarnessInteractionResponse(raw);
 		if (!response) return 'invalid-response';
 		const pending = this.pending.get(response.requestId);
@@ -107,6 +145,19 @@ export class InteractionBroker {
 		spawnGeneration?: number,
 		reason: HarnessInteractionCancelReason = 'process-exited'
 	): number {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return this.closeSessionAdmitted(sessionId, spawnGeneration, reason);
+		} finally {
+			release();
+		}
+	}
+
+	private closeSessionAdmitted(
+		sessionId: string,
+		spawnGeneration: number | undefined,
+		reason: HarnessInteractionCancelReason
+	): number {
 		let closed = 0;
 		for (const pending of [...this.pending.values()]) {
 			if (
@@ -122,8 +173,13 @@ export class InteractionBroker {
 
 	/** Cancel every request when the native transport has closed. */
 	closeAll(reason: HarnessInteractionCancelReason = 'transport-closed'): void {
-		for (const requestId of [...this.pending.keys()]) {
-			this.settle(requestId, { outcome: 'cancelled', reason });
+		const release = beginGlobalWorktreeActivity();
+		try {
+			for (const requestId of [...this.pending.keys()]) {
+				this.settle(requestId, { outcome: 'cancelled', reason });
+			}
+		} finally {
+			release();
 		}
 	}
 
@@ -134,6 +190,15 @@ export class InteractionBroker {
 
 	/** Settle, notify, and forget a request while keeping answer values out of settlement events. */
 	private settle(requestId: string, resolution: HarnessInteractionResolution): boolean {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return this.settleAdmitted(requestId, resolution);
+		} finally {
+			release();
+		}
+	}
+
+	private settleAdmitted(requestId: string, resolution: HarnessInteractionResolution): boolean {
 		const pending = this.pending.get(requestId);
 		if (!pending) return false;
 		this.pending.delete(requestId);
@@ -149,6 +214,10 @@ export class InteractionBroker {
 			});
 		} catch {
 			// Settlement is already final. A detached UI listener cannot reopen it.
+		} finally {
+			// Timer cancellation, decision settlement and synchronous delivery ended.
+			// Native providers, async subscribers and external consumers remain separate.
+			pending.release();
 		}
 		return true;
 	}

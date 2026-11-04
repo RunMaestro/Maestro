@@ -186,9 +186,12 @@ describe('process cancellation and control IPC activity', () => {
 				registry.resolvePending('request', { behavior: 'deny', message: 'test cleanup' });
 			}
 		});
-		it('keeps a real harness request pending on refusal and admits its settlement broadcast', async () => {
+		it('keeps a real harness request busy until its admitted settlement broadcast completes', async () => {
 			const { InteractionBroker } = await import('../../../main/harness-control/InteractionBroker');
-			const broadcast = vi.fn(() => expect(active).toBe(1));
+			let duringBroadcast = 0;
+			const broadcast = vi.fn(() => {
+				duringBroadcast = active;
+			});
 			const broker = new InteractionBroker({ onRequest: () => true, onSettled: broadcast });
 			const opened = broker.open(interactionFixture.permission as HarnessInteractionOpenRequest);
 			const raw = { requestId: opened.request.requestId, outcome: 'selected', optionId: 'allow' };
@@ -196,20 +199,21 @@ describe('process cancellation and control IPC activity', () => {
 				broker.resolve(value)
 			);
 			try {
-				const hold = await idle();
-				expect(() => handler('harnessControl:respond')({}, raw)).toThrow(/reserved/);
+				// The broker owns pending work independently of the response IPC scope.
+				await busy();
 				expect(broker.pendingRequests()).toHaveLength(1);
 				expect(broadcast).not.toHaveBeenCalled();
-				hold.release();
 				expect(handler('harnessControl:respond')({}, raw)).toBe('resolved');
 				await expect(opened.completion).resolves.toEqual({
 					outcome: 'selected',
 					optionId: 'allow',
 				});
 				expect(broadcast).toHaveBeenCalledTimes(1);
+				expect(duringBroadcast).toBeGreaterThan(0);
 				expect(broker.pendingRequests()).toHaveLength(0);
 				await idle();
 			} finally {
+				for (const release of releases) release();
 				broker.closeAll();
 			}
 		});
