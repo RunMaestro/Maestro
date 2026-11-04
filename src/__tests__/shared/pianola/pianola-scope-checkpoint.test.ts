@@ -131,6 +131,27 @@ describe('scope checkpoint validation', () => {
 });
 
 describe('scope checkpoint filesystem storage', () => {
+	it('skips passive clocks but persists retry authority and durable clocks', () => {
+		const value = checkpoint();
+		store.writeScopeCheckpoint(value);
+		const before = fs.readFileSync(checkpointPath(), 'utf8');
+		const inode = fs.statSync(checkpointPath(), { bigint: true }).ino;
+		// A caller's property insertion order must not force an otherwise equal write.
+		const { tabs, ...rest } = value;
+		const reordered = { tabs, ...rest, lastSnapshotAt: 120, nextTabIndex: 1 };
+		store.writeScopeCheckpoint(reordered);
+		expect(fs.readFileSync(checkpointPath(), 'utf8')).toBe(before);
+		expect(fs.statSync(checkpointPath(), { bigint: true }).ino).toBe(inode);
+		reordered.tabs[0].state.pendingRetry = { messageId: 'ask', attempts: 1 };
+		store.writeScopeCheckpoint(reordered);
+		expect(store.readScopeCheckpoint(scopeId)?.tabs[0].state.pendingRetry).toEqual({
+			messageId: 'ask',
+			attempts: 1,
+		});
+		store.writeScopeCheckpoint({ ...reordered, lastSnapshotAt: 130 }, true);
+		expect(store.readScopeCheckpoint(scopeId)?.lastSnapshotAt).toBe(130);
+	});
+
 	it('distinguishes a missing checkpoint from invalid JSON and invalid schema', () => {
 		expect(store.readScopeCheckpoint(scopeId)).toBeNull();
 		fs.writeFileSync(checkpointPath(), '{broken');

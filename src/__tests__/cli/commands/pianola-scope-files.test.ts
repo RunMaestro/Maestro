@@ -9,6 +9,8 @@ import { resolveSyncDir } from '../../../shared/syncPath';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 
+vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
+
 const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
 const directories: string[] = [];
 const watchers: PianolaScopeFiles[] = [];
@@ -35,6 +37,27 @@ function setup() {
 }
 
 describe('scope file wakeups', () => {
+	it('does not reread unchanged files and inspects only the named mutation', () => {
+		const { directory, files, signal } = setup();
+		const file = path.join(directory, 'maestro-pianola-rules.json');
+		fs.writeFileSync(file, '{}');
+		files.refresh();
+		signal.mockClear();
+		const read = vi.spyOn(fs, 'readFileSync');
+		files.refresh();
+		expect(read.mock.calls.map((args) => path.basename(String(args[0])))).toEqual([
+			'maestro-bootstrap.json',
+		]);
+		read.mockClear();
+		fs.writeFileSync(file, '{"rules":[]}');
+		const watcher = (files as unknown as { watchers: Map<string, fs.FSWatcher> }).watchers.get(
+			directory
+		)!;
+		watcher.emit('change', 'rename', path.basename(file));
+		expect(read.mock.calls.map((args) => args[0])).toEqual([file]);
+		expect(signal).toHaveBeenCalledOnce();
+	});
+
 	it('detects atomic registry and synced settings changes, then rebinds the sync location', async () => {
 		const { directory, files, signal } = setup();
 		const sync = path.join(directory, 'synced');

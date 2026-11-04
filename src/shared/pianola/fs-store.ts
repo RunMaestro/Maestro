@@ -14,6 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'node:util';
 import { reconcileSuggestionEvidence } from './pianola-synthesis';
 import { settledDecisionPairs } from './transcript-mining';
 import { createHash } from 'crypto';
@@ -983,12 +984,6 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
 			throw new Error('Invalid Pianola scope checkpoint');
 		}
-		if (
-			Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf-8') + 1 >
-			20 * 1024 * 1024
-		) {
-			throw new Error('Pianola checkpoint too large');
-		}
 		withFileLock(name, 'scope checkpoint', () => {
 			const before = receipt ? readMutationContent(name) : null;
 			const current = readScopeCheckpoint(checkpoint.scopeId);
@@ -1023,7 +1018,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 					coverage: tab.coverage ? { ...tab.coverage, observedAt: undefined } : undefined,
 				})),
 			});
-			if (current && canonicalJson(current) === canonicalJson(checkpoint)) {
+			if (current && isDeepStrictEqual(current, checkpoint)) {
 				receipt?.({ before, after: before });
 				return;
 			}
@@ -1032,7 +1027,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				current &&
 				(checkpoint.lastSnapshotAt ?? 0) >= (current.lastSnapshotAt ?? 0) &&
 				(checkpoint.lastSnapshotAt ?? 0) - (current.lastSnapshotAt ?? 0) < 20_000 &&
-				canonicalJson(observationState(current)) === canonicalJson(observationState(checkpoint))
+				isDeepStrictEqual(observationState(current), observationState(checkpoint))
 			) {
 				receipt?.({ before, after: before });
 				return;

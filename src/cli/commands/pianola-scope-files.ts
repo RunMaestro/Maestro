@@ -15,6 +15,7 @@ import {
 export class PianolaScopeFiles {
 	private watchers = new Map<string, fs.FSWatcher>();
 	private snapshots = new Map<string, string | null>();
+	private revisions = new Map<string, string>();
 	private paths: string[] = [];
 	private disposed = false;
 	private failed = false;
@@ -55,13 +56,14 @@ export class PianolaScopeFiles {
 				this.watchers.clear();
 				this.paths = paths;
 				this.snapshots.clear();
+				this.revisions.clear();
 				for (const file of paths) this.snapshots.set(file, this.read(file));
 			}
 			for (const dir of new Set(paths.map((file) => path.dirname(file)))) {
 				if (this.watchers.has(dir)) continue;
 				const watcher = fs.watch(dir, (_event, filename) => {
 					if (filename && !this.paths.includes(path.join(dir, filename.toString()))) return;
-					this.inspect();
+					this.inspect(filename ? [path.join(dir, filename.toString())] : this.paths);
 				});
 				watcher.on('error', () => {
 					watcher.close();
@@ -81,14 +83,34 @@ export class PianolaScopeFiles {
 		}
 	}
 
-	private inspect(): boolean {
+	private inspect(paths = this.paths): boolean {
 		if (this.disposed) return false;
 		try {
 			let changed = false;
-			for (const file of this.paths) {
+			for (const file of paths) {
+				// Reuse the store's nanosecond identity scheme for passive hints only.
+				// Commit the identity only after a stable read; never cache a failed read.
+				const revision = (): string => {
+					try {
+						const stat = fs.statSync(file, { bigint: true });
+						return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
+						throw error;
+					}
+				};
+				const before = revision();
+				if (before === this.revisions.get(file)) continue;
 				const actual = this.read(file);
+				const after = revision();
+				if (before !== after) {
+					this.revisions.delete(file);
+					this.signal();
+					continue;
+				}
 				if (actual !== this.snapshots.get(file)) changed = true;
 				this.snapshots.set(file, actual);
+				this.revisions.set(file, after);
 			}
 			if (changed) this.signal();
 			return true;
@@ -104,6 +126,7 @@ export class PianolaScopeFiles {
 		file: string,
 		write: (receipt: (value: PianolaFileMutationReceipt) => void) => void
 	): void {
+		this.revisions.delete(file);
 		let before: string | null;
 		try {
 			before = this.read(file);

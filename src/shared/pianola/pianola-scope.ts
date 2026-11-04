@@ -211,14 +211,14 @@ export function validatePianolaScopeSelection(raw: unknown): PianolaScopeSelecti
 }
 
 /** Match current membership and verify the entire native ancestry before admission. */
-function ownerMatches(
+function ownerSelectionState(
 	selection: PianolaScopeSelection,
 	owner: PianolaScopeOwner,
 	owners: ReadonlyMap<string, PianolaScopeOwner>,
 	excluded: ReadonlySet<string>,
 	requireGroupMetadata: boolean
-): boolean {
-	if (selection.mode !== 'agents-and-groups') return false;
+): 'selected' | 'unselected' | 'unknown' {
+	if (selection.mode !== 'agents-and-groups') return 'unknown';
 	const seen = new Set<string>();
 	let current: PianolaScopeOwner | undefined = owner;
 	let selected = false;
@@ -231,7 +231,7 @@ function ownerMatches(
 			current.remote !== false ||
 			current.isPianola !== false
 		)
-			return false;
+			return 'unknown';
 		seen.add(current.id);
 		// Check only this lineage. Incomplete unrelated owners must not prevent
 		// other agents from running, or let a paused group be bypassed here.
@@ -242,7 +242,7 @@ function ownerMatches(
 				!current.groupId.trim() ||
 				current.groupId.length > 200)
 		)
-			return false;
+			return 'unknown';
 		// Missing group metadata is never interpreted as current membership.
 		if (
 			selection.agentIds.includes(current.id) ||
@@ -252,10 +252,19 @@ function ownerMatches(
 			(typeof current.groupId === 'string' && selection.groupIds.includes(current.groupId))
 		)
 			selected = true;
-		if (!current.parentSessionId) return selected;
+		if (!current.parentSessionId) return selected ? 'selected' : 'unselected';
 		current = owners.get(current.parentSessionId);
 	}
-	return false;
+	return 'unknown';
+}
+
+/** Passive hint suppression only. Incomplete census/ancestry must continue to wake. */
+export function pianolaOwnerSelectionState(
+	selection: PianolaAgentGroupSelection,
+	owner: PianolaScopeOwner,
+	owners: ReadonlyMap<string, PianolaScopeOwner>
+): 'selected' | 'unselected' | 'unknown' {
+	return ownerSelectionState(selection, owner, owners, new Set(), selection.groupIds.length > 0);
 }
 
 /**
@@ -297,8 +306,10 @@ export function resolvePianolaScopeOwnership(
 	const requireGroupMetadata = scopes.some(
 		(scope) => scope.selection.mode === 'agents-and-groups' && scope.selection.groupIds.length > 0
 	);
-	const matching = scopes.filter((scope) =>
-		ownerMatches(scope.selection, owner, owners, excluded, requireGroupMetadata)
+	const matching = scopes.filter(
+		(scope) =>
+			ownerSelectionState(scope.selection, owner, owners, excluded, requireGroupMetadata) ===
+			'selected'
 	);
 	if (matching.some((scope) => !scope.enabled))
 		return { kind: 'excluded', reason: 'disabled scope' };

@@ -1001,6 +1001,71 @@ describe('production scope loop event drain', () => {
 		}
 	});
 
+	it('bounds selected busy chunks while deadlines and exit shorten the wait', async () => {
+		vi.useFakeTimers();
+		const wakeups = new PianolaScopeWakeups();
+		try {
+			wakeups.setMembership(
+				{
+					capturedAt: 1,
+					complete: true,
+					owners: [{ id: 'selected', cwd: '/', isPianola: false, remote: false, groupId: null }],
+					tabs: [
+						{
+							agentId: 'selected',
+							tabId: 't',
+							busy: true,
+							createdAt: 1,
+							paused: false,
+							consult: false,
+							ephemeral: false,
+							cursorAvailable: true,
+							cursor: null,
+						},
+					],
+				},
+				{
+					label: 's',
+					mode: 'agents-and-groups',
+					agentIds: ['selected'],
+					groupIds: [],
+					excludedAgentIds: [],
+				},
+				wakeups.generation
+			);
+			const frame = {
+				type: 'bridge.event',
+				channel: 'sessions:transcriptCommitted',
+				args: [{ agentId: 'selected' }],
+			};
+			let woke = false;
+			const wait = wakeups.wait(Date.now() + 20000).then(() => {
+				woke = true;
+			});
+			for (let i = 0; i < 100; i++) {
+				wakeups.onFrame(frame);
+				await vi.advanceTimersByTimeAsync(5);
+			}
+			expect(woke).toBe(false);
+			wakeups.onFrame({ type: 'bridge.event', channel: 'process:exit' });
+			await vi.advanceTimersByTimeAsync(50);
+			await wait;
+			expect(woke).toBe(true);
+			wakeups.consume();
+			woke = false;
+			const deadline = wakeups.wait(Date.now() + 25).then(() => {
+				woke = true;
+			});
+			wakeups.onFrame(frame);
+			await vi.advanceTimersByTimeAsync(25);
+			await deadline;
+			expect(woke).toBe(true);
+		} finally {
+			wakeups.dispose();
+			vi.useRealTimers();
+		}
+	});
+
 	it('keeps group, future and descendant identities eligible for a resync', async () => {
 		vi.useFakeTimers();
 		const wakeups = new PianolaScopeWakeups();
@@ -1079,4 +1144,213 @@ describe('production scope loop event drain', () => {
 			vi.useRealTimers();
 		}
 	});
+});
+
+// Equal scheduling windows; real production cycle/store, synthetic census and wire.
+describe('equal wall clock recovery and chunk budgets', () => {
+	it.each(['idle', 'unselected', 'selected-busy'] as const)(
+		'%s: compares 5s polling with event recovery',
+		async (scenario) => {
+			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			fs.mkdirSync(root, { recursive: true });
+			const measurements = [];
+			for (const mode of ['poll', 'events'] as const) {
+				const directory = fs.mkdtempSync(path.join(root, 'l03-window-'));
+				const store = createPianolaFsStore({
+					resolveDir: () => directory,
+					indent: 2,
+					trailingNewline: true,
+				});
+				const wakeups = new PianolaScopeWakeups();
+				vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+				vi.setSystemTime(100000);
+				const scopeId = '11111111-1111-4111-8111-111111111111';
+				const selection = {
+					mode: 'agents-and-groups' as const,
+					label: 'selected',
+					agentIds: ['selected'],
+					groupIds: [],
+					excludedAgentIds: [],
+				};
+				store.writeSupervisorTargets([
+					{
+						id: scopeId,
+						kind: 'watch-scope',
+						enabled: true,
+						createdAt: 1,
+						managerAgentId: 'manager',
+						selection,
+					},
+				]);
+				const snapshot = {
+					capturedAt: Date.now(),
+					complete: true,
+					owners: ['selected', 'outside'].map((id) => ({
+						id,
+						cwd: directory,
+						isPianola: false,
+						remote: false,
+						groupId: null,
+						parentSessionId: null,
+					})),
+					tabs: Array.from({ length: 500 }, (_, i) => ({
+						agentId: 'selected',
+						tabId: `tab-${i}`,
+						createdAt: 1,
+						paused: false,
+						consult: false,
+						ephemeral: false,
+						busy: scenario === 'selected-busy',
+						cursorAvailable: true,
+						cursor: null,
+					})),
+				};
+				let cycles = 0,
+					wireBytes = 0,
+					frames = 0,
+					cycleCpu = 0,
+					cycleMs = 0,
+					hostWireCpu = 0,
+					censusWireBytes = 0,
+					censusWireCpu = 0;
+				const io = { reads: 0, readBytes: 0, writes: 0, writeBytes: 0 };
+				const readFile = fs.readFileSync,
+					writeFile = fs.writeFileSync;
+				const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((
+					...args: Parameters<typeof readFile>
+				) => {
+					const value = Reflect.apply(readFile, fs, args) as string | Buffer;
+					io.reads++;
+					io.readBytes += Buffer.byteLength(value);
+					return value;
+				}) as typeof readFile);
+				const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((
+					...args: Parameters<typeof writeFile>
+				) => {
+					io.writes++;
+					io.writeBytes += Buffer.byteLength(args[1] as string);
+					return Reflect.apply(writeFile, fs, args);
+				}) as typeof writeFile);
+				syncBuiltinESMExports();
+				const deps = {
+					store,
+					readSnapshot: async () => {
+						const cpu = process.cpuUsage();
+						const serialized = JSON.stringify(snapshot);
+						censusWireBytes += Buffer.byteLength(serialized);
+						const response = JSON.parse(serialized);
+						const used = process.cpuUsage(cpu);
+						censusWireCpu += used.user + used.system;
+						return response;
+					},
+					readTranscript: vi.fn(async () => {
+						throw new Error('unchanged/busy transcript must not be read');
+					}),
+					watch: {
+						readRules: () => [],
+						recordDecision: store.appendDecision,
+						now: () => new Date().toISOString(),
+						genId: () => 'unused',
+						log: () => {},
+						notify: () => {},
+					},
+					dispatch: vi.fn(),
+					requestJudgment: vi.fn(),
+				};
+				const cycle = async () => {
+					snapshot.capturedAt = Date.now();
+					const cpu = process.cpuUsage(),
+						start = realPerformance.now();
+					const result = await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+					const used = process.cpuUsage(cpu);
+					cycleCpu += used.user + used.system;
+					cycleMs += realPerformance.now() - start;
+					expect(result.issues).toEqual([]);
+					cycles++;
+					wakeups.setMembership(snapshot, selection, wakeups.generation);
+				};
+				try {
+					await cycle(); // enrollment outside observed window
+					cycles = 0;
+					Object.assign(io, { reads: 0, readBytes: 0, writes: 0, writeBytes: 0 });
+					cycleCpu = 0;
+					cycleMs = 0;
+					censusWireBytes = 0;
+					censusWireCpu = 0;
+					let due = false;
+					let waiting = Promise.resolve();
+					const arm = () => {
+						due = false;
+						waiting = wakeups.wait(Date.now() + (mode === 'poll' ? 5000 : 20000)).then(() => {
+							due = true;
+						});
+					};
+					arm();
+					for (let elapsed = 50; elapsed <= 60000; elapsed += 50) {
+						if (scenario !== 'idle') {
+							const cpu = process.cpuUsage();
+							for (let i = 0; i < 5; i++) {
+								const json = JSON.stringify({
+									type: 'bridge.event',
+									channel: 'sessions:transcriptCommitted',
+									args: [
+										{
+											agentId: scenario === 'unselected' ? 'outside' : 'selected',
+											revision: frames++,
+										},
+									],
+								});
+								wireBytes += Buffer.byteLength(json);
+								const frame = JSON.parse(json);
+								if (mode === 'events') wakeups.onFrame(frame);
+							}
+							const used = process.cpuUsage(cpu);
+							hostWireCpu += used.user + used.system;
+						}
+						await vi.advanceTimersByTimeAsync(50);
+						if (due) {
+							await waiting;
+							wakeups.consume();
+							await cycle();
+							arm();
+						}
+					}
+					expect(cycles).toBe(mode === 'poll' || scenario === 'selected-busy' ? 12 : 3);
+					expect(deps.readTranscript).not.toHaveBeenCalled();
+					expect(deps.dispatch).not.toHaveBeenCalled();
+					expect(deps.requestJudgment).not.toHaveBeenCalled();
+					measurements.push({
+						scenario,
+						mode,
+						windowMs: 60000,
+						io: { ...io },
+						cycles,
+						frames,
+						wireBytes,
+						cycleCpuMicros: cycleCpu,
+						cycleElapsedMs: cycleMs,
+						transportAndHintCpuMicros: hostWireCpu,
+						censusWireBytes,
+						censusWireCpuMicros: censusWireCpu,
+						workerCpuExcludingCensusSerializationMicros: cycleCpu - censusWireCpu,
+						decisions: store.readDecisions().length,
+						rss: process.memoryUsage().rss,
+					});
+				} finally {
+					readSpy.mockRestore();
+					writeSpy.mockRestore();
+					syncBuiltinESMExports();
+					wakeups.dispose();
+					vi.useRealTimers();
+					fs.rmSync(directory, { recursive: true, force: true });
+				}
+			}
+			if (process.env.PIANOLA_RECORD_MEASUREMENTS === '1')
+				fs.writeFileSync(
+					path.join(root, `L03-window-${scenario}.json`),
+					JSON.stringify(measurements, null, 2)
+				);
+		},
+		30000
+	);
 });

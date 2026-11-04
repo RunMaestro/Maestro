@@ -18,6 +18,7 @@ import {
 import { generateUUID } from '../../shared/uuid';
 import {
 	isPianolaScopeId,
+	pianolaOwnerSelectionState,
 	type PianolaAgentGroupSelection,
 } from '../../shared/pianola/pianola-scope';
 import {
@@ -214,10 +215,12 @@ export class PianolaScopeWakeups {
 	private wake: (() => void) | undefined;
 	private stopped = false;
 	private unselected = new Set<string>();
+	private busyOwners = new Set<string>();
 	private membershipGeneration = 0;
 	invalidate = (): void => {
 		this.membershipGeneration++;
 		this.unselected.clear();
+		this.busyOwners.clear();
 		this.signal();
 	};
 	get generation(): number {
@@ -231,47 +234,30 @@ export class PianolaScopeWakeups {
 		if (generation !== this.membershipGeneration) return;
 		const owners = new Map(snapshot.owners.map((owner) => [owner.id, owner]));
 		const unselected = new Set<string>();
+		if (!snapshot.complete || owners.size !== snapshot.owners.length) {
+			this.unselected.clear();
+			this.busyOwners.clear();
+			return;
+		}
+		const selected = new Set<string>();
 		for (const owner of snapshot.owners) {
-			let current = owner;
-			const seen = new Set<string>();
-			let safe = true;
-			while (true) {
-				if (
-					seen.has(current.id) ||
-					seen.size >= 100 ||
-					current.remote !== false ||
-					current.isPianola !== false ||
-					(selection.groupIds.length > 0 &&
-						current.groupId !== null &&
-						(typeof current.groupId !== 'string' || !current.groupId.trim()))
-				) {
-					safe = false;
-					break;
-				}
-				seen.add(current.id);
-				if (
-					selection.agentIds.includes(current.id) ||
-					(typeof current.groupId === 'string' && selection.groupIds.includes(current.groupId)) ||
-					(selection.futureLocalAgents && !selection.futureAgentBaselineIds?.includes(current.id))
-				) {
-					safe = false;
-					break;
-				}
-				if (!current.parentSessionId) break;
-				const parent = owners.get(current.parentSessionId);
-				if (!parent) {
-					safe = false;
-					break;
-				}
-				current = parent;
-			}
-			if (safe) unselected.add(owner.id);
+			const state = pianolaOwnerSelectionState(selection, owner, owners);
+			if (state === 'unselected') unselected.add(owner.id);
+			if (state === 'selected') selected.add(owner.id);
 		}
 		this.unselected = unselected;
+		// Busy streams get one census per five seconds, independent of chunk frequency.
+		// Deadlines and process/owner events retain their own earlier wakeup.
+		this.busyOwners = new Set(
+			snapshot.tabs
+				.filter((tab) => tab.busy === true && selected.has(tab.agentId))
+				.map((tab) => tab.agentId)
+		);
+		for (const tab of snapshot.tabs) if (tab.busy !== true) this.busyOwners.delete(tab.agentId);
 	}
 	signal = (): void => {
 		if (this.stopped) return;
-		this.dirtyAt ??= Date.now() + 50;
+		this.dirtyAt = Math.min(this.dirtyAt ?? Infinity, Date.now() + 50);
 		this.wake?.();
 	};
 	onFrame = (frame: Record<string, unknown>): void => {
@@ -283,6 +269,12 @@ export class PianolaScopeWakeups {
 						? (cursor as { agentId?: unknown }).agentId
 						: undefined;
 				if (typeof agentId === 'string' && this.unselected.has(agentId)) return;
+				if (typeof agentId === 'string' && this.busyOwners.has(agentId)) {
+					if (this.stopped) return;
+					this.dirtyAt = Math.min(this.dirtyAt ?? Infinity, Date.now() + 5000);
+					this.wake?.();
+					return;
+				}
 				this.signal();
 				return;
 			}
