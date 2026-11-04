@@ -47,7 +47,10 @@ import { useAtMentionCompletion } from './useAtMentionCompletion';
 import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing, type ProcessInputOptions } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
-import { hasCapabilityCached } from '../agent/useAgentCapabilities';
+import {
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+} from '../../components/ChatComposer';
 import {
 	useCrossAgentDispatch,
 	type SpawnBackgroundSynopsisFn,
@@ -851,15 +854,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			if (isGroupChatActive) {
 				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
-				const canAttach = chat?.moderatorAgentId
-					? hasCapabilityCached(chat.moderatorAgentId, 'supportsImageInput')
-					: false;
-				if (!canAttach) {
+				if (!canModeratorReadImages(chat?.moderatorAgentId)) {
 					e.preventDefault();
-					notifyCenterFlash({
-						message: "This room's moderator can't read images",
-						color: 'yellow',
-					});
+					flashModeratorCannotReadImages();
 					return;
 				}
 			}
@@ -1199,21 +1196,23 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const pathlessFiles: File[] = [];
 			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
+			let roomModeratorRefusedImages = false;
+			if (isGroupChatActive) {
+				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+				if (!canModeratorReadImages(chat?.moderatorAgentId)) {
+					const hasAnyImage = Array.from(files).some((file) => file.type.startsWith('image/'));
+					if (hasAnyImage) {
+						roomModeratorRefusedImages = true;
+						flashModeratorCannotReadImages();
+					}
+				}
+			}
+
 			for (let i = 0; i < files.length; i++) {
 				const file = files[i];
 				if (file.type.startsWith('image/')) {
-					if (isGroupChatActive) {
-						const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
-						const canAttach = chat?.moderatorAgentId
-							? hasCapabilityCached(chat.moderatorAgentId, 'supportsImageInput')
-							: false;
-						if (!canAttach) {
-							notifyCenterFlash({
-								message: "This room's moderator can't read images",
-								color: 'yellow',
-							});
-							continue;
-						}
+					if (roomModeratorRefusedImages) {
+						continue;
 					}
 					const reader = new FileReader();
 					reader.onload = (event) => {

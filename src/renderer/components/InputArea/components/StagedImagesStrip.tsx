@@ -1,6 +1,7 @@
 import React, { memo, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { MiniBadge } from '../../ui/MiniBadge';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../services/stagedImagesOrganizer';
 import { StagedImageTile } from './StagedImageTile';
@@ -75,17 +76,12 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 				)}
 
 				{warning && (
-					<div
-						data-testid="staged-images-warning"
-						className="flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium shrink-0 self-center border"
-						style={{
-							backgroundColor: `${theme.colors.warning ?? '#eab308'}1a`,
-							borderColor: `${theme.colors.warning ?? '#eab308'}40`,
-							color: theme.colors.warning ?? '#eab308',
-						}}
-					>
-						<span>{warning}</span>
-					</div>
+					<MiniBadge
+						label={warning}
+						theme={theme}
+						color={theme.colors.warning}
+						testId="staged-images-warning"
+					/>
 				)}
 
 				<div

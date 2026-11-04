@@ -14,6 +14,53 @@
 
 import type { AgentCapabilities } from '../../../shared/types';
 import type { ComposerCommandMode } from '../../utils/shellCommandInput';
+import { getCachedCapabilities } from '../../hooks/agent/useAgentCapabilities';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+
+export const MODERATOR_CANNOT_READ_IMAGES_MESSAGE = "This room's moderator can't read images";
+export const REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL = 'Remove the attached images to send';
+
+/**
+ * Flash a standard yellow center notification explaining that the room's
+ * moderator cannot read images.
+ */
+export function flashModeratorCannotReadImages(detail?: string): void {
+	notifyCenterFlash({
+		message: MODERATOR_CANNOT_READ_IMAGES_MESSAGE,
+		color: 'yellow',
+		...(detail ? { detail } : {}),
+	});
+}
+
+export interface ModeratorCapabilitiesState {
+	loading?: boolean;
+	error?: unknown;
+	capabilities?: AgentCapabilities;
+}
+
+/**
+ * Answers whether the room's moderator can read attached images.
+ *
+ * Rules:
+ * - If capabilities are unknown (loading, failed fetch, or not yet cached),
+ *   we keep the pre-change behavior and return true.
+ * - Only a known, successfully loaded `supportsImageInput: false` returns false.
+ */
+export function canModeratorReadImages(
+	moderatorAgentId?: string | null,
+	state?: ModeratorCapabilitiesState
+): boolean {
+	if (state) {
+		if (state.loading || state.error) return true;
+		if (state.capabilities) {
+			return state.capabilities.supportsImageInput !== false;
+		}
+	}
+	if (!moderatorAgentId) return true;
+	const cached = getCachedCapabilities(moderatorAgentId);
+	if (!cached) return true;
+	return cached.supportsImageInput !== false;
+}
 
 export interface ComposerCapabilities {
 	/** Attach Image button and its file picker. */
@@ -49,7 +96,8 @@ export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = 
 });
 
 export interface GroupChatComposerCapabilitiesInput {
-	hasCapability: (capability: keyof AgentCapabilities) => boolean;
+	hasCapability?: (capability: keyof AgentCapabilities) => boolean;
+	canAttachImages?: boolean;
 }
 
 /**
@@ -57,11 +105,17 @@ export interface GroupChatComposerCapabilitiesInput {
  * the moderator's provider can read images.
  */
 export function deriveGroupChatComposerCapabilities(
-	input: GroupChatComposerCapabilitiesInput
+	input?: GroupChatComposerCapabilitiesInput
 ): ComposerCapabilities {
+	const imageAttach =
+		input?.canAttachImages !== undefined
+			? input.canAttachImages
+			: input?.hasCapability
+				? input.hasCapability('supportsImageInput')
+				: true;
 	return {
 		...GROUP_CHAT_COMPOSER_CAPABILITIES,
-		imageAttach: input.hasCapability('supportsImageInput'),
+		imageAttach,
 	};
 }
 

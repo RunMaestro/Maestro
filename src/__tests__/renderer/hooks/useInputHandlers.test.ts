@@ -127,6 +127,11 @@ vi.mock('../../../renderer/stores/centerFlashStore', () => ({
 
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+import {
+	setCapabilitiesCache,
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 const mockNotifyCenterFlash = vi.mocked(notifyCenterFlash);
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -1273,6 +1278,38 @@ describe('useInputHandlers', () => {
 			expect(mockNotifyCenterFlash).toHaveBeenCalled();
 		});
 
+		it('refuses image paste in group chat mode when moderator cannot read images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const pasteEvt = imagePasteEvent();
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handlePaste(pasteEvt);
+			});
+
+			expect(pasteEvt.preventDefault).toHaveBeenCalled();
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
 		it('ignores a file drop while in command mode', () => {
 			const { result } = renderInCommandMode();
 
@@ -1374,6 +1411,100 @@ describe('useInputHandlers', () => {
 			});
 
 			// The drop handler creates a FileReader - just verify it doesn't throw
+			expect(dropEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('refuses image drop in group chat mode when moderator cannot read images and flashes once for multiple images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const img1 = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(img1, 'type', { value: 'image/png' });
+			const img2 = new Blob(['data2'], { type: 'image/png' });
+			Object.defineProperty(img2, 'type', { value: 'image/png' });
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 2,
+						0: img1,
+						1: img2,
+						item: (idx: number) => (idx === 0 ? img1 : img2),
+						[Symbol.iterator]: function* () {
+							yield img1;
+							yield img2;
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledTimes(1);
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('allows image drop in group chat mode when moderator capabilities are unknown / uncached', () => {
+			clearCapabilitiesCache();
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'fresh-uncached-agent' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const img1 = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(img1, 'type', { value: 'image/png' });
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: img1,
+						item: () => img1,
+						[Symbol.iterator]: function* () {
+							yield img1;
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).not.toHaveBeenCalled();
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 	});

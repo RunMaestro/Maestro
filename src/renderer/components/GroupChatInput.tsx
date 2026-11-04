@@ -32,10 +32,12 @@ import {
 	ChatComposer,
 	deriveGroupChatComposerCapabilities,
 	clipboardHasImage,
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+	REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
 } from './ChatComposer';
 import { useGroupChatStore } from '../stores/groupChatStore';
-import { useAgentCapabilities, hasCapabilityCached } from '../hooks/agent/useAgentCapabilities';
-import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { useAgentCapabilities } from '../hooks/agent/useAgentCapabilities';
 import { PhoneSheetSwitchRow } from './ui/PhoneSheetRows';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { logger } from '../utils/logger';
@@ -201,10 +203,19 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		)
 	);
 	const effectiveModeratorId = moderatorAgentId ?? storeModeratorId;
-	const { hasCapability } = useAgentCapabilities(effectiveModeratorId);
+	const {
+		capabilities: agentCaps,
+		loading: agentLoading,
+		error: agentError,
+	} = useAgentCapabilities(effectiveModeratorId);
+	const canAttachImages = canModeratorReadImages(effectiveModeratorId, {
+		loading: agentLoading,
+		error: agentError,
+		capabilities: agentCaps,
+	});
 	const capabilities = useMemo(
-		() => deriveGroupChatComposerCapabilities({ hasCapability }),
-		[hasCapability]
+		() => deriveGroupChatComposerCapabilities({ canAttachImages }),
+		[canAttachImages]
 	);
 	const stagedImagesWarning =
 		stagedImages.length > 0 && !capabilities.imageAttach
@@ -253,16 +264,17 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		// Read live moderator from store at submit time so a change between render and Enter is honored
 		const liveChat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
 		const liveModeratorId = liveChat?.moderatorAgentId ?? moderatorAgentId;
-		const canSendImages = liveModeratorId
-			? hasCapabilityCached(liveModeratorId, 'supportsImageInput')
-			: hasCapability('supportsImageInput');
+		const canSendImages =
+			liveModeratorId === effectiveModeratorId
+				? canModeratorReadImages(liveModeratorId, {
+						loading: agentLoading,
+						error: agentError,
+						capabilities: agentCaps,
+					})
+				: canModeratorReadImages(liveModeratorId);
 
 		if (stagedImages.length > 0 && !canSendImages) {
-			notifyCenterFlash({
-				message: "This room's moderator can't read images",
-				color: 'yellow',
-				detail: 'Remove the attached images to send',
-			});
+			flashModeratorCannotReadImages(REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL);
 			return;
 		}
 
@@ -281,7 +293,10 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		stagedImages,
 		setStagedImages,
 		moderatorAgentId,
-		hasCapability,
+		effectiveModeratorId,
+		agentLoading,
+		agentError,
+		agentCaps,
 	]);
 
 	const handleChange = useCallback(
@@ -296,10 +311,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 			if (clipboardHasImage(e.clipboardData) && !capabilities.imageAttach) {
 				e.preventDefault();
-				notifyCenterFlash({
-					message: "This room's moderator can't read images",
-					color: 'yellow',
-				});
+				flashModeratorCannotReadImages();
 				return;
 			}
 			handlePaste?.(e);
@@ -316,10 +328,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			);
 			if (hasImage && !capabilities.imageAttach) {
 				e.preventDefault();
-				notifyCenterFlash({
-					message: "This room's moderator can't read images",
-					color: 'yellow',
-				});
+				flashModeratorCannotReadImages();
 				return;
 			}
 			handleDrop?.(e);

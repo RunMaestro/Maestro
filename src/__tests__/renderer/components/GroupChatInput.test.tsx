@@ -1356,6 +1356,43 @@ describe('GroupChatInput', () => {
 			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
 		});
 
+		it('shows the Attach Image button while capabilities are loading', () => {
+			render(
+				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'uncached-loading-agent' })} />
+			);
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+		});
+
+		it('shows the Attach Image button and allows send when capability fetch fails', async () => {
+			vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValueOnce(
+				new Error('IPC failed')
+			);
+			const onSend = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						moderatorAgentId: 'failing-agent',
+						stagedImages: ['data:image/png;base64,sample'],
+						onSend,
+						enterToSendAI: true,
+					})}
+				/>
+			);
+
+			expect(screen.queryByTestId('staged-images-warning')).not.toBeInTheDocument();
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'allowed despite error');
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(onSend).toHaveBeenCalledWith(
+				'allowed despite error',
+				['data:image/png;base64,sample'],
+				false
+			);
+		});
+
 		it('omits the Attach Image button when the moderator does not support image input', () => {
 			render(<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal' })} />);
 			expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
@@ -1400,6 +1437,30 @@ describe('GroupChatInput', () => {
 				},
 			});
 
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(handleDrop).not.toHaveBeenCalled();
+		});
+
+		it('flashes warning only once when multiple images are dropped into an incapable moderator room', () => {
+			const handleDrop = vi.fn();
+			render(
+				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal', handleDrop })} />
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			fireEvent.drop(textarea, {
+				dataTransfer: {
+					files: [
+						new File(['img1'], 'photo1.png', { type: 'image/png' }),
+						new File(['img2'], 'photo2.png', { type: 'image/png' }),
+					],
+				},
+			});
+
+			expect(notifyCenterFlash).toHaveBeenCalledTimes(1);
 			expect(notifyCenterFlash).toHaveBeenCalledWith({
 				message: "This room's moderator can't read images",
 				color: 'yellow',
