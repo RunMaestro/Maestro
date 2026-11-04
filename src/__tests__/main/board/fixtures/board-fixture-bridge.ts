@@ -10,9 +10,9 @@ import type {
 import {
 	CommandTimeoutError,
 	ConnectionClosedError,
-	MaestroNotRunningError,
 	UnsupportedCommandError,
-} from '../../../../shared/maestro-lib/client/bridge-errors';
+} from '../../../../shared/maestro-lib/client/bridge-connection';
+import { MaestroNotRunningError } from '../../../../shared/maestro-lib/client/not-running';
 import {
 	fixtureBridgeMarkers,
 	readFixtureBridgeManifest,

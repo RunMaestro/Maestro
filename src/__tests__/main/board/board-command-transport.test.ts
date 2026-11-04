@@ -54,6 +54,7 @@ import {
 	type BoardCard,
 } from '../../../shared/board/types';
 import { CLI_SECRET_HEADER } from '../../../shared/webLogin';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -62,7 +63,9 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 let cliBuildDir: string;
 let proof: FixtureBridgeAdmission;
+const isolationFixture = createBoardIsolationFixture();
 beforeAll(async () => {
+	isolationFixture.install();
 	const isolation = requireBoardIsolation();
 	readBoardIsolationRegistries(isolation);
 	if (process.env.BOARD_ISOLATION_CONTRACT !== canonicalJson(isolation))
@@ -70,8 +73,9 @@ beforeAll(async () => {
 	configureIsolatedBoardSourceHost(isolation);
 	cliBuildDir = fs.mkdtempSync(path.join(isolation.root, 'board-cli-build-'));
 });
-afterAll(() => {
+afterAll(async () => {
 	if (cliBuildDir) fs.rmSync(cliBuildDir, { recursive: true, force: true });
+	await isolationFixture.cleanup();
 });
 async function cli(...args: string[]) {
 	const isolation = requireBoardIsolation({ expected: proof.contract });
@@ -210,11 +214,11 @@ beforeEach(async () => {
 		return plan.profileNamespace;
 	});
 	fs.writeFileSync(
-		path.join(isolation.userData, 'maestro-settings.json'),
+		path.join(isolation.sync, 'maestro-settings.json'),
 		JSON.stringify({ encoreFeatures: { board: true, maestroCue: true } })
 	);
 	fs.writeFileSync(
-		path.join(isolation.userData, 'maestro-sessions.json'),
+		path.join(isolation.sync, 'maestro-sessions.json'),
 		JSON.stringify({
 			sessions: [
 				{ id: 'creator', name: 'Creator', toolType: 'codex', projectRoot: roots[0], cwd: roots[0] },
@@ -269,6 +273,7 @@ beforeEach(async () => {
 				name: 'board-fixture-bridge',
 				setup(builder) {
 					builder.onResolve({ filter: /(?:^|\/)bridge-connection$/ }, (args) => {
+						if (args.importer === fixture) return undefined;
 						const resolved = path.resolve(args.resolveDir, args.path) + '.ts';
 						return resolved === path.resolve('src/shared/maestro-lib/client/bridge-connection.ts')
 							? { path: 'fixture', namespace: 'board-fixture' }
@@ -1691,7 +1696,7 @@ describe('source-owned canonical alias compatibility', () => {
 			const fixture = installBoardOwner(false);
 			expect((await cli('hold', id, ...common)).code).toBe(0);
 			expect((await cli('resume', id, ...common)).code).toBe(0);
-			const sessionsFile = path.join(requireBoardIsolation().userData, 'maestro-sessions.json');
+			const sessionsFile = path.join(requireBoardIsolation().sync, 'maestro-sessions.json');
 			const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
 			sessions.sessions[0].projectRoot = root;
 			sessions.sessions[0].cwd = root;
@@ -1747,7 +1752,7 @@ describe('source-owned canonical alias compatibility', () => {
 			const fixture = installBoardOwner(false);
 			expect((await cli('hold', id, ...common)).code).toBe(0);
 			expect((await cli('resume', id, ...common)).code).toBe(0);
-			const sessionsFile = path.join(dir, 'maestro-sessions.json');
+			const sessionsFile = path.join(requireBoardIsolation().sync, 'maestro-sessions.json');
 			const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
 			sessions.sessions[0].projectRoot = root;
 			sessions.sessions[0].cwd = root;
