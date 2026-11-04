@@ -1,9 +1,14 @@
+import { pianolaWatchScope } from '../../../../cli/commands/pianola-scope-watch';
+import { MaestroClient } from '../../../../cli/services/maestro-client';
+import * as workerStore from '../../../../cli/services/pianola-store';
+import * as cliStorage from '../../../../cli/services/storage';
+import type { BridgeConnectionOptions } from '../../../../shared/maestro-lib/client/bridge-connection';
 import { nativeCurrentTurns } from '../../../../main/pianola/current-turn';
 import { registerSessionCallbacks } from '../../../../main/web-server/callbacks/sessionCallbacks';
 import { handleGetSessionHistory } from '../../../../main/web-server/handlers/messageHandlers/sessions';
 import { classifyMessages } from '../../../../shared/pianola/pianola-classifier';
 import type { CurrentTurnRead } from '../../../../shared/currentTurn';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import type { AgentRun } from '../../../../shared/agent-run';
 import { handleEnqueueCommand } from '../../../../main/web-server/handlers/messageHandlers/queue';
 import * as queueSupervision from '../../../../main/web-server/handlers/messageHandlers/dispatchSupervision';
@@ -228,7 +233,7 @@ describe('persistence IPC handlers', () => {
 	});
 
 	describe('native transcript commit -> captured turn -> host -> history wire', () => {
-		it('reads the entire native current turn over 100 entries, keeping early risk before a harmless question', () => {
+		it('reads the full native turn and wakes the production worker only after owner commit', async () => {
 			const agentId = generateUUID();
 			const owner = {
 				isDestroyed: () => false,
@@ -250,7 +255,7 @@ describe('persistence IPC handlers', () => {
 						removedIds: [],
 						observation: {
 							sourceGeneration: agentId,
-							sequence: ++sequence,
+							sequence: sender === 42 ? ++sequence : sequence + 1,
 							createdAt: 7,
 							provider: 'codex',
 						},
@@ -322,7 +327,12 @@ describe('persistence IPC handlers', () => {
 				});
 				return send.mock.calls.at(-1)![1] as { currentTurn: CurrentTurnRead; messages: unknown[] };
 			};
+			const committedFrames = () =>
+				vi
+					.mocked(broadcastBridgeEvent)
+					.mock.calls.filter(([channel]) => channel === 'sessions:transcriptCommitted');
 			const read = request();
+			expect(committedFrames().at(-1)?.[1]).toEqual([read.currentTurn.cursor]);
 			expect(read.currentTurn.status).toBe('complete');
 			expect(read.currentTurn.messages).toHaveLength(153);
 			expect(read.currentTurn.cursor).toMatchObject({
@@ -348,7 +358,9 @@ describe('persistence IPC handlers', () => {
 			// Legacy callers still get the same persisted window and tail semantics.
 			expect(callbacks.setGetSessionHistoryCallback('tab', { tail: 1 }).messages).toHaveLength(1);
 			// A non-owning native renderer cannot revise this observation.
+			const commitCount = committedFrames().length;
 			publish([{ ...output.at(-1)!, text: 'Foreign' }], 43);
+			expect(committedFrames()).toHaveLength(commitCount);
 			expect(request().currentTurn.cursor).toEqual(read.currentTurn.cursor);
 			publish([{ ...output.at(-1)!, text: 'Which variable should I choose?' }]);
 			expect(request({ expectedCursor: read.currentTurn.cursor }).currentTurn).toMatchObject({
@@ -356,6 +368,106 @@ describe('persistence IPC handlers', () => {
 				messages: [],
 			});
 			expect(request({ expectedCursor: {} })).toHaveProperty('code', 'INVALID_CURSOR');
+			// Join the actual owner-validated IPC producer to BridgeConnection's
+			// frame callback and the production worker/cycle/store consumer.
+			vi.useFakeTimers();
+			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			mkdirSync(root, { recursive: true });
+			const directory = mkdtempSync(path.join(root, 'J02-owner-loop-'));
+			const store = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const scopeId = '11111111-1111-4111-8111-111111111111';
+			store.writeSupervisorTargets([
+				{
+					id: scopeId,
+					kind: 'watch-scope',
+					enabled: true,
+					createdAt: 1,
+					managerAgentId: 'manager',
+					selection: {
+						mode: 'agents-and-groups',
+						label: 'Selected',
+						agentIds: [agentId],
+						groupIds: [],
+						excludedAgentIds: [],
+					},
+				},
+			]);
+			let enabled = true;
+			vi.spyOn(cliStorage, 'readSettingValue').mockImplementation(() => ({ pianola: enabled }));
+			vi.spyOn(workerStore, 'readPianolaSupervisorTargets').mockImplementation(
+				store.readSupervisorTargets
+			);
+			vi.spyOn(workerStore, 'readPianolaScopeCheckpoint').mockImplementation(
+				store.readScopeCheckpoint
+			);
+			vi.spyOn(workerStore, 'writePianolaScopeCheckpoint').mockImplementation(
+				store.writeScopeCheckpoint
+			);
+			vi.spyOn(workerStore, 'readPianolaDecisions').mockImplementation(store.readDecisions);
+			vi.spyOn(workerStore, 'appendPianolaDecision').mockImplementation(store.appendDecision);
+			vi.spyOn(workerStore, 'readPianolaRules').mockReturnValue([]);
+			vi.spyOn(workerStore, 'getPianolaProfile').mockReturnValue({ entry: undefined } as never);
+			let connection: BridgeConnectionOptions;
+			vi.spyOn(MaestroClient.prototype, 'connect').mockImplementation(async function () {
+				connection = (this as unknown as { options: BridgeConnectionOptions }).options;
+			});
+			vi.spyOn(MaestroClient.prototype, 'isOpen', 'get').mockReturnValue(true);
+			vi.spyOn(MaestroClient.prototype, 'disconnect').mockImplementation(() => {});
+			let censusCount = 0;
+			vi.spyOn(MaestroClient.prototype, 'sendCommand').mockImplementation(async (message) => {
+				if (message.type === 'list_desktop_sessions') {
+					censusCount++;
+					return { success: true, ...callbacks.setListDesktopSessionsCallback() } as never;
+				}
+				handleGetSessionHistory(ctx, {} as WebClient, message as never);
+				return send.mock.calls.at(-1)![1] as never;
+			});
+			vi.mocked(broadcastBridgeEvent).mockImplementation((channel, args) => {
+				if (channel === 'sessions:transcriptCommitted') {
+					// A hint cannot run ahead of the committed native revision.
+					expect(request().currentTurn.cursor).toEqual(args[0]);
+				}
+				connection?.onFrame?.({ type: 'bridge.event', channel, args });
+			});
+			const worker = pianolaWatchScope(scopeId, { dryRun: true });
+			try {
+				await vi.advanceTimersByTimeAsync(0);
+				expect(censusCount).toBe(1);
+				const next = {
+					id: 'next-question',
+					source: 'ai',
+					text: 'Should I name it value?',
+					timestamp: 201,
+				};
+				all.push(next);
+				publish([next], 43); // unowned sync never emits the commit hint
+				await vi.advanceTimersByTimeAsync(100);
+				expect(censusCount).toBe(1);
+				expect(store.readDecisions()).toHaveLength(0);
+				publish([next]);
+				await vi.advanceTimersByTimeAsync(49);
+				expect(censusCount).toBe(1);
+				await vi.advanceTimersByTimeAsync(1);
+				expect(censusCount).toBe(2);
+				expect(store.readDecisions()).toHaveLength(1);
+				expect(store.readDecisions()[0].classification).toMatchObject({
+					kind: 'question',
+					risk: 'high',
+				});
+			} finally {
+				enabled = false;
+				connection!.onClose?.(1006, 'stop');
+				await vi.advanceTimersByTimeAsync(20000);
+				await worker;
+				vi.mocked(broadcastBridgeEvent).mockImplementation(() => {});
+				vi.restoreAllMocks();
+				vi.useRealTimers();
+				rmSync(directory, { recursive: true, force: true });
+			}
 		});
 	});
 

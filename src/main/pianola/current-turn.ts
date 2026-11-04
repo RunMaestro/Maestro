@@ -45,7 +45,7 @@ export class NativeCurrentTurns {
 		return canonicalJson([agentId, tabId]);
 	}
 
-	commit(patch: SessionTranscriptPatch): void {
+	commit(patch: SessionTranscriptPatch): CurrentTurnCursor | undefined {
 		const meta = patch.observation;
 		if (!patch.tabId || patch.field !== 'logs' || !meta) return;
 		if (
@@ -197,6 +197,7 @@ export class NativeCurrentTurns {
 			this.retainedBytes -= this.states.get(first)!.bytes;
 			this.states.delete(first);
 		}
+		return { ...state.cursor };
 	}
 
 	/** Native lifecycle evidence invalidates old reads even when ledger capture fails. */

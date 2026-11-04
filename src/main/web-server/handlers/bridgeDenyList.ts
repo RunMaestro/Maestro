@@ -116,7 +116,7 @@ const EVENTS: Record<string, string> = {
 	// is mirrored intentionally so host-created Concerto panels remain visible.
 	remote:
 		'movement cadenza cadenzaFlash cadenzaHidden notifyToast notifyCenterFlash autoRunStateMirror',
-	sessions: 'lifecycleSync transcriptSync',
+	sessions: 'lifecycleSync transcriptSync transcriptCommitted',
 	settings: 'externalChange',
 	stats: 'updated',
 	symphony: 'contributionStarted prCreated updated',

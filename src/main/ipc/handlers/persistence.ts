@@ -801,8 +801,10 @@ export function registerPersistenceHandlers(
 				owner &&
 				isWebContentsAvailable(owner) &&
 				owner.webContents.id === senderWebContentsIdOf(event)
-			)
-				nativeCurrentTurns.commit(patch);
+			) {
+				const committed = nativeCurrentTurns.commit(patch);
+				if (committed) broadcastBridgeEvent('sessions:transcriptCommitted', [committed]);
+			}
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win) && win.webContents.id !== senderWebContentsIdOf(event)) {
 					win.webContents.send('sessions:transcriptSync', patch);

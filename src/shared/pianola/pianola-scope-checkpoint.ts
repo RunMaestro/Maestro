@@ -61,6 +61,8 @@ export interface PianolaScopeCheckpointTab {
 	baselineBusy?: boolean;
 	lastSeen: PianolaScopeCursor | null;
 	state: WatchState;
+	/** Earliest retry iteration; event volume must not spend retry budgets. */
+	nextWatchAt?: number;
 	status: 'active' | 'suspended' | 'closed';
 	/** An intent persisted before delivery; an unknown outcome is never retried blindly. */
 	unresolvedIntent: { decisionId: string; messageId: string; admitted?: boolean } | null;
@@ -180,6 +182,7 @@ export function validatePianolaScopeCheckpoint(
 			(tab.baselineBusy !== undefined && typeof tab.baselineBusy !== 'boolean') ||
 			!isPianolaScopeCursor(tab.lastSeen) ||
 			!state(tab.state) ||
+			(tab.nextWatchAt !== undefined && !nonnegativeInteger(tab.nextWatchAt)) ||
 			(tab.status !== 'active' && tab.status !== 'suspended' && tab.status !== 'closed')
 		)
 			return null;

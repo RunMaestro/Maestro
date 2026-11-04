@@ -266,6 +266,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Composer, queue, and transcript
 
 - **Native current-turn observation:** `isCurrentTurnCursor()`, `sameCurrentTurnCursor()`, `composeCurrentTurn()`, `currentTurnMessages()` in `src/shared/currentTurn.ts`
+- **Coalescing Pianola scope wakeups:** `PianolaScopeWakeups` in `src/cli/commands/pianola-scope-watch.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`

@@ -80,6 +80,7 @@ function fixture() {
 		},
 	];
 	let decisionSequence = 0;
+	let clock = Date.parse('2026-10-28T00:00:00.000Z');
 	const deps: PianolaScopeCycleDeps = {
 		store,
 		readSnapshot: vi.fn(async () => JSON.parse(JSON.stringify(snapshot)) as PianolaScopeSnapshot),
@@ -91,7 +92,7 @@ function fixture() {
 		watch: {
 			readRules: () => rules,
 			recordDecision: (record) => store.appendDecision(record),
-			now: () => '2026-10-28T00:00:00.000Z',
+			now: () => new Date(clock).toISOString(),
 			genId: () => `decision-${++decisionSequence}`,
 			log: vi.fn(),
 			notify: vi.fn(),
@@ -125,6 +126,7 @@ function fixture() {
 	}
 	function cycle(id = scopeId) {
 		snapshot.capturedAt += 10;
+		clock += 5000;
 		return runPianolaScopeCycle(id, deps, { dryRun: false });
 	}
 	function saveScopes(...values: PianolaSupervisedTarget[]) {
@@ -1190,4 +1192,74 @@ describe('RF review regressions', () => {
 			)
 		).toEqual({ kind: 'explicit-watch' });
 	});
+});
+
+describe('event drain fairness and elapsed budgets', () => {
+	it('finishes a 45-tab sweep before revisiting the first 20 open decisions', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tabs = Array.from({ length: 45 }, (_, i) => f.tab('tab-' + i));
+		await f.cycle();
+		for (const tab of tabs) f.history(tab, [message('ask-' + tab.tabId)]);
+		const sweep = new Set<string>();
+		const drain = () =>
+			runPianolaScopeCycle(scopeId, f.deps, { dryRun: false, maxTabs: 20, sweep });
+		const first = await drain();
+		expect(first.moreWork).toBe(true);
+		expect(first.iterations).toHaveLength(20);
+		const second = await drain();
+		expect(second.moreWork).toBe(true);
+		expect(second.iterations.map((r) => r.tabId)).toEqual(tabs.slice(20, 40).map((t) => t.tabId));
+		const third = await drain();
+		expect(third.moreWork).toBe(false);
+		expect(third.iterations.map((r) => r.tabId)).toEqual(tabs.slice(40).map((t) => t.tabId));
+		expect(f.store.readDecisions()).toHaveLength(45);
+		expect(sweep.size).toBe(45);
+	});
+
+	it.each([1, 1000])(
+		'spends the same retry and handoff time budget with %i event cycles',
+		async (events) => {
+			const f = fixture();
+			let clock = Date.parse('2026-11-04T10:00:00Z');
+			f.deps.watch.now = () => new Date(clock).toISOString();
+			const tab = f.tab();
+			await f.cycle();
+			f.history(tab, [message('ask')]);
+			vi.mocked(f.deps.dispatch).mockResolvedValue({ status: 'rejected', error: 'refused' });
+			const cycle = () => runPianolaScopeCycle(scopeId, f.deps, { dryRun: false });
+			await cycle();
+			for (let i = 0; i < events; i++) await cycle();
+			expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+			clock += 4999;
+			await cycle();
+			expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+			clock++;
+			await cycle();
+			expect(f.deps.dispatch).toHaveBeenCalledTimes(2);
+			// The native outcome writer owns the existing accepted judgment deadline.
+			const record = f.store.readDecisions().at(-1)!;
+			const deadline = clock + 60000;
+			f.store.appendDecision(
+				updatePianolaDecision(
+					record,
+					{
+						phase: 'judgment',
+						delivery: 'accepted',
+						status: 'mira_processing',
+						deadlineAt: deadline,
+					},
+					f.deps.watch.now()
+				)
+			);
+			for (let i = 0; i < events; i++) await cycle();
+			expect(f.store.readDecisions().at(-1)?.lifecycle?.status).toBe('mira_processing');
+			clock = deadline - 1;
+			expect((await cycle()).nextDueAt).toBe(deadline);
+			clock = deadline;
+			await cycle();
+			expect(f.store.readDecisions().at(-1)?.lifecycle?.status).toBe('waiting_human');
+		},
+		20000
+	);
 });

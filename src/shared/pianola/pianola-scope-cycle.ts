@@ -111,6 +111,9 @@ export interface PianolaScopeCycleResult {
 	iterations: Array<{ agentId: string; tabId: string; result: IterationResult }>;
 	/** Metadata, history or delivery uncertainty, suitable for scope health. */
 	issues: string[];
+	/** Continue the current bounded sweep before revisiting an open decision. */
+	moreWork?: boolean;
+	nextDueAt?: number;
 }
 
 function fingerprint(value: unknown): string {
@@ -362,7 +365,7 @@ function deliveryOutcome(result: PianolaScopeDeliveryResult): { success: boolean
 export async function runPianolaScopeCycle(
 	scopeId: string,
 	deps: PianolaScopeCycleDeps,
-	options: { dryRun: boolean; maxTabs?: number; shouldStop?: () => boolean }
+	options: { dryRun: boolean; maxTabs?: number; shouldStop?: () => boolean; sweep?: Set<string> }
 ): Promise<PianolaScopeCycleResult> {
 	const targets = deps.store.readSupervisorTargets();
 	const scopes = scopesFrom(targets);
@@ -698,13 +701,18 @@ export async function runPianolaScopeCycle(
 	const start = (checkpoint.nextTabIndex ?? 0) % Math.max(1, snapshot.tabs.length);
 	const maxTabs = Math.max(1, Math.min(100, Math.floor(options.maxTabs ?? 20)));
 	const positions = new Map(snapshot.tabs.map((tab, index) => [tab, index]));
-	working.sort(
+	const eligible = working.filter(
+		({ tab }) => !options.sweep?.has(canonicalJson([tab.agentId, tab.tabId]))
+	);
+	result.moreWork = eligible.length > maxTabs;
+	eligible.sort(
 		(a, b) =>
 			((positions.get(a.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length) -
 			((positions.get(b.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length)
 	);
-	for (const { tab, saved } of working.slice(0, maxTabs)) {
+	for (const { tab, saved } of eligible.slice(0, maxTabs)) {
 		if (options.shouldStop?.() || externallySuspended) break;
+		options.sweep?.add(canonicalJson([tab.agentId, tab.tabId]));
 		checkpoint.nextTabIndex = (positions.get(tab)! + 1) % snapshot.tabs.length;
 		persist();
 		try {
@@ -893,12 +901,21 @@ export async function runPianolaScopeCycle(
 					: 'Continue bounded transcript monitoring',
 			};
 			if (saved.unresolvedIntent || pending || tab.busy) {
+				// Native decision lifecycle/deadline owns an in-flight handoff.
+				// A stale watcher retry must not keep waking an acknowledged decision.
+				saved.nextWatchAt = undefined;
 				saved.lastSeen = tab.cursor;
 				persist();
 				if (saved.unresolvedIntent)
 					result.issues.push(`Delivery outcome unknown: ${tab.agentId}/${tab.tabId}`);
 				continue;
 			}
+			if (
+				saved.state.pendingRetry &&
+				saved.nextWatchAt !== undefined &&
+				Date.parse(deps.watch.now()) < saved.nextWatchAt
+			)
+				continue;
 			let latestRecord: PianolaDecisionRecord | undefined;
 			const deliveryGuard = (record: PianolaDecisionRecord): PianolaScopeDeliveryGuard => ({
 				scopeId,
@@ -1023,6 +1040,9 @@ export async function runPianolaScopeCycle(
 				};
 			}
 			saved.state = iteration.state;
+			saved.nextWatchAt = iteration.state.pendingRetry
+				? Date.parse(deps.watch.now()) + 5000
+				: undefined;
 			saved.baselineBusy = false;
 			saved.lastSeen = tab.cursor;
 			saved.unresolvedIntent = null;
@@ -1071,6 +1091,21 @@ export async function runPianolaScopeCycle(
 			// intent, so another healthy tab in this scope can still make progress.
 		}
 	}
+	const now = Date.parse(deps.watch.now());
+	const due = [
+		...checkpoint.tabs
+			.filter((tab) => tab.status === 'active' && !!tab.state.pendingRetry)
+			.map((tab) => tab.nextWatchAt),
+		...deps.store
+			.readDecisions()
+			.filter(
+				(record) =>
+					record.lifecycle?.guard.scopeId === scopeId &&
+					record.lifecycle.status === 'mira_processing'
+			)
+			.map((record) => record.lifecycle?.deadlineAt),
+	].filter((at): at is number => at !== undefined);
+	if (due.length) result.nextDueAt = Math.min(...due) <= now ? now + 50 : Math.min(...due);
 	return result;
 }
 

@@ -46,6 +46,8 @@ Use **Automatically watch future local agents** in this section to configure a s
 
 An older Auto-Watch boolean without a manager policy displays **NeedsConfiguration** and cannot create legacy tab watchers. Both persisted sessions and plugin-created agents use the same dynamic scope path. Repeated creation notifications do not register another watcher or reset checkpoints. Closed agents lose coverage when absent from the native census. Disabling Pianola stops its supervised workers. This observation policy adds no global answer rule.
 
+Selected agent/group scopes react to native transcript and lifecycle changes, combining bursts into one serial check. A recovery census runs at least every 20 seconds while idle. Larger scopes drain in batches of 20 so pending decisions cannot starve later chats. Events do not shorten retry or manager response deadlines, and only verified current-turn evidence can authorize a reply.
+
 The collapsed watch list still shows a count of failed or backing-off watches. On startup, Pianola removes automatic watches whose agents are no longer stored; manually added watches are preserved.
 
 Each watch is supervised by the desktop app. It restarts on crash and comes back when you relaunch, so it keeps working while you are away from the keyboard. Busy worktree agents are grouped under their parent so a five-worktree project reads as one row rather than five.

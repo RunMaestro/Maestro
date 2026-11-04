@@ -431,3 +431,210 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		}
 	});
 });
+
+import { MaestroClient as ScopeClient } from '../../../cli/services/maestro-client';
+import * as cliStorage from '../../../cli/services/storage';
+import * as scopeStore from '../../../cli/services/pianola-store';
+import { PianolaScopeWakeups, pianolaWatchScope } from '../../../cli/commands/pianola-scope-watch';
+import type { BridgeConnectionOptions } from '../../../shared/maestro-lib/client/bridge-connection';
+
+describe('production scope loop event drain', () => {
+	it('coalesces native commit frames, retains in-cycle signals, recovers idle/disconnect, and stops cleanly', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1000);
+		vi.spyOn(cliStorage, 'readSettingValue').mockImplementation(() => ({
+			pianola: settings.enabled,
+		}));
+		const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+		fs.mkdirSync(root, { recursive: true });
+		const directory = fs.mkdtempSync(path.join(root, 'J02-loop-'));
+		const store = createPianolaFsStore({
+			resolveDir: () => directory,
+			indent: 2,
+			trailingNewline: true,
+		});
+		const scopeId = '11111111-1111-4111-8111-111111111111';
+		store.writeSupervisorTargets([
+			{
+				id: scopeId,
+				kind: 'watch-scope',
+				enabled: true,
+				createdAt: 1,
+				managerAgentId: 'manager',
+				selection: {
+					mode: 'agents-and-groups',
+					label: 'Selected',
+					agentIds: ['agent'],
+					groupIds: [],
+					excludedAgentIds: [],
+				},
+			},
+		]);
+		vi.spyOn(scopeStore, 'readPianolaSupervisorTargets').mockImplementation(
+			store.readSupervisorTargets
+		);
+		vi.spyOn(scopeStore, 'readPianolaScopeCheckpoint').mockImplementation(
+			store.readScopeCheckpoint
+		);
+		vi.spyOn(scopeStore, 'writePianolaScopeCheckpoint').mockImplementation(
+			store.writeScopeCheckpoint
+		);
+		vi.spyOn(scopeStore, 'readPianolaDecisions').mockImplementation(store.readDecisions);
+		vi.spyOn(scopeStore, 'appendPianolaDecision').mockImplementation(store.appendDecision);
+		vi.spyOn(scopeStore, 'readPianolaRules').mockReturnValue([]);
+		vi.spyOn(scopeStore, 'getPianolaProfile').mockReturnValue({ entry: undefined } as never);
+		let bridge: BridgeConnectionOptions;
+		vi.spyOn(ScopeClient.prototype, 'connect').mockImplementation(async function () {
+			bridge = (this as unknown as { options: BridgeConnectionOptions }).options;
+		});
+		const open = vi.spyOn(ScopeClient.prototype, 'isOpen', 'get').mockReturnValue(true);
+		const disconnect = vi.spyOn(ScopeClient.prototype, 'disconnect').mockImplementation(() => {});
+		const f = fixture();
+		let censuses = 0;
+		let signalDuringRead = false;
+		const send = vi
+			.spyOn(ScopeClient.prototype, 'sendCommand')
+			.mockImplementation(async (message) => {
+				if (message.type === 'list_desktop_sessions') {
+					censuses++;
+					const turn = f.read();
+					return {
+						success: true,
+						supervisionVersion: 1,
+						complete: true,
+						capturedAt: Date.now(),
+						owners: [
+							{
+								id: 'agent',
+								cwd: '/project',
+								parentSessionId: null,
+								isPianola: false,
+								remote: false,
+							},
+						],
+						sessions: [
+							{
+								agentId: 'agent',
+								tabId: 'tab',
+								createdAt: 7,
+								supervision: {
+									cwd: '/project',
+									parentSessionId: null,
+									isPianola: false,
+									remote: false,
+									lineageComplete: true,
+									paused: false,
+									busy: false,
+									consult: false,
+									ephemeral: false,
+									cursorAvailable: true,
+									currentTurn: turn,
+								},
+							},
+						],
+					} as never;
+				}
+				if (message.type === 'get_session_history') {
+					if (signalDuringRead) {
+						signalDuringRead = false;
+						bridge!.onFrame!({ type: 'session_state_change' });
+					}
+					return {
+						success: true,
+						agentId: 'agent',
+						tabId: 'tab',
+						currentTurn: f.index.read(
+							binding,
+							message.expectedCursor as never,
+							true,
+							message.deltaBase as never
+						),
+					} as never;
+				}
+				throw new Error('Unexpected worker command: ' + message.type);
+			});
+		const listeners = process.listenerCount('SIGTERM');
+		const running = pianolaWatchScope(scopeId, { dryRun: true });
+		try {
+			await vi.advanceTimersByTimeAsync(0);
+			expect(censuses).toBe(1);
+			// An unowned sync and provider output are not a native commit wakeup.
+			bridge!.onFrame!({ type: 'bridge.event', channel: 'sessions:transcriptSync', args: [{}] });
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(censuses).toBe(1);
+			// A run update before transcript commit is only a dirty hint.
+			bridge!.onFrame!({ type: 'bridge.event', channel: 'agentRun:updated' });
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(2);
+			expect(store.readDecisions()).toHaveLength(0);
+			f.commit([f.row('question', 'Should I use count or total?')]);
+			signalDuringRead = true;
+			for (let i = 0; i < 1000; i++)
+				bridge!.onFrame!({
+					type: 'bridge.event',
+					channel: 'sessions:transcriptCommitted',
+					args: [f.read().cursor],
+				});
+			await vi.advanceTimersByTimeAsync(49);
+			expect(censuses).toBe(2);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(censuses).toBe(3);
+			expect(store.readDecisions()).toHaveLength(1);
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(4); // signal arriving during transcript await survives
+			await vi.advanceTimersByTimeAsync(19999);
+			expect(censuses).toBe(4);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(censuses).toBe(5); // real recovery census, no synthetic timestamp
+			open.mockReturnValueOnce(false);
+			bridge!.onClose!(1006, 'lost');
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(6);
+			expect(ScopeClient.prototype.connect).toHaveBeenCalledTimes(2);
+			settings.enabled = false;
+			bridge!.onFrame!({ type: 'bridge.event', channel: 'settings:externalChange' });
+			await vi.advanceTimersByTimeAsync(50);
+			await running;
+			expect(disconnect).toHaveBeenCalledTimes(1);
+			expect(process.listenerCount('SIGTERM')).toBe(listeners);
+			expect(vi.getTimerCount()).toBe(0);
+			expect(send.mock.calls.some(([m]) => m.type === 'pianola_scope_reply')).toBe(false);
+		} finally {
+			settings.enabled = false;
+			bridge!.onClose?.(1006, 'cleanup');
+			await vi.advanceTimersByTimeAsync(20000);
+			await running;
+			settings.enabled = true;
+			vi.restoreAllMocks();
+			vi.useRealTimers();
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it('cancels a waiting drain on stop and bounds a continuous stream by the first signal', async () => {
+		vi.useFakeTimers();
+		const wakeups = new PianolaScopeWakeups();
+		try {
+			let woke = false;
+			const waiting = wakeups.wait(Date.now() + 20000).then(() => {
+				woke = true;
+			});
+			for (let i = 0; i < 10; i++) {
+				wakeups.signal();
+				await vi.advanceTimersByTimeAsync(5);
+			}
+			await waiting;
+			expect(woke).toBe(true);
+			wakeups.consume();
+			const stopped = wakeups.wait(Date.now() + 20000);
+			wakeups.dispose();
+			await stopped;
+			expect(vi.getTimerCount()).toBe(0);
+			wakeups.signal();
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			wakeups.dispose();
+			vi.useRealTimers();
+		}
+	});
+});

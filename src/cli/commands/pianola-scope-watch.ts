@@ -184,18 +184,83 @@ export function createPianolaScopeWorkerDeps(
 	};
 }
 
+/** A single full-resync bit bounds any burst, including unknown membership/overflow.
+ * Signals carry no authority: every drain still reads a real native census.
+ */
+export class PianolaScopeWakeups {
+	private dirtyAt: number | undefined;
+	private timer: ReturnType<typeof setTimeout> | undefined;
+	private wake: (() => void) | undefined;
+	private stopped = false;
+	signal = (): void => {
+		if (this.stopped) return;
+		this.dirtyAt ??= Date.now() + 50;
+		this.wake?.();
+	};
+	onFrame = (frame: Record<string, unknown>): void => {
+		if (frame.type === 'bridge.event') {
+			if (
+				[
+					'sessions:transcriptCommitted',
+					'sessions:lifecycleSync',
+					'settings:externalChange',
+					'process:exit',
+					'process:command-exit',
+					'agentRun:updated',
+				].includes(String(frame.channel))
+			)
+				this.signal();
+		} else if (
+			[
+				'connected',
+				'session_state_change',
+				'session_added',
+				'session_removed',
+				'tabs_changed',
+			].includes(String(frame.type))
+		)
+			this.signal();
+	};
+	/** Consume before the cycle so events arriving during awaits survive it. */
+	consume(): void {
+		this.dirtyAt = undefined;
+	}
+	async wait(deadline: number): Promise<void> {
+		while (!this.stopped) {
+			const due = Math.min(deadline, this.dirtyAt ?? Infinity);
+			if (due <= Date.now()) return;
+			await new Promise<void>((resolve) => {
+				this.wake = () => {
+					clearTimeout(this.timer);
+					this.timer = undefined;
+					this.wake = undefined;
+					resolve();
+				};
+				this.timer = setTimeout(this.wake, due - Date.now());
+			});
+		}
+	}
+	dispose(): void {
+		this.stopped = true;
+		this.wake?.();
+		clearTimeout(this.timer);
+		this.dirtyAt = undefined;
+	}
+}
+
 export async function pianolaWatchScope(
 	scopeId: string,
 	options: PianolaScopeWatchOptions
 ): Promise<void> {
 	ensurePianolaEnabled(options.json);
 	if (!isPianolaScopeId(scopeId)) throw new Error('Invalid Pianola scope ID');
-	const client = new MaestroClient();
+	const wakeups = new PianolaScopeWakeups();
+	const client = new MaestroClient({ onFrame: wakeups.onFrame, onClose: wakeups.signal });
+	const sweep = new Set<string>();
 	let stopped = false;
-	let wake: (() => void) | undefined;
 	const onSignal = () => {
 		stopped = true;
-		wake?.();
+		wakeups.dispose();
 	};
 	process.on('SIGINT', onSignal);
 	process.on('SIGTERM', onSignal);
@@ -222,12 +287,18 @@ export async function pianolaWatchScope(
 			}
 			if (target.selection?.mode !== 'agents-and-groups')
 				throw new Error('Legacy scope requires explicit agent/group selection');
+			if (sweep.size === 0) wakeups.consume();
+			let nextDueAt = Date.now() + 20000;
+			let moreWork = false;
 			try {
 				const result = await runPianolaScopeCycle(scopeId, deps, {
 					dryRun: !!options.dryRun,
 					maxTabs: 20,
+					sweep,
 					shouldStop: () => stopped || !pianolaEnabledNow(),
 				});
+				moreWork = result.moreWork === true;
+				nextDueAt = Math.min(nextDueAt, result.nextDueAt ?? Infinity);
 				if (options.json) console.log(JSON.stringify({ scopeId, ...result }));
 				else for (const issue of result.issues) console.error(`[pianola] ${scopeId}: ${issue}`);
 			} catch (error) {
@@ -235,24 +306,13 @@ export async function pianolaWatchScope(
 				console.error(`[pianola] ${scopeId}: ${error.message}`);
 			}
 			if (options.once || stopped) break;
-			await new Promise<void>((resolve) => {
-				const timer = setTimeout(
-					() => {
-						wake = undefined;
-						resolve();
-					},
-					(target.intervalSeconds ?? 5) * 1000
-				);
-				wake = () => {
-					clearTimeout(timer);
-					wake = undefined;
-					resolve();
-				};
-			});
+			if (!moreWork) sweep.clear();
+			await wakeups.wait(moreWork ? Date.now() + 50 : nextDueAt);
 		}
 	} finally {
 		process.off('SIGINT', onSignal);
 		process.off('SIGTERM', onSignal);
+		wakeups.dispose();
 		client.disconnect();
 	}
 }
