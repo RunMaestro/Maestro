@@ -141,6 +141,7 @@ import { createOutputParser } from '../../../main/parsers';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 import { captureException } from '../../../main/utils/sentry';
 import { logger } from '../../../main/utils/logger';
+import { harnessInteractionBroker } from '../../../main/harness-control/integration';
 
 const target = path.resolve('rpc-cleanup-target');
 let gate: typeof import('../../../main/git/worktreeActivity');
@@ -1602,6 +1603,209 @@ describe('standalone Hermes gateway activity', () => {
 			await import('../../../main/process-manager/spawners/HermesApiSpawner');
 		hermes = new HermesApiSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
 	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses retained notifications before record lookup or effects under %s',
+		async (root) => {
+			hermes.spawn(input());
+			await drain();
+			const callbacks = connection();
+			await close();
+			processes.clear();
+			const hold = await reserve(root);
+			const lookup = vi.fn();
+			vi.clearAllMocks();
+			try {
+				for (const method of [
+					'event',
+					'request.cancel',
+					'tool.start',
+					'tool.complete',
+					'approval.expire',
+					'clarify.expire',
+					'secret.expire',
+					'sudo.expire',
+					'message.delta',
+					'message.interim',
+					'session.usage',
+					'message.complete',
+					'message.error',
+					'run.failed',
+					'run.cancelled',
+					'run.interrupted',
+					'unknown',
+				]) {
+					callbacks.onNotification!({
+						get method() {
+							lookup();
+							return method;
+						},
+						params: { type: 'message.delta', payload: { text: 'late' } },
+					});
+				}
+				await drain();
+				for (const probe of [
+					lookup,
+					probes.output,
+					probes.request,
+					probes.exit,
+					probes.interaction,
+					harnessInteractionBroker.withdraw,
+					native.stdin.end,
+					fallback,
+					stopProcess,
+					logger.warn,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				expect(captureException).toHaveBeenCalledWith(
+					expect.objectContaining({ message: expect.stringContaining('reserved') })
+				);
+			} finally {
+				hold.release();
+			}
+			(await reserve()).release();
+		}
+	);
+	it.each([
+		['message.delta', 'acp.text'],
+		['event', 'acp.text'],
+		['tool.start', 'acp.tool'],
+		['session.usage', 'acp.usage'],
+		['unknown', 'acp.system'],
+	])('preserves synchronous retained %s output after native close', async (method, type) => {
+		hermes.spawn(input());
+		await drain();
+		await close();
+		processes.clear();
+		(await reserve()).release();
+		probes.output.mockClear();
+		notify(method, { type: 'message.delta', payload: { text: 'late' }, usage: { input: 3 } });
+		expect(probes.output).toHaveBeenCalledOnce();
+		expect(JSON.parse(probes.output.mock.calls[0][1])).toMatchObject({ type });
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['request.cancel', 'approval.expire', 'clarify.expire', 'secret.expire', 'sudo.expire'])(
+		'preserves %s withdrawal while an interaction remains pending',
+		async (method) => {
+			hermes.spawn(input());
+			await drain();
+			const interaction = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(interaction.promise);
+			const answer = connection().onServerRequest!({ id: 'cancel-me', method: 'secret' });
+			notify(method, { id: 'cancel-me', request_id: 'cancel-me' });
+			expect(harnessInteractionBroker.withdraw).toHaveBeenCalledWith('broker');
+			await close();
+			await blocked();
+			interaction.resolve({ outcome: 'dismissed' });
+			await answer;
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['message.error', 'run.failed', 'run.cancelled', 'run.interrupted', 'message.complete'])(
+		'owns %s exit reporting without releasing independent native activity',
+		async (method) => {
+			hermes.spawn(input());
+			await drain();
+			const reporting = Promise.withResolvers<void>();
+			probes.exit.mockReturnValueOnce(reporting.promise);
+			notify(method, { status: 'error', error: 'failed', output: 'partial' });
+			expect(probes.exit).toHaveBeenCalledWith('rpc-session', 1, processes.get('rpc-session'));
+			expect(native.stdin.end).toHaveBeenCalledOnce();
+			expect(probes.output.mock.calls.map((call) => JSON.parse(call[1]))).toContainEqual({
+				type: 'acp.error',
+				message: 'failed',
+			});
+			processes.clear();
+			reporting.resolve();
+			await drain();
+			await blocked();
+			await close();
+			expect(probes.exit).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each(['ready', 'running', 'queued', 'steer', '4007', '4009', 'failure'])(
+		'retains completion query and exit reporting independently for %s',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			const state = Promise.withResolvers<unknown>();
+			const reporting = Promise.withResolvers<void>();
+			probes.request.mockReturnValueOnce(state.promise);
+			probes.exit.mockReturnValueOnce(reporting.promise);
+			notify('message.complete', { output: 'done', pending_steer: outcome === 'steer' });
+			expect(probes.request).toHaveBeenLastCalledWith('session.resume', { session_id: 'session' });
+			await close();
+			processes.clear();
+			await blocked();
+			if (['4007', '4009', 'failure'].includes(outcome)) state.reject(new Error(outcome));
+			else state.resolve({ running: outcome === 'running', queued: outcome === 'queued' });
+			await drain();
+			await blocked();
+			const frames = probes.output.mock.calls.map((call) => JSON.parse(call[1]));
+			const result = frames.find((frame) => frame.type === 'acp.result');
+			expect(Boolean(result)).toBe(['ready', '4007'].includes(outcome));
+			if (result) expect(result).toMatchObject({ text: 'done', stopReason: 'end_turn' });
+			expect(frames.some((frame) => frame.type === 'acp.error')).toBe(false);
+			expect(probes.exit).toHaveBeenCalledOnce();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'keeps concurrent completion queries after reporting and replacement on %s',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			const first = Promise.withResolvers<unknown>();
+			const second = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			notify('message.complete', { output: 'first' });
+			notify('message.complete', { output: 'second' });
+			await close();
+			processes.clear();
+			native = makeNative();
+			hermes.spawn(input());
+			await drain();
+			await close();
+			processes.clear();
+			await blocked();
+			first.resolve({ running: true });
+			await drain();
+			await blocked();
+			if (outcome === 'resolve') second.resolve({ queued: true });
+			else second.reject(new Error('4009 session busy'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['lookup', 'output', 'diagnostic'])(
+		'releases failed retained notification %s without fallback',
+		async (stage) => {
+			hermes.spawn(input());
+			await drain();
+			const callbacks = connection();
+			await close();
+			vi.clearAllMocks();
+			const fail = () => {
+				throw new Error('notification failed');
+			};
+			if (stage === 'output') probes.output.mockImplementationOnce(fail);
+			if (stage === 'diagnostic') vi.mocked(captureException).mockImplementation(fail);
+			callbacks.onNotification!({
+				get method() {
+					return stage === 'lookup' || stage === 'diagnostic' ? fail() : 'message.delta';
+				},
+				params: { text: 'late' },
+			});
+			await drain();
+			expect(fallback).not.toHaveBeenCalled();
+			expect(stopProcess).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses late gateway setup before request lookup or acknowledgement under %s',
 		async (root) => {

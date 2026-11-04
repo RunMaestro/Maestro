@@ -240,7 +240,9 @@ class HermesTurn {
 		}
 		this.connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'jsonrpc',
-			onNotification: (record) => this.onNotification(record),
+			onNotification: (record) => {
+				this.observeCompletion(this.onNotification(record));
+			},
 			onServerRequest: (record) => this.onServerRequest(record),
 		});
 		if (config.agentSessionId) {
@@ -305,7 +307,15 @@ class HermesTurn {
 		});
 	}
 
-	private onNotification(record: NdJsonRecord): void {
+	private async onNotification(record: NdJsonRecord): Promise<void> {
+		// Retained transport callbacks can outlive the original start observer.
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.onNotificationAdmitted(record)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async onNotificationAdmitted(record: NdJsonRecord): Promise<void> {
 		if (this.isSuperseded()) return;
 		let method = record.method;
 		let params = (record.params ?? {}) as Record<string, unknown>;
@@ -352,8 +362,7 @@ class HermesTurn {
 			case 'clarify.request':
 			case 'secret.request':
 			case 'sudo.request':
-				this.observeCompletion(this.onGatewayInteraction(method, params));
-				return;
+				return this.onGatewayInteraction(method, params);
 			case 'approval.expire':
 			case 'clarify.expire':
 			case 'secret.expire':
@@ -380,8 +389,7 @@ class HermesTurn {
 				this.forwardUsage(params.usage);
 				return;
 			case 'message.complete':
-				this.observeCompletion(this.onComplete(params));
-				return;
+				return this.onComplete(params);
 			case 'message.error':
 			case 'run.failed':
 			case 'run.cancelled':
@@ -843,17 +851,22 @@ class HermesTurn {
 	}
 
 	private finish(code: number): void {
-		if (this.finished) return;
-		this.finished = true;
-		this.observeCompletion(
-			this.ctx.exitHandler
-				.handleExit(this.config.sessionId, code, this.managedProcess)
-				.catch((error) => {
-					logger.error('[HermesTurn] handleExit failed', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-				})
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				if (this.finished) return;
+				this.finished = true;
+				observe(
+					this.ctx.exitHandler
+						.handleExit(this.config.sessionId, code, this.managedProcess)
+						.catch((error) => {
+							logger.error('[HermesTurn] handleExit failed', LOG_CONTEXT, {
+								sessionId: this.config.sessionId,
+								error: String(error),
+							});
+						})
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 
