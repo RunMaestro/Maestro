@@ -22,6 +22,7 @@ import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { prepareGroupChatSpawn } from '../../shared/maestro-lib/groupchat/spawn';
 import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 import { steeringSocketPathFor } from '../process-manager/steering-client';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -105,6 +106,20 @@ export interface SpawnGroupChatAgentResult {
  * inline versions this replaces.
  */
 export async function spawnGroupChatAgent(
+	config: SpawnGroupChatAgentConfig
+): Promise<SpawnGroupChatAgentResult> {
+	// Prompt delivery and SSH/provider setup can touch paths outside the cwd.
+	// Refuse before setup; ProcessManager/spawners independently own native
+	// lifetimes after handoff. This request settling does not prove native close.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await spawnAdmittedGroupChatAgent(config);
+	} finally {
+		release();
+	}
+}
+
+async function spawnAdmittedGroupChatAgent(
 	config: SpawnGroupChatAgentConfig
 ): Promise<SpawnGroupChatAgentResult> {
 	const { processManager, sshStore } = config;
