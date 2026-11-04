@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
 
 // Hoist the mock functions so vi.mock() factories - which are themselves
 // hoisted above all imports - can reference them at module-init time. Without
@@ -46,13 +47,17 @@ vi.mock('util', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('util')>();
 	const wrap = (fn: unknown) => {
 		if (fn === mockExecFile) {
-			return (...args: unknown[]) =>
-				new Promise((resolve, reject) => {
+			return (...args: unknown[]) => {
+				const child = new EventEmitter();
+				const result = new Promise((resolve, reject) => {
 					mockExecFile(...args, (err: Error | null, stdout: string, stderr: string) => {
 						if (err) reject(err);
 						else resolve({ stdout, stderr });
 					});
 				});
+				void result.finally(() => child.emit('close')).catch(() => {});
+				return Object.assign(result, { child });
+			};
 		}
 		return actual.promisify(fn as never);
 	};

@@ -45,18 +45,16 @@
  *   `(node:1234) DeprecationWarning: ...` to stdout, and we don't want a
  *   single stderr-shaped line to nuke an otherwise-good sample.
  *
- * - Failure modes: never throws. Every error path (spawn `ENOENT`, timeout,
+ * - Failure modes after admission: every error path (spawn `ENOENT`, timeout,
  *   non-zero exit, empty stdout, malformed JSON, missing wire fields)
  *   resolves to `null` and emits a Sentry breadcrumb with stage + binPath +
  *   configDir + reason. Full env and full stdout are intentionally NOT
  *   included in the Sentry payload - env leaks PATH / shell vars, stdout
  *   could carry account-level usage data.
  *
- * - execFile choice: node's `execFile` via `util.promisify`, not the
- *   project's `execFileNoThrow`. The helper's options shape requires either
- *   `env` OR an `ExecOptions` carrying `input`/`timeout` (the two are
- *   mutually exclusive), and extending it would be adjacent-system
- *   refactoring out of scope.
+ * - Keep node's promisified `execFile` to preserve the sampler's 1MB buffer
+ *   and error classification. Its returned child owns activity until close,
+ *   independently of result settlement and asynchronous failure reporting.
  */
 
 import { execFile } from 'child_process';
@@ -69,6 +67,8 @@ import { isWindows } from '../../shared/platformDetection';
 import { captureMessage } from '../utils/sentry';
 import { getSnapshot, resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
 import { readClaudeAccountIdentity } from './claude-account-identity';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
+import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
 
 const execFileAsync = promisify(execFile);
 
@@ -161,11 +161,25 @@ export async function ensureUsageProbeDir(baseDir = os.tmpdir()): Promise<string
 }
 
 /**
- * Run `maestro-p --status`, parse the wire envelope, and return a
+ * Admit before setup, then run `maestro-p --status` and return a
  * canonicalized `UsageSnapshot`. Resolves to `null` on any failure - see the
- * module docblock for the full list of swallowed failure modes.
+ * module docblock for swallowed sampling failures. A cleanup reservation
+ * rejects before options, environment or recovery can be accessed.
  */
 export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapshot | null> {
+	return withWorktreeTurnActivity(
+		(_start, observe) => observe(sampleUsageAdmitted(opts, observe)),
+		() => {
+			// Failure reporting is already observed below; diagnostics must not
+			// reject an otherwise completed sample or release its activity early.
+		}
+	);
+}
+
+async function sampleUsageAdmitted(
+	opts: SampleUsageOptions,
+	observe: <T>(completion: Promise<T>) => Promise<T>
+): Promise<UsageSnapshot | null> {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...(opts.customEnvVars ?? {}) };
 	if (opts.configDir !== undefined) {
@@ -206,7 +220,9 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// caller's working directory nor the home dir will do.
 	const probeDir = await ensureUsageProbeDir();
 	if (!probeDir) {
-		void reportFailure('spawn', opts, configDirKey, 'usage probe folder is missing or not private');
+		void observe(
+			reportFailure('spawn', opts, configDirKey, 'usage probe folder is missing or not private')
+		);
 		return null;
 	}
 	childEnv.MAESTRO_P_ACCEPT_WORKSPACE_TRUST = '1';
@@ -235,27 +251,33 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 
 	let stdout: string;
 	try {
-		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {
+		// The callback can settle on error/timeout before stdio closes. Unknown
+		// launch or missing observation remains busy, never proof of no child.
+		const releaseNative = beginGlobalWorktreeActivity();
+		const resultPromise = execFileAsync(process.execPath, [opts.binPath, '--status'], {
 			cwd: probeDir,
 			env: childEnv,
 			encoding: 'utf8',
 			maxBuffer: MAX_BUFFER_BYTES,
 			timeout: timeoutMs,
 		});
+		observe(resultPromise);
+		resultPromise.child.once('close', releaseNative);
+		const result = await resultPromise;
 		stdout = result.stdout;
 	} catch (err) {
-		void reportFailure('spawn', opts, configDirKey, classifySpawnError(err));
+		void observe(reportFailure('spawn', opts, configDirKey, classifySpawnError(err)));
 		return null;
 	}
 
 	if (!stdout || stdout.trim().length === 0) {
-		void reportFailure('parse', opts, configDirKey, 'empty stdout');
+		void observe(reportFailure('parse', opts, configDirKey, 'empty stdout'));
 		return null;
 	}
 
 	const jsonLine = extractFirstJsonLine(stdout);
 	if (jsonLine === null) {
-		void reportFailure('parse', opts, configDirKey, 'no json object line found');
+		void observe(reportFailure('parse', opts, configDirKey, 'no json object line found'));
 		return null;
 	}
 
@@ -263,17 +285,19 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	try {
 		parsed = JSON.parse(jsonLine);
 	} catch (err) {
-		void reportFailure(
-			'parse',
-			opts,
-			configDirKey,
-			`json parse: ${err instanceof Error ? err.message : String(err)}`
+		void observe(
+			reportFailure(
+				'parse',
+				opts,
+				configDirKey,
+				`json parse: ${err instanceof Error ? err.message : String(err)}`
+			)
 		);
 		return null;
 	}
 
 	if (!isStatusWireEnvelope(parsed)) {
-		void reportFailure('parse', opts, configDirKey, 'wire shape rejected by type guard');
+		void observe(reportFailure('parse', opts, configDirKey, 'wire shape rejected by type guard'));
 		return null;
 	}
 
