@@ -236,7 +236,7 @@ export class WebSocketMessageHandler {
 		if (client.isAuthorized?.() === false) return;
 		const frame = JSON.stringify({ ...data, timestamp: Date.now() });
 		if (!onSent) {
-			sendBounded(client.socket, frame);
+			sendBounded(client.socket, frame, undefined, data.type === 'pong');
 			return;
 		}
 		client.socket.send(frame, (error?: Error) => {
@@ -884,7 +884,7 @@ export class WebSocketMessageHandler {
 			client,
 			message as unknown as Parameters<typeof handleBridgeInvoke>[1],
 			(c, payload) => {
-				sendBounded(c.socket, JSON.stringify(payload));
+				sendBounded(c.socket, JSON.stringify(payload), undefined, true);
 			}
 		);
 	}
