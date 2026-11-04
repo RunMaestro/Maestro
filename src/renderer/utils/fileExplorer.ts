@@ -921,6 +921,26 @@ function collectPaths(
 	return paths;
 }
 
+// Matching ordered shapes guarantee equal path sets, even with duplicate names.
+// Any difference falls back to the set comparison, which handles reordering and duplicates.
+function sameTreeStructure(oldNodes: FileTreeNode[], newNodes: FileTreeNode[]): boolean {
+	if (oldNodes === newNodes) return true;
+	if (oldNodes.length !== newNodes.length) return false;
+	for (let i = 0; i < oldNodes.length; i++) {
+		const oldNode = oldNodes[i];
+		const newNode = newNodes[i];
+		if (oldNode.name !== newNode.name || oldNode.type !== newNode.type) return false;
+		if (oldNode.type === 'folder') {
+			const oldChildren = oldNode.children;
+			const newChildren = newNode.children;
+			if (oldChildren && newChildren) {
+				if (!sameTreeStructure(oldChildren, newChildren)) return false;
+			} else if ((oldChildren?.length ?? 0) !== (newChildren?.length ?? 0)) return false;
+		}
+	}
+	return true;
+}
+
 /**
  * Compare two file trees and count the differences
  */
@@ -928,6 +948,11 @@ export function compareFileTrees(
 	oldTree: FileTreeNode[],
 	newTree: FileTreeNode[]
 ): FileTreeChanges {
+	if (sameTreeStructure(oldTree, newTree)) {
+		const cached = rootPathSetsCache.get(oldTree);
+		if (cached) rootPathSetsCache.set(newTree, cached);
+		return { totalChanges: 0, newFiles: 0, newFolders: 0, removedFiles: 0, removedFolders: 0 };
+	}
 	const oldPaths = collectPaths(oldTree);
 	const newPaths = collectPaths(newTree);
 
