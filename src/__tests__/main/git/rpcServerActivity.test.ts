@@ -24,6 +24,11 @@ const probes = vi.hoisted(() => ({
 	respond: vi.fn(),
 	query: vi.fn<typeof import('@anthropic-ai/claude-agent-sdk').query>(),
 	stderr: vi.fn(),
+	opencodeSdk: vi.fn(),
+	opencodeClient: vi.fn(),
+}));
+vi.mock('../../../main/opencode-server/sdk-loader', () => ({
+	loadOpencodeSdk: probes.opencodeSdk,
 }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: probes.query }));
 vi.mock('../../../main/codex-app-server/rpc-client', async (original) => ({
@@ -1995,5 +2000,281 @@ describe('Claude SDK native activity', () => {
 		).toThrow(sentinel);
 		expect(hook).toHaveBeenCalledOnce();
 		expect(spawn).not.toHaveBeenCalled();
+	});
+});
+
+describe('shared OpenCode server activity', () => {
+	let manager: typeof import('../../../main/opencode-server/OpencodeServerManager').opencodeServerManager;
+	const opts = { binaryPath: 'opencode-fixture', cwd: target, permissionMode: 'standard' as const };
+	const sdk = { createOpencodeClient: probes.opencodeClient };
+	beforeEach(async () => {
+		Object.assign(native, { kill: vi.fn() });
+		Object.assign(native.stdout, { resume: vi.fn() });
+		Object.assign(native.stderr, { resume: vi.fn() });
+		probes.opencodeSdk.mockResolvedValue(sdk);
+		probes.opencodeClient.mockReturnValue({ fixture: true });
+		({ opencodeServerManager: manager } =
+			await import('../../../main/opencode-server/OpencodeServerManager'));
+	});
+	afterEach(() => {
+		manager.shutdown();
+		vi.useRealTimers();
+	});
+	const ready = () =>
+		native.stdout.emit('data', 'opencode server listening on http://127.0.0.1:4321\n');
+	async function start() {
+		const result = manager.ensureServer(opts);
+		ready();
+		return result;
+	}
+	it.each(['key', 'env'])('releases failed %s setup before any native launch', async (stage) => {
+		const fail = () => {
+			throw new Error('setup failed');
+		};
+		if (stage === 'env') vi.mocked(buildChildProcessEnv).mockImplementationOnce(fail);
+		await expect(
+			manager.ensureServer({
+				...opts,
+				get binaryPath() {
+					return stage === 'key' ? fail() : opts.binaryPath;
+				},
+			})
+		).rejects.toThrow('setup failed');
+		expect(spawn).not.toHaveBeenCalled();
+		expect(probes.opencodeSdk).not.toHaveBeenCalled();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses before manager setup under reservation %s',
+		async (root) => {
+			const hold = await reserve(root);
+			const read = vi.fn(() => opts.binaryPath);
+			try {
+				await expect(
+					manager.ensureServer({
+						...opts,
+						get binaryPath() {
+							return read();
+						},
+					})
+				).rejects.toThrow('reserved');
+				expect(read).not.toHaveBeenCalled();
+				expect(buildChildProcessEnv).not.toHaveBeenCalled();
+				expect(spawn).not.toHaveBeenCalled();
+				expect(probes.opencodeSdk).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it('blocks an earlier reservation still canonicalizing when server setup starts', async () => {
+		const resolving = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockImplementationOnce(() => resolving.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const result = start();
+		resolving.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await result;
+		await close();
+		(await reserve()).release();
+	});
+	it('blocks reentrant environment setup and preserves native launch options', async () => {
+		let reservation: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+		vi.mocked(buildChildProcessEnv).mockImplementationOnce(() => {
+			reservation = gate.reserveWorktreeCleanup(target);
+			return { FIXTURE_ENV: 'present' };
+		});
+		const result = manager.ensureServer({
+			...opts,
+			customEnvVars: { A: 'one' },
+			shellEnvVars: { B: 'two' },
+			extraPathDirs: ['bin'],
+		});
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		expect(buildChildProcessEnv).toHaveBeenCalledWith({ A: 'one' }, false, { B: 'two' }, ['bin']);
+		expect(spawn).toHaveBeenCalledWith(
+			opts.binaryPath,
+			['serve', '--hostname=127.0.0.1', '--port=0'],
+			{
+				cwd: target,
+				env: {
+					FIXTURE_ENV: 'present',
+					OPENCODE_CONFIG_CONTENT: JSON.stringify({
+						permission: { '*': 'ask', external_directory: 'ask', question: 'deny' },
+						tools: { question: false },
+					}),
+				},
+				stdio: ['ignore', 'pipe', 'pipe'],
+				shell: false,
+			}
+		);
+		ready();
+		await expect(result).resolves.toMatchObject({ url: 'http://127.0.0.1:4321' });
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('waits for a complete readiness line and SDK publication even after native close', async () => {
+		const loading = Promise.withResolvers<typeof sdk>();
+		probes.opencodeSdk.mockReturnValueOnce(loading.promise);
+		const result = manager.ensureServer(opts);
+		native.stdout.emit('data', 'opencode server listening on http://127.0.0.1:');
+		await drain();
+		expect(probes.opencodeSdk).not.toHaveBeenCalled();
+		native.stdout.emit('data', '4321\n');
+		await drain();
+		expect(probes.opencodeSdk).toHaveBeenCalledOnce();
+		expect(
+			(native.stdout as typeof native.stdout & { resume: unknown }).resume
+		).toHaveBeenCalledOnce();
+		expect(
+			(native.stderr as typeof native.stderr & { resume: unknown }).resume
+		).toHaveBeenCalledOnce();
+		await close();
+		await blocked();
+		loading.resolve(sdk);
+		await expect(result).resolves.toMatchObject({ client: { fixture: true } });
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['error', 'exit', 'shutdown'])(
+		'does not treat %s as independent native close',
+		async (event) => {
+			await start();
+			if (event === 'shutdown') manager.shutdown();
+			else if (event === 'error') native.emit('error', new Error('after readiness'));
+			else native.emit('exit', 0, null);
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it.each(['error', 'exit', 'timeout'])(
+		'retains failed %s startup until native close',
+		async (failure) => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			const result = manager.ensureServer(opts);
+			const rejected = expect(result).rejects.toThrow();
+			if (failure === 'error') native.emit('error', new Error('start failure'));
+			else if (failure === 'exit') native.emit('exit', 1, null);
+			else await vi.advanceTimersByTimeAsync(15000);
+			await rejected;
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('holds shutdown during readiness until readiness rejection and child close', async () => {
+		const result = manager.ensureServer(opts);
+		const rejected = expect(result).rejects.toThrow('before becoming ready');
+		manager.shutdown();
+		await blocked();
+		await close();
+		await blocked();
+		native.emit('exit', 1, null);
+		await rejected;
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['load', 'client'])(
+		'keeps a failed SDK %s blocked until native close',
+		async (failure) => {
+			if (failure === 'load') probes.opencodeSdk.mockRejectedValueOnce(new Error('load failed'));
+			else
+				probes.opencodeClient.mockImplementationOnce(() => {
+					throw new Error('client failed');
+				});
+			await expect(start()).rejects.toThrow('failed');
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('releases proven synchronous nonstart without entering readiness or SDK setup', async () => {
+		vi.mocked(spawn).mockImplementationOnce(() => {
+			throw new Error('nonstart');
+		});
+		await expect(manager.ensureServer(opts)).rejects.toThrow();
+		expect(probes.opencodeSdk).not.toHaveBeenCalled();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['handle', 'observer'])(
+		'keeps missing native %s uncertainty blocked',
+		async (failure) => {
+			if (failure === 'handle')
+				vi.spyOn(native.stdin, 'on').mockImplementationOnce(() => {
+					throw new Error('postspawn handle lost');
+				});
+			else {
+				const original = native.on.bind(native);
+				let observers = 0;
+				vi.spyOn(native, 'on').mockImplementation((event, listener) => {
+					if (event === 'close' && ++observers === 2) throw new Error('observer unavailable');
+					return original(event, listener);
+				});
+			}
+			await expect(manager.ensureServer(opts)).rejects.toThrow();
+			await close();
+			await blocked();
+		}
+	);
+	it('shares one startup and retains pending reuse through SDK work after shutdown/close', async () => {
+		const loading = Promise.withResolvers<typeof sdk>();
+		probes.opencodeSdk.mockReturnValueOnce(loading.promise);
+		const first = manager.ensureServer(opts);
+		const second = manager.ensureServer(opts);
+		expect(spawn).toHaveBeenCalledOnce();
+		ready();
+		await drain();
+		manager.shutdown();
+		await close();
+		await blocked();
+		loading.resolve(sdk);
+		expect(await first).toEqual(await second);
+		await drain();
+		(await reserve()).release();
+	});
+	it('admits cached reuse and refuses it under a reservation even without another launch', async () => {
+		const first = await start();
+		expect(await manager.ensureServer({ ...opts, cwd: path.resolve('another-project') })).toEqual(
+			first
+		);
+		expect(spawn).toHaveBeenCalledOnce();
+		expect(buildChildProcessEnv).toHaveBeenCalledOnce();
+		await close();
+		const hold = await reserve();
+		try {
+			await expect(manager.ensureServer(opts)).rejects.toThrow('reserved');
+		} finally {
+			hold.release();
+		}
+	});
+	it('retains old and replacement native children independently after exit/cache eviction', async () => {
+		await start();
+		const old = native;
+		old.emit('exit', 0, null);
+		native = makeNative();
+		Object.assign(native, { kill: vi.fn() });
+		Object.assign(native.stdout, { resume: vi.fn() });
+		Object.assign(native.stderr, { resume: vi.fn() });
+		await start();
+		await close(old);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('holds a child without pid despite a throwing shutdown kill', async () => {
+		native.pid = undefined as never;
+		await start();
+		vi.spyOn(native as typeof native & { kill(): void }, 'kill').mockImplementation(() => {
+			throw new Error('kill failed');
+		});
+		manager.shutdown();
+		await blocked();
+		await close();
+		(await reserve()).release();
 	});
 });
