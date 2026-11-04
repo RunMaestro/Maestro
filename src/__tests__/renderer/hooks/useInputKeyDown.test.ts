@@ -2608,5 +2608,118 @@ describe('IME composition leaves the AI composer branches alone', () => {
 			expect(deps.setInputValue).not.toHaveBeenCalled();
 			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
 		});
+
+		it('completes quoted partial mention on single match with caret at end', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Alice-Bob ');
+		});
+
+		it('completes quoted partial mention on single match with caret mid-token', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const textarea = document.createElement('textarea');
+			textarea.value = 'ask @"Alice B" and more';
+			textarea.selectionStart = textarea.selectionEnd = 11;
+			const inputRef = { current: textarea };
+
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B" and more',
+				inputRef,
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Alice-Bob  and more');
+		});
+
+		it('opens picker with raw filter on multiple matches for quoted partial mention', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice1',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice2',
+						name: 'Alice Brown',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(true);
+			expect(mockInputContext.setAtMentionFilter).toHaveBeenCalledWith('"Alice B');
+			expect(mockInputContext.setAtMentionStartIndex).toHaveBeenCalledWith(4);
+			expect(mockInputContext.setSelectedAtMentionIndex).toHaveBeenCalledWith(0);
+			expect(mockInputContext.setAtMentionCategory).toHaveBeenCalledWith('agents');
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
 	});
 });

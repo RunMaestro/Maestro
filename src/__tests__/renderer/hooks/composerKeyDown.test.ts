@@ -548,6 +548,31 @@ describe('findPartialMentionAtCursor', () => {
 			filter: 'cody',
 		});
 	});
+
+	it('preserves opening quote and includes quoted tail across spaces', () => {
+		// Caret at end without closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B', 13)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret mid-token without closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B', 10)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret mid-token with closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B" more', 10)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret right before closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B"', 13)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret past closing quote (completed mention, not a partial trigger)
+		expect(findPartialMentionAtCursor('ask @"Alice B"', 14)).toBeNull();
+	});
 });
 
 describe('handleComposerAgentTabKey', () => {
@@ -834,5 +859,76 @@ describe('handleComposerAgentTabKey', () => {
 		expect(handled).toBe(true);
 		expect(preventDefault).toHaveBeenCalled();
 		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co-dex');
+	});
+
+	it('completes quoted partial mention on single match passing raw filter to accept', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @"Alice B';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 13;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const agentAlice: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'Alice Bob',
+			value: '@"Alice Bob" ',
+			targetSessionId: 'sess-alice',
+			score: 10,
+		};
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @"Alice B',
+			getAgentSuggestions: (filter) => {
+				// Search term is stripped of quotes
+				expect(filter).toBe('Alice B');
+				return [agentAlice];
+			},
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		// Accept receives raw filter so spliceMentionLiteral can measure the replaced span
+		expect(accept).toHaveBeenCalledWith(agentAlice, 4, '"Alice B');
+	});
+
+	it('opens picker with raw filter on multiple matches for quoted partial mention', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @"Alice B';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 13;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const openPicker = vi.fn();
+		const agent1: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'Alice Bob',
+			value: '@"Alice Bob" ',
+			targetSessionId: 'sess-1',
+			score: 10,
+		};
+		const agent2: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'Alice Brown',
+			value: '@"Alice Brown" ',
+			targetSessionId: 'sess-2',
+			score: 9,
+		};
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @"Alice B',
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('Alice B');
+				return [agent1, agent2];
+			},
+			accept: vi.fn(),
+			openPicker,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(openPicker).toHaveBeenCalledWith(4, '"Alice B');
 	});
 });
