@@ -18,7 +18,7 @@ are not part of this change.
   which rc had already deleted.
 - Restore `maxWorkers: 8` while retaining rc's forks pool, separate node/jsdom projects,
   and inherited-environment sanitization. No production code, test exclusions,
-  timeouts, assertions, or mock behavior are changed.
+  timeouts, or assertions are changed. Consolidated mock factories retain their behavior.
 
 Each merged file identifies its source files in comments. Each source's ordinary
 module-local state and hooks remain inside a separate unnamed suite, preserving
@@ -131,6 +131,21 @@ The real scanner suite then passed both existing tests in 4.48 seconds overall.
 Its benchmark recorded 5,000 files, 20,480,000 bytes, 639 event-loop ticks during
 the worker scan, and a maximum timer gap of 3.10 ms. Production scanner code was
 not changed.
+
+## Empty remote-filesystem test fixture
+
+The next normal push passed the scanner suite. It was rejected only by two
+10-second deadlines in the unchanged remote-session tests in
+`src/__tests__/main/agents/session-storage.test.ts`: the test group used a fixture
+SSH hostname without stubbing remote directory I/O. Its intended input was an
+empty remote filesystem, but it could wait on real SSH/DNS.
+
+That test group now supplies `{ success: true, data: [] }` at the remote-directory
+I/O boundary and restores the spy after each test. Storage methods, SSH configuration,
+credentials, test bodies, assertions, and deadlines are unchanged. All 114 tests
+in the file passed in 5.06 seconds overall. A structural comparison against current
+rc also preserved all 717 existing test/assertion expressions in that file and all
+14 in the scanner suite.
 
 ## Protected local work
 

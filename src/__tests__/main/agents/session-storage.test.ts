@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs/promises';
+import * as remoteFs from '../../../main/utils/remote-fs';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
 import {
@@ -700,6 +701,14 @@ describe('Storage Module Initialization', () => {
 });
 
 describe('CodexSessionStorage SSH Remote Support', () => {
+	// These tests model an empty remote filesystem, not live SSH to fixture hosts.
+	beforeEach(() => {
+		vi.spyOn(remoteFs, 'readDirRemote').mockResolvedValue({ success: true, data: [] });
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	// Mock SSH remote config for testing
 	const mockSshConfig = {
 		id: 'test-ssh',
