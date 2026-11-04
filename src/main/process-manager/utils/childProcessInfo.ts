@@ -4,6 +4,7 @@
  */
 
 import { execFile } from 'child_process';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 import { isWindows } from '../../../shared/platformDetection';
 
 export interface ChildProcessInfo {
@@ -36,104 +37,76 @@ export function isPidAlive(pid: number | undefined): boolean {
 /**
  * Get the direct child processes of a given PID.
  * Returns an array of { pid, command } for each child process.
- * On failure (process exited, permission denied, etc.), returns an empty array.
+ * Ordinary probe failures return an empty array. Cleanup admission and unknown
+ * launch/observation failures reject before fallback can conceal them.
  */
-export function getChildProcesses(parentPid: number): Promise<ChildProcessInfo[]> {
+export async function getChildProcesses(parentPid: number): Promise<ChildProcessInfo[]> {
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await inspectChildProcesses(parentPid);
+	} finally {
+		release();
+	}
+}
+
+/** Keep the original callback exec options; result settlement is not native close. */
+function inspectProcessTable(command: string, args: string[]): Promise<string | null> {
+	const releaseNative = beginGlobalWorktreeActivity();
 	return new Promise((resolve) => {
-		if (isWindows()) {
-			// wmic: get child processes by parent PID
-			execFile(
-				'wmic',
-				[
-					'process',
-					'where',
-					`ParentProcessId=${parentPid}`,
-					'get',
-					'ProcessId,CommandLine',
-					'/format:csv',
-				],
-				{ timeout: 3000 },
-				(error, stdout) => {
-					if (error || !stdout) {
-						resolve([]);
-						return;
-					}
-					const children: ChildProcessInfo[] = [];
-					const lines = stdout.trim().split('\n');
-					for (const line of lines) {
-						// CSV format: Node,CommandLine,ProcessId
-						const parts = line.trim().split(',');
-						if (parts.length >= 3) {
-							const pid = parseInt(parts[parts.length - 1], 10);
-							const command = parts.slice(1, -1).join(',').trim();
-							if (!isNaN(pid) && command) {
-								children.push({ pid, command });
-							}
-						}
-					}
-					resolve(children);
-				}
-			);
-		} else {
-			// macOS/Linux: use ps to get direct children
-			// -o pid=,comm= gives us PID and command name without headers
-			execFile(
-				'ps',
-				['--ppid', String(parentPid), '-o', 'pid=,comm='],
-				{ timeout: 3000 },
-				(error, stdout) => {
-					if (error || !stdout) {
-						// macOS ps doesn't support --ppid, try alternate form
-						execFile('ps', ['-o', 'pid=,comm=', '-p', String(parentPid)], { timeout: 3000 }, () => {
-							// Fall back to pgrep + ps approach for macOS
-							getChildProcessesDarwin(parentPid).then(resolve);
-						});
-						return;
-					}
-					resolve(parsePs(stdout));
-				}
-			);
-		}
+		const child = execFile(command, args, { timeout: 3000 }, (error, stdout) => {
+			// A retained/late callback must be admitted before result or fallback effects.
+			const releaseCallback = beginGlobalWorktreeActivity();
+			try {
+				resolve(error || !stdout ? null : stdout);
+			} finally {
+				releaseCallback();
+			}
+		});
+		// Unknown launch or failed observation stays busy, even after rejection.
+		child.once('close', releaseNative);
 	});
 }
 
-/**
- * macOS fallback: use pgrep -P to find children, then ps to get their commands.
- */
-function getChildProcessesDarwin(parentPid: number): Promise<ChildProcessInfo[]> {
-	return new Promise((resolve) => {
-		execFile('pgrep', ['-P', String(parentPid)], { timeout: 3000 }, (error, stdout) => {
-			if (error || !stdout.trim()) {
-				resolve([]);
-				return;
+async function inspectChildProcesses(parentPid: number): Promise<ChildProcessInfo[]> {
+	if (isWindows()) {
+		const stdout = await inspectProcessTable('wmic', [
+			'process',
+			'where',
+			`ParentProcessId=${parentPid}`,
+			'get',
+			'ProcessId,CommandLine',
+			'/format:csv',
+		]);
+		if (!stdout) return [];
+		const children: ChildProcessInfo[] = [];
+		for (const line of stdout.trim().split('\n')) {
+			// CSV format: Node,CommandLine,ProcessId
+			const parts = line.trim().split(',');
+			if (parts.length >= 3) {
+				const pid = parseInt(parts[parts.length - 1], 10);
+				const command = parts.slice(1, -1).join(',').trim();
+				if (!isNaN(pid) && command) children.push({ pid, command });
 			}
-			const childPids = stdout
-				.trim()
-				.split('\n')
-				.map((s) => s.trim())
-				.filter(Boolean);
+		}
+		return children;
+	}
 
-			if (childPids.length === 0) {
-				resolve([]);
-				return;
-			}
-
-			// Get command names for all child PIDs
-			execFile(
-				'ps',
-				['-o', 'pid=,comm=', '-p', childPids.join(',')],
-				{ timeout: 3000 },
-				(psError, psStdout) => {
-					if (psError || !psStdout) {
-						// At least return PIDs without command names
-						resolve(childPids.map((p) => ({ pid: parseInt(p, 10), command: '' })));
-						return;
-					}
-					resolve(parsePs(psStdout));
-				}
-			);
-		});
-	});
+	// Linux direct query; preserve the original macOS probe and fallback order.
+	const stdout = await inspectProcessTable('ps', ['--ppid', String(parentPid), '-o', 'pid=,comm=']);
+	if (stdout) return parsePs(stdout);
+	await inspectProcessTable('ps', ['-o', 'pid=,comm=', '-p', String(parentPid)]);
+	const pgrep = await inspectProcessTable('pgrep', ['-P', String(parentPid)]);
+	if (!pgrep?.trim()) return [];
+	const childPids = pgrep
+		.trim()
+		.split('\n')
+		.map((s) => s.trim())
+		.filter(Boolean);
+	if (!childPids.length) return [];
+	const commands = await inspectProcessTable('ps', ['-o', 'pid=,comm=', '-p', childPids.join(',')]);
+	return commands
+		? parsePs(commands)
+		: childPids.map((p) => ({ pid: parseInt(p, 10), command: '' }));
 }
 
 function parsePs(stdout: string): ChildProcessInfo[] {

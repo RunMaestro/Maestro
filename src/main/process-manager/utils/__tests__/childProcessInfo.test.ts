@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
 import { getChildProcesses, isPidAlive } from '../childProcessInfo';
 
 // Note: this test mocks execFile (not exec) - the implementation uses execFile
@@ -34,17 +35,23 @@ describe('getChildProcesses', () => {
 		// First call: ps --ppid fails (macOS)
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(new Error('not supported'), '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// Second call: ps -o (fallback, also fails to trigger darwin path)
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(new Error('no match'), '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// Third call: pgrep -P (darwin fallback, no children)
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(new Error('no children'), '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 
 		const result = await getChildProcesses(12345);
@@ -55,22 +62,30 @@ describe('getChildProcesses', () => {
 		// First call: ps --ppid fails (macOS doesn't support --ppid)
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(new Error('not supported'), '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// Second call: ps -o (fallback check, triggers darwin path)
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// Third call: pgrep -P returns child PIDs
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '100\n200\n', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// Fourth call: ps -o pid=,comm= for those PIDs
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '  100 node\n  200 python\n', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 
 		const result = await getChildProcesses(12345);
@@ -84,21 +99,29 @@ describe('getChildProcesses', () => {
 		// ps --ppid fails → darwin fallback
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(new Error('not supported'), '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// pgrep returns PIDs
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '100\n200\n300\n', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 		// ps shows a mix of shell and non-shell processes
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '  100 zsh\n  200 node\n  300 bash\n', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 
 		const result = await getChildProcesses(12345);
@@ -110,7 +133,9 @@ describe('getChildProcesses', () => {
 		// ps --ppid succeeds on Linux
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, '  500 npm\n  600 webpack\n', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 
 		const result = await getChildProcesses(12345);
@@ -125,7 +150,9 @@ describe('getChildProcesses', () => {
 
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(null, 'Node,CommandLine,ProcessId\nHOST,node server.js,999\n', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 
 		const result = await getChildProcesses(12345);
@@ -137,7 +164,9 @@ describe('getChildProcesses', () => {
 
 		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb: any) => {
 			cb(new Error('failed'), '', '');
-			return {} as any;
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('close'));
+			return child as any;
 		});
 
 		const result = await getChildProcesses(12345);
