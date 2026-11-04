@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SessionItem } from '../../../renderer/components/SessionItem';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -27,6 +28,7 @@ const { prState } = vi.hoisted(() => ({
 vi.mock('../../../renderer/hooks/worktree/useWorktreePullRequest', () => ({
 	useWorktreePullRequest: () => ({ loading: false, refresh: prState.refresh, ...prState.current }),
 }));
+vi.mock('../../../renderer/utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 const defaultTheme: Theme = {
 	id: 'dracula',
@@ -273,6 +275,64 @@ describe('SessionItem worktree collapse toggle', () => {
 });
 
 describe('worktree PR summary', () => {
+	it('opens accessible details with PR, checks and local divergence', () => {
+		const onSelect = vi.fn();
+		prState.current = {
+			snapshot: {
+				discovery: {
+					status: 'found',
+					pullRequest: {
+						identity: { number: 42 },
+						title: 'Example',
+						url: 'https://github.com/a/b/pull/42',
+						state: 'OPEN',
+						isDraft: true,
+						baseBranch: 'rc',
+					},
+				},
+				ci: {
+					status: 'available',
+					checkedAt: '2026-11-04T10:00:00Z',
+					checks: [
+						{
+							kind: 'check-run',
+							id: '1',
+							name: 'Build',
+							state: 'failed',
+							detailsUrl: 'https://github.com/a/b/actions/runs/1',
+							updatedAt: '2026-11-04T10:00:00Z',
+						},
+					],
+				},
+				divergence: { status: 'different', ahead: 2, behind: 1 },
+			},
+		};
+		render(
+			<LayerStackProvider>
+				<SessionItem
+					{...defaultProps}
+					variant="worktree"
+					session={createMockSession()}
+					onSelect={onSelect}
+				/>
+			</LayerStackProvider>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Show PR and CI details' }));
+		expect(screen.getByRole('dialog', { name: 'Worktree PR and CI' })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'PR #42: Example' })).toHaveAttribute(
+			'href',
+			'https://github.com/a/b/pull/42'
+		);
+		expect(screen.getByText(/OPEN · Draft · Base: rc/)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Build' })).toHaveAttribute(
+			'href',
+			'https://github.com/a/b/actions/runs/1'
+		);
+		expect(screen.getByText(/2 ahead, 1 behind/)).toBeInTheDocument();
+		expect(onSelect).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+	});
 	it('shows CI transitions and refreshes without selecting the worktree', () => {
 		const onSelect = vi.fn();
 		const session = createMockSession({ worktreeBranch: 'feat/x' });

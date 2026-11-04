@@ -1,5 +1,5 @@
 import { useHasHeadlessActivity } from '../stores/headlessActivityStore';
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import {
 	Activity,
 	GitBranch,
@@ -14,6 +14,7 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import { LongPressable, longPressMouseEvent } from './shared/LongPressable';
 import { WorktreePill } from './ui/WorktreePill';
+import { Modal } from './ui/Modal';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
@@ -28,9 +29,11 @@ import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { useWorktreePullRequest } from '../hooks/worktree/useWorktreePullRequest';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { openUrl } from '../utils/openUrl';
 import { getConnectingColor } from '../utils/theme';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
-import { abbreviateGroupName } from '../../shared/formatters';
+import { abbreviateGroupName, formatRelativeTime } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
 
@@ -39,6 +42,7 @@ import type { Session, Group, Theme } from '../types';
 // ============================================================================
 
 function WorktreePullRequestRefresh({ session, theme }: { session: Session; theme: Theme }) {
+	const [detailsOpen, setDetailsOpen] = useState(false);
 	const ssh = session.sessionSshRemoteConfig;
 	const { snapshot, loading, stale, error, refresh } = useWorktreePullRequest(
 		session.cwd,
@@ -76,30 +80,140 @@ function WorktreePullRequestRefresh({ session, theme }: { session: Session; them
 							? 'Detached HEAD'
 							: 'PR status loading';
 	return (
-		<button
-			type="button"
-			className="text-2xs shrink-0"
-			style={{ color: theme.colors.textDim }}
-			title={`${label}. Refresh PR status`}
-			aria-label={`${label}. Refresh PR status`}
-			onClick={(event) => {
-				event.stopPropagation();
-				refresh();
-			}}
-			onKeyDown={(event) => event.stopPropagation()}
-		>
-			{loading
-				? 'PR …'
-				: stale
-					? 'PR stale'
-					: discovery?.status === 'found'
-						? `#${discovery.pullRequest.identity.number} · ${ciLabel}`
-						: discovery?.status === 'no-pr'
-							? 'No PR'
-							: discovery?.status === 'unavailable'
-								? 'PR unknown'
-								: 'PR ↻'}
-		</button>
+		<>
+			<button
+				type="button"
+				className="text-2xs shrink-0"
+				style={{ color: theme.colors.textDim }}
+				title={`${label}. Refresh PR status`}
+				aria-label={`${label}. Refresh PR status`}
+				onClick={(event) => {
+					event.stopPropagation();
+					refresh();
+				}}
+				onKeyDown={(event) => event.stopPropagation()}
+			>
+				{loading
+					? 'PR …'
+					: stale
+						? 'PR stale'
+						: discovery?.status === 'found'
+							? `#${discovery.pullRequest.identity.number} · ${ciLabel}`
+							: discovery?.status === 'no-pr'
+								? 'No PR'
+								: discovery?.status === 'unavailable'
+									? 'PR unknown'
+									: 'PR ↻'}
+			</button>
+			<button
+				type="button"
+				className="text-2xs shrink-0 underline"
+				style={{ color: theme.colors.textDim }}
+				aria-label="Show PR and CI details"
+				onClick={(event) => {
+					event.stopPropagation();
+					setDetailsOpen(true);
+				}}
+				onKeyDown={(event) => event.stopPropagation()}
+			>
+				Details
+			</button>
+			{detailsOpen && (
+				<Modal
+					theme={theme}
+					title="Worktree PR and CI"
+					subtitle={session.name}
+					priority={MODAL_PRIORITIES.WORKTREE_PR_DETAILS}
+					onClose={() => setDetailsOpen(false)}
+					width={520}
+					resizeKey="worktree-pr-details"
+					portal
+					closeOnBackdropClick
+				>
+					<div className="space-y-3 text-sm break-words" style={{ color: theme.colors.textMain }}>
+						{stale && <p role="status">Stale data: {error ?? 'refresh failed'}</p>}
+						{discovery?.status === 'found' ? (
+							<>
+								<p>
+									<a
+										href={discovery.pullRequest.url}
+										className="underline"
+										style={{ color: theme.colors.accent }}
+										onClick={(event) => {
+											event.preventDefault();
+											openUrl(discovery.pullRequest.url, {
+												ctrlKey: event.ctrlKey || event.metaKey,
+											});
+										}}
+									>
+										PR #{discovery.pullRequest.identity.number}: {discovery.pullRequest.title}
+									</a>
+								</p>
+								<p>
+									{discovery.pullRequest.state}
+									{discovery.pullRequest.isDraft ? ' · Draft' : ''} · Base:{' '}
+									{discovery.pullRequest.baseBranch}
+								</p>
+								<p>
+									{snapshot?.divergence?.status === 'equal'
+										? 'Local HEAD matches PR head'
+										: snapshot?.divergence?.status === 'different'
+											? `Local divergence from PR head: ${snapshot.divergence.ahead} ahead, ${snapshot.divergence.behind} behind`
+											: `Local divergence unknown${snapshot?.divergence?.status === 'unavailable' ? `: ${snapshot.divergence.message}` : ''}`}
+								</p>
+								<h3 className="font-bold">Checks</h3>
+								{ci?.status === 'no-ci' ||
+								(ci?.status === 'available' && ci.checks.length === 0) ? (
+									<p>No CI checks reported</p>
+								) : ci?.status === 'unavailable' ? (
+									<p>CI unknown: {ci.message}</p>
+								) : ci?.status === 'available' ? (
+									<ul className="space-y-2">
+										{ci.checks.map((check) => (
+											<li key={`${check.kind}:${check.id}`}>
+												{check.detailsUrl && /^https?:\/\//i.test(check.detailsUrl) ? (
+													<a
+														className="underline"
+														style={{ color: theme.colors.accent }}
+														href={check.detailsUrl}
+														onClick={(event) => {
+															event.preventDefault();
+															openUrl(check.detailsUrl!, {
+																ctrlKey: event.ctrlKey || event.metaKey,
+															});
+														}}
+													>
+														{check.name}
+													</a>
+												) : (
+													check.name
+												)}
+												{' · '}
+												{check.state}
+												{check.workflow ? ` · ${check.workflow.name}` : ''}
+												{check.updatedAt && !Number.isNaN(Date.parse(check.updatedAt))
+													? ` · updated ${formatRelativeTime(check.updatedAt)}`
+													: ' · update time unknown'}
+											</li>
+										))}
+									</ul>
+								) : (
+									<p>CI unknown</p>
+								)}
+								{ci?.checkedAt && !Number.isNaN(Date.parse(ci.checkedAt)) && (
+									<p>CI retrieved {formatRelativeTime(ci.checkedAt)}</p>
+								)}
+							</>
+						) : (
+							<p>{label}</p>
+						)}
+						<button type="button" className="underline" onClick={refresh}>
+							Refresh PR status
+						</button>
+					</div>
+				</Modal>
+			)}
+		</>
 	);
 }
 
