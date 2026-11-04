@@ -177,6 +177,8 @@ describe('process cancellation and control IPC activity', () => {
 				await expect(completion).resolves.toBe(decision);
 				expect(notify).toHaveBeenCalledTimes(1);
 				expect(registry.relayRegistryStats().pending).toBe(0);
+				await busy();
+				unsubscribe();
 				await idle();
 			} finally {
 				for (const release of releases) release();

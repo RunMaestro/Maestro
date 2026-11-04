@@ -48,18 +48,37 @@ export function subscribePendingPermissions(
 	listener: (snapshot: PendingPermissionSnapshot) => void
 ): () => void {
 	const release = beginGlobalWorktreeActivity();
+	// A retained listener may resume consumers long after subscription setup.
+	let setupSettled = false;
+	let cleanupSettled = false;
+	let cleanupDepth = 0;
+	let released = false;
+	const releaseIfSettled = () => {
+		if (setupSettled && cleanupSettled && cleanupDepth === 0 && !released) {
+			released = true;
+			release();
+		}
+	};
 	try {
+		// A throwing insertion may already have retained the listener.
 		pendingListeners.add(listener);
 		return () => {
 			const releaseUnsubscribe = beginGlobalWorktreeActivity();
+			cleanupDepth++;
+			let completed = false;
 			try {
 				pendingListeners.delete(listener);
+				completed = true;
 			} finally {
+				cleanupSettled = completed;
+				cleanupDepth--;
+				releaseIfSettled();
 				releaseUnsubscribe();
 			}
 		};
 	} finally {
-		release();
+		setupSettled = true;
+		releaseIfSettled();
 	}
 }
 
