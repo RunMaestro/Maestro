@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { openBoardDb } from '../../../main/board/board-db';
@@ -15,7 +15,9 @@ import {
 	suppressBoardSource,
 } from '../../../main/board/board-source-cleanup';
 import { BoardStorageFacade } from '../../../main/board/board-storage';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
+const fixture = createBoardIsolationFixture();
 let contract: BoardIsolation;
 let db: ReturnType<typeof openBoardDb>;
 let storage: BoardStorageFacade;
@@ -23,12 +25,16 @@ let scratch: string;
 let ownsDatabase = false;
 
 beforeAll(() => {
+	fixture.install();
 	contract = requireBoardIsolation();
 	readBoardIsolationRegistries(contract);
 	for (const suffix of ['', '-wal', '-shm']) {
 		if (fs.existsSync(contract.db + suffix)) throw new Error('Board test database must be fresh');
 	}
 	fs.mkdirSync(path.dirname(contract.db), { recursive: true });
+});
+afterAll(async () => {
+	await fixture.cleanup();
 });
 beforeEach(() => {
 	ownsDatabase = false;

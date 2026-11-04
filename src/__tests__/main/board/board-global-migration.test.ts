@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { fork } from 'node:child_process';
@@ -28,7 +28,9 @@ import {
 import { compareSqliteSnapshots, snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../../shared/board/types';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
+const fixture = createBoardIsolationFixture();
 let scratch: { dir: string; cleanup: () => void };
 let contract: BoardIsolation;
 let db: ReturnType<typeof openBoardDb>;
@@ -47,12 +49,16 @@ const card = {
 };
 
 beforeAll(() => {
+	fixture.install();
 	contract = requireBoardIsolation();
 	readBoardIsolationRegistries(contract);
 	for (const suffix of ['', '-wal', '-shm']) {
 		if (fs.existsSync(contract.db + suffix)) throw new Error('Board test database must be fresh');
 	}
 	fs.mkdirSync(path.dirname(contract.db), { recursive: true });
+});
+afterAll(async () => {
+	await fixture.cleanup();
 });
 beforeEach(() => {
 	const dir = fs.mkdtempSync(path.join(contract.root, 'global-migration-'));
