@@ -5,7 +5,7 @@ import path from 'path';
 import { logger } from '../../../utils/logger';
 import { SafeSendFn } from '../../../utils/safe-send';
 import type { SessionsData, MaestroSettings } from '../../../stores/types';
-import { CreateHandlerOptions } from '../../../utils/ipcHandler';
+import { createIpcHandler, CreateHandlerOptions } from '../../../utils/ipcHandler';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { getExpandedEnv } from '../../../agents/path-prober';
 import { resolveGhPath } from '../../../utils/cliDetection';
@@ -56,6 +56,22 @@ export const handlerOpts = (operation: string, logSuccess = true): CreateHandler
 	logSuccess,
 	precondition: requireSymphony,
 });
+
+/** Hold global Git activity across a complete IPC operation, including recovery. */
+export function createSymphonyGitHandler<
+	TArgs extends unknown[],
+	TResult extends Record<string, unknown>,
+>(operation: string, handler: (...args: TArgs) => Promise<TResult>) {
+	return createIpcHandler(handlerOpts(operation), async (...args: TArgs) => {
+		// Refusal must happen outside the operation's own failure/cleanup paths.
+		const release = await beginWorktreeGitActivity();
+		try {
+			return await handler(...args);
+		} finally {
+			release();
+		}
+	});
+}
 
 /**
  * Get the symphony directory path.
