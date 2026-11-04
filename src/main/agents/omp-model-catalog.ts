@@ -30,6 +30,7 @@ import { execFileNoThrow } from '../utils/execFile';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { buildExpandedEnv } from '../../shared/pathUtils';
 import { logger } from '../utils/logger';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = 'OmpModelCatalog';
 
@@ -196,9 +197,29 @@ export interface PrimeOmpModelCatalogOptions {
  * Fetch `omp models --json` with the given command/env and populate the catalog
  * under `catalogKey`. Best-effort and deduped per identity: concurrent callers
  * share one fetch, and a fresh catalog is not re-fetched within
- * {@link PRIME_TTL_MS}. Never throws.
+ * {@link PRIME_TTL_MS}. Command failures are best-effort; cleanup admission
+ * refusal throws before cache/configuration lookup or recovery.
  */
 export function primeOmpModelCatalog(
+	command: string,
+	env: NodeJS.ProcessEnv | undefined,
+	catalogKey: string,
+	options?: PrimeOmpModelCatalogOptions
+): Promise<void> {
+	const release = beginGlobalWorktreeActivity();
+	try {
+		const completion = primeOmpModelCatalogAdmitted(command, env, catalogKey, options);
+		// Observe each caller without replacing the shared in-flight promise.
+		// Caller continuations and descendants require independent coverage.
+		void completion.then(release, release);
+		return completion;
+	} catch (error) {
+		release();
+		throw error;
+	}
+}
+
+function primeOmpModelCatalogAdmitted(
 	command: string,
 	env: NodeJS.ProcessEnv | undefined,
 	catalogKey: string,
@@ -230,7 +251,13 @@ export function primeOmpModelCatalog(
 	const startedAt = Date.now();
 	const promise = (async () => {
 		try {
-			const result = await execFileNoThrow(command, ['models', '--json'], undefined, env);
+			// Result/timeout/cache settlement cannot prove native close. Every
+			// attempt owns its child independently, including overlapping retries;
+			// an unknown launch or missing observer conservatively remains busy.
+			const releaseNative = beginGlobalWorktreeActivity();
+			const result = await execFileNoThrow(command, ['models', '--json'], undefined, env, (child) =>
+				child.once('close', releaseNative)
+			);
 			if (result.exitCode !== 0) {
 				primeFailures.set(catalogKey, Date.now());
 				logger.warn('omp models --json failed while priming catalog', LOG_CONTEXT, {
