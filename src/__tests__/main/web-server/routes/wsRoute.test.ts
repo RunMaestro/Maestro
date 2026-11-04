@@ -44,6 +44,8 @@ const { webLogin } = vi.hoisted(() => ({
 		reads: 0,
 		/** Session id -> the account behind it. */
 		sessions: new Map<string, { id: string; username: string; displayName: string }>(),
+		expires: new Map<string, number>(),
+		revokedAccounts: new Set<string>(),
 	},
 }));
 
@@ -58,8 +60,12 @@ vi.mock('../../../../main/stores/getters', () => ({
 
 vi.mock('../../../../main/web-server/auth/web-user-store', () => ({
 	getWebUserStore: () => ({
-		resolveSession: (sessionId?: string) =>
-			sessionId ? webLogin.sessions.get(sessionId) : undefined,
+		resolveSession: (sessionId?: string) => {
+			const user = sessionId ? webLogin.sessions.get(sessionId) : undefined;
+			if (!sessionId || !user || webLogin.revokedAccounts.has(user.id)) return undefined;
+			if ((webLogin.expires.get(sessionId) ?? Infinity) <= Date.now()) return undefined;
+			return user;
+		},
 	}),
 }));
 
@@ -807,6 +813,49 @@ describe('WsRoute Web Login gate', () => {
 });
 
 describe('broadcast authorization freshness', () => {
+	it('denies only expired and revoked accounts on the next delivery', async () => {
+		webLogin.enabled = true;
+		webLogin.sessions.clear();
+		webLogin.expires.clear();
+		webLogin.revokedAccounts.clear();
+		for (const id of ['valid', 'expired', 'revoked']) {
+			webLogin.sessions.set(id, { id, username: id, displayName: id });
+		}
+		const service = new BroadcastService();
+		const clients = new Map();
+		service.setGetWebClientsCallback(() => clients);
+		const route = new WsRoute('token');
+		const callbacks = createMockCallbacks();
+		vi.mocked(callbacks.onClientConnect).mockImplementation((client) =>
+			clients.set(client.id, client)
+		);
+		route.setCallbacks(callbacks);
+		const fastify = createMockFastify();
+		route.registerRoute(fastify as any);
+		const handler = fastify.getRoute('GET', '/token/ws')!.handler;
+		const sockets = ['valid', 'expired', 'revoked'].map((id) => {
+			const socket = createMockConnection();
+			handler(
+				socket,
+				createMockRequest(undefined, {
+					headers: { host: 'localhost', cookie: `${WEB_LOGIN_COOKIE}=${id}` },
+				})
+			);
+			socket.send.mockClear();
+			return socket;
+		});
+		service.broadcastToAll({ type: 'before' });
+		webLogin.expires.set('expired', Date.now());
+		webLogin.revokedAccounts.add('revoked');
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		service.broadcastToAll({ type: 'after' });
+		expect(sockets.map((socket) => socket.send.mock.calls.length)).toEqual([2, 1, 1]);
+		for (const socket of sockets.slice(1))
+			expect(socket.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		for (const socket of sockets) socket.emit('close');
+		webLogin.expires.clear();
+		webLogin.revokedAccounts.clear();
+	});
 	it.each([1, 5, 10])(
 		'reads the global flag once for %i real route clients per delivery',
 		(count) => {

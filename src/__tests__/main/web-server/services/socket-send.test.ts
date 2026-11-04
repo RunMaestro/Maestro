@@ -11,6 +11,47 @@ import {
 } from '../../../../main/web-server/services/socket-send';
 
 describe('bounded WebSocket output', () => {
+	it('rejects an oversized queued message and prevents pending completion from sending more', async () => {
+		let completion!: (error?: Error) => void;
+		const socket = Object.assign(new EventEmitter(), {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: vi.fn((_data: string, _options: unknown, callback: (error?: Error) => void) => {
+				completion = callback;
+			}),
+			close: vi.fn(),
+			terminate: vi.fn(),
+		}) as unknown as WebSocket;
+		expect(sendBounded(socket, 'x'.repeat(WEB_CLIENT_MAX_BUFFERED_BYTES + 1))).toBe(true);
+		expect(sendBounded(socket, 'y'.repeat(WEB_CLIENT_MAX_BUFFERED_BYTES + 1))).toBe(false);
+		expect(socket.close).toHaveBeenCalledOnce();
+		completion();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(socket.send).toHaveBeenCalledOnce();
+		socket.emit('close');
+	});
+
+	it('cleans up a failed write and ignores later acknowledgements', async () => {
+		let completion!: (error?: Error) => void;
+		const socket = Object.assign(new EventEmitter(), {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: vi.fn((_data: string, _options: unknown, callback: (error?: Error) => void) => {
+				completion = callback;
+			}),
+			close: vi.fn(),
+			terminate: vi.fn(),
+		}) as unknown as WebSocket;
+		enableWebSocketChunks(socket);
+		expect(sendBounded(socket, 'x'.repeat(100_000))).toBe(true);
+		const first = JSON.parse(vi.mocked(socket.send).mock.calls[0][0] as string);
+		completion(new Error('write failed'));
+		acknowledgeWebSocketChunk(socket, first.offset + first.data.length);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(socket.close).toHaveBeenCalledOnce();
+		expect(socket.send).toHaveBeenCalledOnce();
+		socket.emit('close');
+	});
 	it('yields native Unicode fragments to the event loop while preserving FIN and queued order', async () => {
 		const frames: Array<{ data: string; fin: boolean }> = [];
 		let sentinelFrames = -1;
