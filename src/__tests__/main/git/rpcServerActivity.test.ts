@@ -2062,6 +2062,190 @@ describe('Claude SDK native activity', () => {
 			(await reserve()).release();
 		}
 	);
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses retained Claude controls before query, queue or recovery under %s',
+		async (root) => {
+			claude.spawn(input);
+			const managed = processes.get(input.sessionId)!;
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			const hold = await reserve(root);
+			for (const probe of [
+				sdk.interrupt,
+				sdk.close,
+				captureException,
+				fallback,
+				spawn,
+				fs.realpath,
+			])
+				vi.mocked(probe).mockClear();
+			try {
+				await expect(managed.sdkController!.interrupt()).rejects.toThrow('reserved');
+				await expect(managed.sdkController!.kill()).rejects.toThrow('reserved');
+				await expect(managed.harnessControl!.interrupt()).rejects.toThrow('reserved');
+				await expect(managed.harnessControl!.close()).rejects.toThrow('reserved');
+				await expect(
+					managed.harnessControl!.steer({ id: 'late', text: 'follow up' })
+				).rejects.toThrow('reserved');
+				for (const probe of [
+					sdk.interrupt,
+					sdk.close,
+					captureException,
+					fallback,
+					spawn,
+					fs.realpath,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each([
+		['sdk', false],
+		['sdk', true],
+		['harness', false],
+		['harness', true],
+	] as const)(
+		'owns retained Claude %s interrupt after original settlement (rejected: %s)',
+		async (entry, rejected) => {
+			claude.spawn(input);
+			const managed = processes.get(input.sessionId)!;
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const pending = Promise.withResolvers<Awaited<ReturnType<Query['interrupt']>>>();
+			vi.mocked(sdk.interrupt).mockReturnValueOnce(pending.promise);
+			vi.mocked(sdk.close).mockClear();
+			const completion =
+				entry === 'sdk' ? managed.sdkController!.interrupt() : managed.harnessControl!.interrupt();
+			expect(completion).toBeInstanceOf(Promise);
+			await blocked();
+			expect(sdk.close).not.toHaveBeenCalled();
+			if (rejected) pending.reject(new Error('interrupt transport failed'));
+			else pending.resolve(undefined);
+			await expect(completion).resolves.toBeUndefined();
+			expect(sdk.close).toHaveBeenCalledOnce();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['sdk', 'harness'] as const)(
+		'preserves retained Claude %s close failures after original settlement',
+		async (entry) => {
+			claude.spawn(input);
+			const managed = processes.get(input.sessionId)!;
+			next.resolve({ done: true, value: undefined });
+			await close();
+			processes.clear();
+			const error = new Error('close threw');
+			vi.mocked(sdk.close).mockImplementationOnce(() => {
+				throw error;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				throw new Error('diagnostics failed');
+			});
+			const completion =
+				entry === 'sdk' ? managed.sdkController!.kill() : managed.harnessControl!.close();
+			await expect(completion).rejects.toBe(error);
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(error);
+			(await reserve()).release();
+		}
+	);
+	it('observes ignored Claude SDK close failure after original settlement', async () => {
+		claude.spawn(input);
+		const managed = processes.get(input.sessionId)!;
+		next.resolve({ done: true, value: undefined });
+		await close();
+		processes.clear();
+		const error = new Error('ignored SDK close failed');
+		vi.mocked(sdk.close).mockImplementationOnce(() => {
+			throw error;
+		});
+		void managed.sdkController!.kill();
+		await drain();
+		expect(captureException).toHaveBeenCalledWith(error);
+		(await reserve()).release();
+	});
+	it('retains concurrent Claude controls independently of replacement and native close', async () => {
+		claude.spawn(input);
+		const managed = processes.get(input.sessionId)!;
+		next.resolve({ done: true, value: undefined });
+		await close();
+		const first = Promise.withResolvers<Awaited<ReturnType<Query['interrupt']>>>();
+		const last = Promise.withResolvers<Awaited<ReturnType<Query['interrupt']>>>();
+		vi.mocked(sdk.interrupt).mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
+		const firstControl = managed.sdkController!.interrupt();
+		const lastControl = managed.harnessControl!.interrupt();
+		native = makeNative();
+		next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+		expect(claude.spawn(input).success).toBe(true);
+		processes.clear();
+		next.resolve({ done: true, value: undefined });
+		await close();
+		await blocked();
+		last.reject(new Error('second interrupt failed'));
+		await lastControl;
+		await drain();
+		await blocked();
+		first.resolve(undefined);
+		await firstControl;
+		await drain();
+		(await reserve()).release();
+	});
+	it('admits retained Claude interrupt before an earlier pending reservation resolves', async () => {
+		claude.spawn(input);
+		const managed = processes.get(input.sessionId)!;
+		next.resolve({ done: true, value: undefined });
+		await close();
+		processes.clear();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const pending = Promise.withResolvers<Awaited<ReturnType<Query['interrupt']>>>();
+		vi.mocked(sdk.interrupt).mockReturnValueOnce(pending.promise);
+		const completion = managed.sdkController!.interrupt();
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await blocked();
+		pending.resolve(undefined);
+		await completion;
+		await drain();
+		(await reserve()).release();
+	});
+	it('preserves Claude follow-up queueing and the finished steering verdict', async () => {
+		claude.spawn(input);
+		const managed = processes.get(input.sessionId)!;
+		const prompt = probes.query.mock.calls[0][0].prompt;
+		if (typeof prompt === 'string') throw new Error('Expected streaming input');
+		const messages = prompt[Symbol.asyncIterator]();
+		await messages.next();
+		const waiting = messages.next();
+		await expect(
+			managed.harnessControl!.steer({ id: 'follow-up', text: 'continue' })
+		).resolves.toEqual({
+			type: 'steering',
+			id: 'follow-up',
+			verdict: 'queued',
+		});
+		expect((await waiting).value).toMatchObject({ message: { role: 'user', content: 'continue' } });
+		next.resolve({ done: true, value: undefined });
+		await close();
+		processes.clear();
+		await expect(
+			managed.harnessControl!.steer({ id: 'late', text: 'continue' })
+		).resolves.toMatchObject({
+			type: 'steering',
+			id: 'late',
+			verdict: 'refused',
+			refusal: 'not-running',
+		});
+		await drain();
+		(await reserve()).release();
+	});
 	it.each([false, true])(
 		'retains permission completion and failure after query and native close (failure: %s)',
 		async (fail) => {

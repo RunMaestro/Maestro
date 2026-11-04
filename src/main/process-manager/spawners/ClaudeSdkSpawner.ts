@@ -150,15 +150,15 @@ class ClaudeTurn {
 			projectPath: config.projectPath,
 			agentSessionId: config.agentSessionId,
 			sdkController: {
-				interrupt: () => this.observeCompletion(this.interrupt()),
-				kill: () => this.observeCompletion(this.close()),
+				interrupt: () => this.withActivity(() => this.interrupt()),
+				kill: () => this.withActivity(() => this.close()),
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
 				closed: this.closed.promise,
-				steer: (request) => this.observeCompletion(this.steer(request)),
-				interrupt: () => this.observeCompletion(this.interrupt()),
-				close: () => this.observeCompletion(this.close()),
+				steer: (request) => this.withActivity(() => this.steer(request)),
+				interrupt: () => this.withActivity(() => this.interrupt()),
+				close: () => this.withActivity(() => this.close()),
 			},
 		};
 	}
@@ -441,6 +441,23 @@ class ClaudeTurn {
 				error: String(error),
 			});
 		});
+	}
+
+	private withActivity<T>(operation: () => Promise<T>): Promise<T> {
+		try {
+			// Observe the actual returned control promise, including fire-and-forget
+			// SDK callers, independently of the original turn's settled observer.
+			return withWorktreeTurnActivity(
+				(_start, observe) => observe(operation()),
+				(error) => void captureException(error)
+			);
+		} catch (error) {
+			// Preserve async refusal without running the operation or reporting it
+			// as a transport failure. Ignored controls still have a rejection handler.
+			const refused = Promise.reject<T>(error);
+			void refused.catch(() => {});
+			return refused;
+		}
 	}
 
 	private isSuperseded(): boolean {
