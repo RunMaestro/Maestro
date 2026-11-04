@@ -58,20 +58,21 @@ const handlerOpts = (
 	...extra,
 });
 
-/** Hold outer setup; standalone runners/spawners separately track native completion. */
-function withProcessStartActivity<TArgs extends unknown[], TResult>(
+/** Hold outer requests; standalone managers/runners separately track native completion. */
+function withProcessActivity<TArgs extends unknown[], TResult>(
 	options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
 	handler: (...args: TArgs) => Promise<TResult>
 ): (_event: unknown, ...args: TArgs) => Promise<TResult> {
-	return withIpcErrorLogging(options, async (...args: TArgs) => {
+	const wrapped = withIpcErrorLogging(options, handler);
+	return async (event: unknown, ...args: TArgs) => {
 		// Shells, SSH proxies and preparation may affect paths outside the agent cwd.
 		const release = beginGlobalWorktreeActivity();
 		try {
-			return await handler(...args);
+			return await wrapped(event, ...args);
 		} finally {
 			release();
 		}
-	});
+	};
 }
 
 /** Extract a fail-closed owner from either an Electron or bridge invocation event. */
@@ -289,7 +290,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Send SIGINT to a process
 	ipcMain.handle(
 		'process:interrupt',
-		withIpcErrorLogging(handlerOpts('interrupt'), async (sessionId: string) => {
+		withProcessActivity(handlerOpts('interrupt'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			if (
 				!processManager.get(sessionId) &&
@@ -304,7 +305,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Kill a process
 	ipcMain.handle(
 		'process:kill',
-		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
+		withProcessActivity(handlerOpts('kill'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			if (
 				!processManager.get(sessionId) &&
@@ -425,7 +426,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// wrapped with ssh to execute on the remote host.
 	ipcMain.handle(
 		'process:spawnTerminalTab',
-		withProcessStartActivity(
+		withProcessActivity(
 			handlerOpts('spawnTerminalTab'),
 			async (config: {
 				sessionId: string;
@@ -600,7 +601,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// TODO: Remove this handler once all callers migrate to process:spawnTerminalTab for persistent PTY sessions
 	ipcMain.handle(
 		'process:runCommand',
-		withProcessStartActivity(
+		withProcessActivity(
 			handlerOpts('runCommand'),
 			async (config: {
 				sessionId: string;
@@ -675,7 +676,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// process map, so process:kill can't reach it.
 	ipcMain.handle(
 		'process:cancelCommand',
-		withIpcErrorLogging(
+		withProcessActivity(
 			handlerOpts('cancelCommand'),
 			async (config: { sessionId: string }): Promise<boolean> => {
 				const processManager = requireProcessManager(getProcessManager);

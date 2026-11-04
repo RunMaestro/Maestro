@@ -1,0 +1,303 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'fs/promises';
+import path from 'path';
+import { EventEmitter } from 'events';
+import { spawn } from 'child_process';
+import { ipcMain } from 'electron';
+import type { ProcessHandlerDependencies } from '../../../main/ipc/handlers/process';
+
+vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
+vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
+vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('../../../main/plugins/relay-conversations', () => ({
+	cancelRelayConversationTurn: vi.fn(),
+}));
+vi.mock('../../../main/permission-relay/registry', () => ({}));
+vi.mock('../../../main/utils/headless-agent-activity', () => ({}));
+vi.mock('../../../main/utils/sentry', () => ({ addBreadcrumb: vi.fn() }));
+vi.mock('../../../main/utils/safe-send', () => ({}));
+vi.mock('../../../main/process-manager/utils/childProcessInfo', () => ({}));
+vi.mock('../../../main/concerto-html', () => ({}));
+vi.mock('../../../main/ipc/handlers/process/handle-spawn', () => ({
+	cancelPendingDesktopSpawns: vi.fn(),
+}));
+vi.mock('../../../main/permission-relay', () => ({ initPermissionRelay: vi.fn() }));
+vi.mock('../../../main/harness-control/integration', () => ({ initHarnessControl: vi.fn() }));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+}));
+vi.mock('../../../main/utils/cliDetection', () => ({
+	resolveSshPath: vi.fn(async () => 'ssh'),
+	getExpandedEnv: vi.fn(() => ({})),
+}));
+vi.mock('../../../main/process-manager/utils/commandKill', () => ({
+	killProcessTreeNow: vi.fn(),
+}));
+
+import { logger } from '../../../main/utils/logger';
+import { addBreadcrumb } from '../../../main/utils/sentry';
+import { cancelRelayConversationTurn } from '../../../main/plugins/relay-conversations';
+import { cancelPendingDesktopSpawns } from '../../../main/ipc/handlers/process/handle-spawn';
+
+describe('process cancellation IPC activity', () => {
+	const target = path.resolve('process-cancellation-target');
+	const operations = ['interrupt', 'kill', 'cancelCommand'] as const;
+	type Operation = (typeof operations)[number];
+	type Handler = (event: unknown, arg: unknown) => Promise<unknown>;
+	let gate: typeof import('../../../main/git/worktreeActivity');
+	let releases: Array<() => void>;
+	let active: number;
+	let manager: Record<'get' | Operation, ReturnType<typeof vi.fn>>;
+	let deps: ProcessHandlerDependencies;
+	const handler = (operation: Operation) =>
+		vi
+			.mocked(ipcMain.handle)
+			.mock.calls.find(([name]) => name === `process:${operation}`)![1] as Handler;
+	const run = (operation: Operation, event: unknown = {}) =>
+		handler(operation)(event, operation === 'cancelCommand' ? { sessionId: 'session' } : 'session');
+	async function reservation(root = target) {
+		const hold = await gate.reserveWorktreeCleanup(root);
+		if (hold.status === 'reserved-partially') releases.push(hold.release);
+		return hold;
+	}
+	async function idle(root = target) {
+		const hold = await reservation(root);
+		expect(hold.status).toBe('reserved-partially');
+		if (hold.status !== 'reserved-partially') throw new Error('Expected partial reservation');
+		expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
+		return hold;
+	}
+	const busy = async () =>
+		expect(await reservation()).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+
+	beforeEach(async () => {
+		vi.resetModules();
+		vi.resetAllMocks();
+		releases = [];
+		active = 0;
+		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
+		manager = {
+			get: vi.fn(() => ({})),
+			interrupt: vi.fn(() => true),
+			kill: vi.fn(() => true),
+			cancelCommand: vi.fn(() => false),
+		};
+		deps = {
+			getProcessManager: vi.fn(() => manager),
+			getAgentDetector: () => null,
+			getMainWindow: () => null,
+			settingsStore: {},
+			agentConfigsStore: {},
+			sessionsStore: {},
+			interactiveReplayController: { clearInteractiveReplay: vi.fn() },
+		} as unknown as ProcessHandlerDependencies;
+		gate = await import('../../../main/git/worktreeActivity');
+		const admit = gate.beginGlobalWorktreeActivity;
+		vi.spyOn(gate, 'beginGlobalWorktreeActivity').mockImplementation(() => {
+			const release = admit();
+			active++;
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				active--;
+				release();
+			};
+		});
+		const { registerProcessHandlers } = await import('../../../main/ipc/handlers/process');
+		registerProcessHandlers(deps);
+		vi.mocked(deps.getProcessManager).mockClear();
+	});
+	afterEach(() => {
+		releases.forEach((release) => release());
+		vi.restoreAllMocks();
+	});
+
+	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+		'refuses cancellation before setup or recovery under %s',
+		async (root) => {
+			await idle(root);
+			for (const operation of operations) await expect(run(operation)).rejects.toThrow(/reserved/);
+			for (const work of [
+				deps.getProcessManager,
+				manager.get,
+				...operations.map((op) => manager[op]),
+				cancelPendingDesktopSpawns,
+				cancelRelayConversationTurn,
+				deps.interactiveReplayController!.clearInteractiveReplay,
+				addBreadcrumb,
+				logger.info,
+				logger.debug,
+				logger.error,
+			])
+				expect(work).not.toHaveBeenCalled();
+		}
+	);
+	it('refuses before cancelCommand configuration access', async () => {
+		await idle();
+		const read = vi.fn();
+		await expect(handler('cancelCommand')({}, new Proxy({}, { get: read }))).rejects.toThrow(
+			/reserved/
+		);
+		expect(read).not.toHaveBeenCalled();
+	});
+	it('admits before pending reservation canonicalization and holds across diagnostics', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const hold = reservation();
+		const diagnostic = Promise.withResolvers<void>();
+		vi.mocked(addBreadcrumb).mockReturnValueOnce(diagnostic.promise);
+		const pending = run('kill');
+		canonical.resolve(target);
+		await expect(hold).resolves.toMatchObject({ status: 'blocked' });
+		await busy();
+		expect(manager.kill).not.toHaveBeenCalled();
+		diagnostic.resolve();
+		await expect(pending).resolves.toBe(true);
+		await idle();
+	});
+	it('retains concurrent kill requests independently through diagnostic settlement', async () => {
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(addBreadcrumb).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+		const one = run('kill');
+		const two = run('kill');
+		first.resolve();
+		await one;
+		await busy();
+		second.resolve();
+		await two;
+		await idle();
+	});
+	it.each(operations)(
+		'admits %s before manager access, result inspection and error reporting',
+		async (op) => {
+			const failure = Error('manager unavailable');
+			vi.mocked(deps.getProcessManager).mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				throw failure;
+			});
+			vi.mocked(logger.error).mockImplementationOnce(() => expect(active).toBe(1));
+			await expect(run(op)).rejects.toBe(failure);
+			expect(logger.error).toHaveBeenCalledWith(
+				`${op} error`,
+				expect.any(String),
+				expect.any(Object)
+			);
+			await idle();
+		}
+	);
+	it.each(['interrupt', 'kill'] as const)(
+		'preserves %s pending-start and Relay short-circuit cancellation',
+		async (op) => {
+			manager.get.mockReturnValue(undefined);
+			vi.mocked(cancelPendingDesktopSpawns).mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				return true;
+			});
+			await expect(run(op)).resolves.toBe(true);
+			expect(cancelRelayConversationTurn).not.toHaveBeenCalled();
+			vi.mocked(cancelRelayConversationTurn).mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				return true;
+			});
+			await expect(run(op)).resolves.toBe(true);
+			expect(manager[op]).not.toHaveBeenCalled();
+			expect(addBreadcrumb).not.toHaveBeenCalled();
+			expect(deps.interactiveReplayController!.clearInteractiveReplay).not.toHaveBeenCalled();
+			await idle();
+		}
+	);
+	it.each(['pending', 'relay', 'replay', 'breadcrumb', 'kill'])(
+		'holds kill through %s failure and skips later recovery',
+		async (stage) => {
+			const fail = () => {
+				expect(active).toBe(1);
+				throw Error(stage);
+			};
+			if (stage === 'pending' || stage === 'relay') manager.get.mockReturnValue(undefined);
+			if (stage === 'pending') vi.mocked(cancelPendingDesktopSpawns).mockImplementationOnce(fail);
+			if (stage === 'relay') vi.mocked(cancelRelayConversationTurn).mockImplementationOnce(fail);
+			if (stage === 'replay')
+				vi.mocked(deps.interactiveReplayController!.clearInteractiveReplay).mockImplementationOnce(
+					fail
+				);
+			if (stage === 'breadcrumb')
+				vi.mocked(addBreadcrumb).mockImplementationOnce(async () => fail());
+			if (stage === 'kill') manager.kill.mockImplementationOnce(fail);
+			vi.mocked(logger.error).mockImplementationOnce(() => expect(active).toBe(1));
+			await expect(run('kill')).rejects.toThrow(stage);
+			if (stage !== 'kill') expect(manager.kill).not.toHaveBeenCalled();
+			await idle();
+		}
+	);
+	it.each(operations)('preserves %s false result and bridge arguments', async (op) => {
+		manager[op].mockReturnValueOnce(false);
+		await expect(run(op, { clientId: 'bridge' })).resolves.toBe(false);
+		expect(manager[op]).toHaveBeenCalledWith('session');
+		await idle();
+	});
+	it('holds cancelCommand result getters and reporting, releasing after reporting throws', async () => {
+		await expect(
+			handler('cancelCommand')(
+				{},
+				{
+					get sessionId() {
+						expect(active).toBe(1);
+						return 'session';
+					},
+				}
+			)
+		).resolves.toBe(false);
+		vi.mocked(logger.debug).mockImplementationOnce(() => {
+			expect(active).toBe(1);
+			throw Error('report failed');
+		});
+		vi.mocked(logger.error).mockImplementationOnce(() => expect(active).toBe(1));
+		await expect(run('cancelCommand')).rejects.toThrow('report failed');
+		await idle();
+	});
+	it('releases after diagnostic rejection and preserves the original error', async () => {
+		const diagnostic = Promise.withResolvers<void>();
+		vi.mocked(addBreadcrumb).mockReturnValueOnce(diagnostic.promise);
+		const pending = run('kill');
+		await busy();
+		const failure = Error('diagnostic rejected');
+		diagnostic.reject(failure);
+		await expect(pending).rejects.toBe(failure);
+		expect(manager.kill).not.toHaveBeenCalled();
+		await idle();
+	});
+	it('composes with the real SSH runner: cancellation and exit require independent native close', async () => {
+		const native = Object.assign(new EventEmitter(), {
+			pid: 123,
+			stdout: new EventEmitter(),
+			stderr: new EventEmitter(),
+			kill: vi.fn(),
+		});
+		vi.mocked(spawn).mockReturnValue(native as unknown as ReturnType<typeof spawn>);
+		const { SshCommandRunner } =
+			await import('../../../main/process-manager/runners/SshCommandRunner');
+		const runner = new SshCommandRunner(new EventEmitter());
+		manager.cancelCommand.mockImplementation((id) => runner.cancel(id));
+		const pending = runner.run('session', 'command', '~/remote-only', {
+			id: 'remote',
+			name: 'Remote',
+			enabled: true,
+			host: 'host',
+			username: 'user',
+			port: 22,
+			privateKeyPath: '',
+		});
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+		await expect(run('cancelCommand')).resolves.toBe(true);
+		await pending;
+		native.emit('exit', 0);
+		await busy();
+		native.emit('close', 0);
+		await idle();
+	});
+});
