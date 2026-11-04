@@ -51,6 +51,7 @@ import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -172,6 +173,17 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return this.spawnAdmitted(config);
+		} finally {
+			// SDK/server work may outlive this synchronous setup. Its native lifetime
+			// needs independent coverage; manager settlement is not completion.
+			release();
+		}
+	}
+
+	private spawnAdmitted(config: ProcessConfig): SpawnResult {
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&
@@ -417,8 +429,13 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	private fallbackToCli(config: ProcessConfig): SpawnResult {
-		this.harnessControls.forget(config.sessionId);
-		return this.childProcessSpawner.spawn(config);
+		const release = beginGlobalWorktreeActivity();
+		try {
+			this.harnessControls.forget(config.sessionId);
+			return this.childProcessSpawner.spawn(config);
+		} finally {
+			release();
+		}
 	}
 
 	private registerHarnessControl(config: ProcessConfig): void {
@@ -888,33 +905,38 @@ export class ProcessManager extends EventEmitter {
 		cols?: number;
 		rows?: number;
 	}): SpawnResult {
-		const shell = config.shell || getDefaultShell();
-		logger.info('[ProcessManager] Spawning terminal tab PTY', 'ProcessManager', {
-			sessionId: config.sessionId,
-			cwd: config.cwd,
-			shell,
-			cols: config.cols || 80,
-			rows: config.rows || 24,
-		});
-		return this.spawn({
-			sessionId: config.sessionId,
-			toolType: 'terminal',
-			reuseTerminal: true,
-			cwd: config.cwd,
-			command: shell,
-			args: [],
-			shell,
-			shellArgs: config.shellArgs,
-			shellEnvVars: config.shellEnvVars,
-			cols: config.cols || 80,
-			rows: config.rows || 24,
-		});
+		const release = beginGlobalWorktreeActivity();
+		try {
+			const shell = config.shell || getDefaultShell();
+			logger.info('[ProcessManager] Spawning terminal tab PTY', 'ProcessManager', {
+				sessionId: config.sessionId,
+				cwd: config.cwd,
+				shell,
+				cols: config.cols || 80,
+				rows: config.rows || 24,
+			});
+			return this.spawn({
+				sessionId: config.sessionId,
+				toolType: 'terminal',
+				reuseTerminal: true,
+				cwd: config.cwd,
+				command: shell,
+				args: [],
+				shell,
+				shellArgs: config.shellArgs,
+				shellEnvVars: config.shellEnvVars,
+				cols: config.cols || 80,
+				rows: config.rows || 24,
+			});
+		} finally {
+			release();
+		}
 	}
 
 	/**
 	 * Run a single command and capture stdout/stderr cleanly
 	 */
-	runCommand(
+	async runCommand(
 		sessionId: string,
 		command: string,
 		cwd: string,
@@ -922,10 +944,21 @@ export class ProcessManager extends EventEmitter {
 		shellEnvVars?: Record<string, string>,
 		sshRemoteConfig?: SshRemoteConfig | null
 	): Promise<CommandResult> {
-		if (sshRemoteConfig) {
-			return this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars);
+		const release = beginGlobalWorktreeActivity();
+		try {
+			if (sshRemoteConfig) {
+				return await this.sshCommandRunner.run(
+					sessionId,
+					command,
+					cwd,
+					sshRemoteConfig,
+					shellEnvVars
+				);
+			}
+			return await this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
+		} finally {
+			release();
 		}
-		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
 	}
 
 	/**
