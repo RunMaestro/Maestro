@@ -20,7 +20,7 @@ import fs from 'fs/promises';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { reserveWorktreeCleanup } from '../../../../main/git/worktreeActivity';
 import { resolveGhPath } from '../../../../main/utils/cliDetection';
-import { getShellPath } from '../../../../main/runtime/getShellPath';
+import { getShellPath } from '../../../../shared/maestro-lib/launch/getShellPath';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -4319,7 +4319,7 @@ export function Component() {
 
 		it('should proceed without enriched PATH when getShellPath rejects', async () => {
 			// Force getShellPath to reject
-			const shellPathModule = await import('../../../../main/runtime/getShellPath');
+			const shellPathModule = await import('../../../../shared/maestro-lib/launch/getShellPath');
 			vi.mocked(shellPathModule.getShellPath).mockRejectedValueOnce(
 				new Error('Shell exited with code 1')
 			);
