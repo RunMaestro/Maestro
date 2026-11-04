@@ -9,6 +9,7 @@ import { CreateHandlerOptions } from '../../../utils/ipcHandler';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { getExpandedEnv } from '../../../agents/path-prober';
 import { resolveGhPath } from '../../../utils/cliDetection';
+import { beginWorktreeGitActivity } from '../../../git/worktreeActivity';
 import {
 	SYMPHONY_STATE_PATH,
 	SYMPHONY_CACHE_PATH,
@@ -338,6 +339,23 @@ export async function createDraftPR(
 	upstreamSlug?: string,
 	forkOwner?: string
 ): Promise<{ success: boolean; prUrl?: string; prNumber?: number; error?: string }> {
+	// Refuse before auth/setup, outside the failed-PR remote-branch rollback path.
+	const release = await beginWorktreeGitActivity();
+	try {
+		return await createDraftPRAdmitted(repoPath, baseBranch, title, body, upstreamSlug, forkOwner);
+	} finally {
+		release();
+	}
+}
+
+async function createDraftPRAdmitted(
+	repoPath: string,
+	baseBranch: string,
+	title: string,
+	body: string,
+	upstreamSlug?: string,
+	forkOwner?: string
+): ReturnType<typeof createDraftPR> {
 	// Check gh authentication first
 	const authCheck = await checkGhAuthentication();
 	if (!authCheck.authenticated) {

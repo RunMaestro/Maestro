@@ -2,6 +2,7 @@ import { execFileNoThrow } from './execFile';
 import { logger } from './logger';
 import { getExpandedEnv } from '../agents/path-prober';
 import { resolveGhPath } from './cliDetection';
+import { beginWorktreeGitActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[SymphonyFork]';
 
@@ -17,6 +18,19 @@ export interface ForkSetupResult {
  * and `upstream` points to the original repo.
  */
 export async function ensureForkSetup(
+	repoPath: string,
+	repoSlug: string
+): Promise<ForkSetupResult> {
+	// Admission must precede setup and remain held across remote fallback commands.
+	const release = await beginWorktreeGitActivity();
+	try {
+		return await ensureForkSetupAdmitted(repoPath, repoSlug);
+	} finally {
+		release();
+	}
+}
+
+async function ensureForkSetupAdmitted(
 	repoPath: string,
 	repoSlug: string
 ): Promise<ForkSetupResult> {
