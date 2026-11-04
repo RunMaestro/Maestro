@@ -537,6 +537,8 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
+	pendingAdmissionId?: string;
 	// Hold set when the process ownership probe cannot reach main. The
 	// item becomes runnable only after bridge reconciliation confirms ownership.
 	waitingForConnection?: boolean;

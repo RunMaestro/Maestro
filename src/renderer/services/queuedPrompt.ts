@@ -296,7 +296,7 @@ export function sendQueuedItemNow(
 ): boolean {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const item = session?.executionQueue?.find((i) => i.id === itemId);
-	if (!session || !item) return false;
+	if (!session || !item || item.pendingAdmissionId) return false;
 
 	const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
 	if (targetTabBusy) return false;

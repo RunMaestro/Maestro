@@ -9,7 +9,8 @@
  * taking index 0. A connection hold is an ordering barrier: later items cannot
  * overtake a prompt whose delivery state is still unknown. A consult hold
  * (`awaitingConsult`) is the same barrier scoped to one tab: that tab's turn is
- * not finished until the agents it consulted have replied.
+ * not finished until the agents it consulted have replied. Pending admission
+ * likewise blocks its tab, independently of the user's pause flag.
  */
 
 import type {
@@ -66,7 +67,7 @@ export function applyQueuedItemEdit(
 	}
 ): QueuedItem[] {
 	return queue.map((item) =>
-		item.id === itemId
+		item.id === itemId && !item.pendingAdmissionId
 			? {
 					...item,
 					text: patch.text,
@@ -83,7 +84,9 @@ export function applyQueuedItemEdit(
  * cross-agent consult holds it.
  */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused && !item.waitingForConnection && !item.awaitingConsult;
+	return (
+		!item.paused && !item.waitingForConnection && !item.awaitingConsult && !item.pendingAdmissionId
+	);
 }
 
 /**
@@ -113,8 +116,7 @@ export function dropConsultHold(queue: QueuedItem[], tabId: string | undefined):
  * actually run, or -1. The ONE place the dispatch order is decided:
  *
  * - a connection hold is a barrier for the whole queue (delivery state unknown);
- * - a consult hold is a barrier for ITS TAB only: that tab's turn is not done
- *   until the reply lands, while other tabs carry on;
+ * - consult and admission holds are barriers for their tab only;
  * - a paused item is simply skipped.
  */
 function firstRunnableQueueIndex(queue: QueuedItem[]): number {
@@ -122,7 +124,7 @@ function firstRunnableQueueIndex(queue: QueuedItem[]): number {
 	for (let index = 0; index < queue.length; index += 1) {
 		const item = queue[index];
 		if (item.waitingForConnection) return -1;
-		if (item.awaitingConsult) {
+		if (item.awaitingConsult || item.pendingAdmissionId) {
 			consultBlockedTabs.add(item.tabId);
 			continue;
 		}
@@ -190,7 +192,11 @@ export function hasWorkAheadOfNewMessage(
 	if (opts.autoRunActive) return true;
 	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
 	return (session.executionQueue ?? []).some(
-		(item) => item.waitingForConnection || !!item.awaitingConsult || isRunnableQueueItem(item)
+		(item) =>
+			item.waitingForConnection ||
+			!!item.awaitingConsult ||
+			!!item.pendingAdmissionId ||
+			isRunnableQueueItem(item)
 	);
 }
 
@@ -489,7 +495,12 @@ export function reorderQueueItem(
  * already underway.
  */
 function isMergeableQueueItem(item: QueuedItem): boolean {
-	return item.type === 'message' && !item.crossAgentOnly && !item.awaitingConsult;
+	return (
+		item.type === 'message' &&
+		!item.crossAgentOnly &&
+		!item.awaitingConsult &&
+		!item.pendingAdmissionId
+	);
 }
 
 /**
@@ -613,6 +624,7 @@ export function getQueueBusyContext(
 
 /** Why a queued item cannot be force sent right now. */
 export type ForceSendBlockedReason =
+	| 'pending-admission'
 	| 'no-target-tab'
 	| 'target-tab-busy'
 	| 'needs-forced-parallel'
@@ -636,22 +648,24 @@ export interface ForceSendEligibility extends QueueBusyContext {
  */
 export function getForceSendEligibility(
 	session: Session,
-	item: Pick<QueuedItem, 'tabId' | 'awaitingConsult'>,
+	item: Pick<QueuedItem, 'tabId' | 'awaitingConsult' | 'pendingAdmissionId'>,
 	opts: { forcedParallelEnabled: boolean }
 ): ForceSendEligibility {
 	const busy = getQueueBusyContext(session, item);
 	const requiresParallel = busy.otherBusyTabs.length > 0;
 	// A consult hold has nothing to send yet: its text is the reply, which has not
 	// arrived. Forcing it would hand the agent an empty continuation.
-	const blockedReason: ForceSendBlockedReason | undefined = item.awaitingConsult
-		? 'awaiting-consult'
-		: !resolveQueuedItemTarget(session, item)
-			? 'no-target-tab'
-			: busy.targetTabBusy
-				? 'target-tab-busy'
-				: requiresParallel && !opts.forcedParallelEnabled
-					? 'needs-forced-parallel'
-					: undefined;
+	const blockedReason: ForceSendBlockedReason | undefined = item.pendingAdmissionId
+		? 'pending-admission'
+		: item.awaitingConsult
+			? 'awaiting-consult'
+			: !resolveQueuedItemTarget(session, item)
+				? 'no-target-tab'
+				: busy.targetTabBusy
+					? 'target-tab-busy'
+					: requiresParallel && !opts.forcedParallelEnabled
+						? 'needs-forced-parallel'
+						: undefined;
 	return { ...busy, requiresParallel, canForce: !blockedReason, blockedReason };
 }
 
@@ -677,7 +691,8 @@ export function shouldOfferForceSend(
 	return (
 		eligibility.blockedReason !== 'no-target-tab' &&
 		eligibility.blockedReason !== 'target-tab-busy' &&
-		eligibility.blockedReason !== 'awaiting-consult'
+		eligibility.blockedReason !== 'awaiting-consult' &&
+		eligibility.blockedReason !== 'pending-admission'
 	);
 }
 
@@ -693,6 +708,8 @@ export function shouldOfferForceSend(
 export function getForceSendTitle(eligibility: ForceSendEligibility): string {
 	const otherBusyCount = eligibility.otherBusyTabs.length;
 	switch (eligibility.blockedReason) {
+		case 'pending-admission':
+			return 'Waiting for supervision admission';
 		case 'target-tab-busy':
 			return 'This tab is already working - the message runs when the current turn finishes';
 		case 'needs-forced-parallel':
@@ -710,6 +727,7 @@ export function getForceSendTitle(eligibility: ForceSendEligibility): string {
 
 /** Why a queued message cannot be steered into the running turn right now. */
 export type SteerBlockedReason =
+	| 'pending-admission'
 	| 'no-target-tab'
 	| 'tab-not-working'
 	| 'not-claude'
@@ -816,10 +834,12 @@ export function getSteerEligibility(
 		| 'agentContext'
 		| 'paused'
 		| 'waitingForConnection'
+		| 'pendingAdmissionId'
 		| 'readOnlyMode'
 		| 'dispatchCallback'
 	>
 ): SteerEligibility {
+	if (item.pendingAdmissionId) return { canSteer: false, blockedReason: 'pending-admission' };
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) {
 		return { canSteer: false, blockedReason: 'no-target-tab' };
@@ -961,6 +981,7 @@ export function getSteerTitle(eligibility: SteerEligibility): string {
  * keyboard steer has no control to hide, so it has to say why nothing happened.
  */
 const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
+	'pending-admission': 'The message is waiting for supervision admission.',
 	'no-target-tab': 'The tab this message was queued on is gone.',
 	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
 	'not-claude': 'This provider cannot take a message while a turn is running.',

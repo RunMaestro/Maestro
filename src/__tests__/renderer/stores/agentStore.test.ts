@@ -1261,6 +1261,20 @@ describe('agentStore', () => {
 			mockGetAgent.mockResolvedValue(mockAgent);
 		});
 
+		it('refuses a pending-admission item at the direct dispatch boundary', async () => {
+			useSessionStore.getState().setSessions([createMockSession({ id: 'session-1' })]);
+			await expect(
+				useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ pendingAdmissionId: 'dispatch-1' }),
+						defaultDeps
+					)
+			).rejects.toThrow('DispatchAdmissionPending');
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
 		it.each(['user', 'auto', undefined] as const)(
 			'preserves queued message and command provenance %s without promoting unknown callers',
 			async (querySource) => {

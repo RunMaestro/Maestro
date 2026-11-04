@@ -386,6 +386,24 @@ describe('mergeQueuedItemIntoAbove', () => {
 });
 
 describe('sendQueuedItemNow', () => {
+	it('keeps technical admission held across user resume and force send', () => {
+		const held = {
+			id: 'held',
+			timestamp: 0,
+			tabId: 'b',
+			type: 'message' as const,
+			text: 'hi',
+			paused: true,
+			pendingAdmissionId: 'dispatch-1',
+		};
+		seed({ executionQueue: [held] });
+		const dispatch = vi.fn().mockResolvedValue(true);
+		expect(setQueuedItemPaused('session-1', held.id, false)).toBe(true);
+		expect(currentQueue()[0]).toMatchObject({ pendingAdmissionId: 'dispatch-1' });
+		expect(sendQueuedItemNow('session-1', held.id, dispatch)).toBe(false);
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(currentQueue()).toHaveLength(1);
+	});
 	beforeEach(() => {
 		planCrossAgentMentions.mockReset();
 		planCrossAgentMentions.mockReturnValue(null);

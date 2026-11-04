@@ -391,6 +391,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
+		if (item.pendingAdmissionId) throw new Error('DispatchAdmissionPending');
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
