@@ -182,6 +182,33 @@ awaits the asynchronous build instead; both existing scanner tests and the
 unchanged-expression audit passed. Hosted validation remains the acceptance
 gate for this additional startup correction.
 
+### Remaining publication blocker
+
+The hosted run completed with both Ubuntu shards, Windows shard 2/2, and
+lint/format passing. Windows shard 1/2 remained blocked solely by scanner fixture
+setup exceeding 10 seconds. Greptile explicitly scored published head
+`f46ebb6231e04ee425f5ce68771328accde3c5cc` at 5/5.
+
+The asynchronous-build correction in local commit
+`9d5ae3563c986c0b1cec8fca74a692754b10f75b` could not be pushed: the unmodified
+hook rejected it with 60,667 tests passed, 213 skipped, and only scanner setup
+failing. A full-suite phase probe measured worker bundling at 443 ms, but file
+creation did not complete before the hook deadline. The temporary phase logging
+was removed afterward.
+
+Reducing the full run to rc's four-worker limit and separately increasing the
+I/O thread pool to eight both retained the same sole setup timeout. Neither
+experiment changed tracked configuration. A native tar-extraction probe took
+7.25 seconds locally, and spreading copies across directories was slower than
+the flat fixture in its paired probe; neither alternative was adopted.
+
+These outcomes do not establish a passing final-head CI result. The remaining
+constraint is reliable creation of 5,000 independent files / 20,480,000 bytes
+within the existing 10-second setup budget under Windows full-suite load.
+No exclusions, retries, fixture reductions, assertion edits, deadline increases,
+hook bypasses, machine changes, or rc pushes were used to clear that constraint.
+Unpublished changes and their exact receipts remain preserved locally.
+
 ## Protected local work
 
 The interrupted index, working tree, and untracked work are retained under
