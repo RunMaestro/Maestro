@@ -3643,3 +3643,207 @@ describe('Copilot per-turn activity', () => {
 		await blocked();
 	});
 });
+
+describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (transport) => {
+	let managed: ManagedProcess;
+	const cancel = transport === 'rpc' ? probes.request : probes.notify;
+	beforeEach(async () => {
+		let active: Pick<typeof spawner, 'spawn'> = spawner;
+		if (transport === 'acp') {
+			const app = { onRequest: vi.fn(), onNotification: vi.fn(), connect: vi.fn() };
+			app.onRequest.mockReturnValue(app);
+			app.onNotification.mockReturnValue(app);
+			app.connect.mockReturnValue({
+				agent: { request: probes.request, notify: probes.notify },
+				close: probes.close,
+			});
+			probes.acpClient.mockReturnValue(app);
+			const replies: Record<string, unknown> = {
+				initialize: { protocolVersion: 1 },
+				new: { sessionId: 'acp-session' },
+				prompt: { stopReason: 'end_turn' },
+			};
+			probes.request.mockImplementation(async (method: string) => replies[method]);
+			probes.notify.mockResolvedValue(undefined);
+			const { AcpServerSpawner } =
+				await import('../../../main/process-manager/spawners/AcpServerSpawner');
+			active = new AcpServerSpawner(
+				processes,
+				new EventEmitter(),
+				{} as DataBufferManager,
+				fallback
+			);
+		}
+		expect(active.spawn(config({ nativeAcpArgs: ['--acp'] })).success).toBe(true);
+		await drain();
+		managed = processes.get('rpc-session')!;
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses retained SDK/harness stops before transport, signalling or recovery under %s',
+		async (root) => {
+			await close();
+			processes.clear();
+			const hold = await reserve(root);
+			for (const probe of [
+				probes.request,
+				probes.notify,
+				stopProcess,
+				captureException,
+				fallback,
+				spawn,
+				fs.realpath,
+			])
+				vi.mocked(probe).mockClear();
+			try {
+				await expect(managed.sdkController!.interrupt()).rejects.toThrow('reserved');
+				await expect(managed.sdkController!.kill()).rejects.toThrow('reserved');
+				await expect(managed.harnessControl!.interrupt!()).rejects.toThrow('reserved');
+				await expect(
+					managed.harnessControl!.close!({ sync: true, shutdown: true })
+				).rejects.toThrow('reserved');
+				for (const probe of [
+					probes.request,
+					probes.notify,
+					stopProcess,
+					captureException,
+					fallback,
+					spawn,
+					fs.realpath,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each(['sdk-interrupt', 'sdk-kill', 'harness-interrupt', 'harness-close'] as const)(
+		'owns a late pending cancellation independently after close/removal via %s',
+		async (action) => {
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const pending = Promise.withResolvers<void>();
+			cancel.mockReturnValueOnce(pending.promise);
+			const options = { sync: true, shutdown: true };
+			if (action === 'sdk-interrupt') await managed.sdkController!.interrupt();
+			if (action === 'sdk-kill') await managed.sdkController!.kill(options);
+			if (action === 'harness-interrupt') await managed.harnessControl!.interrupt!();
+			if (action === 'harness-close') await managed.harnessControl!.close!(options);
+			expect(cancel).toHaveBeenLastCalledWith(
+				...(transport === 'rpc' ? ['abort'] : ['cancel', { sessionId: 'acp-session' }])
+			);
+			expect(stopProcess).toHaveBeenLastCalledWith(
+				{ child: native },
+				action.endsWith('interrupt')
+					? {
+							from: 'interrupt',
+							graceMs: 1000,
+							sessionId: 'rpc-session',
+							label: 'interrupt',
+						}
+					: {
+							from: 'terminate',
+							upTo: 'terminate',
+							graceMs: 1000,
+							immediate: true,
+							blocking: true,
+							sessionId: 'rpc-session',
+							label: 'kill',
+						}
+			);
+			await blocked();
+			if (action.startsWith('sdk')) pending.resolve();
+			else pending.reject(new Error('cancel transport closed'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['exit', 'error'] as const)(
+		'keeps the independent child hold after stop and %s',
+		async (event) => {
+			const pending = Promise.withResolvers<void>();
+			cancel.mockReturnValueOnce(pending.promise);
+			await managed.harnessControl!.close!();
+			if (event === 'exit') native.emit('exit', 0, null);
+			else native.emit('error', new Error('native error'));
+			processes.clear();
+			pending.resolve();
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('retains concurrent old controls and a replacement generation independently', async () => {
+		await close();
+		const first = Promise.withResolvers<void>();
+		const last = Promise.withResolvers<void>();
+		cancel.mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
+		await managed.harnessControl!.interrupt!();
+		await managed.sdkController!.kill();
+		native = makeNative();
+		spawner.spawn(config());
+		await drain();
+		processes.clear();
+		await close();
+		await blocked();
+		last.reject(new Error('second cancel failed'));
+		await drain();
+		await blocked();
+		first.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('admits before an earlier resolving reservation and holds its cancel RPC', async () => {
+		await close();
+		processes.clear();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const pending = Promise.withResolvers<void>();
+		cancel.mockReturnValueOnce(pending.promise);
+		await managed.sdkController!.interrupt();
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await blocked();
+		pending.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('preserves synchronous transport failure handling and releases settled control work', async () => {
+		await close();
+		processes.clear();
+		const error = new Error('cancel threw synchronously');
+		cancel.mockImplementationOnce(() => {
+			throw error;
+		});
+		vi.mocked(stopProcess).mockClear();
+		if (transport === 'rpc') {
+			await expect(managed.sdkController!.interrupt()).rejects.toBe(error);
+			expect(stopProcess).not.toHaveBeenCalled();
+			expect(captureException).toHaveBeenCalledWith(error);
+		} else {
+			await expect(managed.sdkController!.interrupt()).resolves.toBeUndefined();
+			expect(stopProcess).toHaveBeenCalledOnce();
+		}
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains pending cancellation after stop and diagnostic failures', async () => {
+		await close();
+		processes.clear();
+		const pending = Promise.withResolvers<void>();
+		cancel.mockReturnValueOnce(pending.promise);
+		vi.mocked(stopProcess).mockImplementationOnce(() => {
+			throw new Error('stop failed');
+		});
+		vi.mocked(captureException).mockImplementationOnce(() => {
+			throw new Error('report failed');
+		});
+		await expect(managed.sdkController!.kill()).rejects.toThrow('stop failed');
+		await blocked();
+		pending.reject(new Error('cancel failed'));
+		await drain();
+		(await reserve()).release();
+	});
+});
