@@ -1,0 +1,757 @@
+/**
+ * Tests for src/shared/cli-activity.ts
+ *
+ * This module provides functions for tracking CLI activity status across sessions.
+ * Tests mock Node.js fs, os, and process modules to isolate behavior.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock the Node.js modules before importing the module under test
+vi.mock('fs', () => ({
+	readFileSync: vi.fn(),
+	writeFileSync: vi.fn(),
+	existsSync: vi.fn(),
+	mkdirSync: vi.fn(),
+}));
+
+vi.mock('os', () => ({
+	platform: vi.fn(),
+	homedir: vi.fn(),
+}));
+
+// Now import after mocks are set up
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+import {
+	registerCliActivity,
+	unregisterCliActivity,
+	getCliActivityForSession,
+	isSessionBusyWithCli,
+	getSessionIdsBusyWithCli,
+} from '../../shared/cli-activity';
+import { resolveUserDataDir } from '../../shared/userDataDir';
+
+// Local type alias mirroring the (now-internal) CliActivityStatus shape
+// expected by registerCliActivity. Kept in sync with shared/cli-activity.ts.
+type CliActivityStatus = Parameters<typeof registerCliActivity>[0];
+
+// Type assertions for mocked modules
+const mockFs = {
+	readFileSync: fs.readFileSync as ReturnType<typeof vi.fn>,
+	writeFileSync: fs.writeFileSync as ReturnType<typeof vi.fn>,
+	existsSync: fs.existsSync as ReturnType<typeof vi.fn>,
+	mkdirSync: fs.mkdirSync as ReturnType<typeof vi.fn>,
+};
+
+const mockOs = {
+	platform: os.platform as ReturnType<typeof vi.fn>,
+	homedir: os.homedir as ReturnType<typeof vi.fn>,
+};
+
+describe('cli-activity', () => {
+	// Sample activity data for tests
+	const sampleActivity: CliActivityStatus = {
+		sessionId: 'session-123',
+		playbookId: 'playbook-456',
+		playbookName: 'Test Playbook',
+		startedAt: Date.now(),
+		pid: 12345,
+		currentTask: 'Running tests',
+		currentDocument: 'test-doc.md',
+	};
+
+	const anotherActivity: CliActivityStatus = {
+		sessionId: 'session-456',
+		playbookId: 'playbook-789',
+		playbookName: 'Another Playbook',
+		startedAt: Date.now() - 10000,
+		pid: 67890,
+	};
+
+	let savedUserDataEnv: string | undefined;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+
+		// Platform-default tests must not see the runner's MAESTRO_USER_DATA;
+		// the override tests set it themselves.
+		savedUserDataEnv = process.env.MAESTRO_USER_DATA;
+		delete process.env.MAESTRO_USER_DATA;
+
+		// Default mock implementations
+		mockOs.platform.mockReturnValue('darwin');
+		mockOs.homedir.mockReturnValue('/Users/testuser');
+		mockFs.existsSync.mockReturnValue(true);
+		mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+		mockFs.writeFileSync.mockReturnValue(undefined);
+		mockFs.mkdirSync.mockReturnValue(undefined);
+
+		// Mock console.error for writeCliActivities error handling
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		if (savedUserDataEnv === undefined) delete process.env.MAESTRO_USER_DATA;
+		else process.env.MAESTRO_USER_DATA = savedUserDataEnv;
+	});
+
+	describe('MAESTRO_USER_DATA', () => {
+		// The desktop sets it on its own env and every agent it spawns inherits
+		// it, so a CLI run inside an agent must register where the desktop's
+		// watcher (getUserDataPath()/cli-activity.json) is looking. The old
+		// private resolver ignored it, so in dev the desktop never saw a CLI run.
+		it('reads the activity file from MAESTRO_USER_DATA', () => {
+			process.env.MAESTRO_USER_DATA = '/data/maestro-dev';
+
+			getCliActivityForSession('any-session');
+
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(
+				path.join(path.resolve('/data/maestro-dev'), 'cli-activity.json'),
+				'utf-8'
+			);
+		});
+
+		it('registers activity into MAESTRO_USER_DATA', () => {
+			process.env.MAESTRO_USER_DATA = '/data/maestro-dev';
+
+			registerCliActivity(sampleActivity);
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
+				path.join(path.resolve('/data/maestro-dev'), 'cli-activity.json'),
+				expect.any(String),
+				'utf-8'
+			);
+		});
+
+		it('agrees with resolveUserDataDir() on a case-sensitive Linux install', () => {
+			mockOs.platform.mockReturnValue('linux');
+			mockOs.homedir.mockReturnValue('/home/testuser');
+			const originalXdg = process.env.XDG_CONFIG_HOME;
+			delete process.env.XDG_CONFIG_HOME;
+			try {
+				getCliActivityForSession('any-session');
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join(resolveUserDataDir(), 'cli-activity.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalXdg !== undefined) process.env.XDG_CONFIG_HOME = originalXdg;
+			}
+		});
+	});
+
+	describe('getConfigDir (internal via path construction)', () => {
+		describe('on macOS', () => {
+			it('should construct correct config path for macOS', () => {
+				mockOs.platform.mockReturnValue('darwin');
+				mockOs.homedir.mockReturnValue('/Users/testuser');
+
+				// Call a function that uses getConfigDir internally
+				getCliActivityForSession('any-session');
+
+				// Verify the path was constructed correctly
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join(
+						'/Users/testuser',
+						'Library',
+						'Application Support',
+						'Maestro',
+						'cli-activity.json'
+					),
+					'utf-8'
+				);
+			});
+		});
+
+		describe('on Windows', () => {
+			it('should construct correct config path for Windows with APPDATA', () => {
+				mockOs.platform.mockReturnValue('win32');
+				mockOs.homedir.mockReturnValue('C:\\Users\\testuser');
+				const originalAppdata = process.env.APPDATA;
+				process.env.APPDATA = 'C:\\Users\\testuser\\AppData\\Roaming';
+
+				getCliActivityForSession('any-session');
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'Maestro', 'cli-activity.json'),
+					'utf-8'
+				);
+
+				process.env.APPDATA = originalAppdata;
+			});
+
+			it('should construct correct config path for Windows without APPDATA', () => {
+				mockOs.platform.mockReturnValue('win32');
+				mockOs.homedir.mockReturnValue('C:\\Users\\testuser');
+				const originalAppdata = process.env.APPDATA;
+				delete process.env.APPDATA;
+
+				getCliActivityForSession('any-session');
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'Maestro', 'cli-activity.json'),
+					'utf-8'
+				);
+
+				process.env.APPDATA = originalAppdata;
+			});
+		});
+
+		describe('on Linux', () => {
+			it('should construct correct config path for Linux with XDG_CONFIG_HOME', () => {
+				mockOs.platform.mockReturnValue('linux');
+				mockOs.homedir.mockReturnValue('/home/testuser');
+				const originalXdg = process.env.XDG_CONFIG_HOME;
+				process.env.XDG_CONFIG_HOME = '/home/testuser/.custom-config';
+
+				getCliActivityForSession('any-session');
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/home/testuser/.custom-config', 'maestro', 'cli-activity.json'),
+					'utf-8'
+				);
+
+				process.env.XDG_CONFIG_HOME = originalXdg;
+			});
+
+			it('should construct correct config path for Linux without XDG_CONFIG_HOME', () => {
+				mockOs.platform.mockReturnValue('linux');
+				mockOs.homedir.mockReturnValue('/home/testuser');
+				const originalXdg = process.env.XDG_CONFIG_HOME;
+				delete process.env.XDG_CONFIG_HOME;
+
+				getCliActivityForSession('any-session');
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/home/testuser', '.config', 'maestro', 'cli-activity.json'),
+					'utf-8'
+				);
+
+				process.env.XDG_CONFIG_HOME = originalXdg;
+			});
+		});
+
+		describe('on other platforms', () => {
+			it('should construct correct config path for other platforms (freebsd)', () => {
+				mockOs.platform.mockReturnValue('freebsd');
+				mockOs.homedir.mockReturnValue('/home/testuser');
+				const originalXdg = process.env.XDG_CONFIG_HOME;
+				delete process.env.XDG_CONFIG_HOME;
+
+				getCliActivityForSession('any-session');
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/home/testuser', '.config', 'Maestro', 'cli-activity.json'),
+					'utf-8'
+				);
+
+				process.env.XDG_CONFIG_HOME = originalXdg;
+			});
+		});
+	});
+
+	describe('registerCliActivity', () => {
+		it('should register a new activity', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			registerCliActivity(sampleActivity);
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(1);
+			expect(parsed.activities[0].sessionId).toBe('session-123');
+		});
+
+		it('should replace existing activity for same session', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const updatedActivity: CliActivityStatus = {
+				...sampleActivity,
+				currentTask: 'New task',
+			};
+			registerCliActivity(updatedActivity);
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(1);
+			expect(parsed.activities[0].currentTask).toBe('New task');
+		});
+
+		it('should preserve other session activities', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [anotherActivity] }));
+
+			registerCliActivity(sampleActivity);
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(2);
+		});
+
+		it('should create directory if it does not exist', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+			mockFs.existsSync.mockReturnValue(false);
+
+			registerCliActivity(sampleActivity);
+
+			expect(mockFs.mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
+		});
+
+		it('should handle write errors gracefully', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+			mockFs.writeFileSync.mockImplementation(() => {
+				throw new Error('Permission denied');
+			});
+
+			// Should not throw
+			expect(() => registerCliActivity(sampleActivity)).not.toThrow();
+			expect(console.error).toHaveBeenCalledWith(
+				'[CLI Activity] Failed to write activity file:',
+				expect.any(Error)
+			);
+		});
+	});
+
+	describe('unregisterCliActivity', () => {
+		it('should remove an existing activity', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			unregisterCliActivity('session-123');
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(0);
+		});
+
+		it('should preserve other activities when removing one', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ activities: [sampleActivity, anotherActivity] })
+			);
+
+			unregisterCliActivity('session-123');
+
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(1);
+			expect(parsed.activities[0].sessionId).toBe('session-456');
+		});
+
+		it('should handle non-existent session gracefully', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			unregisterCliActivity('non-existent-session');
+
+			// Still writes (same data)
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(1);
+		});
+	});
+
+	describe('getCliActivityForSession', () => {
+		it('should return activity for existing session', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const activity = getCliActivityForSession('session-123');
+
+			expect(activity).toBeDefined();
+			expect(activity?.sessionId).toBe('session-123');
+			expect(activity?.playbookName).toBe('Test Playbook');
+		});
+
+		it('should return undefined for non-existent session', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const activity = getCliActivityForSession('non-existent');
+
+			expect(activity).toBeUndefined();
+		});
+
+		it('should find correct session among multiple', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ activities: [sampleActivity, anotherActivity] })
+			);
+
+			const activity = getCliActivityForSession('session-456');
+
+			expect(activity).toBeDefined();
+			expect(activity?.playbookId).toBe('playbook-789');
+		});
+
+		it('should return undefined when no activities exist', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			const activity = getCliActivityForSession('session-123');
+
+			expect(activity).toBeUndefined();
+		});
+	});
+
+	describe('isSessionBusyWithCli', () => {
+		it('should return false when no activity exists', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			const busy = isSessionBusyWithCli('session-123');
+
+			expect(busy).toBe(false);
+		});
+
+		it('should return true when process is running', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			// Mock process.kill to not throw (process exists)
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockReturnValue(true) as unknown as typeof process.kill;
+
+			const busy = isSessionBusyWithCli('session-123');
+
+			expect(busy).toBe(true);
+			expect(process.kill).toHaveBeenCalledWith(12345, 0);
+
+			process.kill = originalKill;
+		});
+
+		it('should return false and cleanup when process is not running', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			// Mock process.kill to throw (process doesn't exist)
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
+			}) as unknown as typeof process.kill;
+
+			const busy = isSessionBusyWithCli('session-123');
+
+			expect(busy).toBe(false);
+			// Should have cleaned up stale entry (called writeFileSync)
+			expect(mockFs.writeFileSync).toHaveBeenCalled();
+
+			process.kill = originalKill;
+		});
+
+		it('should preserve busy activity when the process probe returns EPERM', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isSessionBusyWithCli('session-123')).toBe(true);
+				expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('should not erase activity after an unknown process-probe error', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Unexpected probe failure'), { code: 'EIO' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isSessionBusyWithCli('session-123')).toBe(false);
+				expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('should check correct PID', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ activities: [{ ...sampleActivity, pid: 99999 }] })
+			);
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockReturnValue(true) as unknown as typeof process.kill;
+
+			isSessionBusyWithCli('session-123');
+
+			expect(process.kill).toHaveBeenCalledWith(99999, 0);
+
+			process.kill = originalKill;
+		});
+	});
+
+	// Batch form used by the desktop session listing, which asks about every
+	// agent at once. Same liveness rule as isSessionBusyWithCli, but resolved
+	// from a single read of the activity file instead of one read per agent.
+	describe('getSessionIdsBusyWithCli', () => {
+		const activityFor = (sessionId: string, pid: number) => ({
+			...sampleActivity,
+			sessionId,
+			pid,
+		});
+
+		it('reads the activity file once no matter how many sessions it holds', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					activities: [activityFor('a', 1), activityFor('b', 2), activityFor('c', 3)],
+				})
+			);
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockReturnValue(true) as unknown as typeof process.kill;
+
+			try {
+				expect(getSessionIdsBusyWithCli()).toEqual(new Set(['a', 'b', 'c']));
+				expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('applies the same EPERM-is-alive / ESRCH-is-dead rule per entry', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					activities: [activityFor('alive', 1), activityFor('denied', 2), activityFor('gone', 3)],
+				})
+			);
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation((pid: number) => {
+				if (pid === 1) return true;
+				if (pid === 2) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+				throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				// 'denied' counts as busy: EPERM proves the pid exists.
+				expect(getSessionIdsBusyWithCli()).toEqual(new Set(['alive', 'denied']));
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('returns an empty set when nothing is registered', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+			expect(getSessionIdsBusyWithCli()).toEqual(new Set());
+		});
+	});
+
+	describe('CliActivityStatus interface', () => {
+		it('should accept minimal required fields', () => {
+			const minimal: CliActivityStatus = {
+				sessionId: 'session-1',
+				playbookId: 'playbook-1',
+				playbookName: 'Test',
+				startedAt: Date.now(),
+				pid: 1234,
+			};
+
+			expect(minimal.sessionId).toBe('session-1');
+			expect(minimal.currentTask).toBeUndefined();
+			expect(minimal.currentDocument).toBeUndefined();
+		});
+
+		it('should accept all fields', () => {
+			const full: CliActivityStatus = {
+				sessionId: 'session-1',
+				playbookId: 'playbook-1',
+				playbookName: 'Test',
+				startedAt: Date.now(),
+				pid: 1234,
+				currentTask: 'Running',
+				currentDocument: 'doc.md',
+			};
+
+			expect(full.currentTask).toBe('Running');
+			expect(full.currentDocument).toBe('doc.md');
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle special characters in session IDs', () => {
+			const specialActivity: CliActivityStatus = {
+				sessionId: 'session-with-special-chars_123!@#$',
+				playbookId: 'playbook-456',
+				playbookName: 'Test',
+				startedAt: Date.now(),
+				pid: 1234,
+			};
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			registerCliActivity(specialActivity);
+
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities[0].sessionId).toBe('session-with-special-chars_123!@#$');
+		});
+
+		it('should handle unicode characters in playbook names', () => {
+			const unicodeActivity: CliActivityStatus = {
+				sessionId: 'session-unicode',
+				playbookId: 'playbook-unicode',
+				playbookName: 'Test Playbook 🎵 日本語 العربية',
+				startedAt: Date.now(),
+				pid: 1234,
+				currentTask: 'Running task 🚀',
+			};
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			registerCliActivity(unicodeActivity);
+
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities[0].playbookName).toBe('Test Playbook 🎵 日本語 العربية');
+			expect(parsed.activities[0].currentTask).toBe('Running task 🚀');
+		});
+
+		it('should handle very long session IDs', () => {
+			const longId = 'session-' + 'x'.repeat(1000);
+			const longActivity: CliActivityStatus = {
+				sessionId: longId,
+				playbookId: 'playbook-456',
+				playbookName: 'Test',
+				startedAt: Date.now(),
+				pid: 1234,
+			};
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			registerCliActivity(longActivity);
+
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities[0].sessionId).toBe(longId);
+		});
+
+		it('should handle negative PIDs (edge case)', () => {
+			const negativeActivity: CliActivityStatus = {
+				...sampleActivity,
+				pid: -1,
+			};
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			registerCliActivity(negativeActivity);
+
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities[0].pid).toBe(-1);
+		});
+
+		it('should handle zero timestamp', () => {
+			const zeroTimestamp: CliActivityStatus = {
+				...sampleActivity,
+				startedAt: 0,
+			};
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			registerCliActivity(zeroTimestamp);
+
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities[0].startedAt).toBe(0);
+		});
+
+		it('should handle concurrent read/write scenarios', () => {
+			// Simulate file being empty on first read, then having content on second read
+			let readCount = 0;
+			mockFs.readFileSync.mockImplementation(() => {
+				readCount++;
+				if (readCount === 1) {
+					return JSON.stringify({ activities: [] });
+				}
+				return JSON.stringify({ activities: [sampleActivity] });
+			});
+
+			registerCliActivity(anotherActivity);
+
+			// First write should have one activity
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('integration scenarios', () => {
+		it('should support full lifecycle: register -> get -> unregister', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			// Register
+			registerCliActivity(sampleActivity);
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+
+			// Simulate subsequent reads returning the registered activity
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			// Get
+			const activity = getCliActivityForSession('session-123');
+			expect(activity).toBeDefined();
+
+			// Unregister
+			unregisterCliActivity('session-123');
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(2);
+		});
+
+		it('should support multiple concurrent sessions', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+
+			// Register first session
+			registerCliActivity(sampleActivity);
+
+			// Simulate file now contains first activity
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			// Register second session
+			registerCliActivity(anotherActivity);
+
+			// Verify both are preserved
+			const [, writtenContent] = mockFs.writeFileSync.mock.calls[1];
+			const parsed = JSON.parse(writtenContent as string);
+			expect(parsed.activities).toHaveLength(2);
+		});
+	});
+
+	describe('on another data directory (F9)', () => {
+		const DIR = path.join('/data', 'dev');
+		const FILE = path.join(DIR, 'cli-activity.json');
+
+		it('registers and unregisters in that directory, never the default one', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+			registerCliActivity(sampleActivity, DIR);
+			const [writtenPath, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			expect(writtenPath).toBe(FILE);
+			expect(JSON.parse(writtenContent as string).activities).toEqual([sampleActivity]);
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+			unregisterCliActivity(sampleActivity.sessionId, DIR);
+			expect(mockFs.writeFileSync.mock.calls[1][0]).toBe(FILE);
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(FILE, 'utf-8');
+			// Nothing was read from or written to the user's own file.
+			expect(mockFs.writeFileSync.mock.calls.every(([target]) => target === FILE)).toBe(true);
+		});
+
+		it('reads that directory for a busy check', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ activities: [{ ...sampleActivity, pid: process.pid }] })
+			);
+			expect(getCliActivityForSession(sampleActivity.sessionId, DIR)).toMatchObject({
+				sessionId: sampleActivity.sessionId,
+			});
+			expect(isSessionBusyWithCli(sampleActivity.sessionId, DIR)).toBe(true);
+			expect(mockFs.readFileSync.mock.calls.every(([target]) => target === FILE)).toBe(true);
+		});
+
+		it('creates that directory when it is missing', () => {
+			mockFs.existsSync.mockReturnValue(false);
+			mockFs.readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+			registerCliActivity(sampleActivity, DIR);
+			expect(mockFs.mkdirSync).toHaveBeenCalledWith(DIR, { recursive: true });
+		});
+	});
+});

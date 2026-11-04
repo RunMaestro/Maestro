@@ -1,0 +1,849 @@
+/**
+ * Tests for context usage estimation utilities
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+	estimateContextUsage,
+	calculateContextTokens,
+	calculateContextDisplay,
+	computeOverLimitDisplay,
+	calculateDisplayInputTokens,
+	estimateAccumulatedGrowth,
+	resolveGaugeTokenStats,
+	DEFAULT_CONTEXT_WINDOWS,
+} from '../../../renderer/utils/contextUsage';
+import type { UsageStats } from '../../../shared/types';
+
+describe('estimateContextUsage', () => {
+	const createStats = (overrides: Partial<UsageStats> = {}): UsageStats => ({
+		inputTokens: 10000,
+		outputTokens: 5000,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0.01,
+		contextWindow: 0,
+		...overrides,
+	});
+
+	describe('when contextWindow is provided', () => {
+		it('should calculate percentage from provided context window', () => {
+			const stats = createStats({ contextWindow: 100000 });
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (10000 + 0 + 0) / 100000 = 10%
+			expect(result).toBe(10);
+		});
+
+		it('should include cacheReadInputTokens in calculation (part of total input context)', () => {
+			const stats = createStats({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadInputTokens: 50000,
+				cacheCreationInputTokens: 5000,
+				contextWindow: 100000,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (1000 + 50000 + 5000) / 100000 = 56%
+			expect(result).toBe(56);
+		});
+
+		it('should return null when accumulated tokens exceed context window', () => {
+			const stats = createStats({
+				inputTokens: 50000,
+				outputTokens: 50000,
+				cacheReadInputTokens: 150000,
+				cacheCreationInputTokens: 200000,
+				contextWindow: 200000,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (50000 + 150000 + 200000) = 400000 > 200000 -> null (accumulated values)
+			expect(result).toBeNull();
+		});
+
+		it('should round to nearest integer', () => {
+			const stats = createStats({
+				inputTokens: 33333,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				contextWindow: 100000,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			// 33333 / 100000 = 33.333% -> 33%
+			expect(result).toBe(33);
+		});
+	});
+
+	describe('when contextWindow is not provided (fallback)', () => {
+		it('should use claude-code default context window (200k)', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (10000 + 0 + 0) / 200000 = 5%
+			expect(result).toBe(5);
+		});
+
+		it('should use codex default context window (200k) and include output tokens', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats, 'codex');
+			// Codex includes output tokens: (10000 + 5000 + 0) / 200000 = 7.5% -> 8%
+			expect(result).toBe(8);
+		});
+
+		it('should use opencode default context window (128k)', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats, 'opencode');
+			// (10000 + 0 + 0) / 128000 = 7.8% -> 8%
+			expect(result).toBe(8);
+		});
+
+		it('should return null for terminal agent', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats, 'terminal');
+			expect(result).toBeNull();
+		});
+
+		it('should return null when no agent specified', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats);
+			expect(result).toBeNull();
+		});
+
+		it('should return 0 when no tokens used', () => {
+			const stats = createStats({
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				contextWindow: 0,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			expect(result).toBe(0);
+		});
+	});
+
+	describe('cacheReadInputTokens handling', () => {
+		it('should handle undefined cacheReadInputTokens', () => {
+			const stats = createStats({
+				inputTokens: 10000,
+				outputTokens: 5000,
+				contextWindow: 100000,
+			});
+			// @ts-expect-error - testing undefined case
+			stats.cacheReadInputTokens = undefined;
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (10000 + 0) / 100000 = 10%
+			expect(result).toBe(10);
+		});
+
+		it('should return null when accumulated cacheRead tokens cause total to exceed context window', () => {
+			// During multi-tool turns, Claude Code accumulates token values across
+			// internal API calls. When accumulated total exceeds context window,
+			// return null to signal callers should preserve previous valid percentage.
+			const stats = createStats({
+				inputTokens: 500,
+				outputTokens: 1000,
+				cacheReadInputTokens: 758000, // accumulated across multi-tool turn
+				cacheCreationInputTokens: 50000,
+				contextWindow: 200000,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (500 + 758000 + 50000) = 808500 > 200000 -> null (accumulated values)
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle negative context window as missing', () => {
+			const stats = createStats({ contextWindow: -100 });
+			const result = estimateContextUsage(stats, 'claude-code');
+			// Should use fallback since contextWindow is invalid
+			expect(result).toBe(5);
+		});
+
+		it('should handle undefined context window', () => {
+			const stats = createStats();
+			// @ts-expect-error - testing undefined case
+			stats.contextWindow = undefined;
+			const result = estimateContextUsage(stats, 'claude-code');
+			// Should use fallback
+			expect(result).toBe(5);
+		});
+
+		it('should return null for very large accumulated token counts', () => {
+			const stats = createStats({
+				inputTokens: 250000,
+				outputTokens: 500000,
+				cacheReadInputTokens: 500000,
+				cacheCreationInputTokens: 250000,
+				contextWindow: 0,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (250000 + 500000 + 250000) = 1000000 > 200000 -> null (accumulated values)
+			expect(result).toBeNull();
+		});
+
+		it('should handle very small percentages', () => {
+			const stats = createStats({
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				contextWindow: 0,
+			});
+			const result = estimateContextUsage(stats, 'claude-code');
+			// (100 + 0) / 200000 = 0.05% -> 0% (output excluded for Claude)
+			expect(result).toBe(0);
+		});
+	});
+});
+
+describe('calculateContextTokens', () => {
+	const createStats = (
+		overrides: Partial<UsageStats> = {}
+	): Pick<
+		UsageStats,
+		'inputTokens' | 'outputTokens' | 'cacheReadInputTokens' | 'cacheCreationInputTokens'
+	> => ({
+		inputTokens: 10000,
+		outputTokens: 5000,
+		cacheReadInputTokens: 2000,
+		cacheCreationInputTokens: 1000,
+		...overrides,
+	});
+
+	describe('Claude agents (input + cacheRead + cacheCreation)', () => {
+		it('should include input, cacheRead, and cacheCreation tokens for claude-code', () => {
+			const stats = createStats();
+			const result = calculateContextTokens(stats, 'claude-code');
+			// 10000 + 2000 + 1000 = 13000 (excludes output only)
+			expect(result).toBe(13000);
+		});
+
+		it('should include input, cacheRead, and cacheCreation tokens for claude', () => {
+			const stats = createStats();
+			const result = calculateContextTokens(stats, 'claude');
+			expect(result).toBe(13000);
+		});
+
+		it('should include input, cacheRead, and cacheCreation tokens when agent is undefined', () => {
+			const stats = createStats();
+			const result = calculateContextTokens(stats);
+			// Defaults to Claude behavior
+			expect(result).toBe(13000);
+		});
+	});
+
+	describe('OpenAI agents (includes output tokens)', () => {
+		it('should include input, output, and cacheCreation tokens for codex', () => {
+			const stats = createStats();
+			const result = calculateContextTokens(stats, 'codex');
+			// 10000 + 5000 + 1000 = 16000 (input + output + cacheCreation, excludes cacheRead)
+			expect(result).toBe(16000);
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle zero values', () => {
+			const stats = createStats({
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+			});
+			const result = calculateContextTokens(stats, 'claude-code');
+			expect(result).toBe(0);
+		});
+
+		it('should handle undefined cache tokens', () => {
+			const stats = {
+				inputTokens: 10000,
+				outputTokens: 5000,
+				cacheReadInputTokens: undefined as unknown as number,
+				cacheCreationInputTokens: undefined as unknown as number,
+			};
+			const result = calculateContextTokens(stats, 'claude-code');
+			expect(result).toBe(10000);
+		});
+
+		it('should include cacheRead in raw calculation (callers detect accumulated values)', () => {
+			// calculateContextTokens returns the raw total including cacheRead.
+			// Callers (estimateContextUsage) detect when total > contextWindow
+			// and return null to signal accumulated values from multi-tool turns.
+			const stats = createStats({
+				inputTokens: 50000,
+				outputTokens: 9000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 75000,
+			});
+			const result = calculateContextTokens(stats, 'claude-code');
+			// 50000 + 758000 + 75000 = 883000 (raw total, callers check against window)
+			expect(result).toBe(883000);
+		});
+	});
+});
+
+describe('estimateAccumulatedGrowth', () => {
+	it('should grow by 1% for typical multi-tool turn with many internal calls', () => {
+		// 31% usage, 40 internal API calls
+		// outputTokens: 10026 (accumulated), cacheRead: 2.5M, window: 200K
+		const result = estimateAccumulatedGrowth(31, 10026, 2500000, 200000);
+		// prevTokens = 62000, estCalls = 2500000/62000 ≈ 40
+		// singleTurnGrowth = 10026/40 ≈ 251, growthPercent = 251/200000*100 ≈ 0 → min 1%
+		expect(result).toBe(32);
+	});
+
+	it('should cap per-turn growth at 3%', () => {
+		// Fewer calls, more output per call
+		const result = estimateAccumulatedGrowth(40, 100000, 400000, 200000);
+		// prevTokens = 80000, estCalls = 400000/80000 = 5
+		// singleTurnGrowth = 100000/5 = 20000, growthPercent = 20000/200000*100 = 10 → cap 3%
+		expect(result).toBe(43);
+	});
+
+	it('should guarantee minimum 1% growth', () => {
+		const result = estimateAccumulatedGrowth(50, 100, 5000000, 200000);
+		// Very small output → growthPercent ≈ 0 → min 1%
+		expect(result).toBe(51);
+	});
+
+	it('should return currentUsage unchanged when currentUsage is 0', () => {
+		const result = estimateAccumulatedGrowth(0, 10000, 500000, 200000);
+		expect(result).toBe(0);
+	});
+
+	it('should return currentUsage unchanged when contextWindow is 0', () => {
+		const result = estimateAccumulatedGrowth(30, 10000, 500000, 0);
+		expect(result).toBe(30);
+	});
+
+	it('should handle zero cacheRead tokens', () => {
+		const result = estimateAccumulatedGrowth(30, 5000, 0, 200000);
+		// estCalls = max(1, 0/60000) = 1, singleTurnGrowth = 5000
+		// growthPercent = 5000/200000*100 = 3% (at cap)
+		expect(result).toBe(33);
+	});
+
+	it('should grow monotonically across consecutive accumulated turns', () => {
+		let usage = 31;
+		for (let i = 0; i < 5; i++) {
+			const prev = usage;
+			usage = estimateAccumulatedGrowth(usage, 10000, 2500000, 200000);
+			expect(usage).toBeGreaterThan(prev);
+		}
+		expect(usage).toBeGreaterThanOrEqual(36);
+	});
+
+	it('should not be capped internally (caller handles threshold cap)', () => {
+		// At 98% with substantial output, growth of 3% still applies (bounded max).
+		// The function intentionally does not cap at 100% - the caller in App.tsx
+		// applies Math.min(estimated, yellowThreshold - 5) to prevent exceeding thresholds.
+		const result = estimateAccumulatedGrowth(98, 50000, 500000, 200000);
+		// prevTokens=196000, estCalls=3, singleTurnGrowth=16667, growthPercent=8 → cap 3%
+		expect(result).toBeGreaterThan(98);
+		expect(result).toBe(101); // 98 + 3% (max bounded growth)
+	});
+
+	it('should use minimum context floor for low usage to avoid inflated call estimates', () => {
+		// At 1% usage, prevTokens would be 2000 without the floor.
+		// With MIN_PREV_CONTEXT_FRACTION (5%), floor is 10000.
+		// This prevents dividing cacheRead by a tiny number and inflating estCalls.
+		const result = estimateAccumulatedGrowth(1, 50000, 100000, 200000);
+		// minTokens = 10000, prevTokens = max(10000, 2000) = 10000
+		// estCalls = max(1, round(100000/10000)) = 10
+		// singleTurnGrowth = 50000/10 = 5000, growthPercent = round(5000/200000*100) = 3 → cap 3%
+		expect(result).toBe(4); // 1 + 3%
+	});
+});
+
+describe('calculateContextDisplay', () => {
+	it('should calculate tokens and percentage for normal usage', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 50000, cacheReadInputTokens: 30000, cacheCreationInputTokens: 20000 },
+			200000,
+			'claude-code'
+		);
+		// (50000 + 30000 + 20000) / 200000 = 50%
+		expect(result.tokens).toBe(100000);
+		expect(result.percentage).toBe(50);
+		expect(result.contextWindow).toBe(200000);
+		expect(result.trustworthy).toBe(true);
+	});
+
+	it('should fall back to fallbackPercentage when tokens exceed context window', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			75 // preserved contextUsage from session
+		);
+		// Raw = 1008000 > 200000, so falls back: tokens = round(75/100 * 200000) = 150000
+		expect(result.tokens).toBe(150000);
+		expect(result.percentage).toBe(75);
+		expect(result.trustworthy).toBe(true);
+	});
+
+	it('should cap percentage at 100 when fallback tokens fill the entire window', () => {
+		// Raw overflow with a fallback percentage at the window cap derives tokens
+		// equal to the full window - percentage must clamp to 100 (not 100.x).
+		const result = calculateContextDisplay(
+			{ inputTokens: 190000, cacheReadInputTokens: 15000, cacheCreationInputTokens: 0 },
+			200000,
+			'claude-code',
+			100
+		);
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
+		expect(result.trustworthy).toBe(true);
+	});
+
+	it('should return zeros when context window is 0', () => {
+		const result = calculateContextDisplay({ inputTokens: 50000 }, 0, 'claude-code');
+		expect(result.tokens).toBe(0);
+		expect(result.percentage).toBe(0);
+		expect(result.contextWindow).toBe(0);
+		expect(result.trustworthy).toBe(false);
+	});
+
+	it('should return untrustworthy zeros when accumulated values overflow without a fallback', () => {
+		// Issue #762: previously this branch returned tokens=contextWindow, surfacing
+		// the capacity (e.g. 700,000) as if it were the used token count. Now it
+		// returns zeros + trustworthy:false so the caller can preserve last-known-good.
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code'
+			// no fallback
+		);
+		expect(result.tokens).toBe(0);
+		expect(result.percentage).toBe(0);
+		expect(result.contextWindow).toBe(200000);
+		expect(result.trustworthy).toBe(false);
+	});
+
+	it('should return untrustworthy zeros when accumulated values overflow with a zero fallback', () => {
+		// Finding Q1: a zero fallback is the ABSENCE of a prior measurement, not a
+		// measurement of zero. Accepting it derived tokens = 0 and flagged the frame
+		// trustworthy, which latched the gauge at 0% for the life of any session
+		// whose first turn already overflowed the window.
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			0 // no baseline established yet
+		);
+		expect(result.tokens).toBe(0);
+		expect(result.percentage).toBe(0);
+		expect(result.contextWindow).toBe(200000);
+		expect(result.trustworthy).toBe(false);
+	});
+
+	it('should clamp fallback percentages above 100 before deriving tokens', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			150
+		);
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
+		expect(result.trustworthy).toBe(true);
+	});
+
+	it('should use Codex semantics (includes output tokens)', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 50000, outputTokens: 30000, cacheCreationInputTokens: 20000 },
+			200000,
+			'codex'
+		);
+		// Codex: (50000 + 20000 + 30000) / 200000 = 50%
+		expect(result.tokens).toBe(100000);
+		expect(result.percentage).toBe(50);
+	});
+
+	it('should handle history entries with accumulated tokens and preserved contextUsage', () => {
+		// Simulates what HistoryDetailModal sees: accumulated stats + entry.contextUsage
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 5676,
+				outputTokens: 8522,
+				cacheReadInputTokens: 1128700,
+				cacheCreationInputTokens: 0,
+			},
+			200000,
+			undefined, // history entries don't have agent type
+			100 // the screenshot showed 100% context
+		);
+		// Raw = 5676 + 1128700 + 0 = 1134376 > 200000
+		// Falls back to: round(100/100 * 200000) = 200000
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
+	});
+
+	describe('over-limit percentages (finding R1, Decision 2)', () => {
+		it('reads exactly 100 at the window boundary with the clamp removed', () => {
+			const result = calculateContextDisplay(
+				{ inputTokens: 150000, cacheReadInputTokens: 50000 },
+				200000,
+				'claude-code'
+			);
+			expect(result.tokens).toBe(200000);
+			expect(result.percentage).toBe(100);
+			expect(result.trustworthy).toBe(true);
+		});
+
+		it('still bounds a fallback-derived reading at 100', () => {
+			// The bound that stays (Task 5): a stored `contextUsage` fallback is
+			// 0-100 by construction, so a percentage recovered from it is NOT an
+			// over-limit measurement and must not be presented as one.
+			const result = calculateContextDisplay(
+				{ inputTokens: 400000, cacheReadInputTokens: 100000 },
+				200000,
+				'claude-code',
+				150
+			);
+			expect(result.percentage).toBe(100);
+			expect(result.trustworthy).toBe(true);
+		});
+
+		it('documents that a raw over-limit frame is still untrustworthy, not a >100 reading', () => {
+			// KNOWN GAP, deliberate: removing the clamp does not by itself make the
+			// header pill read `147%`. A raw frame above the window with no
+			// fallback hits the #762 branch first and returns untrustworthy zeros,
+			// so the header holds its last good value instead. Changing that branch
+			// is explicitly out of scope for this playbook; this test pins the
+			// current contract so the asymmetry with the timeline stays deliberate.
+			const result = calculateContextDisplay(
+				{ inputTokens: 250000, cacheReadInputTokens: 44000 },
+				200000,
+				'claude-code'
+			);
+			expect(result.percentage).toBe(0);
+			expect(result.trustworthy).toBe(false);
+		});
+	});
+});
+
+describe('computeOverLimitDisplay', () => {
+	// Review of PR #1364 (CodeRabbit). The guard checked `scaleMax > 0`, so a
+	// positive-but-too-small scale slipped through and pushed an in-window point
+	// past the track - the exact case the code comment warned about.
+	it('ignores a scaleMax smaller than the window', () => {
+		const result = computeOverLimitDisplay(100_000, 200_000, 100_000);
+		expect(result.fillFraction).toBe(0.5);
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+	});
+
+	it('uses a scaleMax equal to the window unchanged', () => {
+		expect(computeOverLimitDisplay(100_000, 200_000, 200_000).fillFraction).toBe(0.5);
+	});
+
+	const WINDOW = 200000;
+
+	it('reports an under-limit point with its true percentage and proportional fill', () => {
+		const result = computeOverLimitDisplay(100000, WINDOW);
+
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBe(0.5);
+	});
+
+	it('treats a point exactly at the window as 100% but NOT over limit', () => {
+		const result = computeOverLimitDisplay(WINDOW, WINDOW);
+
+		expect(result.truePercentage).toBe(100);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBe(1);
+	});
+
+	it('reports the true unclamped percentage for an over-limit point', () => {
+		// 294000 / 200000 = 147%
+		const result = computeOverLimitDisplay(294000, WINDOW);
+
+		expect(result.truePercentage).toBe(147);
+		expect(result.overLimit).toBe(true);
+		// Without a headroom scale the bar saturates at the track end.
+		expect(result.fillFraction).toBe(1);
+	});
+
+	it('fills proportionally against a shared headroom scale', () => {
+		const result = computeOverLimitDisplay(294000, WINDOW, WINDOW * 2);
+
+		expect(result.truePercentage).toBe(147);
+		expect(result.overLimit).toBe(true);
+		// 294000 / 400000 = 0.735, so the bar sits past the 100% tick at 0.5.
+		expect(result.fillFraction).toBeCloseTo(0.735, 5);
+	});
+
+	it('keeps an under-limit point below the tick when a headroom scale applies', () => {
+		const result = computeOverLimitDisplay(100000, WINDOW, WINDOW * 2);
+
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBeCloseTo(0.25, 5);
+	});
+
+	it('uses each point OWN window for the percentage, not the shared scale', () => {
+		// A mid-session window change must not retroactively distort old rows.
+		const older = computeOverLimitDisplay(90000, 100000, 400000);
+
+		expect(older.truePercentage).toBe(90);
+		expect(older.overLimit).toBe(false);
+		expect(older.fillFraction).toBeCloseTo(0.225, 5);
+	});
+
+	it('returns zeros (not NaN) for a degenerate zero window', () => {
+		const result = computeOverLimitDisplay(50000, 0);
+
+		expect(result.truePercentage).toBe(0);
+		expect(result.fillFraction).toBe(0);
+		expect(result.overLimit).toBe(false);
+		expect(Number.isNaN(result.truePercentage)).toBe(false);
+		expect(Number.isNaN(result.fillFraction)).toBe(false);
+	});
+
+	it('returns zeros for a negative or non-finite window', () => {
+		expect(computeOverLimitDisplay(50000, -1)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+		expect(computeOverLimitDisplay(50000, Number.NaN)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+	});
+
+	it('floors negative or non-finite token counts at zero', () => {
+		expect(computeOverLimitDisplay(-500, WINDOW)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+		expect(computeOverLimitDisplay(Number.NaN, WINDOW)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+	});
+
+	it('ignores an unusable scaleMax and falls back to the window', () => {
+		expect(computeOverLimitDisplay(100000, WINDOW, 0).fillFraction).toBe(0.5);
+		expect(computeOverLimitDisplay(100000, WINDOW, Number.NaN).fillFraction).toBe(0.5);
+	});
+});
+
+describe('DEFAULT_CONTEXT_WINDOWS', () => {
+	it('should have context windows defined for all ToolType agent types', () => {
+		// Only ToolType values have context windows defined
+		// 'claude' was consolidated to 'claude-code', and 'aider' is not a ToolType
+		expect(DEFAULT_CONTEXT_WINDOWS['claude-code']).toBe(200000);
+		expect(DEFAULT_CONTEXT_WINDOWS['codex']).toBe(200000);
+		expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
+		expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);
+		expect(DEFAULT_CONTEXT_WINDOWS['terminal']).toBe(0);
+	});
+});
+
+describe('calculateDisplayInputTokens', () => {
+	// Reproduces the issue #844 scenario: a Claude Code entry whose usage comes
+	// from a resumed session. The new `input_tokens` delta is tiny, but the
+	// conversation actually lives in `cache_read_input_tokens`.
+	it('adds cache tokens back for Claude so resumed conversations do not look empty', () => {
+		const stats: Partial<UsageStats> = {
+			inputTokens: 5,
+			cacheReadInputTokens: 47_382,
+			cacheCreationInputTokens: 1_204,
+		};
+		// Before the fix this displayed as 5 - see issue #844.
+		expect(calculateDisplayInputTokens(stats, 'claude-code')).toBe(48_591);
+	});
+
+	it('treats missing cache fields as zero (older history entries)', () => {
+		expect(calculateDisplayInputTokens({ inputTokens: 1_000 }, 'claude-code')).toBe(1_000);
+	});
+
+	it('defaults to the Claude formula when agentId is omitted', () => {
+		// Safe default: Claude Code is the most common provider, and the fallback
+		// over-counts rather than under-counts if we guess wrong.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 10,
+			cacheReadInputTokens: 500,
+			cacheCreationInputTokens: 100,
+		};
+		expect(calculateDisplayInputTokens(stats)).toBe(610);
+	});
+
+	it('returns inputTokens as-is for Codex (cached tokens already included)', () => {
+		// Per codex-output-parser.ts: cached_input_tokens is a SUBSET of input_tokens.
+		// Adding cacheReadInputTokens would double-count.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 12_000,
+			cacheReadInputTokens: 8_000, // reported for display only; already in inputTokens
+			cacheCreationInputTokens: 0,
+		};
+		expect(calculateDisplayInputTokens(stats, 'codex')).toBe(12_000);
+	});
+
+	it('handles all-zero / empty stats without throwing', () => {
+		expect(calculateDisplayInputTokens({}, 'claude-code')).toBe(0);
+		expect(calculateDisplayInputTokens({}, 'codex')).toBe(0);
+	});
+
+	it('treats unknown agent types as Claude-family', () => {
+		// If a new agent is added and this helper isn't updated, the Claude formula
+		// is the safer default - the worst case is an over-count on a single entry,
+		// not an "abnormally low" under-count that regresses issue #844.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 3,
+			cacheReadInputTokens: 2_000,
+			cacheCreationInputTokens: 50,
+		};
+		expect(calculateDisplayInputTokens(stats, 'brand-new-agent')).toBe(2_053);
+	});
+});
+
+describe('header and timeline cross-surface agreement (finding R1)', () => {
+	const WINDOW = 200000;
+
+	/**
+	 * Feed one tokens/window pair through BOTH display paths: the header's
+	 * `calculateContextDisplay` and the Context Timeline's
+	 * `computeOverLimitDisplay`. The two surfaces sitting side by side must not
+	 * report different numbers for the same turn - that disagreement is the class
+	 * of bug PR #1221 fixed, and R1 re-opened it by rendering the over-limit case
+	 * differently on each surface.
+	 */
+	const bothSurfaces = (contextTokens: number) => ({
+		header: calculateContextDisplay(
+			{ inputTokens: contextTokens, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+			WINDOW,
+			'claude-code'
+		),
+		timeline: computeOverLimitDisplay(contextTokens, WINDOW),
+	});
+
+	it('agrees on an under-limit turn', () => {
+		const { header, timeline } = bothSurfaces(90000);
+		expect(header.trustworthy).toBe(true);
+		expect(header.percentage).toBe(45);
+		expect(timeline.truePercentage).toBe(45);
+		expect(header.percentage).toBe(timeline.truePercentage);
+		expect(timeline.overLimit).toBe(false);
+	});
+
+	it('agrees on a turn exactly at the limit', () => {
+		const { header, timeline } = bothSurfaces(WINDOW);
+		expect(header.trustworthy).toBe(true);
+		expect(header.percentage).toBe(100);
+		expect(timeline.truePercentage).toBe(100);
+		expect(header.percentage).toBe(timeline.truePercentage);
+		// Exactly at the window is not over it.
+		expect(timeline.overLimit).toBe(false);
+	});
+
+	it('documents the over-limit asymmetry so future drift is deliberate', () => {
+		// The timeline reports the true magnitude of an over-limit turn, which is
+		// the whole point of R1. The header does NOT match it on this input, and
+		// that is by construction rather than by a clamp: a raw frame above the
+		// window with no preserved fallback is the #762 untrustworthy branch, so
+		// the header holds its previous good value instead of rendering anything.
+		// `calculateContextDisplay`'s own clamp is gone (Decision 2), so the day a
+		// trustworthy over-limit numerator reaches it, it will agree with the
+		// timeline automatically. Pinned here so any change to that contract has
+		// to update this expectation on purpose.
+		const { header, timeline } = bothSurfaces(294000);
+		expect(timeline.truePercentage).toBe(147);
+		expect(timeline.overLimit).toBe(true);
+		expect(header.trustworthy).toBe(false);
+		expect(header.percentage).toBe(0);
+	});
+
+	it('agrees when the over-limit turn arrives with a preserved fallback', () => {
+		// The reachable over-limit path today: the accumulated-turn fallback. It is
+		// bounded at 100 on purpose (a stored contextUsage is 0-100 by
+		// construction), so the header reads 100 while the timeline, which plots
+		// the real measured tokens, reads the true figure. Same documented
+		// asymmetry, different entry point.
+		const header = calculateContextDisplay(
+			{ inputTokens: 294000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+			WINDOW,
+			'claude-code',
+			100
+		);
+		const timeline = computeOverLimitDisplay(294000, WINDOW);
+		expect(header.trustworthy).toBe(true);
+		expect(header.percentage).toBe(100);
+		expect(timeline.truePercentage).toBe(147);
+	});
+});
+
+describe('resolveGaugeTokenStats (issue #1782)', () => {
+	// The reporter's numbers: one turn of ~7 internal API calls on a 1M window.
+	// The result message's totals are the SUM of those calls; the last call alone
+	// is what was actually in the window.
+	const turnSpend = {
+		inputTokens: 22,
+		outputTokens: 4_100,
+		cacheReadInputTokens: 437_222,
+		cacheCreationInputTokens: 89_297,
+	};
+	const lastCall = {
+		inputTokens: 3,
+		outputTokens: 600,
+		cacheReadInputTokens: 78_900,
+		cacheCreationInputTokens: 4_500,
+		reasoningTokens: 0,
+	};
+	const ONE_M = 1_000_000;
+
+	it('measures the occupancy snapshot instead of the summed turn spend for Claude', () => {
+		const stats = resolveGaugeTokenStats({ ...turnSpend, absoluteUsage: lastCall }, 'claude-code');
+		const display = calculateContextDisplay(stats, ONE_M, 'claude-code');
+
+		expect(display.tokens).toBe(83_403);
+		expect(display.percentage).toBe(8);
+		expect(display.trustworthy).toBe(true);
+	});
+
+	it('pins the bug: the summed spend stays under a 1M window, so no overflow guard fires', () => {
+		// Without the snapshot this is what the gauge rendered - 53% for a context
+		// that was 8% full. The guard only catches a sum that EXCEEDS the window.
+		const display = calculateContextDisplay(turnSpend, ONE_M, 'claude-code');
+
+		expect(display.tokens).toBe(526_541);
+		expect(display.percentage).toBe(53);
+		expect(display.trustworthy).toBe(true);
+	});
+
+	it('falls back to the top-level fields when no snapshot was attached', () => {
+		expect(resolveGaugeTokenStats(turnSpend, 'claude-code')).toBe(turnSpend);
+	});
+
+	it('uses the snapshot when the agent is unknown (Claude semantics are the default)', () => {
+		expect(resolveGaugeTokenStats({ ...turnSpend, absoluteUsage: lastCall })).toBe(lastCall);
+	});
+
+	it('keeps the top-level fields for combined-context providers', () => {
+		// Codex's snapshot is its CLI's running session total, not one call's
+		// input, and its gauge has always read the per-turn fields.
+		const stats = { ...turnSpend, absoluteUsage: lastCall };
+
+		expect(resolveGaugeTokenStats(stats, 'codex')).toBe(stats);
+		expect(resolveGaugeTokenStats(stats, 'copilot-cli')).toBe(stats);
+	});
+});

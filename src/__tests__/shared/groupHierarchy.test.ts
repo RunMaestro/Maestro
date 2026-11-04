@@ -1,0 +1,174 @@
+import { describe, expect, it } from 'vitest';
+import type { Group } from '../../shared/types';
+import {
+	canCreateGroupInside,
+	canSetGroupParent,
+	normalizeGroupHierarchy,
+	removeGroupAndPromoteChildren,
+	setGroupCollapsed,
+	setGroupHidden,
+	setGroupParent,
+} from '../../shared/groupHierarchy';
+
+const group = (id: string, parentGroupId?: string): Group => ({
+	id,
+	name: id.toUpperCase(),
+	emoji: '📁',
+	collapsed: false,
+	...(parentGroupId ? { parentGroupId } : {}),
+});
+
+describe('group hierarchy', () => {
+	it('nests a root group below another root group', () => {
+		const groups = [group('company'), group('project')];
+
+		expect(setGroupParent(groups, 'project', 'company')).toEqual([
+			group('company'),
+			group('project', 'company'),
+		]);
+	});
+
+	it('moves a child group back to the top level', () => {
+		const groups = [group('company'), group('project', 'company')];
+
+		expect(setGroupParent(groups, 'project', undefined)).toEqual([
+			group('company'),
+			group('project'),
+		]);
+	});
+
+	it('rejects adding a third hierarchy level', () => {
+		const groups = [group('company'), group('project', 'company'), group('service')];
+
+		expect(canSetGroupParent(groups, 'service', 'project')).toBe(false);
+		expect(setGroupParent(groups, 'service', 'project')).toBe(groups);
+	});
+
+	it('rejects nesting a group that already has children', () => {
+		const groups = [group('company'), group('project', 'company'), group('portfolio')];
+
+		expect(canSetGroupParent(groups, 'company', 'portfolio')).toBe(false);
+		expect(setGroupParent(groups, 'company', 'portfolio')).toBe(groups);
+	});
+
+	it('rejects a group becoming its own ancestor', () => {
+		const groups = [group('company'), group('project', 'company')];
+
+		expect(canSetGroupParent(groups, 'company', 'project')).toBe(false);
+		expect(setGroupParent(groups, 'company', 'project')).toBe(groups);
+	});
+
+	it('allows creating a child only inside an existing root group', () => {
+		const groups = [group('company'), group('project', 'company')];
+
+		expect(canCreateGroupInside(groups, 'company')).toBe(true);
+		expect(canCreateGroupInside(groups, 'project')).toBe(false);
+	});
+
+	it('promotes direct children when deleting their parent', () => {
+		const groups = [group('company'), group('project', 'company'), group('personal')];
+
+		expect(removeGroupAndPromoteChildren(groups, 'company')).toEqual([
+			group('project'),
+			group('personal'),
+		]);
+	});
+
+	it('normalizes invalid persisted parent relationships without changing valid children', () => {
+		const groups = [
+			group('company'),
+			group('project', 'company'),
+			group('orphan', 'missing'),
+			group('self', 'self'),
+			group('grandchild', 'project'),
+		];
+
+		expect(normalizeGroupHierarchy(groups)).toEqual([
+			group('company'),
+			group('project', 'company'),
+			group('orphan'),
+			group('self'),
+			group('grandchild'),
+		]);
+	});
+
+	it('promotes every member of a persisted parent cycle to root', () => {
+		expect(normalizeGroupHierarchy([group('a', 'b'), group('b', 'a')])).toEqual([
+			group('a'),
+			group('b'),
+		]);
+	});
+
+	it('promotes every invalid link in chains longer than one parent-child edge', () => {
+		expect(
+			normalizeGroupHierarchy([
+				group('root'),
+				group('level-one', 'root'),
+				group('level-two', 'level-one'),
+				group('level-three', 'level-two'),
+			])
+		).toEqual([
+			group('root'),
+			group('level-one', 'root'),
+			group('level-two'),
+			group('level-three'),
+		]);
+	});
+
+	it('parks a group and leaves the others untouched', () => {
+		const groups = [group('company'), group('project')];
+
+		const next = setGroupHidden(groups, 'project', true);
+
+		expect(next).toEqual([group('company'), { ...group('project'), hidden: true }]);
+		expect(next[0]).toBe(groups[0]);
+	});
+
+	// A visible group stores no key at all, the way every group written before
+	// the field existed reads back.
+	it('drops the key when a group is shown again', () => {
+		const groups = [{ ...group('project'), hidden: true }];
+
+		const next = setGroupHidden(groups, 'project', false);
+
+		expect(next[0]).not.toHaveProperty('hidden');
+	});
+
+	it('returns the same list when the group already reads that way', () => {
+		const groups = [group('company'), { ...group('project'), hidden: true }];
+
+		expect(setGroupHidden(groups, 'project', true)).toBe(groups);
+		expect(setGroupHidden(groups, 'company', false)).toBe(groups);
+	});
+
+	it('returns the same list for a group that does not exist', () => {
+		const groups = [group('company')];
+
+		expect(setGroupHidden(groups, 'missing', true)).toBe(groups);
+	});
+
+	it('folds and unfolds a group, leaving the others untouched', () => {
+		const groups = [group('company'), group('project')];
+
+		const folded = setGroupCollapsed(groups, 'project', true);
+		expect(folded).toEqual([group('company'), { ...group('project'), collapsed: true }]);
+		expect(folded[0]).toBe(groups[0]);
+
+		expect(setGroupCollapsed(folded, 'project', false)[1].collapsed).toBe(false);
+	});
+
+	it('folds a nested group through the same flag', () => {
+		const groups = [group('company'), group('project', 'company')];
+
+		const next = setGroupCollapsed(groups, 'project', true);
+
+		expect(next[1]).toMatchObject({ parentGroupId: 'company', collapsed: true });
+	});
+
+	it('returns the same list when collapse is a no-op', () => {
+		const groups = [{ ...group('project'), collapsed: true }];
+
+		expect(setGroupCollapsed(groups, 'project', true)).toBe(groups);
+		expect(setGroupCollapsed(groups, 'missing', false)).toBe(groups);
+	});
+});

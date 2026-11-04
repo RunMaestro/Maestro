@@ -1,0 +1,308 @@
+/**
+ * Tests for the shared Concerto pointer-drag behavior. Covers pointer capture,
+ * active-pointer filtering, delta reporting, and listener teardown.
+ */
+
+import { act, renderHook } from '@testing-library/react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { usePointerDrag } from '../../../../renderer/hooks/utils/usePointerDrag';
+
+function pointer(type: string, clientX: number, clientY: number, pointerId: number): MouseEvent {
+	const event = new MouseEvent(type, { clientX, clientY, bubbles: true });
+	Object.defineProperty(event, 'pointerId', { value: pointerId });
+	return event;
+}
+
+describe('usePointerDrag', () => {
+	let handle: HTMLDivElement;
+	let setPointerCapture: ReturnType<typeof vi.fn>;
+	let releasePointerCapture: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		handle = document.createElement('div');
+		setPointerCapture = vi.fn();
+		releasePointerCapture = vi.fn();
+		Object.defineProperties(handle, {
+			setPointerCapture: { value: setPointerCapture },
+			releasePointerCapture: { value: releasePointerCapture },
+		});
+		document.body.appendChild(handle);
+	});
+
+	afterEach(() => {
+		handle.remove();
+		vi.restoreAllMocks();
+	});
+
+	function dragEvent(pointerId = 7): ReactPointerEvent<HTMLElement> {
+		return {
+			target: handle,
+			currentTarget: handle,
+			clientX: 20,
+			clientY: 30,
+			pointerId,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as ReactPointerEvent<HTMLElement>;
+	}
+
+	it('captures the active pointer and reports movement across the window', () => {
+		const onDrag = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag));
+
+		expect(setPointerCapture).toHaveBeenCalledWith(7);
+
+		act(() => window.dispatchEvent(pointer('pointermove', 55, 70, 7)));
+
+		expect(onDrag).toHaveBeenCalledWith(35, 40);
+	});
+
+	it('continues dragging when pointer capture is no longer available', () => {
+		setPointerCapture.mockImplementation(() => {
+			throw new DOMException('Pointer is no longer active', 'NotFoundError');
+		});
+		const onDrag = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag));
+		act(() => window.dispatchEvent(pointer('pointermove', 55, 70, 7)));
+
+		expect(onDrag).toHaveBeenCalledWith(35, 40);
+	});
+
+	it('continues when pointer capture was released before cleanup', () => {
+		releasePointerCapture.mockImplementation(() => {
+			throw new DOMException('Pointer is no longer active', 'NotFoundError');
+		});
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		expect(() => act(() => result.current(dragEvent(8), vi.fn()))).not.toThrow();
+		expect(setPointerCapture).toHaveBeenLastCalledWith(8);
+	});
+
+	it('rethrows unexpected pointer capture errors', () => {
+		setPointerCapture.mockImplementation(() => {
+			throw new Error('Unexpected capture failure');
+		});
+		const { result } = renderHook(() => usePointerDrag());
+
+		expect(() => act(() => result.current(dragEvent(), vi.fn()))).toThrow(
+			'Unexpected capture failure'
+		);
+	});
+
+	it('rethrows unexpected pointer release errors', () => {
+		releasePointerCapture.mockImplementationOnce(() => {
+			throw new Error('Unexpected release failure');
+		});
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		expect(() => act(() => result.current(dragEvent(8), vi.fn()))).toThrow(
+			'Unexpected release failure'
+		);
+	});
+
+	it('ignores unrelated pointers and tears down only for the active pointer', () => {
+		const onDrag = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag));
+		act(() => window.dispatchEvent(pointer('pointermove', 80, 90, 4)));
+		act(() => window.dispatchEvent(pointer('pointerup', 80, 90, 4)));
+		act(() => window.dispatchEvent(pointer('pointermove', 40, 50, 7)));
+
+		expect(onDrag).toHaveBeenCalledOnce();
+		expect(onDrag).toHaveBeenCalledWith(20, 20);
+		expect(releasePointerCapture).not.toHaveBeenCalled();
+
+		act(() => window.dispatchEvent(pointer('pointerup', 40, 50, 7)));
+
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 60, 70, 7)));
+		expect(onDrag).toHaveBeenCalledOnce();
+	});
+
+	it('releases pointer capture when the component unmounts mid-drag', () => {
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		unmount();
+
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+	});
+
+	it('fires onEnd on pointerup, after the listeners are torn down', () => {
+		const onDrag = vi.fn();
+		const onEnd = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag, { onEnd }));
+		act(() => window.dispatchEvent(pointer('pointerup', 40, 50, 7)));
+
+		expect(onEnd).toHaveBeenCalledOnce();
+		// Torn down first: capture released and further moves ignored.
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 90, 90, 7)));
+		expect(onDrag).not.toHaveBeenCalled();
+	});
+
+	it('fires onEnd on pointercancel so a system-intercepted gesture still releases', () => {
+		const onEnd = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onEnd }));
+		act(() => window.dispatchEvent(pointer('pointercancel', 40, 50, 7)));
+
+		expect(onEnd).toHaveBeenCalledOnce();
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+	});
+
+	it('tears the drag down BEFORE running onEnd', () => {
+		// The ordering is the fix: a commit that throws must not strand the
+		// gesture. Because teardown already ran, the handle stops tracking the
+		// pointer no matter what the commit does.
+		const onEnd = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onEnd }));
+		act(() => window.dispatchEvent(pointer('pointerup', 40, 50, 7)));
+
+		expect(releasePointerCapture.mock.invocationCallOrder[0]).toBeLessThan(
+			onEnd.mock.invocationCallOrder[0]
+		);
+	});
+
+	it('does not fire onEnd for an abandoned gesture (unmount)', () => {
+		const onEnd = vi.fn();
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onEnd }));
+		unmount();
+
+		// Nothing to commit, and the component is gone.
+		expect(onEnd).not.toHaveBeenCalled();
+	});
+
+	it('cancels the previous pointer before tracking a new drag', () => {
+		const firstDrag = vi.fn();
+		const secondDrag = vi.fn();
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(7), firstDrag));
+		act(() => result.current(dragEvent(8), secondDrag));
+
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 40, 50, 7)));
+		act(() => window.dispatchEvent(pointer('pointermove', 45, 55, 8)));
+
+		expect(firstDrag).not.toHaveBeenCalled();
+		expect(secondDrag).toHaveBeenCalledWith(25, 25);
+
+		unmount();
+		expect(releasePointerCapture).toHaveBeenCalledWith(8);
+	});
+
+	function mouseMove(clientX: number, clientY: number, pointerId: number, buttons: number) {
+		const event = pointer('pointermove', clientX, clientY, pointerId);
+		Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+		Object.defineProperty(event, 'buttons', { value: buttons });
+		return event;
+	}
+
+	it('cancels on Escape when onCancel is supplied, and claims the key', () => {
+		const onDrag = vi.fn();
+		const onEnd = vi.fn();
+		const onCancel = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag, { onEnd, onCancel }));
+		const key = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+		act(() => {
+			window.dispatchEvent(key);
+		});
+
+		expect(onCancel).toHaveBeenCalledOnce();
+		expect(onEnd).not.toHaveBeenCalled();
+		expect(key.defaultPrevented).toBe(true);
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 90, 90, 7)));
+		expect(onDrag).not.toHaveBeenCalled();
+	});
+
+	it('leaves Escape alone when there is no onCancel', () => {
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		const key = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+		act(() => {
+			window.dispatchEvent(key);
+		});
+
+		expect(key.defaultPrevented).toBe(false);
+		expect(releasePointerCapture).not.toHaveBeenCalled();
+	});
+
+	it('settles a lost release (mouse move with no button held) through onEnd', () => {
+		const onDrag = vi.fn();
+		const onEnd = vi.fn();
+		const onCancel = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag, { onEnd, onCancel }));
+		act(() => window.dispatchEvent(mouseMove(40, 50, 7, 1)));
+		act(() => window.dispatchEvent(mouseMove(60, 70, 7, 0)));
+
+		expect(onDrag).toHaveBeenCalledOnce();
+		expect(onEnd).toHaveBeenCalledOnce();
+		expect(onCancel).not.toHaveBeenCalled();
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(mouseMove(80, 90, 7, 1)));
+		expect(onDrag).toHaveBeenCalledOnce();
+	});
+
+	it('fires onCancel for an abandoned gesture (unmount or a superseding drag)', () => {
+		const firstCancel = vi.fn();
+		const secondCancel = vi.fn();
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(7), vi.fn(), { onCancel: firstCancel }));
+		act(() => result.current(dragEvent(8), vi.fn(), { onCancel: secondCancel }));
+		expect(firstCancel).toHaveBeenCalledOnce();
+
+		unmount();
+		expect(secondCancel).toHaveBeenCalledOnce();
+	});
+
+	it('pulls keyboard focus out of a focused <webview> so Escape reaches the drag', () => {
+		const webview = document.createElement('webview');
+		webview.tabIndex = 0;
+		document.body.appendChild(webview);
+		webview.focus();
+		expect(document.activeElement).toBe(webview);
+		const onCancel = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onCancel }));
+
+		expect(document.activeElement).not.toBe(webview);
+		webview.remove();
+	});
+
+	it('leaves focus alone when there is no onCancel to run', () => {
+		const webview = document.createElement('webview');
+		webview.tabIndex = 0;
+		document.body.appendChild(webview);
+		webview.focus();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+
+		expect(document.activeElement).toBe(webview);
+		webview.remove();
+	});
+});

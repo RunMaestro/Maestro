@@ -1,0 +1,235 @@
+import { describe, expect, it } from 'vitest';
+import {
+	clampModalPosition,
+	clampModalSize,
+	defaultModalFloatPosition,
+	DEFAULT_MODAL_SIZE,
+	getModalMaxSize,
+	MODAL_FLOAT_VISIBLE_MARGIN_X,
+	MODAL_FLOAT_VISIBLE_MARGIN_Y,
+	MODAL_VIEWPORT_PADDING,
+	normalizeModalPosition,
+	normalizeModalSize,
+	resolveModalSize,
+	sanitizeModalSizes,
+	viewportModalSize,
+} from '../../../renderer/utils/modalSizing';
+
+describe('modalSizing', () => {
+	it('normalizes finite positive width and height values', () => {
+		expect(normalizeModalSize({ width: 420.4, height: 320.6 })).toEqual({
+			width: 420,
+			height: 321,
+		});
+	});
+
+	it('rejects invalid persisted modal sizes', () => {
+		expect(normalizeModalSize(null)).toBeNull();
+		expect(normalizeModalSize({ width: 400, height: 0 })).toBeNull();
+		expect(normalizeModalSize({ width: Number.POSITIVE_INFINITY, height: 400 })).toBeNull();
+		expect(normalizeModalSize({ width: '400', height: 300 })).toBeNull();
+	});
+
+	it('rejects fractional dimensions that round down to zero', () => {
+		expect(normalizeModalSize({ width: 0.1, height: 0.1 })).toBeNull();
+		expect(normalizeModalSize({ width: 0.4, height: 400 })).toBeNull();
+	});
+
+	it('sanitizes a persisted modal size map', () => {
+		expect(
+			sanitizeModalSizes({
+				settings: { width: 900, height: 700 },
+				bad: { width: -1, height: 300 },
+				alsoBad: null,
+			})
+		).toEqual({
+			settings: { width: 900, height: 700 },
+		});
+	});
+
+	it('resolves max size from the 90vw and 90vh ceiling with padding', () => {
+		expect(getModalMaxSize({ viewport: { width: 1000, height: 800 } })).toEqual({
+			width: 900,
+			height: 720,
+		});
+
+		expect(
+			getModalMaxSize({
+				viewport: { width: 500, height: 400 },
+				viewportPadding: 40,
+			})
+		).toEqual({
+			width: 420,
+			height: 320,
+		});
+	});
+
+	it('clamps size between defaults and viewport max', () => {
+		expect(
+			clampModalSize({ width: 1200, height: 900 }, { viewport: { width: 1000, height: 800 } })
+		).toEqual({
+			width: 900,
+			height: 720,
+		});
+
+		expect(
+			clampModalSize({ width: 10, height: 12 }, { viewport: { width: 1000, height: 800 } })
+		).toEqual({
+			width: 320,
+			height: 240,
+		});
+	});
+
+	it('honors explicit min and max bounds before viewport clamping', () => {
+		expect(
+			clampModalSize(
+				{ width: 700, height: 700 },
+				{
+					minSize: { width: 420, height: 300 },
+					maxSize: { width: 640, height: 520 },
+					viewport: { width: 1200, height: 900 },
+				}
+			)
+		).toEqual({
+			width: 640,
+			height: 520,
+		});
+	});
+
+	it('reduces minimum size when the viewport is smaller than the default minimum', () => {
+		expect(
+			clampModalSize(
+				{ width: 100, height: 80 },
+				{
+					viewport: { width: 200, height: 160 },
+				}
+			)
+		).toEqual({
+			width: 136,
+			height: 96,
+		});
+	});
+
+	it('ignores non-finite developer-supplied maxSize bounds instead of propagating NaN', () => {
+		expect(
+			getModalMaxSize({
+				maxSize: { width: NaN, height: -1 },
+				viewport: { width: 1000, height: 800 },
+			})
+		).toEqual({
+			width: 900,
+			height: 720,
+		});
+	});
+
+	it('ignores non-finite developer-supplied minSize bounds instead of propagating NaN', () => {
+		expect(
+			clampModalSize(
+				{ width: 500, height: 400 },
+				{
+					minSize: { width: NaN, height: 0 },
+					viewport: { width: 1000, height: 800 },
+				}
+			)
+		).toEqual({
+			width: 500,
+			height: 400,
+		});
+	});
+
+	it('ignores non-finite developer-supplied defaultSize bounds instead of propagating NaN', () => {
+		expect(
+			resolveModalSize({
+				defaultSize: { width: NaN, height: Number.POSITIVE_INFINITY },
+				viewport: { width: 1000, height: 800 },
+			})
+		).toEqual(DEFAULT_MODAL_SIZE);
+	});
+
+	it('prefers a valid saved size and falls back to defaults for invalid data', () => {
+		expect(
+			resolveModalSize({
+				savedSize: { width: 520, height: 340 },
+				defaultSize: { width: 800, height: 600 },
+				viewport: { width: 1000, height: 800 },
+			})
+		).toEqual({
+			width: 520,
+			height: 340,
+		});
+
+		expect(
+			resolveModalSize({
+				savedSize: { width: NaN, height: 340 },
+				defaultSize: { width: 800, height: 600 },
+				viewport: { width: 1000, height: 800 },
+			})
+		).toEqual({
+			width: 800,
+			height: 600,
+		});
+	});
+
+	it('scales a default size to a fraction of the viewport', () => {
+		expect(viewportModalSize({ width: 0.5, height: 0.25 }, { width: 1000, height: 800 })).toEqual({
+			width: 500,
+			height: 200,
+		});
+	});
+
+	it('treats a missing or invalid viewport ratio as the full viewport', () => {
+		expect(viewportModalSize({}, { width: 1000, height: 800 })).toEqual({
+			width: 1000,
+			height: 800,
+		});
+		expect(viewportModalSize({ width: NaN, height: 0 }, { width: 1000, height: 800 })).toEqual({
+			width: 1000,
+			height: 800,
+		});
+	});
+
+	it('still caps a viewport-proportional default at the shared max ratio', () => {
+		// A 0.95 ratio asks for more than a modal may take; the clamp wins.
+		expect(
+			resolveModalSize({
+				defaultSize: viewportModalSize({ width: 0.95, height: 0.95 }, { width: 1000, height: 800 }),
+				viewport: { width: 1000, height: 800 },
+			})
+		).toEqual({ width: 900, height: 720 });
+	});
+});
+
+describe('floating position helpers', () => {
+	it('rejects non-finite or malformed positions', () => {
+		expect(normalizeModalPosition(null)).toBeNull();
+		expect(normalizeModalPosition({ x: 10 })).toBeNull();
+		expect(normalizeModalPosition({ x: NaN, y: 10 })).toBeNull();
+		expect(normalizeModalPosition({ x: 10.6, y: -4.2 })).toEqual({ x: 11, y: -4 });
+	});
+
+	it('clamps a position on both ends so the title bar stays grabbable', () => {
+		const viewport = { width: 1000, height: 800 };
+		expect(clampModalPosition({ x: -50, y: -50 }, viewport)).toEqual({ x: 0, y: 0 });
+		// Far edge: leave MODAL_FLOAT_VISIBLE_MARGIN_X/Y of the window on screen.
+		expect(clampModalPosition({ x: 5000, y: 5000 }, viewport)).toEqual({
+			x: 1000 - MODAL_FLOAT_VISIBLE_MARGIN_X,
+			y: 800 - MODAL_FLOAT_VISIBLE_MARGIN_Y,
+		});
+		expect(clampModalPosition({ x: 200, y: 150 }, viewport)).toEqual({ x: 200, y: 150 });
+	});
+
+	it('parks a first pop-out against the right edge, on screen even when tiny', () => {
+		expect(
+			defaultModalFloatPosition({ width: 600, height: 400 }, { width: 1600, height: 900 })
+		).toEqual({ x: 1600 - 600 - MODAL_VIEWPORT_PADDING, y: MODAL_VIEWPORT_PADDING * 2 });
+
+		// A window wider than the display would otherwise be placed off the left
+		// edge; the padding floor plus the clamp keep it reachable.
+		const tight = defaultModalFloatPosition(
+			{ width: 1200, height: 800 },
+			{ width: 700, height: 500 }
+		);
+		expect(tight.x).toBeGreaterThanOrEqual(0);
+		expect(tight.x).toBeLessThanOrEqual(700 - MODAL_FLOAT_VISIBLE_MARGIN_X);
+	});
+});

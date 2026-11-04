@@ -84,7 +84,7 @@ export default defineConfig({
 		// under threads), and native addons loaded from multiple worker threads in
 		// one process can segfault the whole run.
 		pool: 'forks',
-		maxWorkers: 8,
+		maxWorkers: 4,
 		testTimeout: 10000,
 		hookTimeout: 10000,
 		teardownTimeout: 5000,

@@ -1,0 +1,399 @@
+/**
+ * Tests for shouldDropSentryEvent - the shared classifier used by both the
+ * main and renderer Sentry initializers to suppress noise events we cannot
+ * fix from inside the app.
+ *
+ * Strategy: one representative event per documented category gets dropped,
+ * and a "real bug" exception passes through. Don't enumerate every regex -
+ * the file's comment block is authoritative on which categories exist; we
+ * just confirm the dispatch table works.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { shouldDropSentryEvent } from '../../shared/sentryFilters';
+
+function exceptionEvent(type: string, value: string) {
+	return { exception: { values: [{ type, value }] } };
+}
+
+describe('shouldDropSentryEvent', () => {
+	it('drops expected host reconnect events from direct SDK callers', () => {
+		expect(
+			shouldDropSentryEvent(
+				exceptionEvent(
+					'Error',
+					'Not submitted: restoring authoritative host state. Your current work is retained.'
+				)
+			)
+		).toBe(true);
+		expect(
+			shouldDropSentryEvent({
+				message: 'Not submitted: reconnecting to the host. Your current work is retained.',
+			})
+		).toBe(true);
+	});
+
+	it('retains uncertain submissions and unexpected host failures', () => {
+		expect(
+			shouldDropSentryEvent(
+				exceptionEvent(
+					'Error',
+					'Submission uncertainty: connection lost before acknowledgement of process:spawn'
+				)
+			)
+		).toBe(false);
+		expect(
+			shouldDropSentryEvent(exceptionEvent('Error', 'Bridge request timed out: process:spawn'))
+		).toBe(false);
+		expect(shouldDropSentryEvent(exceptionEvent('Error', 'Invalid host snapshot payload'))).toBe(
+			false
+		);
+	});
+
+	describe('OS / filesystem environment', () => {
+		it('drops ENOSPC out-of-disk errors', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('Error', 'ENOSPC: no space left on device, write'))
+			).toBe(true);
+		});
+
+		it('drops SQLITE_FULL, the SQLite wording for the same full disk (MAESTRO-ZD)', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('SqliteError', 'database or disk is full'))).toBe(
+				true
+			);
+		});
+
+		it('still reports SQLite failures that can indicate a real bug', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('SqliteError', 'database disk image is malformed'))
+			).toBe(false);
+			expect(shouldDropSentryEvent(exceptionEvent('SqliteError', 'database is locked'))).toBe(
+				false
+			);
+			expect(
+				shouldDropSentryEvent(exceptionEvent('SqliteError', 'no such table: query_events'))
+			).toBe(false);
+		});
+
+		it('drops EPIPE broken-pipe errors', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'EPIPE: broken pipe, write'))).toBe(
+				true
+			);
+		});
+
+		// The libuv `EPIPE: broken pipe` spelling above is not what Node emits for a
+		// stream/socket write to a dead pipe - that surfaces as a bare `write EPIPE`,
+		// which slipped past the filter and was the single noisiest issue in the field.
+		it('drops bare `write EPIPE` stream errors (Node stream spelling)', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'write EPIPE'))).toBe(true);
+		});
+
+		it('drops bare `read EPIPE` stream errors', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'read EPIPE'))).toBe(true);
+		});
+
+		it('drops Windows rename races (EPERM rename)', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"EPERM: operation not permitted, rename 'C:\\foo.tmp' -> 'C:\\foo'"
+					)
+				)
+			).toBe(true);
+		});
+
+		it('drops EBUSY/EPERM lstat on Windows system files', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('Error', "EBUSY: resource busy or locked, lstat 'C:\\pagefile.sys'")
+				)
+			).toBe(true);
+		});
+
+		it('does NOT drop EBUSY lstat on a user file', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"EBUSY: resource busy or locked, lstat 'C:\\Users\\me\\report.pdf'"
+					)
+				)
+			).toBe(false);
+		});
+
+		it('drops ETIMEDOUT scandir on network filesystems', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('Error', "ETIMEDOUT: connection timed out, scandir '/mnt/nfs/x'")
+				)
+			).toBe(true);
+		});
+
+		it('drops EISDIR watch errors', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('Error', "EISDIR: illegal operation on a directory, watch '/foo'")
+				)
+			).toBe(true);
+		});
+	});
+
+	describe('IPC method noise (user-typed paths that do not exist)', () => {
+		it('drops ENOENT bubbling up through fs:stat', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'fs:stat': Error: ENOENT: no such file or directory, stat '/typo'"
+					)
+				)
+			).toBe(true);
+		});
+
+		it('drops Path-not-found through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Path does not exist: /typo"
+					)
+				)
+			).toBe(true);
+		});
+
+		// MAESTRO-9V: Electron's catch-all when the OS refuses to trash a path
+		// (file open elsewhere, no recycle bin on the volume, permissions). The
+		// delete is user-initiated and the caller already toasts this exact
+		// message, so the crash report on top of it is noise.
+		it('drops the generic trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to perform delete operation"
+					)
+				)
+			).toBe(true);
+		});
+
+		// MAESTRO-15T: the Linux wording of the same refusal.
+		it('drops the Linux trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to move item to trash"
+					)
+				)
+			).toBe(true);
+		});
+
+		// MAESTRO-16F/16G/176: agent prose linked as a path is too long to stat.
+		it('drops ENAMETOOLONG through fs:stat and fs:readFile', () => {
+			for (const [method, op] of [
+				['fs:stat', 'Failed to get file stats: Error: ENAMETOOLONG: name too long, stat'],
+				['fs:readFile', 'Failed to read file: Error: ENAMETOOLONG: name too long, open'],
+			]) {
+				expect(
+					shouldDropSentryEvent(
+						exceptionEvent(
+							'Error',
+							`Error invoking remote method '${method}': Error: ${op} '/consegna verificata; nessun output trovato...'`
+						)
+					)
+				).toBe(true);
+			}
+		});
+
+		it('keeps ENAMETOOLONG from a spawn, which is our own argv', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'spawn ENAMETOOLONG'))).toBe(false);
+		});
+
+		it('keeps a generic delete failure that did NOT come from shell:trashItem', () => {
+			// The rule is scoped to the one IPC channel we know shows a toast -
+			// the same words arriving from anywhere else are still signal.
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'fs:deleteFile': Error: Failed to perform delete operation"
+					)
+				)
+			).toBe(false);
+		});
+
+		it('keeps unrelated shell:trashItem failures', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: EBUSY: resource busy or locked"
+					)
+				)
+			).toBe(false);
+		});
+
+		it('drops EACCES on the sessions file bubbling up through sessions:setMany', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'sessions:setMany': Error: EACCES: permission denied, open '/Users/x/Library/Application Support/maestro/maestro-sessions.json'"
+					)
+				)
+			).toBe(true);
+		});
+
+		it('does NOT drop a generic IPC failure that is not a known noise pattern', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'sessions:create': TypeError: Cannot read properties of undefined (reading 'name')"
+					)
+				)
+			).toBe(false);
+		});
+
+		// A write failure that is *not* an environment/permissions problem still needs to
+		// reach us - the EACCES carve-out above must not swallow real persistence bugs.
+		it('does NOT drop a non-environment failure on the same sessions:setMany method', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'sessions:setMany': TypeError: sessions.map is not a function"
+					)
+				)
+			).toBe(false);
+		});
+	});
+
+	describe('Native Chromium / Electron crashes', () => {
+		it('drops partition_alloc:: crashes', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('partition_alloc::OomDeathTask', ''))).toBe(true);
+		});
+
+		it('drops blink:: crashes', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('blink::LocalFrameView::Layout', ''))).toBe(true);
+		});
+
+		it('drops rx::ContextGL:: crashes', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('rx::ContextGL::initialize', ''))).toBe(true);
+		});
+
+		it('drops unknown empty-value crashes', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('<unknown>', ''))).toBe(true);
+		});
+	});
+
+	describe('External JS injection (antivirus / extensions corrupting the bundle)', () => {
+		it('drops splash-stage ReferenceError for non-shipped symbol `i`', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('Error', 'Renderer error: [Splash] ReferenceError: i is not defined')
+				)
+			).toBe(true);
+		});
+
+		it('drops CSP-block errors from injected proxies', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('Error', 'Page failed to load: ERR_BLOCKED_BY_CSP at https://example')
+				)
+			).toBe(true);
+		});
+	});
+
+	describe('Network / shell environment', () => {
+		it('drops marketplace fetch failures when the user is offline', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'MarketplaceFetchError',
+						'MarketplaceFetchError: Network error fetching index: fetch failed'
+					)
+				)
+			).toBe(true);
+		});
+
+		// Regression (MAESTRO-MR): MarketplaceFetchError carries the original failure
+		// as its `cause`, so Sentry's LinkedErrors integration ships TWO exception
+		// values ordered root-cause-first. The classifier used to read values[0]
+		// only, saw the bare `TypeError: fetch failed`, and let the event through -
+		// the rule above looked correct but never fired in the field.
+		it('drops marketplace fetch failures when Sentry expanded the cause chain', () => {
+			expect(
+				shouldDropSentryEvent({
+					exception: {
+						values: [
+							{ type: 'TypeError', value: 'fetch failed' },
+							{
+								type: 'MarketplaceFetchError',
+								value: 'Network error fetching document: fetch failed',
+							},
+						],
+					},
+				})
+			).toBe(true);
+		});
+
+		// Regression (MAESTRO-TY): GitHub raw rate-limits playbook imports.
+		it('drops marketplace fetches rejected by GitHub rate limiting or a 5xx', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('MarketplaceFetchError', 'Failed to fetch document: 429 Too Many Requests')
+				)
+			).toBe(true);
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('MarketplaceFetchError', 'Failed to fetch asset: 503 Service Unavailable')
+				)
+			).toBe(true);
+		});
+
+		it('does NOT drop a marketplace document that is genuinely missing', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('MarketplaceFetchError', 'Document not found: setup'))
+			).toBe(false);
+		});
+
+		it('drops GitHub CLI network failures when the user is offline', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						'Command failed: gh pr list\nerror connecting to api.github.com\ncheck your internet connection'
+					)
+				)
+			).toBe(true);
+		});
+
+		it('drops shell PATH probe timeouts', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'Timed out reading shell PATH'))).toBe(
+				true
+			);
+		});
+	});
+
+	describe('legitimate errors', () => {
+		it('does NOT drop a normal application exception', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('TypeError', "Cannot read properties of undefined (reading 'sessions')")
+				)
+			).toBe(false);
+		});
+
+		it('does NOT drop an event with no exception at all', () => {
+			expect(shouldDropSentryEvent({})).toBe(false);
+		});
+
+		it('does NOT drop a custom domain error from our code', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('AgentSpawnError', 'Failed to spawn claude-code'))
+			).toBe(false);
+		});
+	});
+});

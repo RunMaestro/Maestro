@@ -1,0 +1,631 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { useAgentUsageListener } from '../../../../../renderer/hooks/agent/internal/useAgentUsageListener';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useContextTimelineStore } from '../../../../../renderer/stores/contextTimelineStore';
+import {
+	getCachedConfiguredContextWindow,
+	__resetConfiguredContextWindowCacheForTests,
+} from '../../../../../renderer/utils/contextWindowResolver';
+import { createMockSession } from '../../../../helpers/mockSession';
+import type { BatchedUpdater } from '../../../../../renderer/hooks/agent/internal/types';
+
+let handler: ((sessionId: string, usage: any) => void) | undefined;
+const mockUnsubscribe = vi.fn();
+
+const mockProcess = {
+	onUsage: vi.fn((h: any) => {
+		handler = h;
+		return mockUnsubscribe;
+	}),
+};
+
+function makeBatched(): BatchedUpdater {
+	return {
+		appendLog: vi.fn(),
+		markDelivered: vi.fn(),
+		markUnread: vi.fn(),
+		updateUsage: vi.fn(),
+		updateContextUsage: vi.fn(),
+		updateCycleBytes: vi.fn(),
+		updateCycleTokens: vi.fn(),
+	};
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	handler = undefined;
+	useSessionStore.setState({
+		sessions: [],
+		groups: [],
+		activeSessionId: '',
+		initialLoadComplete: false,
+		removedWorktreePaths: new Set(),
+	});
+	(window as any).maestro = { ...((window as any).maestro || {}), process: mockProcess };
+	useContextTimelineStore.setState({ buffers: {} });
+	__resetConfiguredContextWindowCacheForTests();
+});
+
+describe('useAgentUsageListener', () => {
+	it('routes usage updates per-tab AND per-session, and tracks cycle tokens', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		const usage = {
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadInputTokens: 10,
+			contextWindow: 200000,
+			contextPercentage: 0.05,
+		};
+		// 'sess-1' has no `-ai-` suffix, so parseSessionId returns
+		// { actualSessionId: 'sess-1', tabId: null, baseSessionId: 'sess-1' }.
+		// The hook fires updateUsage twice - once for the tab (here null) and
+		// once for the session (always null) - so each session-id event
+		// produces two distinct routing calls.
+		handler!('sess-1', usage);
+
+		expect(batched.updateUsage).toHaveBeenCalledTimes(2);
+		expect(batched.updateUsage).toHaveBeenNthCalledWith(1, 'sess-1', null, usage);
+		expect(batched.updateUsage).toHaveBeenNthCalledWith(2, 'sess-1', null, usage);
+		expect(batched.updateCycleTokens).toHaveBeenCalledWith('sess-1', 50);
+	});
+
+	it('routes ai-tab-format usage with the tabId on the per-tab call and null on the per-session call', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		const usage = {
+			inputTokens: 1,
+			outputTokens: 2,
+			cacheReadInputTokens: 0,
+			contextWindow: 200000,
+			contextPercentage: 0.05,
+		};
+		handler!('sess-1-ai-tab-1', usage);
+
+		// First call carries the tabId, second call carries null (session-level).
+		expect(batched.updateUsage).toHaveBeenNthCalledWith(1, 'sess-1', 'tab-1', usage);
+		expect(batched.updateUsage).toHaveBeenNthCalledWith(2, 'sess-1', null, usage);
+	});
+
+	it('skips when session is missing (orphan event)', () => {
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('missing', { inputTokens: 0, outputTokens: 0, contextWindow: 0 });
+		expect(batched.updateUsage).not.toHaveBeenCalled();
+	});
+
+	it('plots the Context Timeline from absoluteUsage when present (cumulative Codex), not the per-turn delta', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'codex' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// Codex arrives delta-normalized: the top-level fields are a small per-turn
+		// delta, while absoluteUsage carries the cumulative window occupancy.
+		handler!('sess-1', {
+			inputTokens: 800,
+			outputTokens: 400,
+			cacheReadInputTokens: 150,
+			cacheCreationInputTokens: 0,
+			contextWindow: 200000,
+			absoluteUsage: {
+				inputTokens: 50000,
+				outputTokens: 2000,
+				cacheReadInputTokens: 40000,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 500,
+			},
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		expect(points).toHaveLength(1);
+		const point = points[0];
+		// Codex is a combined-context agent: contextTokens = input + cacheCreation +
+		// output, computed from the ABSOLUTE totals (50000 + 0 + 2000), not the delta.
+		expect(point.contextTokens).toBe(52000);
+		expect(point.percentage).toBe(26); // round(52000 / 200000 * 100)
+		// The per-turn token chips stay as the delta (this turn's activity).
+		expect(point.inputTokens).toBe(800);
+		expect(point.outputTokens).toBe(400);
+	});
+
+	it('still records a Codex output-only turn when an absoluteUsage snapshot is present', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'codex' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// input/cache deltas are 0 and output grew: the generic output-only guard
+		// would drop this, but the absolute snapshot reflects real context growth.
+		handler!('sess-1', {
+			inputTokens: 0,
+			outputTokens: 300,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 200000,
+			absoluteUsage: {
+				inputTokens: 60000,
+				outputTokens: 3000,
+				cacheReadInputTokens: 40000,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			},
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		expect(points).toHaveLength(1);
+		expect(points[0].contextTokens).toBe(63000); // 60000 + 0 + 3000
+	});
+
+	it('skips a zero-delta Codex repeat (token_count + turn.completed for the same totals)', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'codex' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// All per-turn deltas are 0 (duplicate cumulative totals): no new activity,
+		// so it must not add a duplicate row even though absoluteUsage is present.
+		handler!('sess-1', {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			reasoningTokens: 0,
+			contextWindow: 200000,
+			absoluteUsage: {
+				inputTokens: 60000,
+				outputTokens: 3000,
+				cacheReadInputTokens: 40000,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			},
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		expect(points).toHaveLength(0);
+	});
+
+	it('sizes the timeline against a provider-configured window (no per-session override, not reported)', async () => {
+		// OpenCode's window is configured at the provider level only: no per-session
+		// customContextWindow, and it does not report contextWindow live.
+		(window as any).maestro.agents = {
+			getConfig: vi.fn().mockResolvedValue({ contextWindow: 300000 }),
+		};
+		const session = createMockSession({ id: 'sess-1', toolType: 'opencode' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// First event primes the cache (fire-and-forget); let it resolve.
+		handler!('sess-1', { inputTokens: 100, outputTokens: 10, contextWindow: 0 });
+		await vi.waitFor(() => expect(getCachedConfiguredContextWindow(session)).toBe(300000));
+
+		// Next event should size against the cached 300k provider window.
+		handler!('sess-1', {
+			inputTokens: 30000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 0,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(300000);
+		expect(last.percentage).toBe(10); // round(30000 / 300000 * 100)
+	});
+
+	it('lets a resolved omp model window beat the configured 200k fallback', async () => {
+		// omp reports the model's real window per turn via `contextWindowResolved`,
+		// which must win over the agent-level 200k config default - the reported
+		// bug was opus's 1M window shown as 200k.
+		window.maestro.agents = {
+			// Test seam: only getConfig is exercised by the listener here.
+			getConfig: vi.fn().mockResolvedValue({ contextWindow: 200000 }),
+		} as unknown as typeof window.maestro.agents;
+		const session = createMockSession({ id: 'sess-1', toolType: 'omp' });
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// Prime the configured-window cache to 200k so the assertion proves the
+		// resolved window beats a real configured value, not merely an empty one.
+		handler!('sess-1', { inputTokens: 10, outputTokens: 1, contextWindow: 200000 });
+		await vi.waitFor(() => expect(getCachedConfiguredContextWindow(session)).toBe(200000));
+
+		handler!('sess-1', {
+			inputTokens: 100000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(1000000);
+		expect(last.percentage).toBe(10); // round(100000 / 1000000 * 100)
+	});
+
+	it('lets a resolved window beat a per-session customContextWindow override', () => {
+		// The stored override is a materialized creation-time default (finding P1),
+		// so a genuinely provider-resolved window outranks it.
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			customContextWindow: 200000,
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 100000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(1000000);
+		expect(last.percentage).toBe(10); // round(100000 / 1000000 * 100)
+	});
+
+	// Finding AD1, and the timeline half of the pair. useContextWindow has the
+	// positionally identical case; if only one of the two learns about
+	// provenance the header gauge and the Context Timeline disagree again, which
+	// is exactly the bug PR #1221 fixed.
+	it('keeps a user-edited window above a resolved reported window', () => {
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			customContextWindow: 120000,
+			contextWindowSource: 'user-edited',
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 60000,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(120000);
+		expect(last.percentage).toBe(50); // round(60000 / 120000 * 100)
+	});
+
+	it('keeps an unresolved reported window below the per-session override', () => {
+		// Without the `contextWindowResolved` flag the reported value may be a
+		// parser-injected static fallback, so the stored override still wins.
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			customContextWindow: 200000,
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 20000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(200000);
+		expect(last.percentage).toBe(10); // round(20000 / 200000 * 100)
+	});
+
+	it('keeps a [1m] custom-model marker above a resolved window', () => {
+		// The marker is an explicit model choice, so it stays at the top of the
+		// precedence list even against a provider-resolved window.
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			customModel: 'claude-sonnet-4-5[1m]',
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 100000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 200000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(1_000_000);
+	});
+
+	it('falls back to accumulated growth estimate when contextPercentage is null', () => {
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			contextUsage: 25,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 100,
+			outputTokens: 1000,
+			cacheReadInputTokens: 0,
+			contextWindow: 0,
+			contextPercentage: null,
+		});
+
+		// contextUsage update should fire with a value <= maxEstimate (yellow - 5 = 75)
+		const calls = (batched.updateContextUsage as any).mock.calls;
+		const last = calls[calls.length - 1];
+		expect(last?.[1]).toBeLessThanOrEqual(75);
+	});
+
+	describe('occupancy snapshot bootstrap (finding Q1, D1)', () => {
+		// The reported repro: a claude-code session whose FIRST turn is tool-heavy.
+		// The CLI's result message sums every internal API call, so the turn totals
+		// blow past the window; the last call's usage rides along as absoluteUsage
+		// and is the real occupancy.
+		const OVERFLOWING_FIRST_TURN = {
+			inputTokens: 2_400_000,
+			outputTokens: 5_000,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			absoluteUsage: {
+				inputTokens: 2_000,
+				outputTokens: 500,
+				cacheReadInputTokens: 200_000,
+				cacheCreationInputTokens: 38_000,
+				reasoningTokens: 0,
+			},
+		};
+
+		it('establishes a nonzero baseline from the snapshot when the first turn overflows', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', { ...OVERFLOWING_FIRST_TURN, contextWindow: 1_000_000 });
+
+			// 2000 + 200000 + 38000 = 240000 of a 1M window. Before the fix the turn
+			// totals overflowed, no baseline existed, and the gauge stayed at 0%.
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
+		});
+
+		it('bootstraps against the session window when the event reports none', () => {
+			// The event carries no window, so the primary estimate sizes the snapshot
+			// against the static 200k table and still overflows; only the hook's
+			// resolved window (here a per-agent 1M override) can size it correctly.
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+				customContextWindow: 1_000_000,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', { ...OVERFLOWING_FIRST_TURN, contextWindow: 0 });
+
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
+		});
+
+		// CodeRabbit on PR #1351: the gauge percentage was computed BEFORE
+		// `resolvedWindow`, so it divided by the event's reported window while the
+		// timeline point divided by the configured one. A session with a
+		// per-agent override therefore saw two different denominators on two
+		// surfaces - the gauge/timeline disagreement PR #1221 fixed.
+		//
+		// This case deliberately has NO absoluteUsage: the D1 bootstrap branch
+		// below already divides by `resolvedWindow`, so a snapshot-bearing event
+		// masks the defect. A plain in-window turn goes through
+		// `estimateContextUsage` directly, which is the path that was using the
+		// wrong denominator.
+		it('sizes the gauge against the configured window, not the reported one', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+				// The user configured 1M; the provider reports a 200k default.
+				customContextWindow: 1_000_000,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', {
+				inputTokens: 2_000,
+				outputTokens: 500,
+				cacheReadInputTokens: 200_000,
+				cacheCreationInputTokens: 38_000,
+				contextWindow: 200_000,
+			});
+
+			// 240000 occupancy. Against the configured 1M that is 24%; against the
+			// reported 200k it overflows, yields null, and (with no prior baseline
+			// and no snapshot) the gauge is never updated at all.
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
+		});
+
+		it('is not capped to the yellow-warning gap - a snapshot is a measurement', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', {
+				...OVERFLOWING_FIRST_TURN,
+				contextWindow: 200_000,
+				absoluteUsage: { ...OVERFLOWING_FIRST_TURN.absoluteUsage, cacheReadInputTokens: 140_000 },
+			});
+
+			// 2000 + 140000 + 38000 = 180000 of 200k = 90%, above the 75 cap the
+			// extrapolated growth estimate is held under.
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 90);
+		});
+
+		it('leaves the existing behavior intact when an overflowing first turn has no snapshot', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			const { absoluteUsage: _snapshot, ...noSnapshot } = OVERFLOWING_FIRST_TURN;
+			handler!('sess-1', { ...noSnapshot, contextWindow: 1_000_000 });
+
+			// Nothing real to seed from, so no value is invented: the hook stays
+			// silent rather than fabricating a baseline.
+			expect(batched.updateContextUsage).not.toHaveBeenCalled();
+		});
+
+		it('keeps the growth estimate for a session that already has a baseline', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 25,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			const { absoluteUsage: _snapshot, ...noSnapshot } = OVERFLOWING_FIRST_TURN;
+			handler!('sess-1', { ...noSnapshot, contextWindow: 1_000_000 });
+
+			const calls = (batched.updateContextUsage as any).mock.calls;
+			expect(calls[calls.length - 1]?.[1]).toBeLessThanOrEqual(75);
+		});
+
+		it('records a claude-code output-only turn once it carries a snapshot', () => {
+			// Behavior change flagged by Task 4: the output-only guard is written as
+			// `!usageStats.absoluteUsage && ...`, so claude output-only turns stop
+			// being skipped by the timeline now that claude attaches a snapshot. That
+			// is the intended reading - with real occupancy the row is meaningful.
+			const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', {
+				inputTokens: 0,
+				outputTokens: 300,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				contextWindow: 200_000,
+				absoluteUsage: {
+					inputTokens: 1_000,
+					outputTokens: 300,
+					cacheReadInputTokens: 59_000,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				},
+			});
+
+			const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+			expect(points).toHaveLength(1);
+			// Claude semantics: output does not occupy the input window.
+			expect(points[0].contextTokens).toBe(60_000);
+			expect(points[0].percentage).toBe(30);
+		});
+	});
+});

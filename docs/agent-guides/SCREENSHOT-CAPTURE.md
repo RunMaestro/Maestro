@@ -149,7 +149,7 @@ grouping, the model and effort pills, Send Now, and the edit / reorder / delete
 user can genuinely reach. Editing a queued message from the showcase app works
 normally - pausing blocks dispatch, not editing.
 
-`src/__tests__/shared/groupappearance.merged-13.test.ts` holds the seed to that: every item
+`src/__tests__/shared/showcaseSeed.test.ts` holds the seed to that: every item
 paused, the queue spread over more than one agent, every `tabId` resolving to a
 real AI tab, and no em or en dash anywhere in the file. Nothing else reaches
 this data - `scripts/` is in ESLint's global `ignores`, the dash-only pass
