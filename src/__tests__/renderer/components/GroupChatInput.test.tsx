@@ -1075,6 +1075,54 @@ describe('GroupChatInput', () => {
 				expect(textarea.value).toBe('@Mae');
 			});
 
+			it('completes quoted partial mention on single match with caret at end', () => {
+				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
+			it('completes quoted partial mention on single match with caret mid-token', () => {
+				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B" and more');
+				textarea.selectionStart = textarea.selectionEnd = 7;
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Alice-Bob  and more');
+			});
+
+			it('opens picker on multiple matches for quoted partial and accepts cleanly', () => {
+				const sessions = [
+					createMockSession('session-1', 'Alice Bob', 'claude-code'),
+					createMockSession('session-2', 'Alice Brown', 'claude-code'),
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(screen.queryByText('Alice Bob')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				expect(screen.getByText('Alice Bob')).toBeInTheDocument();
+				expect(screen.getByText('Alice Brown')).toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
 			it('does not complete group mentions on Tab with picker closed', () => {
 				const groups = [createMockGroup('group-1', 'PROJECTS')];
 				const sessions = [

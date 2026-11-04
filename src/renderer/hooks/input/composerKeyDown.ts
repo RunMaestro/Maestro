@@ -38,7 +38,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { isImeComposing } from '../../utils/ime';
 import { getAtMentionTrigger } from '../../../shared/maestro-lib/mentions/trigger';
-import { stripMentionQuotes } from '../../../shared/mentionPatterns';
+import { mentionQuoteChar, stripMentionQuotes } from '../../../shared/mentionPatterns';
 import type { AgentMentionSuggestion } from './useAgentMentionCompletion';
 
 interface WindowIsolation {
@@ -175,16 +175,24 @@ export function findPartialMentionAtCursor(
 	const trigger = getAtMentionTrigger(value, cursorPosition);
 	if (!trigger) return null;
 
+	const openQuote = mentionQuoteChar(trigger.filter);
 	let tail = '';
 	let idx = cursorPosition;
-	while (idx < value.length && !/[\s.,;:!?)\]}>'"]/.test(value[idx])) {
-		tail += value[idx];
-		idx++;
+	if (openQuote) {
+		while (idx < value.length && value[idx] !== openQuote && value[idx] !== '\n') {
+			tail += value[idx];
+			idx++;
+		}
+	} else {
+		while (idx < value.length && !/[\s.,;:!?)\]}>'"]/.test(value[idx])) {
+			tail += value[idx];
+			idx++;
+		}
 	}
-	const fullFilter = stripMentionQuotes(trigger.filter + tail);
+	const rawFilter = trigger.filter + tail;
 	return {
 		startIndex: trigger.startIndex,
-		filter: fullFilter,
+		filter: rawFilter,
 	};
 }
 
@@ -239,7 +247,7 @@ export function handleComposerAgentTabKey(
 	const partial = findPartialMentionAtCursor(value, cursorPosition);
 	if (!partial) return false;
 
-	const suggestions = options.getAgentSuggestions(partial.filter);
+	const suggestions = options.getAgentSuggestions(stripMentionQuotes(partial.filter));
 	const agentMatches = suggestions.filter((item) => item.kind === 'agent');
 
 	if (agentMatches.length === 0) {
