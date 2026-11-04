@@ -1289,6 +1289,45 @@ describe('fileExplorer utils', () => {
 	// compareFileTrees
 	// ============================================================================
 	describe('compareFileTrees', () => {
+		it('preserves path-set counts for fresh arrays, metadata, duplicates, and nested edits', () => {
+			const oldTree: FileTreeNode[] = [
+				{
+					name: 'src',
+					type: 'folder',
+					children: [
+						{ name: 'same', type: 'file' },
+						{ name: 'same', type: 'file' },
+						{ name: 'empty', type: 'folder', children: [] },
+					],
+				},
+				{ name: 'switch', type: 'file' },
+			];
+			const fresh = structuredClone(oldTree);
+			(fresh[0] as FileTreeNode & { metadata: number }).metadata = 42;
+			expect(compareFileTrees(oldTree, fresh)).toEqual({
+				totalChanges: 0,
+				newFiles: 0,
+				newFolders: 0,
+				removedFiles: 0,
+				removedFolders: 0,
+			});
+			fresh[0].children!.reverse();
+			expect(compareFileTrees(oldTree, fresh).totalChanges).toBe(0);
+			const changed = structuredClone(fresh);
+			changed[0].children = [
+				{ name: 'renamed', type: 'file' },
+				{ name: 'empty', type: 'folder' },
+			];
+			changed[1] = { name: 'switch', type: 'folder', children: [] };
+			expect(compareFileTrees(oldTree, changed)).toEqual({
+				totalChanges: 4,
+				newFiles: 1,
+				newFolders: 1,
+				removedFiles: 2,
+				removedFolders: 0,
+			});
+		});
+
 		it('returns all zeros for identical trees', () => {
 			const tree: FileTreeNode[] = [
 				{ name: 'src', type: 'folder', children: [] },
