@@ -222,8 +222,23 @@ class AntigravityTurn {
 	private async run(): Promise<void> {
 		this.connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'jsonrpc',
-			onNotification: (record) => this.onNotification(record),
-			onServerRequest: (record) => this.observeCompletion(this.onServerRequest(record)),
+			// Retained callbacks need fresh admission after setup/child ownership ends.
+			// NDJSON response serialization/write remains a separate boundary.
+			onNotification: (record) =>
+				withWorktreeTurnActivity(
+					() => this.onNotification(record),
+					(error) => void captureException(error)
+				),
+			onServerRequest: async (record) =>
+				withWorktreeTurnActivity(
+					(_start, observe) => observe(this.onServerRequest(record)),
+					(error) => {
+						void captureException(error);
+						logger.error('[AntigravityTurn] Completion failed', LOG_CONTEXT, {
+							error: String(error),
+						});
+					}
+				),
 		});
 		await this.connection.request('start', {
 			cwd: this.config.cwd,
@@ -369,17 +384,22 @@ class AntigravityTurn {
 	}
 
 	private finish(code: number): void {
-		if (this.finished) return;
-		this.finished = true;
-		void this.observeCompletion(
-			this.ctx.exitHandler
-				.handleExit(this.config.sessionId, code, this.managedProcess)
-				.catch((error) => {
-					logger.error('[AntigravityTurn] handleExit failed', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-				})
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				if (this.finished) return;
+				this.finished = true;
+				void observe(
+					this.ctx.exitHandler
+						.handleExit(this.config.sessionId, code, this.managedProcess)
+						.catch((error) => {
+							logger.error('[AntigravityTurn] handleExit failed', LOG_CONTEXT, {
+								sessionId: this.config.sessionId,
+								error: String(error),
+							});
+						})
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 

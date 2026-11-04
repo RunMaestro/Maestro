@@ -953,6 +953,225 @@ describe('standalone Antigravity SDK activity', () => {
 		await close();
 		(await reserve()).release();
 	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses retained notification/permission before record lookup or recovery under %s',
+		async (root) => {
+			antigravity.spawn(input());
+			const callbacks = connection();
+			await close();
+			processes.clear();
+			vi.clearAllMocks();
+			const hold = await reserve(root);
+			try {
+				const lookup = vi.fn(() => {
+					throw new Error('record accessed');
+				});
+				const record = {
+					get params() {
+						return lookup();
+					},
+					get method() {
+						return lookup();
+					},
+				};
+				expect(() => callbacks.onNotification(record)).toThrow('reserved');
+				await expect(callbacks.onServerRequest(record)).rejects.toThrow('reserved');
+				for (const probe of [
+					lookup,
+					probes.output,
+					probes.exit,
+					probes.interaction,
+					probes.request,
+					probes.close,
+					stopProcess,
+					captureException,
+					fallback,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'owns parallel late permissions through replacement and close until final %s',
+		async (outcome) => {
+			antigravity.spawn(input());
+			const callbacks = connection();
+			await close();
+			processes.clear();
+			const first = Promise.withResolvers<{ outcome: string; optionId: string }>();
+			const last = Promise.withResolvers<{ outcome: string; optionId: string }>();
+			probes.interaction.mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
+			const one = callbacks.onServerRequest({
+				id: 1,
+				method: 'permission',
+				params: { tool: 'read' },
+			});
+			const two = callbacks.onServerRequest({
+				id: 2,
+				method: 'permission',
+				params: { tool: 'write', input: { path: 'fixture' } },
+			});
+			await blocked();
+			native = makeNative();
+			antigravity.spawn(input());
+			processes.clear();
+			await close();
+			first.resolve({ outcome: 'selected', optionId: 'allow' });
+			await expect(one).resolves.toEqual({ kind: 'result', value: { allow: true } });
+			await drain();
+			await blocked();
+			if (outcome === 'reject') {
+				const result = expect(two).rejects.toThrow('permission failed');
+				last.reject(new Error('permission failed'));
+				await result;
+			} else {
+				last.resolve({ outcome: 'selected', optionId: 'deny' });
+				await expect(two).resolves.toEqual({ kind: 'result', value: { allow: false } });
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('admits a late permission before an earlier reservation finishes canonicalizing', async () => {
+		antigravity.spawn(input());
+		const callbacks = connection();
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		const permission = Promise.withResolvers<{ outcome: string }>();
+		probes.interaction.mockReturnValueOnce(permission.promise);
+		const response = callbacks.onServerRequest({ id: 1, method: 'permission' });
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		permission.resolve({ outcome: 'cancelled' });
+		await expect(response).resolves.toEqual({ kind: 'result', value: { allow: false } });
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['params', 'broker', 'mapping'])(
+		'releases late permission %s errors despite failed diagnostics',
+		async (failure) => {
+			antigravity.spawn(input());
+			const callbacks = connection();
+			await close();
+			const fail = () => {
+				throw new Error('permission failed');
+			};
+			vi.mocked(captureException).mockImplementationOnce(fail);
+			if (failure === 'broker')
+				vi.spyOn(harnessInteractionBroker, 'open').mockImplementationOnce(fail);
+			if (failure === 'mapping')
+				probes.interaction.mockResolvedValueOnce({
+					get outcome() {
+						return fail();
+					},
+				});
+			await expect(
+				callbacks.onServerRequest({
+					id: 1,
+					method: 'permission',
+					get params() {
+						if (failure === 'params') return fail();
+						return {};
+					},
+				})
+			).rejects.toThrow('permission failed');
+			await drain();
+			expect(captureException).toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it('preserves synchronous late notification order and suppresses replaced generation output', async () => {
+		antigravity.spawn(input());
+		const callbacks = connection();
+		await close();
+		processes.clear();
+		probes.output.mockClear();
+		for (const record of [
+			{ method: 'text', params: { text: 'first' } },
+			{ method: 'error', params: { message: 'second' } },
+			{ method: 'custom', params: {} },
+		])
+			callbacks.onNotification(record);
+		expect(probes.output.mock.calls.map(([, line]) => JSON.parse(line).type)).toEqual([
+			'acp.text',
+			'acp.error',
+			'acp.system',
+		]);
+		native = makeNative();
+		antigravity.spawn(input());
+		callbacks.onNotification({ method: 'text', params: { text: 'superseded' } });
+		expect(probes.output).toHaveBeenCalledTimes(3);
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['params', 'output'])(
+		'releases synchronous late notification %s failure and preserves the error',
+		async (failure) => {
+			antigravity.spawn(input());
+			const callbacks = connection();
+			await close();
+			const fail = () => {
+				throw new Error('notification failed');
+			};
+			vi.mocked(captureException).mockImplementationOnce(fail);
+			if (failure === 'output') probes.output.mockImplementationOnce(fail);
+			expect(() =>
+				callbacks.onNotification({
+					method: 'text',
+					get params() {
+						if (failure === 'params') return fail();
+						return { text: 'fixture' };
+					},
+				})
+			).toThrow('notification failed');
+			expect(captureException).toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'owns late completion reporting after failed native-close handling until %s',
+		async (outcome) => {
+			antigravity.spawn(input());
+			const callbacks = connection();
+			// Native close is proven, but failed connection cleanup prevented finish.
+			probes.close.mockImplementationOnce(() => {
+				throw new Error('connection close failed');
+			});
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const report = Promise.withResolvers<void>();
+			if (outcome === 'throw')
+				probes.exit.mockImplementationOnce(() => {
+					throw new Error('report failed');
+				});
+			else probes.exit.mockReturnValueOnce(report.promise);
+			if (outcome === 'throw') {
+				expect(() => callbacks.onNotification({ method: 'complete', params: { code: 7 } })).toThrow(
+					'report failed'
+				);
+			} else {
+				callbacks.onNotification({ method: 'complete', params: { code: 7 } });
+				expect(probes.exit).toHaveBeenLastCalledWith('rpc-session', 7, expect.any(Object));
+				callbacks.onNotification({ method: 'complete' });
+				expect(probes.exit).toHaveBeenCalledOnce();
+				native = makeNative();
+				antigravity.spawn(input());
+				processes.clear();
+				await close();
+				await blocked();
+				if (outcome === 'reject') report.reject(new Error('report failed'));
+				else report.resolve();
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
 	it.each(['validation', 'shell', 'env', 'nonstart'])(
 		'releases proven pre-native %s failure without fallback in Standard',
 		async (failure) => {
