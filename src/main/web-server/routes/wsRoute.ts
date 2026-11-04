@@ -19,7 +19,11 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
-import { sendBounded } from '../services/socket-send';
+import {
+	acknowledgeWebSocketChunk,
+	enableWebSocketChunks,
+	sendBounded,
+} from '../services/socket-send';
 import type {
 	Theme,
 	WebClient,
@@ -150,6 +154,7 @@ export class WsRoute {
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+			if (url.searchParams.get('bridgeChunks') === '1') enableWebSocketChunks(socket);
 			const sessionId = url.searchParams.get('sessionId') || undefined;
 
 			// A web-desktop client reconnecting after a dropped socket says where it
@@ -317,6 +322,11 @@ export class WsRoute {
 				if (!client.isAuthorized?.()) return;
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
+					if ((data as { type: string }).type === 'bridge.chunkAck') {
+						if (client.isAuthorized?.() !== false)
+							acknowledgeWebSocketChunk(socket, (data as unknown as { offset: unknown }).offset);
+						return;
+					}
 					this.callbacks.handleMessage?.(clientId, data);
 				} catch {
 					sendBounded(
