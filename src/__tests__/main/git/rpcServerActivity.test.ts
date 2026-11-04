@@ -1106,6 +1106,211 @@ describe('standalone Codex app-server activity', () => {
 			fallback
 		);
 	});
+	describe('delayed exit grace and retained direct controls', () => {
+		beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+		afterEach(() => vi.useRealTimers());
+		async function finishedControls() {
+			codex.spawn(input());
+			await drain();
+			line('turn/started', { threadId: 'thread', turn: { id: 'turn' } });
+			const managed = processes.get('rpc-session')!;
+			Object.assign(native, { exitCode: 0 });
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			return managed;
+		}
+		it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+			'refuses retained SDK/harness controls before lookup or recovery under %s',
+			async (root) => {
+				const managed = await finishedControls();
+				const hold = await reserve(root);
+				const lookup = vi.fn(() => null);
+				Object.defineProperty(native, 'exitCode', { get: lookup, configurable: true });
+				const timer = vi.spyOn(globalThis, 'setTimeout');
+				const cancellation = vi.spyOn(globalThis, 'clearTimeout');
+				probes.request.mockClear();
+				vi.mocked(captureException).mockClear();
+				try {
+					expect(() => managed.sdkController!.interrupt()).toThrow('reserved');
+					expect(() => managed.sdkController!.kill()).toThrow('reserved');
+					await expect(managed.harnessControl!.interrupt!()).rejects.toThrow('reserved');
+					await expect(managed.harnessControl!.close!({ sync: true })).rejects.toThrow('reserved');
+					for (const probe of [
+						lookup,
+						timer,
+						cancellation,
+						probes.request,
+						stopProcess,
+						captureException,
+					])
+						expect(probe).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+			}
+		);
+		it('retains one deduplicated timer after native close and registration removal', async () => {
+			const managed = await finishedControls();
+			const timer = vi.spyOn(globalThis, 'setTimeout');
+			managed.sdkController!.interrupt();
+			managed.sdkController!.interrupt();
+			expect(timer).toHaveBeenCalledOnce();
+			expect(timer).toHaveBeenCalledWith(expect.any(Function), 1000);
+			await blocked();
+			await vi.advanceTimersByTimeAsync(999);
+			await blocked();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(stopProcess).not.toHaveBeenCalled();
+			(await reserve()).release();
+		});
+		it('releases confirmed cancellation and preserves shutdown options', async () => {
+			const managed = await finishedControls();
+			managed.sdkController!.interrupt();
+			await blocked();
+			managed.sdkController!.kill({ sync: true, shutdown: true });
+			await drain();
+			(await reserve()).release();
+			expect(stopProcess).toHaveBeenCalledWith(
+				{ child: native },
+				expect.objectContaining({
+					immediate: true,
+					blocking: true,
+					upTo: 'terminate',
+					includeDescendants: false,
+				})
+			);
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(stopProcess).toHaveBeenCalledOnce();
+		});
+		it.each(['return', 'throw'] as const)(
+			'retains a running callback through %s and permits reentrant rescheduling',
+			async (outcome) => {
+				const managed = await finishedControls();
+				managed.sdkController!.interrupt();
+				Object.assign(native, { exitCode: null });
+				let during!: Promise<void>;
+				vi.mocked(stopProcess).mockImplementationOnce(() => {
+					Object.assign(native, { exitCode: 0 });
+					managed.sdkController!.interrupt();
+					during = blocked();
+					if (outcome === 'throw') throw new Error('stop callback failed');
+					return { stage: () => undefined, dispose: () => {} };
+				});
+				if (outcome === 'throw')
+					expect(() => vi.advanceTimersByTime(1000)).toThrow('stop callback failed');
+				else vi.advanceTimersByTime(1000);
+				await during;
+				await drain();
+				await blocked();
+				await vi.advanceTimersByTimeAsync(1000);
+				(await reserve()).release();
+			}
+		);
+		it('retains failed cancellation until the callback settles', async () => {
+			const managed = await finishedControls();
+			managed.sdkController!.interrupt();
+			vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce(() => {
+				throw new Error('cancel failed');
+			});
+			expect(() => managed.sdkController!.kill()).toThrow('cancel failed');
+			await blocked();
+			await vi.advanceTimersByTimeAsync(1000);
+			(await reserve()).release();
+		});
+		it('releases a failed scheduling attempt without running stop recovery', async () => {
+			const managed = await finishedControls();
+			vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce(() => {
+				throw new Error('timer failed');
+			});
+			expect(() => managed.sdkController!.interrupt()).toThrow('timer failed');
+			await drain();
+			(await reserve()).release();
+			expect(stopProcess).not.toHaveBeenCalled();
+		});
+		it('retains newly requested interrupt RPC after the original lifetime settled', async () => {
+			codex.spawn(input());
+			await drain();
+			line('turn/started', { threadId: 'thread', turn: { id: 'turn' } });
+			const managed = processes.get('rpc-session')!;
+			probes.close.mockImplementationOnce(() => {
+				throw new Error('close reporting failed');
+			});
+			await close();
+			(await reserve()).release();
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(pending.promise);
+			managed.sdkController!.interrupt();
+			managed.sdkController!.kill();
+			await drain();
+			await blocked();
+			pending.reject(new Error('interrupt failed'));
+			await drain();
+			(await reserve()).release();
+		});
+		it('admits timer setup ahead of a pending reservation canonicalization', async () => {
+			const managed = await finishedControls();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			managed.sdkController!.interrupt();
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			await vi.advanceTimersByTimeAsync(1000);
+			(await reserve()).release();
+		});
+		it('retains the old timer after a replacement registration and child close', async () => {
+			const managed = await finishedControls();
+			managed.sdkController!.interrupt();
+			native = makeNative();
+			codex.spawn(input());
+			await drain();
+			await close();
+			await blocked();
+			await vi.advanceTimersByTimeAsync(1000);
+			(await reserve()).release();
+		});
+		it.each(['exit', 'error', 'close'] as const)(
+			'preserves independent native ownership and timer cancellation on %s',
+			async (event) => {
+				codex.spawn(input());
+				await drain();
+				line('turn/started', { threadId: 'thread', turn: { id: 'turn' } });
+				processes.get('rpc-session')!.sdkController!.interrupt();
+				native.emit(event, event === 'error' ? new Error('native error') : 0, null);
+				await drain();
+				expect(vi.getTimerCount()).toBe(event === 'exit' ? 1 : 0);
+				if (event !== 'close') {
+					await blocked();
+					await close();
+				}
+				(await reserve()).release();
+			}
+		);
+		it('keeps uncertain callback cancellation blocked after a failed clear', async () => {
+			const managed = await finishedControls();
+			managed.sdkController!.interrupt();
+			vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce(() => {
+				throw new Error('clear failed');
+			});
+			expect(() => vi.advanceTimersByTime(1000)).toThrow('clear failed');
+			await drain();
+			await blocked();
+		});
+		it('keeps the independent child hold after timer cancellation', async () => {
+			codex.spawn(input());
+			await drain();
+			line('turn/started', { threadId: 'thread', turn: { id: 'turn' } });
+			const managed = processes.get('rpc-session')!;
+			managed.sdkController!.interrupt();
+			managed.sdkController!.kill();
+			await vi.advanceTimersByTimeAsync(1000);
+			await blocked();
+			await close();
+			(await reserve()).release();
+		});
+	});
+
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses before parsing, native setup or fallback under %s',
 		async (root) => {

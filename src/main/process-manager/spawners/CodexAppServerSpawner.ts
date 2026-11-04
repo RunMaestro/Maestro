@@ -240,7 +240,7 @@ class CodexAppServerTurn {
 	private heldLines: CodexExecLine[] = [];
 	/** Stderr produced before the turn was committed; forwarded on commit. */
 	private heldStderr = '';
-	private exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
+	private cancelExitGrace: (() => void) | undefined;
 	/** The turn is over (completed, failed, or the child is gone); steering listens. */
 	private turnEnded = false;
 	private readonly turnEndListeners = new Set<() => void>();
@@ -698,21 +698,47 @@ class CodexAppServerTurn {
 
 	/** Run the stop ladder from `from` if the child is still here after the grace. */
 	private armExitGrace(from: 'interrupt' | 'terminate'): void {
-		if (this.exitGraceTimer) return;
-		this.exitGraceTimer = setTimeout(() => {
-			this.exitGraceTimer = undefined;
-			if (!this.childRunning()) return;
-			this.signalRemote('terminate');
-			stopProcess(
-				{ child: this.turn.child },
-				{
-					from,
-					graceMs: INTERACTIVE_STOP_GRACE_MS,
-					sessionId: this.config.sessionId,
-					label: 'codex-app-server',
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				if (this.cancelExitGrace) return;
+				// A completed turn or removed registration cannot settle this timer.
+				const scheduled = Promise.withResolvers<void>();
+				observe(scheduled.promise);
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const finish = (): void => {
+					// A failed cancellation leaves the independent hold unresolved.
+					clearTimeout(timer);
+					if (this.cancelExitGrace === finish) this.cancelExitGrace = undefined;
+					scheduled.resolve();
+				};
+				this.cancelExitGrace = finish;
+				try {
+					timer = setTimeout(() => {
+						// Reentrant kill/interrupt must not settle this running callback.
+						this.cancelExitGrace = undefined;
+						try {
+							if (!this.childRunning()) return;
+							this.signalRemote('terminate');
+							stopProcess(
+								{ child: this.turn.child },
+								{
+									from,
+									graceMs: INTERACTIVE_STOP_GRACE_MS,
+									sessionId: this.config.sessionId,
+									label: 'codex-app-server',
+								}
+							);
+						} finally {
+							finish();
+						}
+					}, CODEX_APP_SERVER_EXIT_GRACE_MS);
+				} catch (error) {
+					finish();
+					throw error;
 				}
-			);
-		}, CODEX_APP_SERVER_EXIT_GRACE_MS);
+			},
+			(error) => void captureException(error)
+		);
 	}
 
 	private childRunning(): boolean {
@@ -727,8 +753,15 @@ class CodexAppServerTurn {
 	 * child that ignored the interrupt goes on running commands.
 	 */
 	private interrupt(): void {
+		withWorktreeTurnActivity(
+			(_start, observe) => this.interruptAdmitted(observe),
+			(error) => void captureException(error)
+		);
+	}
+
+	private interruptAdmitted(observe: <T>(completion: Promise<T>) => Promise<T>): void {
 		this.cancelled = true;
-		const sent = this.sendTurnInterrupt();
+		const sent = this.sendTurnInterrupt(observe);
 		if (!sent && this.childRunning()) {
 			// Nothing to interrupt yet (setup, or `turn/start` unanswered): stop the child now.
 			this.signalRemote('terminate');
@@ -748,12 +781,19 @@ class CodexAppServerTurn {
 
 	/** Hard stop: interrupt the turn as a courtesy, then run the ladder from SIGTERM. */
 	private kill(options: { sync?: boolean; shutdown?: boolean } = {}): void {
+		withWorktreeTurnActivity(
+			(_start, observe) => this.killAdmitted(options, observe),
+			(error) => void captureException(error)
+		);
+	}
+
+	private killAdmitted(
+		options: { sync?: boolean; shutdown?: boolean },
+		observe: <T>(completion: Promise<T>) => Promise<T>
+	): void {
 		this.cancelled = true;
-		this.sendTurnInterrupt();
-		if (this.exitGraceTimer) {
-			clearTimeout(this.exitGraceTimer);
-			this.exitGraceTimer = undefined;
-		}
+		this.sendTurnInterrupt(observe);
+		this.cancelExitGrace?.();
 		this.signalRemote('terminate');
 		stopProcess(
 			{ child: this.turn.child },
@@ -771,11 +811,11 @@ class CodexAppServerTurn {
 	}
 
 	/** Send `turn/interrupt` for the active turn. False when there is no turn to interrupt. */
-	private sendTurnInterrupt(): boolean {
+	private sendTurnInterrupt(observe: <T>(completion: Promise<T>) => Promise<T>): boolean {
 		const threadId = this.translator.threadId;
 		const turnId = this.translator.activeTurnId;
 		if (!threadId || !turnId || this.phase !== 'committed' || this.rpc.isClosed) return false;
-		this.observeCompletion(
+		observe(
 			this.rpc
 				.request(
 					'turn/interrupt',
@@ -793,10 +833,7 @@ class CodexAppServerTurn {
 	}
 
 	private handleChildExit(exit: TurnExit): void {
-		if (this.exitGraceTimer) {
-			clearTimeout(this.exitGraceTimer);
-			this.exitGraceTimer = undefined;
-		}
+		this.cancelExitGrace?.();
 		this.notifyTurnEnded();
 		this.rpc.close('app-server exited');
 		if (this.isSuperseded() || this.finished) return;
