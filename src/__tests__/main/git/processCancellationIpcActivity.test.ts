@@ -159,7 +159,7 @@ describe('process cancellation and control IPC activity', () => {
 	});
 
 	describe('permission and harness responses', () => {
-		it('keeps a real permission pending on refusal and admits its settlement subscribers', async () => {
+		it('keeps a real pending permission busy and admits its settlement subscribers', async () => {
 			const registry = await vi.importActual<
 				typeof import('../../../main/permission-relay/registry')
 			>('../../../main/permission-relay/registry');
@@ -168,11 +168,11 @@ describe('process cancellation and control IPC activity', () => {
 			const unsubscribe = registry.subscribePendingPermissions(notify);
 			vi.mocked(resolvePermissionResponse).mockImplementation(registry.resolvePending);
 			try {
-				const hold = await idle();
-				expect(() => respond('permission:respond')).toThrow(/reserved/);
+				// A real pending decision now owns activity beyond setup, so a
+				// cleanup reservation cannot be acquired before its response.
+				await busy();
 				expect(registry.relayRegistryStats().pending).toBe(1);
 				expect(notify).not.toHaveBeenCalled();
-				hold.release();
 				expect(respond('permission:respond')).toBe(true);
 				await expect(completion).resolves.toBe(decision);
 				expect(notify).toHaveBeenCalledTimes(1);

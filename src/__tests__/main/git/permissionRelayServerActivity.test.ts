@@ -716,9 +716,9 @@ describe('permission relay server request and native lifetime activity', () => {
 		expect(forwarded[0].requestId).not.toBe(forwarded[1].requestId);
 		await busy();
 		registry.resolvePending(forwarded[0].requestId, decision);
-		expect(active).toBe(2);
+		expect(active).toBe(3);
 		await first.result;
-		expect(active).toBe(1);
+		expect(active).toBe(2);
 		await busy();
 		registry.resolvePending(forwarded[1].requestId, decision);
 		let deliveryActive = -1;
@@ -754,11 +754,11 @@ describe('permission relay server request and native lifetime activity', () => {
 				input: {},
 			}) + '\n'
 		);
-		expect(active).toBe(3);
+		expect(active).toBe(4);
 		server.stop();
 		endpoint.emit('close');
 		socket.emit('close');
-		expect(active).toBe(1);
+		expect(active).toBe(2);
 		await busy();
 		let deliveryActive = -1;
 		socket.write.mockImplementationOnce(() => {
@@ -782,7 +782,7 @@ describe('permission relay server request and native lifetime activity', () => {
 			const spawn = binding();
 			const error = new Error(stage);
 			const fail = () => {
-				expect(active).toBe(1);
+				expect(active).toBe(stage === 'forwarding' ? 2 : 1);
 				throw error;
 			};
 			server.setOnRequest(stage === 'forwarding' ? fail : vi.fn());
@@ -807,6 +807,7 @@ describe('permission relay server request and native lifetime activity', () => {
 			// A forwarding throw historically leaves a pending registry entry; this
 			// request scope must not pretend to own that independent registry lifetime.
 			expect(registry.relayRegistryStats().pending).toBe(stage === 'forwarding' ? 1 : 0);
+			if (stage === 'forwarding') await busy();
 			spawn.cleanup();
 			await idle();
 		}
@@ -922,11 +923,11 @@ describe('permission relay server request and native lifetime activity', () => {
 			forwarded.push(request);
 			if (forwarded.length === 1) {
 				decisionRequest(spawn.token);
-				expect(active).toBe(2);
+				expect(active).toBe(4);
 			}
 		});
 		const first = decisionRequest(spawn.token);
-		expect(active).toBe(2);
+		expect(active).toBe(4);
 		for (const request of forwarded) registry.resolvePending(request.requestId, decision);
 		expect(active).toBe(2);
 		await first.result;

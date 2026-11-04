@@ -20,7 +20,7 @@ import type { PendingPermissionSnapshot } from '../../shared/pendingPermissions'
 
 interface PendingRequest {
 	resolve: (decision: PermissionDecision) => void;
-	timer: NodeJS.Timeout;
+	cancelTimer: () => void;
 	token: string;
 }
 
@@ -97,7 +97,7 @@ export function registerSpawn(binding: RelaySpawnBinding): {
 				// socket handler (if somehow still open) doesn't hang forever.
 				for (const [requestId, req] of pending) {
 					if (req.token === token) {
-						clearTimeout(req.timer);
+						req.cancelTimer();
 						pending.delete(requestId);
 						changed = true;
 						req.resolve({ behavior: 'deny', message: 'Agent process exited.' });
@@ -131,25 +131,66 @@ export function createPending(
 	timeoutMs: number = RELAY_DECISION_TIMEOUT_MS
 ): Promise<PermissionDecision> {
 	const release = beginGlobalWorktreeActivity();
+	let setupSettled = false;
+	let timerSettled = false;
+	let decisionSettled = false;
+	let expiring = false;
+	let released = false;
+	// A rejected setup can leave a live timer; a failed notification can leave
+	// an unresolved decision. Neither is completion of this request's work.
+	const releaseIfSettled = () => {
+		if (setupSettled && timerSettled && decisionSettled && !expiring && !released) {
+			released = true;
+			release();
+		}
+	};
 	try {
 		return new Promise<PermissionDecision>((resolve) => {
-			const timer = setTimeout(() => {
-				pending.delete(requestId);
-				notifyPendingPermissions();
-				resolve({
-					behavior: 'deny',
-					message: 'Permission request timed out with no response.',
+			const resolveDecision = (decision: PermissionDecision) => {
+				resolve(decision);
+				decisionSettled = true;
+				releaseIfSettled();
+			};
+			try {
+				const timer = setTimeout(() => {
+					expiring = true;
+					try {
+						pending.delete(requestId);
+						notifyPendingPermissions();
+						resolveDecision({
+							behavior: 'deny',
+							message: 'Permission request timed out with no response.',
+						});
+					} finally {
+						timerSettled = true;
+						expiring = false;
+						releaseIfSettled();
+					}
+				}, timeoutMs);
+				// Don't keep the event loop alive purely for a pending prompt.
+				if (typeof timer.unref === 'function') {
+					timer.unref();
+				}
+				pending.set(requestId, {
+					resolve: resolveDecision,
+					cancelTimer: () => {
+						clearTimeout(timer);
+						timerSettled = true;
+						releaseIfSettled();
+					},
+					token,
 				});
-			}, timeoutMs);
-			// Don't keep the event loop alive purely for a pending prompt.
-			if (typeof timer.unref === 'function') {
-				timer.unref();
+				notifyPendingPermissions();
+			} catch (error) {
+				// The Promise executor rejects with this same error. A timer whose
+				// completion was not observed must continue to exclude cleanup.
+				decisionSettled = true;
+				throw error;
 			}
-			pending.set(requestId, { resolve, timer, token });
-			notifyPendingPermissions();
 		});
 	} finally {
-		release();
+		setupSettled = true;
+		releaseIfSettled();
 	}
 }
 
@@ -164,7 +205,7 @@ export function resolvePending(requestId: string, decision: PermissionDecision):
 		if (!req) {
 			return false;
 		}
-		clearTimeout(req.timer);
+		req.cancelTimer();
 		pending.delete(requestId);
 		notifyPendingPermissions();
 		req.resolve(decision);
