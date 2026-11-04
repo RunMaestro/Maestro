@@ -12,6 +12,7 @@ import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import {
 	startTurn,
+	TurnNotStartedError,
 	type TurnExit,
 	type TurnHandle,
 } from '../../../shared/maestro-lib/run/start-turn';
@@ -27,6 +28,7 @@ import { answerRpcExtensionRequest } from '../../harness-control/rpc-interaction
 import { steeringTextMatches, type SteeringResultFrame } from '../../../shared/chatSteering';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { NativeRpcProtocol } from '../../../shared/maestro-lib/providers/native-control';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 const LOG_CONTEXT = 'NativeRpc';
 
@@ -59,9 +61,67 @@ export class RpcServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		let releaseActivity: (() => void) | undefined;
+		let setupSettled = false;
+		let nativeMayExist = false;
+		let closed = false;
+		let pending = 0;
+		const releaseIfSettled = (): void => {
+			if (setupSettled && (!nativeMayExist || closed) && !pending) releaseActivity?.();
+		};
+		const observeCompletion = <T>(completion: Promise<T>): Promise<T> => {
+			pending++;
+			void completion
+				.catch((error) => {
+					void captureException(error);
+					logger.error('[RpcTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				})
+				.finally(() => {
+					pending--;
+					releaseIfSettled();
+				});
+			return completion;
+		};
+		try {
+			// RPC agents may write beyond cwd; refuse before setup or fallback recovery.
+			releaseActivity = beginGlobalWorktreeActivity();
+			return this.spawnAdmitted(
+				config,
+				(spec, handlers, options) => {
+					nativeMayExist = true;
+					let turn;
+					try {
+						turn = startTurn(spec, handlers, options);
+					} catch (error) {
+						if (error instanceof TurnNotStartedError) nativeMayExist = false;
+						throw error;
+					}
+					// done also settles on error. Only close proves the child/stdio ended.
+					turn.child.on('close', () => {
+						closed = true;
+						releaseIfSettled();
+					});
+					return turn;
+				},
+				observeCompletion
+			);
+		} catch (error) {
+			if (releaseActivity) void captureException(error);
+			return { pid: -1, success: false, error: String(error) };
+		} finally {
+			setupSettled = true;
+			releaseIfSettled();
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		startAdmittedTurn: typeof startTurn,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		if (!config.nativeRpcArgs || !config.nativeRpcProtocol) return this.fallbackToCli(config);
 		try {
-			return new RpcTurn(this.context, config).start();
+			return new RpcTurn(this.context, config, startAdmittedTurn, observeCompletion).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -92,7 +152,9 @@ class RpcTurn {
 
 	constructor(
 		private readonly ctx: RpcTurnContext,
-		private readonly config: ProcessConfig
+		private readonly config: ProcessConfig,
+		private readonly startAdmittedTurn: typeof startTurn,
+		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		this.protocol = config.nativeRpcProtocol ?? 'pi-rpc';
 		const { sessionId, toolType, cwd, command, args } = config;
@@ -134,7 +196,7 @@ class RpcTurn {
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
-				steer: (request) => this.steer(request),
+				steer: (request) => this.observeCompletion(this.steer(request)),
 				interrupt: async () => this.interrupt(),
 				closed: this.closed.promise,
 				close: async (options) => this.kill(options),
@@ -156,7 +218,7 @@ class RpcTurn {
 			config.extraPathDirs,
 			config.querySource
 		);
-		this.turn = startTurn(
+		this.turn = this.startAdmittedTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -184,8 +246,8 @@ class RpcTurn {
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.turn.done.then((exit) => this.handleChildExit(exit));
-		void this.run().catch((error) => this.handleRunError(error));
+		void this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
+		void this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -196,12 +258,14 @@ class RpcTurn {
 			negotiateV2: config.nativeRpcProtocol === 'omp-rpc',
 			onNotification: (record) => this.onNotification(record),
 			onServerRequest: (record) =>
-				answerRpcExtensionRequest(record, {
-					sessionId: config.sessionId,
-					tabId: config.tabId,
-					spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
-					provider: config.toolType,
-				}),
+				this.observeCompletion(
+					answerRpcExtensionRequest(record, {
+						sessionId: config.sessionId,
+						tabId: config.tabId,
+						spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
+						provider: config.toolType,
+					})
+				),
 		});
 		this.connection = connection;
 		if (config.agentSessionId) {
@@ -307,7 +371,7 @@ class RpcTurn {
 		}
 		if (record.type === 'agent_end' && this.protocol === 'pi-rpc' && record.willRetry !== true) {
 			this.forwardLine(JSON.stringify(record));
-			void this.finishPiAgentEnd();
+			void this.observeCompletion(this.finishPiAgentEnd());
 			return;
 		}
 		if (record.type === 'agent_settled' || record.type === 'session_settled') {
@@ -392,7 +456,8 @@ class RpcTurn {
 
 	private async interrupt(): Promise<void> {
 		this.cancelled = true;
-		void this.connection?.request('abort').catch(() => undefined);
+		if (this.connection)
+			void this.observeCompletion(this.connection.request('abort').catch(() => undefined));
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -406,7 +471,8 @@ class RpcTurn {
 
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
 		this.cancelled = true;
-		void this.connection?.request('abort').catch(() => undefined);
+		if (this.connection)
+			void this.observeCompletion(this.connection.request('abort').catch(() => undefined));
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -492,14 +558,16 @@ class RpcTurn {
 	private finish(code: number): void {
 		if (this.finished) return;
 		this.finished = true;
-		void this.ctx.exitHandler
-			.handleExit(this.config.sessionId, code, this.managedProcess)
-			.catch((error) => {
-				logger.error('[RpcTurn] handleExit failed', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
-			});
+		void this.observeCompletion(
+			this.ctx.exitHandler
+				.handleExit(this.config.sessionId, code, this.managedProcess)
+				.catch((error) => {
+					logger.error('[RpcTurn] handleExit failed', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+				})
+		);
 	}
 
 	private isSuperseded(): boolean {
