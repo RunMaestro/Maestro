@@ -30,6 +30,7 @@ import {
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getSshRemoteConfig, type SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { getClaudeTokenMode, type ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -245,6 +246,21 @@ export interface GroomContextResult {
  * @returns Promise resolving to the grooming result
  */
 export async function groomContext(
+	options: GroomContextOptions,
+	processManager: GroomingProcessManager,
+	agentDetector: AgentDetector
+): Promise<GroomContextResult> {
+	// Preparation and effort fallback belong to one request. Native lifetimes
+	// remain independently held by the manager/spawners until actual close.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await groomContextWithRetry(options, processManager, agentDetector);
+	} finally {
+		release();
+	}
+}
+
+async function groomContextWithRetry(
 	options: GroomContextOptions,
 	processManager: GroomingProcessManager,
 	agentDetector: AgentDetector
