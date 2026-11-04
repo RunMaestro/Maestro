@@ -30,6 +30,7 @@ import type { HarnessControlCapabilities } from '../../../shared/harness-control
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
 import { ANTIGRAVITY_SDK_SIDECAR } from './antigravitySdkSidecar';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'AntigravitySdk';
 
@@ -62,6 +63,26 @@ export class AntigravitySdkSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(start, observe) => this.spawnAdmitted(config, start, observe),
+				(error) => {
+					void captureException(error);
+					logger.error('[AntigravityTurn] Completion failed', LOG_CONTEXT, {
+						error: String(error),
+					});
+				}
+			);
+		} catch (error) {
+			return { pid: -1, success: false, error: String(error) };
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		startAdmittedTurn: typeof startTurn,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		if (config.toolType !== 'antigravity' || config.harnessControlMode !== 'native') {
 			return this.fallbackToCli(config);
 		}
@@ -72,7 +93,12 @@ export class AntigravitySdkSpawner {
 			if (config.agentSessionId) {
 				throw new Error('Antigravity SDK resume is not supported; use the current transport');
 			}
-			return new AntigravityTurn(this.context, config).start();
+			return new AntigravityTurn(
+				this.context,
+				config,
+				startAdmittedTurn,
+				observeCompletion
+			).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -109,7 +135,9 @@ class AntigravityTurn {
 
 	constructor(
 		private readonly ctx: AntigravityTurnContext,
-		private readonly config: ProcessConfig
+		private readonly config: ProcessConfig,
+		private readonly startAdmittedTurn: typeof startTurn,
+		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -152,7 +180,7 @@ class AntigravityTurn {
 			runInShell: config.runInShell,
 			shell: config.shell,
 		});
-		this.turn = startTurn(
+		this.turn = this.startAdmittedTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -180,14 +208,14 @@ class AntigravityTurn {
 		);
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.childProcess = this.turn.child;
-		void this.turn.done.then((exit) => this.handleChildExit(exit));
+		void this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
 	}
 
 	start(): SpawnResult {
 		const { sessionId } = this.config;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.run().catch((error) => this.handleRunError(error));
+		void this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -195,7 +223,7 @@ class AntigravityTurn {
 		this.connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'jsonrpc',
 			onNotification: (record) => this.onNotification(record),
-			onServerRequest: (record) => this.onServerRequest(record),
+			onServerRequest: (record) => this.observeCompletion(this.onServerRequest(record)),
 		});
 		await this.connection.request('start', {
 			cwd: this.config.cwd,
@@ -267,7 +295,8 @@ class AntigravityTurn {
 
 	private async interrupt(): Promise<void> {
 		this.cancelled = true;
-		void this.connection?.request('interrupt').catch(() => undefined);
+		if (this.connection)
+			void this.observeCompletion(this.connection.request('interrupt').catch(() => undefined));
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -281,7 +310,8 @@ class AntigravityTurn {
 
 	private async close(): Promise<void> {
 		this.cancelled = true;
-		void this.connection?.request('close').catch(() => undefined);
+		if (this.connection)
+			void this.observeCompletion(this.connection.request('close').catch(() => undefined));
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -332,14 +362,16 @@ class AntigravityTurn {
 	private finish(code: number): void {
 		if (this.finished) return;
 		this.finished = true;
-		void this.ctx.exitHandler
-			.handleExit(this.config.sessionId, code, this.managedProcess)
-			.catch((error) => {
-				logger.error('[AntigravityTurn] handleExit failed', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
-			});
+		void this.observeCompletion(
+			this.ctx.exitHandler
+				.handleExit(this.config.sessionId, code, this.managedProcess)
+				.catch((error) => {
+					logger.error('[AntigravityTurn] handleExit failed', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+				})
+		);
 	}
 
 	private isSuperseded(): boolean {

@@ -66,6 +66,9 @@ vi.mock('../../../shared/maestro-lib/harness/rpc/connection', () => ({
 vi.mock('../../../main/harness-control/rpc-interactions', () => ({
 	answerRpcExtensionRequest: probes.interaction,
 }));
+vi.mock('../../../main/harness-control/integration', () => ({
+	harnessInteractionBroker: { open: () => ({ completion: probes.interaction() }) },
+}));
 
 import { buildChildProcessEnv } from '../../../main/process-manager/utils/envBuilder';
 import { planSpawnShell } from '../../../main/process-manager/utils/windowsSpawnShell';
@@ -471,6 +474,255 @@ describe('standalone native RPC activity', () => {
 		await drain();
 		await blocked();
 		await close();
+		(await reserve()).release();
+	});
+});
+
+describe('standalone Antigravity SDK activity', () => {
+	let antigravity: import('../../../main/process-manager/spawners/AntigravitySdkSpawner').AntigravitySdkSpawner;
+	const input = (overrides: Partial<ProcessConfig> = {}) =>
+		config({ toolType: 'antigravity', harnessControlMode: 'native', ...overrides });
+	beforeEach(async () => {
+		const { AntigravitySdkSpawner } =
+			await import('../../../main/process-manager/spawners/AntigravitySdkSpawner');
+		antigravity = new AntigravitySdkSpawner(
+			processes,
+			new EventEmitter(),
+			{} as DataBufferManager,
+			fallback
+		);
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses validation/parser/shell/env/native/fallback setup under %s',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				vi.mocked(fs.realpath).mockClear();
+				for (const overrides of [
+					{},
+					{ toolType: 'terminal' },
+					{ harnessControlMode: undefined },
+					{ agentSessionId: 'unsupported', permissionMode: 'full' },
+					{ cwd: path.resolve('remote-path') },
+				] as Partial<ProcessConfig>[])
+					expect(antigravity.spawn(input(overrides))).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+				for (const probe of [
+					createOutputParser,
+					planSpawnShell,
+					buildChildProcessEnv,
+					spawn,
+					fallback,
+					fs.realpath,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+			} finally {
+				hold.release();
+			}
+			antigravity.spawn(input());
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('admits synchronously before shell/env setup and an earlier resolving reservation', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		let duringSetup!: Promise<void>;
+		vi.mocked(planSpawnShell).mockImplementationOnce((command, args) => {
+			duringSetup = blocked();
+			return { command, args, shell: false };
+		});
+		antigravity.spawn(input());
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await duringSetup;
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['interrupt', 'kill'] as const)(
+		'retains pending start after %s and native close',
+		async (action) => {
+			const setup = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(setup.promise);
+			antigravity.spawn(input());
+			await processes.get('rpc-session')!.sdkController![action]();
+			await close();
+			await blocked();
+			setup.resolve({});
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['exit', 'error', 'complete', 'interrupt', 'kill'])(
+		'retains native activity after %s until independent close',
+		async (event) => {
+			antigravity.spawn(input());
+			await drain();
+			if (event === 'exit') native.emit('exit', 0, null);
+			if (event === 'error') native.emit('error', new Error('spawn failed'));
+			if (event === 'complete')
+				connection().onNotification({ method: 'complete', params: { code: 0 } });
+			if (event === 'interrupt') await processes.get('rpc-session')!.sdkController!.interrupt();
+			if (event === 'kill') await processes.get('rpc-session')!.sdkController!.kill();
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it.each(['interrupt', 'close'])(
+		'retains pending %s request after native close',
+		async (method) => {
+			antigravity.spawn(input());
+			await drain();
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(pending.promise);
+			const control = processes.get('rpc-session')!.harnessControl!;
+			if (method === 'interrupt') await control.interrupt();
+			else await control.close();
+			expect(probes.request).toHaveBeenLastCalledWith(method);
+			await close();
+			await blocked();
+			pending.reject(new Error('control failed'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('retains permission and exit reporting independently after native close', async () => {
+		const permission = Promise.withResolvers<{ outcome: string; optionId: string }>();
+		const reporting = Promise.withResolvers<void>();
+		probes.interaction.mockReturnValueOnce(permission.promise);
+		probes.exit.mockReturnValueOnce(reporting.promise);
+		antigravity.spawn(input());
+		const response = connection().onServerRequest({ id: 1, method: 'permission' });
+		await close();
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		await blocked();
+		permission.resolve({ outcome: 'selected', optionId: 'allow' });
+		await expect(response).resolves.toEqual({ kind: 'result', value: { allow: true } });
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains failed permission and throwing child-exit reporting until native close', async () => {
+		probes.interaction.mockRejectedValueOnce(new Error('permission failed'));
+		probes.close.mockImplementationOnce(() => {
+			throw new Error('report failed');
+		});
+		antigravity.spawn(input());
+		await expect(connection().onServerRequest({ id: 1, method: 'permission' })).rejects.toThrow(
+			'permission failed'
+		);
+		native.emit('error', new Error('spawn failed'));
+		await drain();
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['validation', 'shell', 'env', 'nonstart'])(
+		'releases proven pre-native %s failure without fallback in Standard',
+		async (failure) => {
+			const fail = () => {
+				throw new Error('setup failed');
+			};
+			if (failure === 'shell') vi.mocked(planSpawnShell).mockImplementationOnce(fail);
+			if (failure === 'env') vi.mocked(buildChildProcessEnv).mockImplementationOnce(fail);
+			if (failure === 'nonstart') vi.mocked(spawn).mockImplementationOnce(fail);
+			expect(
+				antigravity.spawn(input(failure === 'validation' ? { agentSessionId: 'unsupported' } : {}))
+					.success
+			).toBe(false);
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['lost-handle', 'observer'])('retains uncertain %s native lifetime', async (failure) => {
+		if (failure === 'lost-handle')
+			vi.spyOn(native.stdin, 'on').mockImplementationOnce(() => {
+				throw new Error('postspawn');
+			});
+		else {
+			const on = native.on.bind(native);
+			let closes = 0;
+			vi.spyOn(native, 'on').mockImplementation((event, listener) => {
+				if (event === 'close' && ++closes === 2) throw new Error('observer failed');
+				return on(event, listener);
+			});
+		}
+		expect(antigravity.spawn(input()).success).toBe(false);
+		await close();
+		await blocked();
+	});
+	it('retains each replaced/unregistered generation and failed registration child', async () => {
+		antigravity.spawn(input());
+		const old = native;
+		native = makeNative();
+		antigravity.spawn(input());
+		processes.clear();
+		await close();
+		await blocked();
+		await close(old);
+		(await reserve()).release();
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		native = makeNative();
+		expect(antigravity.spawn(input()).success).toBe(false);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('holds failed async setup to native close and composes independently admitted fallback', async () => {
+		const setup = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(setup.promise);
+		antigravity.spawn(input());
+		setup.reject(new Error('SDK start failed'));
+		await drain();
+		expect(stopProcess).toHaveBeenCalled();
+		expect(probes.exit).toHaveBeenCalled();
+		expect(fallback).not.toHaveBeenCalled();
+		await blocked();
+		await close();
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		expect(
+			antigravity.spawn(input({ permissionMode: 'full', agentSessionId: 'unsupported' })).success
+		).toBe(true);
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+	it('releases failed direct fallback without a native launch', async () => {
+		fallback.mockImplementationOnce(() => {
+			throw new Error('fallback failed');
+		});
+		expect(antigravity.spawn(input({ toolType: 'terminal' })).success).toBe(false);
+		expect(fallback).toHaveBeenCalledOnce();
+		expect(spawn).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+	it('retains the failed native child and its CLI fallback independently', async () => {
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		expect(antigravity.spawn(input({ permissionMode: 'full' })).success).toBe(true);
+		await blocked();
+		await close();
+		await blocked();
+		releaseFallback();
 		(await reserve()).release();
 	});
 });
