@@ -183,6 +183,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const activeSession = useSessionStore(selectActiveSession);
 	const [collections, setCollections] = useState<BoardWorkspaceCollection[]>([]);
 	const [sourceRoots, setSourceRoots] = useState<Record<string, string>>({});
+	const [sourceLabels, setSourceLabels] = useState<Record<string, string>>({});
 	const [groupFilter, setGroupFilter] = useState('all');
 	const [agentFilter, setAgentFilter] = useState('all');
 	const groups = useSessionStore((s) => s.groups);
@@ -438,7 +439,9 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const [bulkPreview, setBulkPreview] = useState(false);
 	const [bulkPending, setBulkPending] = useState(false);
 	const bulkPendingRef = useRef(false);
-	const [bulkResults, setBulkResults] = useState<string[]>([]);
+	const [bulkResults, setBulkResults] = useState<
+		{ message: string; collection: BoardWorkspaceCollection; cards: BoardCard[] }[]
+	>([]);
 
 	// Editor state: null = board view, otherwise the card editor is showing.
 	const [cycleError, setCycleError] = useState<string | null>(null);
@@ -509,15 +512,19 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					if (generation !== loadGenerationRef.current) continue;
 					if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
 					const roots: Record<string, string> = {};
+					const labels: Record<string, string> = {};
 					for (const source of response.value.sources) {
-						if (source.location)
+						if (source.location) {
+							labels[source.sourceKey] = source.location.path;
 							roots[source.sourceKey] =
 								source.location.location.kind === 'local'
 									? source.location.path
 									: `${BOARD_SOURCE_PROJECT_PREFIX}${source.sourceKey}`;
+						}
 					}
 
 					setSourceRoots(roots);
+					setSourceLabels(labels);
 					setCollections(response.value.collections);
 					setLoadError(null);
 					setCaptureResult(null);
@@ -1105,7 +1112,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			group.entries.push([key, card]);
 			groups.set(groupKey, group);
 		}
-		const results: string[] = [];
+		const results: { message: string; collection: BoardWorkspaceCollection; cards: BoardCard[] }[] =
+			[];
 		try {
 			for (const { collection, entries } of groups.values()) {
 				try {
@@ -1123,9 +1131,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						})),
 					});
 					if (!response.ok) {
-						results.push(
-							`${collection.board.name}: no cards deleted. ${response.error.code === 'stale-revision' ? 'The board changed; refresh and select the cards again.' : 'Check the cards and try again.'}`
-						);
+						results.push({
+							collection,
+							cards: entries.map(([, card]) => card),
+							message: `${collection.board.name}: no cards deleted. ${response.error.code === 'stale-revision' ? 'The board changed; refresh and select the cards again.' : 'Check the cards and try again.'}`,
+						});
 						continue;
 					}
 					const receipt = response.value as BoardDeleteCardsResult;
@@ -1148,9 +1158,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						for (const [key] of entries) delete next[key];
 						return next;
 					});
-					results.push(
-						`${collection.board.name}: deleted ${entries.length} ${entries.length === 1 ? 'card' : 'cards'}: ${entries.map(([, card]) => card.title).join(', ')}.`
-					);
+					results.push({
+						collection,
+						cards: entries.map(([, card]) => card),
+						message: `${collection.board.name}: deleted ${entries.length} ${entries.length === 1 ? 'card' : 'cards'}: ${entries.map(([, card]) => card.title).join(', ')}.`,
+					});
 				} catch (error) {
 					captureException(error, {
 						extra: {
@@ -1159,9 +1171,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							collection: collection.collectionKey,
 						},
 					});
-					results.push(
-						`${collection.board.name}: no cards deleted. Check the connection and try again.`
-					);
+					results.push({
+						collection,
+						cards: entries.map(([, card]) => card),
+						message: `${collection.board.name}: no cards deleted. Check the connection and try again.`,
+					});
 				}
 			}
 		} finally {
@@ -2103,9 +2117,13 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								{Object.entries(bulkSelection).map(([key, { card, collection }]) => (
 									<li key={key}>
 										{card.title} ({collection.board.name}
-										{card.workingDirectory
-											? ` · ${truncatePath(card.workingDirectory, 40)}`
-											: ''});{' '}
+										{card.workingDirectory ? ` · ${truncatePath(card.workingDirectory, 40)}` : ''});
+										Source: {sourceLabels[collection.sourceKey] ?? 'Unknown source'}.{' '}
+										<details>
+											<summary>Card identity details</summary>
+											Source: {collection.sourceKey}; collection: {collection.collectionKey}; card:{' '}
+											{card.id}; revision: {card.storageRevision}
+										</details>
 										{
 											collection.board.cards.filter((other) => other.parents.includes(card.id))
 												.length
@@ -2147,9 +2165,31 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								Close preview
 							</button>
 							{bulkResults.map((result) => (
-								<p key={result} role="status">
-									{result}
-								</p>
+								<div
+									key={JSON.stringify([
+										result.collection.sourceKey,
+										result.collection.collectionKey,
+									])}
+									role="status"
+								>
+									<p>
+										{result.message} Source:{' '}
+										{sourceLabels[result.collection.sourceKey] ?? 'Unknown source'}.
+									</p>
+									<ul>
+										{result.cards.map((card) => (
+											<li key={card.id}>
+												{card.title}
+												<details>
+													<summary>Card identity details</summary>Source:{' '}
+													{result.collection.sourceKey}; collection:{' '}
+													{result.collection.collectionKey}; card: {card.id}; revision:{' '}
+													{card.storageRevision}
+												</details>
+											</li>
+										))}
+									</ul>
+								</div>
 							))}
 						</section>
 					)}

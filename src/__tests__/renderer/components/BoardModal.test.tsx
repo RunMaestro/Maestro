@@ -3370,6 +3370,54 @@ describe('BoardModal initialization and workflow visibility', () => {
 });
 
 describe('Board bulk deletion', () => {
+	it('identifies duplicate names in mixed success and conflict receipts', async () => {
+		const boards: Board[] = [
+			{ id: 'one', name: 'Same board', cards: [makeCard({ id: 'a', title: 'Same card' })] },
+			{ id: 'two', name: 'Same board', cards: [makeCard({ id: 'b', title: 'Same card' })] },
+		];
+		installApis(boards);
+		const response = workspaceResponse(boards);
+		if (!response.ok) throw new Error('Expected workspace fixture');
+		response.value.collections[1].sourceKey = 'source-two';
+		response.value.sources.push({
+			sourceKey: 'source-two',
+			projectRef: { sourceKey: 'source-two' },
+			location: { location: { kind: 'local' }, path: '/other/project' },
+		});
+		boardApi.queryWorkspace.mockResolvedValue(response);
+		boardApi.deleteCards
+			.mockResolvedValueOnce({
+				ok: true,
+				value: { revision: 2, board: { ...boards[0], cards: [] } },
+			})
+			.mockResolvedValueOnce({ ok: false, error: { code: 'stale-revision' } });
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findAllByText('Same card');
+		for (const check of screen.getAllByRole('checkbox', { name: 'Select for deletion' }))
+			fireEvent.click(check);
+		fireEvent.click(screen.getByRole('button', { name: 'Review 2 selected' }));
+		expect(screen.getByLabelText('Delete selected cards preview')).toHaveTextContent(
+			'/other/project'
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+		await screen.findByText(/no cards deleted.*board changed/);
+		const statuses = screen.getAllByRole('status');
+		expect(
+			statuses.some(
+				(status) =>
+					status.textContent?.includes('/other/project') &&
+					status.textContent?.includes('Same card')
+			)
+		).toBe(true);
+		expect(
+			statuses.some(
+				(status) =>
+					status.textContent?.includes(PROJECT_ROOT) &&
+					status.textContent?.includes('deleted 1 card')
+			)
+		).toBe(true);
+		expect(screen.getByRole('button', { name: 'Review 1 selected' })).toBeEnabled();
+	});
 	it('keeps stale selections removable and isolates revision conflicts by source and collection', async () => {
 		const boards: Board[] = [
 			{
