@@ -929,6 +929,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								// Unexpanded provider commands go to the provider as typed.
 								literalPrompt: commandName.startsWith('/'),
 								mentionRouting,
+								pianolaDispatchId: control?.dispatchId,
 							},
 						})
 					);

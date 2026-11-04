@@ -206,7 +206,7 @@ export class PianolaNewTabDispatch {
 							.reconcile(receipt.dispatchId, 'accepted', runId)
 							.catch(deps.onReconcileError);
 					},
-					'targetTabId' in request ? request.dispatchId : undefined
+					request.dispatchId
 				);
 				guard();
 				if ('targetTabId' in request) {
@@ -269,15 +269,21 @@ export class PianolaNewTabDispatch {
 				throw new Error('DispatchPrepareUnknown');
 
 			pianolaNewTabSpawns.hold(request.targetAgentId, tabId);
-			const prepared = await this.newTabPrepare(request, tabId);
-			if (!prepared.success || prepared.tabId !== tabId)
-				throw new Error(prepared.error ?? 'DispatchPrepareUnknown');
-			await this.admission.bind(client, request.dispatchId, tabId);
-			await this.admission.enroll(client, request.dispatchId);
-			if (!this.callbacks.has(request.dispatchId))
-				this.callbacks.set(request.dispatchId, armCallback(tabId));
-			this.requests.set(request.dispatchId, request);
+			// A lost prepare acknowledgment may still have created the empty tab. Keep
+			// its fence so only the same host-minted address can be prepared again.
+			let prepareUnknown = true;
 			try {
+				const prepared = await this.newTabPrepare(request, tabId);
+				prepareUnknown = !!prepared.unknown;
+				if (!prepared.success || prepared.tabId !== tabId)
+					throw new Error(prepared.error ?? 'DispatchPrepareUnknown');
+				await this.admission.bind(client, request.dispatchId, tabId);
+				await this.admission.enroll(client, request.dispatchId);
+				if (!this.callbacks.has(request.dispatchId))
+					this.callbacks.set(request.dispatchId, armCallback(tabId));
+				this.requests.set(request.dispatchId, request);
+				// If status itself becomes unavailable after release, preserve uncertainty.
+				receipt = { ...receipt, outcome: 'unknown' };
 				receipt = await this.admission.release(client, request.dispatchId);
 				const runId = this.startedRuns.get(request.dispatchId);
 				if (runId) receipt = await this.admission.reconcile(request.dispatchId, 'accepted', runId);
@@ -287,6 +293,11 @@ export class PianolaNewTabDispatch {
 			} finally {
 				this.requests.delete(request.dispatchId);
 				this.identities.delete(request.dispatchId);
+				if (
+					!prepareUnknown &&
+					(receipt.outcome === 'not-started' || receipt.outcome === 'rejected')
+				)
+					pianolaNewTabSpawns.cancelHold(request.targetAgentId, tabId);
 			}
 			return { receipt, callbackId: this.callbacks.get(request.dispatchId) };
 		});

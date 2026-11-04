@@ -1732,6 +1732,15 @@ describe('useRemoteIntegration', () => {
 			expect(
 				dispatchEventSpy.mock.calls.filter(([event]) => event.type === 'maestro:remoteCommand')
 			).toHaveLength(1);
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({
+						tabId: 'host-tab',
+						pianolaDispatchId: 'host-dispatch',
+					}),
+				})
+			);
 			expect(useSessionStore.getState().activeSessionId).toBe('other-session');
 		});
 		it('keeps a prepared tab empty when persistence fails', async () => {

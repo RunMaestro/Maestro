@@ -206,21 +206,30 @@ async function spawnNative(
 }
 
 describe('native spawn configuration', () => {
-	it('requires the exact existing-tab dispatch marker at native spawn', async () => {
-		const tabId = generateUUID();
-		const dispatchId = generateUUID();
-		pianolaNewTabSpawns.hold('worker', tabId);
-		const started = vi.fn();
-		pianolaNewTabSpawns.arm('worker', tabId, () => {}, started, dispatchId);
-		await expect(
-			spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
-		).rejects.toThrow('DispatchIdentityMismatch');
-		await spawnNativeWithResult('copilot-cli', {
-			sessionId: `worker-ai-${tabId}`,
-			pianolaDispatchId: dispatchId,
-		});
-		expect(started).toHaveBeenCalledOnce();
+	it('allows an ordinary markerless send with Pianola disabled and no held admission', async () => {
+		const result = await spawnNativeWithResult('copilot-cli');
+		expect(result.result.success).toBe(true);
+		expect(result.processManager.spawn).toHaveBeenCalledOnce();
 	});
+
+	it.each(['existing-tab', 'new-tab'])(
+		'requires the exact %s dispatch marker at native spawn',
+		async (kind) => {
+			const tabId = generateUUID();
+			const dispatchId = kind === 'new-tab' ? tabId : generateUUID();
+			pianolaNewTabSpawns.hold('worker', tabId);
+			const started = vi.fn();
+			pianolaNewTabSpawns.arm('worker', tabId, () => {}, started, dispatchId);
+			await expect(
+				spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+			).rejects.toThrow('DispatchIdentityMismatch');
+			await spawnNativeWithResult('copilot-cli', {
+				sessionId: `worker-ai-${tabId}`,
+				pianolaDispatchId: dispatchId,
+			});
+			expect(started).toHaveBeenCalledOnce();
+		}
+	);
 
 	it('blocks an unadmitted new tab before any spawn preflight', async () => {
 		const tabId = generateUUID();

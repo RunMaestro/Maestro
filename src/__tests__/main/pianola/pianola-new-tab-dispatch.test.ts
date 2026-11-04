@@ -88,10 +88,11 @@ function fixture() {
 			expect(store.readScopeCheckpoint(scopeId)?.tabs[0].baseline).toBeNull();
 			expect(store.readDispatchAdmission(request.dispatchId)?.outcome).toBe('unknown');
 			expect(events).toContain('callback');
-			const guard = pianolaNewTabSpawns.claim(key);
+			const guard = pianolaNewTabSpawns.claim(key, control?.dispatchId);
 			guard();
 			events.push('spawn');
-			pianolaNewTabSpawns.started(key, 'actual-spawn-generation');
+			pianolaNewTabSpawns.captured(key, 'actual-spawn-generation');
+			pianolaNewTabSpawns.started(key);
 			// First worker question can arrive before the renderer ack.
 			snapshot.tabs[0].cursor = { id: 'first-question', count: 1, textLength: 20 };
 			return { success: true, tabId: control?.tabId };
@@ -160,6 +161,63 @@ describe('native new-tab Pianola admission adapter', () => {
 		expect(pianolaNewTabSpawns.isHeld('worker', f.request.dispatchId)).toBe(false);
 	});
 
+	it.each(['checkpoint', 'bind', 'enroll', 'callback'] as const)(
+		'cleans up a persisted empty tab after %s failure so a normal send can start',
+		async (failure) => {
+			const f = fixture();
+			if (failure === 'checkpoint')
+				vi.spyOn(f.store, 'writeScopeCheckpoint').mockImplementationOnce(() => {
+					throw new Error('WriteFailed');
+				});
+			else if (failure === 'callback')
+				f.arm.mockImplementationOnce(() => {
+					throw new Error('WriteFailed');
+				});
+			else {
+				const write = f.store.writeDispatchAdmission.bind(f.store);
+				vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+					if (record.phase === (failure === 'bind' ? 'bound' : 'enrolled'))
+						throw new Error('WriteFailed');
+					write(record);
+				});
+			}
+			await expect(f.adapter.run(f.client, f.request, f.arm)).rejects.toThrow('WriteFailed');
+			expect(f.snapshot.tabs).toHaveLength(1);
+			expect(f.events).not.toContain('spawn');
+			expect(pianolaNewTabSpawns.isHeld('worker', f.request.dispatchId)).toBe(false);
+			expect(() => pianolaNewTabSpawns.claim(f.key)).not.toThrow();
+		}
+	);
+
+	it('refuses markerless and foreign sends while release is delayed without consuming the fence', async () => {
+		const f = fixture();
+		let continueRelease!: () => void;
+		const delayed = new Promise<void>((resolve) => {
+			continueRelease = resolve;
+		});
+		let reachedRelease!: () => void;
+		const reached = new Promise<void>((resolve) => {
+			reachedRelease = resolve;
+		});
+		const original = f.newTab.getMockImplementation()!;
+		f.newTab.mockImplementation(async (...args) => {
+			if (args[5]?.phase === 'release') {
+				reachedRelease();
+				await delayed;
+			}
+			return original(...args);
+		});
+		const result = f.adapter.run(f.client, f.request, f.arm);
+		await reached;
+		expect(() => pianolaNewTabSpawns.claim(f.key)).toThrow('DispatchIdentityMismatch');
+		expect(() => pianolaNewTabSpawns.claim(f.key, 'foreign')).toThrow('DispatchIdentityMismatch');
+		expect(f.adapter.admission.status(f.client, f.request.dispatchId).outcome).toBe('unknown');
+		expect(pianolaNewTabSpawns.isHeld('worker', f.request.dispatchId)).toBe(true);
+		continueRelease();
+		expect((await result).receipt.outcome).toBe('accepted');
+		expect(f.events.filter((e) => e === 'spawn')).toHaveLength(1);
+	});
+
 	it('binds and durably enrolls the empty tab and arms the callback before a fast first turn', async () => {
 		const f = fixture();
 		const result = await f.adapter.run(f.client, f.request, f.arm);
@@ -213,6 +271,8 @@ describe('native new-tab Pianola admission adapter', () => {
 			'DispatchPrepareUnknown'
 		);
 		expect(f.snapshot.tabs).toHaveLength(1);
+		expect(pianolaNewTabSpawns.isHeld('worker', f.request.dispatchId)).toBe(true);
+		expect(() => pianolaNewTabSpawns.claim(f.key)).toThrow('DispatchAdmissionPending');
 		await f.adapter.run(f.client, f.request, f.arm);
 		expect(f.snapshot.tabs).toHaveLength(1);
 		expect(f.events.filter((e) => e === 'spawn')).toHaveLength(1);
@@ -225,15 +285,18 @@ describe('native new-tab Pianola admission adapter', () => {
 		});
 		await expect(f.adapter.run(f.client, f.request, f.arm)).rejects.toThrow();
 		expect(f.newTab).toHaveBeenCalledTimes(1);
-		expect(() => pianolaNewTabSpawns.claim(f.key)).toThrow('DispatchAdmissionPending');
+		expect(pianolaNewTabSpawns.isHeld('worker', f.request.dispatchId)).toBe(false);
+		expect(() => pianolaNewTabSpawns.claim(f.key)).not.toThrow();
 	});
 	it('rechecks pause after renderer preparation at the native spawn and does not retry unknown delivery', async () => {
 		const f = fixture();
 		const original = f.newTab.getMockImplementation()!;
 		f.newTab.mockImplementation(async (...args) => {
 			if (args[5]?.phase === 'prepare') return original(...args);
-			const guard = pianolaNewTabSpawns.claim(f.key);
-			expect(() => pianolaNewTabSpawns.claim(f.key)).toThrow('DispatchAlreadyStarting');
+			const guard = pianolaNewTabSpawns.claim(f.key, f.request.dispatchId);
+			expect(() => pianolaNewTabSpawns.claim(f.key, f.request.dispatchId)).toThrow(
+				'DispatchAlreadyStarting'
+			);
 			f.snapshot.tabs[0].paused = true;
 			guard();
 			return { success: true };
