@@ -1,7 +1,17 @@
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { isSessionRemote } from '../utils/sessionHelpers';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
+import { defaultRangeExtractor, measureElement, useVirtualizer } from '@tanstack/react-virtual';
 import { createPortal } from 'react-dom';
 import { X, KanbanSquare, Plus, Trash2, RefreshCw, ChevronLeft, Square, Play } from 'lucide-react';
 import type { Theme } from '../types';
@@ -1398,10 +1408,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	);
 
 	const cardsByStatus = useMemo(() => {
-		const map = new Map<
-			CardStatus,
-			{ card: BoardCard; collection: BoardWorkspaceCollection; key: string }[]
-		>();
+		const map = new Map<CardStatus, BoardCardEntry[]>();
 		for (const status of WORKFLOW_COLUMNS) map.set(status, []);
 		for (const collection of collections)
 			for (const card of collection.board.cards) {
@@ -1432,12 +1439,22 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	// --- Keyboard grid navigation -------------------------------------------
 
-	/** Live tile elements, keyed by card id, so navigation can move DOM focus. */
-	const tileRefs = useRef(new Map<string, HTMLDivElement>());
-	const registerTile = useCallback((cardId: string, el: HTMLDivElement | null) => {
-		if (el) tileRefs.current.set(cardId, el);
-		else tileRefs.current.delete(cardId);
+	const columnNavigators = useRef(new Map<CardStatus, (index: number) => void>());
+	const registerColumn = useCallback(
+		(status: CardStatus, focus: ((index: number) => void) | null) => {
+			if (focus) columnNavigators.current.set(status, focus);
+			else columnNavigators.current.delete(status);
+		},
+		[]
+	);
+	const handleDragStart = useCallback((cardId: string, collection: BoardWorkspaceCollection) => {
+		setDragCard({ cardId, collection });
 	}, []);
+	const handleDragEnd = useCallback(() => {
+		setDragCard(null);
+		setDragOverStatus(null);
+	}, []);
+	const filterKey = canonicalJson([groupFilter, agentFilter, kindFilter, statusFilter]);
 
 	/**
 	 * Arrow-key movement across the kanban grid: up/down within a column, left/
@@ -1449,7 +1466,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				const cards = cardsByStatus.get(fromStatus) ?? [];
 				const nextIndex = key === 'ArrowDown' ? fromIndex + 1 : fromIndex - 1;
 				const target = cards[nextIndex];
-				if (target) tileRefs.current.get(target.key)?.focus();
+				if (target) columnNavigators.current.get(fromStatus)?.(nextIndex);
 				return;
 			}
 			const step = key === 'ArrowRight' ? 1 : -1;
@@ -1457,8 +1474,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			for (let i = from + step; i >= 0 && i < WORKFLOW_COLUMNS.length; i += step) {
 				const cards = cardsByStatus.get(WORKFLOW_COLUMNS[i]) ?? [];
 				if (cards.length === 0) continue;
-				const target = cards[Math.min(fromIndex, cards.length - 1)];
-				tileRefs.current.get(target.key)?.focus();
+				columnNavigators.current.get(WORKFLOW_COLUMNS[i])?.(Math.min(fromIndex, cards.length - 1));
 				return;
 			}
 		},
@@ -2193,8 +2209,12 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							))}
 						</section>
 					)}
-					{board && !draft && (
-						<div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
+					{board && (
+						<div
+							hidden={!!draft}
+							className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden p-4"
+							style={{ display: draft ? 'none' : undefined }}
+						>
 							<div className="flex gap-3 h-full" style={{ minWidth: 'min-content' }}>
 								{WORKFLOW_COLUMNS.map((status) => {
 									const meta = STATUS_META[status];
@@ -2247,8 +2267,14 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 													{cards.length}
 												</span>
 											</div>
-											<div className="flex-1 overflow-y-auto p-2 space-y-2">
-												{cards.map(({ card, collection, key }, index) => {
+											<BoardCardList
+												status={status}
+												cards={cards}
+												filterKey={filterKey}
+												visible={view === 'cards' && !draft}
+												dragCard={dragCard}
+												registerColumn={registerColumn}
+												renderCard={({ card, collection, key }, index) => {
 													const selection = bulkSelectionByCollection
 														.get(collection.sourceKey)
 														?.get(collection.collectionKey);
@@ -2314,33 +2340,32 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 																onJumpToAgent={handleJumpToAgent}
 																dragging={
 																	dragCard?.cardId === card.id &&
+																	dragCard.collection.sourceKey === collection.sourceKey &&
 																	dragCard.collection.collectionKey === collection.collectionKey
 																}
-																registerTile={(_id, el) => registerTile(key, el)}
-																onDragStart={() => setDragCard({ cardId: card.id, collection })}
-																onDragEnd={() => {
-																	setDragCard(null);
-																	setDragOverStatus(null);
-																}}
-																onClick={() => openEditCard(card, false, collection)}
-																onMoveRequest={() => openEditCard(card, true, collection)}
-																onNavigate={(key) => navigateTiles(status, index, key)}
-																onDelete={() => handleDeleteCard(card.id, collection)}
-																onCancelRun={() => void handleCancelCard(card.id, collection)}
-																onResume={() => void handleResumeCard(card.id, collection)}
+																collection={collection}
+																column={status}
+																index={index}
+																onDragStart={handleDragStart}
+																onDragEnd={handleDragEnd}
+																onClick={openEditCard}
+																onNavigate={navigateTiles}
+																onDelete={handleDeleteCard}
+																onCancelRun={handleCancelCard}
+																onResume={handleResumeCard}
 															/>
 														</div>
 													);
-												})}
-												{cards.length === 0 && (
-													<div
-														className="text-xs-plus text-center py-4"
-														style={{ color: theme.colors.textDim }}
-													>
-														Drop here
-													</div>
-												)}
-											</div>
+												}}
+											/>
+											{cards.length === 0 && (
+												<div
+													className="text-xs-plus text-center py-4"
+													style={{ color: theme.colors.textDim }}
+												>
+													Drop here
+												</div>
+											)}
 										</div>
 									);
 								})}
@@ -2425,6 +2450,203 @@ function RunElapsed({ startedAt, className, style }: RunElapsedProps) {
 
 // ---------------------------------------------------------------------------
 
+interface BoardCardEntry {
+	card: BoardCard;
+	collection: BoardWorkspaceCollection;
+	key: string;
+}
+
+interface BoardCardScrollPosition {
+	offset: number;
+	key?: string;
+	within: number;
+}
+
+interface BoardCardListProps {
+	status: CardStatus;
+	cards: BoardCardEntry[];
+	filterKey: string;
+	visible: boolean;
+	dragCard: { cardId: string; collection: BoardWorkspaceCollection } | null;
+	registerColumn: (status: CardStatus, focus: ((index: number) => void) | null) => void;
+	renderCard: (entry: BoardCardEntry, index: number) => React.ReactNode;
+}
+
+/** Keep column drop surfaces mounted; only card contents leave the scroll window.
+ * Dynamic measurement includes selection controls and expanded run disclosures. */
+function BoardCardList({
+	status,
+	cards,
+	filterKey,
+	visible,
+	dragCard,
+	registerColumn,
+	renderCard,
+}: BoardCardListProps) {
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const offsets = useRef(new Map<string, BoardCardScrollPosition>());
+	const restoring = useRef<BoardCardScrollPosition | null>(null);
+	const currentFilter = useRef(filterKey);
+	const pendingFocus = useRef<string | null>(null);
+	const [focusedKey, setFocusedKey] = useState<string | null>(null);
+	const windowed = cards.length >= 100;
+	const focusedIndex = cards.findIndex((entry) => entry.key === focusedKey);
+	const draggedIndex = cards.findIndex(
+		({ card, collection }) =>
+			card.id === dragCard?.cardId &&
+			collection.sourceKey === dragCard.collection.sourceKey &&
+			collection.collectionKey === dragCard.collection.collectionKey
+	);
+	const virtualizer = useVirtualizer({
+		count: cards.length,
+		getScrollElement: () => scrollRef.current,
+		estimateSize: useCallback(() => 168, []),
+		getItemKey: useCallback((index: number) => cards[index].key, [cards]),
+		overscan: 3,
+		gap: 8,
+		initialRect: { width: 202, height: 600 },
+		// Keep measurements through empty/small filters. Disabling the virtualizer
+		// clears its size cache and moves the restored viewport to a different card.
+		measureElement: (element, entry, instance) => {
+			const size = measureElement(element, entry, instance);
+			// Hidden Workers/editor panels report zero; that is not a new card height.
+			return size || instance.measurementsCache[instance.indexFromElement(element)]?.size || 168;
+		},
+		rangeExtractor: useCallback(
+			(range) => {
+				const indices = new Set(defaultRangeExtractor(range));
+				// Unmounting the native drag source cancels HTML5 dragging. Likewise,
+				// a focused control must survive wheel scrolling outside its window.
+				if (focusedIndex >= 0) indices.add(focusedIndex);
+				if (draggedIndex >= 0) indices.add(draggedIndex);
+				return [...indices].sort((a, b) => a - b);
+			},
+			[focusedIndex, draggedIndex]
+		),
+	});
+	const focusCard = useCallback(
+		(index: number) => {
+			const entry = cards[index];
+			if (!entry) return;
+			restoring.current = null;
+			// Reveal the column horizontally without asking an offscreen row to scroll.
+			scrollRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+			pendingFocus.current = entry.key;
+			setFocusedKey(entry.key);
+			if (windowed) virtualizer.scrollToIndex(index, { align: 'auto' });
+			else
+				scrollRef.current
+					?.querySelector<HTMLElement>(`[data-index="${index}"] [data-board-card]`)
+					?.focus();
+		},
+		[cards, virtualizer, windowed]
+	);
+	useLayoutEffect(() => {
+		registerColumn(status, focusCard);
+		return () => registerColumn(status, null);
+	}, [status, registerColumn, focusCard]);
+	useLayoutEffect(() => {
+		if (!pendingFocus.current) return;
+		const index = cards.findIndex((entry) => entry.key === pendingFocus.current);
+		const tile = scrollRef.current?.querySelector<HTMLElement>(
+			`[data-index="${index}"] [data-board-card]`
+		);
+		if (tile) {
+			tile.focus({ preventScroll: true });
+			pendingFocus.current = null;
+		}
+	});
+	useLayoutEffect(() => {
+		currentFilter.current = filterKey;
+		if (visible) restoring.current = offsets.current.get(filterKey) ?? { offset: 0, within: 0 };
+	}, [filterKey, visible]);
+	const rememberPosition = useCallback(() => {
+		if (!visible || restoring.current || !scrollRef.current) return;
+		const offset = scrollRef.current.scrollTop;
+		const item = virtualizer.getVirtualItemForOffset(offset);
+		offsets.current.set(currentFilter.current, {
+			offset,
+			key: item ? cards[item.index].key : undefined,
+			within: offset - (item?.start ?? offset),
+		});
+	}, [virtualizer, visible, cards]);
+	useLayoutEffect(() => {
+		const element = scrollRef.current;
+		if (!visible || !element) return;
+		const position = restoring.current;
+		if (position) {
+			const index = cards.findIndex((entry) => entry.key === position.key);
+			const item = index >= 0 ? virtualizer.measurementsCache[index] : undefined;
+			const targetOffset = item ? item.start + position.within : position.offset;
+			const offset = Math.max(
+				0,
+				Math.min(targetOffset, element.scrollHeight - element.clientHeight)
+			);
+			if (Math.abs(element.scrollTop - offset) > 0.5) {
+				if (windowed) virtualizer.scrollToOffset(offset);
+				else element.scrollTop = offset;
+			}
+			// A returning filter may initially use estimated heights. Keep the
+			// anchor until its measured row has mounted, then correct before paint.
+			const mounted = index < 0 || element.querySelector(`[data-index="${index}"]`);
+			if (mounted && Math.abs(element.scrollTop - offset) <= 0.5) restoring.current = null;
+		}
+		rememberPosition();
+	});
+	const virtualRows = virtualizer.getVirtualItems();
+	const rows = windowed
+		? virtualRows
+		: cards.map((entry, index) => ({ key: entry.key, index, start: 0 }));
+	return (
+		<div
+			ref={scrollRef}
+			className="flex-1 min-h-0 overflow-y-auto p-2"
+			role="list"
+			aria-label={`${STATUS_META[status].label} cards`}
+			onScroll={rememberPosition}
+			onWheel={() => {
+				restoring.current = null;
+			}}
+			onTouchStart={() => {
+				restoring.current = null;
+			}}
+			onPointerDown={() => {
+				restoring.current = null;
+			}}
+		>
+			<div
+				className={windowed ? 'relative' : 'space-y-2'}
+				style={windowed ? { height: virtualizer.getTotalSize() } : undefined}
+			>
+				{rows.map((row) => (
+					<div
+						key={row.key}
+						data-index={row.index}
+						role="listitem"
+						aria-posinset={row.index + 1}
+						aria-setsize={cards.length}
+						ref={virtualizer.measureElement}
+						onFocusCapture={() => setFocusedKey(cards[row.index].key)}
+						style={
+							windowed
+								? {
+										position: 'absolute',
+										top: 0,
+										left: 0,
+										width: '100%',
+										transform: `translateY(${row.start}px)`,
+									}
+								: undefined
+						}
+					>
+						{renderCard(cards[row.index], row.index)}
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
 interface BoardCardTileProps {
 	readiness?: string[];
 	theme: Theme;
@@ -2437,26 +2659,25 @@ interface BoardCardTileProps {
 	/** Jump to the worker agent that ran this card (worker chip click). */
 	onJumpToAgent: (agentId: string) => void;
 	dragging: boolean;
-	/** Publishes the tile element so the grid can move focus onto it. */
-	registerTile: (cardId: string, el: HTMLDivElement | null) => void;
-	onDragStart: () => void;
+	collection: BoardWorkspaceCollection;
+	column: CardStatus;
+	index: number;
+	onDragStart: (cardId: string, collection: BoardWorkspaceCollection) => void;
 	onDragEnd: () => void;
-	onClick: () => void;
-	/** Open the editor focused on its "Move to" picker (the `m` shortcut). */
-	onMoveRequest: () => void;
+	onClick: (card: BoardCard, focusMove: boolean, collection: BoardWorkspaceCollection) => void;
 	/** Arrow-key navigation request; the board decides which tile gets focus. */
-	onNavigate: (key: string) => void;
-	onDelete: () => Promise<void>;
+	onNavigate: (column: CardStatus, index: number, key: string) => void;
+	onDelete: (cardId: string, collection: BoardWorkspaceCollection) => Promise<void>;
 	/** Stop the in-flight run. Only rendered on `running` cards. */
-	onCancelRun: () => void;
+	onCancelRun: (cardId: string, collection: BoardWorkspaceCollection) => Promise<void>;
 	/** Release an AB1 user hold. Only rendered on cards with `heldByUser`. */
-	onResume: () => void;
+	onResume: (cardId: string, collection: BoardWorkspaceCollection) => Promise<void>;
 }
 
 /** A single draggable, focusable card. Shows its title, assignee, parent count,
  * and a "waiting on N" blocker badge (Phase 2 getBlockers); running cards also
  * show attempt, elapsed time, and which worker claimed them. */
-function BoardCardTile({
+const BoardCardTile = memo(function BoardCardTile({
 	theme,
 	card,
 	board,
@@ -2465,11 +2686,12 @@ function BoardCardTile({
 	projectAgents,
 	onJumpToAgent,
 	dragging,
-	registerTile,
+	collection,
+	column,
+	index,
 	onDragStart,
 	onDragEnd,
 	onClick,
-	onMoveRequest,
 	onNavigate,
 	onDelete,
 	onCancelRun,
@@ -2507,11 +2729,11 @@ function BoardCardTile({
 		setDeleteArmed(false);
 		deletingRef.current = true;
 		setDeleting(true);
-		void onDelete().finally(() => {
+		void onDelete(card.id, collection).finally(() => {
 			deletingRef.current = false;
 			setDeleting(false);
 		});
-	}, [deleteArmed, onDelete]);
+	}, [deleteArmed, onDelete, card.id, collection]);
 
 	const handleDeleteClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -2529,12 +2751,12 @@ function BoardCardTile({
 				case 'Enter':
 				case ' ':
 					e.preventDefault();
-					onClick();
+					onClick(card, false, collection);
 					return;
 				case 'm':
 				case 'M':
 					e.preventDefault();
-					onMoveRequest();
+					onClick(card, true, collection);
 					return;
 				case 'Delete':
 				case 'Backspace':
@@ -2546,12 +2768,12 @@ function BoardCardTile({
 				case 'ArrowLeft':
 				case 'ArrowRight':
 					e.preventDefault();
-					onNavigate(e.key);
+					onNavigate(column, index, e.key);
 					return;
 				default:
 			}
 		},
-		[onClick, onMoveRequest, onNavigate, armOrDelete]
+		[onClick, onNavigate, armOrDelete, card, collection, column, index]
 	);
 
 	const priorityMeta = PRIORITY_META[card.priority ?? 'normal'];
@@ -2619,15 +2841,15 @@ function BoardCardTile({
 	const showRunDetails = !!latestSummary || !!runBranch || (isRunning && !!latestRun);
 	return (
 		<div
-			ref={(el) => registerTile(card.id, el)}
+			data-board-card={card.id}
 			draggable
 			role="button"
 			tabIndex={0}
 			aria-label={`${card.title}, ${STATUS_META[card.status].label}`}
 			aria-describedby={projectDescriptionId}
-			onDragStart={onDragStart}
+			onDragStart={() => onDragStart(card.id, collection)}
 			onDragEnd={onDragEnd}
-			onClick={onClick}
+			onClick={() => onClick(card, false, collection)}
 			onKeyDown={handleKeyDown}
 			onFocus={(e) => {
 				if (e.target === e.currentTarget) setFocused(true);
@@ -2657,7 +2879,7 @@ function BoardCardTile({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onCancelRun();
+								void onCancelRun(card.id, collection);
 							}}
 							className="p-0.5 rounded hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.warning }}
@@ -2671,7 +2893,7 @@ function BoardCardTile({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onResume();
+								void onResume(card.id, collection);
 							}}
 							className="p-0.5 rounded hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.success }}
@@ -2909,7 +3131,7 @@ function BoardCardTile({
 			)}
 		</div>
 	);
-}
+});
 
 // ---------------------------------------------------------------------------
 

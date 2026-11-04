@@ -3465,29 +3465,6 @@ describe('Board bulk deletion', () => {
 		expect(boardApi.deleteCards).not.toHaveBeenCalled();
 	});
 
-	it('enforces the per-collection limit and permits deselection at the boundary', async () => {
-		const cards = Array.from({ length: 501 }, (_, i) =>
-			makeCard({ id: `limit-${i}`, title: `Limit ${i}` })
-		);
-		installApis([
-			{ id: 'limit', name: 'Limit', cards },
-			{ id: 'other', name: 'Other', cards: [makeCard({ id: 'other', title: 'Other card' })] },
-		]);
-		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		await screen.findByText('Limit 0');
-		const checks = screen.getAllByRole('checkbox', { name: 'Select for deletion' });
-		act(() => {
-			for (let i = 0; i < 500; i++) fireEvent.click(checks[i]);
-		});
-		expect(checks[500]).toBeDisabled();
-		expect(checks[0]).toBeEnabled();
-		expect(checks[501]).toBeEnabled();
-		fireEvent.click(screen.getByRole('button', { name: 'Review 500 selected' }));
-		expect(screen.getByText(/Select at most 500 cards per collection/)).toBeInTheDocument();
-		fireEvent.click(checks[0]);
-		expect(checks[500]).toBeEnabled();
-	}, 150000);
-
 	it('keeps rejected selections, displays committed receipts and avoids duplicate requests and catalog refresh', async () => {
 		const boards: Board[] = [
 			{
@@ -3562,5 +3539,248 @@ describe('Board bulk deletion', () => {
 			})
 		);
 		expect(boardApi.captureCatalog).toHaveBeenCalledTimes(catalogCalls);
+	});
+});
+
+describe('BoardModal windowed columns', () => {
+	beforeEach(() => {
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				observe() {}
+				unobserve() {}
+				disconnect() {}
+			}
+		);
+		// Supply geometry, keep the installed virtualizer and real scroll events.
+		// jsdom otherwise measures every viewport and row as zero pixels.
+		vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.getAttribute('role') === 'list' ? 336 : 160;
+		});
+		vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(202);
+		vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(90000);
+		vi.spyOn(Element.prototype, 'scrollTo').mockImplementation(function (this: Element, options) {
+			if (typeof options === 'object' && options.top !== undefined) {
+				this.scrollTop = options.top;
+				this.dispatchEvent(new Event('scroll'));
+			}
+		});
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('enforces the per-collection limit and permits deselection at the boundary', async () => {
+		// This boundary test uses a deliberately tall viewport to select 500 in one batch.
+		vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.getAttribute('role') === 'list' ? 100000 : 160;
+		});
+		const cards = Array.from({ length: 501 }, (_, i) =>
+			makeCard({ id: `limit-${i}`, title: `Limit ${i}` })
+		);
+		installApis([
+			{ id: 'limit', name: 'Limit', cards },
+			{ id: 'other', name: 'Other', cards: [makeCard({ id: 'other', title: 'Other card' })] },
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Limit 0');
+		const checks = screen.getAllByRole('checkbox', { name: 'Select for deletion' });
+		act(() => {
+			for (let i = 0; i < 500; i++) fireEvent.click(checks[i]);
+		});
+		expect(checks[500]).toBeDisabled();
+		expect(checks[0]).toBeEnabled();
+		expect(checks[501]).toBeEnabled();
+		fireEvent.click(screen.getByRole('button', { name: 'Review 500 selected' }));
+		expect(screen.getByText(/Select at most 500 cards per collection/)).toBeInTheDocument();
+		fireEvent.click(checks[0]);
+		expect(checks[500]).toBeEnabled();
+	}, 150000);
+	function largeBoard() {
+		return {
+			id: 'large',
+			name: 'Large',
+			cards: Array.from({ length: 500 }, (_, index) =>
+				makeCard({
+					id: `card-${index}`,
+					title: `Window card ${index}`,
+					kind: index % 2 ? 'review' : 'work',
+				})
+			),
+		} satisfies Board;
+	}
+
+	it('mounts a bounded measured list with full counts and focuses the next offscreen card', async () => {
+		const board = largeBoard();
+		board.cards.push(
+			...Array.from({ length: 100 }, (_, index) =>
+				makeCard({ id: `done-${index}`, title: `Done card ${index}`, status: 'done' })
+			)
+		);
+		installApis([board]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const first = await screen.findByRole('button', { name: 'Window card 0, To Do' });
+		const list = screen.getByRole('list', { name: 'To Do cards' });
+		expect(screen.getByRole('group', { name: 'To Do, 500 cards' })).toBeInTheDocument();
+		expect(within(list).getAllByRole('listitem').length).toBeLessThan(20);
+		expect(within(list).getAllByRole('listitem')[0]).toHaveAttribute('aria-setsize', '500');
+		expect(within(list).getAllByRole('listitem')[0]).toHaveAttribute('data-index', '0');
+		expect(within(list).getAllByRole('listitem')[0].style.height).toBe('');
+		act(() => first.focus());
+		for (let index = 1; index <= 20; index++) {
+			fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+			expect(
+				await screen.findByRole('button', { name: `Window card ${index}, To Do` })
+			).toHaveFocus();
+		}
+		fireEvent.scroll(list, { target: { scrollTop: 35000 } });
+		expect(screen.getByRole('button', { name: 'Window card 20, To Do' })).toHaveFocus();
+		expect(screen.queryByRole('button', { name: 'Done card 20, Done' })).not.toBeInTheDocument();
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+		expect(await screen.findByRole('button', { name: 'Done card 20, Done' })).toHaveFocus();
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+		expect(screen.getByRole('button', { name: 'Window card 20, To Do' })).toHaveFocus();
+		fireEvent.keyDown(document.activeElement!, { key: 'm' });
+		expect(await screen.findByPlaceholderText('e.g. Design the schema')).toHaveValue(
+			'Window card 20'
+		);
+	});
+
+	it('restores filtered scroll and retains the same list across workers and the editor', async () => {
+		// Measured card heights deliberately differ from the 168px estimate.
+		vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.getAttribute('role') === 'list' ? 336 : 100;
+		});
+		installApis([largeBoard()]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Window card 0');
+		const list = screen.getByRole('list', { name: 'To Do cards' });
+		fireEvent.scroll(list, { target: { scrollTop: 1760 } });
+		const visibleCard = () =>
+			within(list)
+				.getAllByRole('listitem')
+				.find((row) => {
+					const start = Number(row.style.transform.match(/translateY\(([-\d.]+)px\)/)?.[1] ?? 0);
+					return start + row.offsetHeight > list.scrollTop;
+				})
+				?.querySelector('[data-board-card]')
+				?.getAttribute('data-board-card');
+		const firstWindowCard = visibleCard();
+		choose(screen.getByRole('button', { name: 'Filter by type' }), 'Documentation');
+		expect(list.scrollTop).toBe(0);
+		fireEvent.scroll(list, { target: { scrollTop: 880 } });
+		choose(screen.getByRole('button', { name: 'Filter by type' }), 'All types');
+		expect(visibleCard()).toBe(firstWindowCard);
+		fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+		fireEvent.click(screen.getByRole('tab', { name: 'Cards' }));
+		expect(screen.getByRole('list', { name: 'To Do cards' })).toBe(list);
+		expect(visibleCard()).toBe(firstWindowCard);
+		fireEvent.click(within(list).getAllByRole('button', { name: /Window card .*To Do/ })[0]);
+		fireEvent.click(await screen.findByRole('button', { name: 'Cancel', exact: true }));
+		expect(screen.getByRole('list', { name: 'To Do cards' })).toBe(list);
+		expect(visibleCard()).toBe(firstWindowCard);
+	});
+
+	it('ignores zero-height observations from the hidden worker panel', async () => {
+		const observations = new Map<Element, ResizeObserverCallback>();
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(private callback: ResizeObserverCallback) {}
+				observe(target: Element) {
+					observations.set(target, this.callback);
+				}
+				unobserve(target: Element) {
+					observations.delete(target);
+				}
+				disconnect() {}
+			}
+		);
+		installApis([largeBoard()]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Window card 0');
+		const list = screen.getByRole('list', { name: 'To Do cards' });
+		fireEvent.scroll(list, { target: { scrollTop: 1760 } });
+		const offset = list.scrollTop;
+		const first = within(list).getAllByRole('listitem')[0].getAttribute('data-index');
+		fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+		act(() => {
+			for (const [target, callback] of [...observations]) {
+				if (target.getAttribute('role') !== 'listitem') continue;
+				callback(
+					[
+						{
+							target,
+							borderBoxSize: [{ blockSize: 0, inlineSize: 0 }],
+						} as unknown as ResizeObserverEntry,
+					],
+					{} as ResizeObserver
+				);
+			}
+		});
+		fireEvent.click(screen.getByRole('tab', { name: 'Cards' }));
+		expect(list.scrollTop).toBe(offset);
+		expect(within(list).getAllByRole('listitem')[0]).toHaveAttribute('data-index', first);
+	});
+
+	it('retains offscreen bulk selections and submits both original card and collection revisions', async () => {
+		const board = largeBoard();
+		installApis([board]);
+		boardApi.deleteCards.mockResolvedValue({
+			ok: true,
+			value: { revision: 2, board: { ...board, cards: [] } },
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Window card 0');
+		const list = screen.getByRole('list', { name: 'To Do cards' });
+		fireEvent.click(within(list).getAllByRole('checkbox')[0]);
+		fireEvent.scroll(list, { target: { scrollTop: 35000 } });
+		expect(screen.queryByText('Window card 0')).not.toBeInTheDocument();
+		const secondTitle = within(list)
+			.getAllByRole('button', { name: /Window card .*To Do/ })[0]
+			.getAttribute('data-board-card');
+		fireEvent.click(within(list).getAllByRole('checkbox')[0]);
+		fireEvent.click(screen.getByRole('button', { name: 'Review 2 selected' }));
+		const preview = screen.getByLabelText('Delete selected cards preview');
+		expect(preview).toHaveTextContent('Window card 0');
+		fireEvent.click(within(preview).getByRole('button', { name: 'Delete selected', exact: true }));
+		await waitFor(() => expect(boardApi.deleteCards).toHaveBeenCalledOnce());
+		expect(boardApi.deleteCards.mock.calls[0][0]).toMatchObject({
+			target: { sourceKey: 'source-one', collectionKey: 'large', expectedRevision: 1 },
+			cards: [
+				{ cardId: 'card-0', cardRevision: 0 },
+				{ cardId: secondTitle, cardRevision: 0 },
+			],
+		});
+	});
+
+	it('keeps the dragged tile mounted during scroll and drops into an empty column with fences', async () => {
+		const board = largeBoard();
+		for (const card of board.cards) card.status = 'done';
+		installApis([board]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const tile = await screen.findByRole('button', { name: 'Window card 0, Done' });
+		fireEvent.dragStart(tile);
+		const list = screen.getByRole('list', { name: 'Done cards' });
+		fireEvent.scroll(list, { target: { scrollTop: 35000 } });
+		expect(tile).toBeInTheDocument();
+		const target = screen.getByRole('group', { name: 'To Do, 0 cards' });
+		fireEvent.dragOver(target);
+		fireEvent.drop(target);
+		await waitFor(() => expect(boardApi.setCardStatus).toHaveBeenCalledOnce());
+		expect(boardApi.setCardStatus.mock.calls[0]).toMatchObject([
+			PROJECT_ROOT,
+			'large',
+			'card-0',
+			'todo',
+			{ sourceKey: 'source-one', collectionKey: 'large', revision: 1, cardRevision: 0 },
+		]);
 	});
 });
