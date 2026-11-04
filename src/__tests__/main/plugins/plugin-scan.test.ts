@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { buildSync } from 'esbuild';
+import { build } from 'esbuild';
 import { PluginFileScanner } from '../../../main/plugins/plugin-scan';
 import { pluginIdentity } from '../../../main/plugins/plugin-identity';
 import { buildSigningPayload } from '../../../shared/plugins/signing';
@@ -13,7 +13,7 @@ beforeAll(async () => {
 	fs.mkdirSync(scratch, { recursive: true });
 	dir = fs.mkdtempSync(path.join(scratch, 'fresh-plugin-worker-'));
 	script = path.join(dir, 'worker.cjs');
-	buildSync({
+	await build({
 		entryPoints: [path.resolve('src/main/plugins/plugin-scan-worker.ts')],
 		bundle: true,
 		platform: 'node',

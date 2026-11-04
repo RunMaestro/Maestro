@@ -172,6 +172,16 @@ The structural audit against current rc preserved every existing test/assertion
 expression in all three fixture-corrected files: 14 scanner expressions, 717
 session-storage expressions, and 236 Lightbox expressions.
 
+Hosted run `41818542993` on `f46ebb6231` passed both Ubuntu shards, including
+the formerly failing Lightbox shard, and lint/format. Windows shard 1/2 still
+exceeded scanner setup's 10-second deadline, so file-copy optimization alone
+was insufficient. The fixture also used esbuild's synchronous API, which starts
+an additional Node worker. A local comparison measured 264 ms for that path and
+21 ms for the asynchronous API, with byte-identical worker output. Setup now
+awaits the asynchronous build instead; both existing scanner tests and the
+unchanged-expression audit passed. Hosted validation remains the acceptance
+gate for this additional startup correction.
+
 ## Protected local work
 
 The interrupted index, working tree, and untracked work are retained under
