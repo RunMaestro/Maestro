@@ -74,6 +74,7 @@ import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 
 const target = path.resolve('rpc-cleanup-target');
 let gate: typeof import('../../../main/git/worktreeActivity');
+let boundary: typeof import('../../../main/git/worktreeTurnActivity');
 let spawner: import('../../../main/process-manager/spawners/RpcServerSpawner').RpcServerSpawner;
 let native: ReturnType<typeof makeNative>;
 let processes: Map<string, ManagedProcess>;
@@ -136,11 +137,121 @@ beforeEach(async () => {
 	native = makeNative();
 	vi.mocked(spawn).mockImplementation(() => native as unknown as ReturnType<typeof spawn>);
 	gate = await import('../../../main/git/worktreeActivity');
+	boundary = await import('../../../main/git/worktreeTurnActivity');
 	const { RpcServerSpawner } =
 		await import('../../../main/process-manager/spawners/RpcServerSpawner');
 	processes = new Map();
 	fallback = vi.fn(() => ({ success: true, pid: 999 }));
 	spawner = new RpcServerSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
+});
+
+describe('shared native turn activity boundary', () => {
+	const spec = { command: 'fixture', args: [], cwd: target, env: {} };
+	const options = { stopGraceMs: 1000, keepStdinOpen: true };
+	it('refuses before caller setup, recovery or reporting', async () => {
+		const hold = await reserve();
+		try {
+			const operation = vi.fn();
+			const report = vi.fn();
+			expect(() => boundary.withWorktreeTurnActivity(operation, report)).toThrow('reserved');
+			expect(operation).not.toHaveBeenCalled();
+			expect(report).not.toHaveBeenCalled();
+			expect(spawn).not.toHaveBeenCalled();
+		} finally {
+			hold.release();
+		}
+	});
+	it('retains observed setup without a native child until settlement', async () => {
+		const setup = Promise.withResolvers<string>();
+		const result = boundary.withWorktreeTurnActivity(
+			(_start, observe) => observe(setup.promise),
+			vi.fn()
+		);
+		expect(result).toBe(setup.promise);
+		await blocked();
+		setup.resolve('ready');
+		await expect(result).resolves.toBe('ready');
+		await drain();
+		(await reserve()).release();
+	});
+	it('preserves synchronous errors when diagnostic reporting also throws', async () => {
+		const original = new Error('setup failed');
+		expect(() =>
+			boundary.withWorktreeTurnActivity(
+				() => {
+					throw original;
+				},
+				() => {
+					throw new Error('diagnostics failed');
+				}
+			)
+		).toThrow(original);
+		(await reserve()).release();
+	});
+	it('keeps every completion after close and preserves rejection despite failed diagnostics', async () => {
+		const first = Promise.withResolvers<void>();
+		const last = Promise.withResolvers<void>();
+		const failure = new Error('report failed');
+		const reporter = vi.fn(() => {
+			throw new Error('diagnostics failed');
+		});
+		boundary.withWorktreeTurnActivity((start, observe) => {
+			const turn = start(spec, {}, options);
+			observe(turn.done);
+			expect(observe(first.promise)).toBe(first.promise);
+			observe(last.promise);
+		}, reporter);
+		await close();
+		await blocked();
+		const rejected = expect(first.promise).rejects.toBe(failure);
+		first.reject(failure);
+		await rejected;
+		await drain();
+		expect(reporter).toHaveBeenCalledWith(failure);
+		await blocked();
+		last.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each([false, true])(
+		'refuses escaped launch after setup (previous child: %s)',
+		async (launch) => {
+			const escaped = boundary.withWorktreeTurnActivity((start, observe) => {
+				if (launch) observe(start(spec, {}, options).done);
+				return start;
+			}, vi.fn());
+			if (launch) await close();
+			const hold = await reserve();
+			try {
+				vi.mocked(spawn).mockClear();
+				expect(() => escaped(spec, {}, options)).toThrow('one launch');
+				expect(spawn).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each(['live', 'closed', 'nonstart'])(
+		'refuses a second launch after %s without losing the first lifetime',
+		async (state) => {
+			if (state === 'nonstart')
+				vi.mocked(spawn).mockImplementationOnce(() => {
+					throw new Error('nonstart');
+				});
+			boundary.withWorktreeTurnActivity((start, observe) => {
+				if (state === 'nonstart') expect(() => start(spec, {}, options)).toThrow();
+				else observe(start(spec, {}, options).done);
+				if (state === 'closed') native.emit('close', 0, null);
+				expect(() => start(spec, {}, options)).toThrow('one launch');
+			}, vi.fn());
+			expect(spawn).toHaveBeenCalledOnce();
+			if (state === 'live') {
+				await blocked();
+				await close();
+			} else await drain();
+			(await reserve()).release();
+		}
+	);
 });
 afterEach(() => vi.restoreAllMocks());
 

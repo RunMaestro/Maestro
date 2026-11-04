@@ -12,7 +12,6 @@ import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import {
 	startTurn,
-	TurnNotStartedError,
 	type TurnExit,
 	type TurnHandle,
 } from '../../../shared/maestro-lib/run/start-turn';
@@ -28,7 +27,7 @@ import { answerRpcExtensionRequest } from '../../harness-control/rpc-interaction
 import { steeringTextMatches, type SteeringResultFrame } from '../../../shared/chatSteering';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { NativeRpcProtocol } from '../../../shared/maestro-lib/providers/native-control';
-import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'NativeRpc';
 
@@ -61,56 +60,16 @@ export class RpcServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
-		let releaseActivity: (() => void) | undefined;
-		let setupSettled = false;
-		let nativeMayExist = false;
-		let closed = false;
-		let pending = 0;
-		const releaseIfSettled = (): void => {
-			if (setupSettled && (!nativeMayExist || closed) && !pending) releaseActivity?.();
-		};
-		const observeCompletion = <T>(completion: Promise<T>): Promise<T> => {
-			pending++;
-			void completion
-				.catch((error) => {
+		try {
+			return withWorktreeTurnActivity(
+				(start, observe) => this.spawnAdmitted(config, start, observe),
+				(error) => {
 					void captureException(error);
 					logger.error('[RpcTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
-				})
-				.finally(() => {
-					pending--;
-					releaseIfSettled();
-				});
-			return completion;
-		};
-		try {
-			// RPC agents may write beyond cwd; refuse before setup or fallback recovery.
-			releaseActivity = beginGlobalWorktreeActivity();
-			return this.spawnAdmitted(
-				config,
-				(spec, handlers, options) => {
-					nativeMayExist = true;
-					let turn;
-					try {
-						turn = startTurn(spec, handlers, options);
-					} catch (error) {
-						if (error instanceof TurnNotStartedError) nativeMayExist = false;
-						throw error;
-					}
-					// done also settles on error. Only close proves the child/stdio ended.
-					turn.child.on('close', () => {
-						closed = true;
-						releaseIfSettled();
-					});
-					return turn;
-				},
-				observeCompletion
+				}
 			);
 		} catch (error) {
-			if (releaseActivity) void captureException(error);
 			return { pid: -1, success: false, error: String(error) };
-		} finally {
-			setupSettled = true;
-			releaseIfSettled();
 		}
 	}
 
