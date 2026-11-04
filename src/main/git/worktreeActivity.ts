@@ -29,6 +29,7 @@ function overlaps(a: string, b: string): boolean {
  * Callers must await admission and release only after their work has settled.
  */
 export async function beginWorktreeActivity(paths: readonly string[]): Promise<() => void> {
+	if (!paths.length) return beginGlobalWorktreeActivity();
 	const activity: { roots: string[] | null } = { roots: null };
 	// Register synchronously, before realpath can yield to a cleanup request.
 	activities.add(activity);
@@ -51,6 +52,17 @@ export async function beginWorktreeActivity(paths: readonly string[]): Promise<(
 		activities.delete(activity);
 		throw error;
 	}
+}
+
+/** Synchronous admission for arbitrary commands whose affected paths are unknown. */
+export function beginGlobalWorktreeActivity(): () => void {
+	if (reservations.size)
+		throw new Error('Worktree cleanup has reserved this path. Retry after it finishes.');
+	const activity = { roots: null };
+	activities.add(activity);
+	return () => {
+		activities.delete(activity);
+	};
 }
 
 /**

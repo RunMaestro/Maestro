@@ -15,6 +15,7 @@ import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -44,8 +45,16 @@ export class PtySpawner {
 		} = config;
 
 		const isTerminal = toolType === 'terminal';
+		let releaseActivity: (() => void) | undefined;
+		let spawned = false;
+		let exited = false;
+		let setupSettled = false;
+		let reportExit: ((event: { exitCode: number; signal?: number }) => void) | undefined;
 
 		try {
+			// A shell, agent or local SSH client can touch paths beyond its cwd.
+			// Refuse synchronously before setup, without inspecting remote paths.
+			releaseActivity = beginGlobalWorktreeActivity();
 			let ptyCommand: string;
 			let ptyArgs: string[];
 
@@ -134,6 +143,17 @@ export class PtySpawner {
 				cwd: cwd,
 				env: ptyEnv as Record<string, string>,
 			});
+			spawned = true;
+			// Install before fallible registration/data setup. If observing exit
+			// fails, retain activity: a failed spawn result cannot prove termination.
+			ptyProcess.onExit((event) => {
+				exited = true;
+				try {
+					reportExit?.(event);
+				} finally {
+					if (setupSettled) releaseActivity?.();
+				}
+			});
 
 			const managedProcess: ManagedProcess = {
 				sessionId,
@@ -204,7 +224,7 @@ export class PtySpawner {
 				}
 			});
 
-			ptyProcess.onExit(({ exitCode, signal }) => {
+			reportExit = ({ exitCode, signal }) => {
 				if (isSuperseded()) {
 					logger.warn('[ProcessManager] Ignoring exit from superseded PTY', 'ProcessManager', {
 						sessionId,
@@ -249,7 +269,7 @@ export class PtySpawner {
 				if (currentProcess && currentProcess !== managedProcess) return;
 				if (currentProcess === managedProcess) this.processes.delete(sessionId);
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-			});
+			};
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {
 				sessionId,
@@ -278,6 +298,9 @@ export class PtySpawner {
 				...(error instanceof Error && 'errno' in error && { errno: (error as any).errno }),
 			});
 			return { pid: -1, success: false };
+		} finally {
+			setupSettled = true;
+			if (!spawned || exited) releaseActivity?.();
 		}
 	}
 }
