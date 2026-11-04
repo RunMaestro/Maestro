@@ -111,6 +111,27 @@ from the repaired validation environment. This change establishes 398 fewer file
 boundaries, not a newly measured wall-clock speedup over current rc. Historical
 measurements from the older cleanup branch must not be presented as timings for this base.
 
+## Scanner fixture setup correction
+
+The resumed normal push completed with an exit receipt: formatting, TypeScript,
+and ESLint passed; 60,667 tests passed and 213 were skipped across 2,298 files.
+The only failing suite was `src/__tests__/main/plugins/plugin-scan.test.ts`, whose
+fixture preparation exceeded the unchanged 10-second hook deadline.
+
+A direct setup probe measured a 57 ms worker bundle, 8.88 seconds creating the
+fixture with serial writes, and 2.40 seconds with at most 32 asynchronous writes
+in flight. Both variants created the same 5,000 files and 20,480,000 bytes; every
+file was byte-verified. The setup now uses bounded asynchronous writes and computes
+the identical payload hash once. Signing remains deterministic because the
+canonical signing payload sorts paths independently of write completion order.
+The fixture size, signed bytes, tamper check, fail-closed check, assertions, and
+test/hook deadlines are unchanged.
+
+The real scanner suite then passed both existing tests in 4.48 seconds overall.
+Its benchmark recorded 5,000 files, 20,480,000 bytes, 639 event-loop ticks during
+the worker scan, and a maximum timer gap of 3.10 ms. Production scanner code was
+not changed.
+
 ## Protected local work
 
 The interrupted index, working tree, and untracked work are retained under

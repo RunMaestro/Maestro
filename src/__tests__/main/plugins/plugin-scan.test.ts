@@ -8,7 +8,7 @@ import { PluginFileScanner } from '../../../main/plugins/plugin-scan';
 import { pluginIdentity } from '../../../main/plugins/plugin-identity';
 import { buildSigningPayload } from '../../../shared/plugins/signing';
 let dir: string, script: string, pluginDir: string, key: string;
-beforeAll(() => {
+beforeAll(async () => {
 	const scratch = path.resolve('.maestro/scratch');
 	fs.mkdirSync(scratch, { recursive: true });
 	dir = fs.mkdtempSync(path.join(scratch, 'fresh-plugin-worker-'));
@@ -24,11 +24,16 @@ beforeAll(() => {
 	fs.mkdirSync(pluginDir);
 	const files: Record<string, string> = {},
 		bytes = Buffer.alloc(4096, 65);
-	for (let i = 0; i < 5000; i++) {
-		const name = 'file-' + i;
-		fs.writeFileSync(path.join(pluginDir, name), bytes);
-		files[name] = createHash('sha256').update(bytes).digest('hex');
-	}
+	const hash = createHash('sha256').update(bytes).digest('hex');
+	await Promise.all(
+		Array.from({ length: 32 }, async (_, offset) => {
+			for (let i = offset; i < 5000; i += 32) {
+				const name = 'file-' + i;
+				await fs.promises.writeFile(path.join(pluginDir, name), bytes);
+				files[name] = hash;
+			}
+		})
+	);
 	const pair = generateKeyPairSync('ed25519');
 	key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
 	fs.writeFileSync(
