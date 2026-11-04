@@ -423,6 +423,9 @@ function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 			'messageId',
 			'decisionId',
 		].every((key) => typeof guard[key] === 'string' && guard[key].length > 0) &&
+		(guard.enrollmentRevision === undefined ||
+			(Number.isSafeInteger(guard.enrollmentRevision) &&
+				(guard.enrollmentRevision as number) >= 0)) &&
 		isRecord(guard.cursor) &&
 		typeof guard.cursor.id === 'string' &&
 		Number.isSafeInteger(guard.cursor.count) &&

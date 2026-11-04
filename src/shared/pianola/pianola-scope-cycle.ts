@@ -58,6 +58,8 @@ export interface PianolaScopeSnapshot {
 }
 
 export interface PianolaScopeDeliveryGuard {
+	/** Binds delayed replies across selection edits, including remove/re-add. */
+	enrollmentRevision?: number;
 	scopeId: string;
 	configurationFingerprint: string;
 	bindingFingerprint: string;
@@ -345,6 +347,8 @@ export async function runPianolaScopeCycle(
 			// The host may suspend the scope while this child awaits I/O. Never
 			// overwrite that pause with an older in-memory armed checkpoint.
 			const current = deps.store.readScopeCheckpoint(scopeId);
+			if ((current?.enrollmentRevision ?? 0) > (checkpoint?.enrollmentRevision ?? 0))
+				throw new Error('Scope enrollment changed; discard the old cycle and reload');
 			if (current?.status === 'suspended' && lastPersistedStatus !== 'suspended')
 				externallySuspended = true;
 			if (
@@ -544,7 +548,13 @@ export async function runPianolaScopeCycle(
 		// A handover is an enrollment barrier even if an older worker overwrote
 		// its prepared checkpoint. Busy historical asks never become new work.
 		const historicalAtHandover =
-			scope.legacyMigration !== undefined && tab.createdAt <= scope.legacyMigration.completedAt;
+			(scope.legacyMigration !== undefined && tab.createdAt <= scope.legacyMigration.completedAt) ||
+			// A host-prepared historical baseline stays historical on resume, even
+			// when the same assistant entry grew while its tab was busy/paused.
+			(!!saved?.baseline &&
+				saved.baselineBusy === false &&
+				tab.cursor?.id === saved.baseline.id &&
+				tab.cursor.count === saved.baseline.count);
 		const binding = pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners);
 		const needsBaseline =
 			firstActivation ||
@@ -695,7 +705,8 @@ export async function runPianolaScopeCycle(
 				// only an unsent answer (or an already delivered judgment), never an
 				// answer whose delivery may have reached the recipient.
 				if (
-					life.guard.configurationFingerprint !== configurationFingerprint &&
+					(life.guard.configurationFingerprint !== configurationFingerprint ||
+						(life.guard.enrollmentRevision ?? 0) !== (checkpoint.enrollmentRevision ?? 0)) &&
 					life.guard.bindingFingerprint === saved.bindingFingerprint &&
 					life.managerAgentId === scope.managerAgentId &&
 					!life.acknowledgedAt &&
@@ -756,7 +767,11 @@ export async function runPianolaScopeCycle(
 						observed = updatePianolaDecision(
 							observed,
 							{
-								guard: { ...life.guard, configurationFingerprint },
+								guard: {
+									...life.guard,
+									configurationFingerprint,
+									enrollmentRevision: checkpoint.enrollmentRevision,
+								},
 							},
 							deps.watch.now()
 						);
@@ -820,6 +835,7 @@ export async function runPianolaScopeCycle(
 			let latestRecord: PianolaDecisionRecord | undefined;
 			const deliveryGuard = (record: PianolaDecisionRecord): PianolaScopeDeliveryGuard => ({
 				scopeId,
+				enrollmentRevision: checkpoint.enrollmentRevision,
 				configurationFingerprint,
 				bindingFingerprint: saved.bindingFingerprint!,
 				agentId: tab.agentId,
@@ -873,6 +889,7 @@ export async function runPianolaScopeCycle(
 				persist();
 				return {
 					scopeId,
+					enrollmentRevision: checkpoint.enrollmentRevision,
 					configurationFingerprint,
 					bindingFingerprint: saved.bindingFingerprint!,
 					agentId: tab.agentId,
@@ -1061,6 +1078,7 @@ export function validatePianolaScopeDelivery(
 	if (
 		!checkpoint ||
 		checkpoint.status !== 'armed' ||
+		(checkpoint.enrollmentRevision ?? 0) !== (guard.enrollmentRevision ?? 0) ||
 		checkpoint.configurationFingerprint !== guard.configurationFingerprint ||
 		snapshot.capturedAt < (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt) ||
 		!saved ||

@@ -831,6 +831,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		}
 		withFileLock(name, 'scope checkpoint', () => {
 			const current = readScopeCheckpoint(checkpoint.scopeId);
+			if ((current?.enrollmentRevision ?? 0) > (checkpoint.enrollmentRevision ?? 0))
+				throw new Error('Scope enrollment changed; discard the old cycle and reload');
 			// A CLI cycle may have captured its census before host admission. Preserve
 			// only newly enrolled tabs it never saw, under the same configuration.
 			if (current?.configurationFingerprint === checkpoint.configurationFingerprint) {

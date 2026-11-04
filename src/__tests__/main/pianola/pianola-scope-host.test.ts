@@ -12,7 +12,12 @@ import {
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
-import type { PianolaScopeSnapshot } from '../../../shared/pianola/pianola-scope-cycle';
+import {
+	runPianolaScopeCycle,
+	admitPianolaScopeReply,
+	type PianolaScopeCycleDeps,
+	type PianolaScopeSnapshot,
+} from '../../../shared/pianola/pianola-scope-cycle';
 
 const { handlers, native } = vi.hoisted(() => {
 	const sender = { mainFrame: {}, isDestroyed: () => false, getType: () => 'window' };
@@ -199,6 +204,348 @@ describe('owner scope configuration through production adapters', () => {
 		});
 		await cli();
 		expect(lastOutput()).toMatchObject({ success: true, target: { id: scopeId } });
+	});
+
+	it.each([
+		{ paused: false, group: false },
+		{ paused: false, group: true },
+		{ paused: true, group: false },
+		{ paused: true, group: true },
+	])(
+		'owner edits selection %j and fences a delayed old census across restart',
+		async ({ paused, group }) => {
+			await nativeSave({ ...target(), enabled: !paused });
+			const original = store.readSupervisorTargets()[0];
+			const checkpoint = store.readScopeCheckpoint(scopeId)!;
+			checkpoint.tabs[0].unresolvedIntent = { decisionId: 'unknown', messageId: 'historic' };
+			store.writeScopeCheckpoint(checkpoint);
+			census.owners.push({ ...census.owners[0], id: 'added', groupId: 'team' });
+			census.tabs.push({ ...census.tabs[0], agentId: 'added', tabId: 'added-old', paused });
+			let release!: () => void;
+			let entered!: () => void;
+			const reached = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			const wait = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const deps: PianolaScopeCycleDeps = {
+				store,
+				readSnapshot: async () => {
+					const old = structuredClone(census);
+					entered();
+					await wait;
+					return old;
+				},
+				readTranscript: vi.fn(async (t) => ({ ...t, messages: [] })),
+				watch: {
+					readRules: () => [],
+					recordDecision: vi.fn(),
+					now: () => new Date().toISOString(),
+					genId: () => 'decision',
+					log: vi.fn(),
+					notify: vi.fn(),
+				},
+				dispatch: vi.fn(async () => ({ status: 'accepted' as const })),
+			};
+			// A paused cycle exits before census; resume only the fixture worker for
+			// this interleaving, then restore the actual owner pause before saving.
+			if (paused) store.upsertSupervisorTarget({ ...original, enabled: true });
+			const pending = runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			const outcome = pending.catch((error: Error) => error);
+			await reached;
+			if (paused) store.upsertSupervisorTarget(original);
+			census.capturedAt++;
+			const edited = {
+				...target(),
+				selection: {
+					...target().selection!,
+					agentIds: group ? ['agent'] : ['agent', 'added'],
+					groupIds: group ? ['team'] : [],
+				},
+			};
+			expect((await nativeSave(edited)).migration?.status).toBe('registered');
+			const configured = store.readSupervisorTargets()[0];
+			expect(configured).toEqual({ ...original, selection: edited.selection });
+			const enrolled = store.readScopeCheckpoint(scopeId)!;
+			expect(enrolled.tabs[0]).toEqual(checkpoint.tabs[0]);
+			expect(enrolled.tabs[1]).toMatchObject({
+				agentId: 'added',
+				baselineBusy: false,
+				baseline: census.tabs[1].cursor,
+			});
+			release();
+			expect(await outcome).toBeInstanceOf(Error);
+			expect(store.readScopeCheckpoint(scopeId)).toEqual(enrolled);
+			const reopened = createPianolaFsStore({ resolveDir: () => directory });
+			expect(reopened.readScopeCheckpoint(scopeId)).toEqual(enrolled);
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			// Exact owner/CLI reconciliation does not re-enroll.
+			expect((await nativeSave(edited)).migration?.status).toBe('registered');
+			await cli({ agents: group ? 'agent' : 'added,agent', groups: group ? 'team' : undefined });
+			expect(lastOutput().success).toBe(true);
+			expect(reopened.readScopeCheckpoint(scopeId)).toEqual(enrolled);
+			store.upsertSupervisorTarget({ ...configured, enabled: true });
+			census.tabs[1].paused = false;
+			const historical = {
+				id: 'historic',
+				role: 'assistant' as const,
+				source: 'ai' as const,
+				content: 'Should I name it count or total?',
+				timestamp: '2026-11-04T00:00:00Z',
+			};
+			census.tabs[1].cursor = {
+				id: historical.id,
+				count: 1,
+				textLength: historical.content.length,
+			};
+			deps.store = reopened;
+			deps.readSnapshot = async () => structuredClone(census);
+			deps.readTranscript = async (t) => ({ ...t, messages: [historical] });
+			deps.watch.recordDecision = (r) => store.appendDecision(r);
+			store.writeRules([
+				{
+					id: 'naming',
+					enabled: true,
+					scope: 'global',
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					priority: 1,
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			]);
+			deps.watch.readRules = () => store.readRules();
+			// Resume while still busy, then finish the same historical entry.
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			census.tabs[1].busy = false;
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			const fresh = { ...historical, id: 'new-question' };
+			census.tabs[1].cursor = { id: fresh.id, count: 2, textLength: fresh.content.length };
+			deps.readTranscript = async (t) => ({ ...t, messages: [historical, fresh] });
+			deps.dispatch = vi.fn(async (_t, answer, guard) => {
+				admitPianolaScopeReply(guard, answer, census, reopened);
+				return { status: 'accepted' };
+			});
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(deps.dispatch).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it('owner removal and re-add baselines only returning coverage and rejects stale checkpoint writes', async () => {
+		await nativeSave();
+		const old = store.readScopeCheckpoint(scopeId)!;
+		const removed = {
+			...target(),
+			selection: { ...target().selection!, excludedAgentIds: ['agent'] },
+		};
+		expect((await nativeSave(removed)).migration?.status).toBe('registered');
+		census.capturedAt++;
+		census.tabs[0].cursor = { id: 'historical-again', count: 2, textLength: 40 };
+		expect((await nativeSave()).migration?.status).toBe('registered');
+		const current = store.readScopeCheckpoint(scopeId)!;
+		expect(current.tabs[0]).toMatchObject({ baseline: census.tabs[0].cursor, baselineBusy: false });
+		expect(() => store.writeScopeCheckpoint(old)).toThrow(/enrollment/i);
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(current);
+	});
+
+	it.each(['agent', 'group', 'exclude'])(
+		'native owner changes %s selection and fences the actual send boundary',
+		async (change) => {
+			await nativeSave();
+			store.writeRules([
+				{
+					id: 'naming',
+					enabled: true,
+					scope: 'global',
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					priority: 1,
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			]);
+			const messages = [
+				{
+					id: 'historic',
+					role: 'assistant' as const,
+					source: 'ai' as const,
+					content: 'Working on the selected naming task.',
+					timestamp: '2026-11-04T00:00:00Z',
+				},
+				{
+					id: 'fresh',
+					role: 'assistant' as const,
+					source: 'ai' as const,
+					content: 'Should I name it count or total?',
+					timestamp: '2026-11-04T00:01:00Z',
+				},
+			];
+			census.tabs[0].busy = false;
+			census.tabs[0].cursor = { id: 'fresh', count: 2, textLength: messages[1].content.length };
+			census.capturedAt++;
+			census.owners[0].groupId = 'team';
+			// Use the group as existing coverage for its removal variant.
+			if (change === 'group') {
+				const grouped = {
+					...target(),
+					selection: { ...target().selection!, agentIds: [], groupIds: ['team'] },
+				};
+				await nativeSave(grouped);
+			}
+			let sends = 0;
+			const deps: PianolaScopeCycleDeps = {
+				store,
+				readSnapshot: async () => structuredClone(census),
+				readTranscript: async (t) => ({ ...t, messages }),
+				watch: {
+					readRules: () => store.readRules(),
+					recordDecision: (r) => store.appendDecision(r),
+					now: () => '2026-11-04T00:01:00Z',
+					genId: () => 'fresh-decision',
+					log: vi.fn(),
+					notify: vi.fn(),
+				},
+				dispatch: async (_t, answer, guard) => {
+					const edited = {
+						...target(),
+						selection: {
+							...target().selection!,
+							agentIds: change === 'exclude' ? ['agent'] : ['other'],
+							excludedAgentIds: change === 'exclude' ? ['agent'] : [],
+						},
+					};
+					expect((await nativeSave(edited)).migration?.status).toBe('registered');
+					expect(() => admitPianolaScopeReply(guard, answer, census, store)).toThrow();
+					// Even remove/re-add (same configuration fingerprint) cannot admit
+					// an old epoch's delayed answer.
+					await nativeSave();
+					expect(() => admitPianolaScopeReply(guard, answer, census, store)).toThrow();
+					sends++;
+					return { status: 'unknown', error: 'Fixture final boundary rejected old authority' };
+				},
+			};
+			await expect(runPianolaScopeCycle(scopeId, deps, { dryRun: false })).rejects.toThrow(
+				/enrollment/i
+			);
+			expect(sends).toBe(1);
+			expect(store.readScopeCheckpoint(scopeId)?.tabs[0].unresolvedIntent).toMatchObject({
+				decisionId: 'fresh-decision',
+			});
+		}
+	);
+
+	it('a bound web owner can edit selection while another user cannot', async () => {
+		await nativeSave();
+		for (const id of ['other', 'human']) {
+			let reply: { ok: boolean; result: PianolaSupervisorSnapshot } | undefined;
+			await handleBridgeInvoke(
+				{ id: 'web', cli: false, user: { id, username: id, displayName: id } },
+				{
+					type: 'bridge.invoke',
+					requestId: 2,
+					channel: 'pianola:supervisor-add',
+					args: [
+						{
+							...target(),
+							selection: { ...target().selection!, excludedAgentIds: ['agent'] },
+							ownerAuthorized: true,
+						},
+					],
+				},
+				(_client, response) => {
+					reply = response as typeof reply;
+				}
+			);
+			expect(reply?.result.migration?.status).toBe(
+				id === 'human' ? 'registered' : 'NeedsConfiguration'
+			);
+		}
+		expect(store.readSupervisorTargets()[0].selection?.excludedAgentIds).toEqual(['agent']);
+	});
+
+	it('only the current owner can change manager, retaining policy and fencing old enrollment', async () => {
+		await nativeSave();
+		const previous = store.readSupervisorTargets()[0];
+		previous.enabled = false;
+		previous.delegationPolicy!.enabled = false;
+		store.upsertSupervisorTarget(previous);
+		const oldCheckpoint = store.readScopeCheckpoint(scopeId)!;
+		census.owners.push({ ...census.owners[1], id: 'new-manager' });
+		desktopOwner = false;
+		expect(
+			(await nativeSave({ ...target(), managerAgentId: 'new-manager' })).migration?.status
+		).toBe('NeedsConfiguration');
+		desktopOwner = true;
+		expect(
+			(await nativeSave({ ...target(), managerAgentId: 'new-manager' })).migration?.status
+		).toBe('registered');
+		expect(store.readSupervisorTargets()[0]).toMatchObject({
+			enabled: false,
+			managerAgentId: 'new-manager',
+			delegationPolicy: {
+				...previous.delegationPolicy!,
+				revision: 2,
+				managerAgentId: 'new-manager',
+			},
+		});
+		expect(() => store.writeScopeCheckpoint(oldCheckpoint)).toThrow(/enrollment/i);
+	});
+
+	it.each(['add', 'remove'])(
+		'refuses an overlapping %s handover without any registry or checkpoint writes',
+		async (operation) => {
+			await nativeSave();
+			census.owners.push({ ...census.owners[0], id: 'other' });
+			census.tabs.push({ ...census.tabs[0], agentId: 'other', tabId: 'other-old' });
+			store.upsertSupervisorTarget({
+				...target(),
+				id: '22222222-2222-4222-8222-222222222222',
+				createdAt: operation === 'add' ? 0 : 2,
+				selection: { ...target().selection!, agentIds: [operation === 'add' ? 'other' : 'agent'] },
+			});
+			const before = store.readSupervisorTargets();
+			const checkpoint = store.readScopeCheckpoint(scopeId);
+			const edited = {
+				...target(),
+				selection: {
+					...target().selection!,
+					agentIds: operation === 'add' ? ['agent', 'other'] : ['other'],
+				},
+			};
+			expect((await nativeSave(edited)).migration?.status).toBe('NeedsConfiguration');
+			expect(store.readSupervisorTargets()).toEqual(before);
+			expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
+		}
+	);
+
+	it('reordered owner selection is a reconcile and keeps unknown delivery and baseline byte-for-byte', async () => {
+		await nativeSave({
+			...target(),
+			selection: { ...target().selection!, agentIds: ['agent', 'other'] },
+		});
+		const old = store.readScopeCheckpoint(scopeId)!;
+		old.tabs[0].unresolvedIntent = { decisionId: 'unknown', messageId: 'historic' };
+		store.writeScopeCheckpoint(old);
+		const before = fs.readFileSync(
+			path.join(directory, `maestro-pianola-scope-${scopeId}.json`),
+			'utf8'
+		);
+		expect(
+			(
+				await nativeSave({
+					...target(),
+					selection: { ...target().selection!, agentIds: ['other', 'agent'] },
+				})
+			).migration?.status
+		).toBe('registered');
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(old);
+		expect(
+			fs.readFileSync(path.join(directory, `maestro-pianola-scope-${scopeId}.json`), 'utf8')
+		).toBe(before);
 	});
 
 	it('rechecks native owner authority after waiting for the registry lock', async () => {

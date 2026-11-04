@@ -66,6 +66,8 @@ export interface PianolaScopeCheckpointTab {
 
 export interface PianolaScopeCheckpoint {
 	version: 1;
+	/** Host enrollment epoch. Older workers must never overwrite a newer barrier. */
+	enrollmentRevision?: number;
 	scopeId: string;
 	configurationFingerprint: string;
 	activatedAt: number;
@@ -136,6 +138,7 @@ export function validatePianolaScopeCheckpoint(
 		!record(raw) ||
 		raw.version !== 1 ||
 		raw.scopeId !== expectedId ||
+		(raw.enrollmentRevision !== undefined && !nonnegativeInteger(raw.enrollmentRevision)) ||
 		typeof raw.configurationFingerprint !== 'string' ||
 		!FINGERPRINT.test(raw.configurationFingerprint) ||
 		!nonnegativeInteger(raw.activatedAt) ||

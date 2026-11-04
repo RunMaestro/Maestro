@@ -118,18 +118,43 @@ export async function migratePianolaLegacyWatches(
 			(existing.kind !== 'watch-scope' ||
 				!existing.selection ||
 				!existing.managerAgentId ||
-				((!!existing.delegationPolicy || !deps.prepare) &&
+				(!deps.prepare &&
 					canonicalJson(existing.delegationPolicy ?? null) !==
 						canonicalJson(scope.delegationPolicy ?? null)) ||
-				pianolaScopeConfigurationFingerprint({
-					...existing,
-					selection: existing.selection,
-					managerAgentId: existing.managerAgentId,
-				}) !== pianolaScopeConfigurationFingerprint(scope))
+				(!deps.prepare &&
+					pianolaScopeConfigurationFingerprint({
+						...existing,
+						selection: existing.selection,
+						managerAgentId: existing.managerAgentId,
+					}) !== pianolaScopeConfigurationFingerprint(scope)))
 		) {
 			result.reason = 'Scope configuration changed; reconcile the existing selection first';
 			return current;
 		}
+		const selectionChanged =
+			!!existing?.selection &&
+			!!existing.managerAgentId &&
+			pianolaScopeConfigurationFingerprint({
+				...existing,
+				selection: existing.selection,
+				managerAgentId: existing.managerAgentId,
+			}) !== pianolaScopeConfigurationFingerprint(scope);
+		const previouslySelected = (agentId: string, tabId: string) =>
+			!!existing?.selection &&
+			!!existing.managerAgentId &&
+			resolvePianolaScopeOwnership(
+				{ agentId, tabId, paused: false, consult: false, ephemeral: false },
+				snapshot.owners,
+				[
+					{
+						...existing,
+						enabled: true,
+						selection: existing.selection,
+						managerAgentId: existing.managerAgentId,
+					},
+				],
+				[]
+			).kind === 'scope';
 		if (legacy.length) {
 			const manager = snapshot.owners.filter(
 				(owner) => owner.id === scope.managerAgentId && !owner.remote
@@ -194,7 +219,7 @@ export async function migratePianolaLegacyWatches(
 			};
 			return current;
 		}
-		if (existing?.legacyMigration && !active.length) {
+		if (existing?.legacyMigration && !active.length && !selectionChanged) {
 			result = {
 				status: 'already-migrated',
 				scopeId: scope.id,
@@ -235,7 +260,12 @@ export async function migratePianolaLegacyWatches(
 					: entry
 		);
 		if (!existing) next.push(replacement);
-		if (legacy.length || !existing || (!!deps.prepare && !existing.delegationPolicy)) {
+		if (
+			selectionChanged ||
+			legacy.length ||
+			!existing ||
+			(!!deps.prepare && !existing.delegationPolicy)
+		) {
 			// Check the registry that would actually be published, after retiring
 			// legacy watches. An overlapping older scope has no handover baseline
 			// or receipt and could replay a historical busy question on idle.
@@ -252,7 +282,11 @@ export async function migratePianolaLegacyWatches(
 					: []
 			);
 			const watches = next.filter((entry) => entry.kind === 'watch');
-			for (const tab of snapshot.tabs.filter((tab) => matches(tab.agentId, tab.tabId))) {
+			for (const tab of snapshot.tabs.filter(
+				(tab) =>
+					matches(tab.agentId, tab.tabId) ||
+					(selectionChanged && previouslySelected(tab.agentId, tab.tabId))
+			)) {
 				// Resolve the potential winner after resume, not current send authority.
 				// Temporary scope/tab pauses must not hide a missing handover baseline.
 				const owner = resolvePianolaScopeOwnership(
@@ -267,7 +301,12 @@ export async function migratePianolaLegacyWatches(
 				}
 			}
 		}
-		if (legacy.length || !existing || (!!deps.prepare && !existing.delegationPolicy)) {
+		if (
+			selectionChanged ||
+			legacy.length ||
+			!existing ||
+			(!!deps.prepare && !existing.delegationPolicy)
+		) {
 			const checkpoint = deps.store.readScopeCheckpoint(scope.id) ?? {
 				version: 1 as const,
 				scopeId: scope.id,
@@ -276,7 +315,7 @@ export async function migratePianolaLegacyWatches(
 				status: 'armed' as const,
 				tabs: [],
 			};
-			if (checkpoint.tabs.some((tab) => tab.unresolvedIntent)) {
+			if (!selectionChanged && checkpoint.tabs.some((tab) => tab.unresolvedIntent)) {
 				result.reason = 'Scope has an unresolved delivery; reconcile its outcome before takeover';
 				return current;
 			}
@@ -291,7 +330,14 @@ export async function migratePianolaLegacyWatches(
 				const takenOver = active.some(
 					(watch) => watch.agentId === tab.agentId && watch.tabId === tab.tabId
 				);
-				if (saved && !takenOver) continue;
+				if (
+					saved &&
+					!takenOver &&
+					(!selectionChanged ||
+						(previouslySelected(tab.agentId, tab.tabId) &&
+							existing?.managerAgentId === scope.managerAgentId))
+				)
+					continue;
 				if (!tab.cursorAvailable)
 					throw new Error(`Migration cursor unavailable: ${tab.agentId}/${tab.tabId}`);
 				const baseline = {
@@ -308,8 +354,10 @@ export async function migratePianolaLegacyWatches(
 				if (saved) Object.assign(saved, baseline);
 				else checkpoint.tabs.push(baseline);
 			}
+			checkpoint.configurationFingerprint = pianolaScopeConfigurationFingerprint(scope);
+			checkpoint.enrollmentRevision = (checkpoint.enrollmentRevision ?? 0) + 1;
 			checkpoint.lastSnapshotAt = snapshot.capturedAt;
-			deps.store.writeScopeCheckpoint(checkpoint);
+			deps.store.writeScopeCheckpoint(checkpoint, true);
 		}
 		result = {
 			status: active.length ? 'migrated' : 'registered',
@@ -322,7 +370,7 @@ export async function migratePianolaLegacyWatches(
 }
 
 /** Shared native UI / bridge configuration path. Only a verified human owner may
- * create observation consent. Automation can reconcile the exact standing
+ * create or change observation consent. Automation can reconcile the exact standing
  * selection already authorized on the host, never change its policy or pause.
  * This does not grant answer authority or delegated configuration rights.
  */
@@ -357,7 +405,7 @@ export async function configurePianolaScope(
 			if (matches.length > 1)
 				return 'Ambiguous standing scope selection; reconcile duplicates on the host';
 			const existing = byId ?? matches[0];
-			if (byId && !matches.includes(byId))
+			if (byId && (!ownerAuthorized || byId.kind !== 'watch-scope') && !matches.includes(byId))
 				return 'Scope configuration changed; reconcile the existing selection first';
 			if (
 				!ownerAuthorized &&
@@ -374,22 +422,31 @@ export async function configurePianolaScope(
 			const rules = deps.readRules();
 			if (rules.malformed)
 				return 'Pianola rules unavailable; repair the host rules before configuration';
-			const policy = existing?.delegationPolicy ?? {
-				version: 1 as const,
-				revision: 1,
-				enabled: true,
-				managerAgentId: managers[0].id,
-				coverage: 'selected-agents' as const,
-				ruleSetRevision: createHash('sha256').update(canonicalJson(rules.rules)).digest('hex'),
-			};
+			const policy = existing?.delegationPolicy
+				? {
+						...existing.delegationPolicy,
+						...(ownerAuthorized && existing.managerAgentId !== target.managerAgentId
+							? {
+									managerAgentId: target.managerAgentId!,
+									revision: existing.delegationPolicy.revision + 1,
+								}
+							: {}),
+					}
+				: {
+						version: 1 as const,
+						revision: 1,
+						enabled: true,
+						managerAgentId: managers[0].id,
+						coverage: 'selected-agents' as const,
+						ruleSetRevision: createHash('sha256').update(canonicalJson(rules.rules)).digest('hex'),
+					};
 			// A CLI request is only a trigger for the stored consent. Its ID, label,
 			// enabled flag, timestamps, worker options and policy confer no rights.
 			return existing
 				? {
 						...existing,
-						selection: ownerAuthorized
-							? { ...existing.selection!, label: target.selection!.label }
-							: existing.selection,
+						selection: ownerAuthorized ? target.selection! : existing.selection,
+						managerAgentId: ownerAuthorized ? target.managerAgentId : existing.managerAgentId,
 						delegationPolicy: policy,
 					}
 				: { ...target, delegationPolicy: policy };
