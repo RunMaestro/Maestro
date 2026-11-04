@@ -51,6 +51,8 @@ export interface PianolaScopeCheckpointTab {
 	tabId: string;
 	/** Effective owner/root binding. Missing on an older checkpoint forces a baseline. */
 	bindingFingerprint?: string;
+	/** Pre-start admission survives a concurrent worker census missing this tab. */
+	dispatchEnrollmentId?: string;
 	coverage?: PianolaScopeTabCoverage;
 	baseline: PianolaScopeCursor | null;
 	/** Only a live stream at enrollment may complete within the baseline entry. */
@@ -165,6 +167,9 @@ export function validatePianolaScopeCheckpoint(
 			(tab.bindingFingerprint !== undefined &&
 				(typeof tab.bindingFingerprint !== 'string' ||
 					!FINGERPRINT.test(tab.bindingFingerprint))) ||
+			(tab.dispatchEnrollmentId !== undefined &&
+				(typeof tab.dispatchEnrollmentId !== 'string' ||
+					!isPianolaScopeId(tab.dispatchEnrollmentId))) ||
 			!isPianolaScopeCursor(tab.baseline) ||
 			(tab.baselineBusy !== undefined && typeof tab.baselineBusy !== 'boolean') ||
 			!isPianolaScopeCursor(tab.lastSeen) ||

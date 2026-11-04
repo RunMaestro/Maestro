@@ -108,3 +108,6 @@ export const writeSupervisorTargetsAsync = store.writeSupervisorTargetsAsync;
 export const updateSupervisorTargetsAsync = store.updateSupervisorTargetsAsync;
 export const upsertSupervisorTargetAsync = store.upsertSupervisorTargetAsync;
 export const removeSupervisorTargetAsync = store.removeSupervisorTargetAsync;
+
+export const readDispatchAdmission = store.readDispatchAdmission;
+export const writeDispatchAdmission = store.writeDispatchAdmission;

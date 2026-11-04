@@ -29,6 +29,8 @@ import { isPianolaOwnerPrincipal, type PianolaOwnerPrincipal } from './owner-ide
 import {
 	isPianolaScopeId,
 	validatePianolaScopeSelection,
+	validatePianolaDelegationPolicy,
+	type PianolaDelegationPolicy,
 	type PianolaScopeSelection,
 } from './pianola-scope';
 
@@ -585,6 +587,7 @@ export interface PianolaSupervisedTarget {
 	/** Agent/group selection, or a readable legacy selection awaiting migration. */
 	selection?: PianolaScopeSelection;
 	managerAgentId?: string;
+	delegationPolicy?: PianolaDelegationPolicy;
 	/** Auto-watch targets are removed when their agent session is closed. */
 	autoCreated?: boolean;
 	/** Watch only: hours idle before the watcher retires itself (0 = never). */
@@ -673,6 +676,18 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 		if (target.tabId || target.agentId || target.planId || target.autoCreated) return null;
 		target.selection = selection;
 		target.managerAgentId = raw.managerAgentId;
+	}
+
+	if (raw.delegationPolicy !== undefined) {
+		const policy = validatePianolaDelegationPolicy(raw.delegationPolicy);
+		if (
+			!policy ||
+			target.kind !== 'watch-scope' ||
+			policy.managerAgentId !== target.managerAgentId ||
+			target.selection?.mode !== 'agents-and-groups'
+		)
+			return null;
+		target.delegationPolicy = policy;
 	}
 
 	// Drop targets that lack the fields their kind needs to spawn a valid command.

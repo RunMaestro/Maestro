@@ -54,6 +54,43 @@ export interface PianolaScopeTab {
 	ephemeral: boolean;
 }
 
+/** Standing observation authority; answer rules remain separately governed. */
+export interface PianolaDelegationPolicy {
+	version: 1;
+	revision: number;
+	enabled: boolean;
+	managerAgentId: string;
+	coverage: 'selected-agents';
+	ruleSetRevision: string;
+}
+
+export function validatePianolaDelegationPolicy(raw: unknown): PianolaDelegationPolicy | null {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+	const p = raw as Record<string, unknown>;
+	if (
+		p.version !== 1 ||
+		!Number.isSafeInteger(p.revision) ||
+		(p.revision as number) < 1 ||
+		typeof p.enabled !== 'boolean' ||
+		p.coverage !== 'selected-agents' ||
+		typeof p.managerAgentId !== 'string' ||
+		!p.managerAgentId.trim() ||
+		p.managerAgentId.length > 200 ||
+		typeof p.ruleSetRevision !== 'string' ||
+		!p.ruleSetRevision.trim() ||
+		p.ruleSetRevision.length > 200
+	)
+		return null;
+	return {
+		version: 1,
+		revision: p.revision as number,
+		enabled: p.enabled,
+		managerAgentId: p.managerAgentId,
+		coverage: p.coverage,
+		ruleSetRevision: p.ruleSetRevision,
+	};
+}
+
 export interface PianolaScopeCandidate {
 	id: string;
 	enabled: boolean;

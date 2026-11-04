@@ -271,7 +271,7 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
  * preserve cursors; changing an owner's parent lineage requires a baseline.
  * Only called after the ownership resolver has verified the entire chain.
  */
-function bindingFingerprint(
+export function pianolaScopeBindingFingerprint(
 	scope: PianolaScopeCandidate,
 	agentId: string,
 	owners: PianolaScopeOwner[]
@@ -533,7 +533,7 @@ export async function runPianolaScopeCycle(
 			result.issues.push(`Transcript cursor unavailable: ${tab.agentId}/${tab.tabId}`);
 			continue;
 		}
-		const binding = bindingFingerprint(scope, tab.agentId, snapshot.owners);
+		const binding = pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners);
 		const needsBaseline =
 			firstActivation ||
 			resume ||
@@ -735,7 +735,7 @@ export async function runPianolaScopeCycle(
 						sameCursor(currentTab.cursor, tab.cursor) &&
 						owner?.kind === 'scope' &&
 						owner.scopeId === scopeId &&
-						bindingFingerprint(currentScope, tab.agentId, current.owners) ===
+						pianolaScopeBindingFingerprint(currentScope, tab.agentId, current.owners) ===
 							saved.bindingFingerprint &&
 						!options.shouldStop?.() &&
 						!externallySuspended &&
@@ -853,7 +853,8 @@ export async function runPianolaScopeCycle(
 				if (
 					winner.kind !== 'scope' ||
 					winner.scopeId !== scopeId ||
-					bindingFingerprint(currentScope, tab.agentId, current.owners) !== saved.bindingFingerprint
+					pianolaScopeBindingFingerprint(currentScope, tab.agentId, current.owners) !==
+						saved.bindingFingerprint
 				)
 					throw new Error('Scope ownership changed before delivery');
 				saved.unresolvedIntent = { decisionId: latestRecord!.id, messageId };
@@ -1038,7 +1039,7 @@ export function validatePianolaScopeDelivery(
 	if (
 		owner.kind !== 'scope' ||
 		owner.scopeId !== scope.id ||
-		bindingFingerprint(scope, tab.agentId, snapshot.owners) !== guard.bindingFingerprint
+		pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners) !== guard.bindingFingerprint
 	)
 		throw new Error('Scope ownership changed');
 	const checkpoint = store.readScopeCheckpoint(scope.id);

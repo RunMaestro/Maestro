@@ -57,12 +57,18 @@ import {
 } from './pianola-scope-checkpoint';
 import { isPianolaScopeId } from './pianola-scope';
 import { canonicalJson } from '../canonicalJson';
+import { isWindows } from '../platformDetection';
 import type { PianolaProgram, PianolaAsk } from './pianola-programs';
 import {
 	validateProgramLoopMemo,
 	type ProgramLoopMemo,
 	type ProgramLoopMemoEntry,
 } from './pianola-program-loop';
+
+import {
+	validatePianolaDispatchAdmission,
+	type PianolaDispatchAdmission,
+} from './pianola-dispatch';
 
 const ASKS_LOCK_TIMEOUT_MS = 5_000;
 const ASKS_LOCK_STALE_MS = 30_000;
@@ -135,9 +141,12 @@ export interface PianolaFsStore {
 	): PianolaSupervisedTarget[];
 	upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[];
 	removeSupervisorTarget(id: string): PianolaSupervisedTarget[];
+	/** Corrupt admission records must never be treated as a new dispatch. */
+	readDispatchAdmission(dispatchId: string): PianolaDispatchAdmission | null;
+	writeDispatchAdmission(admission: PianolaDispatchAdmission): void;
 	/** A missing checkpoint is a first enrollment; a corrupt one throws. */
 	readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null;
-	writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void;
+	writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint, durable?: boolean): void;
 	writeSupervisorTargetsAsync(
 		targets: PianolaSupervisedTarget[]
 	): Promise<PianolaSupervisedTarget[]>;
@@ -156,7 +165,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	const filePath = (name: string): string => path.join(resolveDir(), name);
 
 	/** Atomically persist a JSON value (temp file + rename) so a reader never sees a partial file. */
-	function writeJsonAtomic(name: string, value: unknown): void {
+	function writeJsonAtomic(name: string, value: unknown, durable = false): void {
 		const dir = resolveDir();
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 		const target = path.join(dir, name);
@@ -176,7 +185,24 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				encoding: 'utf-8',
 				flag: 'wx',
 			});
+			if (durable) {
+				const fd = fs.openSync(tmp, 'r+');
+				try {
+					fs.fsyncSync(fd);
+				} finally {
+					fs.closeSync(fd);
+				}
+			}
 			fs.renameSync(tmp, target);
+			// Windows has no directory fsync via Node; host caller proofs remain unavailable there.
+			if (durable && !isWindows()) {
+				const fd = fs.openSync(dir, 'r');
+				try {
+					fs.fsyncSync(fd);
+				} finally {
+					fs.closeSync(fd);
+				}
+			}
 		} finally {
 			fs.rmSync(tmp, { force: true });
 		}
@@ -732,6 +758,31 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return updateSupervisorTargets((current) => current.filter((target) => target.id !== id));
 	}
 
+	function admissionName(dispatchId: string): string {
+		if (!isPianolaScopeId(dispatchId)) throw new Error('Invalid Pianola dispatch ID');
+		return `maestro-pianola-dispatch-${dispatchId}.json`;
+	}
+	function readDispatchAdmission(dispatchId: string): PianolaDispatchAdmission | null {
+		let body: string;
+		try {
+			const file = filePath(admissionName(dispatchId));
+			if (fs.statSync(file).size > 16384) throw new Error('Pianola admission too large');
+			body = fs.readFileSync(file, 'utf8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+		const value = validatePianolaDispatchAdmission(JSON.parse(body));
+		if (!value || value.dispatchId !== dispatchId) throw new Error('Invalid Pianola admission');
+		return value;
+	}
+	function writeDispatchAdmission(admission: PianolaDispatchAdmission): void {
+		if (!validatePianolaDispatchAdmission(admission)) throw new Error('Invalid Pianola admission');
+		if (Buffer.byteLength(JSON.stringify(admission, null, indent), 'utf8') + 1 > 16384)
+			throw new Error('Pianola admission too large');
+		writeJsonAtomic(admissionName(admission.dispatchId), admission, true);
+	}
+
 	function checkpointName(scopeId: string): string {
 		if (!isPianolaScopeId(scopeId)) throw new Error('Invalid Pianola scope ID');
 		return `maestro-pianola-scope-${scopeId}.json`;
@@ -759,7 +810,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return checkpoint;
 	}
 
-	function writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void {
+	function writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint, durable = false): void {
 		const name = checkpointName(checkpoint.scopeId);
 		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
 			throw new Error('Invalid Pianola scope checkpoint');
@@ -770,7 +821,28 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		) {
 			throw new Error('Pianola checkpoint too large');
 		}
-		writeJsonAtomic(name, checkpoint);
+		withFileLock(name, 'scope checkpoint', () => {
+			const current = readScopeCheckpoint(checkpoint.scopeId);
+			// A CLI cycle may have captured its census before host admission. Preserve
+			// only newly enrolled tabs it never saw, under the same configuration.
+			if (current?.configurationFingerprint === checkpoint.configurationFingerprint) {
+				const members = new Set(
+					checkpoint.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))
+				);
+				for (const tab of current.tabs) {
+					if (tab.dispatchEnrollmentId && !members.has(canonicalJson([tab.agentId, tab.tabId])))
+						checkpoint.tabs.push(tab);
+				}
+			}
+			if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId))
+				throw new Error('Invalid Pianola scope checkpoint');
+			if (
+				Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf8') + 1 >
+				20 * 1024 * 1024
+			)
+				throw new Error('Pianola checkpoint too large');
+			writeJsonAtomic(name, checkpoint, durable);
+		});
 	}
 
 	function readProgramLoopMemo(): ProgramLoopMemo {
@@ -863,6 +935,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		updateSupervisorTargets,
 		upsertSupervisorTarget,
 		removeSupervisorTarget,
+		readDispatchAdmission,
+		writeDispatchAdmission,
 		readScopeCheckpoint,
 		writeScopeCheckpoint,
 		writeSupervisorTargetsAsync,
