@@ -11,6 +11,7 @@ import type { CompletedContribution } from '../../../../shared/symphony-types';
 import {
 	LOG_CONTEXT,
 	handlerOpts,
+	createSymphonyGitHandler,
 	readState,
 	writeState,
 	broadcastSymphonyUpdate,
@@ -40,8 +41,8 @@ export function registerContributionFinishHandlers({
 	 */
 	ipcMain.handle(
 		'symphony:createDraftPR',
-		createIpcHandler(
-			handlerOpts('createDraftPR'),
+		createSymphonyGitHandler(
+			'createDraftPR',
 			async (params: {
 				contributionId: string;
 			}): Promise<{

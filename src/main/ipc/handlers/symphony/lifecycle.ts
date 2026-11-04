@@ -16,6 +16,7 @@ import type {
 import {
 	LOG_CONTEXT,
 	handlerOpts,
+	createSymphonyGitHandler,
 	readState,
 	writeState,
 	broadcastSymphonyUpdate,
@@ -271,8 +272,8 @@ export function registerLifecycleHandlers({
 	 */
 	ipcMain.handle(
 		'symphony:complete',
-		createIpcHandler(
-			handlerOpts('complete'),
+		createSymphonyGitHandler(
+			'complete',
 			async (params: {
 				contributionId: string;
 				prBody?: string;
@@ -450,8 +451,8 @@ export function registerLifecycleHandlers({
 	 */
 	ipcMain.handle(
 		'symphony:cancel',
-		createIpcHandler(
-			handlerOpts('cancel'),
+		createSymphonyGitHandler(
+			'cancel',
 			async (contributionId: string, cleanup?: boolean): Promise<{ cancelled: boolean }> => {
 				const state = await readState(app);
 				const index = state.active.findIndex((c) => c.id === contributionId);
