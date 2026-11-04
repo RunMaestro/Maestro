@@ -140,6 +140,65 @@ beforeEach(() => {
 });
 
 describe('PianolaDashboard data mapping', () => {
+	it('shows migrated tab watches as fenced and does not offer to enable them', () => {
+		const setEnabled = vi.fn();
+		supervisorMock.usePianolaSupervisor.mockReturnValue({
+			...supervisorMock.usePianolaSupervisor(),
+			setEnabled,
+			watched: [
+				{
+					targetId: 'old',
+					agentId: 'agent',
+					agentName: 'Agent',
+					tabId: 'chat',
+					enabled: false,
+					migratedToScopeId: 'scope',
+				},
+			],
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Watched');
+		expect(screen.getByText(/Migrated legacy tab chat/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Enable' })).toBeDisabled();
+		expect(setEnabled).not.toHaveBeenCalled();
+	});
+	it('opens a whole-agent selection from the watch picker without registering a tab', async () => {
+		const saveScope = vi.fn(async () => true);
+		const watch = vi.fn();
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'agent', name: 'Agent' }),
+				createMockSession({ id: 'manager', name: 'Manager', isPianola: true }),
+			],
+		});
+		supervisorMock.usePianolaSupervisor.mockReturnValue({
+			...supervisorMock.usePianolaSupervisor(),
+			watchable: [{ agentId: 'agent', agentName: 'Agent' }],
+			saveScope,
+			watch,
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Watched');
+		fireEvent.click(screen.getByRole('button', { name: 'Watch an agent' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Agent' }));
+		expect(screen.getByRole('checkbox', { name: 'Select Agent' })).toBeChecked();
+		expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Agent');
+		fireEvent.change(screen.getByRole('combobox', { name: 'Manager' }), {
+			target: { value: 'manager' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() =>
+			expect(saveScope).toHaveBeenCalledWith(
+				expect.objectContaining({
+					kind: 'watch-scope',
+					enabled: false,
+					managerAgentId: 'manager',
+					selection: expect.objectContaining({ agentIds: ['agent'] }),
+				})
+			)
+		);
+		expect(watch).not.toHaveBeenCalled();
+	});
 	it('collapses a long watch list and keeps the add action accessible', () => {
 		supervisorMock.usePianolaSupervisor.mockReturnValue({
 			...supervisorMock.usePianolaSupervisor(),
@@ -194,7 +253,11 @@ describe('PianolaDashboard data mapping', () => {
 		});
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 		selectWorkspaceTab('Watched');
-		fireEvent.click(screen.getByRole('checkbox', { name: 'Automatically watch new agents' }));
+		fireEvent.click(
+			screen.getByRole('checkbox', {
+				name: 'Automatically watch new agents (legacy initial chat only)',
+			})
+		);
 		expect(setAutoWatchNewAgents).toHaveBeenCalledWith(true);
 	});
 	it('renders each status bucket and the agents in it', () => {

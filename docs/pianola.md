@@ -266,6 +266,18 @@ This crawls your installed CLI transcripts into a labeled decision corpus, then 
 
 The desktop app keeps watchers alive across crashes and restarts:
 
+In the dashboard, **Watch an agent** opens an agent selection: choose its manager
+and save the selection. New selections start paused; saving registers them but
+does not prove the worker is running or that every chat is covered. The dashboard
+shows the worker and coverage separately. Existing tab watches can require a
+host-verified handover; if configuration is missing, the selection stays open
+with the reason and the old ownership remains unchanged. Selecting agents does
+not itself grant permission to answer their questions.
+
+The **Automatically watch new agents** switch currently registers only each new
+agent's initial chat as a legacy tab watch. It does not extend that watch to
+later chats. Existing legacy tab watches are shown separately in the dashboard.
+
 ```bash
 maestro-cli pianola supervise list
 maestro-cli pianola supervise watch <tab-id>

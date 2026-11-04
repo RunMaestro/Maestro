@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { Theme } from '../../types';
 import type { PianolaAgentGroupSelection } from '../../../shared/pianola/pianola-scope';
@@ -9,9 +9,11 @@ import type { PianolaSupervisorState } from './usePianolaSupervisor';
 export function PianolaScopeControls({
 	theme,
 	supervisor,
+	requestedAgent,
 }: {
 	theme: Theme;
 	supervisor: PianolaSupervisorState;
+	requestedAgent?: { agentId: string; agentName: string } | null;
 }): React.ReactElement {
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
@@ -26,6 +28,19 @@ export function PianolaScopeControls({
 		groupIds: [],
 		excludedAgentIds: [],
 	});
+	useEffect(() => {
+		if (!requestedAgent) return;
+		setEditing(null);
+		setCreating(true);
+		setManager('');
+		setSelection({
+			label: requestedAgent.agentName,
+			mode: 'agents-and-groups',
+			agentIds: [requestedAgent.agentId],
+			groupIds: [],
+			excludedAgentIds: [],
+		});
+	}, [requestedAgent]);
 	const scopes = supervisor.targets.filter((target) => target.kind === 'watch-scope');
 	const start = (target?: PianolaSupervisedTarget): void => {
 		setEditing(target ?? null);

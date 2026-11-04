@@ -954,20 +954,15 @@ function WatchedSection({
 	theme,
 	onJumpToAgent,
 	supervisor,
+	onSelectAgent,
 }: {
 	theme: Theme;
 	onJumpToAgent: (sessionId: string) => void;
 	supervisor: PianolaSupervisorState;
+	onSelectAgent: (agent: { agentId: string; agentName: string }) => void;
 }): React.ReactElement {
-	const {
-		watched,
-		watchable,
-		watch,
-		unwatch,
-		setEnabled,
-		autoWatchNewAgents,
-		setAutoWatchNewAgents,
-	} = supervisor;
+	const { watched, watchable, unwatch, setEnabled, autoWatchNewAgents, setAutoWatchNewAgents } =
+		supervisor;
 	const [pickerOpen, setPickerOpen] = React.useState(false);
 	const [expanded, setExpanded] = React.useState(false);
 	const canCollapse = watched.length > 5;
@@ -1013,7 +1008,7 @@ function WatchedSection({
 								type="button"
 								onClick={() => {
 									setPickerOpen(false);
-									void watch(agent.agentId, agent.tabId);
+									onSelectAgent(agent);
 								}}
 								className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-white/5 transition-colors"
 								style={{ color: theme.colors.textMain }}
@@ -1034,7 +1029,7 @@ function WatchedSection({
 			icon={<Eye className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />}
 			title="Watched by Pianola"
 			count={watched.length}
-			emptyLabel="No agents watched yet. Add one and Pianola babysits its questions."
+			emptyLabel="No legacy tab watches registered. Whole-agent selections are listed above."
 			collapsed={collapsed}
 			headerAction={
 				<div className="flex items-center gap-1">
@@ -1076,7 +1071,7 @@ function WatchedSection({
 						checked={autoWatchNewAgents}
 						onChange={(event) => void setAutoWatchNewAgents(event.target.checked)}
 					/>
-					Automatically watch new agents
+					Automatically watch new agents (legacy initial chat only)
 				</label>
 			}
 		>
@@ -1092,7 +1087,7 @@ function WatchedSection({
 					<span
 						className="w-2 h-2 rounded-full shrink-0"
 						style={{ backgroundColor: watchStateColor(theme, row.state) }}
-						title={row.enabled ? (row.state ?? 'starting') : 'disabled'}
+						title={row.enabled ? (row.state ?? 'not running') : 'disabled'}
 					/>
 					<button
 						type="button"
@@ -1103,6 +1098,11 @@ function WatchedSection({
 					>
 						{row.agentName}
 					</button>
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						{row.migratedToScopeId ? 'Migrated legacy tab' : 'Legacy tab'} {row.tabId}
+						{' · '}
+						{row.enabled ? (row.state ?? 'not running') : 'paused'}
+					</span>
 					{row.lastError && (
 						<span
 							className="text-xs truncate max-w-[30%]"
@@ -1114,6 +1114,7 @@ function WatchedSection({
 					)}
 					<button
 						type="button"
+						disabled={!!row.migratedToScopeId}
 						onClick={() => void setEnabled(row.targetId, !row.enabled)}
 						className="text-xs px-2 py-0.5 rounded hover:bg-white/5 transition-colors shrink-0"
 						style={{ color: theme.colors.textDim }}
@@ -1145,6 +1146,11 @@ export function PianolaDashboard({
 	const supervisor = usePianolaSupervisor();
 	const lifecycleDecisions = decisions.filter((record) => record.lifecycle);
 	const [secondaryView, setSecondaryView] = React.useState<SecondaryView>('programs');
+	const [requestedAgent, setRequestedAgent] = React.useState<{
+		agentId: string;
+		agentName: string;
+	} | null>(null);
+	const scopeControlsRef = React.useRef<HTMLDivElement>(null);
 	const needsCount =
 		portfolio.asks.length +
 		portfolio.escalations.length +
@@ -1196,7 +1202,13 @@ export function PianolaDashboard({
 					</button>
 				</header>
 
-				<PianolaScopeControls theme={theme} supervisor={supervisor} />
+				<div ref={scopeControlsRef}>
+					<PianolaScopeControls
+						theme={theme}
+						supervisor={supervisor}
+						requestedAgent={requestedAgent}
+					/>
+				</div>
 
 				<Section
 					theme={theme}
@@ -1438,6 +1450,10 @@ export function PianolaDashboard({
 									theme={theme}
 									onJumpToAgent={onJumpToAgent}
 									supervisor={supervisor}
+									onSelectAgent={(agent) => {
+										setRequestedAgent({ ...agent });
+										scopeControlsRef.current?.scrollIntoView?.({ block: 'start' });
+									}}
 								/>
 							</DashboardPanel>
 						)}
