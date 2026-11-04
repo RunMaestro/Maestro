@@ -267,14 +267,33 @@ describe('atomic legacy handover', () => {
 		expect(await migrate()).toMatchObject({ status: 'already-migrated' });
 	});
 
-	it.each([0, 2])(
-		'checks the resulting registry against an existing overlapping scope created at %s before handing over a busy question',
-		async (createdAt) => {
+	it.each(
+		[0, 2].flatMap((createdAt) =>
+			[
+				{ targetPaused: false, tabPaused: false, overlappingPaused: false },
+				{ targetPaused: true, tabPaused: false, overlappingPaused: false },
+				{ targetPaused: false, tabPaused: true, overlappingPaused: false },
+				{ targetPaused: false, tabPaused: false, overlappingPaused: true },
+				{ targetPaused: true, tabPaused: true, overlappingPaused: true },
+			].map((pauses) => ({ createdAt, ...pauses }))
+		)
+	)(
+		'checks potential ownership before busy-question handover: %j',
+		async ({ createdAt, targetPaused, tabPaused, overlappingPaused }) => {
 			const callerRuns = new HostCallerRuns();
 			vi.spyOn(hostCallerRuns, 'issue').mockImplementation(callerRuns.issue.bind(callerRuns));
 			const overlappingId = '22222222-2222-4222-8222-222222222222';
-			store.upsertSupervisorTarget({ ...scope(), id: overlappingId, createdAt });
+			store.upsertSupervisorTarget({
+				...scope(),
+				id: overlappingId,
+				createdAt,
+				enabled: !overlappingPaused,
+			});
+			const target = { ...scope(), enabled: !targetPaused };
 			snapshot.tabs[0].busy = true;
+			snapshot.tabs[0].paused = tabPaused;
+			// No unpaused sibling may mask the paused-tab ownership bypass.
+			snapshot.tabs = [snapshot.tabs[0]];
 			const history: PianolaMessage[] = [
 				{
 					id: 'historical',
@@ -335,7 +354,7 @@ describe('atomic legacy handover', () => {
 			await cycle(overlappingId);
 			const before = activeStore.readSupervisorTargets();
 			const overlappingCheckpoint = activeStore.readScopeCheckpoint(overlappingId);
-			const result = await migrate();
+			const result = await migrate(target);
 			if (createdAt === 0) {
 				expect(result).toMatchObject({
 					status: 'NeedsConfiguration',
@@ -350,8 +369,19 @@ describe('atomic legacy handover', () => {
 			} else {
 				expect(result.status).toBe('migrated');
 				expect(callerRuns.resolve(client)).toBeUndefined();
-				expect(ownership('old')).toEqual({ kind: 'scope', scopeId });
+				expect(store.readSupervisorTargets().find((entry) => entry.id === scopeId)?.enabled).toBe(
+					!targetPaused
+				);
 			}
+			// Resume the actual persisted scopes and tab before idle and restart.
+			await activeStore.updateSupervisorTargetsAsync((targets) =>
+				targets.map((entry) => (entry.kind === 'watch-scope' ? { ...entry, enabled: true } : entry))
+			);
+			snapshot.tabs[0].paused = false;
+			supervisor.reconcile();
+			expect(ownership('old')).toEqual(
+				createdAt === 0 ? { kind: 'explicit-watch' } : { kind: 'scope', scopeId }
+			);
 			await cycle(overlappingId);
 			if (createdAt !== 0) await cycle(scopeId);
 			snapshot.tabs[0].busy = false;
