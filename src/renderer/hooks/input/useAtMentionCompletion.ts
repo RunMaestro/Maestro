@@ -204,6 +204,11 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 
 			const suggestions: AtMentionSuggestion[] = [];
 			const filterLower = filter.toLowerCase();
+			const compare = (a: AtMentionSuggestion, b: AtMentionSuggestion) => {
+				if (b.score !== a.score) return b.score - a.score;
+				if (a.type !== b.type) return a.type === 'file' ? -1 : 1;
+				return a.displayText.localeCompare(b.displayText);
+			};
 
 			for (const file of allFiles) {
 				// PERF: The name is a suffix of the path, so a path that does not contain
@@ -219,31 +224,26 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 				const bestMatch = nameMatch.score > pathMatch.score ? nameMatch : pathMatch;
 
 				if (bestMatch.matches) {
-					suggestions.push({
+					const suggestion: AtMentionSuggestion = {
 						value: file.path,
 						type: file.type,
 						displayText: file.name,
 						fullPath: file.path,
 						score: bestMatch.score,
 						source: file.source,
-					});
+					};
+					// Insert after equal entries to preserve stable input-order ties.
+					let index = 0;
+					while (index < suggestions.length && compare(suggestions[index], suggestion) <= 0)
+						index++;
+					if (index < MAX_SUGGESTION_RESULTS) {
+						suggestions.splice(index, 0, suggestion);
+						if (suggestions.length > MAX_SUGGESTION_RESULTS) suggestions.pop();
+					}
 				}
 			}
 
-			// Sort by score (highest first), then alphabetically
-			suggestions.sort((a, b) => {
-				if (b.score !== a.score) {
-					return b.score - a.score;
-				}
-				// Within same score, prefer files over folders, then alphabetical
-				if (a.type !== b.type) {
-					return a.type === 'file' ? -1 : 1;
-				}
-				return a.displayText.localeCompare(b.displayText);
-			});
-
-			// Limit to reasonable number
-			return suggestions.slice(0, MAX_SUGGESTION_RESULTS);
+			return suggestions;
 		},
 		[allFiles]
 	);
