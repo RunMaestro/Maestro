@@ -37,7 +37,8 @@ type NativeCallbacks = Partial<
 		'listDesktopSessions' | 'getSessionHistory' | 'executeCommand' | 'notifyToast'
 	>
 >;
-type DecisionStore = Parameters<typeof validatePianolaScopeDelivery>[2];
+type DecisionStore = Parameters<typeof validatePianolaScopeDelivery>[2] &
+	Partial<Pick<typeof defaultStore, 'appendDecisionAsync'>>;
 
 function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
 	const cursor = record.lifecycle!.guard.cursor;
@@ -223,7 +224,7 @@ async function sendClaimedDecision(
 			},
 			new Date().toISOString()
 		);
-		store.appendDecision({
+		await (store.appendDecisionAsync ?? store.appendDecision)({
 			...next,
 			dispatched: phase === 'answer' && result.status === 'accepted',
 			...(result.status === 'accepted' ? {} : { error: result.error }),
@@ -266,9 +267,16 @@ export async function deliverPianolaScopeDecision(
 			{ managerTabId: managerTab.tabId },
 			new Date().toISOString()
 		);
-		store.appendDecision(record);
+		await (store.appendDecisionAsync ?? store.appendDecision)(record);
 	}
-	admitPianolaScopeReply(rawGuard, command, snapshot, store, judgment);
+	// Metadata persistence may yield under contention. Admission must re-read
+	// native membership and the asking turn after that wait.
+	const admissionSnapshot = pianolaScopeSnapshotFromDesktop({
+		success: true,
+		...callbacks.listDesktopSessions?.(),
+	});
+	currentAsk(callbacks, record);
+	admitPianolaScopeReply(rawGuard, command, admissionSnapshot, store, judgment);
 	return sendClaimedDecision(callbacks, record, command, destination, store);
 }
 
@@ -363,7 +371,7 @@ export async function resolvePianolaDecision(
 			: { kind: 'human' as const, actorId: actor.actorId, timestamp: now };
 	const groupId = snapshot.owners.find((owner) => owner.id === record.agentId)?.groupId ?? null;
 	if (request.escalation !== undefined) {
-		store.appendDecision(
+		await (store.appendDecisionAsync ?? store.appendDecision)(
 			updatePianolaDecision(
 				{ ...record, decision: { action: 'escalate', matchedRuleId: null, reason: text } },
 				{

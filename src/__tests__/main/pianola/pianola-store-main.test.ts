@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import { once } from 'events';
 
 vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
@@ -19,6 +21,7 @@ import {
 	readRulesResult,
 	writeRules,
 	appendDecision,
+	appendDecisionAsync,
 	readDecisions,
 } from '../../../main/pianola/pianola-store-main';
 import {
@@ -201,5 +204,56 @@ describe('decision audit log compaction (LOW-7)', () => {
 		appendDecision(decisionRecord('d2'));
 		const lines = fs.readFileSync(decisionsFile(), 'utf-8').split('\n').filter(Boolean);
 		expect(lines.length).toBe(2);
+	});
+});
+
+describe('main decision contention', () => {
+	it('refuses sync claims immediately and yields for async receipts behind a real process lock', async () => {
+		const lock = path.join(tmpDir, PIANOLA_DECISIONS_FILENAME + '.lock');
+		const child = spawn(
+			process.execPath,
+			[
+				'-e',
+				`
+			const fs = require('fs');
+			const lock = process.argv[1];
+			fs.writeFileSync(lock, process.pid + '.held', { flag: 'wx' });
+			process.stdout.write('ready');
+			process.stdin.once('data', () => { fs.unlinkSync(lock); process.exit(0); });
+		`,
+				lock,
+			],
+			{ stdio: ['pipe', 'pipe', 'pipe'] }
+		);
+		try {
+			await once(child.stdout, 'data');
+			const wait = vi.spyOn(Atomics, 'wait');
+			const started = performance.now();
+			expect(() => appendDecision(decisionRecord('refused'))).toThrow('lock busy');
+			expect(performance.now() - started).toBeLessThan(250);
+			expect(wait).not.toHaveBeenCalled();
+			expect(readDecisions()).toEqual([]);
+			let settled = false;
+			const pending = appendDecisionAsync(decisionRecord('receipt')).then(() => {
+				settled = true;
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 30));
+			expect(settled).toBe(false);
+			expect(readDecisions()).toEqual([]);
+			expect(fs.readFileSync(lock, 'utf8')).toBe(child.pid + '.held');
+			const exited = once(child, 'exit');
+			child.stdin.write('release');
+			await exited;
+			await pending;
+			expect(readDecisions().map((record) => record.id)).toEqual(['receipt']);
+			expect(wait).not.toHaveBeenCalled();
+			wait.mockRestore();
+		} finally {
+			if (child.exitCode === null) {
+				child.kill();
+				await once(child, 'exit');
+			}
+			vi.restoreAllMocks();
+		}
 	});
 });

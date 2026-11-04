@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { once, EventEmitter } from 'node:events';
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import * as mainStore from '../../../main/pianola/pianola-store-main';
+import { resolvePianolaDecision } from '../../../main/pianola/pianola-decisions';
+import { classifyMessages } from '../../../shared/pianola/pianola-classifier';
+import { reconcilePianolaDecision } from '../../../shared/pianola/pianola-decision-lifecycle';
 import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
 import { createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -747,10 +751,24 @@ describe('owner scope configuration through production adapters', () => {
 			expect(store.readSupervisorTargets().find((entry) => entry.id === 'legacy')?.enabled).toBe(
 				true
 			);
-			// A real host lifecycle receipt settles the pending delivery; a CLI payload cannot.
+			// Keep a deliberately stale copy even when an unchanged intent update
+			// returned the original object and append revised it in place.
+			const staleRecord = { ...record, mutationRevision: undefined };
+			// A stale ack cannot settle a newer durable mutation.
+			expect(() =>
+				store.appendDecision(
+					updatePianolaDecision(
+						staleRecord,
+						{ delivery: 'accepted', acknowledgedAt: now, status: 'agent_running' },
+						now
+					)
+				)
+			).toThrow('mutation conflict');
+			expect(store.readDecisions()[0].lifecycle?.acknowledgedAt).toBeUndefined();
+			// The native receipt must continue from the current CAS row.
 			store.appendDecision(
 				updatePianolaDecision(
-					record,
+					store.readDecisions()[0],
 					{ delivery: 'accepted', acknowledgedAt: now, status: 'agent_running' },
 					now
 				)
@@ -1065,4 +1083,132 @@ describe('standing future local agents', () => {
 		expect((await nativeSave(request)).migration?.status).toBe('NeedsConfiguration');
 		expect(store.readSupervisorTargets()).toEqual([]);
 	});
+});
+
+describe('L02 main decision claims', () => {
+	it.each(['human', 'manager'] as const)(
+		'refuses a contended %s claim and persists its outcome and ack after release',
+		async (actor) => {
+			census.tabs[0].busy = false;
+			const messages = [
+				{
+					id: 'historic',
+					role: 'assistant' as const,
+					source: 'ai' as const,
+					content: 'Should I name it count or total?',
+					timestamp: '2026-11-04T18:00:00Z',
+				},
+			];
+			census.tabs[0].cursor = { id: 'historic', count: 1, textLength: messages[0].content.length };
+			census.tabs.push({ ...census.tabs[0], agentId: 'manager', tabId: 'manager-tab' });
+			await nativeSave();
+			const checkpoint = store.readScopeCheckpoint(scopeId)!;
+			const now = messages[0].timestamp;
+			const record = startPianolaDecision(
+				{
+					id: 'pending',
+					agentId: 'agent',
+					tabId: 'old',
+					timestamp: now,
+					dryRun: false,
+					dispatched: false,
+					classification: classifyMessages(messages),
+					decision: { action: 'escalate', matchedRuleId: null, reason: 'handed off to Pianola' },
+				},
+				{
+					scopeId,
+					configurationFingerprint: checkpoint.configurationFingerprint,
+					enrollmentRevision: checkpoint.enrollmentRevision,
+					bindingFingerprint: checkpoint.tabs[0].bindingFingerprint!,
+					agentId: 'agent',
+					tabId: 'old',
+					messageId: 'historic',
+					decisionId: 'pending',
+					cursor: census.tabs[0].cursor!,
+				},
+				'manager',
+				null
+			);
+			record.lifecycle!.managerTabId = 'manager-tab';
+			store.appendDecision(record);
+			const callbacks = {
+				listDesktopSessions: () => ({
+					supervisionVersion: 1,
+					complete: true,
+					capturedAt: census.capturedAt,
+					owners: census.owners.map((owner) => ({ ...owner, parentSessionId: null })),
+					sessions: census.tabs.map((tab) => {
+						const owner = census.owners.find((owner) => owner.id === tab.agentId)!;
+						return {
+							...tab,
+							supervision: { ...owner, ...tab, parentSessionId: null, lineageComplete: true },
+						};
+					}),
+				}),
+				getSessionHistory: () => ({ agentId: 'agent', tabId: 'old', messages }),
+				executeCommand: vi.fn(async () => true),
+			};
+			const principal =
+				actor === 'human'
+					? { kind: 'human' as const, actorId: 'owner', principal: 'owner' as const }
+					: { kind: 'manager' as const, agentId: 'manager', tabId: 'manager-tab' };
+			const resolve = () =>
+				resolvePianolaDecision(
+					callbacks as never,
+					{ decisionId: record.id, answer: 'Use count.' },
+					principal
+				);
+			const child = spawn(
+				process.execPath,
+				[
+					'-e',
+					`
+			const fs = require('fs'); const lock = process.argv[1];
+			fs.writeFileSync(lock, process.pid + '.held', { flag: 'wx' }); process.stdout.write('ready');
+			process.stdin.once('data', () => { fs.unlinkSync(lock); process.exit(0); });
+		`,
+					path.join(directory, 'pianola-decisions.jsonl.lock'),
+				],
+				{ stdio: ['pipe', 'pipe', 'pipe'] }
+			);
+			try {
+				await once(child.stdout, 'data');
+				const wait = vi.spyOn(Atomics, 'wait');
+				const before = store.readDecisions();
+				const started = performance.now();
+				await expect(resolve()).rejects.toThrow('lock busy');
+				expect(performance.now() - started).toBeLessThan(250);
+				expect(wait).not.toHaveBeenCalled();
+				expect(callbacks.executeCommand).not.toHaveBeenCalled();
+				expect(store.readDecisions()).toEqual(before);
+				const exited = once(child, 'exit');
+				child.stdin.write('release');
+				await exited;
+				expect(await resolve()).toEqual({ status: 'accepted' });
+				expect(store.readDecisions()[0].lifecycle).toMatchObject({
+					source: { kind: actor },
+					delivery: 'accepted',
+				});
+				expect(callbacks.executeCommand).toHaveBeenCalledOnce();
+				const ack = reconcilePianolaDecision(
+					store.readDecisions()[0],
+					census.tabs[0],
+					[
+						...messages,
+						{ ...messages[0], id: 'answer', role: 'user', source: 'user', content: 'Use count.' },
+					],
+					now
+				);
+				await mainStore.appendDecisionAsync(ack);
+				expect(store.readDecisions()[0].lifecycle?.acknowledgedAt).toBe(now);
+				await expect(resolve()).rejects.toThrow('no longer pending');
+				expect(callbacks.executeCommand).toHaveBeenCalledOnce();
+			} finally {
+				if (child.exitCode === null) {
+					child.kill();
+					await once(child, 'exit');
+				}
+			}
+		}
+	);
 });

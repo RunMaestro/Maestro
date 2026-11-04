@@ -33,6 +33,7 @@ const store = createPianolaFsStore({
 	resolveDir: pianolaDir,
 	indent: '\t',
 	trailingNewline: false,
+	decisionLockMode: 'try',
 });
 
 export const readRulesResult = store.readRulesResult;
@@ -48,7 +49,7 @@ export function onHumanDecisionSettled(listener: () => void): () => void {
 	};
 }
 
-export function appendDecision(record: PianolaDecisionRecord): void {
+function decisionSettledNotification(record: PianolaDecisionRecord): () => void {
 	const candidate = settledDecisionPairs([record])[0];
 	const alreadySettled =
 		candidate &&
@@ -62,10 +63,25 @@ export function appendDecision(record: PianolaDecisionRecord): void {
 				canonicalJson([pair.evidence, pair.classification]) ===
 					canonicalJson([candidate.evidence, candidate.classification])
 		);
+	return () => {
+		if (candidate && !alreadySettled) {
+			for (const listener of humanDecisionListeners) listener();
+		}
+	};
+}
+
+/** Final synchronous admission: contention refuses before any send. */
+export function appendDecision(record: PianolaDecisionRecord): void {
+	const notify = decisionSettledNotification(record);
 	store.appendDecision(record);
-	if (candidate && !alreadySettled) {
-		for (const listener of humanDecisionListeners) listener();
-	}
+	notify();
+}
+
+/** Receipt/resolution persistence yields while another process owns the log. */
+export async function appendDecisionAsync(record: PianolaDecisionRecord): Promise<void> {
+	const notify = decisionSettledNotification(record);
+	await store.appendDecisionAsync(record);
+	notify();
 }
 export const readDecisions = store.readDecisions;
 export const readPlans = store.readPlans;

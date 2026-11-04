@@ -58,6 +58,8 @@ The audit trail, and the most important tab in the feature. For every decision i
 
 **Every watcher decision is recorded before anything is dispatched.** That ordering is deliberate. It means a rule that turns out to be wrong is always visible after the fact, rather than being a thing that happened invisibly at 3am. (Program-loop wakes persist their reservation before dispatch and append their Recent decisions entry afterward.)
 
+Decision claims and receipts share one revision check and append/compaction lock across desktop and CLI writers. Desktop receipt and resolution writes yield while another writer owns the log. The final synchronous claim tries the lock once and refuses a busy log before sending; it never waits for the other process. A stale revision is refused even after the lock becomes available. Re-read the pending decision before retrying a refused claim; an uncertain admitted answer remains blocked until native acknowledgment, rather than being sent again.
+
 ### Suggestions
 
 Pianola can read your own past CLI transcripts and propose rules and a decision profile that match how you already answer. Proposals sit here until you approve them. Approving only writes config, and an approved rule still goes through every safety check at runtime.

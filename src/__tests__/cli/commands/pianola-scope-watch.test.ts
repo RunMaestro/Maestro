@@ -217,7 +217,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		});
 		const append = store.appendDecision;
 		let injected = false;
-		store.appendDecision = (record) => {
+		const interleave = (record: Parameters<typeof store.appendDecision>[0]) => {
 			if (
 				!injected &&
 				record.lifecycle &&
@@ -237,7 +237,15 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 					},
 				});
 			}
+		};
+		store.appendDecision = (record) => {
+			interleave(record);
 			append(record);
+		};
+		const appendAsync = store.appendDecisionAsync;
+		store.appendDecisionAsync = async (record) => {
+			interleave(record);
+			await appendAsync(record);
 		};
 		const callbacks: Partial<MessageHandlerCallbacks> = {};
 		const scopeId = '11111111-1111-4111-8111-111111111111';

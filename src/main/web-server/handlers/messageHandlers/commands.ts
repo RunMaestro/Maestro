@@ -73,7 +73,7 @@ export async function handlePianolaScopeReply(
 					status: 'unknown',
 					error: 'Native admission was recorded; reconcile before retrying',
 				};
-			pianolaStore.appendDecision(
+			await pianolaStore.appendDecisionAsync(
 				updatePianolaDecision(
 					record,
 					{
