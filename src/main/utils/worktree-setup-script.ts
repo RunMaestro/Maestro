@@ -11,6 +11,7 @@
  */
 
 import { execFileNoThrow } from './execFile';
+import { beginWorktreeGitActivity } from '../git/worktreeActivity';
 import { execShellRemote } from './remote-git';
 import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from './spawnPath';
@@ -111,54 +112,61 @@ export async function runWorktreeSetupScript(
 		return { success: true, ran: false, stdout: '', stderr: '' };
 	}
 
-	const env = buildSetupScriptEnv(context);
+	// The shell probe and arbitrary script can run Git or touch sibling metadata.
+	// Admit globally before setup; remote paths stay outside local exclusion.
+	const release = sshRemote ? undefined : await beginWorktreeGitActivity();
+	try {
+		const env = buildSetupScriptEnv(context);
 
-	logger.info(
-		`Running worktree setup script in ${context.worktreePath}${sshRemote ? ' (remote)' : ''}`,
-		LOG_CONTEXT
-	);
+		logger.info(
+			`Running worktree setup script in ${context.worktreePath}${sshRemote ? ' (remote)' : ''}`,
+			LOG_CONTEXT
+		);
 
-	let result;
-	if (sshRemote) {
-		result = await execShellRemote(trimmed, sshRemote, {
-			cwd: context.worktreePath,
-			env,
-			timeoutMs: WORKTREE_SETUP_TIMEOUT_MS,
-		});
-	} else {
-		const shell = resolveSetupShell();
-		result = await execFileNoThrow(shell.command, shell.args(trimmed), context.worktreePath, {
-			timeout: WORKTREE_SETUP_TIMEOUT_MS,
-			// GUI-launched Electron gets a truncated PATH on macOS, so tools the
-			// script expects (node, npm, pnpm) would be missing. Same treatment
-			// git:createPR gives the gh CLI.
-			env: { ...process.env, ...env, PATH: await resolveLocalPath() },
-		});
+		let result;
+		if (sshRemote) {
+			result = await execShellRemote(trimmed, sshRemote, {
+				cwd: context.worktreePath,
+				env,
+				timeoutMs: WORKTREE_SETUP_TIMEOUT_MS,
+			});
+		} else {
+			const shell = resolveSetupShell();
+			result = await execFileNoThrow(shell.command, shell.args(trimmed), context.worktreePath, {
+				timeout: WORKTREE_SETUP_TIMEOUT_MS,
+				// GUI-launched Electron gets a truncated PATH on macOS, so tools the
+				// script expects (node, npm, pnpm) would be missing. Same treatment
+				// git:createPR gives the gh CLI.
+				env: { ...process.env, ...env, PATH: await resolveLocalPath() },
+			});
+		}
+
+		const stdout = tail(result.stdout ?? '');
+		const stderr = tail(result.stderr ?? '');
+
+		if (result.exitCode === 0) {
+			return { success: true, ran: true, exitCode: 0, stdout, stderr };
+		}
+
+		logger.warn(
+			`Worktree setup script failed (exit ${result.exitCode}) in ${context.worktreePath}`,
+			LOG_CONTEXT
+		);
+
+		return {
+			success: false,
+			ran: true,
+			exitCode: result.exitCode,
+			stdout,
+			stderr,
+			error:
+				result.exitCode === 'ETIMEDOUT'
+					? `Setup script timed out after ${WORKTREE_SETUP_TIMEOUT_MS / 1000}s`
+					: stderr.trim() || `Setup script exited with code ${result.exitCode}`,
+		};
+	} finally {
+		release?.();
 	}
-
-	const stdout = tail(result.stdout ?? '');
-	const stderr = tail(result.stderr ?? '');
-
-	if (result.exitCode === 0) {
-		return { success: true, ran: true, exitCode: 0, stdout, stderr };
-	}
-
-	logger.warn(
-		`Worktree setup script failed (exit ${result.exitCode}) in ${context.worktreePath}`,
-		LOG_CONTEXT
-	);
-
-	return {
-		success: false,
-		ran: true,
-		exitCode: result.exitCode,
-		stdout,
-		stderr,
-		error:
-			result.exitCode === 'ETIMEDOUT'
-				? `Setup script timed out after ${WORKTREE_SETUP_TIMEOUT_MS / 1000}s`
-				: stderr.trim() || `Setup script exited with code ${result.exitCode}`,
-	};
 }
 
 /**
