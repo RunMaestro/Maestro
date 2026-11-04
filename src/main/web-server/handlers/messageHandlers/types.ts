@@ -239,6 +239,7 @@ export interface MessageHandlerCallbacks {
 		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 	) => Promise<EnqueueCommandResult>;
 	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
+	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];

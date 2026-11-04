@@ -1,4 +1,4 @@
-import type { ConfirmQueueItem } from './stores/queue-item-receipt';
+import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
 import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
@@ -631,6 +631,7 @@ let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
 // Host-only receipt implementation, assigned during IPC bootstrap.
+let releaseQueueItemInPersistence: ReleaseQueueItem | null = null;
 let confirmQueueItemInPersistence: ConfirmQueueItem | null = null;
 // Set by registerPersistenceHandlers (in setupIpcHandlers). Lets the plugin
 // focus verbs record into the persistence layer's `session.activated` dedupe so
@@ -925,6 +926,11 @@ const CUE_DISABLED_MESSAGE =
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
+	releaseQueueItem: (...args) => {
+		if (!releaseQueueItemInPersistence)
+			return Promise.reject(new Error('DispatchQueueDrainUnavailable'));
+		return releaseQueueItemInPersistence(...args);
+	},
 	confirmQueueItem: (request) =>
 		confirmQueueItemInPersistence?.(request) ??
 		Promise.resolve({ durable: false, reason: 'store-unavailable' }),
@@ -3778,6 +3784,9 @@ app
 			getPluginAuthStore: () => pluginAuthStore,
 			getPluginEventBus: () => pluginEventBus,
 			getInteractiveReplayController: () => interactiveReplayController,
+			setReleaseQueueItem: (fn) => {
+				releaseQueueItemInPersistence = fn;
+			},
 			setConfirmQueueItem: (fn) => {
 				confirmQueueItemInPersistence = fn;
 			},

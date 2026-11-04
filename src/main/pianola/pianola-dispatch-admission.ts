@@ -1,6 +1,6 @@
 /** Host-only pre-start boundary. Adapters prepare a held target, then bind/enroll/release.
  * One service per host; no watcher, timer, plugin activation or answer permission. */
-import { createHash } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import {
@@ -43,6 +43,10 @@ type Store = Pick<
 >;
 export interface PianolaDispatchAdmissionDeps {
 	store: Store;
+	/** Host-only atomic session mutation; never a renderer-supplied receipt. */
+	releaseQueueItem?: import('../stores/queue-item-receipt').ReleaseQueueItem;
+	queueSnapshot?(): PianolaScopeSnapshot;
+	now?(): number;
 	callers?: Pick<HostCallerRuns, 'resolve'>;
 	featureEnabled(): boolean;
 	/** Host metadata only; complete census, with authoritative pre-start cursor. */
@@ -82,8 +86,25 @@ export class PianolaDispatchAdmissionService {
 	/** Resolve standing scope authority on each boundary, including overlapping pause vetoes. */
 	private async authorize(client: Client, targetAgentId: string, targetTabId?: string) {
 		const caller = this.caller(client);
+		return {
+			caller,
+			...(await this.authorizeOwner(
+				caller.run.agentId,
+				() => caller.assertActive(),
+				targetAgentId,
+				targetTabId
+			)),
+		};
+	}
+
+	private async authorizeOwner(
+		managerAgentId: string,
+		assertAuthority: () => void,
+		targetAgentId: string,
+		targetTabId?: string
+	) {
 		const snapshot = await this.deps.readSnapshot();
-		caller.assertActive();
+		assertAuthority();
 		if (!this.deps.featureEnabled()) throw new Error('PianolaFeatureOff');
 		if (!snapshot.complete) throw new Error('PianolaSnapshotUnavailable');
 		const targets = this.deps.store.readSupervisorTargets();
@@ -104,7 +125,7 @@ export class PianolaDispatchAdmissionService {
 		);
 		if (ownership.kind !== 'scope') throw new Error('PianolaTargetExcluded');
 		const scope = scopes.find((s) => s.id === ownership.scopeId)!;
-		if (scope.managerAgentId !== caller.run.agentId) throw new Error('PianolaManagerMismatch');
+		if (scope.managerAgentId !== managerAgentId) throw new Error('PianolaManagerMismatch');
 		const target = targets.find((t) => t.id === scope.id)!;
 		// Existing identity-based selection is standing observation authorization.
 		// An absent policy does not require a new per-dispatch opt-in or create an answer rule.
@@ -125,7 +146,7 @@ export class PianolaDispatchAdmissionService {
 		const policyFingerprint = hash({ scope: pianolaScopeConfigurationFingerprint(scope), policy });
 		// Synchronous final fence. Adapter additionally verifies the held native tab/queue identity.
 		const guard = () => {
-			caller.assertActive();
+			assertAuthority();
 			if (
 				!this.deps.featureEnabled() ||
 				canonicalJson(targets) !== canonicalJson(this.deps.store.readSupervisorTargets()) ||
@@ -133,7 +154,7 @@ export class PianolaDispatchAdmissionService {
 			)
 				throw new Error('PianolaPolicyChanged');
 		};
-		return { caller, snapshot, scope, policyFingerprint, guard };
+		return { snapshot, scope, policyFingerprint, guard };
 	}
 
 	prepare(client: Client, request: PianolaDispatchRequest): Promise<PianolaDispatchReceipt> {
@@ -199,60 +220,67 @@ export class PianolaDispatchAdmissionService {
 			}
 			const auth = await this.authorize(client, record.targetAgentId, record.targetTabId);
 			this.checkPolicy(record, auth);
-			const tab = auth.snapshot.tabs.find(
-				(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
-			)!;
-			if (!tab.cursorAvailable || tab.busy) throw new Error('DispatchBaselineUnavailable');
-			const configurationFingerprint = pianolaScopeConfigurationFingerprint(auth.scope);
-			let checkpoint = this.deps.store.readScopeCheckpoint(record.scopeId);
-			// Never silently re-arm a suspended or reconfigured existing scope.
-			if (
-				checkpoint &&
-				(checkpoint.status !== 'armed' ||
-					checkpoint.configurationFingerprint !== configurationFingerprint)
-			)
-				throw new Error('PianolaCheckpointSuspended');
-			checkpoint ??= {
-				version: 1,
-				scopeId: record.scopeId,
-				configurationFingerprint,
-				activatedAt: auth.snapshot.capturedAt,
-				status: 'armed',
-				tabs: [],
-			};
-			const bindingFingerprint = pianolaScopeBindingFingerprint(
-				auth.scope,
-				tab.agentId,
-				auth.snapshot.owners
-			);
-			const saved = checkpoint.tabs.find((t) => t.agentId === tab.agentId && t.tabId === tab.tabId);
-			if (saved && (saved.status !== 'active' || saved.bindingFingerprint !== bindingFingerprint))
-				throw new Error('PianolaEnrollmentUnavailable');
-			if (!saved)
-				checkpoint.tabs.push({
-					agentId: tab.agentId,
-					tabId: tab.tabId,
-					bindingFingerprint,
-					dispatchEnrollmentId: record.dispatchId,
-					baseline: tab.cursor,
-					baselineBusy: false,
-					lastSeen: tab.cursor,
-					state: initialWatchState(),
-					status: 'active',
-					unresolvedIntent: null,
-				});
-			// Checkpoint commit precedes journal commit; a crash here may safely reuse coverage.
-			this.deps.store.writeScopeCheckpoint(checkpoint, true);
-			record.supervision = saved ? 'already-covered' : 'enrolled';
-			record.phase = 'enrolled';
-			this.deps.store.writeDispatchAdmission(record);
+			this.enrollRecord(record, auth);
 			return this.receipt(record);
 		});
 	}
 
+	private enrollRecord(
+		record: PianolaDispatchAdmission,
+		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorizeOwner']>>
+	) {
+		const tab = auth.snapshot.tabs.find(
+			(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
+		)!;
+		if (!tab.cursorAvailable || tab.busy) throw new Error('DispatchBaselineUnavailable');
+		const configurationFingerprint = pianolaScopeConfigurationFingerprint(auth.scope);
+		let checkpoint = this.deps.store.readScopeCheckpoint(record.scopeId);
+		// Never silently re-arm a suspended or reconfigured existing scope.
+		if (
+			checkpoint &&
+			(checkpoint.status !== 'armed' ||
+				checkpoint.configurationFingerprint !== configurationFingerprint)
+		)
+			throw new Error('PianolaCheckpointSuspended');
+		checkpoint ??= {
+			version: 1,
+			scopeId: record.scopeId,
+			configurationFingerprint,
+			activatedAt: auth.snapshot.capturedAt,
+			status: 'armed',
+			tabs: [],
+		};
+		const bindingFingerprint = pianolaScopeBindingFingerprint(
+			auth.scope,
+			tab.agentId,
+			auth.snapshot.owners
+		);
+		const saved = checkpoint.tabs.find((t) => t.agentId === tab.agentId && t.tabId === tab.tabId);
+		if (saved && (saved.status !== 'active' || saved.bindingFingerprint !== bindingFingerprint))
+			throw new Error('PianolaEnrollmentUnavailable');
+		if (!saved)
+			checkpoint.tabs.push({
+				agentId: tab.agentId,
+				tabId: tab.tabId,
+				bindingFingerprint,
+				dispatchEnrollmentId: record.dispatchId,
+				baseline: tab.cursor,
+				baselineBusy: false,
+				lastSeen: tab.cursor,
+				state: initialWatchState(),
+				status: 'active',
+				unresolvedIntent: null,
+			});
+		// Checkpoint commit precedes journal commit; a crash here may safely reuse coverage.
+		this.deps.store.writeScopeCheckpoint(checkpoint, true);
+		record.supervision = saved ? 'already-covered' : 'enrolled';
+		record.phase = 'enrolled';
+		this.deps.store.writeDispatchAdmission(record);
+	}
+
 	private checkPolicy(
 		record: PianolaDispatchAdmission,
-		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorize']>>
+		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorizeOwner']>>
 	) {
 		auth.guard();
 		if (auth.scope.id !== record.scopeId || auth.policyFingerprint !== record.policyFingerprint)
@@ -262,6 +290,7 @@ export class PianolaDispatchAdmissionService {
 	release(client: Client, dispatchId: string): Promise<PianolaDispatchReceipt> {
 		return this.queue.enqueue('admissions', async () => {
 			const record = this.record(client, dispatchId);
+			if (record.queuePrepare) throw new Error('DispatchQueueDrainUnavailable');
 			if (record.phase === 'released' || record.phase === 'settled') return this.receipt(record);
 			if (record.phase !== 'enrolled') throw new Error('DispatchNotEnrolled');
 			const auth = await this.authorize(client, record.targetAgentId, record.targetTabId);
@@ -336,7 +365,10 @@ export class PianolaDispatchAdmissionService {
 	) {
 		return this.queue.enqueue('admissions', async () => {
 			const record = this.record(client, dispatchId);
-			if (record.queuePrepare) return this.queueOutcome(record);
+			if (record.queuePrepare) {
+				if (record.phase !== 'bound') throw new Error('DispatchQueueAlreadyReleased');
+				return this.queueOutcome(record);
+			}
 			if (
 				record.phase !== 'bound' ||
 				record.targetTabId !== item.tabId ||
@@ -346,6 +378,21 @@ export class PianolaDispatchAdmissionService {
 				throw new Error('DispatchTargetMismatch');
 			const auth = await this.authorize(client, record.targetAgentId, record.targetTabId);
 			this.checkPolicy(record, auth);
+			const tab = auth.snapshot.tabs.find(
+				(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
+			)!;
+			const acceptedAt = (this.deps.now ?? Date.now)();
+			record.queueAuthority = {
+				acceptedAt,
+				expiresAt: acceptedAt + 86_400_000,
+				bindingFingerprint: pianolaScopeBindingFingerprint(
+					auth.scope,
+					tab.agentId,
+					auth.snapshot.owners
+				),
+				createdAt: tab.createdAt,
+				...(tab.agentSessionId !== undefined ? { agentSessionId: tab.agentSessionId } : {}),
+			};
 			record.queuePrepare = {
 				phase: 'unknown',
 				item: JSON.parse(canonicalJson(item)),
@@ -359,6 +406,124 @@ export class PianolaDispatchAdmissionService {
 				return { ...this.queueOutcome(record), commitFailed: true, commitError };
 			}
 			return this.queueOutcome(record);
+		});
+	}
+
+	/** Host drain only. No wire caller may adopt a journal by ID. The standing
+	 * task was authorized at prepare; caller completion is irrelevant, policy
+	 * revocation, target replacement and expiry are not. Uncertain release is
+	 * terminal for retries, including after restart or a lost acknowledgment. */
+	releaseQueue(dispatchId: string) {
+		return this.queue.enqueue('admissions', async () => {
+			const record = this.deps.store.readDispatchAdmission(dispatchId);
+			if (
+				!record?.queuePrepare ||
+				record.queuePrepare.phase !== 'durable' ||
+				!record.queueAuthority
+			)
+				throw new Error('DispatchQueueAuthorityUnavailable');
+			if (record.phase !== 'bound' || record.queueRelease)
+				throw new Error('DispatchQueueReleaseUncertain');
+			if (!this.deps.releaseQueueItem || !this.deps.queueSnapshot)
+				throw new Error('DispatchQueueDrainUnavailable');
+			const authority = record.queueAuthority;
+			const assertAuthority = () => {
+				const now = (this.deps.now ?? Date.now)();
+				if (now < authority.acceptedAt || now >= authority.expiresAt)
+					throw new Error('DispatchQueueAuthorityExpired');
+			};
+			const auth = await this.authorizeOwner(
+				record.caller.agentId,
+				assertAuthority,
+				record.targetAgentId,
+				record.targetTabId
+			);
+			this.checkPolicy(record, auth);
+			const guard = () => {
+				auth.guard();
+				const snapshot = this.deps.queueSnapshot!();
+				const tab = snapshot.tabs.find(
+					(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
+				);
+				if (
+					!snapshot.complete ||
+					!tab ||
+					!tab.cursorAvailable ||
+					tab.busy ||
+					tab.paused ||
+					tab.consult ||
+					tab.ephemeral ||
+					tab.createdAt !== authority.createdAt ||
+					tab.agentSessionId !== authority.agentSessionId ||
+					pianolaScopeBindingFingerprint(auth.scope, record.targetAgentId, snapshot.owners) !==
+						authority.bindingFingerprint
+				)
+					throw new Error('DispatchTargetIdentityChangedOrBusy');
+				const targets = this.deps.store.readSupervisorTargets();
+				const ownership = resolvePianolaScopeOwnership(
+					tab,
+					snapshot.owners,
+					targets
+						.filter((t) => t.kind === 'watch-scope' && t.selection && t.managerAgentId)
+						.map((t) => ({ ...t, selection: t.selection!, managerAgentId: t.managerAgentId! })),
+					targets.filter((t) => t.kind === 'watch')
+				);
+				if (ownership.kind !== 'scope' || ownership.scopeId !== record.scopeId)
+					throw new Error('PianolaTargetExcluded');
+				if (record.queueRelease) {
+					const checkpoint = this.deps.store.readScopeCheckpoint(record.scopeId);
+					const saved = checkpoint?.tabs.find(
+						(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
+					);
+					if (
+						checkpoint?.status !== 'armed' ||
+						saved?.status !== 'active' ||
+						checkpoint.configurationFingerprint !==
+							pianolaScopeConfigurationFingerprint(auth.scope) ||
+						saved.bindingFingerprint !== authority.bindingFingerprint
+					)
+						throw new Error('PianolaEnrollmentUnavailable');
+				}
+				this.deps.assertTargetReady(this.receipt(record), authority.bindingFingerprint);
+			};
+			guard();
+			const release = await this.deps.releaseQueueItem(
+				{
+					agentId: record.targetAgentId,
+					tabId: record.targetTabId!,
+					itemId: record.queueItemId!,
+					pendingAdmissionId: record.dispatchId,
+					item: JSON.parse(canonicalJson(record.queuePrepare.item)),
+					tabIdentity: {
+						createdAt: authority.createdAt,
+						...(authority.agentSessionId !== undefined
+							? { agentSessionId: authority.agentSessionId }
+							: {}),
+					},
+				},
+				(assertRow) => {
+					guard();
+					assertRow();
+					// Capture baseline only NOW, under the session write lock.
+					const snapshot = this.deps.queueSnapshot!();
+					const currentAuth = { ...auth, snapshot };
+					record.outcome = 'unknown';
+					this.enrollRecord(record, currentAuth);
+					guard();
+					assertRow();
+					record.queueRelease = {
+						generation: randomUUID(),
+						baseline: snapshot.tabs.find(
+							(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
+						)!.cursor,
+					};
+					record.phase = 'released';
+					record.outcome = 'unknown';
+					this.deps.store.writeDispatchAdmission(record);
+					return { generation: record.queueRelease.generation, guard };
+				}
+			);
+			return { receipt: this.receipt(record), ...release };
 		});
 	}
 

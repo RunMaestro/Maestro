@@ -25,3 +25,13 @@ export type QueueItemReceipt =
 	  };
 
 export type ConfirmQueueItem = (request: QueueItemReceiptRequest) => Promise<QueueItemReceipt>;
+
+/** Host capability only. Runs on the same lock as saves and readback. commit
+ * must durably journal uncertainty before returning a release generation.
+ * The supplied guard rechecks the live cache after asynchronous disk I/O. */
+export type ReleaseQueueItem = (
+	request: QueueItemReceiptRequest & {
+		tabIdentity: { createdAt: number; agentSessionId?: string | null };
+	},
+	commit: (guard: () => void) => { generation: string; guard: () => void }
+) => Promise<{ generation: string; guard: () => void }>;

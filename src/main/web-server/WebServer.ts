@@ -1,5 +1,6 @@
 import type {
 	ConfirmQueueItem,
+	ReleaseQueueItem,
 	QueueItemReceiptRequest,
 	QueueItemReceipt,
 } from '../stores/queue-item-receipt';
@@ -718,6 +719,17 @@ export class WebServer {
 
 	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
 		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
+	}
+
+	private releaseQueueItemCallback?: ReleaseQueueItem;
+	setReleaseQueueItemCallback(callback?: ReleaseQueueItem): void {
+		this.releaseQueueItemCallback = callback;
+	}
+	/** Host only, never registered as a remote message or renderer bridge verb. */
+	releaseQueueItemFromMain(...args: Parameters<ReleaseQueueItem>): ReturnType<ReleaseQueueItem> {
+		if (!this.releaseQueueItemCallback)
+			return Promise.reject(new Error('DispatchQueueDrainUnavailable'));
+		return this.releaseQueueItemCallback(...args);
 	}
 
 	private confirmQueueItemCallback?: ConfirmQueueItem;
@@ -1461,6 +1473,7 @@ export class WebServer {
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
 				this.callbackRegistry.noteAgentDelegation(notice),
 			confirmQueueItem: (request) => this.confirmQueueItemFromMain(request),
+			releaseQueueItem: (...args) => this.releaseQueueItemFromMain(...args),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,

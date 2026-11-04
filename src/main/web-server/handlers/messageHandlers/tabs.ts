@@ -62,6 +62,11 @@ export function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispat
 			},
 			executeCommand: (...args) => ctx.callbacks.executeCommand!(...args),
 			enqueueCommand: (...args) => ctx.callbacks.enqueueCommand!(...args),
+			releaseQueueItem: (...args) => {
+				if (!ctx.callbacks.releaseQueueItem)
+					return Promise.reject(new Error('DispatchQueueDrainUnavailable'));
+				return ctx.callbacks.releaseQueueItem(...args);
+			},
 			confirmQueueItem: (request) =>
 				ctx.callbacks.confirmQueueItem?.(request) ??
 				Promise.resolve({ durable: false, reason: 'store-unavailable' }),

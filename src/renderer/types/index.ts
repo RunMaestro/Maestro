@@ -539,6 +539,9 @@ export interface QueuedItem {
 	paused?: boolean;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
+	/** Host-journaled release revision. Pending ID remains provenance and a
+	 * renderer safety barrier until the guarded native queue consumer claims it. */
+	admissionRelease?: { generation: string };
 	// Hold set when the process ownership probe cannot reach main. The
 	// item becomes runnable only after bridge reconciliation confirms ownership.
 	waitingForConnection?: boolean;

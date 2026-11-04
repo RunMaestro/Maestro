@@ -57,6 +57,7 @@ import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersisten
 import { canonicalJson } from '../../../shared/canonicalJson';
 import type {
 	ConfirmQueueItem,
+	ReleaseQueueItem,
 	QueueItemReceipt,
 	QueueItemReceiptRequest,
 } from '../../stores/queue-item-receipt';
@@ -226,6 +227,7 @@ export interface PersistenceHandlerDependencies {
 export interface PersistenceHandlers {
 	/** Internal host readback; deliberately has no renderer IPC registration. */
 	confirmQueueItem: ConfirmQueueItem;
+	releaseQueueItem: ReleaseQueueItem;
 	/**
 	 * Record that a session was activated through a path OTHER than this module's
 	 * debounced flush - specifically the plugin focus verbs in index.ts, which
@@ -304,6 +306,89 @@ export function registerPersistenceHandlers(
 					return { durable: false, reason: 'item-changed' };
 			}
 			return { durable: true, request };
+		});
+	};
+
+	const releaseQueueItem: ReleaseQueueItem = (input, commit) => {
+		const expected = canonicalJson(input.item);
+		const request = JSON.parse(canonicalJson(input)) as Parameters<ReleaseQueueItem>[0];
+		return sessionWriteQueue.enqueue('sessions', async () => {
+			const assertRows = (sessions: StoredSession[], releasedGeneration?: string) => {
+				const session = sessions?.find((s) => s.id === request.agentId);
+				const tab = session?.aiTabs?.find((t: { id: string }) => t.id === request.tabId);
+				const rows = session?.executionQueue ?? [];
+				const item = rows.find((r: { id: string }) => r.id === request.itemId);
+				const held = releasedGeneration
+					? { ...request.item, admissionRelease: { generation: releasedGeneration } }
+					: request.item;
+				if (
+					!session ||
+					!tab ||
+					tab.createdAt !== request.tabIdentity.createdAt ||
+					tab.agentSessionId !== request.tabIdentity.agentSessionId ||
+					!item ||
+					request.item.id !== request.itemId ||
+					request.item.tabId !== request.tabId ||
+					request.item.pendingAdmissionId !== request.pendingAdmissionId ||
+					!request.pendingAdmissionId ||
+					item.paused ||
+					session.agentErrorPaused ||
+					rows.filter((r: { id: string }) => r.id === request.itemId).length !== 1 ||
+					rows
+						.slice(0, rows.indexOf(item))
+						.some(
+							(r: {
+								tabId?: string;
+								paused?: boolean;
+								pendingAdmissionId?: string;
+								awaitingConsult?: unknown;
+								waitingForConnection?: boolean;
+							}) =>
+								r.waitingForConnection ||
+								(r.pendingAdmissionId || r.awaitingConsult ? r.tabId === request.tabId : !r.paused)
+						) ||
+					canonicalJson({ ...item, paused: undefined }) !==
+						canonicalJson({ ...held, paused: undefined })
+				)
+					throw new Error('DispatchQueueChangedOrPaused');
+			};
+			if (canonicalJson(request.item) !== expected) throw new Error('DispatchIntentMismatch');
+			assertRows(sessionsStore.get('sessions', []));
+			await flushSessionWrites();
+			const disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8')) as SessionsData;
+			assertRows(disk.sessions);
+			const guard = () => assertRows(sessionsStore.get('sessions', []));
+			guard();
+			// No await between final read, journal intent and cache mutation.
+			const release = commit(guard);
+			guard();
+			const sessions = sessionsStore.get('sessions', []).map((session) =>
+				session.id !== request.agentId
+					? session
+					: {
+							...session,
+							executionQueue: session.executionQueue.map((item: { id: string }) =>
+								item.id !== request.itemId
+									? item
+									: {
+											...item,
+											admissionRelease: { generation: release.generation },
+										}
+							),
+						}
+			);
+			sessionsStore.set('sessions', sessions);
+			await flushSessionWrites();
+			const releasedDisk = JSON.parse(
+				await fs.readFile(sessionsStore.path, 'utf-8')
+			) as SessionsData;
+			assertRows(releasedDisk.sessions, release.generation);
+			const releasedGuard = () => {
+				assertRows(sessionsStore.get('sessions', []), release.generation);
+				release.guard();
+			};
+			releasedGuard();
+			return { generation: release.generation, guard: releasedGuard };
 		});
 	};
 
@@ -1241,5 +1326,5 @@ export function registerPersistenceHandlers(
 		}
 	});
 
-	return { noteSessionActivated, confirmQueueItem };
+	return { noteSessionActivated, confirmQueueItem, releaseQueueItem };
 }

@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { mergeSessionPersistenceChanges } from '../../shared/sessionPersistenceMerge';
 
 describe('observed session changes', () => {
+	it('does not mint host release evidence from renderer additions or saves without a baseline', () => {
+		const incoming = {
+			executionQueue: [
+				{
+					id: 'item',
+					tabId: 'tab',
+					pendingAdmissionId: 'dispatch',
+					admissionRelease: { generation: 'forged' },
+				},
+			],
+		};
+		for (const stored of [
+			undefined,
+			{ executionQueue: [] },
+			{ executionQueue: [{ id: 'item', tabId: 'tab', pendingAdmissionId: 'dispatch' }] },
+		]) {
+			const merged = mergeSessionPersistenceChanges(incoming, stored, undefined);
+			expect(merged.executionQueue[0].admissionRelease).toBeUndefined();
+		}
+	});
+
 	it('preserves only unchanged Host-observed human queue origins on remote saves', () => {
 		const item = { id: 'human', type: 'message', text: 'Read mail', querySource: 'user' };
 		const stored = { executionQueue: [item] };

@@ -1,4 +1,5 @@
 import type { MentionRouting } from '../crossAgentContext';
+import { isPianolaScopeCursor, type PianolaScopeCursor } from './pianola-scope-checkpoint';
 /** Dispatch receipts and the host-only admission journal. Queue prepares retain the exact held row. */
 import type { CallerRunIdentity } from '../agentDelegation';
 import { isPianolaScopeId } from './pianola-scope';
@@ -29,6 +30,16 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 	intentFingerprint: string;
 	policyFingerprint: string;
 	phase: 'prepared' | 'bound' | 'enrolled' | 'released' | 'settled';
+	/** Minted only while the original caller proof is active. Exact target and
+	 * policy pinned for at most 24 hours; older journals without it stay held. */
+	queueAuthority?: {
+		acceptedAt: number;
+		expiresAt: number;
+		bindingFingerprint: string;
+		createdAt: number;
+		agentSessionId?: string | null;
+	};
+	queueRelease?: { generation: string; baseline: PianolaScopeCursor | null };
 	queuePrepare?: { phase: 'unknown' | 'durable'; item: PianolaQueueItem; callbackId?: string };
 }
 
@@ -65,16 +76,37 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 		return null;
 	if (
 		r.queuePrepare &&
-		(r.phase !== 'bound' ||
+		(!['bound', 'enrolled', 'released', 'settled'].includes(r.phase) ||
 			!['unknown', 'durable'].includes(r.queuePrepare.phase) ||
-			!['unknown', 'queued'].includes(r.outcome) ||
+			(r.phase === 'bound' && !['unknown', 'queued'].includes(r.outcome)) ||
 			r.queuePrepare.item?.id !== r.queueItemId ||
 			r.queuePrepare.item?.tabId !== r.targetTabId ||
 			r.queuePrepare.item?.pendingAdmissionId !== r.dispatchId ||
 			r.queuePrepare.item?.type !== 'message' ||
-			(r.queuePrepare.phase === 'durable') !== (r.outcome === 'queued'))
+			(r.phase === 'bound' && (r.queuePrepare.phase === 'durable') !== (r.outcome === 'queued')))
 	)
 		return null;
+	if (
+		r.queueAuthority &&
+		(!r.queuePrepare ||
+			!Number.isSafeInteger(r.queueAuthority.acceptedAt) ||
+			!Number.isSafeInteger(r.queueAuthority.expiresAt) ||
+			r.queueAuthority.expiresAt <= r.queueAuthority.acceptedAt ||
+			r.queueAuthority.expiresAt - r.queueAuthority.acceptedAt > 86_400_000 ||
+			!Number.isSafeInteger(r.queueAuthority.createdAt) ||
+			!/^[a-f0-9]{64}$/.test(r.queueAuthority.bindingFingerprint) ||
+			(r.queueAuthority.agentSessionId != null && !id(r.queueAuthority.agentSessionId)))
+	)
+		return null;
+	if (
+		r.queueRelease &&
+		(!r.queueAuthority ||
+			!isPianolaScopeId(r.queueRelease.generation) ||
+			!isPianolaScopeCursor(r.queueRelease.baseline) ||
+			!['released', 'settled'].includes(r.phase))
+	)
+		return null;
+
 	return r;
 }
 

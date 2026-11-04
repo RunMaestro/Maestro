@@ -147,6 +147,7 @@ export class PianolaNewTabDispatch {
 		this.admission = new PianolaDispatchAdmissionService({
 			...deps,
 			readSnapshot: async () => deps.snapshot(),
+			queueSnapshot: () => deps.snapshot(),
 			assertTargetReady: (receipt, fingerprint) => {
 				const snapshot = deps.snapshot();
 				const tab = snapshot.tabs.find(

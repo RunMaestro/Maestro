@@ -222,7 +222,7 @@ describe('persistence IPC handlers', () => {
 			toolType: 'codex',
 			cwd: '/project',
 			projectRoot: '/project',
-			aiTabs: [{ id: 'tab' }],
+			aiTabs: [{ id: 'tab', createdAt: 1 }],
 			executionQueue: [item],
 		});
 		const save = (
@@ -275,6 +275,7 @@ describe('persistence IPC handlers', () => {
 			registerQueueCallbacks(server, {
 				getMainWindow: () => null,
 				confirmQueueItem: persistence.confirmQueueItem,
+				releaseQueueItem: persistence.releaseQueueItem,
 			});
 		});
 		afterEach(async () => {
@@ -367,6 +368,8 @@ describe('persistence IPC handlers', () => {
 				onReconcileError: vi.fn(),
 				enqueueCommand: enqueue,
 				confirmQueueItem: confirmItem,
+				releaseQueueItem: (...args: Parameters<typeof persistence.releaseQueueItem>) =>
+					server.releaseQueueItemFromMain(...args),
 				queueItem: async () =>
 					({
 						...request.item,
@@ -401,6 +404,216 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 		}
+		async function readyQueue() {
+			const f = queueAdapter(true);
+			await f.adapter.runQueue(f.client, f.input, f.arm);
+			const snapshot = f.deps.snapshot();
+			snapshot.tabs[0].busy = false;
+			snapshot.tabs[0].cursorAvailable = true;
+			f.deps.snapshot = () => snapshot;
+			return { ...f, snapshot };
+		}
+
+		it('releases a durable standing task after caller end and host restart, with an idle baseline and no native send', async () => {
+			const f = await readyQueue();
+			f.revoke();
+			Object.assign(f.snapshot.tabs[0], {
+				cursor: { id: 'idle-after-predecessor', count: 4, textLength: 20 },
+			});
+			const restarted = new PianolaNewTabDispatch(f.deps);
+			const release = await restarted.admission.releaseQueue(f.input.dispatchId);
+			expect(release.receipt).toMatchObject({ outcome: 'unknown', supervision: 'enrolled' });
+			expect(release.generation).toBeTruthy();
+			release.guard();
+			const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+			expect(record).toMatchObject({
+				phase: 'released',
+				queueRelease: {
+					generation: release.generation,
+					baseline: { id: 'idle-after-predecessor', count: 4, textLength: 20 },
+				},
+			});
+			expect(record.queueAuthority!.expiresAt - record.queueAuthority!.acceptedAt).toBe(86_400_000);
+			const disk = JSON.parse(await realFs.readFile(mockSessionsStore.path, 'utf8'));
+			expect(disk.sessions[0].executionQueue[0].admissionRelease.generation).toBe(
+				release.generation
+			);
+			expect(f.store.readScopeCheckpoint(f.scopeId)!.tabs[0]).toMatchObject({
+				baselineBusy: false,
+				baseline: { id: 'idle-after-predecessor', count: 4, textLength: 20 },
+			});
+			expect(f.deps.newTab).not.toHaveBeenCalled();
+			await expect(
+				new PianolaNewTabDispatch(f.deps).admission.releaseQueue(f.input.dispatchId)
+			).rejects.toThrow('DispatchQueueReleaseUncertain');
+		});
+
+		it.each([
+			'policy-off',
+			'owner',
+			'excluded',
+			'feature-off',
+			'paused',
+			'busy',
+			'conversation',
+			'replacement',
+			'deleted-tab',
+			'deleted-item',
+			'changed-item',
+			'predecessor',
+			'connection-hold',
+			'authority-missing',
+			'expired',
+		])('keeps queue held for %s after caller end', async (mode) => {
+			const f = await readyQueue();
+			f.revoke();
+			const targets = f.store.readSupervisorTargets();
+			if (mode === 'policy-off') targets[0].enabled = false;
+			if (mode === 'owner') targets[0].managerAgentId = 'other-manager';
+			if (mode === 'excluded') targets[0].selection!.excludedAgentIds = ['agent'];
+			f.store.writeSupervisorTargets(targets);
+			if (mode === 'feature-off') f.deps.featureEnabled = () => false;
+			if (mode === 'busy') f.snapshot.tabs[0].busy = true;
+			if (mode === 'conversation')
+				Object.assign(f.snapshot.tabs[0], { agentSessionId: 'different' });
+			if (mode === 'replacement') f.snapshot.tabs[0].createdAt++;
+			if (mode === 'deleted-tab') current[0].aiTabs = [];
+			if (mode === 'deleted-item') current[0].executionQueue = [];
+			if (mode === 'paused') current[0].executionQueue[0].paused = true;
+			if (mode === 'changed-item') current[0].executionQueue[0].text = 'other';
+			if (mode === 'predecessor' || mode === 'connection-hold')
+				current[0].executionQueue.unshift({
+					id: 'earlier',
+					tabId: mode === 'predecessor' ? 'tab' : 'another',
+					waitingForConnection: mode === 'connection-hold',
+				});
+			if (mode === 'authority-missing' || mode === 'expired') {
+				const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+				if (mode === 'authority-missing') delete record.queueAuthority;
+				else {
+					record.queueAuthority!.acceptedAt = 1;
+					record.queueAuthority!.expiresAt = 2;
+				}
+				f.store.writeDispatchAdmission(record);
+			}
+			await expect(
+				new PianolaNewTabDispatch(f.deps).admission.releaseQueue(f.input.dispatchId)
+			).rejects.toThrow();
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)!.phase).toBe('bound');
+			expect(current[0].executionQueue.some((r: any) => r.admissionRelease)).toBe(false);
+		});
+
+		it('allows user resume independently of the host hold without changing the prepared intent', async () => {
+			const f = queueAdapter();
+			const make = f.deps.queueItem;
+			f.deps.queueItem = async () => ({ ...(await make()), paused: true });
+			await f.adapter.runQueue(f.client, f.input, f.arm);
+			const snapshot = f.deps.snapshot();
+			snapshot.tabs[0].cursorAvailable = true;
+			f.deps.snapshot = () => snapshot;
+			await expect(f.adapter.admission.releaseQueue(f.input.dispatchId)).rejects.toThrow(
+				'DispatchQueueChangedOrPaused'
+			);
+			const before = structuredClone(current[0]);
+			const resumed = structuredClone(before);
+			resumed.executionQueue[0].paused = false;
+			await save([resumed], [], [before]);
+			expect(current[0].executionQueue[0].admissionRelease).toBeUndefined();
+			const released = await f.adapter.admission.releaseQueue(f.input.dispatchId);
+			released.guard();
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)!.queuePrepare!.item.paused).toBe(
+				true
+			);
+			expect(current[0].executionQueue[0].paused).toBe(false);
+		});
+
+		it('allows skipped user-held predecessors but revalidates policy after release', async () => {
+			const f = await readyQueue();
+			current[0].executionQueue.unshift({ id: 'paused-first', tabId: 'tab', paused: true });
+			const release = await f.adapter.admission.releaseQueue(f.input.dispatchId);
+			release.guard();
+			const targets = f.store.readSupervisorTargets();
+			targets[0].enabled = false;
+			f.store.writeSupervisorTargets(targets);
+			expect(() => release.guard()).toThrow('PianolaPolicyChanged');
+		});
+
+		it('serializes duplicate drain requests and refuses a second release after a lost ack', async () => {
+			const f = await readyQueue();
+			const results = await Promise.allSettled([
+				f.adapter.admission.releaseQueue(f.input.dispatchId),
+				f.adapter.admission.releaseQueue(f.input.dispatchId),
+			]);
+			expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)!.phase).toBe('released');
+		});
+
+		it('keeps the fresh generation across stale full saves and refuses forged generations', async () => {
+			const f = await readyQueue();
+			const stale = structuredClone(current[0]);
+			const release = await f.adapter.admission.releaseQueue(f.input.dispatchId);
+			await save([stale], [], [stale]);
+			expect(current[0].executionQueue[0].admissionRelease.generation).toBe(release.generation);
+			const forged = structuredClone(current[0]);
+			forged.executionQueue[0].admissionRelease = { generation: 'forged' };
+			await save([forged], [], [structuredClone(current[0])]);
+			expect(current[0].executionQueue[0].admissionRelease.generation).toBe(release.generation);
+			// User pause is independent of the technical generation, and invalidates the guard.
+			const paused = structuredClone(current[0]);
+			paused.executionQueue[0].paused = true;
+			await save([paused], [], [structuredClone(current[0])]);
+			expect(() => release.guard()).toThrow('DispatchQueueChangedOrPaused');
+		});
+
+		it.each([
+			'readback-pause',
+			'readback-delete',
+			'readback-conversation',
+			'readback-policy',
+			'release-flush',
+			'journal-ack',
+		])('holds safely at the %s boundary', async (boundary) => {
+			const f = await readyQueue();
+			if (boundary.startsWith('readback-')) {
+				const read = realFs.readFile;
+				vi.mocked(fs.readFile).mockImplementation(
+					async (...args: Parameters<typeof fs.readFile>) => {
+						const result = await read(...args);
+						if (boundary === 'readback-pause') current[0].executionQueue[0].paused = true;
+						if (boundary === 'readback-delete') current[0].executionQueue = [];
+						if (boundary === 'readback-conversation') current[0].aiTabs[0].agentSessionId = 'new';
+						if (boundary === 'readback-policy') {
+							const targets = f.store.readSupervisorTargets();
+							targets[0].enabled = false;
+							f.store.writeSupervisorTargets(targets);
+						}
+						return result;
+					}
+				);
+			}
+			if (boundary === 'release-flush')
+				mockFlushSessionWrites.mockImplementation(async () => {
+					if (current[0].executionQueue[0].admissionRelease) throw new Error('disk full');
+					await realFs.writeFile(mockSessionsStore.path, JSON.stringify({ sessions: current }));
+				});
+			if (boundary === 'journal-ack') {
+				const write = f.store.writeDispatchAdmission.bind(f.store);
+				vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+					write(record);
+					if (record.phase === 'released') throw new Error('lost journal ack');
+				});
+			}
+			await expect(f.adapter.admission.releaseQueue(f.input.dispatchId)).rejects.toThrow();
+			const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+			expect(record.phase).toBe(boundary.startsWith('readback-') ? 'bound' : 'released');
+			if (!boundary.startsWith('readback-')) {
+				expect(record.outcome).toBe('unknown');
+				await expect(
+					new PianolaNewTabDispatch(f.deps).admission.releaseQueue(f.input.dispatchId)
+				).rejects.toThrow('DispatchQueueReleaseUncertain');
+			}
+		});
+
 		it.each([false, true])(
 			'queue prepare composes actual disk proof and one held row with busy=%s, without enrollment',
 			async (busy) => {
@@ -612,6 +825,7 @@ describe('persistence IPC handlers', () => {
 				registerQueueCallbacks(server, {
 					getMainWindow: () => null,
 					confirmQueueItem: persistence.confirmQueueItem,
+					releaseQueueItem: persistence.releaseQueueItem,
 				});
 				await f.adapter.runQueue(f.client, f.input, f.arm);
 				expect(f.enqueue).toHaveBeenCalledOnce();

@@ -39,12 +39,13 @@ export function registerQueueCallbacks(
 	server: WebServer,
 	deps: Pick<
 		WebServerFactoryDependencies,
-		'getMainWindow' | 'getWindowForSession' | 'confirmQueueItem'
+		'getMainWindow' | 'getWindowForSession' | 'confirmQueueItem' | 'releaseQueueItem'
 	>
 ): void {
 	const { getMainWindow, getWindowForSession } = deps;
 	// Only callable from main; this is not registered in CallbackRegistry or a
 	// network message handler. Admission integration will consume it separately.
+	server.setReleaseQueueItemCallback(deps.releaseQueueItem);
 	server.setConfirmQueueItemCallback(
 		deps.confirmQueueItem ?? (async () => ({ durable: false, reason: 'store-unavailable' }))
 	);

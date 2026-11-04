@@ -158,6 +158,7 @@ function mergeRecord(
 	for (const field of new Set([...Object.keys(incoming), ...Object.keys(baseline)])) {
 		if (
 			field === 'deferredContent' ||
+			field === 'admissionRelease' ||
 			(preserveClient && clientFields[field]) ||
 			(preserveLive && liveFields[field])
 		)
@@ -198,6 +199,24 @@ export function mergeSessionPersistenceChanges<T extends RecordData>(
 		!stored || !baseline
 			? incoming
 			: (mergeRecord(incoming, stored, baseline, preserveClient, preserveLive) as T);
+	if (Array.isArray(result.executionQueue)) {
+		const storedRows = new Map(
+			(Array.isArray(stored?.executionQueue) ? stored.executionQueue : [])
+				.filter((item: RecordData) => item && typeof item.id === 'string')
+				.map((item: RecordData) => [item.id, item])
+		);
+		result = {
+			...result,
+			executionQueue: result.executionQueue.map((item: RecordData) => {
+				if (!item || typeof item.id !== 'string') return item;
+				const saved = storedRows.get(item.id) as RecordData | undefined;
+				const copy = { ...item };
+				if (saved?.admissionRelease) copy.admissionRelease = saved.admissionRelease;
+				else delete copy.admissionRelease;
+				return copy;
+			}),
+		};
+	}
 	if (Array.isArray(result.executionQueue) && Array.isArray(stored?.executionQueue)) {
 		// A renderer save cannot change a held operation or release its host hold.
 		// User pause remains independent; the host-authorized drain must clear the
