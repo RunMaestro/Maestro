@@ -2648,17 +2648,19 @@ Register desktop-supervised watchers and orchestrations (survive crashes/restart
 
 ## `maestro-cli pianola supervise scope`
 
-Create or replace an agent/group watch selection (new selections start paused)
+Reconcile an exact owner-authorized agent/group selection through the desktop host.
 
-| Option                 | Description                        | Default |
-| ---------------------- | ---------------------------------- | ------- |
-| `--manager <agent-id>` | Manager agent id                   | -       |
-| `--label <label>`      | Selection label                    | -       |
-| `--id <scope-id>`      | Replace an existing selection      | -       |
-| `--agents <ids>`       | Comma-separated agent IDs          | -       |
-| `--groups <ids>`       | Comma-separated group IDs          | -       |
-| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
-| `--json`               | Output as JSON                     | -       |
+Requires a running desktop and an existing standing observation policy saved through the owner UI. The host performs native fencing and baselining before legacy takeover. A new or changed selection returns `NeedsConfiguration`; CLI identity does not grant owner consent. Repeated calls preserve the saved label, policy and pause state.
+
+| Option                 | Description                            | Default |
+| ---------------------- | -------------------------------------- | ------- |
+| `--manager <agent-id>` | Manager agent id                       | -       |
+| `--label <label>`      | Selection label                        | -       |
+| `--id <scope-id>`      | Existing owner-authorized selection id | -       |
+| `--agents <ids>`       | Comma-separated agent IDs              | -       |
+| `--groups <ids>`       | Comma-separated group IDs              | -       |
+| `--exclude <ids>`      | Comma-separated excluded agent IDs     | -       |
+| `--json`               | Output as JSON                         | -       |
 
 ## `maestro-cli pianola supervise watch <tabId>`
 

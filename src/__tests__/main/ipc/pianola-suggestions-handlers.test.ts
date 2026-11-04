@@ -218,7 +218,7 @@ describe('supervisor scope handover adapter', () => {
 		expect(supervisor.reconcile).toHaveBeenCalledOnce();
 	});
 
-	it('refuses an unverified scope owner before registry mutation', async () => {
+	it('rejects an incomplete bridge scope before registry mutation', async () => {
 		registerPianolaHandlers({
 			settingsStore: settingsStore(true),
 			supervisor,
@@ -226,11 +226,11 @@ describe('supervisor scope handover adapter', () => {
 		});
 		await expect(
 			handlers.get('pianola:supervisor-add')!({ type: 'bridge' }, { kind: 'watch-scope' })
-		).rejects.toThrow('PianolaOwnerAuthorizationRequired');
+		).rejects.toThrow('InvalidSupervisedTarget');
 		expect(store.updateSupervisorTargetsAsync).not.toHaveBeenCalled();
 	});
 
-	it('refuses scope mutation when the native desktop owner is restricted', async () => {
+	it('rejects an incomplete scope even when desktop ownership is restricted', async () => {
 		registerPianolaHandlers({
 			settingsStore: {
 				get: (key) => (key === 'encoreFeatures' ? { pianola: true } : { desktopIsOwner: false }),
@@ -243,7 +243,7 @@ describe('supervisor scope handover adapter', () => {
 				{ sender: native.sender, senderFrame: native.sender.mainFrame },
 				{ kind: 'watch-scope' }
 			)
-		).rejects.toThrow('PianolaOwnerAuthorizationRequired');
+		).rejects.toThrow('InvalidSupervisedTarget');
 		expect(store.updateSupervisorTargetsAsync).not.toHaveBeenCalled();
 	});
 });

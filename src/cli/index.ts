@@ -3093,10 +3093,10 @@ const pianolaSupervise = pianola
 
 pianolaSupervise
 	.command('scope')
-	.description('Create or replace an agent/group watch selection (new selections start paused)')
+	.description('Reconcile an exact owner-authorized agent/group selection through the desktop host')
 	.requiredOption('--manager <agent-id>', 'Manager agent id')
 	.requiredOption('--label <label>', 'Selection label')
-	.option('--id <scope-id>', 'Replace an existing selection')
+	.option('--id <scope-id>', 'Existing owner-authorized selection id')
 	.option('--agents <ids>', 'Comma-separated agent IDs')
 	.option('--groups <ids>', 'Comma-separated group IDs')
 	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')

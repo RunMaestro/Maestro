@@ -172,7 +172,7 @@ export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 
 	const requestId = message.requestId;
 	const channel = message.channel;
 	let args = Array.isArray(message.args) ? message.args : [];
-	const event = { ...FAKE_EVENT, clientId: client.id };
+	const event = { ...FAKE_EVENT, clientId: client.id, cli: client.cli === true };
 
 	if (typeof channel !== 'string' || !channel) {
 		send(client, {

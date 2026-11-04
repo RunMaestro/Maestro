@@ -1,7 +1,8 @@
 /**
  * Pianola supervise CLI commands.
  *
- * These register, list, and remove supervised background targets in the SHARED
+ * Scope selections use the owner-authorized host service over the bridge.
+ * Other commands register, list, and remove background targets in the SHARED
  * supervisor store (the same maestro-pianola-supervisor.json the desktop reads).
  * They do not spawn anything themselves: the desktop supervisor watches that file
  * and reconciles within ~1s, spawning/killing the actual watch/orchestrate child
@@ -15,13 +16,14 @@
 import {
 	readPianolaSupervisorTargets,
 	updatePianolaSupervisorTargets,
-	upsertPianolaSupervisorTarget,
 	removePianolaSupervisorTarget,
 	type PianolaSupervisedTarget,
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
 import { ensurePianolaEnabled } from './pianola';
-import { validatePianolaSupervisedTarget } from '../../shared/pianola/storage';
+import { MaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
+import type { PianolaSupervisorSnapshot } from '../../main/ipc/handlers/pianola';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -71,39 +73,62 @@ function parsePositiveInt(raw: string | undefined, min: number): number | undefi
 	return Math.max(min, parseInt(match[1], 10));
 }
 
-/** Create or replace an identity-based selection, retaining its pause state on edit. */
-export function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): void {
+/** Ask the host to reconcile an owner-authorized whole-agent selection. */
+export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
-	const existing = options.id
-		? readPianolaSupervisorTargets().find((target) => target.id === options.id)
-		: undefined;
-	if (options.id && (!existing || existing.kind !== 'watch-scope')) {
-		fail('No watch scope with that id', options.json);
-	}
 	const ids = (value?: string): string[] =>
 		(value ?? '')
 			.split(',')
 			.map((id) => id.trim())
 			.filter(Boolean);
-	const target = validatePianolaSupervisedTarget({
-		...existing,
-		id: existing?.id ?? generateUUID(),
-		kind: 'watch-scope',
-		enabled: existing?.enabled ?? false,
-		createdAt: existing?.createdAt ?? Date.now(),
-		managerAgentId: options.manager,
-		selection: {
-			label: options.label,
-			mode: 'agents-and-groups',
-			agentIds: ids(options.agents),
-			groupIds: ids(options.groups),
-			excludedAgentIds: ids(options.exclude),
-		},
-	});
-	if (!target) fail('Invalid scope selection or manager', options.json);
-	upsertPianolaSupervisorTarget(target);
-	if (options.json) console.log(JSON.stringify({ success: true, target }));
-	else console.log(`Saved watch scope ${target.id} (${target.enabled ? 'enabled' : 'paused'}).`);
+	const client = new MaestroClient();
+	try {
+		await client.connect();
+		const response = await client.sendCommand<{
+			ok: boolean;
+			error?: string;
+			result: PianolaSupervisorSnapshot;
+		}>(
+			{
+				type: 'bridge.invoke',
+				channel: 'pianola:supervisor-add',
+				args: [
+					{
+						id: options.id,
+						kind: 'watch-scope',
+						managerAgentId: options.manager,
+						selection: {
+							label: options.label,
+							mode: 'agents-and-groups',
+							agentIds: ids(options.agents),
+							groupIds: ids(options.groups),
+							excludedAgentIds: ids(options.exclude),
+						},
+					},
+				],
+			},
+			'bridge.response'
+		);
+		if (!response.ok) fail(response.error ?? 'Scope host request failed', options.json);
+		const migration = response.result.migration;
+		if (!migration || migration.status === 'NeedsConfiguration') {
+			if (options.json) console.log(JSON.stringify({ success: false, migration }));
+			else console.error(migration?.reason ?? 'Scope host service unavailable');
+			process.exitCode = 1;
+			return;
+		}
+		const target = response.result.targets.find((entry) => entry.id === migration.scopeId);
+		if (options.json) console.log(JSON.stringify({ success: true, target, migration }));
+		else
+			console.log(
+				`Saved watch scope ${migration.scopeId} (${target?.enabled ? 'enabled' : 'paused'}).`
+			);
+	} catch (error) {
+		exitIfMaestroNotRunning(error, options);
+		throw error;
+	} finally {
+		client.disconnect();
+	}
 }
 
 /** Register (or refresh) a supervised tab watcher. */

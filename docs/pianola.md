@@ -26,6 +26,10 @@ With no rules at all, Pianola is a monitor. It tells you who is stuck and stays 
 
 The host supervisor API can transfer legacy tab watches into a selected agent/group scope. It requires an explicit standing manager policy and a native census. Enabled legacy watches are fenced at host send admission before the scope takes ownership; disabled tab watches remain concrete exceptions, while sibling chats and local worktree descendants follow the selected scope.
 
+The existing selection editor uses the verified native owner connection to authorize observation. The host verifies the chosen manager against its native census and derives the rule revision from the actual saved rules. It creates a standing observation policy without changing answer rules. Repeating an identical selection reuses its scope under the registry lock and retains pauses and existing policies.
+
+`maestro-cli pianola supervise scope` uses the same host service over the bridge. The CLI can reconcile an exact selection with an existing enabled standing policy, including legacy takeover. It cannot create owner consent or change the selected agents, manager, policy, or pause state. Save a new selection in the owner UI first; otherwise the host returns `NeedsConfiguration` without changing ownership. A CLI secret, agent environment variable, or supplied manager field does not establish human ownership.
+
 The registry retains the handover receipt and retired-owner fences across restart. Existing questions are baselined before publication, and uncertain deliveries are not resent. This transfer changes observation coverage; it does not add answer rules.
 
 The API returns `NeedsConfiguration` with a concrete reason if the manager, policy, or old owner's send fence cannot be verified. An older manager handoff containing an unbound direct-answer command also requires reconciliation before takeover. In these cases, existing legacy ownership is preserved. The host path does not migrate a running installation automatically.

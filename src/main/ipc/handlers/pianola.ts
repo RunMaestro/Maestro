@@ -15,7 +15,7 @@
  */
 
 import {
-	migratePianolaLegacyWatches,
+	configurePianolaScope,
 	type PianolaLegacyMigrationResult,
 } from '../../pianola/pianola-legacy-migration';
 import * as migrationStore from '../../pianola/pianola-store-main';
@@ -504,7 +504,10 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		// Validate the untrusted target at this boundary; fill id/createdAt/enabled
 		// when the caller omits them, then upsert and reconcile so the new child
 		// spawns without waiting for the file-watch debounce.
-		async (raw: unknown): Promise<PianolaSupervisorSnapshot> => {
+		async (
+			raw: unknown,
+			ownerAuthorized: () => boolean = () => false
+		): Promise<PianolaSupervisorSnapshot> => {
 			const candidate: Record<string, unknown> = isRecord(raw) ? { ...raw } : {};
 			// Handover receipts/fences are host results, never caller assertions.
 			delete candidate.legacyMigration;
@@ -517,7 +520,9 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			const target = validatePianolaSupervisedTarget(candidate);
 			if (!target) throw new Error('InvalidSupervisedTarget');
 			if (target.kind === 'watch-scope') {
-				const migration = await migratePianolaLegacyWatches(target, {
+				const migration = await configurePianolaScope(target, {
+					ownerAuthorized,
+					readRules: readRulesResult,
 					store: migrationStore,
 					featureEnabled: () => isPianolaEnabled(settingsStore),
 					canFence: (id) => supervisor.canFenceLegacyWatch(id),
@@ -529,7 +534,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 							tabs: [],
 						},
 				});
-				supervisor.reconcile();
+				if (migration.status !== 'NeedsConfiguration') supervisor.reconcile();
 				return { ...snapshot(), migration };
 			}
 			await upsertSupervisorTargetAsync(target);
@@ -634,12 +639,21 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		'pianola:supervisor-add',
 		async (event, target: unknown): Promise<PianolaSupervisorSnapshot> => {
 			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
-			if (isRecord(target) && target.kind === 'watch-scope') {
+			const transport: unknown = event;
+			const ownerAuthorized = (): boolean => {
 				const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
-				if (!isNativeOwnerTransport(event) || !identity.desktopIsOwner)
-					throw new Error('PianolaOwnerAuthorizationRequired');
-			}
-			return wrappedSupervisorAdd(event, target);
+				const user = getActingUser();
+				return (
+					(isNativeOwnerTransport(event) && identity.desktopIsOwner) ||
+					(isRecord(transport) &&
+						transport.type === 'bridge' &&
+						transport.cli !== true &&
+						!!user &&
+						!!identity.ownerWebUserId &&
+						user.id === identity.ownerWebUserId)
+				);
+			};
+			return wrappedSupervisorAdd(event, target, ownerAuthorized);
 		}
 	);
 
