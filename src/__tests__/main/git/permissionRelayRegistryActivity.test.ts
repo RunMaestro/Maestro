@@ -322,4 +322,193 @@ describe('standalone permission relay registry mutation activity', () => {
 			await idle();
 		}
 	);
+	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+		'refuses pending setup before timer creation or notification under %s',
+		async (root) => {
+			const binding = register();
+			const notify = vi.fn();
+			listen(notify);
+			const snapshot = registry.getPendingPermissionSnapshot();
+			const hold = await idle(root);
+			const schedule = vi.spyOn(globalThis, 'setTimeout');
+			expect(() => registry.createPending('request', binding.token)).toThrow(/reserved/);
+			expect(schedule).not.toHaveBeenCalled();
+			expect(notify).not.toHaveBeenCalled();
+			expect(registry.getPendingPermissionSnapshot()).toEqual(snapshot);
+			expect(registry.relayRegistryStats()).toEqual({ bindings: 1, pending: 0 });
+			hold.release();
+			const pending = registry.createPending('request', binding.token);
+			expect(registry.resolvePending('request', decision)).toBe(true);
+			await expect(pending).resolves.toBe(decision);
+		}
+	);
+
+	it('admits pending setup while reservation canonicalization is still pending', async () => {
+		const binding = register();
+		let canonicalize!: (root: string) => void;
+		vi.mocked(fs.realpath).mockImplementationOnce(
+			() => new Promise<string>((resolve) => (canonicalize = resolve))
+		);
+		const reservation = reserve();
+		const listener = vi.fn(() => expect(active).toBe(1));
+		const off = listen(listener);
+		const pending = registry.createPending('request', binding.token);
+		expect(listener).toHaveBeenCalledOnce();
+		off();
+		canonicalize(target);
+		const hold = await reservation;
+		expect(hold.status).toBe('reserved-partially');
+		if (hold.status !== 'reserved-partially') throw new Error('Expected partial reservation');
+		expect(() => registry.createPending('late', binding.token)).toThrow(/reserved/);
+		hold.release();
+		registry.resolvePending('request', decision);
+		await pending;
+	});
+
+	it('holds timer setup, unref and reentrant decision delivery through synchronous completion', async () => {
+		const binding = register();
+		const schedule = globalThis.setTimeout;
+		const unref = vi.fn();
+		vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce((callback, delay) => {
+			expect(active).toBe(1);
+			const timer = schedule(callback, delay);
+			const original = timer.unref.bind(timer);
+			vi.spyOn(timer, 'unref').mockImplementation(() => {
+				expect(active).toBe(1);
+				unref();
+				return original();
+			});
+			return timer;
+		});
+		const version = registry.getPendingPermissionSnapshot().version;
+		const off = listen((snapshot) => {
+			expect(active).toBe(1);
+			expect(snapshot).toEqual({ version: version + 1, processIds: ['agent-ai'] });
+			off();
+			const nested = listen(() => expect(active).toBe(2));
+			expect(registry.resolvePending('request', decision)).toBe(true);
+			nested();
+			expect(active).toBe(1);
+		});
+		const pending = registry.createPending('request', binding.token, 1234);
+		expect(unref).toHaveBeenCalledOnce();
+		expect(globalThis.setTimeout).toHaveBeenCalledWith(expect.any(Function), 1234);
+		await expect(pending).resolves.toBe(decision);
+		await idle();
+	});
+
+	it.each(['timer', 'unref', 'notification'])(
+		'releases pending setup on %s failure while preserving Promise rejection and residue',
+		async (stage) => {
+			const binding = register();
+			const error = new Error(`${stage} failed`);
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			if (stage === 'notification')
+				listen(() => {
+					expect(active).toBe(1);
+					throw error;
+				});
+			else {
+				const schedule = globalThis.setTimeout;
+				vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce((callback, delay) => {
+					expect(active).toBe(1);
+					if (stage === 'timer') throw error;
+					timer = schedule(callback, delay);
+					vi.spyOn(timer, 'unref').mockImplementationOnce(() => {
+						expect(active).toBe(1);
+						throw error;
+					});
+					return timer;
+				});
+			}
+			let pending!: ReturnType<typeof registry.createPending>;
+			expect(() => (pending = registry.createPending('request', binding.token))).not.toThrow();
+			await expect(pending).rejects.toBe(error);
+			if (timer) clearTimeout(timer);
+			expect(registry.relayRegistryStats().pending).toBe(stage === 'notification' ? 1 : 0);
+			for (const off of subscriptions) off();
+			const hold = await idle();
+			hold.release();
+			binding.cleanup();
+		}
+	);
+
+	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+		'refuses subscribe and repeated unsubscribe before changing listeners under %s',
+		async (root) => {
+			const binding = register();
+			const oldListener = vi.fn();
+			const off = listen(oldListener);
+			const newListener = vi.fn();
+			const hold = await idle(root);
+			expect(() => listen(newListener)).toThrow(/reserved/);
+			expect(off).toThrow(/reserved/);
+			hold.release();
+			const pending = registry.createPending('request', binding.token);
+			expect(oldListener).toHaveBeenCalledOnce();
+			expect(newListener).not.toHaveBeenCalled();
+			off();
+			const next = await idle(root);
+			expect(off).toThrow(/reserved/);
+			next.release();
+			const stop = listen(newListener);
+			registry.resolvePending('request', decision);
+			await pending;
+			expect(oldListener).toHaveBeenCalledOnce();
+			expect(newListener).toHaveBeenCalledOnce();
+			stop();
+			await idle();
+		}
+	);
+
+	it.each(['subscribe', 'unsubscribe'])(
+		'holds %s Set mutation and releases on the identical synchronous error',
+		async (operation) => {
+			const listener = vi.fn();
+			const off = operation === 'unsubscribe' ? listen(listener) : undefined;
+			const method = operation === 'subscribe' ? 'add' : 'delete';
+			const original = Set.prototype[method];
+			const error = new Error('listener set failed');
+			const mutate = vi.spyOn(Set.prototype, method).mockImplementation(function (
+				this: Set<unknown>,
+				value
+			) {
+				if (value === listener) {
+					expect(active).toBe(1);
+					throw error;
+				}
+				return Reflect.apply(original, this, [value]);
+			});
+			try {
+				expect(() => (off ? off() : listen(listener))).toThrow(error);
+			} finally {
+				mutate.mockRestore();
+			}
+			expect(active).toBe(0);
+			if (off) off();
+			await idle();
+		}
+	);
+
+	it('keeps pending creation admitted through reentrant native close', async () => {
+		const child = new EventEmitter();
+		vi.mocked(spawn).mockReturnValueOnce(child as ReturnType<typeof spawn>);
+		const { withWorktreeTurnActivity } = await import('../../../main/git/worktreeTurnActivity');
+		withWorktreeTurnActivity(
+			(_start, _observe, spawnChild) => spawnChild('agent', [], {}),
+			() => {}
+		);
+		const binding = register();
+		const off = listen(() => {
+			expect(active).toBe(2);
+			child.emit('close', 0);
+			expect(active).toBe(1);
+		});
+		const pending = registry.createPending('request', binding.token);
+		off();
+		const hold = await idle();
+		hold.release();
+		registry.resolvePending('request', decision);
+		await pending;
+	});
 });

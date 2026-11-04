@@ -47,10 +47,20 @@ export function getPendingPermissionSnapshot(): PendingPermissionSnapshot {
 export function subscribePendingPermissions(
 	listener: (snapshot: PendingPermissionSnapshot) => void
 ): () => void {
-	pendingListeners.add(listener);
-	return () => {
-		pendingListeners.delete(listener);
-	};
+	const release = beginGlobalWorktreeActivity();
+	try {
+		pendingListeners.add(listener);
+		return () => {
+			const releaseUnsubscribe = beginGlobalWorktreeActivity();
+			try {
+				pendingListeners.delete(listener);
+			} finally {
+				releaseUnsubscribe();
+			}
+		};
+	} finally {
+		release();
+	}
 }
 
 function notifyPendingPermissions(): void {
@@ -120,22 +130,27 @@ export function createPending(
 	token: string,
 	timeoutMs: number = RELAY_DECISION_TIMEOUT_MS
 ): Promise<PermissionDecision> {
-	return new Promise<PermissionDecision>((resolve) => {
-		const timer = setTimeout(() => {
-			pending.delete(requestId);
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return new Promise<PermissionDecision>((resolve) => {
+			const timer = setTimeout(() => {
+				pending.delete(requestId);
+				notifyPendingPermissions();
+				resolve({
+					behavior: 'deny',
+					message: 'Permission request timed out with no response.',
+				});
+			}, timeoutMs);
+			// Don't keep the event loop alive purely for a pending prompt.
+			if (typeof timer.unref === 'function') {
+				timer.unref();
+			}
+			pending.set(requestId, { resolve, timer, token });
 			notifyPendingPermissions();
-			resolve({
-				behavior: 'deny',
-				message: 'Permission request timed out with no response.',
-			});
-		}, timeoutMs);
-		// Don't keep the event loop alive purely for a pending prompt.
-		if (typeof timer.unref === 'function') {
-			timer.unref();
-		}
-		pending.set(requestId, { resolve, timer, token });
-		notifyPendingPermissions();
-	});
+		});
+	} finally {
+		release();
+	}
 }
 
 /**

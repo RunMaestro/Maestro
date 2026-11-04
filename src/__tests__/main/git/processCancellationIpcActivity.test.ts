@@ -179,8 +179,8 @@ describe('process cancellation and control IPC activity', () => {
 				expect(registry.relayRegistryStats().pending).toBe(0);
 				await idle();
 			} finally {
-				unsubscribe();
 				for (const release of releases) release();
+				unsubscribe();
 				registry.resolvePending('request', { behavior: 'deny', message: 'test cleanup' });
 			}
 		});
