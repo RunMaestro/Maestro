@@ -11,6 +11,68 @@ import {
 } from '../../../../main/web-server/services/socket-send';
 
 describe('bounded WebSocket output', () => {
+	it.each(['resume', 'close', 'backlog', 'timeout'] as const)(
+		'keeps one scheduled chunk continuation across ACKs and %s',
+		async (action) => {
+			vi.useFakeTimers();
+			const continuations: Array<() => void> = [];
+			const immediate = vi.spyOn(globalThis, 'setImmediate').mockImplementation(((
+				callback: () => void
+			) => {
+				continuations.push(callback);
+				return {} as NodeJS.Immediate;
+			}) as typeof setImmediate);
+			const frames: Array<{ data: string; offset: number; final: boolean }> = [];
+			const socket = Object.assign(new EventEmitter(), {
+				readyState: WebSocket.OPEN,
+				bufferedAmount: 0,
+				send: vi.fn((data: string, _options: unknown, callback: () => void) => {
+					const frame = JSON.parse(data);
+					frames.push(frame);
+					if (frames.length < 16)
+						acknowledgeWebSocketChunk(socket, frame.offset + frame.data.length);
+					callback();
+				}),
+				close: vi.fn(),
+				terminate: vi.fn(),
+			}) as unknown as WebSocket;
+			try {
+				enableWebSocketChunks(socket);
+				const payload = 'a😀漢'.repeat(300_000);
+				expect(sendBounded(socket, payload)).toBe(true);
+				expect(frames).toHaveLength(16);
+				expect(continuations).toHaveLength(1);
+				const last = frames.at(-1)!;
+				if (action !== 'timeout') {
+					acknowledgeWebSocketChunk(socket, last.offset + last.data.length);
+					acknowledgeWebSocketChunk(socket, last.offset + last.data.length);
+				}
+				expect(continuations).toHaveLength(1);
+				if (action === 'close') socket.emit('close');
+				if (action === 'backlog')
+					expect(sendBounded(socket, 'x'.repeat(WEB_CLIENT_MAX_BUFFERED_BYTES + 1))).toBe(false);
+				if (action === 'timeout') vi.advanceTimersByTime(30_000);
+				continuations[0]();
+				if (action === 'resume') {
+					expect(frames.length).toBeGreaterThan(16);
+					let offset = 0;
+					for (const frame of frames) {
+						expect(frame.offset).toBe(offset);
+						expect(frame.data).toBe(payload.slice(offset, offset + frame.data.length));
+						offset += frame.data.length;
+					}
+				} else {
+					expect(frames).toHaveLength(16);
+					if (action !== 'close') expect(socket.close).toHaveBeenCalledOnce();
+				}
+			} finally {
+				socket.emit('close');
+				immediate.mockRestore();
+				vi.clearAllTimers();
+				vi.useRealTimers();
+			}
+		}
+	);
 	it('does not revive a chunk transfer when ACK and close race a yielded continuation', async () => {
 		const frames: Array<{ data: string; offset: number; final: boolean }> = [];
 		const socket = Object.assign(new EventEmitter(), {
