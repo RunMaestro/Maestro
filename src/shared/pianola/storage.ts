@@ -588,6 +588,10 @@ export interface PianolaSupervisedTarget {
 	selection?: PianolaScopeSelection;
 	managerAgentId?: string;
 	delegationPolicy?: PianolaDelegationPolicy;
+	/** Durable handover tombstone: never executable, even if enabled is edited later. */
+	migratedToScopeId?: string;
+	/** Same registry commit as the fences; checkpoints are written before publication. */
+	legacyMigration?: { version: 1; watchIds: string[]; completedAt: number };
 	/** Auto-watch targets are removed when their agent session is closed. */
 	autoCreated?: boolean;
 	/** Watch only: hours idle before the watcher retires itself (0 = never). */
@@ -678,6 +682,35 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 		target.managerAgentId = raw.managerAgentId;
 	}
 
+	if (raw.migratedToScopeId !== undefined) {
+		if (
+			target.kind !== 'watch' ||
+			typeof raw.migratedToScopeId !== 'string' ||
+			!isPianolaScopeId(raw.migratedToScopeId)
+		)
+			return null;
+		target.migratedToScopeId = raw.migratedToScopeId;
+		target.enabled = false;
+	}
+	if (raw.legacyMigration !== undefined) {
+		const migration = raw.legacyMigration;
+		if (
+			target.kind !== 'watch-scope' ||
+			!isRecord(migration) ||
+			migration.version !== 1 ||
+			!Array.isArray(migration.watchIds) ||
+			migration.watchIds.length > 10000 ||
+			migration.watchIds.some((id) => typeof id !== 'string' || !id || id.length > 500) ||
+			!Number.isSafeInteger(migration.completedAt) ||
+			(migration.completedAt as number) < 0
+		)
+			return null;
+		target.legacyMigration = {
+			version: 1,
+			watchIds: [...new Set(migration.watchIds as string[])],
+			completedAt: migration.completedAt as number,
+		};
+	}
 	if (raw.delegationPolicy !== undefined) {
 		const policy = validatePianolaDelegationPolicy(raw.delegationPolicy);
 		if (

@@ -1,3 +1,4 @@
+import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
 	ConfirmQueueItem,
 	ReleaseQueueItem,
@@ -1749,6 +1750,14 @@ export class WebServer {
 		}
 	): void {
 		this.broadcastService.broadcastSessionStateChange(sessionId, state, additionalData);
+	}
+
+	/** Host-only native census used by owner-authorized Pianola handover. */
+	getPianolaScopeSnapshot() {
+		return pianolaScopeSnapshotFromDesktop({
+			success: true,
+			...this.callbackRegistry.listDesktopSessions(),
+		});
 	}
 
 	broadcastSessionAdded(session: SessionBroadcastData): void {

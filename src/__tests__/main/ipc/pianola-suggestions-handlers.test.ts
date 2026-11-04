@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAsActingUser } from '../../../main/web-server/auth/acting-user';
 import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
+import type { PianolaScopeCheckpoint } from '../../../shared/pianola/pianola-scope-checkpoint';
 import type { PianolaRule } from '../../../shared/pianola/types';
 import type { PianolaSuggestionsFile } from '../../../shared/pianola/storage';
 import type { PianolaAsk, PianolaProgram } from '../../../shared/pianola/pianola-programs';
@@ -62,6 +63,8 @@ const store = vi.hoisted(() => ({
 	readRulesResult: vi.fn(() => ({ rules: [] as PianolaRule[], malformed: false })),
 	writeRules: vi.fn((rules: PianolaRule[]) => rules),
 	readDecisions: vi.fn(() => []),
+	readScopeCheckpoint: vi.fn(() => null as PianolaScopeCheckpoint | null),
+	writeScopeCheckpoint: vi.fn(),
 	readSupervisorTargets: vi.fn(() => [] as PianolaSupervisedTarget[]),
 	writeSupervisorTargetsAsync: vi.fn(async (targets: PianolaSupervisedTarget[]) => targets),
 	updateSupervisorTargetsAsync: vi.fn(
@@ -106,6 +109,7 @@ function settingsStore(pianola: boolean): { get: (key: string) => unknown } {
 
 const supervisor = {
 	getHealth: () => [],
+	canFenceLegacyWatch: vi.fn(() => true),
 	reconcile: vi.fn(),
 } as unknown as Parameters<typeof registerPianolaHandlers>[0]['supervisor'];
 
@@ -151,6 +155,67 @@ beforeEach(() => {
 	store.updateSupervisorTargetsAsync.mockImplementation(async (update) =>
 		update(store.readSupervisorTargets())
 	);
+});
+
+describe('supervisor scope handover adapter', () => {
+	it('uses the shared migration path and returns its concrete result through the existing API', async () => {
+		const scopeId = '11111111-1111-4111-8111-111111111111';
+		let targets: PianolaSupervisedTarget[] = [
+			{ id: 'old', kind: 'watch', enabled: true, createdAt: 0, agentId: 'owner', tabId: 'old-tab' },
+		];
+		store.readSupervisorTargets.mockImplementation(() => targets);
+		store.updateSupervisorTargetsAsync.mockImplementation(
+			async (update) => (targets = update(targets))
+		);
+		registerPianolaHandlers({
+			settingsStore: settingsStore(true),
+			supervisor,
+			getWebServer: (() => ({
+				getPianolaScopeSnapshot: () => ({
+					complete: true,
+					capturedAt: 100,
+					owners: [
+						{ id: 'owner', cwd: '/project', groupId: null, isPianola: false, remote: false },
+						{ id: 'manager', cwd: '/manager', groupId: null, isPianola: true, remote: false },
+					],
+					tabs: [],
+				}),
+			})) as never,
+		});
+		const result = await handlers.get('pianola:supervisor-add')!(
+			{},
+			{
+				id: scopeId,
+				kind: 'watch-scope',
+				legacyMigration: { version: 1, watchIds: ['forged'], completedAt: 999 },
+				enabled: true,
+				createdAt: 1,
+				managerAgentId: 'manager',
+				selection: {
+					label: 'Owner',
+					mode: 'agents-and-groups',
+					agentIds: ['owner'],
+					groupIds: [],
+					excludedAgentIds: [],
+				},
+				delegationPolicy: {
+					version: 1,
+					revision: 1,
+					enabled: true,
+					managerAgentId: 'manager',
+					coverage: 'selected-agents',
+					ruleSetRevision: 'rules',
+				},
+			}
+		);
+		expect(result).toMatchObject({ migration: { status: 'migrated', scopeId, watchIds: ['old'] } });
+		expect(targets.find((t) => t.id === 'old')).toMatchObject({
+			enabled: false,
+			migratedToScopeId: scopeId,
+		});
+		expect(store.writeScopeCheckpoint).toHaveBeenCalledOnce();
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
+	});
 });
 
 describe('pianola suggestions IPC handlers', () => {

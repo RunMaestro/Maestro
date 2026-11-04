@@ -14,6 +14,11 @@
  * IPC failure.
  */
 
+import {
+	migratePianolaLegacyWatches,
+	type PianolaLegacyMigrationResult,
+} from '../../pianola/pianola-legacy-migration';
+import * as migrationStore from '../../pianola/pianola-store-main';
 import { ipcMain, type BrowserWindow } from 'electron';
 import type { MemoryRequest } from '../../../shared/pianola/memory';
 import { getPianolaMemory } from '../../pianola/memory-host';
@@ -90,6 +95,7 @@ const LOG_CONTEXT = '[Pianola]';
 
 /** Snapshot returned by every supervisor channel: persisted targets + live health. */
 export interface PianolaSupervisorSnapshot {
+	migration?: PianolaLegacyMigrationResult;
 	targets: PianolaSupervisedTarget[];
 	health: PianolaSupervisorHealth[];
 	checkpoints: Array<{
@@ -500,6 +506,9 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		// spawns without waiting for the file-watch debounce.
 		async (raw: unknown): Promise<PianolaSupervisorSnapshot> => {
 			const candidate: Record<string, unknown> = isRecord(raw) ? { ...raw } : {};
+			// Handover receipts/fences are host results, never caller assertions.
+			delete candidate.legacyMigration;
+			delete candidate.migratedToScopeId;
 			if (typeof candidate.id !== 'string' || candidate.id.length === 0) {
 				candidate.id = generateUUID();
 			}
@@ -507,6 +516,22 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			if (candidate.enabled === undefined) candidate.enabled = true;
 			const target = validatePianolaSupervisedTarget(candidate);
 			if (!target) throw new Error('InvalidSupervisedTarget');
+			if (target.kind === 'watch-scope') {
+				const migration = await migratePianolaLegacyWatches(target, {
+					store: migrationStore,
+					featureEnabled: () => isPianolaEnabled(settingsStore),
+					canFence: (id) => supervisor.canFenceLegacyWatch(id),
+					snapshot: () =>
+						deps.getWebServer?.()?.getPianolaScopeSnapshot() ?? {
+							complete: false,
+							capturedAt: Date.now(),
+							owners: [],
+							tabs: [],
+						},
+				});
+				supervisor.reconcile();
+				return { ...snapshot(), migration };
+			}
 			await upsertSupervisorTargetAsync(target);
 			supervisor.reconcile();
 			return snapshot();

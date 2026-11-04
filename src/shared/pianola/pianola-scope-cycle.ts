@@ -147,13 +147,19 @@ export function pianolaCoverageRegistryFingerprint(targets: PianolaSupervisedTar
 										})
 									: null,
 						}
-					: { id: target.id, enabled: target.enabled, agentId: target.agentId, tabId: target.tabId }
+					: {
+							id: target.id,
+							enabled: target.enabled,
+							agentId: target.agentId,
+							tabId: target.tabId,
+							migratedToScopeId: target.migratedToScopeId ?? null,
+						}
 			)
 			.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 	);
 }
 
-function scopesFrom(targets: PianolaSupervisedTarget[]): PianolaScopeCandidate[] {
+function scopesFrom(targets: PianolaSupervisedTarget[]) {
 	if (new Set(targets.map((target) => target.id)).size !== targets.length)
 		throw new Error('Ambiguous Pianola registry IDs');
 	return targets
@@ -535,6 +541,10 @@ export async function runPianolaScopeCycle(
 			result.issues.push(`Transcript cursor unavailable: ${tab.agentId}/${tab.tabId}`);
 			continue;
 		}
+		// A handover is an enrollment barrier even if an older worker overwrote
+		// its prepared checkpoint. Busy historical asks never become new work.
+		const historicalAtHandover =
+			scope.legacyMigration !== undefined && tab.createdAt <= scope.legacyMigration.completedAt;
 		const binding = pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners);
 		const needsBaseline =
 			firstActivation ||
@@ -556,7 +566,7 @@ export async function runPianolaScopeCycle(
 				tabId: tab.tabId,
 				bindingFingerprint: binding,
 				baseline: createdAfterActivation && !tab.paused ? null : tab.cursor,
-				baselineBusy: tab.busy && !tab.paused,
+				baselineBusy: tab.busy && !tab.paused && !historicalAtHandover,
 				lastSeen: createdAfterActivation && !tab.paused ? null : tab.cursor,
 				state:
 					createdAfterActivation && !tab.paused
@@ -572,7 +582,7 @@ export async function runPianolaScopeCycle(
 			savedByKey.set(key, saved);
 		} else if (needsBaseline || tab.paused) {
 			saved.baseline = tab.cursor;
-			saved.baselineBusy = tab.busy && !tab.paused;
+			saved.baselineBusy = tab.busy && !tab.paused && !historicalAtHandover;
 			saved.lastSeen = tab.cursor;
 			saved.bindingFingerprint = binding;
 			saved.state = initialWatchState();
@@ -1054,6 +1064,10 @@ export function validatePianolaScopeDelivery(
 		checkpoint.configurationFingerprint !== guard.configurationFingerprint ||
 		snapshot.capturedAt < (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt) ||
 		!saved ||
+		(requireIntent &&
+			!saved.baselineBusy &&
+			saved.baseline !== null &&
+			guard.cursor.count <= saved.baseline.count) ||
 		saved.status !== 'active' ||
 		saved.bindingFingerprint !== guard.bindingFingerprint ||
 		(requireIntent &&

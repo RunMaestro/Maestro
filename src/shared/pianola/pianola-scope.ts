@@ -100,6 +100,7 @@ export interface PianolaScopeCandidate {
 }
 
 export interface PianolaExplicitWatch {
+	migratedToScopeId?: string;
 	agentId?: string;
 	tabId?: string;
 	enabled: boolean;
@@ -263,7 +264,8 @@ export function resolvePianolaScopeOwnership(
 		return { kind: 'excluded', reason: 'manager agent' };
 	}
 	const explicit = watches.filter(
-		(watch) => watch.agentId === tab.agentId && watch.tabId === tab.tabId
+		(watch) =>
+			!watch.migratedToScopeId && watch.agentId === tab.agentId && watch.tabId === tab.tabId
 	);
 	if (explicit.some((watch) => !watch.enabled))
 		return { kind: 'excluded', reason: 'disabled watch' };

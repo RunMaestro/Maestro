@@ -17,6 +17,10 @@
  */
 
 import * as fs from 'fs';
+import { hostCallerRuns } from '../agent-run/caller-identity';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../shared/agentDelegation';
+import type { PluginToolRunProofFile } from '../plugins/plugin-tool-run-proof-file';
+import { PluginAuthorityError } from '../plugins/plugin-authority';
 import * as path from 'path';
 import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
 import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
@@ -95,6 +99,7 @@ interface SupervisedChild {
 	// Set true when we kill the child on purpose (disable/remove/quit) so the
 	// exit handler treats it as stopped instead of crashing and restarting.
 	stopping: boolean;
+	legacyProof?: PluginToolRunProofFile;
 }
 
 /**
@@ -179,10 +184,17 @@ export class PianolaSupervisor {
 		);
 		return readSupervisorTargets().filter((target) => {
 			if (target.kind === 'program') return !paused.has(target.programId ?? '');
-			if (target.kind === 'watch') return !pausedLeads.has(target.agentId);
+			if (target.kind === 'watch')
+				return !target.migratedToScopeId && !pausedLeads.has(target.agentId);
 			const plan = plans.find((plan) => plan.id === target.planId);
 			return !plan || (!planProgress(plan).complete && !paused.has(plan.programId ?? ''));
 		});
+	}
+
+	/** A running pre-proof worker cannot be migrated by killing it and guessing. */
+	canFenceLegacyWatch(id: string): boolean {
+		const entry = this.children.get(id);
+		return !!entry?.child && !entry.stopping && !!entry.legacyProof;
 	}
 
 	/** Register future top-level agents and retire their watches when they close. */
@@ -454,6 +466,8 @@ export class PianolaSupervisor {
 				entry.backoffTimer = undefined;
 			}
 			entry.stopping = true;
+			entry.legacyProof?.dispose();
+			entry.legacyProof = undefined;
 			entry.state = 'stopped';
 			const child = entry.child;
 			if (child && child.exitCode === null && child.signalCode === null) {
@@ -568,6 +582,43 @@ export class PianolaSupervisor {
 		entry.target = target;
 		entry.stopping = false;
 
+		// Bind legacy workers to the ordinary host caller ingress. Its assertActive
+		// executes at every send, so registry publication fences even a late reply.
+		entry.legacyProof?.dispose();
+		entry.legacyProof = undefined;
+		if (target.kind === 'watch') {
+			try {
+				entry.legacyProof = hostCallerRuns.issue(
+					{ agentId: target.agentId!, tabId: target.tabId!, spawnGeneration: generateUUID() },
+					{
+						signal: new AbortController().signal,
+						unattended: true,
+						assertActive: () => {
+							const current = readSupervisorTargets().find(
+								(candidate) => candidate.id === target.id
+							);
+							if (
+								!this.deps.isEnabled() ||
+								entry!.stopping ||
+								this.children.get(target.id) !== entry ||
+								!current?.enabled ||
+								current.migratedToScopeId ||
+								current.agentId !== target.agentId ||
+								current.tabId !== target.tabId
+							)
+								throw new PluginAuthorityError('PLUGIN_DENIED');
+						},
+					},
+					path.dirname(supervisorFilePath())
+				);
+			} catch (error) {
+				if (!(error instanceof PluginAuthorityError)) throw error;
+				logger.warn(
+					'Legacy watcher has no verified send fence; takeover requires configuration',
+					LOG_CONTEXT
+				);
+			}
+		}
 		let child: ChildProcess;
 		try {
 			child = this.spawnChild(process.execPath, [cliScriptPath, ...args], {
@@ -576,6 +627,7 @@ export class PianolaSupervisor {
 					// In packaged Electron, process.execPath is the app binary, not
 					// Node; without this it would launch the app instead of the CLI.
 					ELECTRON_RUN_AS_NODE: '1',
+					[CALLER_RUN_PROOF_FILE_ENV_VAR]: entry.legacyProof?.runTokenFile ?? '',
 					// Tell the watch/orchestrate process which agent IS Pianola (so it
 					// never acts on itself and can route decision handoffs) and where the
 					// bundled CLI is for any sub-invocations.
@@ -589,6 +641,8 @@ export class PianolaSupervisor {
 				// Not detached: supervised children must die with the desktop app.
 			});
 		} catch (error) {
+			entry.legacyProof?.dispose();
+			entry.legacyProof = undefined;
 			entry.lastError = error instanceof Error ? error.message : String(error);
 			const errCode = (error as NodeJS.ErrnoException)?.code;
 			if (errCode !== 'ENOENT') {
@@ -616,6 +670,8 @@ export class PianolaSupervisor {
 		});
 
 		child.on('exit', (code, signal) => {
+			entry.legacyProof?.dispose();
+			entry.legacyProof = undefined;
 			entry.child = null;
 			// Intentional kill (disable/remove/quit): stay stopped, never restart.
 			if (entry.stopping) {
@@ -721,6 +777,8 @@ export class PianolaSupervisor {
 			entry.backoffTimer = undefined;
 		}
 		entry.stopping = true;
+		entry.legacyProof?.dispose();
+		entry.legacyProof = undefined;
 		entry.state = 'stopped';
 		const child = entry.child;
 		if (child && child.exitCode === null && child.signalCode === null) {

@@ -22,6 +22,14 @@ That agent is a real chat agent, so you can talk to it like any other. Its works
 
 With no rules at all, Pianola is a monitor. It tells you who is stuck and stays out of the way. That is a genuinely useful mode and it is where you should start, because the rules worth writing are the ones your own agents teach you they need.
 
+## Controlled legacy handover
+
+The host supervisor API can transfer legacy tab watches into a selected agent/group scope. It requires an explicit standing manager policy and a native census. Enabled legacy watches are fenced at host send admission before the scope takes ownership; disabled tab watches remain concrete exceptions, while sibling chats and local worktree descendants follow the selected scope.
+
+The registry retains the handover receipt and retired-owner fences across restart. Existing questions are baselined before publication, and uncertain deliveries are not resent. This transfer changes observation coverage; it does not add answer rules.
+
+The API returns `NeedsConfiguration` with a concrete reason if the manager, policy, or old owner's send fence cannot be verified. An older manager handoff containing an unbound direct-answer command also requires reconciliation before takeover. In these cases, existing legacy ownership is preserved. The host path does not migrate a running installation automatically.
+
 ## The workspace
 
 Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab strip. The manager and rules also open from the Settings tab and from the command palette under **Pianola**.

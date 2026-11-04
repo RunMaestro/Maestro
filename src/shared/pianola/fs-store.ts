@@ -705,7 +705,15 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	}
 
 	function persistSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
-		const validated = validatePianolaSupervisorFile({ targets }).targets;
+		// A stale writer cannot resurrect an owner after an atomic handover.
+		const fences = readSupervisorTargets().filter((target) => target.migratedToScopeId);
+		const merged = targets.map((target) => {
+			const fence = fences.find((old) => old.id === target.id);
+			return fence ? { ...fence, enabled: false } : target;
+		});
+		for (const fence of fences)
+			if (!merged.some((target) => target.id === fence.id)) merged.push(fence);
+		const validated = validatePianolaSupervisorFile({ targets: merged }).targets;
 		writeJsonAtomic(PIANOLA_SUPERVISOR_FILENAME, { targets: validated });
 		return validated;
 	}
