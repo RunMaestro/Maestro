@@ -229,7 +229,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Write data to a process
 	ipcMain.handle(
 		'process:write',
-		withIpcErrorLogging(handlerOpts('write'), async (sessionId: string, data: string) => {
+		withProcessActivity(handlerOpts('write'), async (sessionId: string, data: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			logger.debug(`Writing to process: ${sessionId}`, LOG_CONTEXT, {
 				sessionId,
@@ -246,7 +246,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// src/shared/chatSteering.ts.
 	ipcMain.handle(
 		'process:steer',
-		withIpcErrorLogging(handlerOpts('steer'), async (sessionId: string, text: string) => {
+		withProcessActivity(handlerOpts('steer'), async (sessionId: string, text: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			logger.debug(`Steering running turn: ${sessionId}`, LOG_CONTEXT, {
 				sessionId,
@@ -322,15 +322,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 	ipcMain.handle('process:closeAgent', (_event, agentId: string) => {
-		const processManager = requireProcessManager(getProcessManager);
-		processManager.closeAgent(agentId);
-		return true;
+		const release = beginGlobalWorktreeActivity();
+		try {
+			const processManager = requireProcessManager(getProcessManager);
+			processManager.closeAgent(agentId);
+			return true;
+		} finally {
+			release();
+		}
 	});
 
 	// Resize PTY dimensions
 	ipcMain.handle(
 		'process:resize',
-		withIpcErrorLogging(
+		withProcessActivity(
 			handlerOpts('resize'),
 			async (sessionId: string, cols: number, rows: number) => {
 				const processManager = requireProcessManager(getProcessManager);

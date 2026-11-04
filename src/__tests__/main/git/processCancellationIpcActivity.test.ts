@@ -8,7 +8,10 @@ import type { ProcessHandlerDependencies } from '../../../main/ipc/handlers/proc
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
-vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('child_process', async (importOriginal) => ({
+	...(await importOriginal<typeof import('child_process')>()),
+	spawn: vi.fn(),
+}));
 vi.mock('../../../main/plugins/relay-conversations', () => ({
 	cancelRelayConversationTurn: vi.fn(),
 }));
@@ -39,22 +42,32 @@ import { addBreadcrumb } from '../../../main/utils/sentry';
 import { cancelRelayConversationTurn } from '../../../main/plugins/relay-conversations';
 import { cancelPendingDesktopSpawns } from '../../../main/ipc/handlers/process/handle-spawn';
 
-describe('process cancellation IPC activity', () => {
+describe('process cancellation and control IPC activity', () => {
 	const target = path.resolve('process-cancellation-target');
 	const operations = ['interrupt', 'kill', 'cancelCommand'] as const;
 	type Operation = (typeof operations)[number];
-	type Handler = (event: unknown, arg: unknown) => Promise<unknown>;
+	const inputOperations = ['write', 'steer', 'resize'] as const;
+	type InputOperation = (typeof inputOperations)[number];
+	type ControlOperation = InputOperation | 'closeAgent';
+	type Handler = (event: unknown, ...args: unknown[]) => unknown;
 	let gate: typeof import('../../../main/git/worktreeActivity');
 	let releases: Array<() => void>;
 	let active: number;
-	let manager: Record<'get' | Operation, ReturnType<typeof vi.fn>>;
+	let manager: Record<'get' | Operation | ControlOperation, ReturnType<typeof vi.fn>>;
 	let deps: ProcessHandlerDependencies;
-	const handler = (operation: Operation) =>
+	const handler = (operation: Operation | ControlOperation) =>
 		vi
 			.mocked(ipcMain.handle)
 			.mock.calls.find(([name]) => name === `process:${operation}`)![1] as Handler;
 	const run = (operation: Operation, event: unknown = {}) =>
 		handler(operation)(event, operation === 'cancelCommand' ? { sessionId: 'session' } : 'session');
+	const inputArgs = (op: ControlOperation): unknown[] =>
+		op === 'closeAgent'
+			? ['agent']
+			: op === 'resize'
+				? ['session', 120, 40]
+				: ['session', 'input\n'];
+	const control = (op: ControlOperation) => handler(op)({ clientId: 'bridge' }, ...inputArgs(op));
 	async function reservation(root = target) {
 		const hold = await gate.reserveWorktreeCleanup(root);
 		if (hold.status === 'reserved-partially') releases.push(hold.release);
@@ -84,6 +97,10 @@ describe('process cancellation IPC activity', () => {
 			interrupt: vi.fn(() => true),
 			kill: vi.fn(() => true),
 			cancelCommand: vi.fn(() => false),
+			write: vi.fn(() => true),
+			steer: vi.fn(async () => ({ verdict: 'sent' })),
+			resize: vi.fn(() => false),
+			closeAgent: vi.fn(),
 		};
 		deps = {
 			getProcessManager: vi.fn(() => manager),
@@ -114,6 +131,208 @@ describe('process cancellation IPC activity', () => {
 	afterEach(() => {
 		releases.forEach((release) => release());
 		vi.restoreAllMocks();
+	});
+
+	describe('input and control requests', () => {
+		it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+			'refuses input and control before setup or reporting under %s',
+			async (root) => {
+				await idle(root);
+				for (const op of inputOperations) await expect(control(op)).rejects.toThrow(/reserved/);
+				expect(() => control('closeAgent')).toThrow(/reserved/);
+				for (const work of [
+					deps.getProcessManager,
+					...Object.values(manager),
+					logger.debug,
+					logger.error,
+				])
+					expect(work).not.toHaveBeenCalled();
+			}
+		);
+		it.each(['write', 'steer'] as const)('refuses %s before inspecting input', async (op) => {
+			await idle();
+			const read = vi.fn();
+			await expect(handler(op)({}, 'session', new Proxy({}, { get: read }))).rejects.toThrow(
+				/reserved/
+			);
+			expect(read).not.toHaveBeenCalled();
+		});
+		it.each(inputOperations)('preserves %s arguments and results while admitted', async (op) => {
+			const value = op === 'steer' ? { verdict: 'refused', detail: 'finished' } : false;
+			vi.mocked(deps.getProcessManager).mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				return manager as unknown as ReturnType<ProcessHandlerDependencies['getProcessManager']>;
+			});
+			vi.mocked(logger.debug).mockImplementationOnce(() => expect(active).toBe(1));
+			manager[op].mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				return value;
+			});
+			await expect(control(op)).resolves.toBe(value);
+			expect(manager[op]).toHaveBeenCalledExactlyOnceWith(...inputArgs(op));
+			await idle();
+		});
+		it.each(inputOperations)(
+			'holds %s manager failures through transparent reporting',
+			async (op) => {
+				const failure = Error('manager lookup failed');
+				vi.mocked(deps.getProcessManager).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					throw failure;
+				});
+				vi.mocked(logger.error).mockImplementationOnce(() => expect(active).toBe(1));
+				await expect(control(op)).rejects.toBe(failure);
+				expect(manager[op]).not.toHaveBeenCalled();
+				expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+					`${op} error`,
+					expect.any(String),
+					expect.any(Object)
+				);
+				await idle();
+			}
+		);
+		it.each(['write', 'steer'] as const)(
+			'holds %s input getters and releases after reporting failure',
+			async (op) => {
+				const input = {
+					get length() {
+						expect(active).toBe(1);
+						return 6;
+					},
+				};
+				await handler(op)({}, 'session', input);
+				vi.mocked(logger.debug).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					throw Error('debug failed');
+				});
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					throw Error('report failed');
+				});
+				await expect(control(op)).rejects.toThrow('report failed');
+				expect(manager[op]).toHaveBeenCalledTimes(1);
+				await idle();
+			}
+		);
+		it('admits steering before pending canonicalization and retains concurrent verdicts independently', async () => {
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const hold = reservation();
+			const first = Promise.withResolvers<unknown>();
+			const second = Promise.withResolvers<unknown>();
+			manager.steer.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			const one = control('steer');
+			const two = control('steer');
+			canonical.resolve(target);
+			await expect(hold).resolves.toMatchObject({ status: 'blocked' });
+			first.resolve({ verdict: 'sent' });
+			await expect(one).resolves.toEqual({ verdict: 'sent' });
+			await busy();
+			vi.mocked(logger.error).mockImplementationOnce(() => expect(active).toBe(1));
+			const failure = Error('steering rejected');
+			second.reject(failure);
+			await expect(two).rejects.toBe(failure);
+			await idle();
+		});
+		it.each(inputOperations)(
+			'releases %s after missing manager or nested callback failure',
+			async (op) => {
+				vi.mocked(deps.getProcessManager).mockReturnValueOnce(null);
+				await expect(control(op)).rejects.toThrow('Process manager not initialized');
+				expect(manager[op]).not.toHaveBeenCalled();
+				(await idle()).release();
+				const failure = Error('control failed');
+				manager[op].mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					throw failure;
+				});
+				await expect(control(op)).rejects.toBe(failure);
+				await idle();
+			}
+		);
+		it('preserves synchronous closeAgent success and holds manager access and callbacks', async () => {
+			vi.mocked(deps.getProcessManager).mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				return manager as unknown as ReturnType<ProcessHandlerDependencies['getProcessManager']>;
+			});
+			manager.closeAgent.mockImplementationOnce(() => expect(active).toBe(1));
+			expect(control('closeAgent')).toBe(true);
+			expect(manager.closeAgent).toHaveBeenCalledExactlyOnceWith('agent');
+			expect(logger.error).not.toHaveBeenCalled();
+			await idle();
+		});
+		it.each(['manager', 'callback'] as const)(
+			'preserves synchronous closeAgent %s failure without logging',
+			async (stage) => {
+				const failure = Error(stage);
+				const fail = () => {
+					expect(active).toBe(1);
+					throw failure;
+				};
+				if (stage === 'manager') vi.mocked(deps.getProcessManager).mockImplementationOnce(fail);
+				else manager.closeAgent.mockImplementationOnce(fail);
+				expect(() => control('closeAgent')).toThrow(failure);
+				expect(logger.error).not.toHaveBeenCalled();
+				await idle();
+			}
+		);
+		it('retains steering result assimilation and error serialization after nested settlement', async () => {
+			manager.steer.mockReturnValueOnce({
+				then(resolve: (value: unknown) => void) {
+					expect(active).toBe(1);
+					resolve({ verdict: 'sent' });
+				},
+			});
+			await control('steer');
+			const failure = Object.defineProperty(Error('steer failed'), 'stack', {
+				get() {
+					expect(active).toBe(1);
+					return 'stack';
+				},
+			});
+			manager.steer.mockRejectedValueOnce(failure);
+			vi.mocked(logger.error).mockImplementationOnce(() => expect(active).toBe(1));
+			await expect(control('steer')).rejects.toBe(failure);
+			await idle();
+		});
+		it('composes IPC completion with independent native close and buffered-write acknowledgement', async () => {
+			const native = Object.assign(new EventEmitter(), {
+				stdout: new EventEmitter(),
+				stderr: new EventEmitter(),
+			});
+			vi.mocked(spawn).mockReturnValue(native as unknown as ReturnType<typeof spawn>);
+			const { withWorktreeTurnActivity } = await import('../../../main/git/worktreeTurnActivity');
+			const buffered = Promise.withResolvers<void>();
+			manager.write.mockImplementationOnce(() =>
+				withWorktreeTurnActivity((_start, observe, launch) => {
+					launch('agent', [], {});
+					observe(buffered.promise);
+					return true;
+				}, vi.fn())
+			);
+			await expect(control('write')).resolves.toBe(true);
+			native.emit('exit', 0);
+			await busy();
+			native.emit('close', 0);
+			await busy();
+			buffered.resolve();
+			await vi.waitFor(() => expect(active).toBe(0));
+			await idle();
+		});
+		it('does not release pending steering when an independent native scope closes first', async () => {
+			const native = new EventEmitter();
+			const { withWorktreeTurnActivity } = await import('../../../main/git/worktreeTurnActivity');
+			vi.mocked(spawn).mockReturnValue(native as unknown as ReturnType<typeof spawn>);
+			withWorktreeTurnActivity((_start, _observe, launch) => launch('agent', [], {}), vi.fn());
+			const verdict = Promise.withResolvers<unknown>();
+			manager.steer.mockReturnValueOnce(verdict.promise);
+			const pending = control('steer');
+			native.emit('close', 0);
+			await busy();
+			verdict.resolve({ verdict: 'sent' });
+			await pending;
+			await idle();
+		});
 	});
 
 	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
