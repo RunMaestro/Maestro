@@ -26,7 +26,7 @@
  * started.
  */
 
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { logger } from '../host';
 import { shellEscape } from '../launch/shell-escape';
@@ -116,10 +116,14 @@ export function sshConnectionArgs(args: readonly string[]): string[] | null {
  * Signal an SSH-hosted agent on its remote host. Fire-and-forget: it never
  * throws, the one-shot ssh is detached so it finishes even if the app is
  * quitting, and it is killed if it outlives {@link SIGNAL_SSH_TIMEOUT_MS}.
+ * Hosts may observe the child immediately after spawn, before any stream,
+ * timer or reporting setup. An observer failure follows normal setup recovery;
+ * a false verdict therefore does not prove that no child was created.
  */
 export function signalRemoteAgent(
 	target: { sshCommand: string; sshArgs: readonly string[]; pidFile: string; sessionId: string },
-	mode: RemoteSignalMode
+	mode: RemoteSignalMode,
+	onSpawn?: (child: ChildProcess) => void
 ): boolean {
 	const connection = sshConnectionArgs(target.sshArgs);
 	if (!connection) return false;
@@ -129,6 +133,7 @@ export function signalRemoteAgent(
 			stdio: ['pipe', 'ignore', 'ignore'],
 			detached: true,
 		});
+		onSpawn?.(child);
 		const timer = setTimeout(() => {
 			try {
 				child.kill('SIGKILL');
@@ -137,6 +142,7 @@ export function signalRemoteAgent(
 			}
 		}, SIGNAL_SSH_TIMEOUT_MS);
 		timer.unref?.();
+		child.on('close', () => clearTimeout(timer));
 		child.on('error', (error) => {
 			clearTimeout(timer);
 			logger.warn('Remote agent signal ssh failed to start', LOG_CONTEXT, {
