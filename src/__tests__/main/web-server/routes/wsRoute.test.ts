@@ -134,10 +134,12 @@ function createMockCallbacks(): WsRouteCallbacks {
  */
 function createMockSocket() {
 	const eventHandlers: Map<string, Function[]> = new Map();
-	return {
-		readyState: WebSocket.OPEN,
+	const socket = {
+		readyState: WebSocket.OPEN as number,
 		send: vi.fn(),
-		close: vi.fn(),
+		close: vi.fn(() => {
+			socket.readyState = WebSocket.CLOSED;
+		}),
 		on: vi.fn((event: string, handler: Function) => {
 			if (!eventHandlers.has(event)) {
 				eventHandlers.set(event, []);
@@ -145,11 +147,13 @@ function createMockSocket() {
 			eventHandlers.get(event)!.push(handler);
 		}),
 		emit: (event: string, ...args: any[]) => {
+			if (event === 'close') socket.readyState = WebSocket.CLOSED;
 			const handlers = eventHandlers.get(event) || [];
 			handlers.forEach((h) => h(...args));
 		},
 		eventHandlers,
 	};
+	return socket;
 }
 
 /**
@@ -951,12 +955,22 @@ describe('broadcast authorization freshness', () => {
 		expect(session.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 		expect(device.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 		expect(host.close).toHaveBeenCalledWith(4403, 'Host admission expired or revoked');
+		for (const socket of [session, device, host]) expect(socket.readyState).toBe(WebSocket.CLOSED);
 		webLogin.enabled = false;
+		const guest = connect(createMockRequest());
+		expect(guest.readyState).toBe(WebSocket.OPEN);
 		service.broadcastToAll({ type: 'gate-off' });
-		expect(session.send).toHaveBeenCalledTimes(2);
+		expect(guest.send).toHaveBeenCalledTimes(1);
+		expect(guest.send).toHaveBeenCalledWith(expect.stringContaining('"type":"gate-off"'));
+		for (const socket of [session, device, host]) expect(socket.send).toHaveBeenCalledTimes(1);
+		expect(cli.send).toHaveBeenCalledTimes(3);
 		webLogin.enabled = true;
 		service.broadcastToAll({ type: 'gate-on' });
-		expect(session.send).toHaveBeenCalledTimes(2);
-		for (const socket of [session, device, host, cli]) socket.emit('close');
+		expect(guest.send).toHaveBeenCalledTimes(1);
+		expect(guest.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		expect(guest.readyState).toBe(WebSocket.CLOSED);
+		for (const socket of [session, device, host]) expect(socket.send).toHaveBeenCalledTimes(1);
+		expect(cli.send).toHaveBeenCalledTimes(4);
+		for (const socket of [session, device, host, cli, guest]) socket.emit('close');
 	});
 });
