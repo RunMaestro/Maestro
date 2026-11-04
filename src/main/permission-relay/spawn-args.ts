@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../utils/logger';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import {
 	RELAY_MCP_SERVER_NAME,
 	RELAY_PERMISSION_PROMPT_TOOL,
@@ -106,22 +107,49 @@ function buildMcpConfig(
  * mode would silently abort on the first tool call. A file path has no shell
  * metacharacters, so it survives quoting on every platform. `--mcp-config` has
  * accepted a file path since the flag was introduced.
+ * `onConfigCreated` publishes ownership after exclusive creation, before a
+ * content write can fail. The caller retains that path for failure cleanup.
  */
 export function buildRelayArgs(
 	execPath: string,
 	bridgeScriptPath: string,
 	socketPath: string,
 	token: string,
-	configDir: string
+	configDir: string,
+	onConfigCreated?: (configPath: string) => void
 ): RelayArgsResult {
-	const mcpConfig = buildMcpConfig(execPath, bridgeScriptPath, socketPath, token);
-	// Token is a 64-hex-char nonce; a short prefix keeps the filename unique
-	// per spawn without leaking the full auth token into a predictable path.
-	const configPath = path.join(configDir, `permission-relay-mcp-${token.slice(0, 16)}.json`);
-	fs.writeFileSync(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+	const release = beginGlobalWorktreeActivity();
+	try {
+		const mcpConfig = buildMcpConfig(execPath, bridgeScriptPath, socketPath, token);
+		// Token is a 64-hex-char nonce; a short prefix keeps the filename unique
+		// per spawn without leaking the full auth token into a predictable path.
+		const configPath = path.join(configDir, `permission-relay-mcp-${token.slice(0, 16)}.json`);
+		const content = JSON.stringify(mcpConfig);
+		// A collision is not ours to overwrite or hand to failure cleanup.
+		const fd = fs.openSync(configPath, 'wx', 0o600);
+		let failure: { error: unknown } | undefined;
+		try {
+			onConfigCreated?.(configPath);
+			fs.writeFileSync(fd, content);
+		} catch (error) {
+			failure = { error };
+		}
+		try {
+			fs.closeSync(fd);
+		} catch (error) {
+			if (!failure) throw error;
+			// Do not replace the original setup error with a secondary close error.
+			logger.warn('Failed to close relay config after setup failure', LOG_CONTEXT, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+		if (failure) throw failure.error;
 
-	return {
-		args: ['--permission-prompt-tool', RELAY_PERMISSION_PROMPT_TOOL, '--mcp-config', configPath],
-		configPath,
-	};
+		return {
+			args: ['--permission-prompt-tool', RELAY_PERMISSION_PROMPT_TOOL, '--mcp-config', configPath],
+			configPath,
+		};
+	} finally {
+		release();
+	}
 }

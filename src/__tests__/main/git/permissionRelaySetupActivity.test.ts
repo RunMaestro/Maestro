@@ -11,6 +11,9 @@ vi.mock('fs/promises', async (original) => {
 vi.mock('fs', async (original) => ({
 	...(await original<typeof import('fs')>()),
 	unlinkSync: vi.fn(),
+	openSync: vi.fn(),
+	writeFileSync: vi.fn(),
+	closeSync: vi.fn(),
 }));
 vi.mock('child_process', async (original) => ({
 	...(await original<typeof import('child_process')>()),
@@ -77,6 +80,9 @@ describe('standalone permission relay setup and cleanup activity', () => {
 			.mockReset()
 			.mockImplementation(async (p) => String(p));
 		vi.mocked(syncFs.unlinkSync).mockReset();
+		vi.mocked(syncFs.openSync).mockReset().mockReturnValue(41);
+		vi.mocked(syncFs.writeFileSync).mockReset();
+		vi.mocked(syncFs.closeSync).mockReset();
 		vi.mocked(resolveBridgeScriptPath).mockReset().mockReturnValue('/bridge.js');
 		vi.mocked(server.ensureStarted).mockReset().mockResolvedValue('/relay.sock');
 		vi.mocked(buildRelayArgs).mockReset().mockReturnValue({ args, configPath: 'owned-config' });
@@ -171,7 +177,8 @@ describe('standalone permission relay setup and cleanup activity', () => {
 			'/bridge.js',
 			'/relay.sock',
 			'token-1',
-			target
+			target,
+			expect.any(Function)
 		);
 		await reserve();
 	});
@@ -650,6 +657,217 @@ describe('standalone permission relay setup and cleanup activity', () => {
 		manager.emit('exit', params.sessionId);
 		expect(cleanups[0]).toHaveBeenCalledOnce();
 		await reserve();
+	});
+
+	describe('partial config write ownership', () => {
+		let builder: typeof buildRelayArgs;
+		beforeEach(async () => {
+			const actual = await vi.importActual<
+				typeof import('../../../main/permission-relay/spawn-args')
+			>('../../../main/permission-relay/spawn-args');
+			builder = actual.buildRelayArgs;
+			vi.mocked(buildRelayArgs).mockImplementation(builder);
+		});
+
+		it.each(['explicit', 'exit', 'replacement'] as const)(
+			'retries owned partial-write unlink failure through %s after token retirement',
+			async (route) => {
+				const registry = await vi.importActual<
+					typeof import('../../../main/permission-relay/registry')
+				>('../../../main/permission-relay/registry');
+				vi.mocked(registerSpawn).mockImplementation(registry.registerSpawn);
+				const manager = new EventEmitter();
+				relay.initPermissionRelay(() => null, manager);
+				const writeError = new Error('partial content write failed');
+				vi.mocked(syncFs.writeFileSync).mockImplementationOnce(() => {
+					throw writeError;
+				});
+				await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(writeError);
+				const token = vi.mocked(buildRelayArgs).mock.calls[0][3];
+				const configPath = path.join(target, `permission-relay-mcp-${token.slice(0, 16)}.json`);
+				expect(syncFs.openSync).toHaveBeenCalledExactlyOnceWith(configPath, 'wx', 0o600);
+				expect(syncFs.closeSync).toHaveBeenCalledExactlyOnceWith(41);
+				await blocked();
+				const unlinkError = new Error('partial file is busy');
+				vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+					throw unlinkError;
+				});
+				if (route === 'replacement')
+					await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(unlinkError);
+				else
+					expect(() =>
+						route === 'exit'
+							? manager.emit('exit', params.sessionId)
+							: relay.cleanupSessionRelay(params.sessionId)
+					).toThrow(unlinkError);
+				expect(registry.lookupBinding(token)).toBeUndefined();
+				expect(syncFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(configPath);
+				expect(registerSpawn).toHaveBeenCalledOnce();
+				await blocked();
+				if (route === 'replacement') {
+					await relay.preparePermissionRelayArgs(params);
+					relay.cleanupSessionRelay(params.sessionId);
+				} else if (route === 'exit') manager.emit('exit', params.sessionId);
+				else relay.cleanupSessionRelay(params.sessionId);
+				expect(syncFs.unlinkSync).toHaveBeenNthCalledWith(2, configPath);
+				await reserve();
+			}
+		);
+
+		it.each(['EEXIST', 'EACCES', 'ENOENT'])(
+			'does not claim or unlink a file when exclusive open fails with %s',
+			async (code) => {
+				const error = Object.assign(new Error('open failed'), { code });
+				vi.mocked(syncFs.openSync).mockImplementationOnce(() => {
+					throw error;
+				});
+				await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(error);
+				relay.cleanupSessionRelay(params.sessionId);
+				expect(cleanups[0]).toHaveBeenCalledOnce();
+				expect(syncFs.writeFileSync).not.toHaveBeenCalled();
+				expect(syncFs.closeSync).not.toHaveBeenCalled();
+				expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+				await reserve();
+			}
+		);
+
+		it.each([false, true])(
+			'keeps ownership after reentrant cleanup inside content write (failure: %s)',
+			async (fail) => {
+				vi.mocked(syncFs.writeFileSync).mockImplementationOnce(() => {
+					expect(synchronousHolds).toBeGreaterThanOrEqual(2);
+					relay.cleanupSessionRelay(params.sessionId);
+					expect(cleanups[0]).not.toHaveBeenCalled();
+					expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+					if (fail) throw new Error('reentrant partial write');
+				});
+				const request = relay.preparePermissionRelayArgs(params);
+				if (fail) await expect(request).rejects.toThrow('reentrant partial write');
+				else await expect(request).resolves.toContain('--mcp-config');
+				relay.cleanupSessionRelay(params.sessionId);
+				expect(cleanups[0]).toHaveBeenCalledOnce();
+				expect(syncFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(
+					path.join(target, 'permission-relay-mcp-token-1.json')
+				);
+				await reserve();
+			}
+		);
+
+		it.each([false, true])(
+			'preserves setup errors and owned file cleanup when close fails (write failed: %s)',
+			async (writeFails) => {
+				const writeError = new Error('original write error');
+				const closeError = new Error('close error');
+				vi.mocked(syncFs.closeSync).mockImplementationOnce(() => {
+					throw closeError;
+				});
+				if (writeFails)
+					vi.mocked(syncFs.writeFileSync).mockImplementationOnce(() => {
+						throw writeError;
+					});
+				await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(
+					writeFails ? writeError : closeError
+				);
+				expect(syncFs.closeSync).toHaveBeenCalledOnce();
+				if (writeFails) expect(logger.warn).toHaveBeenCalledOnce();
+				relay.cleanupSessionRelay(params.sessionId);
+				expect(syncFs.unlinkSync).toHaveBeenCalledOnce();
+				await reserve();
+			}
+		);
+
+		it('refuses standalone construction before inspection or filesystem effects', async () => {
+			const hold = await reserve();
+			const inspect = vi.fn(() => {
+				throw new Error('token inspected');
+			});
+			const token = {
+				get slice() {
+					return inspect();
+				},
+			} as unknown as string;
+			const created = vi.fn();
+			expect(() => builder('/node', '/bridge', '/sock', token, target, created)).toThrow(
+				/reserved/
+			);
+			expect(inspect).not.toHaveBeenCalled();
+			expect(created).not.toHaveBeenCalled();
+			for (const effect of [syncFs.openSync, syncFs.writeFileSync, syncFs.closeSync])
+				expect(effect).not.toHaveBeenCalled();
+			hold.release();
+			await reserve();
+		});
+
+		it('blocks a reservation canonicalizing during partial write and failed recovery', async () => {
+			const registry = await vi.importActual<
+				typeof import('../../../main/permission-relay/registry')
+			>('../../../main/permission-relay/registry');
+			vi.mocked(registerSpawn).mockImplementation(registry.registerSpawn);
+			let pending: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+			vi.mocked(syncFs.writeFileSync).mockImplementationOnce(() => {
+				pending = gate.reserveWorktreeCleanup(target);
+				throw new Error('partial write');
+			});
+			await expect(relay.preparePermissionRelayArgs(params)).rejects.toThrow('partial write');
+			if (!pending) throw new Error('Reservation did not start');
+			const result = await pending;
+			if (result.status === 'reserved-partially') releases.push(result.release);
+			expect(result.status).toBe('blocked');
+			vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+				throw new Error('recovery failed');
+			});
+			expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow('recovery failed');
+			await blocked();
+			relay.cleanupSessionRelay(params.sessionId);
+			await reserve();
+		});
+
+		it('retires an actual partial config after write failure without losing its path', async () => {
+			const actual = await vi.importActual<typeof import('fs')>('fs');
+			const dir = actual.mkdtempSync(path.join(process.cwd(), '.it', 'relay-partial-'));
+			const file = path.join(dir, 'permission-relay-mcp-token-1.json');
+			const error = Object.assign(new Error('disk full after partial write'), { code: 'ENOSPC' });
+			vi.mocked(syncFs.openSync).mockImplementation(actual.openSync);
+			vi.mocked(syncFs.closeSync).mockImplementation(actual.closeSync);
+			vi.mocked(syncFs.unlinkSync).mockImplementation(actual.unlinkSync);
+			vi.mocked(syncFs.writeFileSync).mockImplementationOnce((fd) => {
+				actual.writeFileSync(fd, '{"mcpServers":');
+				throw error;
+			});
+			try {
+				await expect(
+					relay.preparePermissionRelayArgs({ ...params, userDataDir: dir })
+				).rejects.toBe(error);
+				expect(actual.readFileSync(file, 'utf8')).toBe('{"mcpServers":');
+				expect(syncFs.closeSync).toHaveBeenCalledOnce();
+				relay.cleanupSessionRelay(params.sessionId);
+				expect(actual.existsSync(file)).toBe(false);
+				expect(syncFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(file);
+			} finally {
+				// Recover the owned fixture even when a regression assertion fails.
+				relay.cleanupSessionRelay(params.sessionId);
+				actual.rmSync(dir, { recursive: true });
+			}
+			await reserve();
+		});
+
+		it('preserves an actual pre-existing config without truncation or unlink', async () => {
+			const actual = await vi.importActual<typeof import('fs')>('fs');
+			const dir = actual.mkdtempSync(path.join(process.cwd(), '.it', 'relay-collision-'));
+			const file = path.join(dir, 'permission-relay-mcp-token-1.json');
+			actual.writeFileSync(file, 'user-owned collision');
+			vi.mocked(syncFs.openSync).mockImplementation(actual.openSync);
+			try {
+				await expect(
+					relay.preparePermissionRelayArgs({ ...params, userDataDir: dir })
+				).rejects.toMatchObject({ code: 'EEXIST' });
+				relay.cleanupSessionRelay(params.sessionId);
+				expect(actual.readFileSync(file, 'utf8')).toBe('user-owned collision');
+				expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+			} finally {
+				actual.rmSync(dir, { recursive: true });
+			}
+		});
 	});
 
 	describe('initialization and retained forwarding callbacks', () => {

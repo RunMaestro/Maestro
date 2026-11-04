@@ -163,18 +163,13 @@ export async function preparePermissionRelayArgs(params: {
 		const entry = { cleanup, running: true };
 		sessionCleanups.set(params.sessionId, entry);
 		try {
-			const { args, configPath } = buildRelayArgs(
-				params.execPath,
-				bridgeScriptPath,
-				socketPath,
-				token,
-				params.userDataDir
-			);
-
-			// Wrap the registry cleanup so process exit also deletes the temp MCP config.
+			// Install recovery before construction: the exclusive file may exist even
+			// when writing its content fails and buildRelayArgs never returns.
+			let configPath: string | undefined;
 			let releaseRecovery: (() => void) | undefined;
 			entry.cleanup = () => {
 				cleanup();
+				if (configPath === undefined) return;
 				try {
 					fs.unlinkSync(configPath);
 				} catch (error) {
@@ -188,13 +183,24 @@ export async function preparePermissionRelayArgs(params: {
 				releaseRecovery?.();
 				releaseRecovery = undefined;
 			};
+			const config = buildRelayArgs(
+				params.execPath,
+				bridgeScriptPath,
+				socketPath,
+				token,
+				params.userDataDir,
+				(createdPath) => {
+					configPath = createdPath;
+				}
+			);
+			configPath = config.configPath;
 
 			logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
 				sessionId: params.sessionId,
 				socketPath,
 			});
 
-			return args;
+			return config.args;
 		} finally {
 			// Reentrant cleanup during construction cannot retire a partial owner.
 			// Once setup unwinds, failure/exit/replacement callers can retry it.
