@@ -41,6 +41,7 @@ import {
 } from './pianola-decision-lifecycle';
 
 export interface PianolaScopeSnapshotTab extends PianolaScopeTab {
+	agentSessionId?: string | null;
 	/** Host creation time, never the provider session's creation time. */
 	createdAt: number;
 	busy: boolean;
@@ -248,6 +249,7 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 			agentId: tab.agentId,
 			tabId: tab.tabId,
 			createdAt: tab.createdAt,
+			agentSessionId: tab.agentSessionId,
 			paused: info.paused,
 			busy: info.busy,
 			consult: info.consult,

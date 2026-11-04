@@ -206,6 +206,22 @@ async function spawnNative(
 }
 
 describe('native spawn configuration', () => {
+	it('requires the exact existing-tab dispatch marker at native spawn', async () => {
+		const tabId = generateUUID();
+		const dispatchId = generateUUID();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		const started = vi.fn();
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, started, dispatchId);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+		).rejects.toThrow('DispatchIdentityMismatch');
+		await spawnNativeWithResult('copilot-cli', {
+			sessionId: `worker-ai-${tabId}`,
+			pianolaDispatchId: dispatchId,
+		});
+		expect(started).toHaveBeenCalledOnce();
+	});
+
 	it('blocks an unadmitted new tab before any spawn preflight', async () => {
 		const tabId = generateUUID();
 		pianolaNewTabSpawns.hold('worker', tabId);

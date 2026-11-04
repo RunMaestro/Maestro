@@ -356,7 +356,8 @@ export type ExecuteCommandCallback = (
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
 	mentionRouting?: MentionRouting,
 	/** Throw on a missing/malformed receipt instead of reporting a rejection. */
-	requireDeliveryReceipt?: boolean
+	requireDeliveryReceipt?: boolean,
+	pianolaDispatchId?: string
 ) => Promise<boolean>;
 
 /**

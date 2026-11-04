@@ -115,7 +115,7 @@ function fixture() {
 		}
 	);
 	const send = vi.fn();
-	const executeCommand = vi.fn(async () => true);
+	const executeCommand = vi.fn(async (..._args: unknown[]) => true);
 	const enqueueCommand = vi.fn(async () => ({
 		success: true,
 		tabId: 'tab',
@@ -333,5 +333,139 @@ describe('production new-tab handler supervision wiring', () => {
 		await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
 		expect(f.newTab.mock.calls[0]).toHaveLength(5);
 		expect(f.send.mock.calls[0][1].admission).toBeUndefined();
+	});
+});
+
+describe('existing-tab production dispatch admission', () => {
+	async function existingFixture() {
+		const f = fixture();
+		await f.newTab('worker', '', true, false, undefined, {
+			phase: 'prepare',
+			dispatchId: generateUUID(),
+			tabId: 'tab',
+		});
+		f.newTab.mockClear();
+		f.executeCommand.mockImplementation(async (...args: unknown[]) => {
+			expect(args[2]).toBe('ai');
+			expect(args[3]).toBe('tab');
+			expect(args[4]).toBe(false);
+			expect(args[8]).toBe(true);
+			expect(store.readScopeCheckpoint(f.scopeId)?.tabs[0].tabId).toBe('tab');
+			const id = args[9] as string;
+			expect(store.readDispatchAdmission(id)?.outcome).toBe('unknown');
+			const key = 'worker-ai-tab';
+			pianolaNewTabSpawns.claim(key, id)();
+			pianolaNewTabSpawns.captured(key, 'run:actual-existing');
+			pianolaNewTabSpawns.started(key);
+			return true;
+		});
+		return f;
+	}
+	async function send(f: Awaited<ReturnType<typeof existingFixture>>, id: string, tabId?: string) {
+		f.send.mockClear();
+		handleSendCommand(f.ctx, f.client, {
+			type: 'send_command',
+			sessionId: 'worker',
+			command: 'work',
+			inputMode: 'ai',
+			dispatchId: id,
+			...(tabId ? { tabId } : {}),
+			background: true,
+		});
+		await vi.waitFor(() => expect(f.send).toHaveBeenCalled());
+		return f.send.mock.calls[0][1];
+	}
+	it.each([undefined, 'tab'])(
+		'binds %s once and captures fast starts after enrollment',
+		async (tab) => {
+			const f = await existingFixture();
+			const id = generateUUID();
+			expect(await send(f, id, tab)).toMatchObject({
+				success: true,
+				tabId: 'tab',
+				admission: { outcome: 'accepted', runId: 'run:actual-existing' },
+			});
+			expect(await send(f, id, tab)).toMatchObject({ success: true, tabId: 'tab' });
+			expect(f.executeCommand).toHaveBeenCalledTimes(1);
+			expect(f.newTab).not.toHaveBeenCalled();
+		}
+	);
+	it('keeps an implicit target pinned across active-tab changes and same-key reconciliation', async () => {
+		const f = await existingFixture();
+		const original = f.executeCommand.getMockImplementation()!;
+		const detail = f.ctx.callbacks.getSessionDetail!('worker')!;
+		f.executeCommand.mockImplementation(async (...args: unknown[]) => {
+			vi.spyOn(f.ctx.callbacks, 'getSessionDetail').mockReturnValue({
+				...detail,
+				activeTabId: 'another-tab',
+			});
+			return original(...args);
+		});
+		const id = generateUUID();
+		expect(await send(f, id)).toMatchObject({ success: true, tabId: 'tab' });
+		expect(await send(f, id)).toMatchObject({ success: true, tabId: 'tab' });
+		expect(f.executeCommand).toHaveBeenCalledTimes(1);
+	});
+	it('retains the ordinary busy refusal without creating enrollment or dispatching', async () => {
+		const f = await existingFixture();
+		const detail = f.ctx.callbacks.getSessionDetail!('worker')!;
+		vi.spyOn(f.ctx.callbacks, 'getSessionDetail').mockReturnValue({ ...detail, state: 'busy' });
+		handleSendCommand(f.ctx, f.client, {
+			type: 'send_command',
+			sessionId: 'worker',
+			command: 'work',
+			inputMode: 'ai',
+			tabId: 'tab',
+		});
+		expect(f.ctx.sendError).toHaveBeenCalledWith(
+			f.client,
+			expect.stringContaining('busy'),
+			expect.anything()
+		);
+		expect(f.executeCommand).not.toHaveBeenCalled();
+		expect(f.newTab).not.toHaveBeenCalled();
+		expect(store.readScopeCheckpoint(f.scopeId)).toBeFalsy();
+	});
+
+	it('refuses a conversation replacement between enrollment and native spawn', async () => {
+		const f = await existingFixture();
+		f.executeCommand.mockImplementation(async (...args: unknown[]) => {
+			(f.snapshot.sessions[0] as { agentSessionId: string }).agentSessionId = 'replacement';
+			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab', args[9] as string)).toThrow(
+				'DispatchTargetIdentityChanged'
+			);
+			return false;
+		});
+		expect(await send(f, generateUUID(), 'tab')).toMatchObject({
+			success: false,
+			admission: { outcome: 'rejected' },
+		});
+	});
+
+	it('retains unknown after lost renderer acknowledgment and never releases again', async () => {
+		const f = await existingFixture();
+		f.executeCommand.mockRejectedValue(new Error('lost ack'));
+		const id = generateUUID();
+		expect(await send(f, id, 'tab')).toMatchObject({
+			success: false,
+			unknown: true,
+			admission: { outcome: 'unknown' },
+		});
+		expect(await send(f, id, 'tab')).toMatchObject({ unknown: true });
+		expect(f.executeCommand).toHaveBeenCalledTimes(1);
+		pianolaNewTabSpawns.cancelHold('worker', 'tab');
+	});
+	it('rechecks pause at native start and refuses an unrelated spawn marker', async () => {
+		const f = await existingFixture();
+		f.executeCommand.mockImplementation(async (...args: unknown[]) => {
+			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab')).toThrow('DispatchIdentityMismatch');
+			(f.snapshot.sessions[0] as { supervision: { paused: boolean } }).supervision.paused = true;
+			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab', args[9] as string)).toThrow();
+			return false;
+		});
+		expect(await send(f, generateUUID(), 'tab')).toMatchObject({
+			success: false,
+			admission: { outcome: 'rejected' },
+		});
 	});
 });

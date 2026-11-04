@@ -360,7 +360,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => {
 				// Delivery receipt for the web server's `executeCommand` promise.
 				// Every early return below must answer it, or the caller waits out
@@ -475,6 +476,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							images,
 							mentionRouting,
 							receiptChannel,
+							pianolaDispatchId,
 						},
 					})
 				);

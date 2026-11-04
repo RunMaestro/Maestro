@@ -82,6 +82,46 @@ describe('dispatch command', () => {
 		});
 	});
 
+	it.each(['unknown', 'rejected'])(
+		'preserves managed existing-tab %s receipts without resending',
+		async (outcome) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const dispatchId = '715608e4-9e3c-4b50-b9ce-9ec48cb308ac';
+			const admission = {
+				version: 1,
+				dispatchId,
+				targetAgentId: 'agent-abc-123',
+				targetTabId: 'tab',
+				supervision: outcome === 'rejected' ? 'paused' : 'enrolled',
+				outcome,
+			};
+			const sendCommand = vi.fn().mockResolvedValue({
+				success: false,
+				tabId: 'tab',
+				dispatchId,
+				admission,
+				unknown: outcome === 'unknown',
+				error: 'paused',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			await dispatch('agent-abc', 'work', { tab: 'tab', dispatchId });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				dispatchId,
+				admission,
+				code: outcome === 'unknown' ? 'DISPATCH_UNKNOWN' : 'DISPATCH_REFUSED',
+			});
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				type: 'send_command',
+				dispatchId,
+				tabId: 'tab',
+			});
+		}
+	);
+
 	describe('default (active tab) flow', () => {
 		it('sends send_command in the background by default (no tabId) and surfaces the desktop-supplied tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
@@ -100,6 +140,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'send_command',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					command: 'Hello world',
 					inputMode: 'ai',
@@ -322,6 +363,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'send_command',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					command: 'Hello world',
 					inputMode: 'ai',
@@ -407,6 +449,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'send_command',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					command: 'Follow up',
 					inputMode: 'ai',
@@ -453,6 +496,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'send_command',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					command: 'Follow up',
 					inputMode: 'ai',
@@ -591,6 +635,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'send_command',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					command: 'Concurrent message',
 					inputMode: 'ai',
@@ -908,6 +953,7 @@ describe('dispatch command', () => {
 
 			expect(sendCommand.mock.calls[0][0]).toMatchObject({
 				type: 'send_command',
+				dispatchId: expect.any(String),
 				fromSessionId: 'caller-agent',
 				fromTabId: 'caller-tab',
 			});
@@ -974,6 +1020,7 @@ describe('dispatch command', () => {
 				expect(result.success).toBe(true);
 				expect(sendCommand.mock.calls[0][0]).toMatchObject({
 					type: 'send_command',
+					dispatchId: expect.any(String),
 					mentionRouting: mode,
 				});
 			}

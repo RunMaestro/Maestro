@@ -1353,7 +1353,8 @@ export class WebServer {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: MentionRouting,
-				requireDeliveryReceipt?: boolean
+				requireDeliveryReceipt?: boolean,
+				pianolaDispatchId?: string
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1364,7 +1365,11 @@ export class WebServer {
 					images,
 					background,
 					mentionRouting,
-					...(requireDeliveryReceipt ? [true] : [])
+					...((pianolaDispatchId
+						? [requireDeliveryReceipt, pianolaDispatchId]
+						: requireDeliveryReceipt
+							? [true]
+							: []) as [boolean?, string?])
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),

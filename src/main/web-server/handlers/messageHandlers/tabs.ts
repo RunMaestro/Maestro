@@ -39,7 +39,7 @@ import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults'
 import { normalizeRenameTabResult } from '../../types';
 
 const newTabAdmissions = new WeakMap<MessageHandlerContext['callbacks'], PianolaNewTabDispatch>();
-function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispatch {
+export function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispatch {
 	let adapter = newTabAdmissions.get(ctx.callbacks);
 	if (!adapter) {
 		const store = pianolaStore;
@@ -56,6 +56,7 @@ function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispatch {
 				if (result.malformed) throw new Error('PianolaRulesUnavailable');
 				return createHash('sha256').update(canonicalJson(result.rules)).digest('hex');
 			},
+			executeCommand: (...args) => ctx.callbacks.executeCommand!(...args),
 			newTab: (...args) => ctx.callbacks.newAITabWithPrompt!(...args),
 			onReconcileError: (error) => {
 				void captureException(error, { area: 'pianola', handler: 'new_tab_reconcile' });

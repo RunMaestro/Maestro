@@ -140,7 +140,8 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,

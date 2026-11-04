@@ -16,6 +16,7 @@ import type {
  */
 export interface ProcessConfig {
 	sessionId: string;
+	pianolaDispatchId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

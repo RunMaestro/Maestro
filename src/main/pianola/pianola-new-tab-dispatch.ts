@@ -6,6 +6,7 @@ import {
 	type PianolaScopeSnapshot,
 } from '../../shared/pianola/pianola-scope-cycle';
 import type { PianolaDispatchReceipt } from '../../shared/pianola/pianola-dispatch';
+import type { ExecuteCommandCallback } from '../web-server/types';
 import type { NewAITabWithPromptCallback } from '../../shared/pianola/pianola-dispatch';
 import {
 	PianolaDispatchAdmissionService,
@@ -21,18 +22,30 @@ class NewTabSpawnFences {
 			started?: (runId?: string) => void;
 			claimed?: boolean;
 			capturedRunId?: string;
+			dispatchId?: string;
 		}
 	>();
 	hold(agentId: string, tabId: string) {
 		const key = `${agentId}-ai-${tabId}`;
 		if (!this.held.has(key)) this.held.set(key, {});
 	}
+	cancelHold(agentId: string, tabId: string) {
+		const key = `${agentId}-ai-${tabId}`;
+		if (!this.held.get(key)?.claimed) this.held.delete(key);
+	}
 	isHeld(agentId: string, tabId: string): boolean {
 		return this.held.has(`${agentId}-ai-${tabId}`);
 	}
-	arm(agentId: string, tabId: string, guard: () => void, started: (runId?: string) => void) {
+	arm(
+		agentId: string,
+		tabId: string,
+		guard: () => void,
+		started: (runId?: string) => void,
+		dispatchId?: string
+	) {
 		const entry = this.held.get(`${agentId}-ai-${tabId}`);
 		if (!entry) throw new Error('DispatchTargetNotHeld');
+		entry.dispatchId = dispatchId;
 		entry.guard = guard;
 		entry.started = started;
 	}
@@ -42,9 +55,14 @@ class NewTabSpawnFences {
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
 		entry.guard();
 	}
-	claim(processId: string): (() => void) & { notStarted(): void } {
+	claim(processId: string, dispatchId?: string): (() => void) & { notStarted(): void } {
 		const entry = this.held.get(processId);
-		if (!entry) return Object.assign(() => {}, { notStarted() {} });
+		if (!entry) {
+			if (dispatchId) throw new Error('DispatchFenceUnavailable');
+			return Object.assign(() => {}, { notStarted() {} });
+		}
+		if (entry.dispatchId && entry.dispatchId !== dispatchId)
+			throw new Error('DispatchIdentityMismatch');
 		if (entry.claimed) throw new Error('DispatchAlreadyStarting');
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
 		try {
@@ -83,6 +101,11 @@ class NewTabSpawnFences {
 }
 export const pianolaNewTabSpawns = new NewTabSpawnFences();
 
+export interface PianolaExistingTabRequest extends PianolaNewTabRequest {
+	targetTabId: string;
+	images?: string[];
+}
+
 export interface PianolaNewTabRequest {
 	dispatchId: string;
 	targetAgentId: string;
@@ -97,12 +120,17 @@ export class PianolaNewTabDispatch {
 	readonly admission: PianolaDispatchAdmissionService;
 	private readonly queue = createKeyedWriteQueue();
 	private readonly requests = new Map<string, PianolaNewTabRequest>();
+	private readonly identities = new Map<
+		string,
+		{ createdAt: number; agentSessionId?: string | null }
+	>();
 	private readonly startedRuns = new Map<string, string | undefined>();
 	private readonly callbacks = new Map<string, string | undefined>();
 	constructor(
 		deps: Omit<PianolaDispatchAdmissionDeps, 'readSnapshot' | 'assertTargetReady' | 'release'> & {
 			snapshot(): PianolaScopeSnapshot;
 			newTab: NewAITabWithPromptCallback;
+			executeCommand?: ExecuteCommandCallback;
 			onReconcileError(error: unknown): void;
 		}
 	) {
@@ -148,16 +176,59 @@ export class PianolaNewTabDispatch {
 				)
 					throw new Error('DispatchTargetUnavailable');
 			},
-			release: async (receipt, guard) => {
+			release: async (receipt, admissionGuard) => {
 				const request = this.requests.get(receipt.dispatchId);
 				if (!request || !receipt.targetTabId) throw new Error('DispatchIntentUnavailable');
-				pianolaNewTabSpawns.arm(receipt.targetAgentId, receipt.targetTabId, guard, (runId) => {
-					this.startedRuns.set(receipt.dispatchId, runId);
-					void this.admission
-						.reconcile(receipt.dispatchId, 'accepted', runId)
-						.catch(deps.onReconcileError);
-				});
+				const identity = this.identities.get(receipt.dispatchId);
+				const guard = () => {
+					admissionGuard();
+					if (identity) {
+						const tab = deps
+							.snapshot()
+							.tabs.find(
+								(t) => t.agentId === receipt.targetAgentId && t.tabId === receipt.targetTabId
+							);
+						if (
+							!tab ||
+							tab.createdAt !== identity.createdAt ||
+							tab.agentSessionId !== identity.agentSessionId
+						)
+							throw new Error('DispatchTargetIdentityChanged');
+					}
+				};
+				pianolaNewTabSpawns.arm(
+					receipt.targetAgentId,
+					receipt.targetTabId,
+					guard,
+					(runId) => {
+						this.startedRuns.set(receipt.dispatchId, runId);
+						void this.admission
+							.reconcile(receipt.dispatchId, 'accepted', runId)
+							.catch(deps.onReconcileError);
+					},
+					'targetTabId' in request ? request.dispatchId : undefined
+				);
 				guard();
+				if ('targetTabId' in request) {
+					if (!deps.executeCommand) throw new Error('DispatchTransportUnavailable');
+					const accepted = await deps.executeCommand(
+						request.targetAgentId,
+						request.prompt,
+						'ai',
+						receipt.targetTabId,
+						false,
+						(request as PianolaExistingTabRequest).images,
+						request.background,
+						request.mentionRouting,
+						true,
+						request.dispatchId
+					);
+					return this.startedRuns.has(receipt.dispatchId)
+						? 'accepted'
+						: accepted
+							? 'unknown'
+							: 'rejected';
+				}
 				const result = await deps.newTab(
 					request.targetAgentId,
 					request.prompt,
@@ -215,6 +286,55 @@ export class PianolaNewTabDispatch {
 				if (receipt.outcome !== 'unknown') throw error;
 			} finally {
 				this.requests.delete(request.dispatchId);
+				this.identities.delete(request.dispatchId);
+			}
+			return { receipt, callbackId: this.callbacks.get(request.dispatchId) };
+		});
+	}
+
+	/** Existing tabs use the same durable journal and native capture fence as new tabs. */
+	runExisting(
+		client: Client,
+		request: PianolaExistingTabRequest,
+		armCallback: (tabId: string) => string | undefined
+	): Promise<{ receipt: PianolaDispatchReceipt; callbackId?: string }> {
+		return this.queue.enqueue(request.dispatchId, async () => {
+			let receipt = await this.admission.prepare(client, {
+				dispatchId: request.dispatchId,
+				targetAgentId: request.targetAgentId,
+				intent: request,
+			});
+			if (receipt.outcome !== 'not-started')
+				return { receipt, callbackId: this.callbacks.get(request.dispatchId) };
+			if (pianolaNewTabSpawns.isHeld(request.targetAgentId, request.targetTabId))
+				throw new Error('DispatchTargetHeld');
+			pianolaNewTabSpawns.hold(request.targetAgentId, request.targetTabId);
+			try {
+				const tab = this.snapshot().tabs.find(
+					(t) => t.agentId === request.targetAgentId && t.tabId === request.targetTabId
+				);
+				if (tab)
+					this.identities.set(request.dispatchId, {
+						createdAt: tab.createdAt,
+						agentSessionId: tab.agentSessionId,
+					});
+				// No renderer prepare: this exact tab must already exist and have an idle baseline.
+				await this.admission.bind(client, request.dispatchId, request.targetTabId);
+				await this.admission.enroll(client, request.dispatchId);
+				if (!this.callbacks.has(request.dispatchId))
+					this.callbacks.set(request.dispatchId, armCallback(request.targetTabId));
+				this.requests.set(request.dispatchId, request);
+				receipt = await this.admission.release(client, request.dispatchId);
+				const runId = this.startedRuns.get(request.dispatchId);
+				if (runId) receipt = await this.admission.reconcile(request.dispatchId, 'accepted', runId);
+			} catch (error) {
+				receipt = this.admission.status(client, request.dispatchId);
+				if (receipt.outcome !== 'unknown') throw error;
+			} finally {
+				this.requests.delete(request.dispatchId);
+				this.identities.delete(request.dispatchId);
+				if (receipt.outcome === 'not-started' || receipt.outcome === 'rejected')
+					pianolaNewTabSpawns.cancelHold(request.targetAgentId, request.targetTabId);
 			}
 			return { receipt, callbackId: this.callbacks.get(request.dispatchId) };
 		});

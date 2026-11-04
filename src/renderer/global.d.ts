@@ -62,6 +62,7 @@ type LocalFileScanNode = {
 
 interface ProcessConfig {
 	sessionId: string;
+	pianolaDispatchId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -591,7 +592,8 @@ interface MaestroAPI {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => void
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`

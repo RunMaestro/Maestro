@@ -134,7 +134,7 @@ export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
-	const admissionGuard = pianolaNewTabSpawns.claim(config.sessionId);
+	const admissionGuard = pianolaNewTabSpawns.claim(config.sessionId, config.pianolaDispatchId);
 	const proofCleanup: { release?: () => void; notStarted: boolean } = { notStarted: true };
 	const controller = new AbortController();
 	const pending = pendingDesktopSpawns.get(config.sessionId) ?? new Set<AbortController>();

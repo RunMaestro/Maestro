@@ -1673,6 +1673,7 @@ export interface Session {
 // Process spawning configuration
 export interface ProcessConfig {
 	sessionId: string;
+	pianolaDispatchId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

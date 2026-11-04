@@ -34,7 +34,8 @@ export function createCommandRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -48,8 +49,11 @@ export function createCommandRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: MentionRouting,
-				receiptChannel?: string
+				dispatchOrReceipt?: string,
+				replyChannel?: string
 			) => {
+				const receiptChannel = replyChannel ?? dispatchOrReceipt;
+				const pianolaDispatchId = replyChannel ? dispatchOrReceipt : undefined;
 				log('Received remote:executeCommand IPC', {
 					sessionId,
 					commandPreview: command?.substring(0, 50),
@@ -71,7 +75,8 @@ export function createCommandRemoteApi() {
 						images,
 						background,
 						mentionRouting,
-						receiptChannel
+						receiptChannel,
+						...(pianolaDispatchId ? [pianolaDispatchId] : [])
 					);
 				} catch (error) {
 					ipcRenderer.invoke(

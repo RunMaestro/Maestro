@@ -684,6 +684,35 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote command handling', () => {
+		it('passes a managed existing-tab dispatch marker into the renderer send event', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const spy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() =>
+				onRemoteCommandHandler?.(
+					'session-1',
+					'work',
+					'ai',
+					'tab',
+					false,
+					undefined,
+					true,
+					undefined,
+					'reply',
+					'dispatch-id'
+				)
+			);
+			expect(spy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					detail: expect.objectContaining({
+						tabId: 'tab',
+						receiptChannel: 'reply',
+						pianolaDispatchId: 'dispatch-id',
+					}),
+				})
+			);
+		});
+
 		it('carries a dispatch --routing into the maestro:remoteCommand event', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
 			const deps = createDeps({ sessions: [session] });

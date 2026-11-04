@@ -179,6 +179,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
 				receiptChannel?: string;
+				pianolaDispatchId?: string;
 			}>;
 			const {
 				sessionId,
@@ -190,6 +191,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				literalPrompt,
 				mentionRouting,
 				receiptChannel,
+				pianolaDispatchId,
 			} = customEvent.detail;
 
 			// The CLI's `dispatch` success flag is this ack, not the fact that an
@@ -231,6 +233,19 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				toolType: session.toolType,
 			});
 
+			if (
+				pianolaDispatchId &&
+				(effectiveInputMode !== 'ai' ||
+					!requestedTabId ||
+					session.state === 'busy' ||
+					session.agentErrorPaused ||
+					!session.aiTabs.some(
+						(t) => t.id === requestedTabId && t.state !== 'busy' && !t.agentError
+					))
+			) {
+				reportDelivery(false, 'DispatchTargetUnavailable');
+				return;
+			}
 			// Handle terminal mode commands
 			if (effectiveInputMode === 'terminal') {
 				logger.info('[Remote] Terminal mode - using runCommand for clean output');
@@ -384,6 +399,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// stamps the intent on the queued item instead. A routing the caller
 			// picked (`dispatch --routing`) wins over the wording, as the strip's does.
 			const mentionPlan = planCrossAgentMentions(command, sessionId, mentionRouting);
+			if (pianolaDispatchId && mentionPlan) {
+				reportDelivery(false, 'DispatchMentionRoutingUnavailable');
+				return;
+			}
 			if (mentionPlan?.suppressLocal) {
 				// Leading mention: addressed only at the consulted agent(s). This
 				// agent does not answer, so record the user's bubble and skip the spawn.
@@ -718,6 +737,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					// Spawn agent with the prompt
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
+						pianolaDispatchId,
 						toolType: session.toolType,
 						cwd: session.cwd,
 						command: commandToUse,

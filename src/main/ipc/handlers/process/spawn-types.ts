@@ -9,6 +9,7 @@ import type { HarnessControlMode } from '../../../../shared/maestro-lib/provider
  */
 export interface SpawnProcessConfig {
 	sessionId: string;
+	pianolaDispatchId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

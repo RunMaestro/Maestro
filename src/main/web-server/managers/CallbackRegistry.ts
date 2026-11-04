@@ -468,7 +468,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -480,7 +481,11 @@ export class CallbackRegistry {
 			images,
 			background,
 			mentionRouting,
-			...(requireDeliveryReceipt ? [true] : [])
+			...((pianolaDispatchId
+				? [requireDeliveryReceipt, pianolaDispatchId]
+				: requireDeliveryReceipt
+					? [true]
+					: []) as [boolean?, string?])
 		);
 	}
 

@@ -1019,6 +1019,39 @@ describe('web-server/web-server-factory', () => {
 			listener?.({ sender: mockWebContents } as never, { accepted, reason });
 		};
 
+		it('forwards the host dispatch marker and waits for the owning renderer receipt', async () => {
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const pending = callback(
+				'session-1',
+				'work',
+				'ai',
+				'tab',
+				false,
+				undefined,
+				true,
+				undefined,
+				true,
+				'dispatch-id'
+			);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'work',
+				'ai',
+				'tab',
+				false,
+				undefined,
+				true,
+				undefined,
+				'dispatch-id',
+				expect.any(String)
+			);
+			answerReceipt(true);
+			await expect(pending).resolves.toBe(true);
+		});
+
 		it('should return false when mainWindow is null', async () => {
 			deps.getMainWindow = vi.fn().mockReturnValue(null);
 			const createWebServer = createWebServerFactory(deps);
