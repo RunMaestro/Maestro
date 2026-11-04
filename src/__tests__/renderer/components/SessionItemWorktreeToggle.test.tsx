@@ -21,6 +21,13 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+const { prState } = vi.hoisted(() => ({
+	prState: { current: {} as Record<string, unknown>, refresh: vi.fn() },
+}));
+vi.mock('../../../renderer/hooks/worktree/useWorktreePullRequest', () => ({
+	useWorktreePullRequest: () => ({ loading: false, refresh: prState.refresh, ...prState.current }),
+}));
+
 const defaultTheme: Theme = {
 	id: 'dracula',
 	name: 'Dracula',
@@ -262,5 +269,52 @@ describe('SessionItem worktree collapse toggle', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Collapse worktrees' }));
 
 		expect(onSelect).not.toHaveBeenCalled();
+	});
+});
+
+describe('worktree PR summary', () => {
+	it('shows CI transitions and refreshes without selecting the worktree', () => {
+		const onSelect = vi.fn();
+		const session = createMockSession({ worktreeBranch: 'feat/x' });
+		const snapshot = {
+			discovery: { status: 'found', pullRequest: { identity: { number: 42 }, state: 'OPEN' } },
+			ci: { status: 'available', checks: [{ state: 'pending' }] },
+		};
+		prState.current = { snapshot };
+		const { rerender } = render(
+			<SessionItem {...defaultProps} variant="worktree" session={session} onSelect={onSelect} />
+		);
+		expect(screen.getByRole('button', { name: /PR #42 OPEN, CI pending/ })).toBeInTheDocument();
+		snapshot.ci.checks[0].state = 'failed';
+		rerender(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={{ ...session }}
+				onSelect={onSelect}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: /CI failed/ }));
+		expect(prState.refresh).toHaveBeenCalled();
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it('distinguishes no PR, unknown CI and stale data', () => {
+		const session = createMockSession();
+		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		const { rerender } = render(
+			<SessionItem {...defaultProps} variant="worktree" session={session} />
+		);
+		expect(screen.getByRole('button', { name: /No PR/ })).toBeInTheDocument();
+		prState.current = {
+			snapshot: {
+				discovery: { status: 'found', pullRequest: { identity: { number: 7 }, state: 'OPEN' } },
+			},
+		};
+		rerender(<SessionItem {...defaultProps} variant="worktree" session={{ ...session }} />);
+		expect(screen.getByRole('button', { name: /CI unknown/ })).toBeInTheDocument();
+		prState.current = { ...prState.current, stale: true, error: 'offline' };
+		rerender(<SessionItem {...defaultProps} variant="worktree" session={{ ...session }} />);
+		expect(screen.getByRole('button', { name: /PR status stale: offline/ })).toBeInTheDocument();
 	});
 });

@@ -46,10 +46,26 @@ function WorktreePullRequestRefresh({ session, theme }: { session: Session; them
 		ssh?.enabled ? (ssh.remoteId ?? 'unconfigured-ssh') : undefined
 	);
 	const discovery = snapshot?.discovery;
+	const ci = snapshot?.ci;
+	const checks = ci?.status === 'available' ? ci.checks : [];
+	const ciLabel =
+		ci?.status === 'no-ci' || (ci?.status === 'available' && checks.length === 0)
+			? 'No CI'
+			: ci?.status !== 'available'
+				? 'CI unknown'
+				: checks.some((check) => check.state === 'failed')
+					? 'CI failed'
+					: checks.some((check) => check.state === 'pending' || check.state === 'running')
+						? 'CI pending'
+						: checks.some((check) => check.state === 'unavailable' || check.state === 'cancelled')
+							? 'CI unknown'
+							: checks.every((check) => check.state === 'skipped')
+								? 'CI skipped'
+								: 'CI passed';
 	const label = stale
 		? `PR status stale: ${error ?? 'refresh failed'}`
 		: discovery?.status === 'found'
-			? `PR #${discovery.pullRequest.identity.number} ${discovery.pullRequest.state}`
+			? `PR #${discovery.pullRequest.identity.number} ${discovery.pullRequest.state}, ${ciLabel}`
 			: discovery?.status === 'no-pr'
 				? 'No PR'
 				: discovery?.status === 'unavailable'
@@ -77,8 +93,12 @@ function WorktreePullRequestRefresh({ session, theme }: { session: Session; them
 				: stale
 					? 'PR stale'
 					: discovery?.status === 'found'
-						? `PR #${discovery.pullRequest.identity.number}`
-						: 'PR ↻'}
+						? `#${discovery.pullRequest.identity.number} · ${ciLabel}`
+						: discovery?.status === 'no-pr'
+							? 'No PR'
+							: discovery?.status === 'unavailable'
+								? 'PR unknown'
+								: 'PR ↻'}
 		</button>
 	);
 }
