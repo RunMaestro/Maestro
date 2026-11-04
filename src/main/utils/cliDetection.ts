@@ -2,6 +2,10 @@ import { execFileNoThrow } from './execFile';
 import { buildExpandedEnv } from '../../shared/pathUtils';
 import { getWhichCommand } from '../../shared/platformDetection';
 import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
+import {
+	detectSshPath as detectSshPathCore,
+	resolveSshPath as resolveSshPathCore,
+} from '../../shared/maestro-lib/launch/ssh-path';
 
 let cloudflaredInstalledCache: boolean | null = null;
 let cloudflaredPathCache: string | null = null;
@@ -205,5 +209,30 @@ export function clearGhCache(): void {
 	ghStatusCache = null;
 }
 
-// SSH detection moved into maestro-lib so the SSH command builder can live there.
-export { detectSshPath, resolveSshPath } from '../../shared/maestro-lib/launch/ssh-path';
+// Keep the library's implementation/cache; only desktop requests participate in
+// main-process exclusion. Direct library callers remain a separate safety gap.
+const execSshDetection: typeof execFileNoThrow = (command, args, cwd, options) => {
+	// Unknown launch/observation and early results must retain native ownership.
+	const releaseNative = beginGlobalWorktreeActivity();
+	return execFileNoThrow(command, args, cwd, options, (child) =>
+		child.once('close', releaseNative)
+	);
+};
+
+export async function detectSshPath(): Promise<string | null> {
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await detectSshPathCore(execSshDetection);
+	} finally {
+		release();
+	}
+}
+
+export async function resolveSshPath(): Promise<string> {
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await resolveSshPathCore(execSshDetection);
+	} finally {
+		release();
+	}
+}
