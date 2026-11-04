@@ -2,10 +2,12 @@
 
 ## Base and scope
 
-The cleanup branch is based on rc commit `ef1f51c3cf868fc7c0ff8f19e7eaeedafe570c02`.
-The consolidation was reconstructed from that commit's current test sources,
-rather than replaying stale merged files over newer rc assertions. Inherited
-Lite feature changes are not part of this change.
+The cleanup branch is based on rc commit `ccd7cbd594f21e80ac978290b97b247accec9347`.
+The consolidation was reconstructed from the current test sources at the earlier
+rc commit `ef1f51c3cf868fc7c0ff8f19e7eaeedafe570c02`, then rebased onto the newer rc.
+None of the newer rc changes overlap the 511 consolidated source files. The newer
+bridge tests and assertions therefore remain intact. Inherited Lite feature changes
+are not part of this change.
 
 - Consolidate 511 source files into 113 test files: 398 fewer file-isolation boundaries.
 - Preserve all 10,087 tests in those source files, including their complete test names.
@@ -24,6 +26,12 @@ existing test names and preventing hooks from applying to neighboring sources.
 Static imports and `vi.hoisted` state stay at module scope. Colliding bindings use
 source-specific aliases; component aliases retain JSX component capitalization.
 Module mocks are shared only when their factories and dependency graphs are compatible.
+
+On the refreshed rc base, a combined runtime run of all 113 consolidated files
+and all six new or changed upstream bridge test files passed: 10,310 tests across
+119 files. The 10,087 consolidated test names and multiplicities still match their
+original rc inputs exactly, and the whole-source structural audit still preserves
+all 511 bodies, imports, mocks, and hoisted state.
 
 ## Verification
 
@@ -90,6 +98,13 @@ The other failing files were unchanged `main/plugins/plugin-scan.test.ts` and
 `src/shared/maestro-lib/runtime/__tests__/turns.test.ts`; observed errors included
 deadlines, Windows `EPERM` during temporary-directory cleanup,
 and missing runtime outcomes. No hook was bypassed and no rc push was attempted.
+
+The saved second-push log contains a passing Prettier check followed only by Git's
+generic ref-push error; its wrapper exit receipt was not persisted. After resuming,
+no previous push job remained registered. The exact Bun formatting and lint commands
+were checked independently and each exited zero; no matching application crash event
+was found. The historical termination cause and exit code could not be recovered,
+so that incomplete log is not treated as a diagnosed type-check or remote rejection.
 
 The clean-rc run is not a controlled speed baseline: its dependency install differed
 from the repaired validation environment. This change establishes 398 fewer file
