@@ -54,6 +54,34 @@ describe('dispatch command', () => {
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
+	it.each([false, true])('preserves optional supervision receipts for queue=%s', async (queue) => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		const admission = {
+			version: 1,
+			dispatchId: 'dispatch',
+			targetAgentId: 'agent-abc-123',
+			targetTabId: 'tab',
+			supervision: 'feature-off',
+			outcome: queue ? 'queued' : 'accepted',
+		};
+		const sendCommand = vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'tab',
+			dispatchId: 'dispatch',
+			admission,
+			queued: queue,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		await dispatch('agent-abc', 'Hello', { queue });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: true,
+			dispatchId: 'dispatch',
+			admission,
+		});
+	});
+
 	describe('default (active tab) flow', () => {
 		it('sends send_command in the background by default (no tabId) and surfaces the desktop-supplied tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');

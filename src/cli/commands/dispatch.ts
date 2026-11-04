@@ -509,6 +509,8 @@ export async function runDispatch(
 			}
 			const result = await client.sendCommand<{
 				success?: boolean;
+				dispatchId?: string;
+				admission?: PianolaDispatchReceipt;
 				tabId?: string;
 				callbackId?: string;
 				queued?: boolean;
@@ -546,6 +548,8 @@ export async function runDispatch(
 			}
 			return {
 				tabId: result.tabId,
+				...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+				...(result.admission ? { admission: result.admission } : {}),
 				callbackId: result.callbackId,
 				// The desktop turns a busy agent away; a headless host queues the
 				// message behind the running turn and says so.
@@ -623,6 +627,8 @@ async function runQueueDispatch(
 		const result = await withMaestroClient(async (client) =>
 			client.sendCommand<{
 				success?: boolean;
+				dispatchId?: string;
+				admission?: PianolaDispatchReceipt;
 				tabId?: string;
 				queued?: boolean;
 				queuePosition?: number;
@@ -667,6 +673,8 @@ async function runQueueDispatch(
 			agentId,
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
+			...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+			...(result.admission ? { admission: result.admission } : {}),
 			queued: result.queued === true,
 			...(options.held && result.queued ? { held: true } : {}),
 			...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),

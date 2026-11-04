@@ -14,7 +14,8 @@ import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
-import { hostCallerRuns } from '../../../agent-run/caller-identity';
+import { dispatchSupervision } from './dispatchSupervision';
+import { generateUUID } from '../../../../shared/uuid';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -66,13 +67,19 @@ export function handleEnqueueCommand(
 		return;
 	}
 
-	// A user hold is not an admission fence: resume, merge and steer can change
-	// it. Refuse verified agent queue dispatch until it has a separate technical
-	// hold and the host can enroll before the actual queue drain.
-	// The renderer's enqueue path always targets AI, even when inputMode says
-	// terminal, so that untrusted field cannot bypass the fence.
-	if (hostCallerRuns.resolve(client) || hostCallerRuns.isRunClient(client)) {
-		sendErrorResult('PianolaAdmissionUnavailable: agent queue dispatch is not supervised');
+	const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
+	const coverage = dispatchSupervision(ctx, client, sessionId, dispatchId, requestedTabId);
+	if (coverage.managed) {
+		ctx.send(client, {
+			type: 'enqueue_command_result',
+			success: false,
+			sessionId,
+			dispatchId,
+			admission: coverage.receipt ? { ...coverage.receipt, outcome: 'rejected' } : undefined,
+			error:
+				coverage.error ?? 'PianolaAdmissionUnavailable: agent queue dispatch is not supervised',
+			requestId: message.requestId,
+		});
 		return;
 	}
 
@@ -131,6 +138,17 @@ export function handleEnqueueCommand(
 				type: 'enqueue_command_result',
 				success: result.success,
 				sessionId,
+				...(coverage.receipt
+					? {
+							dispatchId,
+							admission: {
+								...coverage.receipt,
+								targetTabId: result.tabId,
+								queueItemId: result.itemId,
+								outcome: result.success ? (result.queued ? 'queued' : 'accepted') : 'rejected',
+							},
+						}
+					: {}),
 				...(result.success && enqueueCallbackId ? { callbackId: enqueueCallbackId } : {}),
 				...(result.tabId ? { tabId: result.tabId } : {}),
 				...(result.queued !== undefined ? { queued: result.queued } : {}),

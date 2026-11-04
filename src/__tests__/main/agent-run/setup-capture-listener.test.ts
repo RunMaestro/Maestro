@@ -1,3 +1,4 @@
+import { pianolaNewTabSpawns } from '../../../main/pianola/pianola-new-tab-dispatch';
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRun, AgentRunEvent } from '../../../shared/agent-run';
@@ -50,6 +51,23 @@ describe('ProcessManager -> AgentRun capture', () => {
 	beforeEach(() => {
 		runs.clear();
 		events.length = 0;
+	});
+
+	it('binds the exact captured run, even after a fast exit, rather than an older run or spawn generation', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const previous = spawn(manager);
+		const started = vi.fn();
+		pianolaNewTabSpawns.hold('worker', 'tab');
+		pianolaNewTabSpawns.arm('worker', 'tab', () => {}, started);
+		pianolaNewTabSpawns.claim('worker-ai-tab')();
+		const current = spawn(manager);
+		expect(current.id).not.toBe(previous.id);
+		manager.emit('exit', 'worker-ai-tab', 0);
+		await vi.waitFor(() => expect(runs.get(current.id)?.status).toBe('completed'));
+		pianolaNewTabSpawns.started('worker-ai-tab');
+		expect(started).toHaveBeenCalledWith(current.id);
+		expect(current.id).toMatch(/^run:/);
 	});
 
 	it.each(['rate_limited', 'auth_expired'])(

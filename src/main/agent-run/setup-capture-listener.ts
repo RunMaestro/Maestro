@@ -7,6 +7,7 @@
  * filtered inside the service (ISC-1.7).
  */
 
+import { pianolaNewTabSpawns } from '../pianola/pianola-new-tab-dispatch';
 import type { ProcessManager } from '../process-manager';
 import type { ProcessConfig, TurnSettlement } from '../process-manager/types';
 import type { AgentError } from '../../shared/types';
@@ -56,7 +57,7 @@ export function setupAgentRunCapture(
 	});
 
 	processManager.on('spawn', (config: ProcessConfig) => {
-		service.captureSpawn({
+		const run = service.captureSpawn({
 			sessionId: config.sessionId,
 			toolType: config.toolType,
 			cwd: config.cwd,
@@ -64,6 +65,7 @@ export function setupAgentRunCapture(
 			prompt: config.prompt,
 			worktreePath: config.projectPath,
 		});
+		if (run) pianolaNewTabSpawns.captured(config.sessionId, run.id);
 	});
 
 	processManager.on('agent-error', (sessionId: string, error: AgentError) => {

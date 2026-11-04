@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { handleSendCommand } from '../../../main/web-server/handlers/messageHandlers/commands';
+import { handleEnqueueCommand } from '../../../main/web-server/handlers/messageHandlers/queue';
 import { handleNewAITabWithPrompt } from '../../../main/web-server/handlers/messageHandlers/tabs';
 import { hostCallerRuns } from '../../../main/agent-run/caller-identity';
 import { pianolaNewTabSpawns } from '../../../main/pianola/pianola-new-tab-dispatch';
@@ -14,15 +16,19 @@ import type {
 import type { NewAITabWithPromptCallback } from '../../../shared/pianola/pianola-dispatch';
 
 vi.mock('electron', () => ({ app: { getPath: () => process.cwd() } }));
+const flags = vi.hoisted(() => ({ pianola: true }));
 vi.mock('../../../main/stores/getters', () => ({
-	getSettingsStore: () => ({ get: () => ({ pianola: true }) }),
+	getSettingsStore: () => ({ get: () => flags }),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
-vi.mock('../../../main/utils/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
 const directories: string[] = [];
 let previousDataDir: string | undefined;
 afterEach(() => {
 	vi.restoreAllMocks();
+	flags.pianola = true;
 	if (previousDataDir === undefined) delete process.env.MAESTRO_USER_DATA;
 	else process.env.MAESTRO_USER_DATA = previousDataDir;
 	for (const dir of directories.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -109,18 +115,168 @@ function fixture() {
 		}
 	);
 	const send = vi.fn();
+	const executeCommand = vi.fn(async () => true);
+	const enqueueCommand = vi.fn(async () => ({
+		success: true,
+		tabId: 'tab',
+		queued: true,
+		itemId: 'item',
+	}));
 	const ctx = {
 		callbacks: {
 			getSessions: () => [{ id: 'worker' }],
+			getSessionDetail: () => ({
+				id: 'worker',
+				state: 'idle',
+				inputMode: 'ai',
+				activeTabId: 'tab',
+			}),
+			executeCommand,
+			enqueueCommand,
 			listDesktopSessions: () => snapshot,
 			newAITabWithPrompt: newTab,
 		},
 		send,
 		sendError: vi.fn(),
 	} as unknown as MessageHandlerContext;
-	return { ctx, client, newTab, send };
+	return { ctx, client, newTab, send, snapshot, scopeId, executeCommand, enqueueCommand };
 }
 describe('production new-tab handler supervision wiring', () => {
+	it.each([
+		['new', handleNewAITabWithPrompt],
+		['send', handleSendCommand],
+		['queue', handleEnqueueCommand],
+	] as const)(
+		'%s preserves ordinary feature-off/unmanaged delegation and refuses managed pause/exclusion',
+		async (kind, handle) => {
+			const f = fixture();
+			// Prepare native metadata for an existing tab using the same real adapter fixture.
+			await f.newTab('worker', '', true, false, undefined, {
+				phase: 'prepare',
+				tabId: 'tab',
+				dispatchId: generateUUID(),
+			});
+			f.newTab.mockClear();
+			const invoke = async () => {
+				f.send.mockClear();
+				handle(f.ctx, f.client, {
+					type: kind,
+					sessionId: 'worker',
+					command: 'Hello',
+					prompt: 'Hello',
+					inputMode: 'ai',
+					dispatchId: generateUUID(),
+					tabId: 'tab',
+				});
+				await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+				return f.send.mock.calls[0][1];
+			};
+			flags.pianola = false;
+			expect(await invoke()).toMatchObject({
+				success: true,
+				admission: {
+					supervision: 'feature-off',
+					outcome: kind === 'queue' ? 'queued' : 'accepted',
+				},
+			});
+			flags.pianola = true;
+			const targets = store.readSupervisorTargets();
+			store.writeSupervisorTargets([]);
+			expect(await invoke()).toMatchObject({
+				success: true,
+				admission: { supervision: 'unmanaged' },
+			});
+			// A different scope manager is ordinary delegation, not caller authority.
+			store.writeSupervisorTargets(
+				targets.map((t) => ({ ...t, managerAgentId: 'another-manager' }))
+			);
+			expect(await invoke()).toMatchObject({
+				success: true,
+				admission: { supervision: 'unmanaged' },
+			});
+			if (kind !== 'new') {
+				store.writeSupervisorTargets(targets);
+				const tab = f.snapshot.sessions[0] as { supervision: { paused: boolean } };
+				tab.supervision.paused = true;
+				expect(await invoke()).toMatchObject({
+					success: false,
+					admission: { supervision: 'paused' },
+				});
+				tab.supervision.paused = false;
+			}
+			store.writeSupervisorTargets(targets.map((t) => ({ ...t, enabled: false })));
+			const calls = [
+				f.newTab.mock.calls.length,
+				f.executeCommand.mock.calls.length,
+				f.enqueueCommand.mock.calls.length,
+			];
+			expect(await invoke()).toMatchObject({
+				success: false,
+				admission: { supervision: 'excluded', outcome: 'rejected' },
+			});
+			store.writeSupervisorTargets(
+				targets.map((t) => ({ ...t, selection: { ...t.selection!, excludedAgentIds: ['worker'] } }))
+			);
+			expect(await invoke()).toMatchObject({
+				success: false,
+				admission: { supervision: 'excluded' },
+			});
+			store.writeSupervisorTargets(
+				targets.map((t) => ({
+					...t,
+					delegationPolicy: {
+						version: 1,
+						revision: 1,
+						enabled: false,
+						managerAgentId: 'manager',
+						coverage: 'selected-agents',
+						ruleSetRevision: 'paused',
+					},
+				}))
+			);
+			expect(await invoke()).toMatchObject({
+				success: false,
+				admission: { supervision: 'paused' },
+				error: 'PianolaPolicyPaused',
+			});
+			expect([
+				f.newTab.mock.calls.length,
+				f.executeCommand.mock.calls.length,
+				f.enqueueCommand.mock.calls.length,
+			]).toEqual(calls);
+		}
+	);
+
+	it('does not resend a journaled unknown dispatch through feature-off fallback', async () => {
+		const f = fixture();
+		const native = f.newTab.getMockImplementation()!;
+		f.newTab.mockImplementation(async (...args) =>
+			args[5]?.phase === 'release'
+				? { success: false, unknown: true, tabId: args[5].tabId }
+				: native(...args)
+		);
+		const message = {
+			type: 'new_ai_tab_with_prompt',
+			sessionId: 'worker',
+			prompt: 'Hello',
+			dispatchId: generateUUID(),
+		};
+		handleNewAITabWithPrompt(f.ctx, f.client, message);
+		await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+		expect(f.send.mock.calls[0][1]).toMatchObject({
+			unknown: true,
+			admission: { outcome: 'unknown' },
+		});
+		flags.pianola = false;
+		handleNewAITabWithPrompt(f.ctx, f.client, message);
+		await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(2));
+		expect(f.send.mock.calls[1][1]).toMatchObject({
+			unknown: true,
+			admission: { outcome: 'unknown' },
+		});
+		expect(f.newTab).toHaveBeenCalledTimes(2);
+	});
+
 	it('refuses a revoked previously bound caller instead of falling back to a human send', async () => {
 		const f = fixture();
 		vi.mocked(hostCallerRuns.resolve).mockReturnValue(undefined);

@@ -7,7 +7,7 @@ export type PianolaDispatchOutcome = 'not-started' | 'queued' | 'accepted' | 'un
 export interface PianolaDispatchReceipt {
 	version: 1;
 	dispatchId: string;
-	scopeId: string;
+	scopeId?: string;
 	targetAgentId: string;
 	targetTabId?: string;
 	queueItemId?: string;
@@ -17,11 +17,13 @@ export interface PianolaDispatchReceipt {
 		| 'already-covered'
 		| 'paused'
 		| 'excluded'
+		| 'unmanaged'
 		| 'feature-off'
 		| 'unavailable';
 	outcome: PianolaDispatchOutcome;
 }
 export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
+	scopeId: string;
 	caller: CallerRunIdentity;
 	/** Hash of immutable dispatch intent, including prompt and placement. */
 	intentFingerprint: string;

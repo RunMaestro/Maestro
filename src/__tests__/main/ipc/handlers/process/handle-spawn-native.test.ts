@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import { hostCallerRuns } from '../../../../../main/agent-run/caller-identity';
 import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../../../shared/agentDelegation';
-import { handleProcessSpawn } from '../../../../../main/ipc/handlers/process/handle-spawn';
+import {
+	handleProcessSpawn,
+	cancelPendingDesktopSpawns,
+} from '../../../../../main/ipc/handlers/process/handle-spawn';
 import type { SpawnProcessConfig } from '../../../../../main/ipc/handlers/process/spawn-types';
 import type { ProcessConfig } from '../../../../../main/process-manager/types';
 import { getAgentCapabilities } from '../../../../../shared/maestro-lib/providers/capabilities';
@@ -31,6 +34,8 @@ async function spawnNativeWithResult(
 		shellEnvVars?: Record<string, string>;
 		storedAgent?: boolean;
 		spawnError?: boolean;
+		spawnRefused?: boolean;
+		cancelPreflight?: boolean;
 	} = {}
 ) {
 	const definition = getAgentDefinition(toolType)!;
@@ -45,6 +50,7 @@ async function spawnNativeWithResult(
 	const processManager = {
 		spawn: vi.fn(() => {
 			if (options.spawnError) throw new Error('Fixture spawn failed');
+			if (options.spawnRefused) return { success: false, pid: -1 };
 			return { success: true, pid: 4242 };
 		}),
 		get: vi.fn(() => (options.storedAgent ? processRecord : undefined)),
@@ -88,7 +94,13 @@ async function spawnNativeWithResult(
 	} as SpawnProcessConfig;
 	const result = await handleProcessSpawn(config, {
 		getProcessManager: () => processManager as never,
-		getAgentDetector: () => ({ getAgent: async () => detected }) as never,
+		getAgentDetector: () =>
+			({
+				getAgent: async () => {
+					if (options.cancelPreflight) cancelPendingDesktopSpawns(config.sessionId);
+					return detected;
+				},
+			}) as never,
 		agentConfigsStore: {
 			get: (key: string, fallback: unknown) =>
 				key === 'configs' ? { [toolType]: agentConfigValues } : fallback,
@@ -217,6 +229,97 @@ describe('native spawn configuration', () => {
 		).rejects.toThrow('PausedDuringSpawn');
 		expect(guard).toHaveBeenCalledTimes(2);
 		expect(started).not.toHaveBeenCalled();
+	});
+
+	it('releases a conclusively refused preflight so a later normal send can use the tab', async () => {
+		const tabId = generateUUID();
+		const sessionId = `worker-ai-${tabId}`;
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, vi.fn());
+		const refused = await spawnNativeWithResult('qwen3-coder', {
+			sessionId,
+			harnessControlMode: 'current',
+			permissionMode: 'standard',
+		});
+		expect(refused.result.success).toBe(false);
+		expect(refused.processManager.spawn).not.toHaveBeenCalled();
+		expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(false);
+		const later = await spawnNativeWithResult('copilot-cli', { sessionId });
+		expect(later.result.success).toBe(true);
+		expect(later.processManager.spawn).toHaveBeenCalledOnce();
+	});
+
+	it('releases after a failed final preflight but preserves uncertainty once native spawn is entered', async () => {
+		const tabId = generateUUID();
+		const sessionId = `worker-ai-${tabId}`;
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm(
+			'worker',
+			tabId,
+			vi
+				.fn()
+				.mockImplementationOnce(() => {})
+				.mockImplementation(() => {
+					throw new Error('Paused');
+				}),
+			vi.fn()
+		);
+		await expect(spawnNativeWithResult('copilot-cli', { sessionId })).rejects.toThrow('Paused');
+		expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(false);
+		pianolaNewTabSpawns.hold('worker', tabId);
+		const started = vi.fn();
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, started);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId }, {}, { spawnError: true })
+		).rejects.toThrow('Fixture spawn failed');
+		expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(true);
+		await expect(spawnNativeWithResult('copilot-cli', { sessionId })).rejects.toThrow(
+			'DispatchAlreadyStarting'
+		);
+		expect(started).not.toHaveBeenCalled();
+	});
+
+	it.each(['cancel', 'refused', 'initial-guard'] as const)(
+		'clears a proven %s nonstart before the next normal send',
+		async (failure) => {
+			const tabId = generateUUID();
+			const sessionId = `worker-ai-${tabId}`;
+			pianolaNewTabSpawns.hold('worker', tabId);
+			pianolaNewTabSpawns.arm(
+				'worker',
+				tabId,
+				() => {
+					if (failure === 'initial-guard') throw new Error('Already paused');
+				},
+				vi.fn()
+			);
+			const attempt = spawnNativeWithResult(
+				'copilot-cli',
+				{ sessionId },
+				{},
+				{
+					cancelPreflight: failure === 'cancel',
+					spawnRefused: failure === 'refused',
+				}
+			);
+			if (failure === 'refused')
+				await expect(attempt).rejects.toThrow('agent process did not start');
+			else
+				await expect(attempt).rejects.toThrow(
+					failure === 'cancel' ? /cancel|abort/i : 'Already paused'
+				);
+			expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(false);
+			expect((await spawnNativeWithResult('copilot-cli', { sessionId })).result.success).toBe(true);
+		}
+	);
+
+	it('never substitutes the caller generation when capture has no run evidence', async () => {
+		const tabId = generateUUID();
+		const started = vi.fn();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, started);
+		await spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` });
+		expect(started).toHaveBeenCalledWith(undefined);
 	});
 
 	it('passes effective model and effort with session-over-agent precedence', async () => {

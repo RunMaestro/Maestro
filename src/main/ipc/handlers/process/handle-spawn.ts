@@ -135,13 +135,13 @@ export async function handleProcessSpawn(
 	deps: SpawnHandlerDependencies
 ) {
 	const admissionGuard = pianolaNewTabSpawns.claim(config.sessionId);
-	const proofCleanup: { release?: () => void } = {};
-	const manager = requireProcessManager(deps.getProcessManager);
+	const proofCleanup: { release?: () => void; notStarted: boolean } = { notStarted: true };
 	const controller = new AbortController();
 	const pending = pendingDesktopSpawns.get(config.sessionId) ?? new Set<AbortController>();
 	pending.add(controller);
 	pendingDesktopSpawns.set(config.sessionId, pending);
 	try {
+		const manager = requireProcessManager(deps.getProcessManager);
 		const records = () =>
 			(deps.sessionsStore?.get('sessions', []) ?? []) as Array<{
 				id: string;
@@ -252,6 +252,7 @@ export async function handleProcessSpawn(
 			throw error;
 		}
 	} finally {
+		if (proofCleanup.notStarted) admissionGuard.notStarted();
 		pending.delete(controller);
 		if (!pending.size && pendingDesktopSpawns.get(config.sessionId) === pending)
 			pendingDesktopSpawns.delete(config.sessionId);
@@ -261,7 +262,7 @@ export async function handleProcessSpawn(
 async function handleProcessSpawnImpl(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies,
-	proofCleanup: { release?: () => void },
+	proofCleanup: { release?: () => void; notStarted: boolean },
 	signal: AbortSignal,
 	admissionGuard: () => void
 ) {
@@ -1274,6 +1275,8 @@ async function handleProcessSpawnImpl(
 
 	if (signal.aborted) throw new Error('Agent run cancelled');
 	admissionGuard();
+	// Exceptions after entering native spawn are uncertain; retain the fence.
+	proofCleanup.notStarted = false;
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -1332,7 +1335,8 @@ async function handleProcessSpawnImpl(
 		// SSH app-server launch, when this Codex turn wants app-server.
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
-	if (result.success) pianolaNewTabSpawns.started(config.sessionId, callerSpawnGeneration);
+	proofCleanup.notStarted = !result.success;
+	if (result.success) pianolaNewTabSpawns.started(config.sessionId);
 	const callerProcess = processManager.get(config.sessionId);
 	spawnReturned = true;
 	if (!result.success) exitListener.current?.(config.sessionId);

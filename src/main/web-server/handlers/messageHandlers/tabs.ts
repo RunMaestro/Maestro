@@ -11,7 +11,7 @@ import * as pianolaStore from '../../../pianola/pianola-store-main';
 import { getSettingsStore } from '../../../stores/getters';
 import path from 'path';
 import { generateUUID } from '../../../../shared/uuid';
-import { hostCallerRuns } from '../../../agent-run/caller-identity';
+import { dispatchSupervision } from './dispatchSupervision';
 import { PianolaNewTabDispatch } from '../../../pianola/pianola-new-tab-dispatch';
 import { pianolaScopeSnapshotFromDesktop } from '../../../../shared/pianola/pianola-scope-cycle';
 import { createHash } from 'crypto';
@@ -792,9 +792,22 @@ export function handleNewAITabWithPrompt(
 		return;
 	}
 
-	// Only the host-bound run is authority. Public caller/callback fields cannot opt in.
-	if (hostCallerRuns.resolve(client) || hostCallerRuns.isRunClient(client)) {
-		const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
+	// Only the host-bound run is authority. Callback recipients confer no management.
+	const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
+	const coverage = dispatchSupervision(ctx, client, sessionId, dispatchId);
+	if (coverage.error) {
+		ctx.send(client, {
+			type: 'new_ai_tab_with_prompt_result',
+			success: false,
+			sessionId,
+			dispatchId,
+			admission: coverage.receipt,
+			error: coverage.error,
+			requestId: message.requestId,
+		});
+		return;
+	}
+	if (coverage.managed) {
 		void newTabAdmission(ctx)
 			.run(
 				client,
@@ -874,11 +887,28 @@ export function handleNewAITabWithPrompt(
 				type: 'new_ai_tab_with_prompt_result',
 				success: result.success,
 				sessionId,
+				...(coverage.receipt
+					? {
+							dispatchId,
+							admission: {
+								...coverage.receipt,
+								targetTabId: result.tabId,
+								outcome: result.unknown
+									? 'unknown'
+									: result.success
+										? result.queued
+											? 'queued'
+											: 'accepted'
+										: 'rejected',
+							},
+						}
+					: {}),
 				...(result.tabId ? { tabId: result.tabId } : {}),
 				// `queued` distinguishes "the turn is running now" from "the agent
 				// was mid-turn, so the prompt is waiting its place in the queue" -
 				// both are successes, and an automated caller wants to know which.
 				...(result.queued ? { queued: true } : {}),
+				...(result.unknown ? { unknown: true } : {}),
 				// Carry the renderer's own reason for a refusal. Without it the CLI
 				// can only see a missing tab id and has to guess why.
 				...(result.error ? { error: result.error } : {}),

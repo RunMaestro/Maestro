@@ -16,7 +16,12 @@ import {
 class NewTabSpawnFences {
 	private readonly held = new Map<
 		string,
-		{ guard?: () => void; started?: (runId: string) => void; claimed?: boolean }
+		{
+			guard?: () => void;
+			started?: (runId?: string) => void;
+			claimed?: boolean;
+			capturedRunId?: string;
+		}
 	>();
 	hold(agentId: string, tabId: string) {
 		const key = `${agentId}-ai-${tabId}`;
@@ -25,7 +30,7 @@ class NewTabSpawnFences {
 	isHeld(agentId: string, tabId: string): boolean {
 		return this.held.has(`${agentId}-ai-${tabId}`);
 	}
-	arm(agentId: string, tabId: string, guard: () => void, started: (runId: string) => void) {
+	arm(agentId: string, tabId: string, guard: () => void, started: (runId?: string) => void) {
 		const entry = this.held.get(`${agentId}-ai-${tabId}`);
 		if (!entry) throw new Error('DispatchTargetNotHeld');
 		entry.guard = guard;
@@ -37,22 +42,42 @@ class NewTabSpawnFences {
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
 		entry.guard();
 	}
-	claim(processId: string): () => void {
-		this.assertReady(processId);
+	claim(processId: string): (() => void) & { notStarted(): void } {
 		const entry = this.held.get(processId);
-		if (!entry) return () => {};
+		if (!entry) return Object.assign(() => {}, { notStarted() {} });
 		if (entry.claimed) throw new Error('DispatchAlreadyStarting');
-		entry.claimed = true;
-		return () => {
-			if (this.held.get(processId) !== entry) throw new Error('DispatchTargetUnavailable');
+		if (!entry.guard) throw new Error('DispatchAdmissionPending');
+		try {
 			this.assertReady(processId);
-		};
+		} catch (error) {
+			// An armed dispatch refused before claiming cannot have started.
+			if (this.held.get(processId) === entry) this.held.delete(processId);
+			throw error;
+		}
+		entry.claimed = true;
+		return Object.assign(
+			() => {
+				if (this.held.get(processId) !== entry) throw new Error('DispatchTargetUnavailable');
+				this.assertReady(processId);
+			},
+			{
+				notStarted: () => {
+					// Only the owner of this claim can conclude a proven nonstart.
+					if (this.held.get(processId) === entry) this.held.delete(processId);
+				},
+			}
+		);
 	}
 
-	started(processId: string, runId: string) {
+	captured(processId: string, runId: string) {
+		const entry = this.held.get(processId);
+		if (entry?.claimed) entry.capturedRunId = runId;
+	}
+
+	started(processId: string, runId?: string) {
 		const entry = this.held.get(processId);
 		if (!entry) return;
-		entry.started?.(runId);
+		entry.started?.(runId ?? entry.capturedRunId);
 		this.held.delete(processId);
 	}
 }
@@ -72,7 +97,7 @@ export class PianolaNewTabDispatch {
 	readonly admission: PianolaDispatchAdmissionService;
 	private readonly queue = createKeyedWriteQueue();
 	private readonly requests = new Map<string, PianolaNewTabRequest>();
-	private readonly startedRuns = new Map<string, string>();
+	private readonly startedRuns = new Map<string, string | undefined>();
 	private readonly callbacks = new Map<string, string | undefined>();
 	constructor(
 		deps: Omit<PianolaDispatchAdmissionDeps, 'readSnapshot' | 'assertTargetReady' | 'release'> & {

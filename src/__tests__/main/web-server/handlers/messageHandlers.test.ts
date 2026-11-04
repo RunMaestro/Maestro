@@ -352,33 +352,24 @@ describe('WebSocketMessageHandler', () => {
 		it.each([
 			['send_command', 'command_result', 'executeCommand'],
 			['enqueue_command', 'enqueue_command_result', 'enqueueCommand'],
-		] as const)(
-			'refuses %s for active and revoked bound runs before delivery',
-			(type, result, callback) => {
-				const resolve = vi.spyOn(hostCallerRuns, 'resolve');
-				const wasBound = vi.spyOn(hostCallerRuns, 'isRunClient');
-				for (const revoked of [false, true]) {
-					resolve.mockReturnValue(revoked ? undefined : ({} as ReturnType<typeof resolve>));
-					wasBound.mockReturnValue(revoked);
-					handler.handleMessage(client, {
-						type,
-						sessionId: 'session-1',
-						command: 'do work',
-						inputMode: 'ai',
-						requestId: 'request-1',
-					});
-					expect(callbacks[callback]).not.toHaveBeenCalled();
-					expect(
-						JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)
-					).toMatchObject({
-						type: result,
-						success: false,
-						error: expect.stringContaining('PianolaAdmissionUnavailable'),
-						requestId: 'request-1',
-					});
-				}
-			}
-		);
+		] as const)('refuses %s for revoked bound runs before delivery', (type, result, callback) => {
+			vi.spyOn(hostCallerRuns, 'resolve').mockReturnValue(undefined);
+			vi.spyOn(hostCallerRuns, 'isRunClient').mockReturnValue(true);
+			handler.handleMessage(client, {
+				type,
+				sessionId: 'session-1',
+				command: 'do work',
+				inputMode: 'ai',
+				requestId: 'request-1',
+			});
+			expect(callbacks[callback]).not.toHaveBeenCalled();
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)).toMatchObject({
+				type: result,
+				success: false,
+				error: 'CallerRunUnavailable',
+				requestId: 'request-1',
+			});
+		});
 
 		it('does not turn public caller attribution into authority for a human send', async () => {
 			handler.handleMessage(client, {
@@ -404,7 +395,7 @@ describe('WebSocketMessageHandler', () => {
 			expect(JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)).toMatchObject({
 				type: 'enqueue_command_result',
 				success: false,
-				error: expect.stringContaining('PianolaAdmissionUnavailable'),
+				error: 'CallerRunUnavailable',
 			});
 		});
 
@@ -423,7 +414,7 @@ describe('WebSocketMessageHandler', () => {
 			expect(JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)).toMatchObject({
 				type: 'command_result',
 				success: false,
-				error: expect.stringContaining('PianolaAdmissionUnavailable'),
+				error: 'CallerRunUnavailable',
 			});
 		});
 
