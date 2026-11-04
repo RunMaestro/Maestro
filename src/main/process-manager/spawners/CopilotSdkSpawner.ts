@@ -7,6 +7,7 @@ import {
 	type SessionEvent,
 } from '@github/copilot-sdk';
 import { logger } from '../../utils/logger';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 import { createOutputParser } from '../../parsers';
 import { captureException } from '../../utils/sentry';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
@@ -67,32 +68,61 @@ export class CopilotSdkSpawner {
 		};
 	}
 
-	closeAll(): Promise<void> {
-		this.context.leasesBySession.clear();
-		return this.context.connections.closeAll();
+	async closeAll(): Promise<void> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => {
+				this.context.leasesBySession.clear();
+				return observe(this.context.connections.closeAll());
+			},
+			(error) => void captureException(error)
+		);
 	}
 
 	closeAgent(agentId: string): void {
-		for (const [sessionId, lease] of this.context.leasesBySession) {
-			if (lease.agentId === agentId) this.context.leasesBySession.delete(sessionId);
-		}
-		void this.context.connections.closeAgent(agentId).catch((error) => captureException(error));
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				for (const [sessionId, lease] of this.context.leasesBySession) {
+					if (lease.agentId === agentId) this.context.leasesBySession.delete(sessionId);
+				}
+				observe(this.context.connections.closeAgent(agentId));
+			},
+			(error) => void captureException(error)
+		);
 	}
 
 	closeSession(sessionId: string): boolean {
-		const lease = this.context.leasesBySession.get(sessionId);
-		if (!lease || lease.refs > 0 || lease.closed) return false;
-		this.context.leasesBySession.delete(sessionId);
-		void this.context.connections.close(lease).catch((error) => captureException(error));
-		return true;
+		return withWorktreeTurnActivity(
+			(_start, observe) => {
+				const lease = this.context.leasesBySession.get(sessionId);
+				if (!lease || lease.refs > 0 || lease.closed) return false;
+				this.context.leasesBySession.delete(sessionId);
+				observe(this.context.connections.close(lease));
+				return true;
+			},
+			(error) => void captureException(error)
+		);
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(_start, observe) => this.spawnAdmitted(config, observe),
+				(error) => void captureException(error)
+			);
+		} catch (error) {
+			return { pid: -1, success: false, error: String(error) };
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		observe: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		if (config.toolType !== 'copilot-cli' || config.harnessControlMode !== 'native') {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new CopilotTurn(this.context, config).start();
+			return new CopilotTurn(this.context, config, observe).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -116,6 +146,7 @@ class CopilotTurn {
 	private cancelled = false;
 	private finished = false;
 	private finalizing = false;
+	private readonly completion = Promise.withResolvers<void>();
 	private sawMessageDelta = false;
 	private readonly closed = Promise.withResolvers<void>();
 	private readonly capabilities: HarnessControlCapabilities = {
@@ -133,7 +164,8 @@ class CopilotTurn {
 
 	constructor(
 		private readonly ctx: CopilotTurnContext,
-		private readonly config: ProcessConfig
+		private readonly config: ProcessConfig,
+		private readonly observe: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -161,15 +193,21 @@ class CopilotTurn {
 			agentSessionId: config.agentSessionId,
 			skipCopilotShutdownWait: true,
 			sdkController: {
-				interrupt: () => this.interrupt(),
-				kill: () => this.close(),
+				interrupt: () =>
+					this.withActivity((observe) => this.interrupt(observe)).catch(
+						(error) => void captureException(error)
+					),
+				kill: () =>
+					this.withActivity((observe) => this.close(observe)).catch(
+						(error) => void captureException(error)
+					),
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
 				closed: this.closed.promise,
-				steer: (request) => this.steer(request),
-				interrupt: async () => this.interrupt(),
-				close: async () => this.close(),
+				steer: (request) => this.withActivity(() => this.steer(request)),
+				interrupt: () => this.withActivity((observe) => this.interrupt(observe)),
+				close: () => this.withActivity((observe) => this.close(observe)),
 			},
 		};
 	}
@@ -178,7 +216,10 @@ class CopilotTurn {
 		const { sessionId } = this.config;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.run().catch((error) => this.handleRunError(error));
+		// send() acknowledgement does not end the event turn. Keep this promise
+		// through idle/cancel/error reporting independently of manager ownership.
+		this.observe(this.completion.promise);
+		this.observe(this.run().catch((error) => this.handleRunError(error)));
 		return { pid: -1, success: true };
 	}
 
@@ -188,14 +229,18 @@ class CopilotTurn {
 			throw new Error('Copilot native mode does not support image prompts yet');
 		}
 		const lease = await this.ctx.connections.acquire(config, {
-			onPermissionRequest:
-				config.permissionMode === 'full'
-					? approveAll
-					: config.permissionMode === 'readonly'
-						? (request: PermissionRequest) => this.approveReadOnly(request)
-						: (request: PermissionRequest) => this.approve(request),
-			onUserInputRequest: (request: CopilotUserInputRequest) => this.answerQuestion(request),
-			onElicitationRequest: (request: ElicitationContext) => this.answerElicitation(request),
+			onPermissionRequest: (request, invocation) =>
+				this.withActivity(async () =>
+					config.permissionMode === 'full'
+						? approveAll(request, invocation)
+						: config.permissionMode === 'readonly'
+							? this.approveReadOnly(request)
+							: this.approve(request)
+				),
+			onUserInputRequest: (request: CopilotUserInputRequest) =>
+				this.withActivity(() => this.answerQuestion(request)),
+			onElicitationRequest: (request: ElicitationContext) =>
+				this.withActivity(() => this.answerElicitation(request)),
 		});
 		if (this.cancelled || this.finished || this.isSuperseded()) {
 			await this.ctx.connections.close(lease);
@@ -213,7 +258,11 @@ class CopilotTurn {
 		this.session = lease.session;
 		this.managedProcess.agentSessionId = this.session.sessionId;
 		this.forwardLine(JSON.stringify({ type: 'acp.init', sessionId: this.session.sessionId }));
-		this.unsubscribe = this.session.on((event) => this.onEvent(event));
+		this.unsubscribe = this.session.on((event) => {
+			void this.withActivity(async () => this.onEvent(event)).catch(
+				(error) => void captureException(error)
+			);
+		});
 		this.promptSent = true;
 		await this.session.send({ prompt: config.prompt ?? '', mode: 'enqueue' });
 	}
@@ -397,14 +446,14 @@ class CopilotTurn {
 		this.ctx.stdoutHandler.handleData(this.config.sessionId, line + '\n');
 	}
 
-	private async interrupt(): Promise<void> {
+	private async interrupt(observe: typeof this.observe): Promise<void> {
 		this.cancelled = true;
-		void this.session?.abort().catch(() => undefined);
+		if (this.session) observe(this.session.abort().catch(() => undefined));
 	}
 
-	private async close(): Promise<void> {
+	private async close(observe: typeof this.observe): Promise<void> {
 		this.cancelled = true;
-		void this.session?.abort().catch(() => undefined);
+		if (this.session) observe(this.session.abort().catch(() => undefined));
 		if (this.lease) await this.ctx.connections.close(this.lease);
 		this.ctx.leasesBySession.delete(this.config.sessionId);
 		this.closed.resolve();
@@ -423,12 +472,13 @@ class CopilotTurn {
 				error: String(error),
 			});
 			this.finished = true;
-			if (this.lease) void this.ctx.connections.close(this.lease);
+			if (this.lease) this.observe(this.ctx.connections.close(this.lease));
 			this.ctx.leasesBySession.delete(this.config.sessionId);
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
 				this.ctx.processes.delete(this.config.sessionId);
 				this.ctx.fallbackToCli(this.config);
 			}
+			this.completion.resolve();
 			return;
 		}
 		void captureException(error);
@@ -449,14 +499,28 @@ class CopilotTurn {
 		});
 	}
 
-	private async finish(code: number): Promise<void> {
-		if (this.finalizing) return this.closed.promise;
+	private finish(code: number): Promise<void> {
+		if (this.finalizing) return this.completion.promise;
 		this.finalizing = true;
 		this.finished = true;
-		this.unsubscribe?.();
-		this.unsubscribe = undefined;
-		if (this.lease) this.ctx.connections.release(this.lease);
-		await this.ctx.exitHandler.handleExit(this.config.sessionId, code, this.managedProcess);
+		return this.observe(
+			(async () => {
+				this.unsubscribe?.();
+				this.unsubscribe = undefined;
+				if (this.lease) this.ctx.connections.release(this.lease);
+				await this.ctx.exitHandler.handleExit(this.config.sessionId, code, this.managedProcess);
+			})().finally(() => this.completion.resolve())
+		);
+	}
+
+	private async withActivity<T>(
+		operation: (observe: typeof this.observe) => Promise<T>
+	): Promise<T> {
+		// SDK callbacks and retained controls can outlive the original turn hold.
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(operation(observe)),
+			(error) => void captureException(error)
+		);
 	}
 
 	private isSuperseded(): boolean {

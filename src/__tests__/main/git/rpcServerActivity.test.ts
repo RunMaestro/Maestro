@@ -12,6 +12,11 @@ import type { DataBufferManager } from '../../../main/process-manager/handlers/D
 import type { NdJsonConnection } from '../../../shared/maestro-lib/harness/rpc/connection';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Event } from '@opencode-ai/sdk';
+import type { SessionEvent } from '@github/copilot-sdk';
+import type {
+	CopilotConnectionManager,
+	CopilotConnectionLease,
+} from '../../../main/process-manager/spawners/CopilotConnectionManager';
 import type { OpencodeCurrentPermissionRequest } from '../../../main/opencode-server/permission-requests';
 
 const probes = vi.hoisted(() => ({
@@ -34,6 +39,7 @@ const probes = vi.hoisted(() => ({
 	copilotRuntime: vi.fn(),
 }));
 vi.mock('@github/copilot-sdk', () => ({
+	approveAll: () => ({ kind: 'approve-once' }),
 	CopilotClient: class {
 		constructor(options: unknown) {
 			return probes.copilotClient(options);
@@ -2933,6 +2939,349 @@ describe('Copilot connection manager activity with unavailable native observer',
 		session.resolve({ sessionId: 'late-session' });
 		const lease = await acquiring;
 		expect(lease.closed).toBe(true);
+		await drain();
+		await blocked();
+	});
+});
+
+describe('Copilot per-turn activity', () => {
+	let copilot: import('../../../main/process-manager/spawners/CopilotSdkSpawner').CopilotSdkSpawner;
+	let listener: (event: SessionEvent) => void;
+	let lease: CopilotConnectionLease;
+	const session = {
+		sessionId: 'copilot-provider',
+		on: vi.fn<(callback: (event: SessionEvent) => void) => () => void>(),
+		send: vi.fn<() => Promise<string>>(),
+		abort: vi.fn<() => Promise<void>>(),
+	};
+	const connections = {
+		acquire: vi.fn<CopilotConnectionManager['acquire']>(),
+		close: vi.fn<CopilotConnectionManager['close']>(),
+		closeAll: vi.fn<CopilotConnectionManager['closeAll']>(),
+		closeAgent: vi.fn<CopilotConnectionManager['closeAgent']>(),
+		release: vi.fn<CopilotConnectionManager['release']>(),
+	};
+	const input = (overrides: Partial<ProcessConfig> = {}) =>
+		config({
+			toolType: 'copilot-cli',
+			command: 'copilot',
+			harnessControlMode: 'native',
+			...overrides,
+		});
+	async function start(overrides: Partial<ProcessConfig> = {}) {
+		expect(copilot.spawn(input(overrides))).toMatchObject({ success: true });
+		await drain();
+		return processes.get('rpc-session')!;
+	}
+	async function idle() {
+		listener({ type: 'session.idle' } as SessionEvent);
+		await drain();
+	}
+	beforeEach(async () => {
+		session.on.mockImplementation((callback) => {
+			listener = callback;
+			return vi.fn();
+		});
+		session.send.mockResolvedValue('message-id');
+		session.abort.mockResolvedValue(undefined);
+		lease = {
+			key: 'owner',
+			identity: 'identity',
+			client: {} as never,
+			session: session as unknown as CopilotConnectionLease['session'],
+			handlers: {} as never,
+			refs: 1,
+			initializing: false,
+			closed: false,
+			agentId: 'agent',
+			replacing: false,
+		};
+		connections.acquire.mockResolvedValue(lease);
+		connections.close.mockResolvedValue(undefined);
+		connections.closeAll.mockResolvedValue(undefined);
+		connections.closeAgent.mockResolvedValue(undefined);
+		connections.release.mockImplementation((current) => {
+			current.refs--;
+		});
+		const { CopilotSdkSpawner } =
+			await import('../../../main/process-manager/spawners/CopilotSdkSpawner');
+		copilot = new CopilotSdkSpawner(
+			processes,
+			new EventEmitter(),
+			{} as DataBufferManager,
+			fallback,
+			connections as unknown as CopilotConnectionManager
+		);
+	});
+	it.each([target, path.join(target, 'child'), path.resolve('unrelated')])(
+		'refuses parser/map/acquisition and all fallback routing under %s',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				for (const overrides of [
+					{},
+					{ permissionMode: 'full' as const },
+					{ harnessControlMode: 'current' as const },
+				]) {
+					expect(copilot.spawn(input(overrides))).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+				}
+				expect(createOutputParser).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+				expect(connections.acquire).not.toHaveBeenCalled();
+				expect(fallback).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it('admits before pending canonicalization and reentrant parser setup', async () => {
+		const resolving = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(resolving.promise);
+		const earlier = gate.reserveWorktreeCleanup(target);
+		let reentrant: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+		vi.mocked(createOutputParser).mockImplementationOnce(() => {
+			reentrant = gate.reserveWorktreeCleanup(target);
+			return null;
+		});
+		await start();
+		resolving.resolve(target);
+		expect(await earlier).toMatchObject({ status: 'blocked' });
+		expect(await reentrant).toMatchObject({ status: 'blocked' });
+		expect(session.send).toHaveBeenCalledWith({ prompt: 'fixture', mode: 'enqueue' });
+		await idle();
+		(await reserve()).release();
+	});
+	it.each([false, true])('holds reporting through settlement (rejected: %s)', async (rejected) => {
+		await start();
+		await blocked();
+		const reporting = Promise.withResolvers<void>();
+		probes.exit.mockReturnValueOnce(reporting.promise);
+		await idle();
+		await blocked();
+		if (rejected) reporting.reject(new Error('reporting'));
+		else reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('holds pending send even after idle and reporting', async () => {
+		const send = Promise.withResolvers<string>();
+		session.send.mockReturnValueOnce(send.promise);
+		await start();
+		await idle();
+		await blocked();
+		send.resolve('ack');
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['resolve', 'reject'] as const)(
+		'holds cancelled/deleted acquisition until %s and cleanup settle',
+		async (outcome) => {
+			const acquiring = Promise.withResolvers<CopilotConnectionLease>();
+			connections.acquire.mockReturnValueOnce(acquiring.promise);
+			const managed = await start();
+			await managed.harnessControl!.close();
+			processes.clear();
+			await blocked();
+			const closing = Promise.withResolvers<void>();
+			connections.close.mockReturnValueOnce(closing.promise);
+			if (outcome === 'resolve') acquiring.resolve(lease);
+			else acquiring.reject(new Error('acquire'));
+			await drain();
+			if (outcome === 'resolve') {
+				await blocked();
+				closing.resolve();
+				await drain();
+			}
+			expect(session.send).not.toHaveBeenCalled();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['permission', 'question', 'elicitation'] as const)(
+		'holds pending %s after idle and refuses its late callback',
+		async (kind) => {
+			await start();
+			const handlers = connections.acquire.mock.calls[0][1];
+			const pending = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(pending.promise);
+			const invoke = () =>
+				kind === 'permission'
+					? handlers.onPermissionRequest({ kind: 'read' } as never, {
+							sessionId: 'copilot-provider',
+						})
+					: kind === 'question'
+						? handlers.onUserInputRequest({ question: 'Question', choices: ['yes'] })
+						: handlers.onElicitationRequest({
+								message: 'Question',
+								requestedSchema: { type: 'object', properties: {} },
+							} as never);
+			const answer = invoke();
+			await idle();
+			await blocked();
+			pending.resolve({ outcome: 'answers', answers: { answer: 'yes' } });
+			await answer;
+			await drain();
+			const hold = await reserve();
+			try {
+				const before = probes.interaction.mock.calls.length;
+				await expect(invoke()).rejects.toThrow('reserved');
+				expect(probes.interaction).toHaveBeenCalledTimes(before);
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each(['full', 'readonly'] as const)(
+		'preserves %s permission decisions with fresh callback admission',
+		async (permissionMode) => {
+			await start({ permissionMode });
+			const approve = connections.acquire.mock.calls[0][1].onPermissionRequest;
+			expect(
+				await approve({ kind: 'read' } as never, { sessionId: 'copilot-provider' })
+			).toMatchObject({ kind: 'approve-once' });
+			expect(
+				await approve({ kind: 'write' } as never, { sessionId: 'copilot-provider' })
+			).toMatchObject({ kind: permissionMode === 'full' ? 'approve-once' : 'reject' });
+			await idle();
+			const hold = await reserve();
+			try {
+				await expect(
+					approve({ kind: 'read' } as never, { sessionId: 'copilot-provider' })
+				).rejects.toThrow('reserved');
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it.each([
+		['steer', false],
+		['interrupt', false],
+		['close', false],
+		['interrupt', true],
+		['close', true],
+	] as const)(
+		'holds pending %s independently of idle and reporting (late: %s)',
+		async (method, late) => {
+			const managed = await start();
+			if (late) await idle();
+			const pending = Promise.withResolvers<never>();
+			if (method === 'steer') session.send.mockReturnValueOnce(pending.promise);
+			else session.abort.mockReturnValueOnce(pending.promise);
+			const control =
+				method === 'steer'
+					? managed.harnessControl!.steer({ id: 'steer', text: 'next' })
+					: managed.harnessControl![method]();
+			await idle();
+			await blocked();
+			pending.resolve(undefined as never);
+			await control;
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('refuses retained harness and SDK controls before SDK access after idle', async () => {
+		const managed = await start();
+		await idle();
+		const hold = await reserve();
+		try {
+			await expect(managed.harnessControl!.steer({ id: 'late', text: 'next' })).rejects.toThrow(
+				'reserved'
+			);
+			await expect(managed.harnessControl!.interrupt()).rejects.toThrow('reserved');
+			await expect(managed.harnessControl!.close()).rejects.toThrow('reserved');
+			await expect(managed.sdkController!.interrupt()).resolves.toBeUndefined();
+			await expect(managed.sdkController!.kill()).resolves.toBeUndefined();
+			expect(session.send).toHaveBeenCalledTimes(1);
+			expect(session.abort).not.toHaveBeenCalled();
+			expect(connections.close).not.toHaveBeenCalled();
+		} finally {
+			hold.release();
+		}
+	});
+	it.each(['closeAll', 'closeAgent', 'closeSession'] as const)(
+		'admits %s before lease mutation and holds pending shutdown',
+		async (method) => {
+			await start();
+			await idle();
+			const hold = await reserve();
+			try {
+				const run = () =>
+					method === 'closeAll'
+						? copilot.closeAll()
+						: method === 'closeAgent'
+							? copilot.closeAgent('agent')
+							: copilot.closeSession('rpc-session');
+				if (method === 'closeAll') await expect(run()).rejects.toThrow('reserved');
+				else expect(run).toThrow('reserved');
+				expect(connections.closeAll).not.toHaveBeenCalled();
+				expect(connections.closeAgent).not.toHaveBeenCalled();
+				expect(connections.close).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			const pending = Promise.withResolvers<void>();
+			const fn = method === 'closeSession' ? connections.close : connections[method];
+			fn.mockReturnValueOnce(pending.promise);
+			if (method === 'closeAll') void copilot.closeAll();
+			else if (method === 'closeAgent') copilot.closeAgent('agent');
+			else expect(copilot.closeSession('rpc-session')).toBe(true);
+			await blocked();
+			pending.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('composes asynchronous setup failure with independently held fallback', async () => {
+		connections.acquire.mockRejectedValueOnce(new Error('setup'));
+		fallback.mockImplementationOnce(() =>
+			boundary.withWorktreeTurnActivity((start, observe) => {
+				observe(
+					start(
+						{ command: 'fallback', args: [], cwd: target, env: {} },
+						{},
+						{ keepStdinOpen: true, stopGraceMs: 1000 }
+					).done
+				);
+				return { success: true, pid: 12345 };
+			}, vi.fn())
+		);
+		await start({ permissionMode: 'full' });
+		expect(fallback).toHaveBeenCalledTimes(1);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('retains a replaced generation until its own close', async () => {
+		const first = await start();
+		const oldListener = listener;
+		await start();
+		oldListener({ type: 'session.idle' } as SessionEvent);
+		await idle();
+		await blocked();
+		await first.harnessControl!.close();
+		await drain();
+		(await reserve()).release();
+	});
+	it('preserves actual manager unknown native ownership after idle and shutdown', async () => {
+		const { CopilotSdkSpawner } =
+			await import('../../../main/process-manager/spawners/CopilotSdkSpawner');
+		probes.copilotClient.mockReturnValue({
+			start: vi.fn().mockResolvedValue(undefined),
+			createSession: vi.fn().mockResolvedValue(session),
+			forceStop: vi.fn().mockResolvedValue(undefined),
+		});
+		copilot = new CopilotSdkSpawner(
+			processes,
+			new EventEmitter(),
+			{} as DataBufferManager,
+			fallback
+		);
+		await start();
+		await idle();
+		await copilot.closeAll();
 		await drain();
 		await blocked();
 	});
