@@ -24,12 +24,14 @@ beforeAll(async () => {
 	fs.mkdirSync(pluginDir);
 	const files: Record<string, string> = {},
 		bytes = Buffer.alloc(4096, 65);
+	const payload = path.join(dir, 'payload');
+	fs.writeFileSync(payload, bytes);
 	const hash = createHash('sha256').update(bytes).digest('hex');
 	await Promise.all(
 		Array.from({ length: 32 }, async (_, offset) => {
 			for (let i = offset; i < 5000; i += 32) {
 				const name = 'file-' + i;
-				await fs.promises.writeFile(path.join(pluginDir, name), bytes);
+				await fs.promises.copyFile(payload, path.join(pluginDir, name));
 				files[name] = hash;
 			}
 		})

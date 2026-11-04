@@ -427,12 +427,13 @@ describe('LightboxModal', () => {
 
 	describe('copy to clipboard', () => {
 		beforeEach(() => {
-			// Use real timers for async tests
-			vi.useRealTimers();
+			// Let async polling progress without leaving real feedback timers behind.
+			vi.useFakeTimers({ shouldAdvanceTime: true });
 		});
 
-		afterEach(() => {
-			vi.useFakeTimers();
+		afterEach(async () => {
+			await act(async () => {});
+			vi.clearAllTimers();
 		});
 
 		it('copies image to clipboard when copy button clicked', async () => {

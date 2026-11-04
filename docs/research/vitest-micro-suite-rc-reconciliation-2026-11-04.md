@@ -147,6 +147,31 @@ in the file passed in 5.06 seconds overall. A structural comparison against curr
 rc also preserved all 717 existing test/assertion expressions in that file and all
 14 in the scanner suite.
 
+## Hosted CI fixture follow-up
+
+On head `07474d6d1a`, the normal local publication hook passed with 60,669 tests
+passed and 211 skipped. Greptile explicitly reviewed that head at confidence 5/5
+with no substantive finding. Hosted run `41813914860` passed lint/format and two
+of four test shards, but identified two remaining fixture-lifecycle failures:
+
+- Windows shard 1/2 exceeded the scanner fixture's unchanged 10-second setup
+  deadline. A byte-verifying local probe under the later workload measured
+  bounded `writeFile` preparation at 7.93 seconds and bounded native `copyFile`
+  preparation at 3.07 seconds. The fixture now copies one payload outside the
+  scanned directory into 5,000 independent regular files, still totaling
+  20,480,000 bytes. It does not use hard links or change signed contents, tamper
+  checks, assertions, or deadlines. Both scanner tests passed in 6.21 seconds
+  overall after this change; hosted validation is recorded separately in the PR.
+- Ubuntu shard 2/2 passed all 30,349 assertions but reported an uncaught
+  `window is not defined` from LightboxModal's copy-feedback timeout after jsdom
+  teardown. Its existing copy tests now use automatically advancing fake timers,
+  settle pending React work, and clear their timers before returning to real
+  timers. All 50 existing Lightbox tests passed. No production component changed.
+
+The structural audit against current rc preserved every existing test/assertion
+expression in all three fixture-corrected files: 14 scanner expressions, 717
+session-storage expressions, and 236 Lightbox expressions.
+
 ## Protected local work
 
 The interrupted index, working tree, and untracked work are retained under
