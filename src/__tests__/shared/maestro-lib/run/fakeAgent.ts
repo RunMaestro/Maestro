@@ -27,8 +27,14 @@ export function fakeTurnFromRecording(recording: TurnRecording): FakeTurn {
 }
 
 /** A scratch directory per test file, removed by `cleanup()`. */
-export function createScratchDir(prefix: string): { dir: string; cleanup: () => void } {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
+export function createScratchDir(
+	prefix: string,
+	options: { canonical?: boolean } = {}
+): { dir: string; cleanup: () => void } {
+	const created = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
+	// Unlike the JS realpathSync walk, native expands Windows 8.3 temp paths.
+	// Persist the same spelling that fs.promises.realpath returns to the host.
+	const dir = options.canonical ? fs.realpathSync.native(created) : created;
 	return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 

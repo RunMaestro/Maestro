@@ -507,6 +507,7 @@ export function createConsultService() {
 			const spawnResult = await runner.start(
 				{
 					processId: sessionId,
+					originWorkerId: target.id,
 					providerId: target.toolType,
 					agent,
 					command,

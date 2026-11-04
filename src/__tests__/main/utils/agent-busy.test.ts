@@ -72,6 +72,13 @@ describe('agent-busy', () => {
 			expect(isAgentBusy(session, probeWith([]))).toBe(true);
 		});
 
+		it('uses the supplied CLI snapshot while still checking live tab processes', () => {
+			expect(isAgentBusy(session, probeWith([]), new Set(['agent-1']))).toBe(true);
+			expect(isAgentBusy(session, probeWith(['agent-1-ai-tab-b']), new Set())).toBe(true);
+			expect(isAgentBusy(session, probeWith([]), new Set())).toBe(false);
+			expect(mockIsSessionBusyWithCli).not.toHaveBeenCalled();
+		});
+
 		it('ignores malformed tab entries', () => {
 			const malformed = {
 				id: 'agent-1',

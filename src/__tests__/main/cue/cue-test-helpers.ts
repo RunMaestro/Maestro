@@ -7,7 +7,7 @@
  */
 
 import { vi } from 'vitest';
-import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import type { CueConfig } from '../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../shared/types';
 import type { CueEngineDeps } from '../../../main/cue/cue-engine';
 

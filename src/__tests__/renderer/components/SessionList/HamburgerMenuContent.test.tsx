@@ -60,3 +60,16 @@ describe('HamburgerMenuContent - Throughput Gauge', () => {
 		expect(useThroughputGaugeStore.getState().visible).toBe(false);
 	});
 });
+
+describe('HamburgerMenuContent - Profiles Cue independence', () => {
+	const initialEncore = useSettingsStore.getState().encoreFeatures;
+	afterEach(() => useSettingsStore.setState({ encoreFeatures: initialEncore }));
+	it('does not expose Profiles when Cue disables the Board surface', () => {
+		useSettingsStore.setState({
+			encoreFeatures: { ...initialEncore, board: true, maestroCue: false },
+		});
+		renderMenu();
+		expect(screen.queryByRole('button', { name: /Agent Profiles/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /^Board/ })).not.toBeInTheDocument();
+	});
+});

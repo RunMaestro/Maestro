@@ -82,6 +82,30 @@ import {
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
 import {
+	boardList,
+	boardCatalog,
+	boardCreateRole,
+	boardEditRole,
+	boardSetWorkerRole,
+	boardWorkerOptions,
+	boardWorkers,
+	boardSourceCleanup,
+	boardCreate,
+	boardRename,
+	boardDelete,
+	boardShow,
+	boardShowCard,
+	boardCardRuns,
+	boardAddCard,
+	boardUpdateCard,
+	boardRemoveCard,
+	boardRemoveCards,
+	boardSetStatus,
+	boardTick,
+	boardControl,
+	boardWatch,
+} from './commands/board';
+import {
 	cueEngineStart,
 	cueEngineCheck,
 	cueEngineStop,
@@ -284,6 +308,12 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import { CARD_STATUSES } from '../shared/board/types';
+
+// Derived from the single source of truth (`src/shared/board/types.ts`) so the
+// `board set-status` help text can never drift from what the command accepts.
+const CARD_STATUS_LIST = CARD_STATUSES.join('|');
+
 import {
 	allowWhileEncoreOff,
 	encoreCommand,
@@ -1552,6 +1582,289 @@ cuePipeline
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
 
+// Board commands - drive the persistent task DAG (.maestro/board.yaml) headlessly.
+// Mirrors the board:* IPC surface via the same Electron-free storage module the
+// desktop uses. `board tick` runs one dispatcher pass (promote / claim / spawn /
+// apply) reusing the Phase 3 pure helpers + the existing CLI spawn path.
+const board = encoreCommand(program, 'board', 'board', encoreFlags).description(
+	'Manage and dispatch the Maestro Board'
+);
+
+board
+	.command('list')
+	.description('List central Board collections, optionally filtered by source or agent project')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardList);
+
+board
+	.command('create <name>')
+	.description("Create a new, empty board in an agent's project")
+	.option('-a, --agent <id-or-name>', 'Agent whose project will own the board')
+	.option('--max-in-progress <n>', 'Cap how many cards may run at once')
+	.option('--auto-decompose', 'Let the dispatcher fan triage cards out with one LLM pass')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardCreate);
+
+board
+	.command('rename <boardId> <newName>')
+	.description('Rename a board (cards and their ids are untouched)')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardRename);
+
+board
+	.command('delete <boardId>')
+	.description('Delete a board and every card on it')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('--force', 'Delete even when the board still has cards that are not done')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardDelete);
+
+board
+	.command('show <boardId>')
+	.description('Show a board and its cards')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('--status <status>', 'Filter cards by exact status')
+	.option('--priority <priority>', 'Filter cards by priority (high, normal, low)')
+	.option('--kind <kind>', 'Filter cards by kind (work, review, test, documentation)')
+	.option('--scope-agent <id>', 'Filter by exact assigned agent ID')
+	.option('--scope-group <id>', 'Filter by exact assigned group ID')
+	.option('--pin <id>', 'Filter by exact pinned agent ID')
+	.option('--repository <id>', 'Filter by exact repository ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardShow);
+
+board
+	.command('show-card <cardId>')
+	.description('Read a card, its collection identity and its run history')
+	.option('-a, --agent <id-or-name>', 'Agent project context')
+	.option('--board <boardId>', 'Scope lookup to a specific board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardShowCard);
+
+board
+	.command('card-runs <cardId>')
+	.description('Read a card’s persisted run history and results')
+	.option('-a, --agent <id-or-name>', 'Agent project context')
+	.option('--board <boardId>', 'Scope lookup to a specific board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardCardRuns);
+
+board
+	.command('add-card [boardId]')
+	.description('Add a card to the global Board, or to an explicitly selected legacy board')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.requiredOption('-t, --title <title>', 'Card title')
+	.option('--assignee <profileId>', 'Legacy alias for --role; requires an explicit role namespace')
+	.option(
+		'--assignee-agent <agentId>',
+		'Pin the card to a specific agent (runs with its own settings)'
+	)
+	.option('-b, --body <body>', 'Card body / instructions for the assignee')
+	.option('--parents <ids>', 'Comma-separated parent card ids this card depends on')
+	.option('--priority <level>', 'Dispatch priority: high|normal|low (default normal)')
+	.option('--worktree', 'Run this card in its own git worktree (created on first run)')
+	.option(
+		'--pr-on-done [targetBranch]',
+		'Open a pull request when the card lands in done (bare flag targets the repo default branch)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardAddCard);
+
+board
+	.command('update-card <cardId>')
+	.description('Edit a card in place (only the flags you pass are changed)')
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('--board <boardId>', 'Scope the card lookup to a specific board')
+	.option('-t, --title <title>', 'New card title')
+	.option('-b, --body <body>', 'New card body / instructions')
+	.option('--assignee <profileId>', 'Legacy alias for --role; pass "" to clear')
+	.option('--assignee-agent <agentId>', 'Pin the card to a specific agent; pass "" to clear')
+	.option('--parents <ids>', 'Comma-separated parent card ids; pass "" to clear')
+	.option('--priority <level>', 'Dispatch priority: high|normal|low ("normal" clears it)')
+	.option('--worktree', 'Run this card in its own git worktree (created on first run)')
+	.option('--no-worktree', 'Run this card in the shared project directory')
+	.option(
+		'--pr-on-done [targetBranch]',
+		'Open a pull request when the card lands in done (bare flag targets the repo default branch)'
+	)
+	.option('--no-pr-on-done', 'Do not open a pull request when the card lands in done')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardUpdateCard);
+
+board
+	.command('remove-card <cardId>')
+	.description("Delete a card (its children inherit the card's parents)")
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('--board <boardId>', 'Scope the card lookup to a specific board')
+	.option('--force', 'Compatibility flag; running cards must be stopped before removal')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardRemoveCard);
+
+board
+	.command('remove-cards')
+	.description('Atomically delete cards from one explicitly identified collection snapshot')
+	.requiredOption('--source <sourceKey>', 'Exact source ID')
+	.requiredOption('--collection <collectionKey>', 'Exact collection ID')
+	.requiredOption('--revision <revision>', 'Expected collection revision')
+	.requiredOption('--cards <json>', 'JSON array of {cardId, cardRevision} objects')
+	.option('--json', 'Output errors as JSON')
+	.action(boardRemoveCards);
+
+board
+	.command('set-status <cardId> <status>')
+	.description(
+		`Request a card status (${CARD_STATUS_LIST}); final completion requires an explicit human decision in the UI`
+	)
+	.option('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('--board <boardId>', 'Scope the card lookup to a specific board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardSetStatus);
+
+for (const operation of ['hold', 'resume', 'approve'] as const) {
+	board
+		.command(`${operation} <cardId>`)
+		.description(
+			operation === 'approve'
+				? 'Request approval (requires native human authority)'
+				: `${operation} a fenced Board attempt`
+		)
+		.option('-a, --agent <id-or-name>', 'Agent project context')
+		.option('--board <id>', 'Collection legacy id')
+		.option('--run-id <id>', 'Exact host run identity')
+		.option('--owner-epoch <n>', 'Exact host owner epoch')
+		.option('--generation <n>', 'Exact host attempt generation')
+		.option('--json', 'Machine-readable response')
+		.action((cardId, options) => boardControl(cardId, { ...options, operation }));
+}
+
+board
+	.command('catalog')
+	.description('Read current Board scope, role and repository choices from the host')
+	.option('--json', 'Output the exact host catalog as JSON')
+	.action(boardCatalog);
+
+board
+	.command('create-role <name>')
+	.description('Create a role in the global Board; assign it to workers in the Workers tab')
+	.option('--json', 'Output the exact role identity as JSON')
+	.action(boardCreateRole);
+board
+	.command('role-update <roleId>')
+	.description('Update one exact namespaced role through the host')
+	.requiredOption('--source <key>', 'Exact source identity')
+	.requiredOption('--namespace <key>', 'Exact role namespace')
+	.requiredOption('--set <json>', 'Role fields to patch; null clears an optional field')
+	.option('--json', 'Machine-readable output')
+	.action(boardEditRole);
+board
+	.command('role-delete <roleId>')
+	.description('Delete one unreferenced namespaced role through the host')
+	.requiredOption('--source <key>', 'Exact source identity')
+	.requiredOption('--namespace <key>', 'Exact role namespace')
+	.option('--json', 'Machine-readable output')
+	.action(boardEditRole);
+board
+	.command('worker-role <roleId>')
+	.description('Assign or remove one exact role for a registered worker')
+	.requiredOption('-a, --agent <id>', 'Exact registered worker agent ID')
+	.requiredOption('--namespace <key>', 'Exact role namespace (see board catalog)')
+	.option('--remove', 'Remove this role grant')
+	.option('--json', 'Output the assigned role as JSON')
+	.action(boardSetWorkerRole);
+board
+	.command('worker-options')
+	.description('Read or update a registered worker’s local execution overrides')
+	.requiredOption('-a, --agent <id-or-name>', 'Registered worker agent')
+	.option(
+		'--set <json>',
+		'Patch customModel, customEffort, appendSystemPrompt or customArgs; null clears an override'
+	)
+	.option('--json', 'Output errors as JSON')
+	.action(boardWorkerOptions);
+
+for (const operation of ['list', 'show', 'register', 'unregister', 'pause', 'resume']) {
+	board
+		.command(`worker-${operation}`)
+		.description(`${operation} Board workers through the host`)
+		.option('--agent <id>', 'Exact agent ID')
+		.option('--json', 'Machine-readable output')
+		.action((options) => boardWorkers(operation, options));
+}
+
+for (const operation of ['preview', 'export', 'suppress', 'restore']) {
+	board
+		.command(`source-${operation}`)
+		.description(`${operation} an exact legacy source through the authenticated local host`)
+		.option('--source-key <sha256>', 'Exact legacy source key')
+		.option('--backup-path <absolute-path>', 'Host-local backup path')
+		.option('--sha256 <hash>', 'Verified backup SHA-256')
+		.option('--revision <n>', 'Expected workspace revision')
+		.option('--receipt <json>', 'Exact suppression receipt JSON')
+		.option('--json', 'Machine-readable errors')
+		.action((options) => boardSourceCleanup(operation, options));
+}
+
+// Central identity and capture flags are registered on the actual Commander commands.
+for (const command of board.commands) {
+	if (
+		command.name().startsWith('source-') ||
+		command.name().startsWith('worker-') ||
+		command.name().startsWith('role-') ||
+		['catalog', 'create-role', 'remove-cards'].includes(command.name())
+	)
+		continue;
+	command
+		.option('--project-root <path>', 'Registered source project root for selecting a project')
+		.option('--source <key>', 'Canonical source identity; list without filters queries all sources')
+		.option('--collection <key>', 'Canonical collection identity')
+		.option('--revision <n>', 'Expected collection revision')
+		.option('--card-revision <n>', 'Expected card revision');
+	if (['add-card', 'update-card'].includes(command.name())) {
+		command
+			.option('--kind <kind>', 'work, review, test, or documentation')
+			.option('--review-of <cardId>', 'Bind a new review to this exact source card id')
+			.option('--review-attempt <n>', 'Exact completed source attempt for --review-of')
+			.option('--scope-agent <id>', 'Execute only on this agent; pass "" to clear scope')
+			.option('--scope-group <id>', 'Execute only within this group; pass "" to clear scope')
+			.option('--reviewer-agent <id>', 'Explicit reviewer within the task scope; pass "" to clear')
+			.option('--role <id>', 'Require this exact worker role id within scope; pass "" to clear')
+			.option('--role-namespace <key>', 'Exact namespace for --role (see board catalog)')
+			.option('--profile-namespace <key>', 'Legacy alias for --role-namespace')
+			.option('--repository <id>', 'Registered repository identity')
+			.option('--working-directory <path>', 'Explicit execution directory')
+			.option(
+				'--start-mode <mode>',
+				'direct or approval; required approvals remain host protected'
+			);
+	}
+}
+
+board
+	.command('tick')
+	.description('Request one fenced Board dispatch pass from the running host')
+	.option('-a, --agent <id-or-name>', 'Limit to boards belonging to this agent’s project')
+	.option('--board <boardId>', 'Tick only a specific board')
+	.option('--request-id <id>', 'Stable operation identity for retry')
+	.option('--source <key>', 'Canonical source identity')
+	.option('--collection <key>', 'Canonical collection identity')
+	.option('--revision <n>', 'Expected collection revision')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardTick);
+
+board
+	.command('watch')
+	.description('Request fenced host ticks until Ctrl-C; the host owns every run.')
+	.option('-a, --agent <id-or-name>', 'Limit to boards belonging to this agent’s project')
+	.option('--board <boardId>', 'Watch only a specific board')
+	.option('--source <key>', 'Canonical source identity')
+	.option('--collection <key>', 'Canonical collection identity')
+	.option('--revision <n>', 'Expected collection revision')
+	.option('--interval <seconds>', 'Seconds between ticks (default 30, minimum 5)')
+	.option('--json', 'Output one JSON object per tick (for scripting)')
+	.action(boardWatch);
+
 // Cue engine subcommands - run Maestro Cue unattended, without the desktop
 // app, and inspect/control that runner. See `cue-engine.ts` for what the
 // standalone engine can and cannot do relative to the desktop app's own
@@ -2078,6 +2391,7 @@ program
 		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
 	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
+	.option('--board-worker <bool>', 'Opt the agent into the Board worker pool (true/false)')
 	.option(
 		'--provider <type>',
 		'Switch to another provider; tabs keep their transcripts and start fresh conversations there'

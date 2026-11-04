@@ -23,6 +23,7 @@ import { isTurnProcessInScope } from '../../shared/turnInterrupt';
  */
 export interface ProcessLivenessProbe {
 	get(sessionId: string): unknown;
+	getAll?(): Array<{ sessionId: string; isTerminal: boolean }>;
 }
 
 /**
@@ -73,6 +74,16 @@ export function isAgentBusy(
 		return true;
 	if (!processManager) return false;
 
+	// A just-created tab may not yet be in the persisted session snapshot.
+	if (
+		processManager
+			.getAll?.()
+			.some(
+				(process) =>
+					!process.isTerminal && isTurnProcessInScope(process.sessionId, session.id, null)
+			)
+	)
+		return true;
 	const aiTabs = session.aiTabs ?? [];
 	for (const tab of aiTabs) {
 		if (!tab || typeof tab.id !== 'string') continue;

@@ -26,6 +26,8 @@ import { steeringSocketPathFor } from '../process-manager/steering-client';
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
 	sessionId: string;
+	/** Real Maestro worker selected by the caller, absent for standalone moderators. */
+	originWorkerId?: string;
 	/** Agent id (e.g. 'claude-code', 'codex') - used as `toolType` */
 	agentId: string;
 	/** Resolved agent definition */
@@ -154,6 +156,7 @@ export async function spawnGroupChatAgent(
 
 	return processManager.spawn({
 		sessionId: prepared.processId,
+		originWorkerId: config.originWorkerId,
 		toolType: prepared.providerId,
 		cwd: prepared.cwd,
 		command: prepared.command,

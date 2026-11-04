@@ -56,6 +56,18 @@ describe('encoreShortcuts', () => {
 		).toBe(DEFAULT_SHORTCUTS.toggleThroughputGauge);
 	});
 
+	it('lists openBoard only with Board and Cue enabled', () => {
+		const id = 'openBoard';
+		expect(isShortcutAvailable(id, { ...ALL_ON, board: false })).toBe(false);
+		expect(isShortcutAvailable(id, { ...ALL_ON, maestroCue: false })).toBe(false);
+		expect(isShortcutAvailable(id, ALL_ON)).toBe(true);
+	});
+
+	it('does not expose the removed Profiles shortcut', () => {
+		expect(DEFAULT_SHORTCUTS).not.toHaveProperty('openProfiles');
+		expect(availableShortcuts(DEFAULT_SHORTCUTS, ALL_ON)).not.toHaveProperty('openProfiles');
+	});
+
 	it('treats a missing flag map as everything off', () => {
 		expect(isShortcutAvailable('openCue', undefined)).toBe(false);
 		expect(isShortcutAvailable('quickAction', undefined)).toBe(true);

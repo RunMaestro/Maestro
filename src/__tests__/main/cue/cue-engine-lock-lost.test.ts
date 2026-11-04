@@ -5,6 +5,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Execution is injected through onCueRun; avoid loading native provider stores.
+vi.mock('../../../main/cue/cue-executor', () => ({ getCueRunLiveOutput: () => null }));
 
 const touch = vi.hoisted(() => vi.fn(() => 'held' as 'held' | 'lost'));
 const acquire = vi.hoisted(() =>

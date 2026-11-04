@@ -30,6 +30,8 @@ interface ThemedSelectProps {
 	theme: Theme;
 	disabled?: boolean;
 	style?: React.CSSProperties;
+	/** Optional ref for focusing the trigger from a keyboard shortcut. */
+	triggerRef?: React.RefObject<HTMLButtonElement>;
 	/** Optional CSS class for the trigger button */
 	className?: string;
 	/** Accessible label for the trigger button */
@@ -50,6 +52,7 @@ export function ThemedSelect({
 	disabled = false,
 	style,
 	className,
+	triggerRef: externalTriggerRef,
 	'aria-label': ariaLabel,
 	id,
 	filterable = false,
@@ -60,7 +63,8 @@ export function ThemedSelect({
 	const [activeIndex, setActiveIndex] = useState(-1);
 	const [query, setQuery] = useState('');
 	const containerRef = useRef<HTMLDivElement>(null);
-	const triggerRef = useRef<HTMLButtonElement>(null);
+	const internalTriggerRef = useRef<HTMLButtonElement>(null);
+	const triggerRef = externalTriggerRef ?? internalTriggerRef;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const [dropUp, setDropUp] = useState(false);

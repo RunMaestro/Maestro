@@ -39,6 +39,7 @@ interface BuildFeatureCommandsArgs {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenBoard?: () => void;
 	onOpenPianola?: () => void;
 	/** Present only when Computer History can be opened here (Encore on, desktop). */
 	onOpenComputerHistory?: () => void;
@@ -64,6 +65,7 @@ interface BuildFeatureCommandsArgs {
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
+		openBoard?: QuickAction['shortcut'];
 		computerHistory?: QuickAction['shortcut'];
 		fuzzyFileSearch?: QuickAction['shortcut'];
 		editClipboardImage?: QuickAction['shortcut'];
@@ -104,6 +106,7 @@ export function buildFeatureCommands({
 	onOpenSymphony,
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
+	onOpenBoard,
 	onOpenPianola,
 	onOpenComputerHistory,
 	onConfigureCue,
@@ -377,6 +380,19 @@ export function buildFeatureCommands({
 			subtext: 'Event-driven automation dashboard',
 			action: () => {
 				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenBoard) {
+		commands.push({
+			id: 'board',
+			label: 'Board',
+			shortcut: shortcuts.openBoard,
+			subtext: 'Card DAG kanban dispatched on the Cue tick',
+			action: () => {
+				onOpenBoard();
 				setQuickActionOpen(false);
 			},
 		});

@@ -534,6 +534,8 @@ export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'sto
 
 /** Result of a completed (or failed/timed-out) Cue run */
 export interface CueRunResult {
+	/** Local native turn settled; SSH descendants require separate reconciliation. */
+	terminationConfirmed?: boolean;
 	/** False only when the real executor proves no child was launched. */
 	executionStarted?: boolean;
 	runId: string;

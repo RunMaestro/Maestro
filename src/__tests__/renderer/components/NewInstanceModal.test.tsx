@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
@@ -114,6 +115,26 @@ describe('NewInstanceModal', () => {
 		vi.clearAllMocks();
 		// Reset groups so tests don't leak group state between cases
 		useSessionStore.setState({ groups: [] });
+	});
+
+	it('does not offer Board worker enrollment while creating an agent', async () => {
+		const flags = useSettingsStore.getState().encoreFeatures;
+		useSettingsStore.setState({ encoreFeatures: { ...flags, board: true } });
+		try {
+			render(
+				<NewInstanceModal
+					isOpen
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+			await screen.findByRole('dialog', { name: 'Create New Agent' });
+			expect(screen.queryByRole('checkbox', { name: /Board worker/i })).not.toBeInTheDocument();
+		} finally {
+			useSettingsStore.setState({ encoreFeatures: flags });
+		}
 	});
 
 	describe('Initial render and visibility', () => {

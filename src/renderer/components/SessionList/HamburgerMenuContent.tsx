@@ -21,6 +21,7 @@ import {
 	LogOut,
 	MessageCircle,
 	Gauge,
+	KanbanSquare,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { ShortcutHint } from '../ui/ShortcutHint';
@@ -427,6 +428,27 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					{quickChatHotkey.length > 0 && <ShortcutHint theme={theme} keys={quickChatHotkey} />}
+				</button>
+			)}
+			{encoreFeatures.board && encoreFeatures.maestroCue && (
+				<button
+					onClick={() => {
+						openUiSurface('board');
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 text-left"
+					style={{ color: theme.colors.textMain }}
+				>
+					<KanbanSquare className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Board
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Plan tasks, assign agents, and track progress
+						</div>
+					</div>
+					<ShortcutHint theme={theme} keys={shortcuts.openBoard?.keys ?? []} />
 				</button>
 			)}
 			{encoreFeatures.pianola && (

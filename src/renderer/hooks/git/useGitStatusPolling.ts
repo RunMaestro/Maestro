@@ -182,19 +182,34 @@ function gitStatusMapsEqual(
  * anything that reaches us here is a real bug worth seeing.
  */
 async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
+	// Several agents may share a directory. Reuse only this pass's lookup, keyed
+	// by both directory and SSH identity, then update every session separately.
+	// The next poll reads git again so a newly initialized repository is found.
+	const lookups = new Map<
+		string,
+		Promise<{ gitBranches: string[]; gitTags: string[]; gitRefsCacheTime: number } | null>
+	>();
 	const results = await Promise.allSettled(
 		sessions.map(async (session) => {
 			const cwd = session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
 			const sshRemoteId =
 				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
-			const isRepo = await gitService.isRepo(cwd, sshRemoteId);
-			if (!isRepo) return;
-
-			const [gitBranches, gitTags] = await Promise.all([
-				gitService.getBranches(cwd, sshRemoteId),
-				gitService.getTags(cwd, sshRemoteId),
-			]);
+			const key = JSON.stringify([cwd, sshRemoteId ?? null]);
+			let lookup = lookups.get(key);
+			if (!lookup) {
+				lookup = (async () => {
+					if (!(await gitService.isRepo(cwd, sshRemoteId))) return null;
+					const [gitBranches, gitTags] = await Promise.all([
+						gitService.getBranches(cwd, sshRemoteId),
+						gitService.getTags(cwd, sshRemoteId),
+					]);
+					return { gitBranches, gitTags, gitRefsCacheTime: Date.now() };
+				})();
+				lookups.set(key, lookup);
+			}
+			const refs = await lookup;
+			if (!refs) return;
 
 			updateSessionWith(session.id, (s) =>
 				s.isGitRepo
@@ -202,9 +217,7 @@ async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
 					: {
 							...s,
 							isGitRepo: true,
-							gitBranches,
-							gitTags,
-							gitRefsCacheTime: Date.now(),
+							...refs,
 						}
 			);
 		})

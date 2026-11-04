@@ -185,6 +185,7 @@ export const DEFAULT_SHORTCUTS = {
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	openBoard: { id: 'openBoard', label: 'Board', keys: ['Alt', 'Meta', 'Shift', 'b'] },
 	openCue: {
 		id: 'openCue',
 		label: 'Maestro Cue',
