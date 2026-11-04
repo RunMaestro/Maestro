@@ -205,6 +205,14 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 					setHealth(snap.health);
 					setCheckpoints(snap.checkpoints ?? []);
 				}
+				if (snap.migration?.status === 'NeedsConfiguration') {
+					notifyToast({
+						color: 'red',
+						title: 'Pianola needs configuration',
+						message: snap.migration.reason ?? 'The selection was not saved.',
+					});
+					return false;
+				}
 				return true;
 			} catch (err) {
 				mutationEpochRef.current += 1;

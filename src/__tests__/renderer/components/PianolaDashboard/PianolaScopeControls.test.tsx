@@ -82,6 +82,28 @@ afterEach(() => {
 });
 
 describe('PianolaScopeControls production hook composition', () => {
+	it('keeps the selection open and displays the migration refusal', async () => {
+		vi.mocked(window.maestro.pianola.supervisor.add).mockResolvedValueOnce({
+			...persisted,
+			migration: {
+				status: 'NeedsConfiguration',
+				scopeId: scope.id,
+				watchIds: ['old'],
+				reason: 'Legacy owner cannot be fenced',
+			},
+		});
+		render(<Controls />);
+		await screen.findByText('Fixture selection');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'Legacy owner cannot be fenced' })
+			)
+		);
+		expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+	});
+
 	it('keeps the edited selection open when saving fails', async () => {
 		vi.mocked(window.maestro.pianola.supervisor.add).mockRejectedValueOnce(new Error('disk full'));
 		render(<Controls />);

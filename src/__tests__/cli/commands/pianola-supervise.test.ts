@@ -18,6 +18,7 @@ import { pianolaProgramLoop } from '../../../cli/commands/pianola-program-loop';
 import { pianolaProgramStatus } from '../../../cli/commands/pianola-portfolio';
 import {
 	readPianolaSupervisorTargets,
+	upsertPianolaSupervisorTarget,
 	upsertPianolaProgram,
 	upsertPianolaPlan,
 	writePianolaProgramLoopMemo,
@@ -74,6 +75,25 @@ afterEach(() => {
 });
 
 describe('pianolaSuperviseWatch dedupe', () => {
+	it('reports a retained migration fence instead of claiming to restart the old watch', () => {
+		const scopeId = '11111111-1111-4111-8111-111111111111';
+		upsertPianolaSupervisorTarget({
+			id: 'old',
+			kind: 'watch',
+			enabled: false,
+			createdAt: 1,
+			agentId: 'agent-1',
+			tabId: 'tab-1',
+			migratedToScopeId: scopeId,
+		});
+		expect(() => pianolaSuperviseWatch('tab-1', { agent: 'agent-1', json: true })).toThrow(
+			'__exit__'
+		);
+		expect(readPianolaSupervisorTargets()).toEqual([
+			expect.objectContaining({ id: 'old', enabled: false, migratedToScopeId: scopeId }),
+		]);
+		expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('cannot be restarted'));
+	});
 	it('reuses orchestration registration for the same plan', () => {
 		pianolaSuperviseOrchestrate('plan', { json: true });
 		const firstId = lastTargetId();

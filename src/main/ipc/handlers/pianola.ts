@@ -634,6 +634,11 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		'pianola:supervisor-add',
 		async (event, target: unknown): Promise<PianolaSupervisorSnapshot> => {
 			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+			if (isRecord(target) && target.kind === 'watch-scope') {
+				const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
+				if (!isNativeOwnerTransport(event) || !identity.desktopIsOwner)
+					throw new Error('PianolaOwnerAuthorizationRequired');
+			}
 			return wrappedSupervisorAdd(event, target);
 		}
 	);

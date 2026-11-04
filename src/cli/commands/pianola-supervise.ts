@@ -146,7 +146,14 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 			? current.map((entry) => (entry.id === existing.id ? target : entry))
 			: [...current, target];
 	});
-	if (!written.some((t) => t.id === target.id)) {
+	const saved = written.find((t) => t.id === target.id);
+	if (saved?.migratedToScopeId) {
+		fail(
+			`Legacy watch was migrated to scope ${saved.migratedToScopeId}; it cannot be restarted`,
+			options.json
+		);
+	}
+	if (!saved) {
 		fail('Target failed validation and was not saved', options.json);
 	}
 
@@ -154,7 +161,7 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 		console.log(JSON.stringify({ success: true, target, targetCount: written.length }));
 	} else {
 		console.log(
-			`Supervising watch on tab ${tabId} (agent ${options.agent}). Target id: ${target.id}`
+			`Registered legacy tab watch ${tabId} (agent ${options.agent}). Target id: ${target.id}. Running status is available in the desktop.`
 		);
 	}
 }
