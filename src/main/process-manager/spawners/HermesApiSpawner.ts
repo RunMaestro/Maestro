@@ -673,45 +673,55 @@ class HermesTurn {
 	}
 
 	private async interrupt(): Promise<void> {
-		this.cancelled = true;
-		if (this.connection && this.providerSessionId) {
-			this.observeCompletion(
-				this.connection
-					.request('session.interrupt', { session_id: this.providerSessionId })
-					.catch(() => undefined)
-			);
-		}
-		stopProcess(
-			{ child: this.turn.child },
-			{
-				from: 'interrupt',
-				graceMs: INTERACTIVE_STOP_GRACE_MS,
-				sessionId: this.config.sessionId,
-				label: 'interrupt',
-			}
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				this.cancelled = true;
+				if (this.connection && this.providerSessionId) {
+					observe(
+						this.connection
+							.request('session.interrupt', { session_id: this.providerSessionId })
+							.catch(() => undefined)
+					);
+				}
+				stopProcess(
+					{ child: this.turn.child },
+					{
+						from: 'interrupt',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						sessionId: this.config.sessionId,
+						label: 'interrupt',
+					}
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
-		this.cancelled = true;
-		if (this.connection && this.providerSessionId) {
-			this.observeCompletion(
-				this.connection
-					.request('session.interrupt', { session_id: this.providerSessionId })
-					.catch(() => undefined)
-			);
-		}
-		stopProcess(
-			{ child: this.turn.child },
-			{
-				from: 'terminate',
-				upTo: options?.shutdown ? 'terminate' : 'kill',
-				graceMs: INTERACTIVE_STOP_GRACE_MS,
-				immediate: options?.shutdown,
-				blocking: options?.sync,
-				sessionId: this.config.sessionId,
-				label: 'kill',
-			}
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				this.cancelled = true;
+				if (this.connection && this.providerSessionId) {
+					observe(
+						this.connection
+							.request('session.interrupt', { session_id: this.providerSessionId })
+							.catch(() => undefined)
+					);
+				}
+				stopProcess(
+					{ child: this.turn.child },
+					{
+						from: 'terminate',
+						upTo: options?.shutdown ? 'terminate' : 'kill',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						immediate: options?.shutdown,
+						blocking: options?.sync,
+						sessionId: this.config.sessionId,
+						label: 'kill',
+					}
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 

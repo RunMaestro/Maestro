@@ -294,32 +294,41 @@ class AntigravityTurn {
 	}
 
 	private async interrupt(): Promise<void> {
-		this.cancelled = true;
-		if (this.connection)
-			void this.observeCompletion(this.connection.request('interrupt').catch(() => undefined));
-		stopProcess(
-			{ child: this.turn.child },
-			{
-				from: 'interrupt',
-				graceMs: INTERACTIVE_STOP_GRACE_MS,
-				sessionId: this.config.sessionId,
-				label: 'interrupt',
-			}
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				this.cancelled = true;
+				if (this.connection)
+					void observe(this.connection.request('interrupt').catch(() => undefined));
+				stopProcess(
+					{ child: this.turn.child },
+					{
+						from: 'interrupt',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						sessionId: this.config.sessionId,
+						label: 'interrupt',
+					}
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 
 	private async close(): Promise<void> {
-		this.cancelled = true;
-		if (this.connection)
-			void this.observeCompletion(this.connection.request('close').catch(() => undefined));
-		stopProcess(
-			{ child: this.turn.child },
-			{
-				from: 'terminate',
-				graceMs: INTERACTIVE_STOP_GRACE_MS,
-				sessionId: this.config.sessionId,
-				label: 'close',
-			}
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				this.cancelled = true;
+				if (this.connection) void observe(this.connection.request('close').catch(() => undefined));
+				stopProcess(
+					{ child: this.turn.child },
+					{
+						from: 'terminate',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						sessionId: this.config.sessionId,
+						label: 'close',
+					}
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 

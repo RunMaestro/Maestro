@@ -3644,11 +3644,26 @@ describe('Copilot per-turn activity', () => {
 	});
 });
 
-describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (transport) => {
+const retainedStopTransports = ['rpc', 'acp', 'antigravity', 'hermes'] as const;
+describe.each(retainedStopTransports)('retained %s stop controller activity', (transport) => {
 	let managed: ManagedProcess;
-	const cancel = transport === 'rpc' ? probes.request : probes.notify;
+	let active: Pick<typeof spawner, 'spawn'>;
+	const cancel = transport === 'acp' ? probes.notify : probes.request;
+	const input = () =>
+		config({
+			nativeAcpArgs: ['--acp'],
+			...(transport === 'antigravity' || transport === 'hermes'
+				? {
+						toolType: transport,
+						harnessControlMode: 'native' as const,
+						...(transport === 'hermes'
+							? { command: 'python', args: ['-m', 'tui_gateway.entry'] }
+							: {}),
+					}
+				: {}),
+		});
 	beforeEach(async () => {
-		let active: Pick<typeof spawner, 'spawn'> = spawner;
+		active = spawner;
 		if (transport === 'acp') {
 			const app = { onRequest: vi.fn(), onNotification: vi.fn(), connect: vi.fn() };
 			app.onRequest.mockReturnValue(app);
@@ -3674,7 +3689,30 @@ describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (
 				fallback
 			);
 		}
-		expect(active.spawn(config({ nativeAcpArgs: ['--acp'] })).success).toBe(true);
+		if (transport === 'antigravity') {
+			const { AntigravitySdkSpawner } =
+				await import('../../../main/process-manager/spawners/AntigravitySdkSpawner');
+			active = new AntigravitySdkSpawner(
+				processes,
+				new EventEmitter(),
+				{} as DataBufferManager,
+				fallback
+			);
+		}
+		if (transport === 'hermes') {
+			probes.request.mockImplementation(async (method: string) =>
+				method === 'session.create' ? { session_id: 'hermes-session' } : {}
+			);
+			const { HermesApiSpawner } =
+				await import('../../../main/process-manager/spawners/HermesApiSpawner');
+			active = new HermesApiSpawner(
+				processes,
+				new EventEmitter(),
+				{} as DataBufferManager,
+				fallback
+			);
+		}
+		expect(active.spawn(input()).success).toBe(true);
 		await drain();
 		managed = processes.get('rpc-session')!;
 	});
@@ -3730,7 +3768,13 @@ describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (
 			if (action === 'harness-interrupt') await managed.harnessControl!.interrupt!();
 			if (action === 'harness-close') await managed.harnessControl!.close!(options);
 			expect(cancel).toHaveBeenLastCalledWith(
-				...(transport === 'rpc' ? ['abort'] : ['cancel', { sessionId: 'acp-session' }])
+				...(transport === 'rpc'
+					? ['abort']
+					: transport === 'acp'
+						? ['cancel', { sessionId: 'acp-session' }]
+						: transport === 'hermes'
+							? ['session.interrupt', { session_id: 'hermes-session' }]
+							: [action.endsWith('interrupt') ? 'interrupt' : 'close'])
 			);
 			expect(stopProcess).toHaveBeenLastCalledWith(
 				{ child: native },
@@ -3741,15 +3785,22 @@ describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (
 							sessionId: 'rpc-session',
 							label: 'interrupt',
 						}
-					: {
-							from: 'terminate',
-							upTo: 'terminate',
-							graceMs: 1000,
-							immediate: true,
-							blocking: true,
-							sessionId: 'rpc-session',
-							label: 'kill',
-						}
+					: transport === 'antigravity'
+						? {
+								from: 'terminate',
+								graceMs: 1000,
+								sessionId: 'rpc-session',
+								label: 'close',
+							}
+						: {
+								from: 'terminate',
+								upTo: 'terminate',
+								graceMs: 1000,
+								immediate: true,
+								blocking: true,
+								sessionId: 'rpc-session',
+								label: 'kill',
+							}
 			);
 			await blocked();
 			if (action.startsWith('sdk')) pending.resolve();
@@ -3782,7 +3833,7 @@ describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (
 		await managed.harnessControl!.interrupt!();
 		await managed.sdkController!.kill();
 		native = makeNative();
-		spawner.spawn(config());
+		expect(active.spawn(input()).success).toBe(true);
 		await drain();
 		processes.clear();
 		await close();
@@ -3818,7 +3869,7 @@ describe.each(['rpc', 'acp'] as const)('retained %s stop controller activity', (
 			throw error;
 		});
 		vi.mocked(stopProcess).mockClear();
-		if (transport === 'rpc') {
+		if (transport !== 'acp') {
 			await expect(managed.sdkController!.interrupt()).rejects.toBe(error);
 			expect(stopProcess).not.toHaveBeenCalled();
 			expect(captureException).toHaveBeenCalledWith(error);
