@@ -5,6 +5,7 @@ import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { handleGetSessionHistory } from '../../../main/web-server/handlers/messageHandlers/sessions';
 import { composeCurrentTurn } from '../../../shared/currentTurn';
 import type { AgentRun } from '../../../shared/agent-run';
+import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 
 const settings = vi.hoisted(() => ({ enabled: true }));
 vi.mock('../../../main/stores', () => ({
@@ -23,8 +24,12 @@ function fixture() {
 	const index = new NativeCurrentTurns();
 	let sequence = 0;
 	let order: string[] = [];
-	const commit = (rows: Array<{ id: string; text: string; source: string; timestamp: number }>) => {
+	const commit = (
+		rows: Array<{ id: string; text: string; source: string; timestamp: number }>,
+		rest: Partial<SessionTranscriptPatch> = {}
+	) => {
 		for (const row of rows) if (!order.includes(row.id)) order.push(row.id);
+		if (rest.orderIds) order = [...rest.orderIds];
 		index.commit({
 			sessionId: 'agent',
 			tabId: 'tab',
@@ -38,6 +43,7 @@ function fixture() {
 				createdAt: 7,
 				provider: 'codex',
 			},
+			...rest,
 		});
 	};
 	const row = (id: string, text: string, source = 'ai') => ({ id, text, source, timestamp: 10 });
@@ -53,7 +59,7 @@ function fixture() {
 		'user'
 	);
 	// Capture through the actual AgentRun envelope shape used by nativeTabSession.
-	return { index, commit, row, read: () => index.read(binding) };
+	return { index, commit, row, orderIds: () => [...order], read: () => index.read(binding) };
 }
 
 describe('scope worker current-turn wire consumer', () => {
@@ -176,6 +182,10 @@ import type { MessageHandlerCallbacks } from '../../../main/web-server/handlers/
 describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 	it.each([
 		'answer',
+		'ordered-append',
+		'append-reorder',
+		'reorder-restore',
+		'after-claim-reorder',
 		'risk',
 		'tool-risk',
 		'human-read',
@@ -326,9 +336,23 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			if (mode === 'late-human') f.commit([f.row('human', 'Stop', 'user')]);
 			if (mode === 'late-rewrite')
 				f.commit([f.row('progress-0', 'I will delete the production database.')]);
-			f.commit([f.row('submitted', text, 'user')]);
+			const originalOrder = f.orderIds();
+			const reordered = [...originalOrder];
+			[reordered[reordered.length - 2], reordered[reordered.length - 1]] = [
+				reordered.at(-1)!,
+				reordered.at(-2)!,
+			];
+			// Only the new own reply is upserted: all old row objects remain unchanged.
+			f.commit([f.row('submitted', text, 'user')], {
+				orderIds: [
+					...(mode === 'append-reorder' || mode === 'reorder-restore' ? reordered : originalOrder),
+					'submitted',
+				],
+			});
+			if (mode === 'reorder-restore') f.commit([], { orderIds: [...originalOrder, 'submitted'] });
 			const claim = pianolaNewTabSpawns.claim('agent-ai-tab', dispatchId, undefined, 'submitted');
 			try {
+				if (mode === 'after-claim-reorder') f.commit([], { orderIds: [...reordered, 'submitted'] });
 				claim();
 				sends(text);
 				if (mode === 'unknown') throw new Error('Receipt lost');
@@ -350,7 +374,13 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			await cycle(); // Native current-turn enrollment barrier.
 			expect(sendCommand).not.toHaveBeenCalled();
 			busy = false;
-			if (mode !== 'historical-busy')
+			const orderRegression = [
+				'ordered-append',
+				'append-reorder',
+				'reorder-restore',
+				'after-claim-reorder',
+			].includes(mode);
+			if (mode !== 'historical-busy' && !orderRegression)
 				f.commit(
 					Array.from({ length: 150 }, (_, i) =>
 						f.row(
@@ -361,13 +391,29 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				);
 			if (mode === 'tool-risk')
 				f.commit([f.row('tool', 'I will delete the production database.', 'tool')]);
+			f.commit([f.row('finished', 'The implementation is finished.')]);
 			f.commit([f.row('question', 'Should I name it count or total?')]);
+			if (orderRegression)
+				expect(f.read().messages.map((row) => row.id)).toEqual(['user', 'finished', 'question']);
 			if (mode === 'human-read') humanDuringRead = true;
 			await cycle();
-			expect(sends).toHaveBeenCalledTimes(mode === 'answer' || mode === 'unknown' ? 1 : 0);
+			expect(sends).toHaveBeenCalledTimes(
+				mode === 'answer' || mode === 'ordered-append' || mode === 'unknown' ? 1 : 0
+			);
+			if (orderRegression) {
+				if (mode === 'ordered-append') expect(assert.mock.results.at(-1)?.value).toBe(true);
+				else {
+					expect(assert.mock.results.at(-1)?.type).toBe('throw');
+					expect(assert.mock.results.at(-1)?.value.message).toBe(
+						'Native turn changed during delivery'
+					);
+				}
+			}
 			const calls = sendCommand.mock.calls.length;
 			await cycle();
-			expect(sends).toHaveBeenCalledTimes(mode === 'answer' || mode === 'unknown' ? 1 : 0);
+			expect(sends).toHaveBeenCalledTimes(
+				mode === 'answer' || mode === 'ordered-append' || mode === 'unknown' ? 1 : 0
+			);
 			if (mode === 'answer') {
 				expect(sendCommand.mock.calls.length).toBe(calls); // unchanged tabs never read history
 				f.commit([f.row('tool-append', 'Done', 'tool')]);

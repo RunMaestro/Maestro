@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { generateUUID } from '../../shared/uuid';
 import { canonicalJson } from '../../shared/canonicalJson';
 import type { SessionTranscriptPatch } from '../../shared/sessionTranscript';
 import type {
@@ -16,6 +16,8 @@ type State = {
 	rowRevisions: Map<string, number>;
 	rows: Map<string, CurrentTurnMessage>;
 	order: string[];
+	/** Last commit that changed an existing ordered prefix, including reorder-and-restore. */
+	orderMutationRevision: number;
 	bytes: number;
 	reason?: string;
 	freshBoundaryId?: string;
@@ -27,7 +29,7 @@ type State = {
  * Completed turns remain until the next native turn or explicit eviction.
  */
 export class NativeCurrentTurns {
-	readonly generation = randomUUID();
+	readonly generation = generateUUID();
 	private revision = 0;
 	private retainedBytes = 0;
 	private states = new Map<string, State>();
@@ -82,6 +84,7 @@ export class NativeCurrentTurns {
 				rows: new Map(),
 				rowRevisions: new Map(),
 				order: [],
+				orderMutationRevision: 0,
 				bytes: 0,
 				reason: replaced ? 'renderer-or-binding-reset' : 'missing-native-boundary',
 			};
@@ -163,7 +166,12 @@ export class NativeCurrentTurns {
 		if (patch.orderIds.length || patch.snapshot) {
 			const ordered = new Set(patch.orderIds);
 			if (state.order.some((id) => !ordered.has(id))) state.reason = 'current-turn-order-trimmed';
-			state.order = patch.orderIds.filter((id) => state!.rows.has(id));
+			const nextOrder = patch.orderIds.filter((id) => state!.rows.has(id));
+			// Row revisions alone cannot see moves of unchanged rows. Prefix-preserving
+			// appends compose across commits; any other order change fences older reads.
+			if (state.order.some((id, position) => nextOrder[position] !== id))
+				state.orderMutationRevision = state.cursor.revision;
+			state.order = nextOrder;
 		}
 		if (state.order.length !== state.rows.size) state.reason = 'commit-order-gap';
 		// Before spawn only retain the latest user boundary and its following output.
@@ -261,6 +269,7 @@ export class NativeCurrentTurns {
 			!boundaryId ||
 			state.reason !== 'new-user-boundary' ||
 			canonicalJson({ ...state.cursor, revision: cursor.revision }) !== canonicalJson(cursor) ||
+			state.orderMutationRevision > cursor.revision ||
 			state.order.length !== count + 1 ||
 			state.order.at(-1) !== boundaryId ||
 			state.order
