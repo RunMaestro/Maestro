@@ -36,9 +36,17 @@ function parseEnqueueFailureReason(raw: unknown): EnqueueCommandFailureReason | 
 
 export function registerQueueCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
+	deps: Pick<
+		WebServerFactoryDependencies,
+		'getMainWindow' | 'getWindowForSession' | 'confirmQueueItem'
+	>
 ): void {
 	const { getMainWindow, getWindowForSession } = deps;
+	// Only callable from main; this is not registered in CallbackRegistry or a
+	// network message handler. Admission integration will consume it separately.
+	server.setConfirmQueueItemCallback(
+		deps.confirmQueueItem ?? (async () => ({ durable: false, reason: 'store-unavailable' }))
+	);
 	// Each window owns its own agents' queues, so a request about ONE agent has to
 	// reach the window that owns it. The primary would answer from a queue that
 	// does not hold the item.

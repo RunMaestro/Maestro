@@ -1,3 +1,8 @@
+import type {
+	ConfirmQueueItem,
+	QueueItemReceiptRequest,
+	QueueItemReceipt,
+} from '../stores/queue-item-receipt';
 /**
  * WebServer - HTTP and WebSocket server for remote access
  *
@@ -713,6 +718,20 @@ export class WebServer {
 
 	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
 		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
+	}
+
+	private confirmQueueItemCallback?: ConfirmQueueItem;
+
+	setConfirmQueueItemCallback(callback: ConfirmQueueItem): void {
+		this.confirmQueueItemCallback = callback;
+	}
+
+	/** Host-only persisted-item evidence. Does not enqueue or release anything. */
+	confirmQueueItemFromMain(request: QueueItemReceiptRequest): Promise<QueueItemReceipt> {
+		return (
+			this.confirmQueueItemCallback?.(request) ??
+			Promise.resolve({ durable: false, reason: 'store-unavailable' })
+		);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {

@@ -18,13 +18,16 @@ import {
 	registerPersistenceHandlers,
 	SESSION_LIFECYCLE_SYNC_CHANNEL,
 	PersistenceHandlerDependencies,
+	PersistenceHandlers,
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
 } from '../../../../main/ipc/handlers/persistence';
 import type Store from 'electron-store';
 import type { StoredSession } from '../../../../main/stores/types';
-import type { WebServer } from '../../../../main/web-server';
+import { WebServer } from '../../../../main/web-server';
+import { registerQueueCallbacks } from '../../../../main/web-server/callbacks/queueCallbacks';
+import type { QueueItemReceiptRequest } from '../../../../main/stores/queue-item-receipt';
 import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 
 // Mock electron's ipcMain and app
@@ -111,6 +114,7 @@ import {
 
 describe('persistence IPC handlers', () => {
 	let handlers: Map<string, Function>;
+	let persistence: PersistenceHandlers;
 	let mockSettingsStore: {
 		get: ReturnType<typeof vi.fn>;
 		set: ReturnType<typeof vi.fn>;
@@ -188,11 +192,230 @@ describe('persistence IPC handlers', () => {
 			getWebServer: getWebServerFn,
 			flushSessionWrites: mockFlushSessionWrites,
 		};
-		registerPersistenceHandlers(deps);
+		persistence = registerPersistenceHandlers(deps);
 	});
 
 	afterEach(() => {
 		handlers.clear();
+	});
+
+	describe('host queue-item durable readback composition', () => {
+		let realFs: typeof fs;
+		let directory: string;
+		let current: StoredSession[];
+		let request: QueueItemReceiptRequest;
+		let server: WebServer;
+		const session = (item: QueueItemReceiptRequest['item']): StoredSession => ({
+			id: 'agent',
+			name: 'Agent',
+			toolType: 'codex',
+			cwd: '/project',
+			projectRoot: '/project',
+			aiTabs: [{ id: 'tab' }],
+			executionQueue: [item],
+		});
+		const save = (
+			updates: StoredSession[] = [],
+			remove: string[] = [],
+			baseline: StoredSession[] = []
+		) => handlers.get('sessions:setMany')!({}, updates, remove, baseline);
+		const confirm = () => server.confirmQueueItemFromMain(request);
+
+		beforeEach(async () => {
+			realFs = await vi.importActual<typeof fs>('fs/promises');
+			directory = await realFs.mkdtemp(path.join(process.cwd(), '.queue-receipt-test-'));
+			mockSessionsStore.path = path.join(directory, 'sessions.json');
+			request = {
+				agentId: 'agent',
+				tabId: 'tab',
+				itemId: 'item',
+				pendingAdmissionId: 'dispatch',
+				item: {
+					id: 'item',
+					tabId: 'tab',
+					timestamp: 1,
+					type: 'message',
+					text: 'Exact intent',
+					images: ['maestro-image://synthetic.png'],
+					pendingAdmissionId: 'dispatch',
+				},
+			};
+			current = [session(structuredClone(request.item))];
+			mockSessionsStore.get.mockImplementation((_key, fallback) => current ?? fallback);
+			mockSessionsStore.set.mockImplementation((_key, value) => {
+				current = value;
+			});
+			mockFlushSessionWrites.mockImplementation(() =>
+				realFs.writeFile(mockSessionsStore.path, JSON.stringify({ sessions: current }))
+			);
+			vi.mocked(fs.readFile).mockImplementation(realFs.readFile);
+			await mockFlushSessionWrites();
+			// Real registration and real WebServer host method, transport setters inert.
+			server = Object.create(WebServer.prototype);
+			for (const name of [
+				'setEnqueueCommandCallback',
+				'setListQueueCallback',
+				'setRemoveQueueItemCallback',
+				'setSetQueueItemPausedCallback',
+				'setMergeQueueItemCallback',
+				'setSteerQueueItemCallback',
+			])
+				Object.assign(server, { [name]: vi.fn() });
+			registerQueueCallbacks(server, {
+				getMainWindow: () => null,
+				confirmQueueItem: persistence.confirmQueueItem,
+			});
+		});
+		afterEach(async () => {
+			await realFs.rm(directory, { recursive: true, force: true });
+		});
+
+		it('confirms the exact saved row and hold through the registered host adapter', async () => {
+			expect(await save(current)).toBe(true);
+			expect(await confirm()).toEqual({ durable: true, request });
+			expect(handlers.has('sessions:confirmQueueItem')).toBe(false);
+		});
+		it('fails closed when host persistence is unavailable', async () => {
+			registerQueueCallbacks(server, { getMainWindow: () => null });
+			expect(await confirm()).toEqual({ durable: false, reason: 'store-unavailable' });
+		});
+		it.each(['session', 'tab', 'item'])(
+			'refuses a removed %s after a successful boolean save',
+			async (removed) => {
+				const pending = save(
+					removed === 'session'
+						? []
+						: [{ ...current[0], ...(removed === 'tab' ? { aiTabs: [] } : { executionQueue: [] }) }],
+					removed === 'session' ? ['agent'] : []
+				);
+				const receipt = confirm();
+				expect(await pending).toBe(true);
+				expect(await receipt).toEqual({ durable: false, reason: `${removed}-missing` });
+			}
+		);
+		it('does not mistake a tombstoned stale update and successful flush for storage', async () => {
+			const stale = structuredClone(current);
+			const removed = save([], ['agent']);
+			const resurrected = save(stale);
+			const receipt = confirm();
+			expect(await removed).toBe(true);
+			expect(await resurrected).toBe(true);
+			expect(current).toEqual([]);
+			expect(await receipt).toEqual({ durable: false, reason: 'session-missing' });
+		});
+		it.each([
+			{ text: 'Changed' },
+			{ images: ['maestro-image://other.png'] },
+			{ type: 'command', command: '/changed' },
+			{ pendingAdmissionId: 'other' },
+			{ pendingAdmissionId: undefined },
+			{ tabId: 'other' },
+			{ customModel: 'other' },
+		])('refuses changed authoritative intent or hold: %j', async (patch) => {
+			current = [session({ ...request.item, ...patch } as QueueItemReceiptRequest['item'])];
+			expect(await confirm()).toEqual({ durable: false, reason: 'item-changed' });
+		});
+		it('does not accept a stale incoming payload preserved against the current stored row', async () => {
+			const baseline = structuredClone(current);
+			current = [session({ ...request.item, text: 'Peer intent' })];
+			expect(await save(baseline, [], baseline)).toBe(true);
+			expect(await confirm()).toEqual({ durable: false, reason: 'item-changed' });
+		});
+		it('compares post-flush disk, not a pre-flush snapshot or boolean', async () => {
+			mockFlushSessionWrites.mockResolvedValue(undefined);
+			await realFs.writeFile(
+				mockSessionsStore.path,
+				JSON.stringify({ sessions: [session({ ...request.item, text: 'Old disk' })] })
+			);
+			expect(await confirm()).toEqual({ durable: false, reason: 'item-changed' });
+		});
+		it('rejects flush failure and allows a subsequent successful proof', async () => {
+			mockFlushSessionWrites.mockRejectedValueOnce(
+				Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+			);
+			await expect(confirm()).rejects.toThrow('disk full');
+			expect(await confirm()).toEqual({ durable: true, request });
+		});
+		it('does not accept a failed save that left only the in-memory cache populated', async () => {
+			current = [];
+			await mockFlushSessionWrites();
+			mockFlushSessionWrites.mockRejectedValueOnce(
+				Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+			);
+			expect(await save([session(request.item)])).toBe(false);
+			mockFlushSessionWrites.mockResolvedValue(undefined);
+			expect(await confirm()).toEqual({ durable: false, reason: 'session-missing' });
+		});
+		it('refuses a changed hold expectation when a stale renderer save preserves the stored hold', async () => {
+			const baseline = structuredClone(current);
+			const changed = { ...request.item, pendingAdmissionId: 'other' };
+			expect(await save([session(changed)], [], baseline)).toBe(true);
+			request = { ...request, pendingAdmissionId: 'other', item: changed };
+			expect(await confirm()).toEqual({ durable: false, reason: 'item-changed' });
+		});
+		it('cannot confirm a new item after a store write fails', async () => {
+			current = [];
+			await mockFlushSessionWrites();
+			mockSessionsStore.set.mockImplementationOnce(() => {
+				throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+			});
+			expect(await save([session(request.item)])).toBe(false);
+			expect(await confirm()).toEqual({ durable: false, reason: 'session-missing' });
+		});
+		it('refuses duplicate item identities', async () => {
+			current[0].executionQueue.push(structuredClone(request.item));
+			expect(await confirm()).toEqual({ durable: false, reason: 'item-changed' });
+		});
+		it('does not accept a missing file after a purportedly successful flush', async () => {
+			await realFs.unlink(mockSessionsStore.path);
+			mockFlushSessionWrites.mockResolvedValue(undefined);
+			expect(await confirm()).toEqual({ durable: false, reason: 'store-unavailable' });
+		});
+		it('serializes a competing item deletion after the save and before readback', async () => {
+			const first = save(current);
+			const second = save([{ ...current[0], executionQueue: [] }]);
+			const receipt = confirm();
+			expect(await first).toBe(true);
+			expect(await second).toBe(true);
+			expect(await receipt).toEqual({ durable: false, reason: 'item-missing' });
+		});
+		it('keeps a competing save behind the readback lock and pins caller intent', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			mockFlushSessionWrites.mockImplementationOnce(async () => {
+				await gate;
+				await realFs.writeFile(mockSessionsStore.path, JSON.stringify({ sessions: current }));
+			});
+			const receipt = confirm();
+			const deletion = save([{ ...current[0], executionQueue: [] }]);
+			const expected = structuredClone(request);
+			Object.assign(request.item, { text: 'Caller mutation' });
+			release();
+			expect(await receipt).toEqual({ durable: true, request: expected });
+			expect(await deletion).toBe(true);
+			expect(await server.confirmQueueItemFromMain(expected)).toEqual({
+				durable: false,
+				reason: 'item-missing',
+			});
+		});
+		it('refuses a cache mutation during the asynchronous authoritative file read', async () => {
+			vi.mocked(fs.readFile).mockImplementationOnce(
+				async (...args: Parameters<typeof fs.readFile>) => {
+					const bytes = await realFs.readFile(...args);
+					current = [];
+					return bytes;
+				}
+			);
+			expect(await confirm()).toEqual({ durable: false, reason: 'session-missing' });
+		});
+		it('rejects mismatched identity bindings without flushing', async () => {
+			request.pendingAdmissionId = 'unrelated';
+			mockFlushSessionWrites.mockClear();
+			expect(await confirm()).toEqual({ durable: false, reason: 'invalid-request' });
+			expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('sessions:getActiveSessionId', () => {

@@ -1,3 +1,4 @@
+import type { ConfirmQueueItem } from '../../stores/queue-item-receipt';
 import type { App, BrowserWindow } from 'electron';
 import type { ProcessManager } from '../../process-manager';
 import type { WebServer } from '../../web-server';
@@ -52,6 +53,7 @@ export interface IpcBootstrapDependencies {
 
 	// setters - out-params this module currently mutates back in index.ts
 	setWebServer: (server: WebServer | null) => void;
+	setConfirmQueueItem?: (confirm: ConfirmQueueItem) => void;
 	setNoteSessionActivated: (fn: (sessionId: string) => void) => void;
 
 	// plain values - stable consts in index.ts, never reassigned

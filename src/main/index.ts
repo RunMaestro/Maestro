@@ -1,3 +1,4 @@
+import type { ConfirmQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
 import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
@@ -629,6 +630,8 @@ let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+// Host-only receipt implementation, assigned during IPC bootstrap.
+let confirmQueueItemInPersistence: ConfirmQueueItem | null = null;
 // Set by registerPersistenceHandlers (in setupIpcHandlers). Lets the plugin
 // focus verbs record into the persistence layer's `session.activated` dedupe so
 // the two emit paths never desync. Null before IPC setup / when unavailable.
@@ -922,6 +925,9 @@ const CUE_DISABLED_MESSAGE =
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
+	confirmQueueItem: (request) =>
+		confirmQueueItemInPersistence?.(request) ??
+		Promise.resolve({ durable: false, reason: 'store-unavailable' }),
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
@@ -3772,6 +3778,9 @@ app
 			getPluginAuthStore: () => pluginAuthStore,
 			getPluginEventBus: () => pluginEventBus,
 			getInteractiveReplayController: () => interactiveReplayController,
+			setConfirmQueueItem: (fn) => {
+				confirmQueueItemInPersistence = fn;
+			},
 			setNoteSessionActivated: (fn) => {
 				noteSessionActivatedInPersistence = fn;
 			},

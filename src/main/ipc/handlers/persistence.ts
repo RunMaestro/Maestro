@@ -54,6 +54,12 @@ import {
 } from '../../stores/deferred-session-content';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import type {
+	ConfirmQueueItem,
+	QueueItemReceipt,
+	QueueItemReceiptRequest,
+} from '../../stores/queue-item-receipt';
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
 
 /**
@@ -218,6 +224,8 @@ export interface PersistenceHandlerDependencies {
  * `session.activated` outside the debounced `setActiveSessionId` flush.
  */
 export interface PersistenceHandlers {
+	/** Internal host readback; deliberately has no renderer IPC registration. */
+	confirmQueueItem: ConfirmQueueItem;
 	/**
 	 * Record that a session was activated through a path OTHER than this module's
 	 * debounced flush - specifically the plugin focus verbs in index.ts, which
@@ -250,6 +258,54 @@ export function registerPersistenceHandlers(
 		<TArgs extends unknown[], TResult>(handler: (...args: TArgs) => Promise<TResult>) =>
 		(...args: TArgs): Promise<TResult> =>
 			sessionWriteQueue.enqueue('sessions', () => handler(...args));
+
+	const confirmQueueItem: ConfirmQueueItem = (input) => {
+		// Pin the complete request before waiting behind any pending save. No
+		// caller mutation can retarget the proof while flush/readback is in flight.
+		const expected = canonicalJson(input.item);
+		const request: QueueItemReceiptRequest = { ...input, item: JSON.parse(expected) };
+		return sessionWriteQueue.enqueue('sessions', async (): Promise<QueueItemReceipt> => {
+			if (
+				!request.agentId ||
+				!request.tabId ||
+				!request.itemId ||
+				!request.pendingAdmissionId ||
+				request.item.id !== request.itemId ||
+				request.item.tabId !== request.tabId ||
+				request.item.pendingAdmissionId !== request.pendingAdmissionId ||
+				(request.item.type !== 'message' && request.item.type !== 'command')
+			)
+				return { durable: false, reason: 'invalid-request' };
+
+			// This is the SAME queue as setMany/setAll. Keep its lock through the
+			// flush and authoritative readback; a snapshot from before flush is not
+			// evidence. Errors reject and can never be mistaken for durable=true.
+			await flushSessionWrites();
+			let disk: SessionsData;
+			try {
+				disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8'));
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+					return { durable: false, reason: 'store-unavailable' };
+				throw error;
+			}
+			// Both disk and the live cache must agree. A different main-process
+			// mutator during the asynchronous read must not yield stale evidence.
+			for (const sessions of [disk.sessions, sessionsStore.get('sessions', [])]) {
+				const session = sessions?.find((s) => s.id === request.agentId);
+				if (!session) return { durable: false, reason: 'session-missing' };
+				if (!session.aiTabs?.some((tab: { id: string }) => tab.id === request.tabId))
+					return { durable: false, reason: 'tab-missing' };
+				const items = session.executionQueue?.filter(
+					(item: { id: string }) => item.id === request.itemId
+				);
+				if (!items?.length) return { durable: false, reason: 'item-missing' };
+				if (items.length !== 1 || canonicalJson(items[0]) !== expected)
+					return { durable: false, reason: 'item-changed' };
+			}
+			return { durable: true, request };
+		});
+	};
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
 	// stale peer flush that would resurrect a closed agent (see
@@ -1185,5 +1241,5 @@ export function registerPersistenceHandlers(
 		}
 	});
 
-	return { noteSessionActivated };
+	return { noteSessionActivated, confirmQueueItem };
 }

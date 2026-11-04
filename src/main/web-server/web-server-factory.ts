@@ -1,3 +1,4 @@
+import type { ConfirmQueueItem } from '../stores/queue-item-receipt';
 /**
  * Web server factory for creating and configuring the web server.
  * Extracted from main/index.ts for better modularity.
@@ -57,6 +58,8 @@ interface GroupsStore {
 
 /** Dependencies required for creating the web server */
 export interface WebServerFactoryDependencies {
+	/** Internal persistence readback, never a renderer-supplied approval. */
+	confirmQueueItem?: ConfirmQueueItem;
 	/** Settings store for reading web interface configuration */
 	settingsStore: SettingsStore;
 	/** Sessions store for reading session data */
