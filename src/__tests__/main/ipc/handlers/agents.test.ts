@@ -1475,10 +1475,11 @@ describe('agents IPC handlers', () => {
 					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'opencode models'],
 				});
 
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 0,
-					stdout: 'opencode/gpt-5-nano\nollama/qwen3:8b\n',
-					stderr: '',
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, _args, _cwd, _opts, observe) => {
+					const child = new EventEmitter();
+					observe?.(child as Parameters<NonNullable<typeof observe>>[0]);
+					child.emit('close');
+					return { exitCode: 0, stdout: 'opencode/gpt-5-nano\nollama/qwen3:8b\n', stderr: '' };
 				});
 
 				const handler = handlers.get('agents:getModels');
@@ -1507,15 +1508,20 @@ describe('agents IPC handlers', () => {
 					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'omp models --json'],
 				});
 
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 0,
-					stdout: JSON.stringify({
-						models: [
-							{ id: 'claude-opus-4-8', selector: 'anthropic/claude-opus-4-8' },
-							{ id: 'gpt-5.2', selector: 'openai-codex/gpt-5.2' },
-						],
-					}),
-					stderr: '',
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, _args, _cwd, _opts, observe) => {
+					const child = new EventEmitter();
+					observe?.(child as Parameters<NonNullable<typeof observe>>[0]);
+					child.emit('close');
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({
+							models: [
+								{ id: 'claude-opus-4-8', selector: 'anthropic/claude-opus-4-8' },
+								{ id: 'gpt-5.2', selector: 'openai-codex/gpt-5.2' },
+							],
+						}),
+						stderr: '',
+					};
 				});
 
 				const handler = handlers.get('agents:getModels');
