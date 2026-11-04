@@ -1,3 +1,4 @@
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -34,6 +35,8 @@ import { generateUUID } from '../../../shared/uuid';
 import { resolveBoardLocation } from '../../../main/board/board-location';
 import { BOARD_SOURCE_PROJECT_PREFIX, type BoardCard } from '../../../shared/board/types';
 
+const fixture = createBoardIsolationFixture();
+
 let contract: BoardIsolation;
 let fixtureRoot: string;
 let bundleDir: string;
@@ -50,6 +53,7 @@ let registryRevision: number;
 let host: BoardClaimHostContext;
 
 beforeAll(async () => {
+	fixture.install();
 	contract = requireBoardIsolation();
 	readBoardIsolationRegistries(contract);
 	for (const suffix of ['', '-wal', '-shm']) {
@@ -91,7 +95,10 @@ beforeAll(async () => {
 		],
 	});
 });
-afterAll(() => fs.rmSync(bundleDir, { recursive: true, force: true }));
+afterAll(async () => {
+	if (bundleDir) fs.rmSync(bundleDir, { recursive: true, force: true });
+	await fixture.cleanup();
+});
 
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(fixtureRoot, 'claims-'));

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { BoardRegistryRevision } from '../../../main/board/board-registry-revision';
@@ -63,6 +64,10 @@ vi.mock('../../../cli/services/storage', () => ({
 vi.mock('../../../cli/services/wakatime', () => ({ buildCliWakaTimeHeartbeat: () => undefined }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+
+const fixtureIsolation = createBoardIsolationFixture();
+beforeAll(() => fixtureIsolation.install());
+afterAll(async () => fixtureIsolation.cleanup());
 
 let dir: string;
 let providerScript: string;

@@ -1,4 +1,5 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -75,6 +76,8 @@ import { executeBoardCommand } from '../../../main/board/board-command-host';
 import { registerBoardHandlers } from '../../../main/ipc/handlers/board';
 import { createBoardApi } from '../../../main/preload/board';
 
+const fixture = createBoardIsolationFixture();
+
 let dir: string;
 let databasePath: string;
 let ownsDatabase = false;
@@ -110,8 +113,10 @@ function command(value = card()): BoardCaptureCommand {
 	};
 }
 beforeAll(() => {
+	fixture.install();
 	configureIsolatedBoardSourceHost(requireBoardIsolation());
 });
+afterAll(async () => fixture.cleanup());
 beforeEach(() => {
 	ownsDatabase = false;
 	dir = '';

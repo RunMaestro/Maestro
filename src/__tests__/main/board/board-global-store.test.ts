@@ -1,3 +1,4 @@
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -18,6 +19,8 @@ import {
 	type BoardCard,
 } from '../../../shared/board/types';
 
+const fixture = createBoardIsolationFixture();
+
 let dir: string;
 let contract: BoardIsolation;
 let db: ReturnType<typeof openBoardDb>;
@@ -26,6 +29,7 @@ let bundleDir: string;
 let bundle: string;
 
 beforeAll(() => {
+	fixture.install();
 	contract = requireBoardIsolation();
 	readBoardIsolationRegistries(contract);
 	for (const suffix of ['', '-wal', '-shm']) {
@@ -44,7 +48,10 @@ beforeAll(() => {
 		logLevel: 'silent',
 	});
 });
-afterAll(() => fs.rmSync(bundleDir, { recursive: true, force: true }));
+afterAll(async () => {
+	if (bundleDir) fs.rmSync(bundleDir, { recursive: true, force: true });
+	await fixture.cleanup();
+});
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(contract.root, 'global-store-'));
 	db = openBoardDb(contract.db);
