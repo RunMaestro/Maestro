@@ -149,7 +149,14 @@ export async function migratePianolaLegacyWatches(
 				scopeId: scope.id,
 				watchIds: existing.legacyMigration.watchIds,
 			};
-			return current;
+			// A label is presentation only and is excluded from the consent
+			// fingerprint. Save it without changing the paused state, receipt,
+			// worker settings or checkpoint of the existing scope.
+			return current.map((entry) =>
+				entry.id === existing.id
+					? { ...existing, selection: { ...existing.selection!, label: scope.selection.label } }
+					: entry
+			);
 		}
 		// Preserve an explicitly paused scope and each disabled concrete tab watch.
 		const replacement = {

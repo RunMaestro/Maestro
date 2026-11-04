@@ -255,6 +255,27 @@ describe('atomic legacy handover', () => {
 		expect(await migrate()).toMatchObject({ status: 'already-migrated' });
 	});
 
+	it('saves a migrated scope label without rearming, changing its receipt or rebaselining', async () => {
+		await migrate(scope(), () => true);
+		await store.updateSupervisorTargetsAsync((targets) =>
+			targets.map((target) => (target.id === scopeId ? { ...target, enabled: false } : target))
+		);
+		const before = store.readSupervisorTargets();
+		const checkpoint = store.readScopeCheckpoint(scopeId);
+		const changed = scope();
+		changed.selection = { ...changed.selection!, label: 'Renamed' };
+		snapshot.capturedAt++;
+		expect(await migrate(changed, () => true)).toMatchObject({ status: 'already-migrated' });
+		expect(store.readSupervisorTargets()).toEqual(
+			before.map((target) =>
+				target.id === scopeId
+					? { ...target, selection: { ...target.selection!, label: 'Renamed' } }
+					: target
+			)
+		);
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
+	});
+
 	it('recovers a crash after checkpoint preparation but before registry publication', async () => {
 		const original = store.writeScopeCheckpoint;
 		const failure = vi.spyOn(store, 'writeScopeCheckpoint').mockImplementation((checkpoint) => {
