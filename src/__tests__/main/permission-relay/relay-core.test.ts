@@ -19,6 +19,7 @@ import {
 import { buildRelayArgs } from '../../../main/permission-relay/spawn-args';
 import { parseQuestionRequest } from '../../../main/permission-relay/question-request';
 import { PermissionRelayServer } from '../../../main/permission-relay/PermissionRelayServer';
+import { reserveWorktreeCleanup } from '../../../main/git/worktreeActivity';
 import {
 	RELAY_PERMISSION_PROMPT_TOOL,
 	RELAY_MCP_SERVER_NAME,
@@ -375,6 +376,43 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 		} finally {
 			client.destroy();
 			cleanup();
+		}
+	});
+
+	it('blocks cleanup through a real listening socket and delayed native close', async () => {
+		const root = fs.realpathSync(serverDir);
+		const endpoint = Reflect.get(server, 'server') as net.Server;
+		const accepted = new Promise<void>((resolve) => endpoint.once('connection', () => resolve()));
+		const closed = new Promise<void>((resolve) => endpoint.once('close', () => resolve()));
+		const client = net.createConnection(socketPath);
+		try {
+			await Promise.all([
+				accepted,
+				new Promise<void>((resolve, reject) => {
+					client.once('connect', resolve);
+					client.once('error', reject);
+				}),
+			]);
+			for (const stopping of [false, true]) {
+				if (stopping) server.stop();
+				const hold = await reserveWorktreeCleanup(root);
+				if (hold.status === 'reserved-partially') hold.release();
+				expect(hold).toMatchObject({
+					status: 'blocked',
+					blockers: [{ code: 'mutation-busy' }],
+				});
+			}
+		} finally {
+			client.destroy();
+			server.stop();
+			await closed;
+		}
+		const hold = await reserveWorktreeCleanup(root);
+		try {
+			expect(hold.status).toBe('reserved-partially');
+			expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
+		} finally {
+			if (hold.status === 'reserved-partially') hold.release();
 		}
 	});
 });

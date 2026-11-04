@@ -59,7 +59,7 @@ export class PermissionRelayServer {
 	 * bridge env.
 	 */
 	async ensureStarted(userDataDir: string): Promise<string> {
-		// This holds the request, not the listening server or its connections.
+		// Each caller owns a request scope in addition to the native server lifetime.
 		const release = beginGlobalWorktreeActivity();
 		try {
 			if (this.socketPath && this.server) {
@@ -92,56 +92,75 @@ export class PermissionRelayServer {
 	}
 
 	private async start(userDataDir: string): Promise<string> {
-		const socketPath = this.resolveSocketPath(userDataDir);
-
-		// Remove any stale socket file from a previous unclean shutdown.
-		if (process.platform !== 'win32') {
-			try {
-				fs.unlinkSync(socketPath);
-			} catch {
-				// Not present - fine.
-			}
-		}
-
-		const server = net.createServer((socket) => this.handleConnection(socket));
-
-		// Create the socket with 0600 from the start. listen() creates the socket
-		// file immediately, so a later chmod leaves a window where another local
-		// user could connect (on a permissive umask like 022). Constraining the
-		// umask around listen() makes the file restrictive at creation time; the
-		// chmod below is a belt-and-suspenders backstop. Not applicable on win32
-		// (named pipes are per-user by ACL and umask has no effect).
-		const prevUmask = process.platform !== 'win32' ? process.umask(0o177) : undefined;
+		const release = beginGlobalWorktreeActivity();
+		let server: net.Server | undefined;
+		let closed = false;
+		let setupSettled = false;
+		const releaseIfSettled = (): void => {
+			if (setupSettled && (!server || closed)) release();
+		};
 		try {
-			await new Promise<void>((resolve, reject) => {
-				server.once('error', reject);
-				server.listen(socketPath, () => {
-					server.removeListener('error', reject);
-					resolve();
-				});
+			const socketPath = this.resolveSocketPath(userDataDir);
+
+			// Remove any stale socket file from a previous unclean shutdown.
+			if (process.platform !== 'win32') {
+				try {
+					fs.unlinkSync(socketPath);
+				} catch {
+					// Not present - fine.
+				}
+			}
+
+			server = net.createServer((socket) => this.handleConnection(socket));
+			const endpoint = server;
+			endpoint.once('close', () => {
+				closed = true;
+				releaseIfSettled();
 			});
-		} finally {
-			if (prevUmask !== undefined) {
-				process.umask(prevUmask);
-			}
-		}
 
-		// Backstop: ensure 0600 even if the umask path was ineffective.
-		if (process.platform !== 'win32') {
+			// Create the socket with 0600 from the start. listen() creates the socket
+			// file immediately, so a later chmod leaves a window where another local
+			// user could connect (on a permissive umask like 022). Constraining the
+			// umask around listen() makes the file restrictive at creation time; the
+			// chmod below is a belt-and-suspenders backstop. Not applicable on win32
+			// (named pipes are per-user by ACL and umask has no effect).
+			const prevUmask = process.platform !== 'win32' ? process.umask(0o177) : undefined;
 			try {
-				fs.chmodSync(socketPath, 0o600);
-			} catch (e) {
-				logger.warn('Failed to chmod relay socket to 0600', LOG_CONTEXT, {
-					socketPath,
-					error: e instanceof Error ? e.message : String(e),
+				await new Promise<void>((resolve, reject) => {
+					endpoint.once('error', reject);
+					endpoint.listen(socketPath, () => {
+						endpoint.removeListener('error', reject);
+						resolve();
+					});
 				});
+			} finally {
+				if (prevUmask !== undefined) {
+					process.umask(prevUmask);
+				}
 			}
-		}
 
-		this.server = server;
-		this.socketPath = socketPath;
-		logger.info('Permission relay socket listening', LOG_CONTEXT, { socketPath });
-		return socketPath;
+			// Backstop: ensure 0600 even if the umask path was ineffective.
+			if (process.platform !== 'win32') {
+				try {
+					fs.chmodSync(socketPath, 0o600);
+				} catch (e) {
+					logger.warn('Failed to chmod relay socket to 0600', LOG_CONTEXT, {
+						socketPath,
+						error: e instanceof Error ? e.message : String(e),
+					});
+				}
+			}
+
+			this.server = server;
+			this.socketPath = socketPath;
+			logger.info('Permission relay socket listening', LOG_CONTEXT, { socketPath });
+			return socketPath;
+		} finally {
+			// A failed listen or requested stop does not prove native closure.
+			// Even an early close must retain pending startup/reporting work.
+			setupSettled = true;
+			releaseIfSettled();
+		}
 	}
 
 	private handleConnection(socket: net.Socket): void {
