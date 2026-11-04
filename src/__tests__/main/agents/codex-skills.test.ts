@@ -6,8 +6,12 @@ import {
 } from '../../../shared/maestro-lib/run/start-turn';
 import { discoverCodexSkills } from '../../../main/agents/codex-skills';
 import * as path from 'path';
+import { EventEmitter } from 'events';
 
-vi.mock('../../../shared/maestro-lib/run/start-turn', () => ({ startTurn: vi.fn() }));
+vi.mock('../../../shared/maestro-lib/run/start-turn', async (original) => ({
+	...(await original<typeof import('../../../shared/maestro-lib/run/start-turn')>()),
+	startTurn: vi.fn(),
+}));
 
 describe('Codex skill discovery protocol', () => {
 	const cwd = path.resolve('project');
@@ -27,7 +31,11 @@ describe('Codex skill discovery protocol', () => {
 			const done = new Promise<TurnExit>((resolve) => {
 				finish = resolve;
 			});
-			terminate.mockImplementation(() => finish({} as TurnExit));
+			const child = Object.assign(new EventEmitter(), { stdin: { writable: true, write } });
+			terminate.mockImplementation(() => {
+				finish({} as TurnExit);
+				child.emit('close');
+			});
 			write.mockImplementation((line: string) => {
 				const message = JSON.parse(line);
 				if (reply && message.id)
@@ -42,7 +50,7 @@ describe('Codex skill discovery protocol', () => {
 				return true;
 			});
 			return {
-				child: { stdin: { writable: true, write } },
+				child,
 				terminate,
 				done,
 			} as unknown as ReturnType<typeof startTurn>;
