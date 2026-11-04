@@ -104,3 +104,66 @@ export interface WorktreePullRequestSnapshot {
 	ci?: WorktreePullRequestCi;
 	divergence?: WorktreePullRequestDivergence;
 }
+
+/** The PR and head the user reviewed; all fields must be revalidated before mutation. */
+export interface WorktreePullRequestMergeTarget {
+	identity: WorktreePullRequestIdentity;
+	headRepository: WorktreePullRequestRepository;
+	headBranch: string;
+	headSha: string;
+	baseBranch: string;
+}
+
+export type WorktreePullRequestMergeMethod = 'merge' | 'squash' | 'rebase';
+
+/** Queue entry uses the queue's configured method, not a caller-selected method. */
+export type WorktreePullRequestMergeAction =
+	| { kind: 'merge'; method: WorktreePullRequestMergeMethod }
+	| { kind: 'enqueue' };
+
+export interface WorktreePullRequestMergePreflightRequest {
+	worktreePath: string;
+	/** SSH worktrees must be routed remotely or refused before local access. */
+	sshRemoteId?: string;
+	target: WorktreePullRequestMergeTarget;
+}
+
+export interface WorktreePullRequestMergeRequest extends WorktreePullRequestMergePreflightRequest {
+	action: WorktreePullRequestMergeAction;
+}
+
+/** Blockers are explanatory only; GitHub remains authoritative at mutation time. */
+export interface WorktreePullRequestMergeBlocker {
+	code:
+		| 'head-changed'
+		| 'identity-changed'
+		| 'draft'
+		| 'closed'
+		| 'conflict'
+		| 'checks'
+		| 'reviews'
+		| 'protection'
+		| 'method'
+		| 'queue'
+		| 'unknown';
+	message: string;
+}
+
+export type WorktreePullRequestMergePreflight =
+	| {
+			status: 'ready';
+			target: WorktreePullRequestMergeTarget;
+			allowedMethods: WorktreePullRequestMergeMethod[];
+			queueRequired: boolean;
+	  }
+	| { status: 'blocked'; blockers: WorktreePullRequestMergeBlocker[] }
+	| { status: 'merged'; pullRequest: WorktreePullRequest }
+	| { status: 'queued'; pullRequest: WorktreePullRequest }
+	| { status: 'unavailable'; message: string };
+
+/** A merged or queued outcome requires a fresh, matching GitHub state read. */
+export type WorktreePullRequestMergeResult =
+	| { status: 'merged'; pullRequest: WorktreePullRequest }
+	| { status: 'queued'; pullRequest: WorktreePullRequest }
+	| { status: 'blocked'; blockers: WorktreePullRequestMergeBlocker[] }
+	| { status: 'unknown'; message: string };
