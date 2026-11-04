@@ -53,7 +53,10 @@ function mergeRows(
 	preserveLive: boolean,
 	queueRows = false
 ): RecordData[] {
-	const key = (row: RecordData): string => (row.type ? `${row.type}:${row.id}` : row.id);
+	// Queue item IDs identify the operation independently of its editable type.
+	// Otherwise changing the type can duplicate a held row during a merge.
+	const key = (row: RecordData): string =>
+		queueRows ? row.id : row.type ? `${row.type}:${row.id}` : row.id;
 	if ([...incoming, ...stored, ...baseline].some((row) => !row || typeof row.id !== 'string')) {
 		return same(stored, baseline) ? incoming : stored;
 	}
@@ -65,7 +68,15 @@ function mergeRows(
 		const change = next.get(id);
 		const base = before.get(id);
 		if (change) {
-			result.push(mergeRecord(change, current, base ?? current, preserveClient, preserveLive));
+			const merged = mergeRecord(change, current, base ?? current, preserveClient, preserveLive);
+			if (queueRows && current.pendingAdmissionId) {
+				// Reordering checks below must see the saved target and hold, even
+				// when a stale client tried changing or removing them in this save.
+				const restored = { ...current };
+				if ('paused' in merged) restored.paused = merged.paused;
+				else delete restored.paused;
+				result.push(restored);
+			} else result.push(merged);
 			next.delete(id);
 		} else if (
 			!base ||
@@ -188,20 +199,25 @@ export function mergeSessionPersistenceChanges<T extends RecordData>(
 			? incoming
 			: (mergeRecord(incoming, stored, baseline, preserveClient, preserveLive) as T);
 	if (Array.isArray(result.executionQueue) && Array.isArray(stored?.executionQueue)) {
-		// A renderer save cannot release or replace a host admission hold. The
-		// future host-authorized drain must clear it through a separate boundary.
+		// A renderer save cannot change a held operation or release its host hold.
+		// User pause remains independent; the host-authorized drain must clear the
+		// technical hold through a separate boundary.
 		// Removing the whole row remains a queue cancellation.
 		const held = new Map(
 			stored.executionQueue
 				.filter((item: RecordData) => item?.pendingAdmissionId && typeof item.id === 'string')
-				.map((item: RecordData) => [item.id, item.pendingAdmissionId])
+				.map((item: RecordData) => [item.id, item])
 		);
 		result = {
 			...result,
 			executionQueue: result.executionQueue.map((item: RecordData) => {
 				if (!item || typeof item.id !== 'string') return item;
-				const pendingAdmissionId = held.get(item.id);
-				return pendingAdmissionId ? { ...item, pendingAdmissionId } : item;
+				const saved = held.get(item.id) as RecordData | undefined;
+				if (!saved) return item;
+				const restored = { ...saved };
+				if ('paused' in item) restored.paused = item.paused;
+				else delete restored.paused;
+				return restored;
 			}),
 		};
 	}
