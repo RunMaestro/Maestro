@@ -2,6 +2,10 @@
 
 import { execFileNoThrow } from '../../utils/execFile';
 import { killQuiet } from '../../utils/processTree';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import { captureException } from '../../utils/sentry';
+import { logger } from '../../utils/logger';
 
 /**
  * Kill a command's whole process tree RIGHT NOW, with SIGKILL.
@@ -25,18 +29,33 @@ export { killPty } from '../../../shared/ptyKill';
 /**
  * Best-effort async sweep for anything that outlived the synchronous kill.
  *
- * Deliberately fire-and-forget: the tree is already dead by the time this runs,
- * so it exists only to catch a process that was mid-fork during the kill. Never
- * awaited, and never gates the UI.
+ * Deliberately fire-and-forget after the synchronous kill request, to catch a
+ * process that was mid-fork during the kill. Never awaited, and never gates the
+ * UI. Completion does not establish that all descendants have terminated.
  */
 export function sweepStragglers(pid: number): void {
-	void execFileNoThrow('ps', ['-eo', 'pid=,ppid=']).then(({ stdout }) => {
-		if (!stdout) return;
-		for (const line of stdout.split('\n')) {
-			const [childRaw, parentRaw] = line.trim().split(/\s+/);
-			if (Number(parentRaw) === pid && Number(childRaw)) {
-				killQuiet(Number(childRaw), 'SIGKILL');
-			}
-		}
-	});
+	withWorktreeTurnActivity(
+		(_start, observe) => {
+			// UI settlement and ps results do not prove native close. Unknown
+			// launch/observation stays busy; signalling proves no descendant exit.
+			const releaseNative = beginGlobalWorktreeActivity();
+			void observe(
+				execFileNoThrow('ps', ['-eo', 'pid=,ppid='], undefined, undefined, (child) =>
+					child.once('close', releaseNative)
+				)
+					.then(({ stdout }) => {
+						if (!stdout) return;
+						for (const line of stdout.split('\n')) {
+							const [childRaw, parentRaw] = line.trim().split(/\s+/);
+							if (Number(parentRaw) === pid && Number(childRaw)) {
+								killQuiet(Number(childRaw), 'SIGKILL');
+							}
+						}
+					})
+					.catch((error) => captureException(error))
+			);
+		},
+		(error) =>
+			logger.warn('Failed to sweep command stragglers', 'ProcessManager', { error: String(error) })
+	);
 }

@@ -12,7 +12,8 @@
  *    been re-parented to launchd and are unfindable by ppid
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import { EventEmitter } from 'events';
 
 const { mockExecFileSync, mockExecFile, mockIsWindows } = vi.hoisted(() => ({
 	mockExecFileSync: vi.fn(() => ''),
@@ -41,7 +42,7 @@ import {
 const PID = 4242;
 const CTX = { sessionId: 's1' };
 
-let killSpy: ReturnType<typeof vi.spyOn>;
+let killSpy: MockInstance<typeof process.kill>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -159,10 +160,15 @@ describe('killProcessTreeNow', () => {
 
 describe('sweepStragglers', () => {
 	it('kills a leftover child without blocking the caller', async () => {
-		mockExecFile.mockResolvedValue({
-			stdout: `9001 ${PID}\n9002 1\n`,
-			stderr: '',
-			exitCode: 0,
+		mockExecFile.mockImplementationOnce((_command, _args, _cwd, _options, onSpawn) => {
+			const child = new EventEmitter();
+			onSpawn?.(child);
+			queueMicrotask(() => child.emit('close'));
+			return Promise.resolve({
+				stdout: `9001 ${PID}\n9002 1\n`,
+				stderr: '',
+				exitCode: 0,
+			});
 		});
 
 		sweepStragglers(PID); // returns void, never awaited by production code
