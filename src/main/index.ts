@@ -22,6 +22,7 @@ import {
 	getPluginRunProofProtectedPaths,
 	pluginToolRunIdentity,
 } from './plugins/plugin-tool-run-identity';
+import { hostCallerRuns } from './agent-run/caller-identity';
 import {
 	app,
 	BrowserWindow,
@@ -3963,6 +3964,13 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		app.on('will-quit', () => {
+			try {
+				hostCallerRuns.stop();
+			} catch (error) {
+				captureException(error, { context: 'caller run shutdown' });
+			}
+		});
 		// Release parquet file descriptors (and their cached scans) on the way
 		// out. The idle reaper would get to them eventually, but a preview tab
 		// left open otherwise holds a descriptor until the process dies.

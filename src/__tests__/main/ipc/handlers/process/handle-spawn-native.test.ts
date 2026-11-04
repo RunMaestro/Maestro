@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'events';
+import { hostCallerRuns } from '../../../../../main/agent-run/caller-identity';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../../../shared/agentDelegation';
 import { handleProcessSpawn } from '../../../../../main/ipc/handlers/process/handle-spawn';
 import type { SpawnProcessConfig } from '../../../../../main/ipc/handlers/process/spawn-types';
 import type { ProcessConfig } from '../../../../../main/process-manager/types';
@@ -24,6 +27,8 @@ async function spawnNativeWithResult(
 		nativeCapabilities?: Record<string, unknown> | null;
 		opencodeServer?: boolean;
 		shellEnvVars?: Record<string, string>;
+		storedAgent?: boolean;
+		spawnError?: boolean;
 	} = {}
 ) {
 	const definition = getAgentDefinition(toolType)!;
@@ -33,19 +38,34 @@ async function spawnNativeWithResult(
 		path: `/usr/local/bin/${definition.binaryName}`,
 		capabilities: getAgentCapabilities(toolType),
 	};
+	const events = new EventEmitter();
+	const processRecord = { pid: 4242 };
 	const processManager = {
-		spawn: vi.fn(() => ({ success: true, pid: 4242 })),
-		get: vi.fn(),
+		spawn: vi.fn(() => {
+			if (options.spawnError) throw new Error('Fixture spawn failed');
+			return { success: true, pid: 4242 };
+		}),
+		get: vi.fn(() => (options.storedAgent ? processRecord : undefined)),
 		getAll: vi.fn(() => []),
-		on: vi.fn(),
-		off: vi.fn(),
+		on: vi.fn(events.on.bind(events)),
+		off: vi.fn(events.off.bind(events)),
 		getHarnessControlCapabilities: vi.fn(() =>
 			options.nativeCapabilities === undefined ? { protocol: 'test' } : options.nativeCapabilities
 		),
 	};
 	const safeSend = vi.fn();
 	const webContentsSend = vi.fn();
-	let sessions: Array<Record<string, unknown>> = [];
+	let sessions: Array<Record<string, unknown>> = options.storedAgent
+		? [
+				{
+					id: 'agent-1',
+					toolType,
+					codexTransport: 'app-server',
+					harnessControlMode: 'current',
+					aiTabs: [{ id: 'tab-1' }],
+				},
+			]
+		: [];
 	const sessionsStore = {
 		get: (key: string, fallback: unknown) => (key === 'sessions' ? sessions : fallback),
 		set: (key: string, value: unknown) => {
@@ -92,8 +112,73 @@ async function spawnNativeWithResult(
 		processManager,
 		safeSend,
 		webContentsSend,
+		events,
 	};
 }
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('host caller identity spawn wiring with plugins off', () => {
+	it('issues before spawn, pins the actual process and disposes only at its own exit', async () => {
+		const dispose = vi.fn();
+		const issue = vi.spyOn(hostCallerRuns, 'issue').mockImplementation((_binding, authority) => ({
+			runTokenFile: '/private/fixture-proof',
+			signal: authority.signal,
+			assertActive: authority.assertActive,
+			dispose,
+		}));
+		const attempt = await spawnNativeWithResult('codex', {}, {}, { storedAgent: true });
+		expect(issue).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'agent-1',
+				tabId: 'tab-1',
+				spawnGeneration: expect.any(String),
+			}),
+			expect.objectContaining({ signal: expect.any(AbortSignal), unattended: true }),
+			process.cwd()
+		);
+		expect(attempt.config?.customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]).toBe(
+			'/private/fixture-proof'
+		);
+		expect(issue.mock.invocationCallOrder[0]).toBeLessThan(
+			attempt.processManager.spawn.mock.invocationCallOrder[0]
+		);
+		const authority = issue.mock.calls[0][1];
+		expect(() => authority.assertActive()).not.toThrow();
+		attempt.events.emit('exit', 'another-agent-ai-tab');
+		expect(dispose).not.toHaveBeenCalled();
+		attempt.processManager.get.mockReturnValue({ pid: 9000 });
+		expect(() => authority.assertActive()).toThrow('CallerRunUnavailable');
+		attempt.events.emit('exit', 'agent-1-ai-tab-1');
+		expect(dispose).toHaveBeenCalledOnce();
+	});
+
+	it('disposes the issued proof when spawning fails', async () => {
+		const dispose = vi.fn();
+		vi.spyOn(hostCallerRuns, 'issue').mockImplementation((_binding, authority) => ({
+			runTokenFile: '/private/fixture-proof',
+			signal: authority.signal,
+			assertActive: authority.assertActive,
+			dispose,
+		}));
+		await expect(
+			spawnNativeWithResult('codex', {}, {}, { storedAgent: true, spawnError: true })
+		).rejects.toThrow('Fixture spawn failed');
+		expect(dispose).toHaveBeenCalledOnce();
+	});
+
+	it('does not issue for a claimed tab that differs from the actual spawn key', async () => {
+		const issue = vi.spyOn(hostCallerRuns, 'issue');
+		const attempt = await spawnNativeWithResult(
+			'codex',
+			{ tabId: 'forged-tab' },
+			{},
+			{ storedAgent: true }
+		);
+		expect(issue).not.toHaveBeenCalled();
+		expect(attempt.config?.customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]).toBe('');
+	});
+});
 
 async function spawnNative(
 	toolType: ToolType,

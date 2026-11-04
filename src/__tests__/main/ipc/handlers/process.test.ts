@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createInteractiveReplayController } from '../../../../main/agents/claude-interactive-replay';
 import type { ProcessConfig } from '../../../../main/process-manager/types';
+import { hostCallerRuns } from '../../../../main/agent-run/caller-identity';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../../shared/agentDelegation';
 const writerGate = vi.hoisted(() => ({
 	enabled: false,
 	afterAcquire: undefined as ((processId: string) => void) | undefined,
@@ -1921,6 +1923,14 @@ describe('process IPC handlers', () => {
 						},
 					});
 				deps.interactiveReplayController = replay;
+				const callerProof = vi
+					.spyOn(hostCallerRuns, 'issue')
+					.mockImplementation((_binding, authority) => ({
+						runTokenFile: '/private/replay-source-proof',
+						signal: authority.signal,
+						assertActive: authority.assertActive,
+						dispose: vi.fn(),
+					}));
 				const releases: Array<() => void> = [];
 				let pending: Promise<void> | undefined;
 				let rotated: Promise<void> | undefined;
@@ -1939,6 +1949,9 @@ describe('process IPC handlers', () => {
 						}
 					);
 					expect(replay.hasInteractiveReplay(processId)).toBe(true);
+					expect(
+						mockProcessManager.spawn.mock.calls[0][0].customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]
+					).toBe('/private/replay-source-proof');
 					owner.aiTabs[0].agentSessionId = 'replay-provider';
 					events.emit('session-id', processId, 'replay-provider');
 					let acquired = false;
@@ -1972,6 +1985,9 @@ describe('process IPC handlers', () => {
 					}
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
 					expect(mockProcessManager.spawn.mock.calls[1][0].args).toContain('--print');
+					expect(mockProcessManager.spawn.mock.calls[1][0].customEnvVars).not.toHaveProperty(
+						CALLER_RUN_PROOF_FILE_ENV_VAR
+					);
 					expect(managed.has(processId)).toBe(true);
 					expect(acquired).toBe(false);
 					if (outcome === 'duplicate') {
@@ -2007,6 +2023,7 @@ describe('process IPC handlers', () => {
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
 				} finally {
 					replay.clearInteractiveReplay(processId);
+					callerProof.mockRestore();
 					managed.delete(processId);
 					events.emit('exit', processId, 0);
 					await pending;

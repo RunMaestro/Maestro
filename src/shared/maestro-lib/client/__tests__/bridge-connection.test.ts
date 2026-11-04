@@ -66,6 +66,13 @@ import {
 } from '../discovery';
 import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../plugins/headless-agent-timeouts';
 import { CLI_SECRET_HEADER } from '../../../webLogin';
+import { readFileSync } from 'fs';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR, CALLER_RUN_PROOF_HEADER } from '../../../agentDelegation';
+
+vi.mock('fs', async (importOriginal) => ({
+	...(await importOriginal<typeof import('fs')>()),
+	readFileSync: vi.fn(),
+}));
 
 const RUNNING_SERVER: CliServerInfo = {
 	port: 3000,
@@ -100,6 +107,7 @@ describe('BridgeConnection', () => {
 		mockWsUrl = undefined;
 		mockWsOptions = undefined;
 		vi.stubEnv('MAESTRO_CLI_HOST', undefined);
+		vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, undefined);
 	});
 
 	afterEach(() => {
@@ -143,6 +151,37 @@ describe('BridgeConnection', () => {
 	});
 
 	describe('connect()', () => {
+		it('delivers run proof only in the authenticated local upgrade, never in command payloads', async () => {
+			mockRunningServer({ ...RUNNING_SERVER, cliSecret: 'host-secret' });
+			vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, '/private/proof');
+			vi.mocked(readFileSync).mockReturnValue('a'.repeat(64));
+			const client = new BridgeConnection();
+			const connected = client.connect();
+			expect(mockWsOptions?.headers).toEqual({
+				[CLI_SECRET_HEADER]: 'host-secret',
+				[CALLER_RUN_PROOF_HEADER]: 'a'.repeat(64),
+			});
+			expect(mockWsUrl).not.toContain('a'.repeat(64));
+			mockWsInstance.emit('open');
+			await connected;
+			client.send({ type: 'ping' });
+			expect(lastSentPayload()).toEqual({ type: 'ping' });
+			client.disconnect();
+		});
+
+		it('sanitizes a missing or malformed proof file without leaking contents or path', async () => {
+			mockRunningServer({ ...RUNNING_SERVER, cliSecret: 'host-secret' });
+			vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, '/private/proof');
+			for (const read of [
+				() => {
+					throw new Error('/private/proof secret');
+				},
+				() => 'secret-invalid',
+			]) {
+				vi.mocked(readFileSync).mockImplementation(read as never);
+				await expect(new BridgeConnection().connect()).rejects.toThrow(/^CallerRunUnavailable$/);
+			}
+		});
 		it('should throw when no discovery file exists', async () => {
 			vi.mocked(readCliServerInfo).mockReturnValue(null);
 

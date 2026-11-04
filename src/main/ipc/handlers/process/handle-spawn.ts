@@ -12,6 +12,10 @@ import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
 import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
+import { hostCallerRuns } from '../../../agent-run/caller-identity';
+import type { PluginToolRunProofFile } from '../../../plugins/plugin-tool-run-proof-file';
+import { PluginAuthorityError } from '../../../plugins/plugin-authority';
+import { generateUUID } from '../../../../shared/uuid';
 import {
 	pluginToolRunIdentity,
 	createPluginRunProofFile,
@@ -38,6 +42,7 @@ import {
 import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
 } from '../../../../shared/agentDelegation';
 import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
@@ -233,7 +238,7 @@ export async function handleProcessSpawn(
 			} catch (cleanupError) {
 				captureException(
 					cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
-					{ context: 'plugin run proof cleanup', sessionId: config.sessionId }
+					{ context: 'agent run proof cleanup', sessionId: config.sessionId }
 				);
 			}
 			throw error;
@@ -572,23 +577,24 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
-	// MCP plugin-tool bridge: when the plugins feature is on, this agent
-	// supports a verified ephemeral MCP config, and at least one plugin tool
-	// is registered, point the agent at `maestro-cli mcp serve` so its model
-	// can call plugin tools (each call risk-gated in the app). Local spawns
-	// only - the bridge reaches the app over a localhost WebSocket + discovery
-	// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
-	// intentionally skipped to avoid breaking their startup with a wrong shape.
+	// Host caller proofs and optional plugin proofs share exact-process cleanup.
+	// Their registries and authority stay separate, including with Plugins off.
 	let pluginRunToken: string | undefined;
 	let pluginRunProofFile: string | undefined;
+	let callerRunProof: PluginToolRunProofFile | undefined;
+	let spawnReturned = false;
 	const exitListener: { current?: (sessionId: string) => void } = {};
-	const cleanupPluginRunProof = (): void => {
+	const cleanupRunProofs = (): void => {
+		const callerProof = callerRunProof;
+		callerRunProof = undefined;
+		signal.removeEventListener('abort', cleanupRunProofs);
 		const token = pluginRunToken;
 		const file = pluginRunProofFile;
 		pluginRunToken = undefined;
 		pluginRunProofFile = undefined;
 		if (exitListener.current) processManager.off('exit', exitListener.current);
 		if (token) pluginToolRunIdentity.revoke(token);
+		callerProof?.dispose();
 		if (file) {
 			try {
 				removePluginRunProofFile(file);
@@ -599,7 +605,50 @@ async function handleProcessSpawnImpl(
 			}
 		}
 	};
-	proofCleanup.release = cleanupPluginRunProof;
+	proofCleanup.release = cleanupRunProofs;
+	// Clear inherited/configured delivery paths. Only this host may issue one,
+	// and an SSH process cannot use a local private file or localhost bridge.
+	effectiveCustomEnvVars = { ...effectiveCustomEnvVars, [CALLER_RUN_PROOF_FILE_ENV_VAR]: '' };
+	const callerTabId = config.tabId ?? config.sessionId.match(REGEX_AI_TAB_ID)?.[1];
+	const callerAgentExists = () =>
+		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+			(session) => session?.id === baseSessionId
+		);
+	if (
+		config.toolType !== 'terminal' &&
+		!isSshEnabled &&
+		callerTabId &&
+		config.sessionId === `${baseSessionId}-ai-${callerTabId}` &&
+		callerAgentExists()
+	) {
+		try {
+			callerRunProof = hostCallerRuns.issue(
+				{ agentId: baseSessionId, tabId: callerTabId, spawnGeneration: generateUUID() },
+				{
+					signal,
+					unattended: config.querySource !== 'user',
+					assertActive: () => {
+						if (
+							!callerAgentExists() ||
+							(spawnReturned &&
+								(!callerProcess || processManager.get(config.sessionId) !== callerProcess))
+						)
+							throw new Error('CallerRunUnavailable');
+					},
+				},
+				app.getPath('userData')
+			);
+			effectiveCustomEnvVars[CALLER_RUN_PROOF_FILE_ENV_VAR] = callerRunProof.runTokenFile;
+			signal.addEventListener('abort', cleanupRunProofs, { once: true });
+		} catch (error) {
+			if (!(error instanceof PluginAuthorityError)) throw error;
+			// Unsupported private storage leaves a normal human turn unverified
+			// for admission. Never substitute env IDs or expose a raw path/error.
+			logger.warn('Caller run identity unavailable', LOG_CONTEXT);
+		}
+	}
+	// MCP plugin tools remain gated separately. Only verified local provider
+	// configs can reach the localhost bridge; SSH and maestro-p are skipped.
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
 	if (
 		mcpCap?.verified &&
@@ -625,7 +674,7 @@ async function handleProcessSpawnImpl(
 			try {
 				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
 			} catch (error) {
-				cleanupPluginRunProof();
+				cleanupRunProofs();
 				throw error;
 			}
 			const mcpSpec = {
@@ -715,7 +764,7 @@ async function handleProcessSpawnImpl(
 				'Standard permission mode is not available for Claude Code over SSH. ' +
 					'Switch this agent to Full Access or Read-Only, or disable SSH.'
 			);
-			cleanupPluginRunProof();
+			cleanupRunProofs();
 			return { success: false, pid: 0 };
 		}
 		signal.throwIfAborted();
@@ -740,7 +789,7 @@ async function handleProcessSpawnImpl(
 				'Could not start the permission relay for Standard mode. ' +
 					'Switch to Full Access or Read-Only to continue.'
 			);
-			cleanupPluginRunProof();
+			cleanupRunProofs();
 			return { success: false, pid: 0 };
 		}
 	}
@@ -760,7 +809,7 @@ async function handleProcessSpawnImpl(
 			config.sessionId,
 			'Standard permission mode needs a native approval channel. Select Native ACP or switch to Full Access or Read-Only.'
 		);
-		cleanupPluginRunProof();
+		cleanupRunProofs();
 		return { success: false, pid: 0 };
 	}
 
@@ -770,7 +819,7 @@ async function handleProcessSpawnImpl(
 			config.sessionId,
 			'Native ACP control is currently local-only. Disable SSH or select the current transport.'
 		);
-		cleanupPluginRunProof();
+		cleanupRunProofs();
 		return { success: false, pid: 0 };
 	}
 
@@ -1166,10 +1215,10 @@ async function handleProcessSpawnImpl(
 	}
 
 	exitListener.current = (sessionId: string): void => {
-		if (sessionId !== config.sessionId || !pluginRunToken) return;
-		cleanupPluginRunProof();
+		if (sessionId !== config.sessionId) return;
+		cleanupRunProofs();
 	};
-	if (pluginRunToken && exitListener.current) processManager.on('exit', exitListener.current);
+	if (pluginRunToken || callerRunProof) processManager.on('exit', exitListener.current);
 	// ========================================================================
 	// Prompt delivery: argv vs stdin, decided HERE by the host, never by the
 	// caller, and from the FINAL prompt (system prompt and preambles folded in).
@@ -1272,7 +1321,9 @@ async function handleProcessSpawnImpl(
 		// SSH app-server launch, when this Codex turn wants app-server.
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
-	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
+	const callerProcess = processManager.get(config.sessionId);
+	spawnReturned = true;
+	if (!result.success) exitListener.current?.(config.sessionId);
 	if (
 		result.success &&
 		harnessControlMode === 'native' &&
@@ -1344,6 +1395,7 @@ async function handleProcessSpawnImpl(
 		// the user's custom vars or be inherited from whatever launched Maestro.
 		const probeEnv = buildChildProcessEnv(customEnvVarsToPass, false, globalShellEnvVars);
 		delete probeEnv.MAESTRO_CLAUDE_BIN;
+		delete probeEnv[CALLER_RUN_PROOF_FILE_ENV_VAR];
 		void probeClaudeSlashCommandsCached(interactiveClaudeBinPath, config.cwd, probeEnv).then(
 			(commands) => {
 				if (commands && commands.length > 0) {
@@ -1431,6 +1483,9 @@ async function handleProcessSpawnImpl(
 				const replayEnv = originalCustomEnvVars ? { ...originalCustomEnvVars } : undefined;
 				if (replayEnv) {
 					delete replayEnv.MAESTRO_CLAUDE_BIN;
+					// This replay bypasses handleProcessSpawn. It cannot inherit the
+					// completed generation's authority; admission must see it as unmanaged.
+					delete replayEnv[CALLER_RUN_PROOF_FILE_ENV_VAR];
 				}
 
 				const apiCommand = originalAgent.apiCommand ?? 'claude';

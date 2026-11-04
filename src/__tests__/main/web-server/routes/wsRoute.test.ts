@@ -21,6 +21,7 @@ import { sendBounded } from '../../../../main/web-server/services/socket-send';
 import { getCliSecret } from '../../../../main/web-server/auth/cli-secret';
 import { CLI_SECRET_HEADER } from '../../../../shared/webLogin';
 import { WEB_LOGIN_COOKIE, WEB_LOGIN_WS_CLOSE_CODE } from '../../../../shared/webLogin';
+import { CALLER_RUN_PROOF_HEADER } from '../../../../shared/agentDelegation';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -251,6 +252,26 @@ describe('WsRoute', () => {
 	});
 
 	describe('Connection Handling', () => {
+		it.each([true, false])(
+			'rejects forged run proof before sync or client registration (authenticated=%s)',
+			(cli) => {
+				const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+				const connection = createMockConnection();
+				route!.handler(
+					connection,
+					createMockRequest(undefined, {
+						headers: {
+							host: 'localhost:3000',
+							[CALLER_RUN_PROOF_HEADER]: 'a'.repeat(64),
+							...(cli ? { [CLI_SECRET_HEADER]: getCliSecret() } : {}),
+						},
+					})
+				);
+				expect(connection.close).toHaveBeenCalledWith(1008, 'CallerRunUnavailable');
+				expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+				expect(connection.send).not.toHaveBeenCalled();
+			}
+		);
 		it('should generate unique client IDs', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 
