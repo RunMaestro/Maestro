@@ -18,6 +18,23 @@ const probes = vi.hoisted(() => ({
 	output: vi.fn(),
 	interaction: vi.fn(),
 	connected: vi.fn<(options: ConstructorParameters<typeof NdJsonConnection>[1]) => void>(),
+	acpClient: vi.fn(),
+	notify: vi.fn(),
+}));
+vi.mock('@agentclientprotocol/sdk', () => ({
+	PROTOCOL_VERSION: 1,
+	ndJsonStream: vi.fn(),
+	client: probes.acpClient,
+	methods: {
+		agent: {
+			initialize: 'initialize',
+			session: { new: 'new', load: 'load', prompt: 'prompt', cancel: 'cancel' },
+		},
+		client: { session: { requestPermission: 'permission', update: 'update' } },
+	},
+}));
+vi.mock('../../../main/process-manager/spawners/acp-stdio', () => ({
+	acpStdioStream: vi.fn(() => ({})),
 }));
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
 vi.mock('child_process', async (original) => ({
@@ -719,6 +736,295 @@ describe('standalone Antigravity SDK activity', () => {
 			return { success: true, pid: 999 };
 		});
 		expect(antigravity.spawn(input({ permissionMode: 'full' })).success).toBe(true);
+		await blocked();
+		await close();
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+});
+
+describe('standalone ACP activity', () => {
+	let acp: import('../../../main/process-manager/spawners/AcpServerSpawner').AcpServerSpawner;
+	const app = {
+		onRequest: vi.fn(),
+		onNotification: vi.fn(),
+		connect: vi.fn(),
+	};
+	const replies: Record<string, unknown> = {
+		initialize: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+		new: { sessionId: 'acp-session' },
+		load: { sessionId: 'acp-session' },
+		prompt: { stopReason: 'end_turn' },
+	};
+	const input = (overrides: Partial<ProcessConfig> = {}) =>
+		config({
+			toolType: 'gemini',
+			harnessControlMode: 'native',
+			nativeAcpArgs: ['--acp'],
+			...overrides,
+		});
+	const permission = () =>
+		app.onRequest.mock.calls.at(-1)![1]({
+			params: {
+				sessionId: 'acp-session',
+				toolCall: { toolCallId: 'tool' },
+				options: [],
+			},
+		});
+	beforeEach(async () => {
+		app.onRequest.mockReturnValue(app);
+		app.onNotification.mockReturnValue(app);
+		app.connect.mockReturnValue({
+			agent: { request: probes.request, notify: probes.notify },
+			close: probes.close,
+		});
+		probes.acpClient.mockReturnValue(app);
+		probes.request.mockImplementation(async (method: string) => replies[method]);
+		probes.notify.mockResolvedValue(undefined);
+		const { AcpServerSpawner } =
+			await import('../../../main/process-manager/spawners/AcpServerSpawner');
+		acp = new AcpServerSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses setup and fallback before any local inspection under %s',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				vi.mocked(fs.realpath).mockClear();
+				for (const overrides of [
+					{},
+					{ nativeAcpArgs: undefined },
+					{ permissionMode: 'full' },
+					{ cwd: '/remote' },
+				] as Partial<ProcessConfig>[])
+					expect(acp.spawn(input(overrides))).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+				for (const probe of [
+					createOutputParser,
+					planSpawnShell,
+					buildChildProcessEnv,
+					spawn,
+					fallback,
+					fs.realpath,
+					probes.acpClient,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+			} finally {
+				hold.release();
+			}
+			expect(acp.spawn(input()).success).toBe(true);
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('admits before shell setup and an earlier resolving reservation', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		let duringSetup!: Promise<void>;
+		vi.mocked(planSpawnShell).mockImplementationOnce((command, args) => {
+			duringSetup = blocked();
+			return { command, args, shell: false };
+		});
+		acp.spawn(input());
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await duringSetup;
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['initialize', 'new', 'load', 'prompt'])(
+		'retains pending %s after Stop and native close',
+		async (method) => {
+			const setup = Promise.withResolvers<unknown>();
+			probes.request.mockImplementation((name: string) =>
+				name === method ? setup.promise : Promise.resolve(replies[name])
+			);
+			acp.spawn(input(method === 'load' ? { agentSessionId: 'acp-session' } : {}));
+			await drain();
+			expect(probes.request).toHaveBeenCalledWith(method, expect.anything());
+			await processes.get('rpc-session')!.sdkController!.interrupt();
+			await close();
+			await blocked();
+			setup.resolve(replies[method]);
+			await drain();
+			if (method !== 'prompt')
+				expect(probes.request.mock.calls.some(([name]) => name === 'prompt')).toBe(false);
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['exit', 'error', 'result', 'interrupt', 'kill'])(
+		'retains native activity after %s until independent close',
+		async (event) => {
+			acp.spawn(input());
+			await drain();
+			if (event === 'exit') native.emit('exit', 0, null);
+			if (event === 'error') native.emit('error', new Error('transport failed'));
+			if (event === 'result') expect(probes.exit).toHaveBeenCalled();
+			if (event === 'interrupt') await processes.get('rpc-session')!.sdkController!.interrupt();
+			if (event === 'kill') await processes.get('rpc-session')!.sdkController!.kill();
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it.each(['interrupt', 'kill'] as const)(
+		'retains pending cancel notification from %s after close',
+		async (action) => {
+			acp.spawn(input());
+			await drain();
+			const pending = Promise.withResolvers<void>();
+			probes.notify.mockReturnValueOnce(pending.promise);
+			await processes.get('rpc-session')!.sdkController![action]();
+			expect(probes.notify).toHaveBeenCalledWith('cancel', { sessionId: 'acp-session' });
+			await close();
+			await blocked();
+			pending.reject(new Error('cancel failed'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('retains permission and exit reporting independently after native close', async () => {
+		const interaction = Promise.withResolvers<unknown>();
+		const reporting = Promise.withResolvers<void>();
+		probes.interaction.mockReturnValueOnce(interaction.promise);
+		probes.exit.mockReturnValueOnce(reporting.promise);
+		acp.spawn(input());
+		const response = permission();
+		await close();
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		await blocked();
+		interaction.resolve({ outcome: 'selected', optionId: 'allow' });
+		await expect(response).resolves.toEqual({
+			outcome: { outcome: 'selected', optionId: 'allow' },
+		});
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains failed permission and throwing child-exit reporting until close', async () => {
+		probes.interaction.mockRejectedValueOnce(new Error('permission failed'));
+		probes.close.mockImplementationOnce(() => {
+			throw new Error('report failed');
+		});
+		acp.spawn(input());
+		await expect(permission()).rejects.toThrow('permission failed');
+		native.emit('error', new Error('spawn failed'));
+		await drain();
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['parser', 'shell', 'env', 'nonstart'])(
+		'releases proven pre-native %s failure without Standard fallback',
+		async (failure) => {
+			const fail = () => {
+				throw new Error('setup failed');
+			};
+			if (failure === 'parser') vi.mocked(createOutputParser).mockImplementationOnce(fail);
+			if (failure === 'shell') vi.mocked(planSpawnShell).mockImplementationOnce(fail);
+			if (failure === 'env') vi.mocked(buildChildProcessEnv).mockImplementationOnce(fail);
+			if (failure === 'nonstart') vi.mocked(spawn).mockImplementationOnce(fail);
+			expect(acp.spawn(input()).success).toBe(false);
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['lost-handle', 'observer'])('retains uncertain %s native lifetime', async (failure) => {
+		if (failure === 'lost-handle')
+			vi.spyOn(native.stdin, 'on').mockImplementationOnce(() => {
+				throw new Error('postspawn');
+			});
+		else {
+			const on = native.on.bind(native);
+			let closes = 0;
+			vi.spyOn(native, 'on').mockImplementation((event, listener) => {
+				if (event === 'close' && ++closes === 2) throw new Error('observer failed');
+				return on(event, listener);
+			});
+		}
+		expect(acp.spawn(input()).success).toBe(false);
+		await close();
+		await blocked();
+	});
+	it('retains replaced/unregistered generations and a failed registration child', async () => {
+		acp.spawn(input());
+		const old = native;
+		native = makeNative();
+		acp.spawn(input());
+		processes.clear();
+		await close();
+		await blocked();
+		await close(old);
+		(await reserve()).release();
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		native = makeNative();
+		expect(acp.spawn(input()).success).toBe(false);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('retains failed asynchronous setup and independently admitted fallback', async () => {
+		const setup = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(setup.promise);
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		acp.spawn(input({ permissionMode: 'full' }));
+		setup.reject(new Error('initialize failed'));
+		await drain();
+		expect(fallback).toHaveBeenCalledOnce();
+		expect(stopProcess).toHaveBeenCalled();
+		await blocked();
+		await close();
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+	it('releases failed direct fallback without starting a child', async () => {
+		fallback.mockImplementationOnce(() => {
+			throw new Error('fallback failed');
+		});
+		expect(acp.spawn(input({ nativeAcpArgs: undefined })).success).toBe(false);
+		expect(fallback).toHaveBeenCalledOnce();
+		expect(spawn).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+	it('retains missing-pid native error until close and pending setup settle', async () => {
+		Object.assign(native, { pid: undefined });
+		const setup = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(setup.promise);
+		expect(acp.spawn(input())).toMatchObject({ success: true, pid: -1 });
+		native.emit('error', new Error('native failed'));
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		setup.reject(new Error('initialization closed'));
+		await drain();
+		(await reserve()).release();
+	});
+	it('composes failed registration native child and synchronous CLI fallback independently', async () => {
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		expect(acp.spawn(input({ permissionMode: 'full' })).success).toBe(true);
 		await blocked();
 		await close();
 		await blocked();

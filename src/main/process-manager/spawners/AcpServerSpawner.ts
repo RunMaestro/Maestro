@@ -36,6 +36,7 @@ import {
 } from '../../../shared/maestro-lib/harness/acp/interactions';
 import { harnessInteractionBroker } from '../../harness-control/integration';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'AcpServer';
 
@@ -71,9 +72,27 @@ export class AcpServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(start, observe) => this.spawnAdmitted(config, start, observe),
+				(error) => {
+					void captureException(error);
+					logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				}
+			);
+		} catch (error) {
+			return { pid: -1, success: false, error: String(error) };
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		startAdmittedTurn: typeof startTurn,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		if (!config.nativeAcpArgs) return this.fallbackToCli(config);
 		try {
-			return new AcpTurn(this.context, config).start();
+			return new AcpTurn(this.context, config, startAdmittedTurn, observeCompletion).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -113,7 +132,9 @@ class AcpTurn {
 
 	constructor(
 		private readonly ctx: AcpTurnContext,
-		private readonly config: ProcessConfig
+		private readonly config: ProcessConfig,
+		private readonly startAdmittedTurn: typeof startTurn,
+		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -173,7 +194,7 @@ class AcpTurn {
 			config.extraPathDirs,
 			config.querySource
 		);
-		this.turn = startTurn(
+		this.turn = this.startAdmittedTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -201,8 +222,8 @@ class AcpTurn {
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.turn.done.then((exit) => this.handleChildExit(exit));
-		void this.run().catch((error) => this.handleRunError(error));
+		void this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
+		void this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -214,20 +235,24 @@ class AcpTurn {
 		const connectionStream = acp.ndJsonStream(stream.writable, stream.readable);
 		const app = acp
 			.client({ name: 'maestro' })
-			.onRequest(acp.methods.client.session.requestPermission, async ({ params }) => {
-				if (this.providerSessionId && params.sessionId !== this.providerSessionId) {
-					return { outcome: { outcome: 'cancelled' as const } };
-				}
-				const opened = harnessInteractionBroker.open(
-					acpPermissionOpenRequest(params, {
-						sessionId: config.sessionId,
-						tabId: config.tabId,
-						spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
-						provider: config.toolType,
-					})
-				);
-				return acpPermissionResponse(await opened.completion);
-			})
+			.onRequest(acp.methods.client.session.requestPermission, ({ params }) =>
+				this.observeCompletion(
+					(async () => {
+						if (this.providerSessionId && params.sessionId !== this.providerSessionId) {
+							return { outcome: { outcome: 'cancelled' as const } };
+						}
+						const opened = harnessInteractionBroker.open(
+							acpPermissionOpenRequest(params, {
+								sessionId: config.sessionId,
+								tabId: config.tabId,
+								spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
+								provider: config.toolType,
+							})
+						);
+						return acpPermissionResponse(await opened.completion);
+					})()
+				)
+			)
 			.onNotification(acp.methods.client.session.update, ({ params }) => {
 				if (!this.promptSent) return;
 				if (this.providerSessionId && params.sessionId !== this.providerSessionId) return;
@@ -339,7 +364,7 @@ class AcpTurn {
 
 	private async interrupt(): Promise<void> {
 		this.cancelled = true;
-		void this.cancelNative();
+		void this.observeCompletion(this.cancelNative());
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -353,7 +378,7 @@ class AcpTurn {
 
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
 		this.cancelled = true;
-		void this.cancelNative();
+		void this.observeCompletion(this.cancelNative());
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -450,14 +475,16 @@ class AcpTurn {
 	private finish(code: number): void {
 		if (this.finished) return;
 		this.finished = true;
-		void this.ctx.exitHandler
-			.handleExit(this.config.sessionId, code, this.managedProcess)
-			.catch((error) => {
-				logger.error('[AcpTurn] handleExit failed', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
-			});
+		void this.observeCompletion(
+			this.ctx.exitHandler
+				.handleExit(this.config.sessionId, code, this.managedProcess)
+				.catch((error) => {
+					logger.error('[AcpTurn] handleExit failed', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+				})
+		);
 	}
 
 	private isSuperseded(): boolean {
