@@ -23,6 +23,7 @@ import {
 } from '../../../pianola/pianola-decisions';
 import { updatePianolaDecision } from '../../../../shared/pianola/pianola-decision-lifecycle';
 import { readCallerMessageFields } from '../../../../shared/agentDelegation';
+import { hostCallerRuns } from '../../../agent-run/caller-identity';
 
 /** Scope delivery never falls back to unguarded send_command on older hosts. */
 export async function handlePianolaScopeReply(
@@ -225,6 +226,25 @@ export function handleSendCommand(
 	// Use client's inputMode if provided, otherwise fall back to server state
 	const effectiveMode = clientInputMode || sessionDetail.inputMode;
 	const isAiMode = effectiveMode === 'ai';
+	// A verified agent must not silently bypass the pre-start enrollment used by
+	// new-tab dispatch. Until this transport has its own admission adapter, refuse
+	// it before arming a callback or handing anything to the renderer. A revoked
+	// run client must not fall back to the ordinary human-send path either.
+	// Without an explicit terminal mode, the renderer re-reads its own session
+	// state and may see AI even if the host's earlier snapshot said terminal.
+	if (
+		clientInputMode !== 'terminal' &&
+		(hostCallerRuns.resolve(client) || hostCallerRuns.isRunClient(client))
+	) {
+		ctx.send(client, {
+			type: 'command_result',
+			success: false,
+			sessionId,
+			error: 'PianolaAdmissionUnavailable: existing-tab agent dispatch is not supervised',
+			requestId: message.requestId,
+		});
+		return;
+	}
 	const mode = isAiMode ? 'AI' : 'CLI';
 	const claudeId = sessionDetail.agentSessionId || 'none';
 
