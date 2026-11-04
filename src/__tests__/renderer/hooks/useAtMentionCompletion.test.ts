@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { fuzzyMatchWithScore } from '../../../renderer/utils/search';
 import {
 	useAtMentionCompletion,
 	type AtMentionSuggestion,
@@ -41,6 +42,91 @@ function createFolder(name: string, children: FileNode[] = []): FileNode {
 // =============================================================================
 
 describe('useAtMentionCompletion', () => {
+	it.each([false, true])(
+		'matches the full stable sort across sources, paths and ties (reverse=%s)',
+		async (reverse) => {
+			const project = [
+				...Array.from({ length: 70 }, (_, i) => createFile(`prefix-match-${i}.ts`)),
+				...Array.from({ length: 40 }, (_, i) =>
+					createFolder(`module-${i}`, [createFile('match.ts'), createFile('index.ts')])
+				),
+				createFolder('match'),
+				createFile('match'),
+				createFile('match'),
+				createFile('Ämatch.ts'),
+				createFile('é-match.ts'),
+				createFile('unrelated.ts'),
+			];
+			if (reverse) project.reverse();
+			const auto = [
+				{ name: 'match', path: 'match', type: 'file' as const },
+				{ name: 'late-match', path: 'late-match', type: 'file' as const },
+			];
+			const listDocs = vi
+				.spyOn(window.maestro.autorun, 'listDocs')
+				.mockResolvedValue({ success: true, tree: auto } as any);
+			const session = createMockSession(project);
+			session.cwd = '/project';
+			session.autoRunFolderPath = '/elsewhere';
+			const { result, unmount } = renderHook(() => useAtMentionCompletion(session));
+			await waitFor(() =>
+				expect(
+					result.current.getSuggestions('late-match').some((item) => item.source === 'autorun')
+				).toBe(true)
+			);
+			const candidates = [
+				...project.flatMap((node) => [
+					{
+						name: node.name,
+						path: node.name,
+						type: node.type,
+						source: 'project' as const,
+					},
+					...(node.children ?? []).map((child) => ({
+						name: child.name,
+						path: `${node.name}/${child.name}`,
+						type: child.type,
+						source: 'project' as const,
+					})),
+				]),
+				...auto.map((node) => ({
+					name: `${node.name}.md`,
+					path: `${node.path}.md`,
+					type: node.type,
+					source: 'autorun' as const,
+				})),
+			];
+			for (const filter of ['', 'match', 'late-match', 'index', 'module-7/index', 'Äm', 'zz']) {
+				const pool = filter ? candidates : candidates.slice(0, 15);
+				const expected = pool.flatMap((candidate) => {
+					const name = fuzzyMatchWithScore(candidate.name, filter);
+					const path = fuzzyMatchWithScore(candidate.path, filter);
+					const best = name.score > path.score ? name : path;
+					if (filter && !best.matches) return [];
+					return [
+						{
+							value: candidate.path,
+							fullPath: candidate.path,
+							displayText: candidate.name,
+							type: candidate.type,
+							source: candidate.source,
+							score: filter ? best.score : 0,
+						},
+					];
+				});
+				expected.sort(
+					(a, b) =>
+						b.score - a.score ||
+						(a.type === b.type ? 0 : a.type === 'file' ? -1 : 1) ||
+						a.displayText.localeCompare(b.displayText)
+				);
+				expect(result.current.getSuggestions(filter)).toEqual(expected.slice(0, 15));
+			}
+			unmount();
+			listDocs.mockRestore();
+		}
+	);
+
 	describe('interface types', () => {
 		it('AtMentionSuggestion has correct structure', () => {
 			const suggestion: AtMentionSuggestion = {

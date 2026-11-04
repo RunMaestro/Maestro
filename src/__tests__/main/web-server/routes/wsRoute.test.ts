@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
+import { sendBounded } from '../../../../main/web-server/services/socket-send';
 import { getCliSecret } from '../../../../main/web-server/auth/cli-secret';
 import { CLI_SECRET_HEADER } from '../../../../shared/webLogin';
 import { WEB_LOGIN_COOKIE, WEB_LOGIN_WS_CLOSE_CODE } from '../../../../shared/webLogin';
@@ -198,6 +199,46 @@ describe('WsRoute', () => {
 	});
 
 	describe('Route Registration', () => {
+		it.each([false, true])(
+			'negotiates chunk progress before the first owner broadcast: %s',
+			(chunks) => {
+				const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+				const connection = Object.assign(createMockConnection(), { once: vi.fn() });
+				connection.once.mockImplementation(connection.on);
+				connection.send.mockImplementation((_data, _options, complete) => complete?.());
+				const packet = JSON.stringify({
+					type: 'bridge.event',
+					channel: 'large-event',
+					args: ['x'.repeat(40_000)],
+				});
+				vi.mocked(callbacks.onClientConnect).mockImplementation((client) => {
+					sendBounded(client.socket, packet);
+				});
+				route!.handler(
+					connection,
+					createMockRequest(undefined, {
+						url: `/test-token/ws${chunks ? '?bridgeChunks=1' : ''}`,
+					})
+				);
+				const first = JSON.parse(connection.send.mock.calls[0][0]);
+				expect(first.type).toBe(chunks ? 'bridge.chunk' : 'bridge.event');
+				if (chunks) {
+					let offset = 0;
+					const pieces: string[] = [];
+					while (offset < packet.length) {
+						const chunk = JSON.parse(connection.send.mock.calls[pieces.length][0]);
+						expect(chunk.offset).toBe(offset);
+						pieces.push(chunk.data);
+						offset += chunk.data.length;
+						connection.emit('message', JSON.stringify({ type: 'bridge.chunkAck', offset }));
+					}
+					expect(pieces.join('')).toBe(packet);
+					expect(callbacks.handleMessage).not.toHaveBeenCalled();
+				}
+				connection.emit('close');
+			}
+		);
+
 		it('should register WebSocket route with correct path', () => {
 			expect(mockFastify.get).toHaveBeenCalledTimes(1);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/ws`)).toBe(true);
