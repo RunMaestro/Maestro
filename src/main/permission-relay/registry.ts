@@ -13,6 +13,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import type { PermissionDecision, RelaySpawnBinding } from './types';
 import { RELAY_DECISION_TIMEOUT_MS } from './types';
 import type { PendingPermissionSnapshot } from '../../shared/pendingPermissions';
@@ -72,26 +73,36 @@ export function registerSpawn(binding: RelaySpawnBinding): {
 	token: string;
 	cleanup: () => void;
 } {
-	const token = generateRelayToken();
-	bindings.set(token, binding);
+	const release = beginGlobalWorktreeActivity();
+	try {
+		const token = generateRelayToken();
+		bindings.set(token, binding);
 
-	const cleanup = () => {
-		bindings.delete(token);
-		let changed = false;
-		// Deny any requests still waiting on this dead spawn so the bridge's
-		// socket handler (if somehow still open) doesn't hang forever.
-		for (const [requestId, req] of pending) {
-			if (req.token === token) {
-				clearTimeout(req.timer);
-				pending.delete(requestId);
-				changed = true;
-				req.resolve({ behavior: 'deny', message: 'Agent process exited.' });
+		const cleanup = () => {
+			const releaseCleanup = beginGlobalWorktreeActivity();
+			try {
+				bindings.delete(token);
+				let changed = false;
+				// Deny any requests still waiting on this dead spawn so the bridge's
+				// socket handler (if somehow still open) doesn't hang forever.
+				for (const [requestId, req] of pending) {
+					if (req.token === token) {
+						clearTimeout(req.timer);
+						pending.delete(requestId);
+						changed = true;
+						req.resolve({ behavior: 'deny', message: 'Agent process exited.' });
+					}
+				}
+				if (changed) notifyPendingPermissions();
+			} finally {
+				releaseCleanup();
 			}
-		}
-		if (changed) notifyPendingPermissions();
-	};
+		};
 
-	return { token, cleanup };
+		return { token, cleanup };
+	} finally {
+		release();
+	}
 }
 
 /** Look up which session/tab a token belongs to, or undefined if unknown. */
@@ -132,15 +143,20 @@ export function createPending(
  * (already resolved, timed out, or cleaned up). Returns whether it matched.
  */
 export function resolvePending(requestId: string, decision: PermissionDecision): boolean {
-	const req = pending.get(requestId);
-	if (!req) {
-		return false;
+	const release = beginGlobalWorktreeActivity();
+	try {
+		const req = pending.get(requestId);
+		if (!req) {
+			return false;
+		}
+		clearTimeout(req.timer);
+		pending.delete(requestId);
+		notifyPendingPermissions();
+		req.resolve(decision);
+		return true;
+	} finally {
+		release();
 	}
-	clearTimeout(req.timer);
-	pending.delete(requestId);
-	notifyPendingPermissions();
-	req.resolve(decision);
-	return true;
 }
 
 /** Test/inspection helper: current counts. */

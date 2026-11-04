@@ -164,7 +164,7 @@ describe('process cancellation and control IPC activity', () => {
 				typeof import('../../../main/permission-relay/registry')
 			>('../../../main/permission-relay/registry');
 			const completion = registry.createPending('request', 'token');
-			const notify = vi.fn(() => expect(active).toBe(1));
+			const notify = vi.fn(() => expect(active).toBeGreaterThan(0));
 			const unsubscribe = registry.subscribePendingPermissions(notify);
 			vi.mocked(resolvePermissionResponse).mockImplementation(registry.resolvePending);
 			try {
@@ -180,6 +180,7 @@ describe('process cancellation and control IPC activity', () => {
 				await idle();
 			} finally {
 				unsubscribe();
+				for (const release of releases) release();
 				registry.resolvePending('request', { behavior: 'deny', message: 'test cleanup' });
 			}
 		});
