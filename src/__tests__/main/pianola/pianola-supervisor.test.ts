@@ -19,6 +19,7 @@ import type { ChildProcess } from 'child_process';
 // target list without touching electron, fs, or a real watcher.
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
+	readSupervisorTarget: vi.fn(),
 	removeSupervisorTargetAsync: vi.fn(async () => []),
 	updateSupervisorTargetsAsync: vi.fn(),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),

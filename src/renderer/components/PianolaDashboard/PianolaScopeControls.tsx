@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { Theme } from '../../types';
 import type { PianolaAgentGroupSelection } from '../../../shared/pianola/pianola-scope';
@@ -19,6 +19,14 @@ export function PianolaScopeControls({
 }): React.ReactElement {
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
+	const sessionNames = useMemo(
+		() => new Map(sessions.map((session) => [session.id, session.name])),
+		[sessions]
+	);
+	const groupNames = useMemo(
+		() => new Map(groups.map((group) => [group.id, group.name])),
+		[groups]
+	);
 	const [editing, setEditing] = useState<PianolaSupervisedTarget | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -148,30 +156,26 @@ export function PianolaScopeControls({
 							{scope.selection?.mode === 'agents-and-groups'
 								? `Selected: ${scope.selection.agentIds.length} agents, ${scope.selection.groupIds.length} groups${scope.selection.futureLocalAgents ? ', future local agents' : ''}; ${scope.selection.excludedAgentIds.length} exclusions`
 								: 'Legacy selection requires reconfiguration'}{' '}
-							· Manager:{' '}
-							{sessions.find((session) => session.id === scope.managerAgentId)?.name ??
-								scope.managerAgentId}
-							. Worker health does not establish individual chat coverage.
+							· Manager: {sessionNames.get(scope.managerAgentId ?? '') ?? scope.managerAgentId}.
+							Worker health does not establish individual chat coverage.
 							{health?.lastError ? ` ${health.lastError}` : ''}
 						</div>
 						{scope.selection?.mode === 'agents-and-groups' && (
 							<div className="text-xs" style={{ color: theme.colors.textDim }}>
 								<div>
 									Agents:{' '}
-									{scope.selection.agentIds
-										.map((id) => sessions.find((s) => s.id === id)?.name ?? id)
-										.join(', ') || 'none'}
+									{scope.selection.agentIds.map((id) => sessionNames.get(id) ?? id).join(', ') ||
+										'none'}
 								</div>
 								<div>
 									Groups:{' '}
-									{scope.selection.groupIds
-										.map((id) => groups.find((g) => g.id === id)?.name ?? id)
-										.join(', ') || 'none'}
+									{scope.selection.groupIds.map((id) => groupNames.get(id) ?? id).join(', ') ||
+										'none'}
 								</div>
 								<div>
 									Excluded:{' '}
 									{scope.selection.excludedAgentIds
-										.map((id) => sessions.find((s) => s.id === id)?.name ?? id)
+										.map((id) => sessionNames.get(id) ?? id)
 										.join(', ') || 'none'}
 								</div>
 							</div>
@@ -199,9 +203,7 @@ export function PianolaScopeControls({
 										const tabs = evidence.coverage!.tabs.filter((tab) => tab.agentId === agentId);
 										return (
 											<div key={agentId}>
-												<strong>
-													{sessions.find((session) => session.id === agentId)?.name ?? agentId}
-												</strong>
+												<strong>{sessionNames.get(agentId) ?? agentId}</strong>
 												{tabs.map((tab) => (
 													<div key={tab.tabId}>
 														Chat {tab.tabId}: {tab.status} · {tab.reason}

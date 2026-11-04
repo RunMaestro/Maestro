@@ -97,6 +97,7 @@ export const getProfile = store.getProfile;
 export const setProfile = store.setProfile;
 export const supervisorFilePath = store.supervisorFilePath;
 export const readSupervisorTargets = store.readSupervisorTargets;
+export const readSupervisorTarget = store.readSupervisorTarget;
 export const writeSupervisorTargets = store.writeSupervisorTargets;
 export const updateSupervisorTargets = store.updateSupervisorTargets;
 export const upsertSupervisorTarget = store.upsertSupervisorTarget;

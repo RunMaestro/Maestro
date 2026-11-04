@@ -1,6 +1,7 @@
 /** Scope lifecycle contracts through the real watcher and filesystem checkpoint store.
  * Delivery and desktop snapshots are controlled; no live agent receives a message. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync, spawn } from 'child_process';
@@ -1573,4 +1574,70 @@ describe('event drain fairness and elapsed budgets', () => {
 		},
 		20000
 	);
+});
+
+describe('passive checkpoint write economy', () => {
+	it('bounds idle observation writes and flushes membership, cursors and intents before delivery', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		const rename = vi.spyOn(fs, 'renameSync');
+		const writes = () =>
+			rename.mock.calls.filter(([, to]) =>
+				String(to).endsWith(`maestro-pianola-scope-${scopeId}.json`)
+			).length;
+		for (let i = 0; i < 5; i++) await f.cycle();
+		expect(writes()).toBe(0);
+		f.snapshot.capturedAt += 20_000;
+		await f.cycle();
+		expect(writes()).toBe(1);
+		f.tab('new-tab');
+		await f.cycle();
+		expect(f.checkpoint().tabs.some((saved) => saved.tabId === 'new-tab')).toBe(true);
+		f.history(tab, [message('new-ask')]);
+		vi.mocked(f.deps.dispatch).mockImplementation(async (_target, _answer, guard) => {
+			const fresh = createPianolaFsStore({
+				resolveDir: () => path.dirname(f.store.supervisorFilePath()),
+				indent: 2,
+				trailingNewline: true,
+			});
+			expect(fresh.readScopeCheckpoint(scopeId)?.tabs[0].unresolvedIntent?.decisionId).toBe(
+				guard.decisionId
+			);
+			return { status: 'accepted' };
+		});
+		await f.cycle();
+		expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+		expect(f.checkpoint().tabs[0].lastSeen?.id).toBe('new-ask');
+	});
+
+	it('refuses delivery when fsync of the canonical intent fails', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('fsync-ask')]);
+		const sync = vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => {
+			throw new Error('intent fsync failed');
+		});
+		await expect(f.cycle()).rejects.toThrow('intent fsync failed');
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+		expect(f.checkpoint().tabs[0].unresolvedIntent).toBeNull();
+		sync.mockRestore();
+	});
+
+	it('batches passive transcript cursor updates across a fleet', async () => {
+		const f = fixture();
+		for (let i = 0; i < 12; i++) f.tab(`tab-${i}`);
+		await f.cycle();
+		for (const tab of f.snapshot.tabs) {
+			f.history(tab, [message(`progress-${tab.tabId}`, 'Working.')]);
+		}
+		const rename = vi.spyOn(fs, 'renameSync');
+		await f.cycle();
+		const writes = rename.mock.calls.filter(([, to]) =>
+			String(to).endsWith(`maestro-pianola-scope-${scopeId}.json`)
+		);
+		expect(writes.length).toBeLessThanOrEqual(2);
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+	});
 });

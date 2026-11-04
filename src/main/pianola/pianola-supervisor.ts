@@ -33,6 +33,7 @@ import {
 } from '../../shared/maestro-lib/control/termination';
 import {
 	readSupervisorTargets,
+	readSupervisorTarget,
 	removeSupervisorTargetAsync,
 	updateSupervisorTargetsAsync,
 	readPrograms,
@@ -510,9 +511,7 @@ export class PianolaSupervisor {
 						signal: new AbortController().signal,
 						unattended: true,
 						assertActive: () => {
-							const current = readSupervisorTargets().find(
-								(candidate) => candidate.id === target.id
-							);
+							const current = readSupervisorTarget(target.id);
 							if (
 								!this.deps.isEnabled() ||
 								entry!.stopping ||

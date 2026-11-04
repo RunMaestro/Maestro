@@ -371,11 +371,21 @@ export async function runPianolaScopeCycle(
 	const scopes = scopesFrom(targets);
 	const scope = scopes.find((candidate) => candidate.id === scopeId);
 	let checkpoint = deps.store.readScopeCheckpoint(scopeId);
+	// Coverage clocks/reasons may be refreshed after transcript reads. Only an
+	// enrollment/authority change needs the pre-work membership barrier.
+	const enrollmentState = (value: PianolaScopeCheckpoint): string =>
+		canonicalJson({
+			...value,
+			lastSnapshotAt: undefined,
+			nextTabIndex: undefined,
+			tabs: value.tabs.map(({ coverage: _coverage, ...tab }) => tab),
+		});
+	const enrolledAtStart = checkpoint ? enrollmentState(checkpoint) : null;
 	const result: PianolaScopeCycleResult = { status: 'suspended', iterations: [], issues: [] };
 	let persistenceFailed = false;
 	let lastPersistedStatus = checkpoint?.status;
 	let externallySuspended = false;
-	const persist = (): void => {
+	const persist = (durable = false): void => {
 		try {
 			// The host may suspend the scope while this child awaits I/O. Never
 			// overwrite that pause with an older in-memory armed checkpoint.
@@ -391,10 +401,11 @@ export async function runPianolaScopeCycle(
 					.some((target) => target.id === scopeId && target.enabled)
 			)
 				checkpoint!.status = 'suspended';
+			const currentTabs = new Map(
+				current?.tabs.map((tab) => [canonicalJson([tab.agentId, tab.tabId]), tab])
+			);
 			for (const saved of checkpoint!.tabs) {
-				const durable = current?.tabs.find(
-					(tab) => tab.agentId === saved.agentId && tab.tabId === saved.tabId
-				);
+				const durable = currentTabs.get(canonicalJson([saved.agentId, saved.tabId]));
 				if (
 					saved.unresolvedIntent &&
 					durable?.unresolvedIntent?.decisionId === saved.unresolvedIntent.decisionId &&
@@ -402,7 +413,7 @@ export async function runPianolaScopeCycle(
 				)
 					saved.unresolvedIntent.admitted = true;
 			}
-			deps.store.writeScopeCheckpoint(checkpoint!);
+			deps.store.writeScopeCheckpoint(checkpoint!, durable);
 			lastPersistedStatus = checkpoint!.status;
 		} catch (error) {
 			persistenceFailed = true;
@@ -655,7 +666,12 @@ export async function runPianolaScopeCycle(
 		}
 		// A transcript failure persists until an actual successful retry. An
 		// unchanged cursor alone must never clear the previous failure.
-		if (tab.paused || saved.coverage?.status !== 'blocked' || needsBaseline) {
+		if (
+			tab.paused ||
+			!saved.coverage ||
+			(saved.coverage.status !== 'blocked' && saved.coverage.status !== 'covered') ||
+			needsBaseline
+		) {
 			saved.coverage = {
 				observedAt: snapshot.capturedAt,
 				status: tab.paused ? 'paused' : 'covered',
@@ -692,8 +708,8 @@ export async function runPianolaScopeCycle(
 	checkpoint.coverageRegistryFingerprint = pianolaCoverageRegistryFingerprint(targets);
 	checkpoint.status = 'armed';
 	delete checkpoint.lastCycleError;
-	// Commit the entire membership/baseline before any rule, handoff or notice.
-	persist();
+	// Commit changed membership/baselines before any rule, handoff or notice.
+	if (enrollmentState(checkpoint) !== enrolledAtStart) persist(true);
 	result.status = checkpoint.status;
 	if (checkpoint.status !== 'armed') return result;
 	// Rotate over the census, not just changed tabs, so a failing/active prefix
@@ -719,7 +735,6 @@ export async function runPianolaScopeCycle(
 		if (options.shouldStop?.() || externallySuspended) break;
 		options.sweep?.add(canonicalJson([tab.agentId, tab.tabId]));
 		checkpoint.nextTabIndex = (positions.get(tab)! + 1) % snapshot.tabs.length;
-		persist();
 		unattempted.delete(canonicalJson([tab.agentId, tab.tabId]));
 		try {
 			const target: WatchTarget = {
@@ -911,7 +926,7 @@ export async function runPianolaScopeCycle(
 				// A stale watcher retry must not keep waking an acknowledged decision.
 				saved.nextWatchAt = undefined;
 				saved.lastSeen = tab.cursor;
-				persist();
+				if (saved.unresolvedIntent || pending) persist();
 				if (saved.unresolvedIntent)
 					result.issues.push(`Delivery outcome unknown: ${tab.agentId}/${tab.tabId}`);
 				continue;
@@ -976,7 +991,7 @@ export async function runPianolaScopeCycle(
 				)
 					throw new Error('Scope ownership changed before delivery');
 				saved.unresolvedIntent = { decisionId: latestRecord!.id, messageId };
-				persist();
+				persist(true);
 				return {
 					scopeId,
 					enrollmentRevision: checkpoint.enrollmentRevision,
@@ -1057,7 +1072,8 @@ export async function runPianolaScopeCycle(
 			saved.baselineBusy = false;
 			saved.lastSeen = tab.cursor;
 			saved.unresolvedIntent = null;
-			persist();
+			if (iteration.result.record || saved.state.pendingRetry || saved.state.pendingHandoff)
+				persist(true);
 			result.iterations.push({ agentId: tab.agentId, tabId: tab.tabId, result: iteration.result });
 		} catch (error) {
 			if (saved.unresolvedIntent) {
@@ -1099,11 +1115,11 @@ export async function runPianolaScopeCycle(
 					? 'Reconcile the native receipt or recipient transcript before any retry'
 					: 'Restore transcript access/cursor consistency; worker retries this tab on the next cycle',
 			};
-			persist();
 			// Isolate an unavailable/stale tab, preserving any durable uncertain
 			// intent, so another healthy tab in this scope can still make progress.
 		}
 	}
+	persist();
 	const now = Date.parse(deps.watch.now());
 	const due = [
 		...checkpoint.tabs

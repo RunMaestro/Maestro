@@ -28,6 +28,8 @@ import {
 
 const { sendCommand, dispatch } = vi.hoisted(() => ({ sendCommand: vi.fn(), dispatch: vi.fn() }));
 vi.mock('../../../cli/services/maestro-client', () => ({
+	withMaestroClient: async (fn: (client: { sendCommand: typeof sendCommand }) => unknown) =>
+		fn({ sendCommand }),
 	MaestroClient: class {
 		connect = vi.fn();
 		disconnect = vi.fn();

@@ -146,6 +146,8 @@ export interface PianolaFsStore {
 	};
 	setProfile(entry: PianolaProfileEntry, projectPath?: string): PianolaProfiles;
 	readSupervisorTargets(): PianolaSupervisedTarget[];
+	/** Revalidate the on-disk revision synchronously at the final host send boundary. */
+	readSupervisorTarget(id: string): PianolaSupervisedTarget | undefined;
 	writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[];
 	updateSupervisorTargets(
 		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
@@ -785,15 +787,62 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 
+	let supervisorRevision: string | undefined;
+	let supervisorIndex = new Map<string, PianolaSupervisedTarget>();
+	function readSupervisorTarget(id: string): PianolaSupervisedTarget | undefined {
+		const file = supervisorFilePath();
+		// A pending canonical writer is indeterminate, even before its rename.
+		// No watcher delivery or timer participates in this authority check.
+		const revision = (): string | undefined => {
+			if (fs.existsSync(file + '.lock')) return undefined;
+			const stat = fs.statSync(file, { bigint: true });
+			return [file, stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+		};
+		try {
+			const before = revision();
+			if (!before) {
+				supervisorRevision = undefined;
+				supervisorIndex.clear();
+				return undefined;
+			}
+			if (before !== supervisorRevision) {
+				const targets = readSupervisorTargets();
+				if (revision() !== before) {
+					supervisorRevision = undefined;
+					supervisorIndex.clear();
+					return undefined;
+				}
+				supervisorIndex = new Map(targets.map((target) => [target.id, target]));
+				supervisorRevision = before;
+			}
+			const target = supervisorIndex.get(id);
+			return target ? structuredClone(target) : undefined;
+		} catch (error) {
+			supervisorRevision = undefined;
+			supervisorIndex.clear();
+			if (
+				['ENOENT', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR'].includes(
+					(error as NodeJS.ErrnoException).code ?? ''
+				)
+			)
+				return undefined;
+			throw error;
+		}
+	}
+
 	function persistSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
 		// A stale writer cannot resurrect an owner after an atomic handover.
-		const fences = readSupervisorTargets().filter((target) => target.migratedToScopeId);
+		const fences = new Map(
+			readSupervisorTargets()
+				.filter((target) => target.migratedToScopeId)
+				.map((target) => [target.id, target])
+		);
+		const ids = new Set(targets.map((target) => target.id));
 		const merged = targets.map((target) => {
-			const fence = fences.find((old) => old.id === target.id);
+			const fence = fences.get(target.id);
 			return fence ? { ...fence, enabled: false } : target;
 		});
-		for (const fence of fences)
-			if (!merged.some((target) => target.id === fence.id)) merged.push(fence);
+		for (const fence of fences.values()) if (!ids.has(fence.id)) merged.push(fence);
 		const validated = validatePianolaSupervisorFile({ targets: merged }).targets;
 		writeJsonAtomic(PIANOLA_SUPERVISOR_FILENAME, { targets: validated });
 		return validated;
@@ -937,7 +986,34 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				20 * 1024 * 1024
 			)
 				throw new Error('Pianola checkpoint too large');
-			writeJsonAtomic(name, checkpoint, durable);
+			// Observation clocks and the sweep position alone do not justify rewriting
+			// the whole fleet. Refresh their durable projection at most every 20s.
+			const observationState = (value: PianolaScopeCheckpoint): unknown => ({
+				...value,
+				lastSnapshotAt: undefined,
+				nextTabIndex: undefined,
+				tabs: value.tabs.map((tab) => ({
+					...tab,
+					coverage: tab.coverage ? { ...tab.coverage, observedAt: undefined } : undefined,
+				})),
+			});
+			if (current && canonicalJson(current) === canonicalJson(checkpoint)) {
+				receipt?.({ before, after: before });
+				return;
+			}
+			if (
+				!durable &&
+				current &&
+				(checkpoint.lastSnapshotAt ?? 0) >= (current.lastSnapshotAt ?? 0) &&
+				(checkpoint.lastSnapshotAt ?? 0) - (current.lastSnapshotAt ?? 0) < 20_000 &&
+				canonicalJson(observationState(current)) === canonicalJson(observationState(checkpoint))
+			) {
+				receipt?.({ before, after: before });
+				return;
+			}
+			// All changed authority/cursor/enrollment states survive a crash, even
+			// when the caller is flushing a batch of passive observations.
+			writeJsonAtomic(name, checkpoint, true);
 			receipt?.({ before, after: readMutationContent(name) });
 		});
 	}
@@ -1028,6 +1104,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		getProfile,
 		setProfile,
 		readSupervisorTargets,
+		readSupervisorTarget,
 		writeSupervisorTargets,
 		updateSupervisorTargets,
 		upsertSupervisorTarget,

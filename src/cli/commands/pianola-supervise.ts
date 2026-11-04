@@ -21,7 +21,7 @@ import {
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
 import { ensurePianolaEnabled } from './pianola';
-import { MaestroClient } from '../services/maestro-client';
+import { MaestroClient, withMaestroClient } from '../services/maestro-client';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import type { PianolaSupervisorSnapshot } from '../../main/ipc/handlers/pianola';
 
@@ -282,16 +282,16 @@ function describeTarget(target: PianolaSupervisedTarget): string {
 export async function pianolaSuperviseList(options: PianolaSuperviseCommonOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
 	if (options.live) {
-		const client = new MaestroClient();
 		try {
-			await client.connect();
-			const response = await client.sendCommand<{
-				ok: boolean;
-				error?: string;
-				result: PianolaSupervisorSnapshot;
-			}>(
-				{ type: 'bridge.invoke', channel: 'pianola:supervisor-list', args: [] },
-				'bridge.response'
+			const response = await withMaestroClient((client) =>
+				client.sendCommand<{
+					ok: boolean;
+					error?: string;
+					result: PianolaSupervisorSnapshot;
+				}>(
+					{ type: 'bridge.invoke', channel: 'pianola:supervisor-list', args: [] },
+					'bridge.response'
+				)
 			);
 			if (!response.ok) fail(response.error ?? 'Supervisor status unavailable', options.json);
 			if (options.json) console.log(JSON.stringify(response.result));
@@ -313,8 +313,6 @@ export async function pianolaSuperviseList(options: PianolaSuperviseCommonOption
 		} catch (error) {
 			exitIfMaestroNotRunning(error, options);
 			throw error;
-		} finally {
-			client.disconnect();
 		}
 	}
 	const targets = readPianolaSupervisorTargets();

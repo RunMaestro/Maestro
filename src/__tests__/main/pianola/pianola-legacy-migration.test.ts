@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
-import type { ChildProcess, SpawnOptions } from 'child_process';
+import { spawnSync, type ChildProcess, type SpawnOptions } from 'child_process';
 vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
 vi.mock('electron', () => ({ app: { getPath: () => process.env.MAESTRO_USER_DATA } }));
 vi.mock('../../../main/utils/logger', () => ({
@@ -174,6 +174,43 @@ afterEach(() => {
 });
 
 describe('atomic legacy handover', () => {
+	it.each(['rename', 'in-place', 'crossprocess', 'locked', 'missing', 'corrupt'] as const)(
+		'rechecks the actual late-send boundary before any watcher event: %s',
+		(mode) => {
+			const callerRuns = new HostCallerRuns();
+			vi.spyOn(hostCallerRuns, 'issue').mockImplementation(callerRuns.issue.bind(callerRuns));
+			supervisor.reconcile();
+			const client = { cliAuthenticated: true };
+			callerRuns.bind(
+				client,
+				fs.readFileSync(spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!, 'utf8')
+			);
+			expect(callerRuns.resolve(client)).toBeDefined();
+			const file = store.supervisorFilePath();
+			const updated = JSON.stringify({ targets: [legacy('legacy', 'old', false)] });
+			if (mode === 'rename') {
+				fs.writeFileSync(file + '.external', updated);
+				fs.renameSync(file + '.external', file);
+			}
+			if (mode === 'in-place') fs.writeFileSync(file, updated);
+			if (mode === 'crossprocess') {
+				const child = spawnSync(process.execPath, [
+					'-e',
+					"require('fs').writeFileSync(process.argv[1], process.argv[2])",
+					file,
+					updated,
+				]);
+				expect(child.status).toBe(0);
+			}
+			if (mode === 'locked') fs.writeFileSync(file + '.lock', 'external');
+			if (mode === 'missing') fs.unlinkSync(file);
+			if (mode === 'corrupt') fs.writeFileSync(file, '{');
+			expect(callerRuns.resolve(client)).toBeUndefined();
+			expect(callerRuns.isRunClient(client)).toBe(true);
+			expect(spawned).toHaveLength(1);
+		}
+	);
+
 	it('fences a real active owner at host ingress before stop, preserves a concrete pause and covers siblings/worktrees with one scope', async () => {
 		supervisor.reconcile();
 		const proofPath = spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!;
