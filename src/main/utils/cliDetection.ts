@@ -1,6 +1,7 @@
 import { execFileNoThrow } from './execFile';
 import { buildExpandedEnv } from '../../shared/pathUtils';
 import { getWhichCommand } from '../../shared/platformDetection';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 let cloudflaredInstalledCache: boolean | null = null;
 let cloudflaredPathCache: string | null = null;
@@ -31,6 +32,15 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 }
 
 export async function isCloudflaredInstalled(): Promise<boolean> {
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await detectCloudflaredAdmitted();
+	} finally {
+		release();
+	}
+}
+
+async function detectCloudflaredAdmitted(): Promise<boolean> {
 	// Return cached result if available
 	if (cloudflaredInstalledCache !== null) {
 		return cloudflaredInstalledCache;
@@ -39,7 +49,12 @@ export async function isCloudflaredInstalled(): Promise<boolean> {
 	// Use 'which' on macOS/Linux, 'where' on Windows
 	const command = getWhichCommand();
 	const env = getExpandedEnv();
-	const result = await execFileNoThrow(command, ['cloudflared'], undefined, env);
+	// Results (including timeouts) and cache state cannot prove native close.
+	// Unknown launch or observation keeps this independent hold busy.
+	const releaseNative = beginGlobalWorktreeActivity();
+	const result = await execFileNoThrow(command, ['cloudflared'], undefined, env, (child) =>
+		child.once('close', releaseNative)
+	);
 
 	if (result.exitCode === 0 && result.stdout.trim()) {
 		cloudflaredInstalledCache = true;
@@ -67,6 +82,15 @@ export function clearCloudflaredCache(): void {
  * Uses platform-appropriate detection: 'where' on Windows, 'which' on Unix.
  */
 export async function isGhInstalled(): Promise<boolean> {
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await detectGhAdmitted();
+	} finally {
+		release();
+	}
+}
+
+async function detectGhAdmitted(): Promise<boolean> {
 	// Return cached result if available
 	if (ghInstalledCache !== null) {
 		return ghInstalledCache;
@@ -75,7 +99,10 @@ export async function isGhInstalled(): Promise<boolean> {
 	// Use 'which' on macOS/Linux, 'where' on Windows
 	const command = getWhichCommand();
 	const env = getExpandedEnv();
-	const result = await execFileNoThrow(command, ['gh'], undefined, env);
+	const releaseNative = beginGlobalWorktreeActivity();
+	const result = await execFileNoThrow(command, ['gh'], undefined, env, (child) =>
+		child.once('close', releaseNative)
+	);
 
 	if (result.exitCode === 0 && result.stdout.trim()) {
 		ghInstalledCache = true;
@@ -97,15 +124,22 @@ export async function isGhInstalled(): Promise<boolean> {
  * @returns The path to use for gh commands
  */
 export async function resolveGhPath(customPath?: string): Promise<string> {
-	if (customPath) {
-		return customPath;
+	// Admission also covers cached/custom answers and the continuation after
+	// detection. It must precede setup and must not be swallowed by recovery.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		if (customPath) {
+			return customPath;
+		}
+
+		// Ensure detection has run
+		await isGhInstalled();
+
+		// Return cached path or fallback to 'gh'
+		return ghPathCache || 'gh';
+	} finally {
+		release();
 	}
-
-	// Ensure detection has run
-	await isGhInstalled();
-
-	// Return cached path or fallback to 'gh'
-	return ghPathCache || 'gh';
 }
 
 /**
