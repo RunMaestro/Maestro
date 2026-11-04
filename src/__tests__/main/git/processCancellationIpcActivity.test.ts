@@ -5,6 +5,8 @@ import { EventEmitter } from 'events';
 import { spawn } from 'child_process';
 import { ipcMain } from 'electron';
 import type { ProcessHandlerDependencies } from '../../../main/ipc/handlers/process';
+import type { HarnessInteractionOpenRequest } from '../../../shared/harness-control/types';
+import interactionFixture from '../../fixtures/harness-control/interactions.json';
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
@@ -24,8 +26,14 @@ vi.mock('../../../main/concerto-html', () => ({}));
 vi.mock('../../../main/ipc/handlers/process/handle-spawn', () => ({
 	cancelPendingDesktopSpawns: vi.fn(),
 }));
-vi.mock('../../../main/permission-relay', () => ({ initPermissionRelay: vi.fn() }));
-vi.mock('../../../main/harness-control/integration', () => ({ initHarnessControl: vi.fn() }));
+vi.mock('../../../main/permission-relay', () => ({
+	initPermissionRelay: vi.fn(),
+	resolvePermissionResponse: vi.fn(),
+}));
+vi.mock('../../../main/harness-control/integration', () => ({
+	initHarnessControl: vi.fn(),
+	resolveHarnessInteractionResponse: vi.fn(),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
@@ -41,10 +49,14 @@ import { logger } from '../../../main/utils/logger';
 import { addBreadcrumb } from '../../../main/utils/sentry';
 import { cancelRelayConversationTurn } from '../../../main/plugins/relay-conversations';
 import { cancelPendingDesktopSpawns } from '../../../main/ipc/handlers/process/handle-spawn';
+import { resolvePermissionResponse } from '../../../main/permission-relay';
+import { resolveHarnessInteractionResponse } from '../../../main/harness-control/integration';
 
 describe('process cancellation and control IPC activity', () => {
 	const target = path.resolve('process-cancellation-target');
 	const operations = ['interrupt', 'kill', 'cancelCommand'] as const;
+	const responses = ['permission:respond', 'harnessControl:respond'] as const;
+	type Response = (typeof responses)[number];
 	type Operation = (typeof operations)[number];
 	const inputOperations = ['write', 'steer', 'resize'] as const;
 	type InputOperation = (typeof inputOperations)[number];
@@ -55,10 +67,23 @@ describe('process cancellation and control IPC activity', () => {
 	let active: number;
 	let manager: Record<'get' | Operation | ControlOperation, ReturnType<typeof vi.fn>>;
 	let deps: ProcessHandlerDependencies;
-	const handler = (operation: Operation | ControlOperation) =>
+	const handler = (operation: Operation | ControlOperation | Response) =>
 		vi
 			.mocked(ipcMain.handle)
-			.mock.calls.find(([name]) => name === `process:${operation}`)![1] as Handler;
+			.mock.calls.find(
+				([name]) => name === (operation.includes(':') ? operation : `process:${operation}`)
+			)![1] as Handler;
+	const decision = { behavior: 'allow' as const };
+	const response = { requestId: 'request', kind: 'permission', decision: 'allow' };
+	const respond = (channel: Response, event: unknown = {}) =>
+		handler(channel)(
+			event,
+			...(channel === 'permission:respond' ? ['request', decision] : [response])
+		);
+	const resolver = (channel: Response) =>
+		channel === 'permission:respond'
+			? vi.mocked(resolvePermissionResponse)
+			: vi.mocked(resolveHarnessInteractionResponse);
 	const run = (operation: Operation, event: unknown = {}) =>
 		handler(operation)(event, operation === 'cancelCommand' ? { sessionId: 'session' } : 'session');
 	const inputArgs = (op: ControlOperation): unknown[] =>
@@ -131,6 +156,207 @@ describe('process cancellation and control IPC activity', () => {
 	afterEach(() => {
 		releases.forEach((release) => release());
 		vi.restoreAllMocks();
+	});
+
+	describe('permission and harness responses', () => {
+		it('keeps a real permission pending on refusal and admits its settlement subscribers', async () => {
+			const registry = await vi.importActual<
+				typeof import('../../../main/permission-relay/registry')
+			>('../../../main/permission-relay/registry');
+			const completion = registry.createPending('request', 'token');
+			const notify = vi.fn(() => expect(active).toBe(1));
+			const unsubscribe = registry.subscribePendingPermissions(notify);
+			vi.mocked(resolvePermissionResponse).mockImplementation(registry.resolvePending);
+			try {
+				const hold = await idle();
+				expect(() => respond('permission:respond')).toThrow(/reserved/);
+				expect(registry.relayRegistryStats().pending).toBe(1);
+				expect(notify).not.toHaveBeenCalled();
+				hold.release();
+				expect(respond('permission:respond')).toBe(true);
+				await expect(completion).resolves.toBe(decision);
+				expect(notify).toHaveBeenCalledTimes(1);
+				expect(registry.relayRegistryStats().pending).toBe(0);
+				await idle();
+			} finally {
+				unsubscribe();
+				registry.resolvePending('request', { behavior: 'deny', message: 'test cleanup' });
+			}
+		});
+		it('keeps a real harness request pending on refusal and admits its settlement broadcast', async () => {
+			const { InteractionBroker } = await import('../../../main/harness-control/InteractionBroker');
+			const broadcast = vi.fn(() => expect(active).toBe(1));
+			const broker = new InteractionBroker({ onRequest: () => true, onSettled: broadcast });
+			const opened = broker.open(interactionFixture.permission as HarnessInteractionOpenRequest);
+			const raw = { requestId: opened.request.requestId, outcome: 'selected', optionId: 'allow' };
+			vi.mocked(resolveHarnessInteractionResponse).mockImplementation((value) =>
+				broker.resolve(value)
+			);
+			try {
+				const hold = await idle();
+				expect(() => handler('harnessControl:respond')({}, raw)).toThrow(/reserved/);
+				expect(broker.pendingRequests()).toHaveLength(1);
+				expect(broadcast).not.toHaveBeenCalled();
+				hold.release();
+				expect(handler('harnessControl:respond')({}, raw)).toBe('resolved');
+				await expect(opened.completion).resolves.toEqual({
+					outcome: 'selected',
+					optionId: 'allow',
+				});
+				expect(broadcast).toHaveBeenCalledTimes(1);
+				expect(broker.pendingRequests()).toHaveLength(0);
+				await idle();
+			} finally {
+				broker.closeAll();
+			}
+		});
+		it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+			'refuses responses before owner inspection, resolution or reporting under %s',
+			async (root) => {
+				await idle(root);
+				const read = vi.fn();
+				const event = new Proxy({}, { get: read });
+				for (const channel of responses) expect(() => respond(channel, event)).toThrow(/reserved/);
+				expect(read).not.toHaveBeenCalled();
+				for (const work of [
+					resolvePermissionResponse,
+					resolveHarnessInteractionResponse,
+					logger.error,
+				])
+					expect(work).not.toHaveBeenCalled();
+			}
+		);
+		it.each(responses)(
+			'holds %s callbacks and preserves synchronous result identity',
+			async (channel) => {
+				const result = channel === 'permission:respond' ? false : 'not-found';
+				resolver(channel).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					return result as never;
+				});
+				expect(respond(channel)).toBe(result);
+				expect(active).toBe(0);
+				expect(logger.error).not.toHaveBeenCalled();
+				await idle();
+			}
+		);
+		it('preserves the permission request and decision arguments', () => {
+			vi.mocked(resolvePermissionResponse).mockReturnValueOnce(true);
+			expect(respond('permission:respond', { clientId: 'bridge' })).toBe(true);
+			expect(resolvePermissionResponse).toHaveBeenCalledExactlyOnceWith('request', decision);
+		});
+		it.each([
+			[{ sender: { id: 7 } }, { webContentsId: 7 }],
+			[{ clientId: 'bridge', sender: { id: 7 } }, { bridgeClientId: 'bridge' }],
+			[{ clientId: 42, sender: { id: 7 } }, { webContentsId: 7 }],
+			[{}, { webContentsId: undefined }],
+		])('preserves harness ownership for %j', (event, owner) => {
+			vi.mocked(resolveHarnessInteractionResponse).mockReturnValueOnce('resolved');
+			expect(respond('harnessControl:respond', event)).toBe('resolved');
+			expect(resolveHarnessInteractionResponse).toHaveBeenCalledExactlyOnceWith(response, owner);
+		});
+		it('admits before owner getters and holds response inspection and settlement reporting', () => {
+			const inspect = vi.fn(() => expect(active).toBe(1));
+			const raw = {
+				get requestId() {
+					inspect();
+					return 'request';
+				},
+			};
+			vi.mocked(resolveHarnessInteractionResponse).mockImplementationOnce((value) => {
+				expect((value as typeof raw).requestId).toBe('request');
+				logger.debug('settled');
+				return 'resolved';
+			});
+			vi.mocked(logger.debug).mockImplementationOnce(inspect);
+			expect(
+				handler('harnessControl:respond')(
+					{
+						get clientId() {
+							inspect();
+							return undefined;
+						},
+						get sender() {
+							inspect();
+							return { id: 7 };
+						},
+					},
+					raw
+				)
+			).toBe('resolved');
+			expect(inspect).toHaveBeenCalledTimes(4);
+			expect(active).toBe(0);
+		});
+		it.each(responses)(
+			'releases %s on synchronous callback/report failure without recovery',
+			async (channel) => {
+				const failure = Error('settlement failed');
+				resolver(channel).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					throw failure;
+				});
+				expect(() => respond(channel)).toThrow(failure);
+				expect(logger.error).not.toHaveBeenCalled();
+				await idle();
+			}
+		);
+		it('releases after owner lookup throws before invoking the broker', async () => {
+			const failure = Error('owner failed');
+			expect(() =>
+				respond('harnessControl:respond', {
+					get clientId() {
+						expect(active).toBe(1);
+						throw failure;
+					},
+				})
+			).toThrow(failure);
+			expect(resolveHarnessInteractionResponse).not.toHaveBeenCalled();
+			await idle();
+		});
+		it('retains reentrant responses independently and releases the inner failure', async () => {
+			const failure = Error('inner failed');
+			vi.mocked(resolveHarnessInteractionResponse).mockImplementationOnce(() => {
+				expect(active).toBe(2);
+				throw failure;
+			});
+			vi.mocked(resolvePermissionResponse).mockImplementationOnce(() => {
+				expect(() => respond('harnessControl:respond')).toThrow(failure);
+				expect(active).toBe(1);
+				return true;
+			});
+			expect(respond('permission:respond')).toBe(true);
+			await idle();
+		});
+		it.each(responses)(
+			'composes %s with pending reservation and independent resumed native work',
+			async (channel) => {
+				const canonical = Promise.withResolvers<string>();
+				vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+				const hold = reservation();
+				const native = new EventEmitter();
+				vi.mocked(spawn).mockReturnValueOnce(native as unknown as ReturnType<typeof spawn>);
+				const { withWorktreeTurnActivity } = await import('../../../main/git/worktreeTurnActivity');
+				const settlement = Promise.withResolvers<void>();
+				resolver(channel).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					withWorktreeTurnActivity((_start, observe, launch) => {
+						observe(settlement.promise);
+						launch('agent', [], {});
+					}, vi.fn());
+					canonical.resolve(target);
+					return (channel === 'permission:respond' ? true : 'resolved') as never;
+				});
+				respond(channel);
+				await expect(hold).resolves.toMatchObject({ status: 'blocked' });
+				native.emit('exit', 0);
+				await busy();
+				native.emit('close', 0);
+				await busy();
+				settlement.resolve();
+				await vi.waitFor(() => expect(active).toBe(0));
+				await idle();
+			}
+		);
 	});
 
 	describe('input and control requests', () => {

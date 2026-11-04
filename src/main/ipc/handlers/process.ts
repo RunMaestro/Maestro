@@ -198,15 +198,25 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle(
 		'permission:respond',
 		(_event, requestId: string, decision: PermissionDecision) => {
-			return resolvePermissionResponse(requestId, decision);
+			const release = beginGlobalWorktreeActivity();
+			try {
+				return resolvePermissionResponse(requestId, decision);
+			} finally {
+				release();
+			}
 		}
 	);
 	ipcMain.handle('harnessControl:listPending', (event) =>
 		pendingHarnessInteractions(harnessControlOwner(event))
 	);
-	ipcMain.handle('harnessControl:respond', (event, response: unknown) =>
-		resolveHarnessInteractionResponse(response, harnessControlOwner(event))
-	);
+	ipcMain.handle('harnessControl:respond', (event, response: unknown) => {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return resolveHarnessInteractionResponse(response, harnessControlOwner(event));
+		} finally {
+			release();
+		}
+	});
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
