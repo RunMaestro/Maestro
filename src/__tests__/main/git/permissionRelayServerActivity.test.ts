@@ -72,6 +72,11 @@ describe('permission relay server request and native lifetime activity', () => {
 		expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
 		return hold;
 	}
+	async function closeBindingsAndReserve() {
+		if (registry.relayRegistryStats().bindings) await busy();
+		for (const cleanup of cleanups) cleanup();
+		return idle();
+	}
 	const busy = async () =>
 		expect(await reserve()).toMatchObject({
 			status: 'blocked',
@@ -657,7 +662,7 @@ describe('permission relay server request and native lifetime activity', () => {
 		});
 		registry.resolvePending(requestId, decision);
 		await pending.result;
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it.each(['unknown token', 'missing UI'])(
@@ -680,7 +685,7 @@ describe('permission relay server request and native lifetime activity', () => {
 				toolName: 'Bash',
 				input: {},
 			});
-			expect(deliveryActive).toBe(1);
+			expect(deliveryActive).toBe(1 + registry.relayRegistryStats().bindings);
 			expect(JSON.parse(writes[0])).toEqual({
 				type: 'permission-response',
 				requestId: 'original-id',
@@ -692,7 +697,7 @@ describe('permission relay server request and native lifetime activity', () => {
 							: 'Unrecognized permission relay token.',
 				},
 			});
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -716,9 +721,9 @@ describe('permission relay server request and native lifetime activity', () => {
 		expect(forwarded[0].requestId).not.toBe(forwarded[1].requestId);
 		await busy();
 		registry.resolvePending(forwarded[0].requestId, decision);
-		expect(active).toBe(3);
+		expect(active).toBe(3 + registry.relayRegistryStats().bindings);
 		await first.result;
-		expect(active).toBe(2);
+		expect(active).toBe(2 + registry.relayRegistryStats().bindings);
 		await busy();
 		registry.resolvePending(forwarded[1].requestId, decision);
 		let deliveryActive = -1;
@@ -726,14 +731,14 @@ describe('permission relay server request and native lifetime activity', () => {
 			deliveryActive = active;
 		});
 		await second.result;
-		expect(deliveryActive).toBe(1);
+		expect(deliveryActive).toBe(1 + registry.relayRegistryStats().bindings);
 		for (const item of [first, second])
 			expect(JSON.parse(item.socket.write.mock.calls[0][0])).toEqual({
 				type: 'permission-response',
 				requestId: 'bridge-id',
 				decision,
 			});
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('holds socket-dispatched decisions after native close through resumed writes', async () => {
@@ -754,26 +759,26 @@ describe('permission relay server request and native lifetime activity', () => {
 				input: {},
 			}) + '\n'
 		);
-		expect(active).toBe(4);
+		expect(active).toBe(4 + registry.relayRegistryStats().bindings);
 		server.stop();
 		endpoint.emit('close');
 		socket.emit('close');
-		expect(active).toBe(2);
+		expect(active).toBe(2 + registry.relayRegistryStats().bindings);
 		await busy();
 		let deliveryActive = -1;
 		socket.write.mockImplementationOnce(() => {
 			deliveryActive = active;
 		});
 		registry.resolvePending(requestId, decision);
-		expect(active).toBe(1);
+		expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 		await Promise.resolve();
-		expect(deliveryActive).toBe(1);
+		expect(deliveryActive).toBe(1 + registry.relayRegistryStats().bindings);
 		expect(JSON.parse(socket.write.mock.calls[0][0])).toEqual({
 			type: 'permission-response',
 			requestId: 'wire-id',
 			decision,
 		});
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it.each(['lookup', 'payload', 'pending creation', 'forwarding', 'decision rejection'])(
@@ -782,7 +787,9 @@ describe('permission relay server request and native lifetime activity', () => {
 			const spawn = binding();
 			const error = new Error(stage);
 			const fail = () => {
-				expect(active).toBe(stage === 'forwarding' ? 2 : 1);
+				expect(active).toBe(
+					(stage === 'forwarding' ? 2 : 1) + registry.relayRegistryStats().bindings
+				);
 				throw error;
 			};
 			server.setOnRequest(stage === 'forwarding' ? fail : vi.fn());
@@ -809,7 +816,7 @@ describe('permission relay server request and native lifetime activity', () => {
 			expect(registry.relayRegistryStats().pending).toBe(stage === 'forwarding' ? 1 : 0);
 			if (stage === 'forwarding') await busy();
 			spawn.cleanup();
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -824,7 +831,7 @@ describe('permission relay server request and native lifetime activity', () => {
 			const pending = decisionRequest(spawn.token);
 			const error = new Error(stage);
 			const fail = () => {
-				expect(active).toBe(1);
+				expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 				throw error;
 			};
 			if (stage === 'destroyed socket') pending.socket.destroyed = true;
@@ -834,11 +841,11 @@ describe('permission relay server request and native lifetime activity', () => {
 				pending.socket.write.mockImplementationOnce(fail);
 			if (stage === 'write failure' || stage === 'report failure')
 				vi.mocked(logger.debug).mockImplementationOnce(() => {
-					expect(active).toBe(1);
+					expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 					if (stage === 'report failure') throw error;
 				});
 			registry.resolvePending(requestId, decision);
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 			if (stage === 'destroyed getter' || stage === 'report failure')
 				await expect(pending.result).rejects.toBe(error);
 			else await expect(pending.result).resolves.toBeUndefined();
@@ -850,7 +857,7 @@ describe('permission relay server request and native lifetime activity', () => {
 					'[PermissionRelay]',
 					{ error: stage }
 				);
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -869,10 +876,10 @@ describe('permission relay server request and native lifetime activity', () => {
 				if (mode === 'timeout') await vi.advanceTimersByTimeAsync(RELAY_DECISION_TIMEOUT_MS);
 				else {
 					spawn.cleanup();
-					expect(active).toBe(1);
+					expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 				}
 				await pending.result;
-				expect(deliveryActive).toBe(1);
+				expect(deliveryActive).toBe(1 + registry.relayRegistryStats().bindings);
 				expect(JSON.parse(pending.socket.write.mock.calls[0][0]).decision).toEqual({
 					behavior: 'deny',
 					message:
@@ -880,7 +887,7 @@ describe('permission relay server request and native lifetime activity', () => {
 							? 'Permission request timed out with no response.'
 							: 'Agent process exited.',
 				});
-				await idle();
+				await closeBindingsAndReserve();
 			} finally {
 				vi.useRealTimers();
 			}
@@ -907,13 +914,13 @@ describe('permission relay server request and native lifetime activity', () => {
 		);
 		registry.resolvePending(requestId, decision);
 		await Promise.resolve();
-		expect(active).toBe(2);
+		expect(active).toBe(2 + registry.relayRegistryStats().bindings);
 		await busy();
 		socket.emit('close');
-		expect(active).toBe(1);
+		expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 		await busy();
 		endpoint.emit('close');
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('holds reentrant permission forwarding as independent decision scopes', async () => {
@@ -923,15 +930,15 @@ describe('permission relay server request and native lifetime activity', () => {
 			forwarded.push(request);
 			if (forwarded.length === 1) {
 				decisionRequest(spawn.token);
-				expect(active).toBe(4);
+				expect(active).toBe(4 + registry.relayRegistryStats().bindings);
 			}
 		});
 		const first = decisionRequest(spawn.token);
-		expect(active).toBe(4);
+		expect(active).toBe(4 + registry.relayRegistryStats().bindings);
 		for (const request of forwarded) registry.resolvePending(request.requestId, decision);
-		expect(active).toBe(2);
+		expect(active).toBe(2 + registry.relayRegistryStats().bindings);
 		await first.result;
 		await Promise.all(requests);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 });

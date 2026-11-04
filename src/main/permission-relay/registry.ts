@@ -83,13 +83,30 @@ export function registerSpawn(binding: RelaySpawnBinding): {
 	token: string;
 	cleanup: () => void;
 } {
+	// A valid token can admit future permission work after setup or native close.
+	// Own it independently through successful cleanup, including reentrant calls.
 	const release = beginGlobalWorktreeActivity();
+	let insertionStarted = false;
+	let setupSettled = false;
+	let cleanupDepth = 0;
+	let cleanupSettled = false;
+	let released = false;
+	const releaseIfSettled = () => {
+		if (setupSettled && cleanupSettled && cleanupDepth === 0 && !released) {
+			released = true;
+			release();
+		}
+	};
 	try {
 		const token = generateRelayToken();
+		// Once insertion starts, an exception cannot prove the token is absent.
+		insertionStarted = true;
 		bindings.set(token, binding);
 
 		const cleanup = () => {
 			const releaseCleanup = beginGlobalWorktreeActivity();
+			cleanupDepth++;
+			let completed = false;
 			try {
 				bindings.delete(token);
 				let changed = false;
@@ -104,14 +121,20 @@ export function registerSpawn(binding: RelaySpawnBinding): {
 					}
 				}
 				if (changed) notifyPendingPermissions();
+				completed = true;
 			} finally {
+				cleanupSettled = completed;
+				cleanupDepth--;
+				releaseIfSettled();
 				releaseCleanup();
 			}
 		};
 
 		return { token, cleanup };
 	} finally {
-		release();
+		setupSettled = true;
+		if (!insertionStarted) cleanupSettled = true;
+		releaseIfSettled();
 	}
 }
 

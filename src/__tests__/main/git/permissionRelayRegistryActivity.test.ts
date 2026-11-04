@@ -25,6 +25,7 @@ describe('standalone permission relay registry mutation activity', () => {
 	let subscriptions: Array<() => void>;
 	let active: number;
 	let retained: number;
+	let retainedBindings: number;
 	async function reserve(root = target) {
 		const hold = await gate.reserveWorktreeCleanup(root);
 		if (hold.status === 'reserved-partially') releases.push(hold.release);
@@ -36,6 +37,11 @@ describe('standalone permission relay registry mutation activity', () => {
 		if (hold.status !== 'reserved-partially') throw new Error('Expected partial reservation');
 		expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
 		return hold;
+	}
+	async function closeBindingsAndReserve(root = target) {
+		if (registry.relayRegistryStats().bindings) await busy();
+		for (const cleanup of cleanups) cleanup();
+		return idle(root);
 	}
 	const busy = async () =>
 		expect(await reserve()).toMatchObject({
@@ -60,6 +66,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		subscriptions = [];
 		active = 0;
 		retained = 0;
+		retainedBindings = 0;
 		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 		gate = await import('../../../main/git/worktreeActivity');
 		const admit = gate.beginGlobalWorktreeActivity;
@@ -77,7 +84,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		for (const release of releases) release();
 		for (const off of subscriptions) off();
 		for (const cleanup of cleanups) cleanup();
-		expect(registry.relayRegistryStats()).toEqual({ bindings: 0, pending: 0 });
+		expect(registry.relayRegistryStats()).toEqual({ bindings: retainedBindings, pending: 0 });
 		expect(active).toBe(retained);
 		vi.restoreAllMocks();
 		vi.useRealTimers();
@@ -97,8 +104,9 @@ describe('standalone permission relay registry mutation activity', () => {
 		'refuses %s before registry changes or timer cancellation and permits retry',
 		async (operation) => {
 			const binding = register();
+			binding.cleanup();
 			const snapshot = registry.getPendingPermissionSnapshot();
-			const hold = await idle();
+			const hold = await closeBindingsAndReserve();
 			const cancel = vi.spyOn(globalThis, 'clearTimeout');
 			expect(() =>
 				operation === 'cleanup'
@@ -106,12 +114,9 @@ describe('standalone permission relay registry mutation activity', () => {
 					: registry.resolvePending(operation === 'resolve' ? 'request' : 'unknown', decision)
 			).toThrow(/reserved/);
 			expect(cancel).not.toHaveBeenCalled();
-			expect(registry.lookupBinding(binding.token)).toEqual({
-				sessionId: 'agent-ai',
-				tabId: 'tab',
-			});
+			expect(registry.lookupBinding(binding.token)).toBeUndefined();
 			expect(registry.getPendingPermissionSnapshot()).toEqual(snapshot);
-			expect(registry.relayRegistryStats()).toEqual({ bindings: 1, pending: 0 });
+			expect(registry.relayRegistryStats()).toEqual({ bindings: 0, pending: 0 });
 			hold.release();
 			const pending = registry.createPending('request', binding.token);
 			expect(registry.resolvePending('request', decision)).toBe(true);
@@ -122,21 +127,21 @@ describe('standalone permission relay registry mutation activity', () => {
 	it('admits token generation and nested registration synchronously', async () => {
 		const actual = await vi.importActual<typeof import('crypto')>('crypto');
 		vi.mocked(randomBytes).mockImplementationOnce(() => {
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 			register('nested-agent');
-			expect(active).toBe(1);
+			expect(active).toBe(2);
 			return actual.randomBytes(32);
 		});
 		const binding = register();
 		expect(registry.lookupBinding(binding.token)?.sessionId).toBe('agent-ai');
 		expect(registry.relayRegistryStats().bindings).toBe(2);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('releases registration on token failure with the identical error', async () => {
 		const error = new Error('entropy unavailable');
 		vi.mocked(randomBytes).mockImplementationOnce(() => {
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 			throw error;
 		});
 		try {
@@ -146,7 +151,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			expect(failure).toBe(error);
 		}
 		expect(registry.relayRegistryStats().bindings).toBe(0);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('holds timer cancellation and status delivery while preserving the exact decision', async () => {
@@ -167,7 +172,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		await expect(pending).resolves.toBe(decision);
 		expect(callback).toHaveBeenCalledOnce();
 		expect(registry.resolvePending('request', decision)).toBe(false);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('holds cleanup notifications, denies matching requests and preserves another spawn', async () => {
@@ -190,7 +195,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		expect(registry.lookupBinding(b.token)?.sessionId).toBe('other-agent');
 		expect(registry.resolvePending('other', decision)).toBe(true);
 		await expect(other).resolves.toBe(decision);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it.each(['cleanup', 'resolve'])(
@@ -213,7 +218,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			else expect(registry.resolvePending('request', decision)).toBe(true);
 			await pending;
 			await expect(other).resolves.toBe(decision);
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -239,7 +244,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			// throwing response listener leaves its removed request unresolved.
 			if (operation === 'cleanup') {
 				await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
-				await idle();
+				await closeBindingsAndReserve();
 			} else {
 				retained = 1;
 				await busy();
@@ -274,7 +279,7 @@ describe('standalone permission relay registry mutation activity', () => {
 	it('refuses repeated no-op cleanup under a reservation', async () => {
 		const binding = register();
 		binding.cleanup();
-		const hold = await idle();
+		const hold = await closeBindingsAndReserve();
 		expect(binding.cleanup).toThrow(/reserved/);
 		hold.release();
 		expect(binding.cleanup()).toBeUndefined();
@@ -301,7 +306,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			child.emit('exit', 0);
 			await busy();
 			child.emit('close', 0);
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -318,20 +323,20 @@ describe('standalone permission relay registry mutation activity', () => {
 			const binding = register();
 			const pending = registry.createPending('request', binding.token);
 			listen(() => {
-				expect(active).toBe(operation === 'cleanup' ? 2 : 3);
+				expect(active).toBe(operation === 'cleanup' ? 3 : 4);
 				child.emit('close', 0);
-				expect(active).toBe(operation === 'cleanup' ? 1 : 2);
+				expect(active).toBe(operation === 'cleanup' ? 2 : 3);
 			});
 			if (operation === 'cleanup') binding.cleanup();
 			else registry.resolvePending('request', decision);
 			await pending;
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
 		'refuses pending setup before timer creation or notification under %s',
 		async (root) => {
-			const binding = register();
+			const binding = { token: registry.generateRelayToken() };
 			const notify = vi.fn();
 			listen(notify);
 			const snapshot = registry.getPendingPermissionSnapshot();
@@ -341,7 +346,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			expect(schedule).not.toHaveBeenCalled();
 			expect(notify).not.toHaveBeenCalled();
 			expect(registry.getPendingPermissionSnapshot()).toEqual(snapshot);
-			expect(registry.relayRegistryStats()).toEqual({ bindings: 1, pending: 0 });
+			expect(registry.relayRegistryStats()).toEqual({ bindings: 0, pending: 0 });
 			hold.release();
 			const pending = registry.createPending('request', binding.token);
 			expect(registry.resolvePending('request', decision)).toBe(true);
@@ -356,7 +361,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			() => new Promise<string>((resolve) => (canonicalize = resolve))
 		);
 		const reservation = reserve();
-		const listener = vi.fn(() => expect(active).toBe(1));
+		const listener = vi.fn(() => expect(active).toBe(2));
 		const off = listen(listener);
 		const pending = registry.createPending('request', binding.token);
 		expect(listener).toHaveBeenCalledOnce();
@@ -375,11 +380,11 @@ describe('standalone permission relay registry mutation activity', () => {
 		const schedule = globalThis.setTimeout;
 		const unref = vi.fn();
 		vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce((callback, delay) => {
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 			const timer = schedule(callback, delay);
 			const original = timer.unref.bind(timer);
 			vi.spyOn(timer, 'unref').mockImplementation(() => {
-				expect(active).toBe(1);
+				expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 				unref();
 				return original();
 			});
@@ -387,19 +392,19 @@ describe('standalone permission relay registry mutation activity', () => {
 		});
 		const version = registry.getPendingPermissionSnapshot().version;
 		const off = listen((snapshot) => {
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 			expect(snapshot).toEqual({ version: version + 1, processIds: ['agent-ai'] });
 			off();
-			const nested = listen(() => expect(active).toBe(2));
+			const nested = listen(() => expect(active).toBe(3));
 			expect(registry.resolvePending('request', decision)).toBe(true);
 			nested();
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 		});
 		const pending = registry.createPending('request', binding.token, 1234);
 		expect(unref).toHaveBeenCalledOnce();
 		expect(globalThis.setTimeout).toHaveBeenCalledWith(expect.any(Function), 1234);
 		await expect(pending).resolves.toBe(decision);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it.each(['timer', 'unref', 'notification'])(
@@ -411,17 +416,17 @@ describe('standalone permission relay registry mutation activity', () => {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			if (stage === 'notification')
 				listen(() => {
-					expect(active).toBe(1);
+					expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 					throw error;
 				});
 			else {
 				const schedule = globalThis.setTimeout;
 				vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce((callback, delay) => {
-					expect(active).toBe(1);
+					expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 					if (stage === 'timer') throw error;
 					timer = schedule(callback, delay);
 					vi.spyOn(timer, 'unref').mockImplementationOnce(() => {
-						expect(active).toBe(1);
+						expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 						throw error;
 					});
 					return timer;
@@ -439,7 +444,7 @@ describe('standalone permission relay registry mutation activity', () => {
 				await busy();
 			} else {
 				vi.runOnlyPendingTimers();
-				await idle();
+				await closeBindingsAndReserve();
 			}
 		}
 	);
@@ -447,7 +452,7 @@ describe('standalone permission relay registry mutation activity', () => {
 	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
 		'refuses subscribe and repeated unsubscribe before changing listeners under %s',
 		async (root) => {
-			const binding = register();
+			const binding = { token: registry.generateRelayToken() };
 			const oldListener = vi.fn();
 			const off = listen(oldListener);
 			const newListener = vi.fn();
@@ -483,7 +488,7 @@ describe('standalone permission relay registry mutation activity', () => {
 				value
 			) {
 				if (value === listener) {
-					expect(active).toBe(1);
+					expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 					throw error;
 				}
 				return Reflect.apply(original, this, [value]);
@@ -495,7 +500,7 @@ describe('standalone permission relay registry mutation activity', () => {
 			}
 			expect(active).toBe(0);
 			if (off) off();
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -509,9 +514,9 @@ describe('standalone permission relay registry mutation activity', () => {
 		);
 		const binding = register();
 		const off = listen(() => {
-			expect(active).toBe(2);
+			expect(active).toBe(2 + registry.relayRegistryStats().bindings);
 			child.emit('close', 0);
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 		});
 		const pending = registry.createPending('request', binding.token);
 		off();
@@ -537,7 +542,7 @@ describe('standalone permission relay registry mutation activity', () => {
 				behavior: completion === 'resolve' ? 'allow' : 'deny',
 			});
 			expect(vi.getTimerCount()).toBe(0);
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -552,7 +557,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		expect(registry.relayRegistryStats().pending).toBe(1);
 		vi.advanceTimersByTime(20);
 		await expect(second).resolves.toMatchObject({ behavior: 'deny' });
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it.each(['older timeout', 'newer resolution'])(
@@ -578,7 +583,7 @@ describe('standalone permission relay registry mutation activity', () => {
 				vi.advanceTimersByTime(10);
 				await expect(older).resolves.toMatchObject({ behavior: 'deny' });
 			}
-			await idle();
+			await closeBindingsAndReserve();
 		}
 	);
 
@@ -598,7 +603,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		await busy();
 		registry.resolvePending('next', decision);
 		await expect(next).resolves.toBe(decision);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('retains an unresolved decision after its expiry listener throws', async () => {
@@ -607,7 +612,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		const pending = registry.createPending('expires', binding.token, 10);
 		const error = new Error('expiry notification');
 		listen(() => {
-			expect(active).toBe(1);
+			expect(active).toBe(1 + registry.relayRegistryStats().bindings);
 			throw error;
 		});
 		expect(() => vi.advanceTimersByTime(10)).toThrow(error);
@@ -639,7 +644,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		await expect(pending).rejects.toBe(error);
 		await busy();
 		vi.advanceTimersByTime(10);
-		await idle();
+		await closeBindingsAndReserve();
 	});
 
 	it('keeps expiry admitted through reentrant cleanup and independent native close', async () => {
@@ -654,7 +659,7 @@ describe('standalone permission relay registry mutation activity', () => {
 		const binding = register();
 		const pending = registry.createPending('expires', binding.token, 10);
 		listen(() => {
-			expect(active).toBe(2);
+			expect(active).toBe(2 + registry.relayRegistryStats().bindings);
 			binding.cleanup();
 			child.emit('close', 0);
 			expect(active).toBe(1);
@@ -664,6 +669,159 @@ describe('standalone permission relay registry mutation activity', () => {
 			behavior: 'deny',
 			message: 'Permission request timed out with no response.',
 		});
+		await closeBindingsAndReserve();
+	});
+
+	it('retains independent spawn bindings across every cleanup domain until each is retired', async () => {
+		const first = register('first');
+		const second = register('second');
+		for (const root of [target, path.join(target, 'child'), path.resolve('elsewhere')])
+			expect(await reserve(root)).toMatchObject({
+				status: 'blocked',
+				blockers: [{ code: 'mutation-busy' }],
+			});
+		first.cleanup();
+		expect(registry.lookupBinding(first.token)).toBeUndefined();
+		expect(registry.lookupBinding(second.token)?.sessionId).toBe('second');
+		await busy();
+		second.cleanup();
 		await idle();
 	});
+
+	it('blocks an already-pending reservation after binding setup returns', async () => {
+		let canonicalize!: (root: string) => void;
+		vi.mocked(fs.realpath).mockImplementationOnce(
+			() => new Promise<string>((resolve) => (canonicalize = resolve))
+		);
+		const reservation = reserve();
+		const binding = register();
+		canonicalize(target);
+		expect(await reservation).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+		binding.cleanup();
+		await idle();
+	});
+
+	it('retains a valid spawn token after independent native close and decision timeout', async () => {
+		vi.useFakeTimers();
+		const child = new EventEmitter();
+		vi.mocked(spawn).mockReturnValueOnce(child as ReturnType<typeof spawn>);
+		const { withWorktreeTurnActivity } = await import('../../../main/git/worktreeTurnActivity');
+		withWorktreeTurnActivity(
+			(_start, _observe, spawnChild) => spawnChild('agent', [], {}),
+			() => {}
+		);
+		const binding = register();
+		const pending = registry.createPending('times-out', binding.token, 10);
+		child.emit('exit', 0);
+		child.emit('close', 0);
+		vi.advanceTimersByTime(10);
+		await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
+		expect(registry.lookupBinding(binding.token)?.sessionId).toBe('agent-ai');
+		await busy();
+		binding.cleanup();
+		await idle();
+	});
+
+	it.each(['before insertion', 'after insertion'])(
+		'retains uncertain binding setup failure %s',
+		async (stage) => {
+			const binding = { sessionId: 'insertion' };
+			const error = new Error('binding insertion');
+			const set = Map.prototype.set;
+			const insert = vi.spyOn(Map.prototype, 'set').mockImplementation(function (
+				this: Map<unknown, unknown>,
+				key,
+				value
+			) {
+				if (value === binding) {
+					if (stage === 'after insertion') set.call(this, key, value);
+					throw error;
+				}
+				return set.call(this, key, value);
+			});
+			expect(() => registry.registerSpawn(binding)).toThrow(error);
+			insert.mockRestore();
+			retainedBindings = stage === 'after insertion' ? 1 : 0;
+			expect(registry.relayRegistryStats().bindings).toBe(retainedBindings);
+			retained = 1;
+			await busy();
+		}
+	);
+
+	it.each(['before removal', 'after removal'])(
+		'retains binding cleanup failure %s until a successful retry',
+		async (stage) => {
+			const binding = register();
+			const error = new Error(stage);
+			const remove = Map.prototype.delete;
+			const deletion = vi.spyOn(Map.prototype, 'delete').mockImplementation(function (
+				this: Map<unknown, unknown>,
+				key
+			) {
+				if (key === binding.token) {
+					if (stage === 'after removal') remove.call(this, key);
+					throw error;
+				}
+				return remove.call(this, key);
+			});
+			expect(binding.cleanup).toThrow(error);
+			deletion.mockRestore();
+			expect(registry.relayRegistryStats().bindings).toBe(stage === 'after removal' ? 0 : 1);
+			await busy();
+			binding.cleanup();
+			await idle();
+		}
+	);
+
+	it('retains failed binding cleanup after its pending decision independently settles', async () => {
+		const binding = register();
+		const pending = registry.createPending('cancel-fails', binding.token);
+		const error = new Error('cancel');
+		vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce(() => {
+			throw error;
+		});
+		expect(binding.cleanup).toThrow(error);
+		expect(registry.lookupBinding(binding.token)).toBeUndefined();
+		registry.resolvePending('cancel-fails', decision);
+		await expect(pending).resolves.toBe(decision);
+		await busy();
+		binding.cleanup();
+		await idle();
+	});
+
+	it.each(['success', 'notification error'])(
+		'holds reentrant binding cleanup through outer %s',
+		async (outcome) => {
+			const binding = register();
+			const pending = registry.createPending('reentrant', binding.token);
+			const error = new Error('notification');
+			let reservation!: ReturnType<typeof reserve>;
+			const off = listen(() => {
+				binding.cleanup();
+				expect(active).toBe(2);
+				reservation = reserve();
+				if (outcome === 'notification error') throw error;
+			});
+			if (outcome === 'notification error') expect(binding.cleanup).toThrow(error);
+			else binding.cleanup();
+			off();
+			await expect(pending).resolves.toEqual({
+				behavior: 'deny',
+				message: 'Agent process exited.',
+			});
+			if (outcome === 'notification error') {
+				expect(await reservation).toMatchObject({ status: 'blocked' });
+				await busy();
+				binding.cleanup();
+			} else {
+				const hold = await reservation;
+				expect(hold.status).toBe('reserved-partially');
+				if (hold.status === 'reserved-partially') hold.release();
+			}
+			await idle();
+		}
+	);
 });
