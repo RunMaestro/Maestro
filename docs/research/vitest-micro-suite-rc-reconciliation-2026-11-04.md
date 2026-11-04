@@ -69,14 +69,27 @@ with static verification, so resource contention is a possible cause, not a
 proven diagnosis. The plugin-scan hook had also timed out in the clean-rc run.
 The other timeout failures were not independently established as baseline failures.
 
-The failing files were `renderer/rowHoverCss.test.ts`,
+Eleven of the failing files were `renderer/rowHoverCss.test.ts`,
 `renderer/utils/shiki/languageDetect.test.ts`, `scripts/verify-docs-paths.test.ts`,
 `cli/commands/pianola-portfolio.test.ts`, `main/app-lifecycle/window-manager.test.ts`,
-`main/cot-export/leak-guard.test.ts`, `main/lite/host-discovery.test.ts`,
+`main/lite/host-discovery.test.ts`,
 `main/pianola/memory-transport.test.ts`, `main/plugins/net-egress-guard.test.ts`,
 `main/plugins/relay-ledger.test.ts`, `main/plugins/plugin-scan.test.ts`, and
 `shared/dataview/resultCap.test.ts`, all under `src/__tests__/`.
+One additional documentation guard is identified in the local full-run receipt.
 No assertions, exclusions, retries, or timeout limits were changed to suppress them.
+
+The first normal push ran the repository's unmodified validation hook and was
+rejected: 60,635 tests passed, eight failed, and 213 were skipped across 2,296
+files. It also caught an impermissible test-path reference introduced in this
+report; that reference was removed rather than exempting the report from the guard.
+The focused documentation-guard run passed after this correction.
+The other failing files were unchanged `main/plugins/plugin-scan.test.ts` and
+`src/shared/maestro-lib/runtime/__tests__/consults.test.ts`,
+`src/shared/maestro-lib/runtime/__tests__/git.test.ts`, and
+`src/shared/maestro-lib/runtime/__tests__/turns.test.ts`; observed errors included
+deadlines, Windows `EPERM` during temporary-directory cleanup,
+and missing runtime outcomes. No hook was bypassed and no rc push was attempted.
 
 The clean-rc run is not a controlled speed baseline: its dependency install differed
 from the repaired validation environment. This change establishes 398 fewer file
