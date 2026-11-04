@@ -65,6 +65,7 @@ import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
+import { nativeCurrentTurns } from './pianola/current-turn';
 import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import type { PianolaMemoryHost } from './pianola/memory-host';
@@ -434,6 +435,7 @@ if (disableGpuAcceleration) {
 // Generate installation ID on first run (one-time generation)
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
+nativeCurrentTurns.setEnabled(resolveEncoreFeatures(store.get('encoreFeatures')).pianola);
 let installationId = store.get('installationId');
 // An installationId already on disk means this settings store existed before
 // this boot, i.e. the app has launched before. Record that once, permanently -
@@ -788,6 +790,7 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	nativeCurrentTurns.setEnabled(resolveEncoreFeatures(encoreFeatures).pianola);
 	pianolaMemoryHost?.reconcile();
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
 	// A switched-off Throughput Gauge leaves no widget window behind.

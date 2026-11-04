@@ -14,6 +14,7 @@ type State = {
 	source: string;
 	sequence: number;
 	rowRevisions: Map<string, number>;
+	rowBytes: Map<string, number>;
 	rows: Map<string, CurrentTurnMessage>;
 	order: string[];
 	/** Last commit that changed an existing ordered prefix, including reorder-and-restore. */
@@ -33,19 +34,49 @@ export class NativeCurrentTurns {
 	private revision = 0;
 	private retainedBytes = 0;
 	private states = new Map<string, State>();
+	private observers = new Set<string>();
 	constructor(
 		private limits = {
 			tabs: 2048,
 			messages: 8192,
 			bytes: 2 * 1024 * 1024,
 			totalBytes: 32 * 1024 * 1024,
-		}
+		},
+		private enabled = true
 	) {}
 	private key(agentId: string, tabId: string): string {
 		return canonicalJson([agentId, tabId]);
 	}
 
+	/** Feature transitions discard continuity. A new native boundary is required on re-enable. */
+	setEnabled(enabled: boolean): void {
+		if (enabled === this.enabled) return;
+		this.enabled = enabled;
+		this.states.clear();
+		this.retainedBytes = 0;
+	}
+
+	/** Explicit generic current-turn reads observe only this tab, independently of Pianola.
+	 * Interest and retained rows share the tab cap; eviction never reconstructs old history. */
+	observe(agentId: string, tabId: string): void {
+		const key = this.key(agentId, tabId);
+		this.observers.delete(key);
+		this.observers.add(key);
+		while (this.observers.size > this.limits.tabs) {
+			const first = this.observers.values().next().value!;
+			this.observers.delete(first);
+			if (!this.enabled) {
+				this.retainedBytes -= this.states.get(first)?.bytes ?? 0;
+				this.states.delete(first);
+			}
+		}
+	}
+
 	commit(patch: SessionTranscriptPatch): CurrentTurnCursor | undefined {
+		if (!this.enabled && !this.observers.size) return;
+		if (!patch.tabId) return;
+		const key = this.key(patch.sessionId, patch.tabId);
+		if (!this.enabled && !this.observers.has(key)) return;
 		const meta = patch.observation;
 		if (!patch.tabId || patch.field !== 'logs' || !meta) return;
 		if (
@@ -56,7 +87,6 @@ export class NativeCurrentTurns {
 			!meta.provider
 		)
 			return;
-		const key = this.key(patch.sessionId, patch.tabId);
 		let state = this.states.get(key);
 		if (state && meta.sourceGeneration === state.source && meta.sequence <= state.sequence) return;
 		const previousBytes = state?.bytes ?? 0;
@@ -83,6 +113,7 @@ export class NativeCurrentTurns {
 				sequence: meta.sequence - 1,
 				rows: new Map(),
 				rowRevisions: new Map(),
+				rowBytes: new Map(),
 				order: [],
 				orderMutationRevision: 0,
 				bytes: 0,
@@ -115,14 +146,16 @@ export class NativeCurrentTurns {
 		if (patch.snapshot) {
 			state.rows.clear();
 			state.rowRevisions.clear();
+			state.rowBytes.clear();
 			state.order = [];
 			state.bytes = 0;
 		}
 		for (const id of patch.removedIds) {
 			const old = state.rows.get(id);
-			if (old) state.bytes -= Buffer.byteLength(canonicalJson(old));
+			if (old) state.bytes -= state.rowBytes.get(id)!;
 			state.rows.delete(id);
 			state.rowRevisions.delete(id);
+			state.rowBytes.delete(id);
 			state.order = state.order.filter((entry) => entry !== id);
 		}
 		for (const raw of patch.upserts) {
@@ -147,7 +180,7 @@ export class NativeCurrentTurns {
 			const old = state.rows.get(row.id);
 			if (!old && row.source === 'user' && (!patch.snapshot || !replaced))
 				state.freshBoundaryId = row.id;
-			if (old) state.bytes -= Buffer.byteLength(canonicalJson(old));
+			if (old) state.bytes -= state.rowBytes.get(row.id)!;
 			if (
 				bytes + state.bytes > this.limits.bytes ||
 				(!old && state.rows.size >= this.limits.messages)
@@ -155,11 +188,13 @@ export class NativeCurrentTurns {
 				state.reason = 'current-turn-overflow';
 				state.rows.clear();
 				state.rowRevisions.clear();
+				state.rowBytes.clear();
 				state.order = [];
 				state.bytes = 0;
 				break;
 			}
 			state.rows.set(row.id, value);
+			state.rowBytes.set(row.id, bytes);
 			state.rowRevisions.set(row.id, state.cursor.revision);
 			state.bytes += bytes;
 		}
@@ -184,9 +219,10 @@ export class NativeCurrentTurns {
 				state.reason = 'new-user-boundary';
 			if (!state.cursor.runId) {
 				for (const id of state.order.slice(0, user)) {
-					state.bytes -= Buffer.byteLength(canonicalJson(state.rows.get(id)));
+					state.bytes -= state.rowBytes.get(id)!;
 					state.rows.delete(id);
 					state.rowRevisions.delete(id);
+					state.rowBytes.delete(id);
 				}
 				state.order = state.order.slice(user);
 			}
@@ -249,7 +285,8 @@ export class NativeCurrentTurns {
 			state.rows = new Map([[boundaryId!, boundary]]);
 			state.rowRevisions = new Map([[boundaryId!, state.cursor.revision]]);
 			state.order = [boundaryId!];
-			const bytes = Buffer.byteLength(canonicalJson(boundary));
+			const bytes = state.rowBytes.get(boundaryId!)!;
+			state.rowBytes = new Map([[boundaryId!, bytes]]);
 			this.retainedBytes += bytes - state.bytes;
 			state.bytes = bytes;
 		}
@@ -373,4 +410,4 @@ export class NativeCurrentTurns {
 	}
 }
 
-export const nativeCurrentTurns = new NativeCurrentTurns();
+export const nativeCurrentTurns = new NativeCurrentTurns(undefined, false);

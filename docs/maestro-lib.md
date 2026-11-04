@@ -457,6 +457,12 @@ The exported `CurrentTurnRead` type describes the additive desktop observation
 wire protocol (version 1). The scope worker requests `get_session_history` with
 `currentTurn: true` and the census's exact `expectedCursor`. The response is a
 complete native current turn, independent of the persisted history window.
+
+When Pianola is off, an explicit current-turn history request starts bounded
+observation for that tab. The first response may be unavailable: no disk history
+or pre-enable boundary is reconstructed. A fresh native submitted user boundary
+and captured spawn are required before a complete response. Feature transitions
+discard retained continuity; ordinary census reads do not opt tabs into observation.
 Ordinary history requests retain their existing behavior.
 
 A worker with a complete base can supply `deltaBase`. A `mode: 'delta'` response

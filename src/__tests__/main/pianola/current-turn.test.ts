@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
 import type { AgentRun } from '../../../shared/agent-run';
@@ -388,4 +388,73 @@ describe('native current-turn delta and final spawn revision fence', () => {
 			else expect(() => f.index.assertDelivery(cursor, 2, 'submitted', 'Use count.')).toThrow();
 		}
 	);
+});
+
+describe('bounded observation and cached row byte accounting', () => {
+	it('does no row projection while off and refuses old continuity after enable', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('risk', 'Delete the production database')]);
+		const before = f.read().cursor;
+		f.index.setEnabled(false);
+		expect(() => f.index.assertDelivery(before, 2, undefined, '')).toThrow(
+			'Native delivery base lost'
+		);
+		const clone = vi.spyOn(globalThis, 'structuredClone');
+		try {
+			f.commit([row('question', 'Proceed?')]);
+			expect(clone).not.toHaveBeenCalled();
+			expect(f.read().status).toBe('unknown');
+			f.index.setEnabled(true);
+			f.commit([row('question', 'Proceed?')]);
+			expect(f.read().status).toBe('incomplete');
+			f.begin('user'); // the skipped boundary cannot be recovered
+			expect(f.read().status).toBe('incomplete');
+			f.commit([row('fresh', 'Inspect again', 'user')]);
+			f.begin('fresh');
+			expect(f.read().status).toBe('complete');
+			expect(f.index.read(binding, before).status).toBe('reset');
+		} finally {
+			clone.mockRestore();
+		}
+	});
+
+	it('bounds explicit generic observation while Pianola is off', () => {
+		const index = new NativeCurrentTurns(
+			{ tabs: 1, messages: 10, bytes: 4096, totalBytes: 8192 },
+			false
+		);
+		index.observe('agent', 'tab');
+		const f = fixture(index);
+		f.begin('user');
+		expect(f.read().status).toBe('complete');
+		index.observe('other', 'tab');
+		f.commit([row('ignored')]);
+		expect(f.read().status).toBe('unknown');
+		index.observe('agent', 'tab');
+		f.commit([row('late')]);
+		expect(f.read().status).toBe('incomplete');
+	});
+
+	it('accounts overwrites, snapshots, removals and fresh turns without old-row serialization', () => {
+		const f = fixture(
+			new NativeCurrentTurns({ tabs: 2, messages: 10, bytes: 1024, totalBytes: 1024 })
+		);
+		f.begin('user');
+		const byteLength = vi.spyOn(Buffer, 'byteLength');
+		for (let i = 0; i < 100; i++) f.commit([row('stream', '€'.repeat(i % 100))]);
+		expect(byteLength).toHaveBeenCalledTimes(100);
+		byteLength.mockRestore();
+		expect(f.read().status).toBe('complete');
+		f.commit([row('next', 'Fresh', 'user')]);
+		f.begin('next');
+		expect(f.read().messages.map((r) => r.id)).toEqual(['next']);
+		f.commit([row('stream', 'x'.repeat(2000))]);
+		expect(f.read()).toMatchObject({ status: 'incomplete', reason: 'current-turn-overflow' });
+		f.commit([row('small', 'Small', 'user')], { snapshot: true, orderIds: ['small'] });
+		f.begin('small');
+		expect(f.read().status).toBe('complete');
+		f.commit([], { removedIds: ['small'], orderIds: [] });
+		expect(f.read().status).toBe('incomplete');
+	});
 });

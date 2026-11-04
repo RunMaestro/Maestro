@@ -55,6 +55,7 @@ function spawn(manager: EventEmitter, sessionId = 'worker-ai-tab') {
 
 describe('ProcessManager -> AgentRun capture', () => {
 	beforeEach(() => {
+		nativeCurrentTurns.setEnabled(true);
 		runs.clear();
 		events.length = 0;
 	});

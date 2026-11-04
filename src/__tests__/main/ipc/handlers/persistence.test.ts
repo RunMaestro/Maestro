@@ -176,6 +176,7 @@ describe('persistence IPC handlers', () => {
 	let mockFlushSessionWrites: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		nativeCurrentTurns.setEnabled(true);
 		// Clear mocks
 		vi.clearAllMocks();
 
@@ -233,6 +234,156 @@ describe('persistence IPC handlers', () => {
 	});
 
 	describe('native transcript commit -> captured turn -> host -> history wire', () => {
+		it('measures owning IPC and history wire with feature off, enable and explicit observation', async () => {
+			const measurements = [];
+			for (const mode of ['off-unobserved', 'enabled', 'off-explicit'] as const) {
+				const agentId = generateUUID();
+				nativeCurrentTurns.setEnabled(mode === 'enabled');
+				const owner = {
+					isDestroyed: () => false,
+					webContents: { id: 42, isDestroyed: () => false },
+				} as BrowserWindow;
+				registerPersistenceHandlers({ ...deps, getWindowForSession: () => owner });
+				const callbacks: Record<string, (...args: unknown[]) => unknown> = {};
+				const server = new Proxy(
+					{},
+					{
+						get: (_target, key: string) => (callback: (...args: unknown[]) => unknown) => {
+							callbacks[key] = callback;
+						},
+					}
+				);
+				mockSessionsStore.get.mockReturnValue([
+					{
+						id: agentId,
+						toolType: 'codex',
+						cwd: process.cwd(),
+						aiTabs: [{ id: 'stream-tab', createdAt: 7, logs: [] }],
+					},
+				]);
+				registerSessionCallbacks(server as WebServer, {
+					sessionsStore: deps.sessionsStore,
+					groupsStore: deps.groupsStore,
+					getProcessManager: () => ({ get: () => undefined }) as never,
+				});
+				const read = () =>
+					(
+						callbacks.setGetSessionHistoryCallback('stream-tab', { currentTurn: true }) as {
+							currentTurn: CurrentTurnRead;
+						}
+					).currentTurn;
+				if (mode === 'off-explicit') expect(read().status).toBe('unknown');
+				let sequence = 0;
+				const publish = (
+					upserts: { id: string; text: string; source: string; timestamp: number }[],
+					orderIds: string[],
+					targetTabId = 'stream-tab'
+				) =>
+					handlers.get('sessions:publishTranscript')!(
+						{ sender: { id: 42 } },
+						{
+							sessionId: agentId,
+							tabId: targetTabId,
+							field: 'logs',
+							upserts,
+							removedIds: [],
+							orderIds,
+							observation: {
+								sourceGeneration: agentId,
+								sequence: ++sequence,
+								createdAt: 7,
+								provider: 'codex',
+							},
+						}
+					);
+				const user = { id: 'boundary', text: 'Inspect', source: 'user', timestamp: 1 };
+				publish([user], [user.id]);
+				const capture = new AgentRunCaptureService({
+					getAgentRun: () => undefined,
+					upsertAgentRun: (r) => r,
+					appendAgentRunEvent: (e) => e,
+					findActiveRunBySession: () => undefined,
+				});
+				const run = capture.captureSpawn({
+					sessionId: agentId + '-ai-stream-tab',
+					toolType: 'codex',
+					cwd: process.cwd(),
+					nativeTabSession: { agentId, tabId: 'stream-tab', createdAt: 7 },
+				})!;
+				nativeCurrentTurns.begin(run, user.id);
+				const clone = vi.spyOn(globalThis, 'structuredClone');
+				const cpu = process.cpuUsage(),
+					rss = process.memoryUsage().rss,
+					start = performance.now();
+				try {
+					for (let n = 0; n < 100; n++)
+						publish(
+							[{ id: 'stream', text: 'x'.repeat(128 * 1024) + n, source: 'ai', timestamp: 2 }],
+							['boundary', 'stream']
+						);
+					const cloneCalls = clone.mock.calls.length;
+					const elapsedMs = performance.now() - start,
+						used = process.cpuUsage(cpu);
+					const result = read(); // actual registered host history callback
+					expect(result.status).toBe(mode === 'off-unobserved' ? 'unknown' : 'complete');
+					if (mode === 'off-unobserved') expect(cloneCalls).toBe(0);
+					else expect(result.messages.at(-1)?.text).toHaveLength(128 * 1024 + 2);
+					measurements.push({
+						mode,
+						patches: 100,
+						rowBytes: 128 * 1024,
+						cloneCalls,
+						elapsedMs,
+						cpu: used,
+						rssBefore: rss,
+						rssAfter: process.memoryUsage().rss,
+						status: result.status,
+					});
+				} finally {
+					clone.mockRestore();
+				}
+				if (mode === 'enabled') {
+					const cpu = process.cpuUsage(),
+						start = performance.now();
+					for (let n = 0; n < 2050; n++) publish([user], [user.id], `evict-${n}`);
+					expect(read().status).toBe('unknown');
+					measurements.push({
+						mode: 'tab-eviction',
+						patches: 2050,
+						elapsedMs: performance.now() - start,
+						cpu: process.cpuUsage(cpu),
+						status: 'unknown',
+					});
+				}
+
+				// Enabling cannot recover a boundary that was skipped while off.
+				if (mode === 'off-unobserved') {
+					nativeCurrentTurns.setEnabled(true);
+					publish(
+						[{ id: 'stream', text: 'tail only', source: 'ai', timestamp: 2 }],
+						['boundary', 'stream']
+					);
+					expect(read().status).toBe('incomplete');
+				}
+			}
+			if (process.env.PIANOLA_RECORD_MEASUREMENTS === '1') {
+				const root = path.resolve('.maestro/pianola-agent-supervision-20261104');
+				writeFileSync(
+					path.join(root, 'K04-HOST-MEASUREMENTS.json'),
+					JSON.stringify(
+						{
+							measurements,
+							limits:
+								'Real registered owner IPC and history callbacks; Electron and bridge transport mocked. Streaming timing excludes final history read. No provider or network IO.',
+						},
+						null,
+						2
+					)
+				);
+			}
+			nativeCurrentTurns.setEnabled(true);
+		});
+
 		it('reads the full native turn and wakes the production worker only after owner commit', async () => {
 			const agentId = generateUUID();
 			const owner = {

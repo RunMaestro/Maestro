@@ -4,9 +4,14 @@
  *   node_modules/.bin/esbuild scripts/bench-pianola-scope.ts --bundle --platform=node --format=esm --outfile=.maestro/pianola-scope-benchmark/run.mjs
  *   node .maestro/pianola-scope-benchmark/run.mjs .maestro/pianola-scope-benchmark
  * Repeat with a second filename argument, e.g. AFTER.json, to retain the baseline.
+ * Add --native for synthetic native identity/cursor evidence. Legacy and native workloads
+ * must be reported separately: lifecycle reconciliation can increase history reads.
  * CPU/RSS/loop delays include injected transport serialization and share one process.
  */
-import * as fs from 'node:fs';
+import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import os from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import * as path from 'node:path';
 import assert from 'node:assert/strict';
 import { performance, monitorEventLoopDelay } from 'node:perf_hooks';
@@ -39,6 +44,39 @@ assert.equal(
 	'Output filename must stay inside the benchmark directory'
 );
 const cases = [];
+const native = process.argv.includes('--native');
+let io = {
+	reads: 0,
+	readBytes: 0,
+	writes: 0,
+	writeBytes: 0,
+	checkpointWrites: 0,
+	checkpointBytes: 0,
+};
+let measuring = false;
+const readFile = fs.readFileSync;
+const writeFile = fs.writeFileSync;
+fs.readFileSync = ((...args: Parameters<typeof readFile>) => {
+	const value = Reflect.apply(readFile, fs, args) as string | Buffer;
+	if (measuring) {
+		io.reads++;
+		io.readBytes += Buffer.byteLength(value);
+	}
+	return value;
+}) as typeof readFile;
+fs.writeFileSync = ((...args: Parameters<typeof writeFile>) => {
+	if (measuring) {
+		const bytes = Buffer.byteLength(args[1] as string);
+		io.writes++;
+		io.writeBytes += bytes;
+		if (String(args[0]).includes('maestro-pianola-scope-') && !String(args[0]).endsWith('.lock')) {
+			io.checkpointWrites++;
+			io.checkpointBytes += bytes;
+		}
+	}
+	return Reflect.apply(writeFile, fs, args);
+}) as typeof writeFile;
+syncBuiltinESMExports();
 for (const [name, fleet, changed, length, busy] of [
 	['idle-fleet', 500, 0, 1, false],
 	['few-active', 500, 3, 10, false],
@@ -128,10 +166,10 @@ for (const [name, fleet, changed, length, busy] of [
 					counts.decisionReads++;
 					return store.readDecisions();
 				},
-				writeScopeCheckpoint: (c) => {
+				writeScopeCheckpoint: (c, durable, receipt) => {
 					counts.checkpointWrites++;
 					counts.checkpointBytes += Buffer.byteLength(JSON.stringify(c, null, 2) + '\n');
-					store.writeScopeCheckpoint(c);
+					store.writeScopeCheckpoint(c, durable, receipt);
 				},
 			},
 			readSnapshot: async () => {
@@ -140,7 +178,21 @@ for (const [name, fleet, changed, length, busy] of [
 				return structuredClone(snapshot);
 			},
 			readTranscript: async (t) => {
-				const r = { agentId: t.agentId, tabId: t.tabId, messages: histories.get(t.tabId) ?? [] };
+				const r = {
+					agentId: t.agentId,
+					tabId: t.tabId,
+					messages: histories.get(t.tabId) ?? [],
+					...(native
+						? {
+								currentTurn: {
+									version: 1 as const,
+									status: 'complete' as const,
+									cursor: snapshot.tabs.find((tab) => tab.tabId === t.tabId)!.cursor!.native!,
+									messages: [],
+								},
+							}
+						: {}),
+				};
 				seen.add(t.tabId);
 				counts.transcripts++;
 				counts.transcriptBytes += Buffer.byteLength(JSON.stringify(r));
@@ -163,6 +215,26 @@ for (const [name, fleet, changed, length, busy] of [
 				return { status: 'accepted' };
 			},
 		};
+		if (native)
+			for (const tab of snapshot.tabs) {
+				tab.cursor = {
+					id: 'm-0',
+					count: 1,
+					textLength: 0,
+					native: {
+						generation: 'bench-host',
+						sourceGeneration: 'bench-owner',
+						agentId: 'worker',
+						tabId: tab.tabId,
+						createdAt: 50,
+						provider: 'codex',
+						agentSessionId: null,
+						runId: 'run-' + tab.tabId,
+						turnId: 'm-0',
+						revision: 1,
+					},
+				};
+			}
 		await runPianolaScopeCycle(id, deps, { dryRun: false, maxTabs: 20 });
 		for (let n = 0; n < changed; n++) {
 			const messages: PianolaMessage[] = Array.from({ length }, (_, i) => ({
@@ -180,11 +252,21 @@ for (const [name, fleet, changed, length, busy] of [
 				id: messages.at(-1)!.id,
 				count: length,
 				textLength: messages.at(-1)!.content.length,
+				...(native ? { native: { ...snapshot.tabs[n].cursor!.native!, revision: 2 } } : {}),
 			};
 			snapshot.tabs[n].busy = busy;
 		}
 		reset();
 		seen.clear();
+		io = {
+			reads: 0,
+			readBytes: 0,
+			writes: 0,
+			writeBytes: 0,
+			checkpointWrites: 0,
+			checkpointBytes: 0,
+		};
+		measuring = true;
 		const delay = monitorEventLoopDelay({ resolution: 1 });
 		delay.enable();
 		await new Promise((r) => setTimeout(r, 5));
@@ -200,6 +282,7 @@ for (const [name, fleet, changed, length, busy] of [
 			cycles.push(performance.now() - t);
 			await new Promise((r) => setImmediate(r));
 		}
+		measuring = false;
 		const elapsed = performance.now() - start,
 			cpuUsed = process.cpuUsage(cpu);
 		await new Promise((r) => setTimeout(r, 5));
@@ -209,6 +292,8 @@ for (const [name, fleet, changed, length, busy] of [
 		assert.equal(counts.dispatches, 0);
 		if (changed === 0) assert.equal(counts.transcripts, 0);
 		else if (!busy) assert.equal(seen.size, changed);
+		const decisions = store.readDecisions();
+		const decisionStatuses = decisions.map((row) => row.lifecycle?.status ?? 'legacy').sort();
 		const sorted = [...cycles].sort((a, b) => a - b);
 		cases.push({
 			name,
@@ -218,8 +303,13 @@ for (const [name, fleet, changed, length, busy] of [
 			busy,
 			cycles: 5,
 			...counts,
+			actualFs: { ...io },
+			checkpointCounterMeaning:
+				'checkpointWrites/checkpointBytes count attempted API payloads; actualFs counts synchronous filesystem IO including lockfiles',
 			uniqueTranscripts: seen.size,
 			modelInvocations: 0,
+			decisionCount: decisions.length,
+			decisionStatuses,
 			cycleMs: cycles,
 			p50CycleMs: sorted[2],
 			p95CycleMs: sorted[4],
@@ -241,7 +331,12 @@ fs.writeFileSync(
 	output,
 	JSON.stringify(
 		{
-			schema: 1,
+			schema: 2,
+			native,
+			fixtureSha256: createHash('sha256')
+				.update(fs.readFileSync('scripts/bench-pianola-scope.ts'))
+				.digest('hex'),
+			environment: { kernel: os.release(), cpus: os.cpus().length, cpu: os.cpus()[0]?.model },
 			created: new Date().toISOString(),
 			head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
 			branch: execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim(),

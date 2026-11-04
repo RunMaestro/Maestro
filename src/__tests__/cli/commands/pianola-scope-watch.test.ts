@@ -1,3 +1,5 @@
+import { performance as realPerformance } from 'node:perf_hooks';
+import { syncBuiltinESMExports } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 import { createPianolaScopeWorkerDeps } from '../../../cli/commands/pianola-scope-watch';
 import type { MaestroClient } from '../../../cli/services/maestro-client';
@@ -478,6 +480,56 @@ import * as scopeStore from '../../../cli/services/pianola-store';
 import { PianolaScopeWakeups, pianolaWatchScope } from '../../../cli/commands/pianola-scope-watch';
 import type { BridgeConnectionOptions } from '../../../shared/maestro-lib/client/bridge-connection';
 
+// Opt-in diagnostics around real worker segments; fake-clock durations are reported separately.
+function measureWorkerSegment() {
+	if (process.env.PIANOLA_RECORD_MEASUREMENTS !== '1') return () => {};
+	const cpu = process.cpuUsage(),
+		rss = process.memoryUsage().rss,
+		start = realPerformance.now();
+	const counts = { reads: 0, readBytes: 0, writes: 0, writeBytes: 0 };
+	const read = fs.readFileSync,
+		write = fs.writeFileSync;
+	const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((
+		...args: Parameters<typeof read>
+	) => {
+		const value = Reflect.apply(read, fs, args) as string | Buffer;
+		counts.reads++;
+		counts.readBytes += Buffer.byteLength(value);
+		return value;
+	}) as typeof read);
+	const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((
+		...args: Parameters<typeof write>
+	) => {
+		counts.writes++;
+		counts.writeBytes += Buffer.byteLength(args[1] as string);
+		return Reflect.apply(write, fs, args);
+	}) as typeof write);
+	syncBuiltinESMExports();
+	return (name: string, work: Record<string, number>) => {
+		readSpy.mockRestore();
+		writeSpy.mockRestore();
+		syncBuiltinESMExports();
+		fs.writeFileSync(
+			path.resolve('.maestro/pianola-agent-supervision-20261104', `K04-${name}-MEASUREMENTS.json`),
+			JSON.stringify(
+				{
+					name,
+					...counts,
+					work,
+					elapsedMs: realPerformance.now() - start,
+					cpu: process.cpuUsage(cpu),
+					rssBefore: rss,
+					rssAfter: process.memoryUsage().rss,
+					modelCalls: 0,
+					eventLoop: 'not measured in fake-clock segment; see real-time streaming benchmark',
+				},
+				null,
+				2
+			)
+		);
+	};
+}
+
 describe('production scope loop event drain', () => {
 	it.each(['cursor', 'history'])(
 		'uses recovery censuses for an expired manager deadline with unavailable %s',
@@ -614,6 +666,7 @@ describe('production scope loop event drain', () => {
 				});
 				unavailable = true;
 				censuses = 0;
+				const finishMeasurement = measureWorkerSegment();
 				running = pianolaWatchScope(scopeId, {});
 				await vi.advanceTimersByTimeAsync(0);
 				expect(censuses).toBe(1);
@@ -623,6 +676,7 @@ describe('production scope loop event drain', () => {
 				expect(censuses).toBe(2);
 				await vi.advanceTimersByTimeAsync(20000);
 				expect(censuses).toBe(3);
+				finishMeasurement(`expired-${failure}`, { fakeClockMs: 40000, censuses });
 				unavailable = false;
 				await vi.advanceTimersByTimeAsync(20000);
 				expect(store.readDecisions()[0].lifecycle?.status).toBe('waiting_human');
@@ -632,6 +686,7 @@ describe('production scope loop event drain', () => {
 				await running;
 				settings.enabled = true;
 				vi.restoreAllMocks();
+				syncBuiltinESMExports();
 				vi.useRealTimers();
 				fs.rmSync(directory, { recursive: true, force: true });
 			}
@@ -771,6 +826,7 @@ describe('production scope loop event drain', () => {
 		try {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(censuses).toBe(1);
+			const finishUnrelatedMeasurement = measureWorkerSegment();
 			for (let i = 0; i < 1000; i++)
 				bridge!.onFrame!({
 					type: 'bridge.event',
@@ -779,6 +835,7 @@ describe('production scope loop event drain', () => {
 				});
 			await vi.advanceTimersByTimeAsync(50);
 			expect(censuses).toBe(1);
+			finishUnrelatedMeasurement('unrelated-events', { frames: 1000, extraCensuses: censuses - 1 });
 			// An unowned sync and provider output are not a native commit wakeup.
 			bridge!.onFrame!({ type: 'bridge.event', channel: 'sessions:transcriptSync', args: [{}] });
 			await vi.advanceTimersByTimeAsync(5000);
