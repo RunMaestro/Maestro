@@ -267,11 +267,16 @@ export const gitService = {
 		createTracking?: boolean,
 		sshRemoteId?: string
 	): Promise<{ success: boolean; output?: string; error?: string }> {
-		return createIpcMethod({
+		const result = await createIpcMethod({
 			call: () => window.maestro.git.checkoutBranch(cwd, branch, createTracking, sshRemoteId),
 			errorContext: 'Git checkoutBranch',
 			defaultValue: { success: false, error: 'git checkout failed' },
 		});
+		if (result.success)
+			window.dispatchEvent(
+				new CustomEvent('maestro:git-checkout', { detail: { cwd, sshRemoteId } })
+			);
+		return result;
 	},
 
 	/**

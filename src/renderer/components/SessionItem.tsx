@@ -26,6 +26,7 @@ import { useBatchStore } from '../stores/batchStore';
 import { useAutoResumeEntry } from '../stores/autoRunResumeStore';
 import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
+import { useWorktreePullRequest } from '../hooks/worktree/useWorktreePullRequest';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
@@ -36,6 +37,51 @@ import type { Session, Group, Theme } from '../types';
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
 // ============================================================================
+
+function WorktreePullRequestRefresh({ session, theme }: { session: Session; theme: Theme }) {
+	const ssh = session.sessionSshRemoteConfig;
+	const { snapshot, loading, stale, error, refresh } = useWorktreePullRequest(
+		session.cwd,
+		session.worktreeBranch,
+		ssh?.enabled ? (ssh.remoteId ?? 'unconfigured-ssh') : undefined
+	);
+	const discovery = snapshot?.discovery;
+	const label = stale
+		? `PR status stale: ${error ?? 'refresh failed'}`
+		: discovery?.status === 'found'
+			? `PR #${discovery.pullRequest.identity.number} ${discovery.pullRequest.state}`
+			: discovery?.status === 'no-pr'
+				? 'No PR'
+				: discovery?.status === 'unavailable'
+					? `PR unavailable: ${discovery.message}`
+					: discovery?.status === 'ambiguous'
+						? 'Multiple PRs found'
+						: discovery?.status === 'detached'
+							? 'Detached HEAD'
+							: 'PR status loading';
+	return (
+		<button
+			type="button"
+			className="text-2xs shrink-0"
+			style={{ color: theme.colors.textDim }}
+			title={`${label}. Refresh PR status`}
+			aria-label={`${label}. Refresh PR status`}
+			onClick={(event) => {
+				event.stopPropagation();
+				refresh();
+			}}
+			onKeyDown={(event) => event.stopPropagation()}
+		>
+			{loading
+				? 'PR …'
+				: stale
+					? 'PR stale'
+					: discovery?.status === 'found'
+						? `PR #${discovery.pullRequest.identity.number}`
+						: 'PR ↻'}
+		</button>
+	);
+}
 
 /**
  * True when a Claude Code agent has not bound to any provider session yet.
@@ -486,6 +532,9 @@ export const SessionItem = memo(function SessionItem({
 						/>
 						{/* Worktree badge to visually mark worktree children */}
 						{variant === 'worktree' && showWorktreePill && <WorktreePill theme={theme} />}
+						{variant === 'worktree' && (
+							<WorktreePullRequestRefresh session={session} theme={theme} />
+						)}
 					</div>
 				)}
 
