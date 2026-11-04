@@ -50,13 +50,13 @@ export function canModeratorReadImages(
 	moderatorAgentId?: string | null,
 	state?: ModeratorCapabilitiesState
 ): boolean {
+	if (!moderatorAgentId) return true;
 	if (state) {
 		if (state.loading || state.error) return true;
 		if (state.capabilities) {
 			return state.capabilities.supportsImageInput !== false;
 		}
 	}
-	if (!moderatorAgentId) return true;
 	const cached = getCachedCapabilities(moderatorAgentId);
 	if (!cached) return true;
 	return cached.supportsImageInput !== false;

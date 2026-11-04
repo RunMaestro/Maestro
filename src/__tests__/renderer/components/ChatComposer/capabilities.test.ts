@@ -193,6 +193,15 @@ describe('canModeratorReadImages', () => {
 		expect(canModeratorReadImages(null)).toBe(true);
 	});
 
+	it('returns true with no moderator id even when a loaded state says no image input', () => {
+		const loadedWithoutImages = {
+			loading: false,
+			capabilities: { ...DEFAULT_CAPABILITIES, supportsImageInput: false },
+		};
+		expect(canModeratorReadImages(undefined, loadedWithoutImages)).toBe(true);
+		expect(canModeratorReadImages(null, loadedWithoutImages)).toBe(true);
+	});
+
 	it('returns true while capabilities are loading', () => {
 		expect(
 			canModeratorReadImages('some-agent', {
