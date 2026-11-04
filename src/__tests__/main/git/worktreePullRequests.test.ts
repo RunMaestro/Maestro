@@ -107,3 +107,64 @@ describe('worktree PR discovery', () => {
 		});
 	});
 });
+
+describe('worktree PR checks', () => {
+	it('reads current head checks and separately reports local divergence', async () => {
+		const { readWorktreePullRequestCi } = await import('../../../main/git/worktreePullRequests');
+		const local = 'a'.repeat(40);
+		const remote = 'b'.repeat(40);
+		vi.mocked(execGitReadOnly).mockImplementation(async (args) =>
+			ok(args[0] === 'rev-list' ? '2\t1' : args[0] === 'symbolic-ref' ? 'feature' : local)
+		);
+		vi.mocked(execFileNoThrow).mockImplementation(async (_gh, args) => {
+			const path = args.find((arg) => arg.startsWith('repos/')) || '';
+			if (path.includes('check-runs'))
+				return ok(
+					JSON.stringify([
+						{
+							check_runs: [
+								{
+									id: 12,
+									name: 'test',
+									status: 'completed',
+									conclusion: 'success',
+									check_suite: { id: 44 },
+								},
+							],
+						},
+					])
+				);
+			if (path.includes('statuses')) return ok('[[]]');
+			if (path.includes('actions/runs'))
+				return ok(
+					JSON.stringify([{ workflow_runs: [{ check_suite_id: 44, workflow_id: 55, name: 'CI' }] }])
+				);
+			return ok(JSON.stringify({ ...pull(), head: { ...pull().head, sha: remote } }));
+		});
+		const repo = { host: 'github.com', owner: 'fork', name: 'project' };
+		const result = await readWorktreePullRequestCi(
+			{ worktreePath: '/checkout' },
+			{
+				status: 'found',
+				head: { branch: 'feature', localSha: local, repository: repo },
+				pullRequest: {
+					identity: { repository: { ...repo, owner: 'upstream' }, number: 3 },
+					title: 'Change',
+					url: 'https://github.com/upstream/project/pull/3',
+					state: 'OPEN',
+					isDraft: false,
+					headRepository: repo,
+					headBranch: 'feature',
+					headSha: remote,
+					baseBranch: 'rc',
+				},
+			}
+		);
+		expect(result.divergence).toMatchObject({ status: 'different', ahead: 2, behind: 1 });
+		expect(result.ci).toMatchObject({
+			status: 'available',
+			headSha: remote,
+			checks: [{ state: 'passed', workflow: { id: '55', name: 'CI' } }],
+		});
+	});
+});
