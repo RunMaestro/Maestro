@@ -27,6 +27,7 @@ import { buildSshCommand, RemoteCommandOptions } from '../utils/ssh-command-buil
 import { execFileNoThrow } from '../utils/execFile';
 import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import type { SshRemoteConfig } from '../../shared/types';
 import {
 	setRemoteMaestroPAvailable,
@@ -50,6 +51,16 @@ const VERSION_OUTPUT_REGEX = /\d+\.\d+\.\d+/;
  * than caching a false on a flaky network.
  */
 export async function probeRemoteMaestroP(sshRemote: SshRemoteConfig): Promise<boolean | null> {
+	// Admit before SSH setup or recovery, even for independently retained callers.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await probeRemoteMaestroPAdmitted(sshRemote);
+	} finally {
+		release();
+	}
+}
+
+async function probeRemoteMaestroPAdmitted(sshRemote: SshRemoteConfig): Promise<boolean | null> {
 	// Run maestro-p for real (not `command -v`): a successful `--version` proves
 	// node is present and the whole module graph - including the node-pty native
 	// addon the TUI needs - resolves on this host.
@@ -60,7 +71,16 @@ export async function probeRemoteMaestroP(sshRemote: SshRemoteConfig): Promise<b
 
 	try {
 		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		// Timeout/cache settlement cannot prove native close. Unknown launch or
+		// observer failures stay busy; remote descendants remain uncovered.
+		const releaseNative = beginGlobalWorktreeActivity();
+		const resultPromise = execFileNoThrow(
+			sshCommand.command,
+			sshCommand.args,
+			undefined,
+			undefined,
+			(child) => child.once('close', releaseNative)
+		);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(
@@ -128,10 +148,15 @@ export async function probeRemoteMaestroP(sshRemote: SshRemoteConfig): Promise<b
 export async function ensureRemoteMaestroPProbed(
 	sshRemote: SshRemoteConfig
 ): Promise<boolean | undefined> {
-	if (!isRemoteMaestroPProbeStale(sshRemote.id)) {
-		return getRemoteMaestroPAvailable(sshRemote.id);
+	const release = beginGlobalWorktreeActivity();
+	try {
+		if (!isRemoteMaestroPProbeStale(sshRemote.id)) {
+			return getRemoteMaestroPAvailable(sshRemote.id);
+		}
+		const probed = await probeRemoteMaestroP(sshRemote);
+		// A null probe (couldn't determine) leaves the cache unknown; reflect that.
+		return probed ?? getRemoteMaestroPAvailable(sshRemote.id);
+	} finally {
+		release();
 	}
-	const probed = await probeRemoteMaestroP(sshRemote);
-	// A null probe (couldn't determine) leaves the cache unknown; reflect that.
-	return probed ?? getRemoteMaestroPAvailable(sshRemote.id);
 }

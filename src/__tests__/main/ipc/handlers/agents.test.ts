@@ -572,10 +572,11 @@ describe('agents IPC handlers', () => {
 			});
 
 			it("uses POSIX 'command -v' (not 'which') to probe each agent binary", async () => {
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 0,
-					stdout: '/home/dev/.local/bin/claude\n',
-					stderr: '',
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, _args, _cwd, _opts, observe) => {
+					const child = new EventEmitter();
+					observe?.(child as Parameters<NonNullable<typeof observe>>[0]);
+					child.emit('close');
+					return { exitCode: 0, stdout: '/home/dev/.local/bin/claude\n', stderr: '' };
 				});
 
 				const handler = handlers.get('agents:detect');
@@ -606,10 +607,11 @@ describe('agents IPC handlers', () => {
 			});
 
 			it('marks the agent available and records the resolved remote path', async () => {
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 0,
-					stdout: '/home/dev/.claude/local/claude\n',
-					stderr: '',
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, _args, _cwd, _opts, observe) => {
+					const child = new EventEmitter();
+					observe?.(child as Parameters<NonNullable<typeof observe>>[0]);
+					child.emit('close');
+					return { exitCode: 0, stdout: '/home/dev/.claude/local/claude\n', stderr: '' };
 				});
 
 				const handler = handlers.get('agents:detect');
@@ -621,10 +623,11 @@ describe('agents IPC handlers', () => {
 			});
 
 			it('marks the agent unavailable when command -v exits non-zero', async () => {
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 1,
-					stdout: '',
-					stderr: '',
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, _args, _cwd, _opts, observe) => {
+					const child = new EventEmitter();
+					observe?.(child as Parameters<NonNullable<typeof observe>>[0]);
+					child.emit('close');
+					return { exitCode: 1, stdout: '', stderr: '' };
 				});
 
 				const handler = handlers.get('agents:detect');
