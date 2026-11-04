@@ -3,6 +3,7 @@ import {
 	bindProviderSessionWriter,
 } from '../../../utils/provider-session-writer';
 import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
+import { beginGlobalWorktreeActivity } from '../../../git/worktreeActivity';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
@@ -125,6 +126,21 @@ export interface SpawnHandlerDependencies {
  * apply config overrides, wrap SSH, and delegate to ProcessManager.spawn().
  */
 export async function handleProcessSpawn(
+	config: SpawnProcessConfig,
+	deps: SpawnHandlerDependencies
+) {
+	// Preparation and arbitrary commands can affect paths outside the agent cwd.
+	// Standalone spawners retain their own activity through native completion;
+	// settling this orchestration does not establish SDK/server/descendant safety.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return await handleAdmittedProcessSpawn(config, deps);
+	} finally {
+		release();
+	}
+}
+
+async function handleAdmittedProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
