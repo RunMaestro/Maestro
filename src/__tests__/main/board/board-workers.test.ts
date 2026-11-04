@@ -1,7 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
@@ -14,15 +13,17 @@ import {
 	setBoardWorkerOptions,
 } from '../../../main/board/board-workspace-storage';
 
-let dir = '';
+const fixture = createBoardIsolationFixture();
+beforeAll(() => fixture.install());
+afterAll(async () => fixture.cleanup());
 afterEach(() => {
-	if (dir) fs.rmSync(dir, { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(fixture.contract.db + suffix, { force: true });
 });
 
 describe('Board worker registry', () => {
 	it('preserves restrictions and pause on registration retry and after reopen', () => {
-		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-workers-'));
-		const file = path.join(dir, 'board.sqlite');
+		const file = fixture.contract.db;
 		let db = openBoardDb(file);
 		try {
 			expect(registerBoardWorker(db, 'agent')).toBe(true);
@@ -59,8 +60,7 @@ describe('Board worker registry', () => {
 	});
 
 	it('updates access without discarding provenance or changing a pause', () => {
-		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-workers-'));
-		const db = openBoardDb(path.join(dir, 'board.sqlite'));
+		const db = openBoardDb(fixture.contract.db);
 		try {
 			registerBoardWorker(db, 'agent');
 			db.prepare('INSERT INTO profiles VALUES (?, ?, ?, ?)').run('n', 'role', '{}', 'source');
@@ -106,8 +106,7 @@ describe('Board worker registry', () => {
 		}
 	});
 	it('patches options with a stale-write fence while preserving unknown options, origins, access and availability', () => {
-		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-options-'));
-		const file = path.join(dir, 'board.sqlite');
+		const file = fixture.contract.db;
 		const db = openBoardDb(file);
 		try {
 			registerBoardWorker(db, 'a');
