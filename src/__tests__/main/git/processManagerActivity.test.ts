@@ -28,12 +28,17 @@ vi.mock('../../../main/process-manager/spawners/ClaudeSdkSpawner', () => ({
 vi.mock('../../../main/process-manager/spawners/CopilotSdkSpawner', () => ({
 	CopilotSdkSpawner: class {
 		spawn = vi.fn();
+		closeSession = vi.fn(() => false);
+		closeAgent = vi.fn();
+		closeAll = vi.fn(async () => {});
 	},
 }));
 
 import { ProcessManager } from '../../../main/process-manager/ProcessManager';
 import { PtySpawner } from '../../../main/process-manager/spawners/PtySpawner';
 import { ChildProcessSpawner } from '../../../main/process-manager/spawners/ChildProcessSpawner';
+import { CopilotSdkSpawner } from '../../../main/process-manager/spawners/CopilotSdkSpawner';
+import { opencodeServerManager } from '../../../main/opencode-server/OpencodeServerManager';
 import { LocalCommandRunner } from '../../../main/process-manager/runners/LocalCommandRunner';
 import { SshCommandRunner } from '../../../main/process-manager/runners/SshCommandRunner';
 import { unusableCwdReason } from '../../../main/process-manager/utils/spawnCwd';
@@ -558,6 +563,235 @@ describe('direct manager input and steering activity', () => {
 		);
 		expect(manager.write(config.sessionId, 'text')).toBe(false);
 		expect(manager.resize(config.sessionId, 90, 30)).toBe(false);
+		(await reserve()).release();
+	});
+});
+
+describe('direct manager stop and close activity', () => {
+	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+		'refuses every stop entry before lookup, options, state or recovery under %s',
+		async (root) => {
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			const proc = { sessionId: config.sessionId, interrupted: false } as ManagedProcess;
+			entries.set(config.sessionId, proc);
+			const probes = ['get', 'keys', 'values'].map((method) => vi.spyOn(entries, method as 'get'));
+			const buffer = Reflect.get(manager, 'bufferManager') as { flushDataBuffer: () => void };
+			const flush = vi.spyOn(buffer, 'flushDataBuffer');
+			const shutdown = vi.spyOn(opencodeServerManager, 'shutdown').mockImplementation(() => {});
+			const copilot = Reflect.get(manager, 'copilotSdkSpawner') as CopilotSdkSpawner;
+			const option = vi.fn(() => true);
+			const options = {
+				get shutdown() {
+					return option();
+				},
+			};
+			const hold = await reserve(root);
+			expect(() => manager.interrupt(config.sessionId)).toThrow(/reserved/);
+			expect(() => manager.kill(config.sessionId, options)).toThrow(/reserved/);
+			expect(() => manager.killAll(options)).toThrow(/reserved/);
+			expect(() => manager.closeAgent('manager')).toThrow(/reserved/);
+			for (const probe of [
+				...probes,
+				option,
+				flush,
+				shutdown,
+				copilot.closeSession,
+				copilot.closeAgent,
+				copilot.closeAll,
+				logger.error,
+			])
+				expect(probe).not.toHaveBeenCalled();
+			expect(proc.interrupted).toBe(false);
+			hold.release();
+			expect(entries.get(config.sessionId)).toBe(proc);
+		}
+	);
+
+	it.each(['interrupt', 'kill'] as const)(
+		'holds both generations of pending harness %s after map removal and replacement',
+		async (operation) => {
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			const harness = Reflect.get(manager, 'harnessControls') as HarnessControlRegistry;
+			vi.spyOn(harness, 'has').mockReturnValue(true);
+			const first = Promise.withResolvers<boolean>();
+			const second = Promise.withResolvers<boolean>();
+			const control = vi
+				.spyOn(harness, operation === 'kill' ? 'close' : 'interrupt')
+				.mockReturnValueOnce(first.promise)
+				.mockReturnValueOnce(second.promise);
+			const proc = { sessionId: config.sessionId } as ManagedProcess;
+			entries.set(config.sessionId, proc);
+			expect(manager[operation](config.sessionId)).toBe(true);
+			expect(proc.interrupted).toBe(true);
+			if (operation === 'kill') expect(entries.has(config.sessionId)).toBe(false);
+			else expect(entries.get(config.sessionId)).toBe(proc);
+			entries.delete(config.sessionId);
+			manager.emit('exit', config.sessionId, 0);
+			await blocked();
+			entries.set(config.sessionId, { ...proc });
+			expect(manager[operation](config.sessionId)).toBe(true);
+			second.resolve(true);
+			await blocked();
+			first.resolve(false); // A refused protocol request still has to settle.
+			await vi.waitFor(async () => (await reserve()).release());
+			expect(control).toHaveBeenCalledTimes(2);
+		}
+	);
+
+	it.each(['interrupt', 'kill'] as const)(
+		'observes rejected harness %s and preserves the synchronous accepted verdict',
+		async (operation) => {
+			const error = new Error('late control failure');
+			const capture = vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+			const harness = Reflect.get(manager, 'harnessControls') as HarnessControlRegistry;
+			vi.spyOn(harness, 'has').mockReturnValue(true);
+			const pending = Promise.withResolvers<boolean>();
+			vi.spyOn(harness, operation === 'kill' ? 'close' : 'interrupt').mockReturnValue(
+				pending.promise
+			);
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+				sessionId: config.sessionId,
+			} as ManagedProcess);
+			expect(manager[operation](config.sessionId)).toBe(true);
+			await blocked();
+			pending.reject(error);
+			await vi.waitFor(async () => (await reserve()).release());
+			expect(capture).toHaveBeenCalledWith(error);
+		}
+	);
+
+	it.each(['interrupt', 'kill'] as const)(
+		'reports synchronous SDK %s failure without leaking caller activity',
+		async (operation) => {
+			const error = new Error('control dispatch failed');
+			const capture = vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+			const fail = vi.fn(() => {
+				throw error;
+			});
+			const proc = { sdkController: { interrupt: fail, kill: fail } } as unknown as ManagedProcess;
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(
+				config.sessionId,
+				proc
+			);
+			expect(manager[operation](config.sessionId)).toBe(false);
+			expect(proc.interrupted).toBe(true);
+			expect(capture).toHaveBeenCalledWith(error);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['interrupt', 'kill'] as const)(
+		'keeps independently held native work after synchronous SDK %s dispatch',
+		async (operation) => {
+			const releaseNative = beginGlobalWorktreeActivity();
+			releases.push(releaseNative);
+			const dispatch = vi.fn();
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+				sdkController: { interrupt: dispatch, kill: dispatch },
+			} as unknown as ManagedProcess);
+			expect(manager[operation](config.sessionId)).toBe(true);
+			expect(dispatch).toHaveBeenCalledOnce();
+			await blocked();
+			releaseNative();
+			(await reserve()).release();
+		}
+	);
+
+	it('preserves PTY Ctrl+C and forwards kill sync/shutdown flags to native control', async () => {
+		const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+		const write = vi.fn();
+		entries.set(config.sessionId, {
+			isTerminal: true,
+			ptyProcess: { write },
+		} as unknown as ManagedProcess);
+		expect(manager.interrupt(config.sessionId)).toBe(true);
+		expect(write).toHaveBeenCalledExactlyOnceWith('\x03');
+		const kill = vi.fn();
+		entries.set(config.sessionId, { sdkController: { kill } } as unknown as ManagedProcess);
+		expect(manager.kill(config.sessionId, { sync: true, shutdown: true })).toBe(true);
+		expect(kill).toHaveBeenCalledExactlyOnceWith({ sync: true, shutdown: true });
+		expect(entries.size).toBe(0);
+		(await reserve()).release();
+	});
+
+	it.each(['success', 'reject'])(
+		'holds aggregate shutdown across empty registry and pending Copilot %s',
+		async (outcome) => {
+			const capture = vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+			const shutdown = vi.spyOn(opencodeServerManager, 'shutdown').mockImplementation(() => {});
+			const copilot = Reflect.get(manager, 'copilotSdkSpawner') as CopilotSdkSpawner;
+			const pending = Promise.withResolvers<void>();
+			vi.mocked(copilot.closeAll).mockReturnValueOnce(pending.promise);
+			const dispatch = vi.fn();
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			entries.set(config.sessionId, {
+				sdkController: { kill: dispatch },
+			} as unknown as ManagedProcess);
+			expect(manager.killAll({ shutdown: true })).toBeUndefined();
+			expect(entries.size).toBe(0);
+			expect(dispatch).toHaveBeenCalledWith({ sync: true, shutdown: true });
+			expect(shutdown).toHaveBeenCalledOnce();
+			expect(copilot.closeAll).toHaveBeenCalledOnce();
+			manager.emit('exit', config.sessionId, 0);
+			await blocked();
+			const error = new Error('shutdown failed');
+			if (outcome === 'reject') pending.reject(error);
+			else pending.resolve();
+			await vi.waitFor(async () => (await reserve()).release());
+			if (outcome === 'reject')
+				expect(capture).toHaveBeenCalledWith(error, {
+					context: 'Copilot native connection shutdown',
+				});
+		}
+	);
+
+	it('keeps nested harness close pending after closeAgent returns and filters other agents', async () => {
+		const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+		const harness = Reflect.get(manager, 'harnessControls') as HarnessControlRegistry;
+		vi.spyOn(harness, 'has').mockReturnValue(true);
+		const pending = Promise.withResolvers<boolean>();
+		vi.spyOn(harness, 'close').mockReturnValue(pending.promise);
+		entries.set('manager-ai-tab', { sessionId: 'manager-ai-tab' } as ManagedProcess);
+		const other = { sessionId: 'another-ai-tab' } as ManagedProcess;
+		entries.set(other.sessionId, other);
+		const copilot = Reflect.get(manager, 'copilotSdkSpawner') as CopilotSdkSpawner;
+		manager.closeAgent('manager');
+		expect(entries.has('manager-ai-tab')).toBe(false);
+		expect(entries.get(other.sessionId)).toBe(other);
+		expect(copilot.closeAgent).toHaveBeenCalledExactlyOnceWith('manager');
+		await blocked();
+		pending.resolve(true);
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it.each(['killAll', 'closeAgent'] as const)(
+		'releases outer activity when %s throws during aggregate setup',
+		async (operation) => {
+			const error = new Error('shutdown setup failed');
+			vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+			const copilot = Reflect.get(manager, 'copilotSdkSpawner') as CopilotSdkSpawner;
+			if (operation === 'killAll')
+				vi.spyOn(opencodeServerManager, 'shutdown').mockImplementation(() => {
+					throw error;
+				});
+			else
+				vi.mocked(copilot.closeAgent).mockImplementation(() => {
+					throw error;
+				});
+			expect(() =>
+				operation === 'killAll' ? manager.killAll() : manager.closeAgent('manager')
+			).toThrow(error);
+			(await reserve()).release();
+		}
+	);
+
+	it('preserves missing-process and retained-session close verdicts without a native hold', async () => {
+		const copilot = Reflect.get(manager, 'copilotSdkSpawner') as CopilotSdkSpawner;
+		expect(manager.interrupt('missing')).toBe(false);
+		expect(manager.kill('missing')).toBe(false);
+		vi.mocked(copilot.closeSession).mockReturnValue(true);
+		expect(manager.kill('retained')).toBe(true);
+		expect(copilot.closeSession).toHaveBeenLastCalledWith('retained');
 		(await reserve()).release();
 	});
 });

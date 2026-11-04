@@ -651,6 +651,16 @@ export class ProcessManager extends EventEmitter {
 	 * TUI that cancelled its turn and is waiting for the next prompt.
 	 */
 	interrupt(sessionId: string): boolean {
+		return withWorktreeTurnActivity(
+			(_start, observe) => this.interruptAdmitted(sessionId, observe),
+			(error) => void captureException(error)
+		);
+	}
+
+	private interruptAdmitted(
+		sessionId: string,
+		observe: <Result>(completion: Promise<Result>) => Promise<Result>
+	): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process) return false;
 
@@ -663,7 +673,7 @@ export class ProcessManager extends EventEmitter {
 
 		try {
 			if (this.harnessControls.has(sessionId)) {
-				void this.harnessControls.interrupt(sessionId);
+				observe(this.harnessControls.interrupt(sessionId));
 				return true;
 			}
 			if (process.sdkController) {
@@ -733,9 +743,17 @@ export class ProcessManager extends EventEmitter {
 	 *   and one sent right behind the SIGTERM would take that chance away.
 	 * - on Windows both go through a blocking `taskkill /t /f`.
 	 */
-	kill(
+	kill(sessionId: string, options: { sync?: boolean; shutdown?: boolean } = {}): boolean {
+		return withWorktreeTurnActivity(
+			(_start, observe) => this.killAdmitted(sessionId, options, observe),
+			(error) => void captureException(error)
+		);
+	}
+
+	private killAdmitted(
 		sessionId: string,
-		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean } = {}
+		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean },
+		observe: <Result>(completion: Promise<Result>) => Promise<Result>
 	): boolean {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return this.copilotSdkSpawner.closeSession(sessionId);
@@ -752,7 +770,7 @@ export class ProcessManager extends EventEmitter {
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (this.harnessControls.has(sessionId)) {
-				void this.harnessControls.close(sessionId, { sync, shutdown });
+				observe(this.harnessControls.close(sessionId, { sync, shutdown }));
 			} else if (proc.sdkController) {
 				// Server-backed process (OpenCode SDK, Codex app-server): the stop
 				// starts with a protocol call. The controller tears its transport down
@@ -845,7 +863,17 @@ export class ProcessManager extends EventEmitter {
 	 * the libuv/N-API teardown race that aborts the main process during
 	 * Electron environment cleanup (see kill() docs).
 	 */
-	killAll({ shutdown = false }: { shutdown?: boolean } = {}): void {
+	killAll(options: { shutdown?: boolean } = {}): void {
+		withWorktreeTurnActivity(
+			(_start, observe) => this.killAllAdmitted(options, observe),
+			(error) => void captureException(error)
+		);
+	}
+
+	private killAllAdmitted(
+		{ shutdown = false }: { shutdown?: boolean },
+		observe: <Result>(completion: Promise<Result>) => Promise<Result>
+	): void {
 		const sessionIds = [...this.processes.keys()];
 		for (const sessionId of sessionIds) {
 			// Use sync kills so process trees are dead before the app exits.
@@ -855,18 +883,25 @@ export class ProcessManager extends EventEmitter {
 		}
 		// Tear down the shared OpenCode server(s) that back the SDK path.
 		opencodeServerManager.shutdown();
-		void this.copilotSdkSpawner.closeAll().catch((error) => {
-			captureException(error instanceof Error ? error : new Error(String(error)), {
-				context: 'Copilot native connection shutdown',
-			});
-		});
+		observe(
+			this.copilotSdkSpawner.closeAll().catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					context: 'Copilot native connection shutdown',
+				});
+			})
+		);
 	}
 	/** Stop every active turn for an agent and dispose retained native runtimes. */
 	closeAgent(agentId: string): void {
-		for (const proc of [...this.processes.values()]) {
-			if (proc.sessionId.replace(/-ai(?:-.+)?$/, '') === agentId) this.kill(proc.sessionId);
+		const release = beginGlobalWorktreeActivity();
+		try {
+			for (const proc of [...this.processes.values()]) {
+				if (proc.sessionId.replace(/-ai(?:-.+)?$/, '') === agentId) this.kill(proc.sessionId);
+			}
+			this.copilotSdkSpawner.closeAgent(agentId);
+		} finally {
+			release();
 		}
-		this.copilotSdkSpawner.closeAgent(agentId);
 	}
 
 	/**
