@@ -546,6 +546,262 @@ describe('standalone native RPC activity', () => {
 	});
 });
 
+describe('retained Pi/OMP RPC callback activity', () => {
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses retained callbacks before lookup or recovery under %s',
+		async (root) => {
+			spawner.spawn(config());
+			await drain();
+			const callbacks = connection();
+			const managed = processes.get('rpc-session')!;
+			await close();
+			processes.clear();
+			vi.clearAllMocks();
+			const lookup = vi.fn(() => 'session_settled');
+			const hold = await reserve(root);
+			try {
+				await expect(
+					managed.harnessControl!.steer({
+						get id() {
+							return lookup();
+						},
+						text: 'late',
+					})
+				).rejects.toThrow('reserved');
+				await expect(
+					callbacks.onServerRequest!({
+						get type() {
+							return lookup();
+						},
+					})
+				).rejects.toThrow('reserved');
+				callbacks.onNotification!({
+					get type() {
+						return lookup();
+					},
+				});
+				await drain();
+				expect(captureException).toHaveBeenCalledWith(
+					expect.objectContaining({ message: expect.stringContaining('reserved') })
+				);
+				for (const probe of [
+					lookup,
+					probes.request,
+					probes.interaction,
+					probes.output,
+					probes.exit,
+					probes.close,
+					stopProcess,
+					fallback,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'owns concurrent late extension replies through replacement on %s',
+		async (outcome) => {
+			spawner.spawn(config());
+			await drain();
+			const callbacks = connection();
+			await close();
+			processes.clear();
+			const first = Promise.withResolvers<{ kind: 'ignore' }>();
+			const second = Promise.withResolvers<{ kind: 'ignore' }>();
+			probes.interaction.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			const a = callbacks.onServerRequest!({ type: 'extension_ui_request', method: 'confirm' });
+			const b = callbacks.onServerRequest!({ type: 'extension_ui_request', method: 'input' });
+			await blocked();
+			native = makeNative();
+			spawner.spawn(config());
+			await drain();
+			await close();
+			processes.clear();
+			await blocked();
+			first.resolve({ kind: 'ignore' });
+			await expect(a).resolves.toEqual({ kind: 'ignore' });
+			await drain();
+			await blocked();
+			if (outcome === 'reject') {
+				const failed = expect(b).rejects.toThrow('interaction failed');
+				second.reject(new Error('interaction failed'));
+				await failed;
+			} else {
+				second.resolve({ kind: 'ignore' });
+				await expect(b).resolves.toEqual({ kind: 'ignore' });
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'owns retained steering after failed close reporting on %s',
+		async (outcome) => {
+			spawner.spawn(config());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			probes.close.mockImplementationOnce(() => {
+				throw new Error('close failed');
+			});
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(pending.promise);
+			const steering = managed.harnessControl!.steer({ id: 'late', text: 'next' });
+			expect(probes.request).toHaveBeenLastCalledWith('steer', { message: 'next' });
+			await blocked();
+			if (outcome === 'reject') pending.reject(new Error('steer failed'));
+			else pending.resolve({});
+			await expect(steering).resolves.toMatchObject({
+				id: 'late',
+				verdict: outcome === 'reject' ? 'unknown' : 'delivered',
+			});
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['ready', 'streaming', 'queued', 'failure'])(
+		'owns late Pi state queries and subsequent reporting for %s',
+		async (outcome) => {
+			spawner.spawn(config({ toolType: 'pi', nativeRpcProtocol: 'pi-rpc' }));
+			await drain();
+			const callbacks = connection();
+			probes.close.mockImplementationOnce(() => {
+				throw new Error('close failed');
+			});
+			await close();
+			(await reserve()).release();
+			const state = Promise.withResolvers<unknown>();
+			const reporting = Promise.withResolvers<void>();
+			probes.request.mockReturnValueOnce(state.promise);
+			probes.exit.mockReturnValueOnce(reporting.promise);
+			callbacks.onNotification!({ type: 'agent_end' });
+			callbacks.onNotification!({ type: 'agent_end' });
+			expect(probes.request).toHaveBeenLastCalledWith('get_state');
+			processes.clear();
+			await blocked();
+			if (outcome === 'failure') state.reject(new Error('state failed'));
+			else
+				state.resolve({
+					isStreaming: outcome === 'streaming',
+					pendingMessageCount: outcome === 'queued' ? 1 : 0,
+				});
+			await drain();
+			if (outcome === 'ready' || outcome === 'failure') {
+				await blocked();
+				expect(probes.exit).toHaveBeenCalledOnce();
+				expect(probes.exit.mock.calls[0][1]).toBe(outcome === 'ready' ? 0 : 1);
+				reporting.reject(new Error('report failed'));
+				await drain();
+			} else expect(probes.exit).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it('admits a late extension before an earlier reservation canonicalizes', async () => {
+		spawner.spawn(config());
+		await drain();
+		const callbacks = connection();
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const pending = Promise.withResolvers<{ kind: 'ignore' }>();
+		probes.interaction.mockReturnValueOnce(pending.promise);
+		const reply = callbacks.onServerRequest!({ type: 'extension_ui_request', method: 'confirm' });
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		pending.resolve({ kind: 'ignore' });
+		await reply;
+		await drain();
+		(await reserve()).release();
+	});
+	it('preserves synchronous notification order and absorbed/dropped steering', async () => {
+		const emitter = new EventEmitter();
+		const verdicts = vi.fn();
+		emitter.on('steering-verdict', verdicts);
+		const { RpcServerSpawner } =
+			await import('../../../main/process-manager/spawners/RpcServerSpawner');
+		spawner = new RpcServerSpawner(processes, emitter, {} as DataBufferManager, fallback);
+		spawner.spawn(config());
+		await drain();
+		const control = processes.get('rpc-session')!.harnessControl!;
+		await control.steer({ id: 'absorbed', text: 'next' });
+		await control.steer({ id: 'dropped', text: 'later' });
+		probes.output.mockClear();
+		connection().onNotification!({
+			type: 'message_start',
+			message: { role: 'user', content: 'next' },
+		});
+		connection().onNotification!({ type: 'session_settled' });
+		expect(probes.output.mock.calls.map((call) => JSON.parse(call[1]).type)).toEqual([
+			'message_start',
+			'session_settled',
+		]);
+		expect(verdicts.mock.calls.map((call) => call[1])).toEqual([
+			{ type: 'steering', id: 'absorbed', verdict: 'absorbed' },
+			{ type: 'steering', id: 'dropped', verdict: 'dropped' },
+		]);
+		await close();
+		await expect(control.steer({ id: 'finished', text: 'late' })).resolves.toMatchObject({
+			verdict: 'refused',
+			refusal: 'not-running',
+		});
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['lookup', 'output', 'diagnostic'])(
+		'observes failed notification %s and releases without recovery',
+		async (stage) => {
+			spawner.spawn(config());
+			await drain();
+			const callbacks = connection();
+			await close();
+			vi.clearAllMocks();
+			const fail = () => {
+				throw new Error('notification failed');
+			};
+			if (stage === 'output') probes.output.mockImplementationOnce(fail);
+			if (stage === 'diagnostic') vi.mocked(captureException).mockImplementation(fail);
+			callbacks.onNotification!({
+				get type() {
+					return stage === 'output' ? 'message_start' : fail();
+				},
+			});
+			await drain();
+			expect(fallback).not.toHaveBeenCalled();
+			expect(stopProcess).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['sync', 'async'])('owns late exit reporting through %s failure', async (failure) => {
+		spawner.spawn(config());
+		await drain();
+		const callbacks = connection();
+		probes.close.mockImplementationOnce(() => {
+			throw new Error('close failed');
+		});
+		await close();
+		const reporting = Promise.withResolvers<void>();
+		if (failure === 'sync')
+			probes.exit.mockImplementationOnce(() => {
+				throw new Error('report failed');
+			});
+		else probes.exit.mockReturnValueOnce(reporting.promise);
+		callbacks.onNotification!({ type: 'session_settled' });
+		if (failure === 'async') {
+			await blocked();
+			reporting.reject(new Error('report failed'));
+		}
+		await drain();
+		expect(probes.exit).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+});
+
 describe('standalone Antigravity SDK activity', () => {
 	let antigravity: import('../../../main/process-manager/spawners/AntigravitySdkSpawner').AntigravitySdkSpawner;
 	const input = (overrides: Partial<ProcessConfig> = {}) =>

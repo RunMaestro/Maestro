@@ -22,6 +22,7 @@ import {
 import {
 	NdJsonConnection,
 	type NdJsonRecord,
+	type NdJsonServerResponse,
 } from '../../../shared/maestro-lib/harness/rpc/connection';
 import { answerRpcExtensionRequest } from '../../harness-control/rpc-interactions';
 import { steeringTextMatches, type SteeringResultFrame } from '../../../shared/chatSteering';
@@ -155,7 +156,7 @@ class RpcTurn {
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
-				steer: (request) => this.observeCompletion(this.steer(request)),
+				steer: (request) => this.steer(request),
 				interrupt: async () => this.interrupt(),
 				closed: this.closed.promise,
 				close: async (options) => this.kill(options),
@@ -215,16 +216,11 @@ class RpcTurn {
 		const connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'pi',
 			negotiateV2: config.nativeRpcProtocol === 'omp-rpc',
-			onNotification: (record) => this.onNotification(record),
-			onServerRequest: (record) =>
-				this.observeCompletion(
-					answerRpcExtensionRequest(record, {
-						sessionId: config.sessionId,
-						tabId: config.tabId,
-						spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
-						provider: config.toolType,
-					})
-				),
+			onNotification: (record) => {
+				// The original observer remains a diagnostic sink for this void callback.
+				this.observeCompletion(this.onNotification(record));
+			},
+			onServerRequest: (record) => this.onServerRequest(record),
 		});
 		this.connection = connection;
 		if (config.agentSessionId) {
@@ -282,7 +278,29 @@ class RpcTurn {
 		});
 	}
 
+	private async onServerRequest(record: NdJsonRecord): Promise<NdJsonServerResponse> {
+		return withWorktreeTurnActivity(
+			(_start, observe) =>
+				observe(
+					answerRpcExtensionRequest(record, {
+						sessionId: this.config.sessionId,
+						tabId: this.config.tabId,
+						spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
+						provider: this.config.toolType,
+					})
+				),
+			(error) => void captureException(error)
+		);
+	}
+
 	private async steer(request: { id: string; text: string }): Promise<SteeringResultFrame> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.steerAdmitted(request)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async steerAdmitted(request: { id: string; text: string }): Promise<SteeringResultFrame> {
 		if (!this.connection || !this.promptSent || this.finished) {
 			return {
 				type: 'steering',
@@ -310,7 +328,15 @@ class RpcTurn {
 		}
 	}
 
-	private onNotification(record: NdJsonRecord): void {
+	private async onNotification(record: NdJsonRecord): Promise<void> {
+		// Retained callbacks must admit independently after startup/close settles.
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.onNotificationAdmitted(record)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async onNotificationAdmitted(record: NdJsonRecord): Promise<void> {
 		if (this.isSuperseded()) return;
 		if (record.type === 'message_start') {
 			const message = record.message as { role?: string; content?: unknown } | undefined;
@@ -330,8 +356,7 @@ class RpcTurn {
 		}
 		if (record.type === 'agent_end' && this.protocol === 'pi-rpc' && record.willRetry !== true) {
 			this.forwardLine(JSON.stringify(record));
-			void this.observeCompletion(this.finishPiAgentEnd());
-			return;
+			return this.finishPiAgentEnd();
 		}
 		if (record.type === 'agent_settled' || record.type === 'session_settled') {
 			this.dropPendingSteers();
@@ -523,17 +548,22 @@ class RpcTurn {
 	}
 
 	private finish(code: number): void {
-		if (this.finished) return;
-		this.finished = true;
-		void this.observeCompletion(
-			this.ctx.exitHandler
-				.handleExit(this.config.sessionId, code, this.managedProcess)
-				.catch((error) => {
-					logger.error('[RpcTurn] handleExit failed', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-				})
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				if (this.finished) return;
+				this.finished = true;
+				observe(
+					this.ctx.exitHandler
+						.handleExit(this.config.sessionId, code, this.managedProcess)
+						.catch((error) => {
+							logger.error('[RpcTurn] handleExit failed', LOG_CONTEXT, {
+								sessionId: this.config.sessionId,
+								error: String(error),
+							});
+						})
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 
