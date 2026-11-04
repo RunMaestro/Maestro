@@ -42,6 +42,7 @@ import {
 	resolveHarnessInteractionResponse,
 } from '../../harness-control/integration';
 import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -56,6 +57,22 @@ const handlerOpts = (
 	operation,
 	...extra,
 });
+
+/** Hold outer setup; standalone runners/spawners separately track native completion. */
+function withProcessStartActivity<TArgs extends unknown[], TResult>(
+	options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
+	handler: (...args: TArgs) => Promise<TResult>
+): (_event: unknown, ...args: TArgs) => Promise<TResult> {
+	return withIpcErrorLogging(options, async (...args: TArgs) => {
+		// Shells, SSH proxies and preparation may affect paths outside the agent cwd.
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return await handler(...args);
+		} finally {
+			release();
+		}
+	});
+}
 
 /** Extract a fail-closed owner from either an Electron or bridge invocation event. */
 function harnessControlOwner(event: { sender?: { id: number }; clientId?: unknown }): {
@@ -408,7 +425,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// wrapped with ssh to execute on the remote host.
 	ipcMain.handle(
 		'process:spawnTerminalTab',
-		withIpcErrorLogging(
+		withProcessStartActivity(
 			handlerOpts('spawnTerminalTab'),
 			async (config: {
 				sessionId: string;
@@ -583,7 +600,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// TODO: Remove this handler once all callers migrate to process:spawnTerminalTab for persistent PTY sessions
 	ipcMain.handle(
 		'process:runCommand',
-		withIpcErrorLogging(
+		withProcessStartActivity(
 			handlerOpts('runCommand'),
 			async (config: {
 				sessionId: string;
@@ -614,21 +631,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// ========================================================================
 				let sshRemoteConfig: SshRemoteConfig | null = null;
 
-				if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig?.remoteId) {
+				if (config.sessionSshRemoteConfig?.enabled) {
 					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
 						sessionSshConfig: config.sessionSshRemoteConfig,
 					});
-
-					if (sshResult.config) {
-						sshRemoteConfig = sshResult.config;
-						logger.info(`Terminal command will execute via SSH`, LOG_CONTEXT, {
-							sessionId: config.sessionId,
-							remoteName: sshResult.config.name,
-							remoteHost: sshResult.config.host,
-							source: sshResult.source,
-						});
+					if (!sshResult.config) {
+						throw new Error('Terminal command SSH config not found or disabled.');
 					}
+
+					sshRemoteConfig = sshResult.config;
+					logger.info(`Terminal command will execute via SSH`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						remoteName: sshResult.config.name,
+						remoteHost: sshResult.config.host,
+						source: sshResult.source,
+					});
 				}
 
 				logger.debug(`Running command: ${config.command}`, LOG_CONTEXT, {
