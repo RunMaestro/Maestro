@@ -11,6 +11,80 @@ import {
 } from '../../../../main/web-server/services/socket-send';
 
 describe('bounded WebSocket output', () => {
+	it('yields native Unicode fragments to the event loop while preserving FIN and queued order', async () => {
+		const frames: Array<{ data: string; fin: boolean }> = [];
+		let sentinelFrames = -1;
+		let finish!: () => void;
+		const complete = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		const socket = Object.assign(new EventEmitter(), {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: vi.fn((data: string, options?: { fin: boolean }, callback?: () => void) => {
+				frames.push({ data, fin: options?.fin ?? true });
+				if (data === 'following') finish();
+				if (callback) process.nextTick(callback);
+			}),
+			close: vi.fn(),
+			terminate: vi.fn(),
+		}) as unknown as WebSocket;
+		const payload = ('a'.repeat(262_143) + '😀漢').repeat(40);
+		const sentinel = new Promise<void>((resolve) =>
+			setImmediate(() => {
+				sentinelFrames = frames.length;
+				resolve();
+			})
+		);
+		expect(sendBounded(socket, payload)).toBe(true);
+		expect(sendBounded(socket, 'following')).toBe(true);
+		await Promise.all([sentinel, complete]);
+		expect(sentinelFrames).toBeGreaterThan(0);
+		expect(sentinelFrames).toBeLessThan(frames.length - 1);
+		const fragments = frames.slice(0, -1);
+		expect(fragments.map((frame) => frame.data).join('')).toBe(payload);
+		expect(fragments.slice(0, -1).every((frame) => !frame.fin)).toBe(true);
+		expect(fragments.at(-1)?.fin).toBe(true);
+		for (const frame of fragments) {
+			expect(frame.data).not.toMatch(/[\ud800-\udbff]$/u);
+			expect(frame.data).not.toMatch(/^[\udc00-\udfff]/u);
+		}
+		expect(frames.at(-1)?.data).toBe('following');
+		socket.emit('close');
+	});
+
+	it('does not duplicate chunks when ACK and write completion overlap, and stops after close', async () => {
+		const frames: string[] = [];
+		const completions: Array<(error?: Error) => void> = [];
+		const socket = Object.assign(new EventEmitter(), {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: vi.fn((data: string, _options: unknown, callback: (error?: Error) => void) => {
+				frames.push(data);
+				completions.push(callback);
+			}),
+			close: vi.fn(),
+			terminate: vi.fn(),
+		}) as unknown as WebSocket;
+		enableWebSocketChunks(socket);
+		const payload = '😀ab'.repeat(100_000);
+		expect(sendBounded(socket, payload)).toBe(true);
+		const first = JSON.parse(frames[0]);
+		acknowledgeWebSocketChunk(socket, first.offset + first.data.length);
+		expect(frames).toHaveLength(1);
+		completions.shift()!();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(frames).toHaveLength(2);
+		const second = JSON.parse(frames[1]);
+		expect(second.offset).toBe(first.offset + first.data.length);
+		socket.emit('close');
+		Object.assign(socket, { readyState: WebSocket.CLOSED });
+		completions.shift()!();
+		acknowledgeWebSocketChunk(socket, second.offset + second.data.length);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(frames).toHaveLength(2);
+	});
+
 	it('bounds the window and ignores invalid ACKs without renewing the oldest chunk deadline', () => {
 		vi.useFakeTimers();
 		const socket = Object.assign(new EventEmitter(), {
