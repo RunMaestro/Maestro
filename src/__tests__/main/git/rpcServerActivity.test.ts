@@ -139,6 +139,8 @@ import { buildChildProcessEnv } from '../../../main/process-manager/utils/envBui
 import { planSpawnShell } from '../../../main/process-manager/utils/windowsSpawnShell';
 import { createOutputParser } from '../../../main/parsers';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
+import { captureException } from '../../../main/utils/sentry';
+import { logger } from '../../../main/utils/logger';
 
 const target = path.resolve('rpc-cleanup-target');
 let gate: typeof import('../../../main/git/worktreeActivity');
@@ -2035,6 +2037,7 @@ describe('shared OpenCode server activity', () => {
 		Object.assign(native, { kill: vi.fn() });
 		Object.assign(native.stdout, { resume: vi.fn() });
 		Object.assign(native.stderr, { resume: vi.fn() });
+		vi.mocked(captureException).mockResolvedValue(undefined);
 		probes.opencodeSdk.mockResolvedValue(sdk);
 		probes.opencodeClient.mockReturnValue({ fixture: true });
 		({ opencodeServerManager: manager } =
@@ -2051,6 +2054,155 @@ describe('shared OpenCode server activity', () => {
 		ready();
 		return result;
 	}
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses standalone shutdown before any registry access under %s',
+		async (root) => {
+			await start();
+			await close();
+			const hold = await reserve(root);
+			const reads = ['servers', 'startupChildren', 'starting'].map((key) => {
+				const descriptor = Object.getOwnPropertyDescriptor(manager, key)!;
+				const read = vi.fn(() => descriptor.value);
+				Object.defineProperty(manager, key, { configurable: true, get: read });
+				return { read, restore: () => Object.defineProperty(manager, key, descriptor) };
+			});
+			try {
+				expect(() => manager.shutdown()).toThrow('reserved');
+				for (const { read } of reads) expect(read).not.toHaveBeenCalled();
+				expect((native as typeof native & { kill: unknown }).kill).not.toHaveBeenCalled();
+				expect(captureException).not.toHaveBeenCalled();
+				expect(logger.error).not.toHaveBeenCalled();
+			} finally {
+				for (const { restore } of reads) restore();
+				hold.release();
+			}
+			manager.shutdown();
+			expect((native as typeof native & { kill: unknown }).kill).toHaveBeenCalledOnce();
+		}
+	);
+	it('admits an empty shutdown before reading registries and preserves its void return', async () => {
+		const hold = await reserve();
+		try {
+			expect(() => manager.shutdown()).toThrow('reserved');
+		} finally {
+			hold.release();
+		}
+		expect(manager.shutdown()).toBeUndefined();
+		(await reserve()).release();
+	});
+	it.each(['resolve', 'reject'] as const)(
+		'holds pending shutdown diagnostics until they %s after cache clearing and child close',
+		async (outcome) => {
+			await start();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const failure = new Error('kill failed');
+			vi.spyOn(native as typeof native & { kill(): void }, 'kill').mockImplementation(() => {
+				throw failure;
+			});
+			expect(manager.shutdown()).toBeUndefined();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await close();
+			await blocked();
+			manager.shutdown();
+			expect(captureException).toHaveBeenCalledOnce();
+			await blocked();
+			if (outcome === 'resolve') reporting.resolve();
+			else reporting.reject(new Error('report failed'));
+			await drain();
+			(await reserve()).release();
+			expect(logger.error).toHaveBeenCalledTimes(outcome === 'reject' ? 1 : 0);
+		}
+	);
+	it('keeps a canonicalizing reservation blocked during reentrant kill and reporting', async () => {
+		await start();
+		await close();
+		const resolving = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(resolving.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		let nested: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+		vi.spyOn(native as typeof native & { kill(): void }, 'kill').mockImplementation(() => {
+			nested = gate.reserveWorktreeCleanup(target);
+			throw new Error('kill failed');
+		});
+		manager.shutdown();
+		resolving.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		expect(await nested).toMatchObject({ status: 'blocked' });
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each([true, false])(
+		'does not release native ownership after kill returns %s',
+		async (sent) => {
+			await start();
+			const kill = vi
+				.spyOn(native as typeof native & { kill(): boolean }, 'kill')
+				.mockReturnValue(sent);
+			manager.shutdown();
+			expect(kill).toHaveBeenCalledExactlyOnceWith();
+			native.emit('exit', 0, null);
+			await drain();
+			await blocked();
+			manager.shutdown();
+			expect(kill).toHaveBeenCalledOnce();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('retains startup and failure reporting separately after shutdown and child close', async () => {
+		const result = manager.ensureServer(opts);
+		const rejected = expect(result).rejects.toThrow('before becoming ready');
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		vi.spyOn(native as typeof native & { kill(): void }, 'kill').mockImplementation(() => {
+			throw new Error('startup kill failed');
+		});
+		manager.shutdown();
+		await close();
+		await blocked();
+		native.emit('exit', 1, null);
+		await rejected;
+		await drain();
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains separate reports for ready and starting children across shutdown generations', async () => {
+		await start();
+		const old = native;
+		const oldReport = Promise.withResolvers<void>();
+		const nextReport = Promise.withResolvers<void>();
+		vi.spyOn(old as typeof old & { kill(): void }, 'kill').mockImplementation(() => {
+			throw new Error('old kill failed');
+		});
+		vi.mocked(captureException).mockReturnValueOnce(oldReport.promise);
+		manager.shutdown();
+		native = makeNative();
+		Object.assign(native, {
+			kill: vi.fn(() => {
+				throw new Error('new kill failed');
+			}),
+		});
+		const result = manager.ensureServer(opts);
+		const rejected = expect(result).rejects.toThrow('before becoming ready');
+		vi.mocked(captureException).mockReturnValueOnce(nextReport.promise);
+		manager.shutdown();
+		await close(old);
+		await close();
+		native.emit('exit', 1, null);
+		await rejected;
+		nextReport.resolve();
+		await drain();
+		await blocked();
+		oldReport.resolve();
+		await drain();
+		(await reserve()).release();
+	});
 	it.each(['key', 'env'])('releases failed %s setup before any native launch', async (stage) => {
 		const fail = () => {
 			throw new Error('setup failed');

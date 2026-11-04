@@ -286,25 +286,34 @@ class OpencodeServerManager {
 
 	/** Kill every running server and any still-starting child. Called on app shutdown. */
 	shutdown(): void {
-		for (const [key, instance] of this.servers) {
-			try {
-				instance.process.kill();
-			} catch (err) {
-				void captureException(err);
-			}
-			this.servers.delete(key);
-		}
-		// Kill servers still waiting on their readiness banner (tracked separately
-		// from `servers`, so the loop above misses them).
-		for (const child of this.startupChildren) {
-			try {
-				child.kill();
-			} catch (err) {
-				void captureException(err);
-			}
-		}
-		this.startupChildren.clear();
-		this.starting.clear();
+		// Feature teardown also calls this directly, outside ProcessManager.killAll.
+		// Admit before looking at registries; clearing them or sending a signal
+		// cannot release the independently held startup/native child lifetimes.
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				for (const [key, instance] of this.servers) {
+					try {
+						instance.process.kill();
+					} catch (err) {
+						observe(captureException(err));
+					}
+					this.servers.delete(key);
+				}
+				// Kill servers still waiting on their readiness banner (tracked separately
+				// from `servers`, so the loop above misses them).
+				for (const child of this.startupChildren) {
+					try {
+						child.kill();
+					} catch (err) {
+						observe(captureException(err));
+					}
+				}
+				this.startupChildren.clear();
+				this.starting.clear();
+			},
+			(error) =>
+				logger.error('Shared server shutdown failed', 'OpencodeServer', { error: String(error) })
+		);
 	}
 }
 
