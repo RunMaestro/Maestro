@@ -38,6 +38,54 @@ export interface WorktreePullRequestDiscoveryRequest {
 	knownPullRequest?: WorktreePullRequestIdentity;
 }
 
+/** CI belongs to the GitHub PR head, independently of the checkout's HEAD. */
+export type WorktreePullRequestCheckState =
+	| 'pending'
+	| 'running'
+	| 'passed'
+	| 'failed'
+	| 'skipped'
+	| 'cancelled'
+	| 'unavailable';
+
+export interface WorktreePullRequestCheck {
+	/** GitHub check-run or commit-status identity, scoped to the repository. */
+	kind: 'check-run' | 'status';
+	id: string;
+	name: string;
+	state: WorktreePullRequestCheckState;
+	detailsUrl: string | null;
+	workflow: { id: string; name: string } | null;
+	updatedAt: string | null;
+}
+
+export type WorktreePullRequestCi =
+	| { status: 'no-ci'; headSha: string; checkedAt: string }
+	| {
+			status: 'available';
+			headSha: string;
+			checkedAt: string;
+			checks: WorktreePullRequestCheck[];
+	  }
+	| { status: 'unavailable'; headSha: string; checkedAt: string; message: string };
+
+/** Comparison with the PR head; differences do not change remote CI results. */
+export type WorktreePullRequestDivergence =
+	| { status: 'equal'; localSha: string; pullRequestHeadSha: string }
+	| {
+			status: 'different';
+			localSha: string;
+			pullRequestHeadSha: string;
+			ahead: number;
+			behind: number;
+	  }
+	| {
+			status: 'unavailable';
+			localSha: string;
+			pullRequestHeadSha: string;
+			message: string;
+	  };
+
 /** Absence, ambiguity and operational failures must remain distinguishable. */
 export type WorktreePullRequestDiscoveryResult =
 	| { status: 'found'; head: WorktreePullRequestHead; pullRequest: WorktreePullRequest }
