@@ -1,0 +1,92 @@
+# Vitest micro-suite reconciliation onto rc
+
+## Base and scope
+
+The cleanup branch is based on rc commit `ef1f51c3cf868fc7c0ff8f19e7eaeedafe570c02`.
+The consolidation was reconstructed from that commit's current test sources,
+rather than replaying stale merged files over newer rc assertions. Inherited
+Lite feature changes are not part of this change.
+
+- Consolidate 511 source files into 113 test files: 398 fewer file-isolation boundaries.
+- Preserve all 10,087 tests in those source files, including their complete test names.
+- Retain 138 candidates as separate files where merging would compromise isolation:
+  85 mock/dependency/size conflicts, 49 mock factories capturing non-hoisted file state,
+  three collection-time global mutations, and one runtime module-registry mutation.
+- Do not resurrect `shared/cli-server-discovery.test.ts` or `shared/userDataDir.test.ts`,
+  which rc had already deleted.
+- Restore `maxWorkers: 8` while retaining rc's forks pool, separate node/jsdom projects,
+  and inherited-environment sanitization. No production code, test exclusions,
+  timeouts, assertions, or mock behavior are changed.
+
+Each merged file identifies its source files in comments. Each source's ordinary
+module-local state and hooks remain inside a separate unnamed suite, preserving
+existing test names and preventing hooks from applying to neighboring sources.
+Static imports and `vi.hoisted` state stay at module scope. Colliding bindings use
+source-specific aliases; component aliases retain JSX component capitalization.
+Module mocks are shared only when their factories and dependency graphs are compatible.
+
+## Verification
+
+| Check                                                                                             | Observed result                                        |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Affected suites in the actual Vitest forks runtime                                                | 10,087 passed across 113 files                         |
+| Runtime test-name multiset, compared per merged output against its rc inputs                      | Zero missing or extra tests                            |
+| Structural AST multiset of complete test callbacks and assertion calls                            | 45,533 calls preserved; zero missing or extra          |
+| Whole-source structural audit, including hooks, helpers, imports, module mocks, and hoisted state | All 511 source bodies and headers preserved            |
+| `npm run lint`                                                                                    | Passed                                                 |
+| `npm run lint:eslint`                                                                             | Passed                                                 |
+| `npm run build`                                                                                   | Passed                                                 |
+| Local native dependency smoke                                                                     | SQLite in-memory query returned `1`; `node-pty` loaded |
+| `prettier --check .`                                                                              | Passed                                                 |
+| `npm run lint:doc-refs`                                                                           | Passed after repointing three moved-suite references   |
+
+The AST audit checks original-source SHA-256 hashes, then compares parsed test and
+assertion expressions after reversing mechanical binding aliases. It ignores comments,
+formatting, redundant parentheses, and JSX indentation that does not change rendered
+text. Literal values, operators, statement ordering, declarations, callbacks, and
+assertions remain part of the comparison. The runtime comparison independently checks
+exact test-name multiplicities after removing only the added unnamed suite boundaries.
+
+The first runtime pass caught lowercase generated JSX aliases being treated as custom
+DOM elements. Those aliases and their JSX references were corrected; the affected
+suite rerun passed without changing assertions or mock factories.
+
+## Baseline and measurement limits
+
+A full clean-rc run before consolidation completed with 59,916 passing tests, one
+failing test, and 215 skipped tests. Its file summary reported 38 failed files,
+2,649 passing files, and seven skipped files. Most collection failures were missing
+local dependencies, including agent SDKs and memory packages; a native-binding assertion
+also failed. The locked dependencies were subsequently installed, Electron repaired,
+and the Node SQLite binding rebuilt locally, without changing tracked dependency files.
+All 10,087 selected consolidation-input tests had passed in that clean-rc run.
+
+The initial post-reconciliation full run collected 60,856 tests in 2,296 files:
+60,626 passed, 10 failed, and 220 were skipped. Its file summary was 12 failed,
+2,275 passed, and nine skipped. All failures were test or hook deadlines in
+unchanged files; none of the 113 consolidated files failed. This run overlapped
+with static verification, so resource contention is a possible cause, not a
+proven diagnosis. The plugin-scan hook had also timed out in the clean-rc run.
+The other timeout failures were not independently established as baseline failures.
+
+The failing files were `renderer/rowHoverCss.test.ts`,
+`renderer/utils/shiki/languageDetect.test.ts`, `scripts/verify-docs-paths.test.ts`,
+`cli/commands/pianola-portfolio.test.ts`, `main/app-lifecycle/window-manager.test.ts`,
+`main/cot-export/leak-guard.test.ts`, `main/lite/host-discovery.test.ts`,
+`main/pianola/memory-transport.test.ts`, `main/plugins/net-egress-guard.test.ts`,
+`main/plugins/relay-ledger.test.ts`, `main/plugins/plugin-scan.test.ts`, and
+`shared/dataview/resultCap.test.ts`, all under `src/__tests__/`.
+No assertions, exclusions, retries, or timeout limits were changed to suppress them.
+
+The clean-rc run is not a controlled speed baseline: its dependency install differed
+from the repaired validation environment. This change establishes 398 fewer file
+boundaries, not a newly measured wall-clock speedup over current rc. Historical
+measurements from the older cleanup branch must not be presented as timings for this base.
+
+## Protected local work
+
+The interrupted index, working tree, and untracked work are retained under
+`refs/checkpoints/cleanup-tests-rc-resume-20261104`. Original consolidation inputs,
+incidental scratch scripts, and dedup-catalog artifacts are also preserved in the
+ignored `.maestro/scratch/cleanup-tests-resume-20261104/` directory. They are not
+part of the PR. The original `cleanup-tests` branch remains available separately.
