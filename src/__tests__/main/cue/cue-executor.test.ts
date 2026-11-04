@@ -133,7 +133,7 @@ vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 
 // Mock wrapSpawnWithSsh
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
+vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 	// Stand-in; the real wording is covered by the ssh-spawn-wrapper suite.
 	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
