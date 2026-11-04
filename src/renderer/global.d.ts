@@ -3,6 +3,10 @@ import type {
 	TranslationReport,
 } from '../shared/maestro-lib/translation/types';
 import type {
+	WorktreePullRequestDiscoveryRequest,
+	WorktreePullRequestDiscoveryResult,
+} from '../shared/worktreePullRequests';
+import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolveResult,
 	HarnessInteractionResponse,
@@ -1769,6 +1773,9 @@ interface MaestroAPI {
 			createIfMissing: boolean,
 			sshRemoteId?: string
 		) => Promise<GitWorktreeCheckoutResult>;
+		discoverWorktreePullRequest: (
+			request: WorktreePullRequestDiscoveryRequest
+		) => Promise<WorktreePullRequestDiscoveryResult>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

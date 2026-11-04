@@ -226,6 +226,20 @@ describe('Git Preload API', () => {
 	});
 
 	describe('createPR', () => {
+		it('passes discovery identity and SSH routing through unchanged', async () => {
+			const request = {
+				worktreePath: '/remote/tree',
+				sshRemoteId: 'remote-1',
+				knownPullRequest: {
+					repository: { host: 'github.com', owner: 'owner', name: 'repo' },
+					number: 42,
+				},
+			};
+			const result = { status: 'unavailable', reason: 'ssh-unsupported', message: 'Unsupported' };
+			mockInvoke.mockResolvedValue(result);
+			expect(await api.discoverWorktreePullRequest(request)).toEqual(result);
+			expect(mockInvoke).toHaveBeenCalledWith('git:discoverWorktreePullRequest', request);
+		});
 		it('should invoke git:createPR', async () => {
 			mockInvoke.mockResolvedValue({
 				success: true,

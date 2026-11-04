@@ -1,4 +1,6 @@
 import { ipcMain } from 'electron';
+import type { WorktreePullRequestDiscoveryRequest } from '../../../../shared/worktreePullRequests';
+import { discoverWorktreePullRequest } from '../../../git/worktreePullRequests';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
@@ -16,6 +18,13 @@ import { LOG_CONTEXT, handlerOpts } from './shared';
  * Register GitHub CLI integration Git IPC handlers: createPR, checkGhCli, createGist.
  */
 export function registerGithubHandlers(): void {
+	ipcMain.handle(
+		'git:discoverWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('discoverWorktreePullRequest'),
+			(request: WorktreePullRequestDiscoveryRequest) => discoverWorktreePullRequest(request)
+		)
+	);
 	// Create a PR from the worktree branch to a base branch
 	// ghPath parameter allows specifying custom path to gh binary
 	ipcMain.handle(

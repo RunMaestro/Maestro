@@ -11,6 +11,10 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	WorktreePullRequestDiscoveryRequest,
+	WorktreePullRequestDiscoveryResult,
+} from '../../shared/worktreePullRequests';
+import type {
 	GitCommandOutputChunk,
 	GitRunCommandResult,
 	GitStreamingOperation,
@@ -459,6 +463,10 @@ export function createGitApi() {
 		/**
 		 * Create a GitHub PR
 		 */
+		discoverWorktreePullRequest: (
+			request: WorktreePullRequestDiscoveryRequest
+		): Promise<WorktreePullRequestDiscoveryResult> =>
+			ipcRenderer.invoke('git:discoverWorktreePullRequest', request),
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

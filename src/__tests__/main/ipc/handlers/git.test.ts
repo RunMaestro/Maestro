@@ -262,6 +262,7 @@ describe('Git IPC handlers', () => {
 				'git:worktreeRunSetup',
 				'git:worktreeCheckout',
 				'git:createPR',
+				'git:discoverWorktreePullRequest',
 				'git:checkGhCli',
 				'git:getDefaultBranch',
 				'git:listWorktrees',
@@ -3562,6 +3563,15 @@ export function Component() {
 				success: true,
 				hasUncommittedChanges: false,
 			});
+		});
+	});
+
+	describe('git:discoverWorktreePullRequest', () => {
+		it('returns the explicit SSH result without looking up a local checkout', async () => {
+			const handler = handlers.get('git:discoverWorktreePullRequest');
+			expect(
+				await handler({}, { worktreePath: '/remote/tree', sshRemoteId: 'remote-1' })
+			).toMatchObject({ status: 'unavailable', reason: 'ssh-unsupported' });
 		});
 	});
 
