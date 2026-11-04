@@ -34,6 +34,7 @@ const probes = vi.hoisted(() => ({
 	acpClient: vi.fn(),
 	notify: vi.fn(),
 	respond: vi.fn(),
+	handleResponse: vi.fn(),
 	query: vi.fn<typeof import('@anthropic-ai/claude-agent-sdk').query>(),
 	stderr: vi.fn(),
 	opencodeSdk: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock('../../../main/codex-app-server/rpc-client', async (original) => ({
 		notify = probes.notify;
 		close = probes.close;
 		respond = probes.respond;
+		handleResponse = probes.handleResponse;
 		isClosed = false;
 	},
 }));
@@ -1819,6 +1821,283 @@ describe('standalone Codex app-server activity', () => {
 			{} as DataBufferManager,
 			fallback
 		);
+	});
+	describe('retained Codex protocol callbacks', () => {
+		beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+		afterEach(() => vi.useRealTimers());
+		async function settledCallbacks(overrides: Partial<ProcessConfig> = {}, unfinished = false) {
+			const request = input(overrides);
+			codex.spawn(request);
+			await drain();
+			if (unfinished)
+				probes.close.mockImplementationOnce(() => {
+					throw new Error('exit callback failed');
+				});
+			Object.assign(native, { exitCode: 0 });
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			return request;
+		}
+		it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+			'refuses late protocol/stderr/stdin-error before lookup or recovery under %s',
+			async (root) => {
+				const request = await settledCallbacks();
+				const hold = await reserve(root);
+				const lookup = vi.fn(() => 'standard');
+				Object.defineProperty(request, 'permissionMode', { get: lookup });
+				const generation = await import('../../../main/process-manager/generation');
+				const generationLookup = vi.spyOn(generation, 'isSupersededGeneration');
+				vi.clearAllMocks();
+				try {
+					expect(() => line('item/commandExecution/requestApproval', {}, 1)).toThrow('reserved');
+					expect(() => native.stderr.emit('data', 'late')).toThrow('reserved');
+					expect(() => native.stdin.emit('error', { toString: lookup })).toThrow('reserved');
+					for (const probe of [
+						lookup,
+						generationLookup,
+						probes.interaction,
+						probes.respond,
+						probes.output,
+						probes.stderr,
+						probes.exit,
+						fallback,
+						captureException,
+						logger.debug,
+					])
+						expect(probe).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+			}
+		);
+		it.each(['resolve', 'reject'] as const)(
+			'owns concurrent late permissions across replacement on %s',
+			async (outcome) => {
+				await settledCallbacks();
+				const first = Promise.withResolvers<unknown>();
+				const second = Promise.withResolvers<unknown>();
+				probes.interaction.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+				line('item/commandExecution/requestApproval', {}, 1);
+				line('item/fileChange/requestApproval', {}, 2);
+				await blocked();
+				native = makeNative();
+				codex.spawn(input());
+				await drain();
+				await close();
+				processes.clear();
+				await blocked();
+				first.resolve({ outcome: 'selected', optionId: 'decision-0' });
+				await drain();
+				expect(probes.respond).toHaveBeenCalledWith(1, { result: { decision: 'accept' } });
+				await blocked();
+				if (outcome === 'reject') second.reject(new Error('permission failed'));
+				else second.resolve({ outcome: 'cancelled' });
+				await drain();
+				expect(probes.respond).toHaveBeenCalledWith(2, {
+					result: {
+						decision: outcome === 'reject' ? 'decline' : 'cancel',
+					},
+				});
+				expect(logger.warn).toHaveBeenCalledTimes(outcome === 'reject' ? 1 : 0);
+				expect(fallback).not.toHaveBeenCalled();
+				(await reserve()).release();
+			}
+		);
+		it('blocks pending canonicalization with newly admitted late permission work', async () => {
+			await settledCallbacks();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			const pending = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(pending.promise);
+			line('item/commandExecution/requestApproval', {}, 1);
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			await blocked();
+			pending.resolve({ outcome: 'cancelled' });
+			await drain();
+			(await reserve()).release();
+		});
+		it.each(['permission', 'reporting'] as const)(
+			'retains late reporting/permission independently when %s settles first',
+			async (first) => {
+				await settledCallbacks({}, true);
+				const permission = Promise.withResolvers<unknown>();
+				const reporting = Promise.withResolvers<void>();
+				probes.interaction.mockReturnValueOnce(permission.promise);
+				probes.exit.mockReturnValueOnce(reporting.promise);
+				line('item/commandExecution/requestApproval', {}, 1);
+				line('turn/completed', { threadId: 'thread', turn: { id: 'turn', status: 'completed' } });
+				line('turn/completed', { threadId: 'thread', turn: { id: 'turn', status: 'completed' } });
+				expect(probes.exit).toHaveBeenCalledOnce();
+				await vi.advanceTimersByTimeAsync(1000);
+				await blocked();
+				native = makeNative();
+				codex.spawn(input());
+				await drain();
+				await close();
+				processes.clear();
+				if (first === 'reporting') reporting.reject(new Error('report failed'));
+				else permission.resolve({ outcome: 'selected', optionId: 'decision-1' });
+				await drain();
+				await blocked();
+				if (first === 'reporting')
+					permission.resolve({ outcome: 'selected', optionId: 'decision-1' });
+				else reporting.reject(new Error('report failed'));
+				await drain();
+				expect(probes.respond).toHaveBeenCalledWith(1, { result: { decision: 'decline' } });
+				(await reserve()).release();
+			}
+		);
+		it.each(['full', 'readonly', 'standard'] as const)(
+			'preserves late %s approval and question mappings',
+			async (mode) => {
+				await settledCallbacks({
+					permissionMode: mode,
+					...(mode === 'full'
+						? {
+								args: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox'],
+							}
+						: {}),
+				});
+				probes.interaction.mockResolvedValueOnce({ outcome: 'selected', optionId: 'decision-0' });
+				line('item/commandExecution/requestApproval', {}, 1);
+				await drain();
+				expect(probes.respond).toHaveBeenCalledWith(1, {
+					result: {
+						decision: mode === 'readonly' ? 'decline' : 'accept',
+					},
+				});
+				probes.interaction.mockResolvedValueOnce({ outcome: 'answers', answers: { q: 'answer' } });
+				line('item/tool/requestUserInput', { questions: [{ id: 'q', question: 'Which?' }] }, 2);
+				await drain();
+				expect(probes.respond).toHaveBeenCalledWith(2, {
+					result: {
+						answers: mode === 'standard' ? { q: { answers: ['answer'] } } : {},
+					},
+				});
+				(await reserve()).release();
+			}
+		);
+		it('preserves synchronous line/stderr order and suppresses superseded generation output', async () => {
+			await settledCallbacks({}, true);
+			const ordered: string[] = [];
+			probes.output.mockImplementation((_session, chunk) => {
+				ordered.push(chunk);
+			});
+			probes.stderr.mockImplementation((_session, chunk) => {
+				ordered.push(chunk);
+			});
+			line('item/completed', { item: { id: 'text', type: 'agentMessage', text: 'one' } });
+			native.stderr.emit('data', 'two');
+			expect(ordered).toHaveLength(2);
+			expect(ordered[0]).toContain('one');
+			expect(ordered[1]).toBe('two');
+			(await reserve()).release();
+			const old = native;
+			native = makeNative();
+			codex.spawn(input());
+			await drain();
+			probes.output.mockClear();
+			probes.stderr.mockClear();
+			old.stdout.emit(
+				'data',
+				JSON.stringify({
+					method: 'item/completed',
+					params: { item: { id: 'old', type: 'agentMessage', text: 'old' } },
+				}) + '\n'
+			);
+			old.stderr.emit('data', 'old');
+			expect(probes.output).not.toHaveBeenCalled();
+			expect(probes.stderr).not.toHaveBeenCalled();
+			await close();
+			(await reserve()).release();
+		});
+		it.each(['line', 'stderr', 'stdin-error', 'report'] as const)(
+			'releases synchronous late %s failure and preserves the original error',
+			async (stage) => {
+				await settledCallbacks({}, true);
+				const error = new Error('callback failed');
+				const fail = () => {
+					throw error;
+				};
+				vi.mocked(captureException).mockImplementation(fail);
+				if (stage === 'line') probes.output.mockImplementationOnce(fail);
+				if (stage === 'stderr') probes.stderr.mockImplementationOnce(fail);
+				if (stage === 'stdin-error') vi.mocked(logger.debug).mockImplementationOnce(fail);
+				if (stage === 'report') probes.exit.mockImplementationOnce(fail);
+				expect(() => {
+					if (stage === 'line')
+						line('item/completed', { item: { id: 'text', type: 'agentMessage', text: 'fail' } });
+					if (stage === 'stderr') native.stderr.emit('data', 'fail');
+					if (stage === 'stdin-error') native.stdin.emit('error', error);
+					if (stage === 'report')
+						line('turn/completed', {
+							threadId: 'thread',
+							turn: { id: 'turn', status: 'completed' },
+						});
+				}).toThrow(error);
+				await drain();
+				expect(fallback).not.toHaveBeenCalled();
+				(await reserve()).release();
+			}
+		);
+		it('releases a failed late permission response even when decline diagnostics throw', async () => {
+			await settledCallbacks();
+			const pending = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(pending.promise);
+			vi.mocked(logger.warn).mockImplementationOnce(() => {
+				throw new Error('diagnostic failed');
+			});
+			vi.mocked(captureException).mockImplementation(() => {
+				throw new Error('capture failed');
+			});
+			line('item/commandExecution/requestApproval', {}, 1);
+			await blocked();
+			pending.reject(new Error('permission failed'));
+			await drain();
+			expect(probes.respond).not.toHaveBeenCalled();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		});
+		it('preserves synchronous response routing and best-effort response-write failure', async () => {
+			await settledCallbacks({ permissionMode: 'readonly' });
+			native.stdout.emit('data', JSON.stringify({ id: 8, result: 'late' }) + '\n');
+			expect(probes.handleResponse).toHaveBeenCalledWith({ id: 8, result: 'late' });
+			probes.respond.mockImplementationOnce(() => {
+				throw new Error('write failed');
+			});
+			expect(() => line('unknown-method', {}, 1)).not.toThrow();
+			expect(probes.respond).toHaveBeenCalledWith(1, {
+				error: {
+					code: -32601,
+					message: 'Maestro does not handle unknown-method',
+				},
+			});
+			expect(logger.debug).toHaveBeenCalledWith(
+				expect.stringContaining('Could not answer'),
+				expect.any(String),
+				expect.objectContaining({ error: 'Error: write failed' })
+			);
+			(await reserve()).release();
+		});
+		it('releases a late config lookup failure before broker work even if reporting fails', async () => {
+			const request = await settledCallbacks();
+			const error = new Error('config failed');
+			Object.defineProperty(request, 'permissionMode', {
+				get: () => {
+					throw error;
+				},
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				throw new Error('capture failed');
+			});
+			expect(() => line('item/commandExecution/requestApproval', {}, 1)).toThrow(error);
+			expect(probes.interaction).not.toHaveBeenCalled();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		});
 	});
 	describe('delayed exit grace and retained direct controls', () => {
 		beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));

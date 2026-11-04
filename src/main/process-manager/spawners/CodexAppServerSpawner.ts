@@ -361,13 +361,26 @@ class CodexAppServerTurn {
 				shell: spawnPlan.shell,
 			},
 			{
-				onLine: (line) => this.handleLine(line),
-				onStderr: (text) => this.handleStderr(text),
+				// Retained stream callbacks may outlive startup and native close.
+				onLine: (line) =>
+					withWorktreeTurnActivity(
+						(_start, observe) => this.handleLine(line, observe),
+						(error) => void captureException(error)
+					),
+				onStderr: (text) =>
+					withWorktreeTurnActivity(
+						() => this.handleStderr(text),
+						(error) => void captureException(error)
+					),
 				onStdinError: (error) =>
-					logger.debug('[CodexAppServerSpawner] stdin error', LOG_CONTEXT, {
-						sessionId,
-						error: String(error),
-					}),
+					withWorktreeTurnActivity(
+						() =>
+							logger.debug('[CodexAppServerSpawner] stdin error', LOG_CONTEXT, {
+								sessionId,
+								error: String(error),
+							}),
+						(error) => void captureException(error)
+					),
 			},
 			{
 				stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
@@ -501,7 +514,7 @@ class CodexAppServerTurn {
 	}
 
 	/** Route one framed stdout line from the server. */
-	private handleLine(line: string): void {
+	private handleLine(line: string, observe: <T>(completion: Promise<T>) => Promise<T>): void {
 		if (this.isSuperseded()) return;
 		const trimmed = line.trim();
 		if (!trimmed) return;
@@ -519,7 +532,7 @@ class CodexAppServerTurn {
 		if (!message || typeof message !== 'object') return;
 
 		if (isCodexServerRequest(message)) {
-			this.answerServerRequest(message);
+			this.answerServerRequest(message, observe);
 			return;
 		}
 		if (isCodexResponse(message)) {
@@ -551,7 +564,10 @@ class CodexAppServerTurn {
 	 * Answer a server request at once, by policy. An unanswered request stalls
 	 * the turn forever, so even a method Maestro does not know gets an error.
 	 */
-	private answerServerRequest(request: CodexAppServerRequest): void {
+	private answerServerRequest(
+		request: CodexAppServerRequest,
+		observe: <T>(completion: Promise<T>) => Promise<T>
+	): void {
 		if (this.config.permissionMode === 'standard') {
 			const interaction = codexServerInteraction(request, {
 				sessionId: this.config.sessionId,
@@ -559,7 +575,7 @@ class CodexAppServerTurn {
 				spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
 			});
 			if (interaction) {
-				this.observeCompletion(
+				observe(
 					this.answerInteractiveServerRequest(request, interaction).catch((error) => {
 						logger.warn(
 							'[CodexAppServerSpawner] Interactive request failed; declining',
@@ -963,17 +979,22 @@ class CodexAppServerTurn {
 
 	/** Report the turn's exit through ExitHandler, exactly once. */
 	private finish(code: number, signal?: NodeJS.Signals | null): void {
-		if (this.finished) return;
-		this.finished = true;
-		this.observeCompletion(
-			this.ctx.exitHandler
-				.handleExit(this.config.sessionId, code, this.managedProcess, signal)
-				.catch((error) => {
-					logger.error('[CodexAppServerSpawner] handleExit threw', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-				})
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				if (this.finished) return;
+				this.finished = true;
+				observe(
+					this.ctx.exitHandler
+						.handleExit(this.config.sessionId, code, this.managedProcess, signal)
+						.catch((error) => {
+							logger.error('[CodexAppServerSpawner] handleExit threw', LOG_CONTEXT, {
+								sessionId: this.config.sessionId,
+								error: String(error),
+							});
+						})
+				);
+			},
+			(error) => void captureException(error)
 		);
 	}
 
