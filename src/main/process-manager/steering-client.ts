@@ -24,6 +24,8 @@ import {
 } from '../../shared/chatSteering';
 import { isWindows } from '../../shared/platformDetection';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
+import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = '[Steering]';
 
@@ -57,7 +59,8 @@ export { STEERING_REPLY_TIMEOUT_MS } from '../../shared/chatSteering';
 /**
  * Ask a running maestro-p turn to take `text` into the turn in flight.
  *
- * Always resolves, never rejects. The caller is a UI action, and every outcome
+ * Channel outcomes resolve as verdicts; cleanup reservation refusal rejects before
+ * setup. The caller is a UI action, and every channel outcome
  * here is a thing to TELL the user rather than an exception to propagate: a
  * refusal is a normal answer ("a permission prompt is on screen"), and an
  * unreachable socket usually just means this turn is not steerable.
@@ -69,6 +72,16 @@ export async function sendSteeringRequest(options: {
 	id: string;
 	timeoutMs?: number;
 }): Promise<SteeringResultFrame> {
+	return withWorktreeTurnActivity(
+		(_start, observe) => observe(sendSteeringRequestAdmitted(options, observe)),
+		(error) => void captureException(error)
+	);
+}
+
+async function sendSteeringRequestAdmitted(
+	options: Parameters<typeof sendSteeringRequest>[0],
+	observe: <Result>(completion: Promise<Result>) => Promise<Result>
+): Promise<SteeringResultFrame> {
 	// Never sent: the server would refuse it anyway, and the round trip costs a
 	// connection for an answer known here.
 	if (steeringTextTooLong(options.text)) {
@@ -87,19 +100,22 @@ export async function sendSteeringRequest(options: {
 	return new Promise<SteeringResultFrame>((resolve) => {
 		let settled = false;
 		let buffer = '';
+		let socket: net.Socket | undefined;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (result: SteeringResultFrame): void => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
 			try {
-				socket.destroy();
+				socket?.destroy();
 			} catch {
 				// Already gone.
 			}
 			resolve(result);
 		};
 
-		const timer = setTimeout(() => {
+		const onTimeout = (): void => {
+			if (settled) return;
 			// The text may well have been typed - we simply never heard back - so this
 			// is `unknown`, not `refused`. Telling the caller it was refused would
 			// invite a re-send that could double the message into the turn.
@@ -109,7 +125,7 @@ export async function sendSteeringRequest(options: {
 				verdict: 'unknown',
 				detail: 'maestro-p did not answer the steering request in time',
 			});
-		}, timeoutMs);
+		};
 
 		// Whether the connection was ever established. This is the line between "not
 		// steerable" and "we do not know", and it has to be tracked rather than
@@ -118,13 +134,11 @@ export async function sendSteeringRequest(options: {
 		// doubles the message into the turn.
 		let connected = false;
 
-		const socket = net.createConnection(socketPath);
-		socket.setEncoding('utf8');
-
-		socket.on('connect', () => {
+		const onConnect = (): void => {
+			if (settled) return;
 			connected = true;
 			try {
-				socket.write(`${JSON.stringify(frame)}\n`);
+				socket!.write(`${JSON.stringify(frame)}\n`);
 			} catch (err) {
 				finish({
 					type: 'steering',
@@ -134,9 +148,10 @@ export async function sendSteeringRequest(options: {
 					detail: `the steering channel closed before the message was sent: ${String(err)}`,
 				});
 			}
-		});
+		};
 
-		socket.on('data', (chunk: string) => {
+		const onData = (chunk: string): void => {
+			if (settled) return;
 			buffer += chunk;
 			let newline = buffer.indexOf('\n');
 			while (newline >= 0) {
@@ -151,9 +166,10 @@ export async function sendSteeringRequest(options: {
 				}
 				newline = buffer.indexOf('\n');
 			}
-		});
+		};
 
-		socket.on('error', (err: NodeJS.ErrnoException) => {
+		const onError = (err: NodeJS.ErrnoException): void => {
+			if (settled) return;
 			// Never connected is the ordinary "this turn has no channel" case: the agent
 			// is on the API token source, or the turn already finished, or this build of
 			// maestro-p predates steering. That is a clean refusal - nothing was sent,
@@ -189,9 +205,10 @@ export async function sendSteeringRequest(options: {
 				verdict: 'unknown',
 				detail: `the steering channel failed before reporting a verdict: ${err.message}`,
 			});
-		});
+		};
 
-		socket.on('close', () => {
+		const onClose = (): void => {
+			if (settled) return;
 			// Closed without a verdict. Same reasoning as the timeout: the text may
 			// have been typed, so do not invite a re-send.
 			finish({
@@ -200,6 +217,49 @@ export async function sendSteeringRequest(options: {
 				verdict: 'unknown',
 				detail: 'the steering channel closed before reporting a verdict',
 			});
-		});
+		};
+
+		try {
+			socket = net.createConnection(socketPath);
+			// A verdict/timeout and destroy() do not prove the native socket closed.
+			// Retain this independently even if later setup or reporting fails.
+			const closed = Promise.withResolvers<void>();
+			observe(closed.promise);
+			socket.once('close', () => closed.resolve());
+			socket.setEncoding('utf8');
+			socket.on('connect', () =>
+				withWorktreeTurnActivity(onConnect, (error) => void captureException(error))
+			);
+			socket.on('data', (chunk: string) =>
+				withWorktreeTurnActivity(
+					() => onData(chunk),
+					(error) => void captureException(error)
+				)
+			);
+			socket.on('error', (error: NodeJS.ErrnoException) =>
+				withWorktreeTurnActivity(
+					() => onError(error),
+					(failure) => void captureException(failure)
+				)
+			);
+			socket.on('close', () =>
+				withWorktreeTurnActivity(onClose, (error) => void captureException(error))
+			);
+			if (!settled) {
+				timer = setTimeout(
+					() => withWorktreeTurnActivity(onTimeout, (error) => void captureException(error)),
+					timeoutMs
+				);
+			}
+		} catch (error) {
+			settled = true;
+			clearTimeout(timer);
+			try {
+				socket?.destroy();
+			} catch {
+				// Missing close evidence keeps the independent native hold blocked.
+			}
+			throw error;
+		}
 	});
 }
