@@ -5,7 +5,16 @@ import type {
 	MessageHandlerContext,
 	WebClient,
 } from '../../../../main/web-server/handlers/messageHandlers/types';
-import { PianolaNewTabDispatch } from '../../../../main/pianola/pianola-new-tab-dispatch';
+import { EventEmitter } from 'events';
+import { DispatchCallbackRegistry } from '../../../../main/dispatch-callbacks/dispatch-callback-registry';
+import { handleProcessSpawn } from '../../../../main/ipc/handlers/process/handle-spawn';
+import { AgentRunCaptureService } from '../../../../main/agent-run/capture-service';
+import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
+import {
+	pianolaNewTabSpawns,
+	PianolaNewTabDispatch,
+} from '../../../../main/pianola/pianola-new-tab-dispatch';
 import { createPianolaFsStore } from '../../../../shared/pianola/fs-store';
 import { generateUUID } from '../../../../shared/uuid';
 import type { QueuedItem } from '../../../../renderer/types';
@@ -150,6 +159,7 @@ describe('persistence IPC handlers', () => {
 		broadcastSessionAdded: ReturnType<typeof vi.fn>;
 		broadcastSessionRemoved: ReturnType<typeof vi.fn>;
 	};
+	let deps: PersistenceHandlerDependencies;
 	let getWebServerFn: () => WebServer | null;
 	let mockFlushSessionWrites: ReturnType<typeof vi.fn>;
 
@@ -196,7 +206,7 @@ describe('persistence IPC handlers', () => {
 		});
 
 		// Register handlers
-		const deps: PersistenceHandlerDependencies = {
+		deps = {
 			settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
 			sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 			groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
@@ -413,6 +423,294 @@ describe('persistence IPC handlers', () => {
 			f.deps.snapshot = () => snapshot;
 			return { ...f, snapshot };
 		}
+
+		it.each(['success', 'refused', 'unknown', 'no-capture'] as const)(
+			'drains busy->idle after caller end through D01 and native orchestration (%s)',
+			async (outcome) => {
+				const f = await readyQueue();
+				f.revoke();
+				const restarted = new PianolaNewTabDispatch(f.deps);
+				const key = `agent-ai-tab`;
+				const { generation } = await restarted.prepareQueueSpawn(
+					'agent',
+					'tab',
+					f.input.dispatchId,
+					() => {}
+				);
+				expect(current[0].executionQueue[0]).toMatchObject({ admissionRelease: { generation } });
+				expect(() => pianolaNewTabSpawns.claim(key)).toThrow('DispatchQueueConsumerRequired');
+				expect(() => pianolaNewTabSpawns.claim(key, f.input.dispatchId)).toThrow(
+					'DispatchQueueConsumerRequired'
+				);
+				const events = new EventEmitter();
+				const runs: unknown[] = [];
+				const capture = new AgentRunCaptureService({
+					upsertAgentRun: (run: unknown) => {
+						runs.push(run);
+						return run;
+					},
+					appendAgentRunEvent: (event: unknown) => event,
+					findActiveRunBySession: () => undefined,
+				} as never);
+				const spawn = vi.fn((config) => {
+					// This is the actual ProcessManager.spawn seam, after all asynchronous preflight.
+					if (outcome === 'unknown') throw new Error('Native outcome unknown');
+					if (outcome === 'refused') return { success: false, pid: -1 };
+					if (outcome !== 'no-capture') events.emit('spawn', config);
+					return { success: true, pid: 42 };
+				});
+				events.on('spawn', (config) => {
+					const run = capture.captureSpawn({
+						sessionId: config.sessionId,
+						toolType: config.toolType,
+						cwd: config.cwd,
+						tabId: 'tab',
+						prompt: config.prompt,
+					});
+					expect(run?.id).toBeTruthy();
+					pianolaNewTabSpawns.captured(
+						config.sessionId,
+						run!.id,
+						config.pianolaDispatchId,
+						config.pianolaQueueItemId
+					);
+				});
+				const manager = Object.assign(events, { spawn, get: () => undefined, getAll: () => [] });
+				const definition = getAgentDefinition('codex')!;
+				const attempt = handleProcessSpawn(
+					{
+						sessionId: key,
+						tabId: 'tab',
+						pianolaDispatchId: f.input.dispatchId,
+						pianolaQueueItemId: f.input.dispatchId,
+						toolType: 'codex',
+						cwd: process.cwd(),
+						command: definition.command,
+						args: [],
+						prompt: f.input.prompt,
+					},
+					{
+						getProcessManager: () => manager as never,
+						getAgentDetector: () =>
+							({
+								getAgent: async () => ({
+									...definition,
+									available: true,
+									path: '/usr/local/bin/codex',
+									capabilities: getAgentCapabilities('codex'),
+								}),
+							}) as never,
+						agentConfigsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+						settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+						sessionsStore: mockSessionsStore as never,
+						getMainWindow: () => null,
+					}
+				);
+				if (outcome === 'refused' || outcome === 'unknown') {
+					await expect(attempt).rejects.toThrow(
+						outcome === 'unknown' ? 'Native outcome unknown' : /did not start/
+					);
+					await new Promise((resolve) => setImmediate(resolve));
+					expect(spawn).toHaveBeenCalledOnce();
+					expect(f.store.readDispatchAdmission(f.input.dispatchId)?.outcome).toBe(
+						outcome === 'refused' ? 'rejected' : 'unknown'
+					);
+					expect(runs).toHaveLength(0);
+					if (outcome === 'refused')
+						await expect(
+							restarted.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {})
+						).rejects.toThrow('DispatchQueueNotStarted');
+					// Test teardown only: production retains the uncertain one-shot claim.
+					pianolaNewTabSpawns.started(key, undefined, f.input.dispatchId, f.input.dispatchId);
+					return;
+				}
+				const result = await attempt;
+				events.emit('exit', key, 0);
+				await new Promise((resolve) => setImmediate(resolve));
+				expect(result.success).toBe(true);
+				expect(spawn).toHaveBeenCalledOnce();
+				expect(runs).toHaveLength(outcome === 'success' ? 1 : 0);
+				if (outcome === 'success') {
+					expect(result.pianolaRunId).toBeTruthy();
+					expect(f.store.readDispatchAdmission(f.input.dispatchId)).toMatchObject({
+						outcome: 'accepted',
+						runId: result.pianolaRunId,
+					});
+				} else {
+					expect(result.pianolaRunId).toBeUndefined();
+					expect(f.store.readDispatchAdmission(f.input.dispatchId)?.outcome).toBe('unknown');
+				}
+				if (outcome === 'success') {
+					const replay = await new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+						'agent',
+						'tab',
+						f.input.dispatchId,
+						() => {}
+					);
+					expect(replay).toEqual({ reconciled: true, runId: result.pianolaRunId });
+				} else
+					await expect(
+						restarted.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {})
+					).rejects.toThrow('DispatchQueueReleaseUncertain');
+				expect(spawn).toHaveBeenCalledOnce();
+			}
+		);
+
+		it.each(['pause', 'delete', 'model', 'conversation', 'owner', 'policy', 'cancel'] as const)(
+			'revalidates %s immediately before a managed native claim',
+			async (mutation) => {
+				const f = await readyQueue();
+				const adapter = new PianolaNewTabDispatch(f.deps);
+				const key = 'agent-ai-tab';
+				await adapter.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {});
+				const guard = pianolaNewTabSpawns.claim(key, f.input.dispatchId, f.input.dispatchId);
+				if (mutation === 'pause') current[0].executionQueue[0].paused = true;
+				if (mutation === 'delete') current[0].executionQueue = [];
+				if (mutation === 'model')
+					current[0].executionQueue[0].turnSettings = { model: 'different' };
+				if (mutation === 'conversation') f.snapshot.tabs[0].agentSessionId = 'changed';
+				if (mutation === 'owner') f.snapshot.owners[0].isPianola = true;
+				if (mutation === 'policy') f.store.writeSupervisorTargets([]);
+				if (mutation === 'cancel') adapter.cancelQueueItem('agent', 'tab', f.input.dispatchId);
+				expect(guard).toThrow();
+				guard.notStarted();
+				await new Promise((resolve) => setImmediate(resolve));
+				expect(f.store.readDispatchAdmission(f.input.dispatchId)).toMatchObject({
+					outcome: 'rejected',
+				});
+			}
+		);
+
+		it('serializes duplicate idle requests and never retries a release lost on renderer restart', async () => {
+			const f = await readyQueue();
+			const adapter = new PianolaNewTabDispatch(f.deps);
+			const results = await Promise.allSettled([
+				adapter.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {}),
+				adapter.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {}),
+			]);
+			expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+			await expect(
+				new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+					'agent',
+					'tab',
+					f.input.dispatchId,
+					() => {}
+				)
+			).rejects.toThrow('DispatchQueueReleaseUncertain');
+			pianolaNewTabSpawns.cancelHold('agent', 'tab');
+		});
+
+		it('records cancellation durably and refuses a stale saved held row after restart', async () => {
+			const f = await readyQueue();
+			f.adapter.cancelQueueItem('agent', 'tab', f.input.dispatchId);
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)).toMatchObject({
+				queueCancelled: true,
+				phase: 'settled',
+				outcome: 'rejected',
+			});
+			await expect(
+				new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+					'agent',
+					'tab',
+					f.input.dispatchId,
+					() => {}
+				)
+			).rejects.toThrow('DispatchQueueCancelled');
+		});
+
+		it.each(['same-host', 'host-restart', 'missing-proof', 'changed-caller'] as const)(
+			'binds callback admission only to real capture (%s)',
+			async (mode) => {
+				const f = queueAdapter(true);
+				const snapshot = f.deps.snapshot();
+				snapshot.owners.push({
+					id: 'manager',
+					cwd: process.cwd(),
+					isPianola: true,
+					remote: false,
+					groupId: null,
+				});
+				snapshot.tabs.push({
+					...snapshot.tabs[0],
+					agentId: 'manager',
+					tabId: 'manager-tab',
+					createdAt: 7,
+				});
+				let registry = new DispatchCallbackRegistry({ onFire: vi.fn() });
+				const deps = { ...f.deps, snapshot: () => snapshot, callbackRegistry: () => registry };
+				const adapter = new PianolaNewTabDispatch(deps);
+				const result = await adapter.runQueue(
+					f.client,
+					f.input,
+					() =>
+						registry.register({
+							targetAgentId: 'agent',
+							targetTabId: 'tab',
+							callerAgentId: 'manager',
+							callerTabId: 'manager-tab',
+							prompt: f.input.prompt,
+							timeoutMs: 60000,
+							pendingAdmissionId: f.input.dispatchId,
+						}).callbackId
+				);
+				registry.noteSpawn('agent-ai-tab');
+				registry.noteExit('agent-ai-tab', 0);
+				expect(registry.get(result.callbackId!)?.state).toBe('pending');
+				f.revoke();
+				snapshot.tabs[0].busy = false;
+				snapshot.tabs[0].cursorAvailable = true;
+				if (mode !== 'same-host') registry = new DispatchCallbackRegistry({ onFire: vi.fn() });
+				if (mode === 'missing-proof') {
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					delete record.queuePrepare!.callbackProof;
+					f.store.writeDispatchAdmission(record);
+				}
+				if (mode === 'changed-caller') snapshot.tabs[1].createdAt = 8;
+				const restarted = new PianolaNewTabDispatch(deps);
+				if (mode === 'missing-proof' || mode === 'changed-caller') {
+					await expect(
+						restarted.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {})
+					).rejects.toThrow('DispatchCallbackReconstructionUnavailable');
+					expect(registry.list()).toHaveLength(0);
+					return;
+				}
+				await restarted.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {});
+				const key = 'agent-ai-tab';
+				expect(registry.list()[0].state).toBe('pending');
+				registry.noteSpawn(key); // even a foreign spawn observation cannot arm it
+				expect(registry.list()[0].state).toBe('pending');
+				const guard = pianolaNewTabSpawns.claim(key, f.input.dispatchId, f.input.dispatchId);
+				guard();
+				pianolaNewTabSpawns.captured(key, 'foreign-preflight-run');
+				pianolaNewTabSpawns.started(key);
+				expect(registry.list()[0].state).toBe('pending');
+				pianolaNewTabSpawns.captured(
+					key,
+					'real-callback-run',
+					f.input.dispatchId,
+					f.input.dispatchId
+				);
+				expect(registry.list()[0].state).toBe('armed');
+				expect(registry.list()[0].pendingAdmissionId).toBeUndefined();
+				pianolaNewTabSpawns.started(key, undefined, f.input.dispatchId, f.input.dispatchId);
+				await new Promise((resolve) => setImmediate(resolve));
+				expect(f.store.readDispatchAdmission(f.input.dispatchId)?.runId).toBe('real-callback-run');
+			}
+		);
+
+		it('journals a user deletion from the actual serialized persistence save', async () => {
+			const f = await readyQueue();
+			const cancel = vi.fn((agentId: string, tabId: string, itemId: string) =>
+				f.adapter.cancelQueueItem(agentId, tabId, itemId)
+			);
+			deps.cancelQueueItem = cancel;
+			await save([{ ...current[0], executionQueue: [] }], [], structuredClone(current));
+			expect(cancel).toHaveBeenCalledWith('agent', 'tab', f.input.dispatchId);
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)).toMatchObject({
+				queueCancelled: true,
+				outcome: 'rejected',
+			});
+		});
 
 		it('releases a durable standing task after caller end and host restart, with an idle baseline and no native send', async () => {
 			const f = await readyQueue();

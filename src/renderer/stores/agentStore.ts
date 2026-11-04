@@ -1,3 +1,4 @@
+import { flushSessionPersistenceNow } from '../services/sessionPersistenceFlush';
 import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
@@ -63,6 +64,7 @@ import { filterYoloArgs } from '../utils/agentArgs';
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemDispatchFailure,
+	applyQueuedItemDispatch,
 	applyQueuedItemRelease,
 	clearSpawnCollision,
 	noteSpawnCollision,
@@ -391,7 +393,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
-		if (item.pendingAdmissionId) throw new Error('DispatchAdmissionPending');
+		const managedQueue = !!item.pendingAdmissionId;
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
@@ -451,6 +453,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// skipped: its text is Maestro's own "X replied" note, not something the
 		// user asked for, and the message it continues was named when it was sent.
 		if (
+			!managedQueue &&
 			item.type === 'message' &&
 			item.text?.trim() &&
 			!item.agentContext &&
@@ -467,7 +470,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// the consult replies, or arms a hand-off of its answer; `mentionDispatch`
 		// is what the turn's prompt has to be told about either.
 		let mentionDispatch: CrossAgentMentionDispatch | undefined;
-		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+		if (!managedQueue && item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
 			mentionDispatch = dispatchCrossAgentMentionsForMessage(
 				item.text,
 				session,
@@ -505,9 +508,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// its tabId pinned to the resolved target - `item.tabId` may be undefined
 		// when the item fell back to the active tab. `crossAgentMention` is dropped:
 		// the consult just fired, and an auto-retry of this turn must not re-fire it.
-		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
+		if (!managedQueue)
+			noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
 		try {
+			if (managedQueue && (item.type !== 'message' || item.crossAgentMention || item.agentContext))
+				throw new Error('DispatchQueueRoutingUnsupported');
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);
 			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
@@ -540,18 +546,26 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// A queued message that is the tab's FIRST turn opens a new provider
 				// session, so it carries the New Session Message like a typed one does.
 				// A message queued behind a running turn resumes, and gets nothing.
-				const effectivePrompt = withMentionTurnNotes(
-					takePendingMergedContext(
-						sessionId,
-						targetTab.id,
-						prependNewSessionMessageOnFirstTurn(
-							item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt,
+				const effectivePrompt = managedQueue
+					? prependNewSessionMessageOnFirstTurn(
+							messagePrompt,
 							session.newSessionMessage,
 							tabAgentSessionId
 						)
-					),
-					mentionDispatch
-				);
+					: withMentionTurnNotes(
+							takePendingMergedContext(
+								sessionId,
+								targetTab.id,
+								prependNewSessionMessageOnFirstTurn(
+									item.agentContext
+										? `${item.agentContext}\n\n---\n\n${messagePrompt}`
+										: messagePrompt,
+									session.newSessionMessage,
+									tabAgentSessionId
+								)
+							),
+							mentionDispatch
+						);
 
 				// NOTE: The user-visible log entry for this message is appended by the
 				// caller that dequeued the item (e.g. useAgentListeners onExit,
@@ -581,7 +595,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
-				await window.maestro.process.spawn({
+				if (managedQueue) await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+				const spawnResult = await window.maestro.process.spawn({
+					...(managedQueue
+						? { pianolaDispatchId: item.pendingAdmissionId, pianolaQueueItemId: item.id }
+						: {}),
 					sessionId: targetSessionId,
 					querySource: item.querySource,
 					toolType: session.toolType,
@@ -603,6 +621,18 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
+				if (managedQueue) {
+					if (!spawnResult.success)
+						throw new Error(spawnResult.error ?? 'DispatchNativeStartFailed');
+					if (!spawnResult.pianolaRunId) throw new Error('DispatchCaptureUnknown');
+					updateSessionWith(sessionId, (s) => {
+						const current = s.executionQueue?.find((row) => row.id === item.id);
+						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						return spawnResult.pianolaQueueReconciled
+							? { ...s, executionQueue: s.executionQueue.filter((row) => row.id !== item.id) }
+							: applyQueuedItemDispatch(s, current);
+					});
+				}
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
@@ -728,6 +758,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
+			if (managedQueue) {
+				const id = `queue-admission:${item.id}`;
+				const tab = getSession(sessionId)?.aiTabs.find((t) => t.id === item.tabId);
+				if (tab && !tab.logs.some((log) => log.id === id))
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							id,
+							source: 'error',
+							text: `Managed queue held: ${error.message ?? String(error)}. Check admission status before retrying.`,
+						},
+						item.tabId
+					);
+				throw error; // host journal owns uncertainty; never recreate/resume this row
+			}
 
 			// This is the ONE owner of dispatch-failure recovery. It used to only do
 			// the bookkeeping half (idle the tab, write an error frame) and leave the

@@ -65,7 +65,13 @@ export function setupAgentRunCapture(
 			prompt: config.prompt,
 			worktreePath: config.projectPath,
 		});
-		if (run) pianolaNewTabSpawns.captured(config.sessionId, run.id);
+		if (run)
+			pianolaNewTabSpawns.captured(
+				config.sessionId,
+				run.id,
+				config.pianolaDispatchId,
+				config.pianolaQueueItemId
+			);
 	});
 
 	processManager.on('agent-error', (sessionId: string, error: AgentError) => {

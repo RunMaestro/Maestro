@@ -556,6 +556,65 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it.each([
+			'foreign-window',
+			'web-bridge',
+			'wrong-marker',
+			'payload',
+			'model',
+			'conversation',
+			'valid',
+		] as const)(
+			'checks owning desktop and exact queue intent before host release (%s)',
+			async (mode) => {
+				const item = {
+					id: 'dispatch',
+					tabId: 'tab',
+					type: 'message',
+					text: 'Pinned prompt',
+					pendingAdmissionId: 'dispatch',
+					turnSettings: { model: 'pinned-model', effort: 'high' },
+				};
+				const agent = {
+					id: 'queue-agent',
+					toolType: 'claude-code',
+					cwd: '/project',
+					aiTabs: [{ id: 'tab', agentSessionId: 'conversation', permissionMode: 'standard' }],
+					executionQueue: [item],
+				};
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? [agent] : fallback
+				);
+				deps.getWindowForSession = () => ({ webContents: { id: 7 } }) as never;
+				const prepare = vi.fn().mockRejectedValue(new Error('ReachedHostRelease'));
+				deps.getWebServer = () => ({ prepareQueueSpawnFromMain: prepare }) as never;
+				const config = {
+					sessionId: 'queue-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+					pianolaDispatchId: mode === 'wrong-marker' ? 'foreign' : 'dispatch',
+					pianolaQueueItemId: 'dispatch',
+					agentSessionId: mode === 'conversation' ? 'other' : 'conversation',
+					prompt: mode === 'payload' ? 'Changed prompt' : item.text,
+					sessionCustomModel: mode === 'model' ? 'other-model' : 'pinned-model',
+					sessionCustomEffort: 'high',
+					readOnlyMode: false,
+					permissionMode: 'standard',
+				};
+				const event =
+					mode === 'web-bridge'
+						? { clientId: 'web' }
+						: { sender: { id: mode === 'foreign-window' ? 8 : 7, isDestroyed: () => false } };
+				await expect(handlers.get('process:spawn')!(event, config)).rejects.toThrow(
+					mode === 'valid' ? 'ReachedHostRelease' : /Dispatch/
+				);
+				expect(prepare).toHaveBeenCalledTimes(mode === 'valid' ? 1 : 0);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			}
+		);
+
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
 			writerGate.enabled = true;
 			const events = new EventEmitter();

@@ -34,6 +34,8 @@ export interface SdkProcessController {
  * Configuration for spawning a new process
  */
 export interface ProcessConfig {
+	pianolaDispatchId?: string;
+	pianolaQueueItemId?: string;
 	sessionId: string;
 	toolType: string;
 	cwd: string;

@@ -721,6 +721,15 @@ export class WebServer {
 		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
 	}
 
+	prepareQueueSpawnFromMain(
+		agentId: string,
+		tabId: string,
+		itemId: string,
+		assertOwner: () => void
+	) {
+		return this.messageHandler.prepareQueueSpawnFromMain(agentId, tabId, itemId, assertOwner);
+	}
+
 	private releaseQueueItemCallback?: ReleaseQueueItem;
 	setReleaseQueueItemCallback(callback?: ReleaseQueueItem): void {
 		this.releaseQueueItemCallback = callback;

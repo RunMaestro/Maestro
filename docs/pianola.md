@@ -207,7 +207,13 @@ Every named check must exist on the task's active `runId` and be `passed`. Missi
 
 Read the saved plan with `pianola plan show <plan-id> --json` to find the active `runId`; the deterministic `pianola:<plan>:<task>` projection is not necessarily the worker's run. `executionRunId` identifies the current physical process receipt. A repair gets a fresh tab and receipt while `runId` continues to identify the acceptance ledger the repair must update. Waiting for a missing or still-running check never triggers a repair by itself.
 
-The controller persists a claim before dispatch and the confirmed tab afterward. On controller recovery it retains those bindings. If a response was lost, a claim without a tab waits for reconciliation rather than dispatching the same prompt again. Desktop restart recovery marks interrupted physical runs failed; dispatch callbacks are in memory and do not survive a desktop restart. Use one controller to release dependents.
+The controller persists a claim before dispatch and the confirmed tab afterward. On controller recovery it retains those bindings. If a response was lost, a claim without a tab waits for reconciliation rather than dispatching the same prompt again. Desktop restart recovery marks interrupted physical runs failed; ordinary dispatch callbacks are in memory and do not survive a desktop restart. A managed queued dispatch can restore its pending callback only from its authenticated, durable callback intent while the original expiry and caller/target identities still match. Use one controller to release dependents.
+
+### Managed queue execution
+
+Authenticated managed queue work keeps its technical hold until the owning desktop window requests an actual spawn. The host checks FIFO eligibility, idle state, user pause, current scope policy, exact item and conversation identity, then durably records the release before native execution. Hold/Resume does not bypass this admission. Deleting an item or its tab cancels the stored request.
+
+Only the matching native spawn and captured AgentRun ID establish execution. A lost response can reconcile an already recorded run without spawning again; an uncertain release stays held for reconciliation. Pending callbacks ignore predecessor and unrelated spawns, and are released only by their own capture. Missing callback reconstruction evidence blocks execution explicitly. Queue messages that require cross-agent mention routing remain held with `DispatchQueueRoutingUnsupported`; unmanaged queue routing retains its existing behavior.
 
 ### Combining Cue, dispatch and watchers
 

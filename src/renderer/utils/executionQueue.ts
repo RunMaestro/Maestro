@@ -119,12 +119,12 @@ export function dropConsultHold(queue: QueuedItem[], tabId: string | undefined):
  * - consult and admission holds are barriers for their tab only;
  * - a paused item is simply skipped.
  */
-function firstRunnableQueueIndex(queue: QueuedItem[]): number {
+function firstRunnableQueueIndex(queue: QueuedItem[], includeAdmission = false): number {
 	const consultBlockedTabs = new Set<string>();
 	for (let index = 0; index < queue.length; index += 1) {
 		const item = queue[index];
 		if (item.waitingForConnection) return -1;
-		if (item.awaitingConsult || item.pendingAdmissionId) {
+		if (item.awaitingConsult || (item.pendingAdmissionId && (!includeAdmission || item.paused))) {
 			consultBlockedTabs.add(item.tabId);
 			continue;
 		}
@@ -144,6 +144,14 @@ export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem
 /** The first item that would actually run, or undefined if all are held/empty. */
 export function nextRunnableQueueItem(queue: QueuedItem[]): QueuedItem | undefined {
 	const index = firstRunnableQueueIndex(queue);
+	return index >= 0 ? queue[index] : undefined;
+}
+
+/** Candidate for the owning queue consumer only. This projection is a hint to
+ * the host, never a renderer release: ordinary dequeue/force/resume keep their
+ * existing admission barrier. The row stays intact through native admission. */
+export function nextQueueDrainItem(queue: QueuedItem[]): QueuedItem | undefined {
+	const index = firstRunnableQueueIndex(queue, true);
 	return index >= 0 ? queue[index] : undefined;
 }
 

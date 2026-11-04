@@ -116,6 +116,7 @@ export function cancelPendingDesktopSpawns(processId: string): boolean {
 
 /** Dependencies injected into the `process:spawn` orchestration handler. */
 export interface SpawnHandlerDependencies {
+	assertQueueOwner?: () => void;
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
@@ -134,7 +135,11 @@ export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
-	const admissionGuard = pianolaNewTabSpawns.claim(config.sessionId, config.pianolaDispatchId);
+	const admissionGuard = pianolaNewTabSpawns.claim(
+		config.sessionId,
+		config.pianolaDispatchId,
+		config.pianolaQueueItemId
+	);
 	const proofCleanup: { release?: () => void; notStarted: boolean } = { notStarted: true };
 	const controller = new AbortController();
 	const pending = pendingDesktopSpawns.get(config.sessionId) ?? new Set<AbortController>();
@@ -1274,6 +1279,7 @@ async function handleProcessSpawnImpl(
 	}
 
 	if (signal.aborted) throw new Error('Agent run cancelled');
+	deps.assertQueueOwner?.();
 	admissionGuard();
 	// Exceptions after entering native spawn are uncertain; retain the fence.
 	proofCleanup.notStarted = false;
@@ -1336,7 +1342,14 @@ async function handleProcessSpawnImpl(
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
 	proofCleanup.notStarted = !result.success;
-	if (result.success) pianolaNewTabSpawns.started(config.sessionId);
+	const pianolaRunId = result.success
+		? pianolaNewTabSpawns.started(
+				config.sessionId,
+				undefined,
+				config.pianolaDispatchId,
+				config.pianolaQueueItemId
+			)
+		: undefined;
 	const callerProcess = processManager.get(config.sessionId);
 	spawnReturned = true;
 	if (!result.success) exitListener.current?.(config.sessionId);
@@ -1560,6 +1573,7 @@ async function handleProcessSpawnImpl(
 	// Return spawn result with SSH remote info if used
 	return {
 		...result,
+		...(config.pianolaQueueItemId ? { pianolaRunId } : {}),
 		sshRemote: sshRemoteUsed
 			? {
 					id: sshRemoteUsed.id,

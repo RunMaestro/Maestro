@@ -118,7 +118,7 @@ function fixture() {
 			} else {
 				expect(store.readScopeCheckpoint(scopeId)?.tabs[0].tabId).toBe(control.tabId);
 				pianolaNewTabSpawns.claim(`worker-ai-${control.tabId}`, control.dispatchId)();
-				pianolaNewTabSpawns.started(`worker-ai-${control.tabId}`, 'native-run');
+				pianolaNewTabSpawns.started(`worker-ai-${control.tabId}`, 'native-run', control.dispatchId);
 			}
 			return { success: true, tabId: control.tabId };
 		}
@@ -502,8 +502,8 @@ describe('existing-tab production dispatch admission', () => {
 			expect(store.readDispatchAdmission(id)?.outcome).toBe('unknown');
 			const key = 'worker-ai-tab';
 			pianolaNewTabSpawns.claim(key, id)();
-			pianolaNewTabSpawns.captured(key, 'run:actual-existing');
-			pianolaNewTabSpawns.started(key);
+			pianolaNewTabSpawns.captured(key, 'run:actual-existing', id);
+			pianolaNewTabSpawns.started(key, undefined, id);
 			return true;
 		});
 		return f;

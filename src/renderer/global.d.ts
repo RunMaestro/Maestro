@@ -407,7 +407,9 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/autoRunRemote').AutoRunRemoteResult
 		) => void;
-		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
+		spawn: (
+			config: ProcessConfig
+		) => Promise<import('../main/preload/process/core').ProcessSpawnResponse>;
 		spawnTerminalTab: (config: {
 			sessionId: string;
 			cwd: string;

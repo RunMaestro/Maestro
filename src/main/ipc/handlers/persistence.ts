@@ -1,3 +1,6 @@
+import * as pianolaStore from '../../pianola/pianola-store-main';
+import { cancelPianolaQueueItem } from '../../pianola/pianola-new-tab-dispatch';
+import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
 /**
  * Persistence IPC Handlers
  *
@@ -200,6 +203,7 @@ function senderWebContentsIdOf(event: unknown): number | undefined {
  * Dependencies required for persistence handlers
  */
 export interface PersistenceHandlerDependencies {
+	cancelQueueItem?: (agentId: string, tabId: string, itemId: string) => void;
 	settingsStore: Store<MaestroSettings>;
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
@@ -307,6 +311,30 @@ export function registerPersistenceHandlers(
 			}
 			return { durable: true, request };
 		});
+	};
+
+	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]) => {
+		for (const agent of previous) {
+			const current = next.find((s) => s.id === agent.id);
+			for (const item of agent.executionQueue ?? []) {
+				if (
+					item.pendingAdmissionId &&
+					(!current?.aiTabs?.some((tab: { id: string }) => tab.id === item.tabId) ||
+						!current?.executionQueue?.some((row: { id: string }) => row.id === item.id))
+				) {
+					if (deps.cancelQueueItem)
+						deps.cancelQueueItem(agent.id, item.tabId, item.pendingAdmissionId);
+					else
+						cancelPianolaQueueItem(
+							pianolaStore,
+							getDispatchCallbackRegistry(),
+							agent.id,
+							item.tabId,
+							item.pendingAdmissionId
+						);
+				}
+			}
+		}
 	};
 
 	const releaseQueueItem: ReleaseQueueItem = (input, commit) => {
@@ -1048,6 +1076,7 @@ export function registerPersistenceHandlers(
 
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
+					noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
 					// Preserve the renderer acknowledgement contract: true means this
 					// revision reached disk, not merely the in-memory cache.
@@ -1230,6 +1259,7 @@ export function registerPersistenceHandlers(
 			}
 
 			try {
+				noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
 				sessionsStore.set('sessions', sessionsToPersist);
 				await flushSessionWrites();
 			} catch (err) {

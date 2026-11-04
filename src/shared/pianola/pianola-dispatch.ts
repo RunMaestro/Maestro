@@ -23,6 +23,21 @@ export interface PianolaDispatchReceipt {
 		| 'unavailable';
 	outcome: PianolaDispatchOutcome;
 }
+export interface PianolaQueueCallbackProof {
+	registration: {
+		targetAgentId: string;
+		targetTabId: string;
+		callerAgentId: string;
+		callerTabId?: string;
+		callbackPrompt?: string;
+		timeoutMs: number;
+		prompt: string;
+		pendingAdmissionId?: string;
+	};
+	expiresAt: number;
+	owner: import('./pianola-scope').PianolaScopeOwner;
+	callerTab?: { createdAt: number; agentSessionId?: string | null };
+}
 export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 	scopeId: string;
 	caller: CallerRunIdentity;
@@ -39,8 +54,14 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 		createdAt: number;
 		agentSessionId?: string | null;
 	};
+	queueCancelled?: true;
 	queueRelease?: { generation: string; baseline: PianolaScopeCursor | null };
-	queuePrepare?: { phase: 'unknown' | 'durable'; item: PianolaQueueItem; callbackId?: string };
+	queuePrepare?: {
+		phase: 'unknown' | 'durable';
+		item: PianolaQueueItem;
+		callbackId?: string;
+		callbackProof?: PianolaQueueCallbackProof;
+	};
 }
 
 /** Strict read boundary: a corrupt journal must never become a new dispatch. */
@@ -50,6 +71,7 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 	const id = (v: unknown) => typeof v === 'string' && v.trim().length > 0 && v.length <= 500;
 	if (
 		r.version !== 1 ||
+		(r.queueCancelled !== undefined && r.queueCancelled !== true) ||
 		!isPianolaScopeId(r.dispatchId) ||
 		!isPianolaScopeId(r.scopeId) ||
 		!id(r.targetAgentId) ||
@@ -86,6 +108,37 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 			(r.phase === 'bound' && (r.queuePrepare.phase === 'durable') !== (r.outcome === 'queued')))
 	)
 		return null;
+	if (r.queuePrepare?.callbackProof) {
+		const proof = r.queuePrepare.callbackProof;
+		const registration = proof.registration;
+		if (
+			!registration ||
+			!proof.owner ||
+			!id(proof.owner.id) ||
+			typeof proof.owner.cwd !== 'string' ||
+			typeof proof.owner.isPianola !== 'boolean' ||
+			typeof proof.owner.remote !== 'boolean' ||
+			proof.owner.id !== registration.callerAgentId ||
+			!id(registration.callerAgentId) ||
+			(registration.callerTabId !== undefined && !id(registration.callerTabId)) ||
+			(registration.callbackPrompt !== undefined &&
+				typeof registration.callbackPrompt !== 'string') ||
+			registration.targetAgentId !== r.targetAgentId ||
+			registration.targetTabId !== r.targetTabId ||
+			registration.pendingAdmissionId !== r.dispatchId ||
+			registration.prompt !== (r.queuePrepare.item.text ?? '') ||
+			!Number.isFinite(registration.timeoutMs) ||
+			registration.timeoutMs < 1000 ||
+			registration.timeoutMs > 86_400_000 ||
+			!Number.isSafeInteger(proof.expiresAt) ||
+			(registration.callerTabId &&
+				(!proof.callerTab ||
+					!Number.isSafeInteger(proof.callerTab.createdAt) ||
+					(proof.callerTab.agentSessionId != null && !id(proof.callerTab.agentSessionId))))
+		)
+			return null;
+	}
+
 	if (
 		r.queueAuthority &&
 		(!r.queuePrepare ||

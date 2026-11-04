@@ -17,6 +17,8 @@ import type {
 export interface ProcessConfig {
 	sessionId: string;
 	pianolaDispatchId?: string;
+	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -44,6 +46,9 @@ export interface ProcessConfig {
  * Response from spawning a process
  */
 export interface ProcessSpawnResponse {
+	error?: string;
+	pianolaRunId?: string;
+	pianolaQueueReconciled?: boolean;
 	pid: number;
 	success: boolean;
 	sshRemote?: { id: string; name: string; host: string };

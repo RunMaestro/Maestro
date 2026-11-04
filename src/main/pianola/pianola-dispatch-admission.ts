@@ -361,7 +361,8 @@ export class PianolaDispatchAdmissionService {
 		client: Client,
 		dispatchId: string,
 		item: import('../../shared/pianola/pianola-dispatch').PianolaQueueItem,
-		callbackId?: string
+		callbackId?: string,
+		callbackProof?: import('../../shared/pianola/pianola-dispatch').PianolaQueueCallbackProof
 	) {
 		return this.queue.enqueue('admissions', async () => {
 			const record = this.record(client, dispatchId);
@@ -397,6 +398,7 @@ export class PianolaDispatchAdmissionService {
 				phase: 'unknown',
 				item: JSON.parse(canonicalJson(item)),
 				...(callbackId ? { callbackId } : {}),
+				...(callbackProof ? { callbackProof } : {}),
 			};
 			record.outcome = 'unknown';
 			try {
@@ -422,6 +424,7 @@ export class PianolaDispatchAdmissionService {
 				!record.queueAuthority
 			)
 				throw new Error('DispatchQueueAuthorityUnavailable');
+			if (record.queueCancelled) throw new Error('DispatchQueueCancelled');
 			if (record.phase !== 'bound' || record.queueRelease)
 				throw new Error('DispatchQueueReleaseUncertain');
 			if (!this.deps.releaseQueueItem || !this.deps.queueSnapshot)
@@ -440,6 +443,8 @@ export class PianolaDispatchAdmissionService {
 			);
 			this.checkPolicy(record, auth);
 			const guard = () => {
+				if (this.deps.store.readDispatchAdmission(dispatchId)?.queueCancelled)
+					throw new Error('DispatchQueueCancelled');
 				auth.guard();
 				const snapshot = this.deps.queueSnapshot!();
 				const tab = snapshot.tabs.find(

@@ -1,4 +1,6 @@
-import { resolvePianolaScopeOwnership } from '../../shared/pianola/pianola-scope';
+import { getDispatchCallbackRegistry, type DispatchCallbackRegistry } from '../dispatch-callbacks';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { isPianolaScopeId, resolvePianolaScopeOwnership } from '../../shared/pianola/pianola-scope';
 /** Native new-tab adapter. A prepared tab cannot spawn before durable enrollment. */
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import {
@@ -23,6 +25,9 @@ class NewTabSpawnFences {
 			claimed?: boolean;
 			capturedRunId?: string;
 			dispatchId?: string;
+			queueOnly?: boolean;
+			captured?: (runId: string) => void;
+			notStarted?: () => void;
 		}
 	>();
 	hold(agentId: string, tabId: string) {
@@ -41,11 +46,15 @@ class NewTabSpawnFences {
 		tabId: string,
 		guard: () => void,
 		started: (runId?: string) => void,
-		dispatchId?: string
+		dispatchId?: string,
+		lifecycle?: { captured(runId: string): void; notStarted(): void; queueOnly?: boolean }
 	) {
 		const entry = this.held.get(`${agentId}-ai-${tabId}`);
 		if (!entry) throw new Error('DispatchTargetNotHeld');
 		entry.dispatchId = dispatchId;
+		entry.queueOnly = lifecycle?.queueOnly;
+		entry.captured = lifecycle?.captured;
+		entry.notStarted = lifecycle?.notStarted;
 		entry.guard = guard;
 		entry.started = started;
 	}
@@ -55,12 +64,18 @@ class NewTabSpawnFences {
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
 		entry.guard();
 	}
-	claim(processId: string, dispatchId?: string): (() => void) & { notStarted(): void } {
+	claim(
+		processId: string,
+		dispatchId?: string,
+		queueItemId?: string
+	): (() => void) & { notStarted(): void } {
 		const entry = this.held.get(processId);
 		if (!entry) {
 			if (dispatchId) throw new Error('DispatchFenceUnavailable');
 			return Object.assign(() => {}, { notStarted() {} });
 		}
+		if (entry.queueOnly && queueItemId !== entry.dispatchId)
+			throw new Error('DispatchQueueConsumerRequired');
 		if (entry.dispatchId && entry.dispatchId !== dispatchId)
 			throw new Error('DispatchIdentityMismatch');
 		if (entry.claimed) throw new Error('DispatchAlreadyStarting');
@@ -69,7 +84,10 @@ class NewTabSpawnFences {
 			this.assertReady(processId);
 		} catch (error) {
 			// An armed dispatch refused before claiming cannot have started.
-			if (this.held.get(processId) === entry) this.held.delete(processId);
+			if (this.held.get(processId) === entry) {
+				this.held.delete(processId);
+				entry.notStarted?.();
+			}
 			throw error;
 		}
 		entry.claimed = true;
@@ -81,24 +99,80 @@ class NewTabSpawnFences {
 			{
 				notStarted: () => {
 					// Only the owner of this claim can conclude a proven nonstart.
-					if (this.held.get(processId) === entry) this.held.delete(processId);
+					if (this.held.get(processId) === entry) {
+						this.held.delete(processId);
+						entry.notStarted?.();
+					}
 				},
 			}
 		);
 	}
 
-	captured(processId: string, runId: string) {
+	captured(processId: string, runId: string, dispatchId?: string, queueItemId?: string) {
 		const entry = this.held.get(processId);
-		if (entry?.claimed) entry.capturedRunId = runId;
+		if (
+			entry?.claimed &&
+			(!entry.dispatchId || entry.dispatchId === dispatchId) &&
+			(!entry.queueOnly || queueItemId === entry.dispatchId)
+		) {
+			entry.capturedRunId = runId;
+			entry.captured?.(runId);
+		}
 	}
 
-	started(processId: string, runId?: string) {
+	started(processId: string, runId?: string, dispatchId?: string, queueItemId?: string) {
 		const entry = this.held.get(processId);
-		if (!entry) return;
+		if (
+			!entry ||
+			(entry.dispatchId && entry.dispatchId !== dispatchId) ||
+			(entry.queueOnly && queueItemId !== entry.dispatchId)
+		)
+			return;
 		entry.started?.(runId ?? entry.capturedRunId);
 		this.held.delete(processId);
+		return runId ?? entry.capturedRunId;
 	}
 }
+/** Called synchronously under the existing session write lock, even when the
+ * WebServer has not started. A removed durable request cannot be resurrected
+ * by a stale renderer row. Native uncertainty is never labelled a nonstart. */
+export function cancelPianolaQueueItem(
+	store: Pick<
+		PianolaDispatchAdmissionDeps['store'],
+		'readDispatchAdmission' | 'writeDispatchAdmission'
+	>,
+	registry: DispatchCallbackRegistry | null | undefined,
+	agentId: string,
+	tabId: string,
+	itemId: string
+) {
+	if (!isPianolaScopeId(itemId)) return;
+	const record = store.readDispatchAdmission(itemId);
+	if (
+		!record?.queuePrepare ||
+		record.targetAgentId !== agentId ||
+		record.targetTabId !== tabId ||
+		record.runId ||
+		record.phase === 'settled'
+	)
+		return;
+	record.queueCancelled = true;
+	if (!record.queueRelease) {
+		record.phase = 'settled';
+		record.outcome = 'rejected';
+	}
+	store.writeDispatchAdmission(record);
+	const callback = record.queuePrepare.callbackId
+		? registry?.get(record.queuePrepare.callbackId)
+		: undefined;
+	if (
+		callback?.pendingAdmissionId === itemId &&
+		callback.targetAgentId === agentId &&
+		callback.targetTabId === tabId
+	)
+		registry?.cancel(callback.callbackId);
+}
+
 export const pianolaNewTabSpawns = new NewTabSpawnFences();
 
 export interface PianolaExistingTabRequest extends PianolaNewTabRequest {
@@ -139,6 +213,7 @@ export class PianolaNewTabDispatch {
 			queueItem?(
 				request: PianolaExistingTabRequest & { held: boolean }
 			): Promise<import('../../shared/pianola/pianola-dispatch').PianolaQueueItem>;
+			callbackRegistry?: () => DispatchCallbackRegistry | null;
 			onReconcileError(error: unknown): void;
 		}
 	) {
@@ -388,7 +463,13 @@ export class PianolaNewTabDispatch {
 						throw new Error('DispatchQueueUnavailable');
 					const item = await this.deps.queueItem(request);
 					const callbackId = armCallback(request.targetTabId);
-					outcome = await this.admission.prepareQueue(client, request.dispatchId, item, callbackId);
+					outcome = await this.admission.prepareQueue(
+						client,
+						request.dispatchId,
+						item,
+						callbackId,
+						callbackId ? this.queueCallbackProof(callbackId) : undefined
+					);
 					prepared = outcome.prepared;
 					if (outcome.commitFailed) throw outcome.commitError;
 					// The journal commit above forbids ANY subsequent enqueue for this key,
@@ -428,6 +509,190 @@ export class PianolaNewTabDispatch {
 					durable: false,
 				};
 			}
+		});
+	}
+
+	cancelQueueItem(agentId: string, tabId: string, itemId: string) {
+		cancelPianolaQueueItem(this.deps.store, this.registry(), agentId, tabId, itemId);
+	}
+
+	private registry() {
+		return this.deps.callbackRegistry?.() ?? getDispatchCallbackRegistry();
+	}
+
+	private queueCallbackProof(callbackId: string) {
+		const entry = this.registry()?.get(callbackId);
+		if (!entry) return undefined;
+		const snapshot = this.snapshot();
+		const owner = snapshot.owners.find((o) => o.id === entry.callerAgentId);
+		const tab = entry.callerTabId
+			? snapshot.tabs.find(
+					(t) => t.agentId === entry.callerAgentId && t.tabId === entry.callerTabId
+				)
+			: undefined;
+		if (!snapshot.complete || !owner || (entry.callerTabId && !tab))
+			throw new Error('DispatchCallbackOwnerUnavailable');
+		return {
+			registration: {
+				targetAgentId: entry.targetAgentId,
+				targetTabId: entry.targetTabId,
+				callerAgentId: entry.callerAgentId,
+				callerTabId: entry.callerTabId,
+				callbackPrompt: entry.callbackPrompt,
+				timeoutMs: entry.timeoutMs,
+				prompt: entry.prompt,
+				pendingAdmissionId: entry.pendingAdmissionId,
+			},
+			expiresAt: entry.expiresAt,
+			owner,
+			...(tab
+				? { callerTab: { createdAt: tab.createdAt, agentSessionId: tab.agentSessionId } }
+				: {}),
+		};
+	}
+
+	/** This host capability is called only from the owning desktop spawn IPC.
+	 * There is no wire journal adoption or renderer release acknowledgment. */
+	prepareQueueSpawn(agentId: string, tabId: string, itemId: string, assertOwner: () => void) {
+		return this.queue.enqueue(itemId, async () => {
+			assertOwner();
+			const record = this.deps.store.readDispatchAdmission(itemId);
+			if (
+				!record?.queuePrepare ||
+				record.targetAgentId !== agentId ||
+				record.targetTabId !== tabId ||
+				record.queueItemId !== itemId
+			)
+				throw new Error('DispatchTargetMismatch');
+			if (record.outcome === 'accepted' && record.runId)
+				return { reconciled: true as const, runId: record.runId };
+			if (record.queueCancelled) throw new Error('DispatchQueueCancelled');
+			if (record.outcome === 'rejected') throw new Error('DispatchQueueNotStarted');
+			if (record.phase !== 'bound' || record.queueRelease)
+				throw new Error('DispatchQueueReleaseUncertain');
+			if (!record.queueAuthority || Date.now() >= record.queueAuthority.expiresAt)
+				throw new Error('DispatchQueueAuthorityUnavailable');
+			let callbackId = record.queuePrepare.callbackId;
+			const registry = this.registry();
+			const callbackGuard = () => {
+				if (!callbackId) return;
+				const proof = record.queuePrepare!.callbackProof;
+				const entry = registry?.get(callbackId);
+				const snapshot = this.snapshot();
+				const owner = snapshot.owners.find((o) => o.id === proof?.registration.callerAgentId);
+				const tab = snapshot.tabs.find(
+					(t) =>
+						t.agentId === proof?.registration.callerAgentId &&
+						t.tabId === proof?.registration.callerTabId
+				);
+				if (
+					!proof ||
+					!snapshot.complete ||
+					!owner ||
+					canonicalJson(owner) !== canonicalJson(proof.owner) ||
+					(proof.registration.callerTabId &&
+						(!tab ||
+							tab.createdAt !== proof.callerTab?.createdAt ||
+							tab.agentSessionId !== proof.callerTab?.agentSessionId)) ||
+					proof.registration.targetAgentId !== agentId ||
+					proof.registration.targetTabId !== tabId ||
+					proof.registration.pendingAdmissionId !== itemId ||
+					Date.now() >= proof.expiresAt ||
+					!entry ||
+					entry.state !== 'pending' ||
+					entry.pendingAdmissionId !== itemId ||
+					canonicalJson({
+						targetAgentId: entry.targetAgentId,
+						targetTabId: entry.targetTabId,
+						callerAgentId: entry.callerAgentId,
+						callerTabId: entry.callerTabId,
+						callbackPrompt: entry.callbackPrompt,
+						timeoutMs: proof.registration.timeoutMs,
+						prompt: entry.prompt,
+						pendingAdmissionId: entry.pendingAdmissionId,
+					}) !== canonicalJson(proof.registration)
+				)
+					throw new Error('DispatchCallbackReconstructionUnavailable');
+			};
+			if (callbackId && !registry?.get(callbackId)) {
+				const proof = record.queuePrepare.callbackProof;
+				if (!registry || !proof || Date.now() >= proof.expiresAt)
+					throw new Error('DispatchCallbackReconstructionUnavailable');
+				// Only the persisted, authenticated intent may reconstruct this callback.
+				// Validate the caller identity before registering anything.
+				const snapshot = this.snapshot();
+				const owner = snapshot.owners.find((o) => o.id === proof.registration.callerAgentId);
+				const tab = snapshot.tabs.find(
+					(t) =>
+						t.agentId === proof.registration.callerAgentId &&
+						t.tabId === proof.registration.callerTabId
+				);
+				if (
+					!snapshot.complete ||
+					!owner ||
+					canonicalJson(owner) !== canonicalJson(proof.owner) ||
+					(proof.registration.callerTabId &&
+						(!tab ||
+							tab.createdAt !== proof.callerTab?.createdAt ||
+							tab.agentSessionId !== proof.callerTab?.agentSessionId)) ||
+					proof.registration.targetAgentId !== agentId ||
+					proof.registration.targetTabId !== tabId ||
+					proof.registration.pendingAdmissionId !== itemId ||
+					registry.hasArmedFor(agentId, tabId)
+				)
+					throw new Error('DispatchCallbackReconstructionUnavailable');
+				callbackId = registry.register({
+					...proof.registration,
+					timeoutMs: proof.expiresAt - Date.now(),
+				}).callbackId;
+				record.queuePrepare.callbackId = callbackId;
+				this.deps.store.writeDispatchAdmission(record);
+			}
+			callbackGuard();
+			// Do not hold a busy predecessor. Only D01 can establish FIFO/idle eligibility.
+			const released = await this.admission.releaseQueue(itemId);
+			assertOwner();
+			callbackGuard();
+			if (pianolaNewTabSpawns.isHeld(agentId, tabId)) throw new Error('DispatchTargetHeld');
+			pianolaNewTabSpawns.hold(agentId, tabId);
+			const guard = () => {
+				const current = this.deps.store.readDispatchAdmission(itemId);
+				if (
+					current?.queueCancelled ||
+					current?.phase !== 'released' ||
+					current.queueRelease?.generation !== released.generation
+				)
+					throw new Error('DispatchQueueCancelledOrChanged');
+				assertOwner();
+				callbackGuard();
+				released.guard();
+			};
+			pianolaNewTabSpawns.arm(
+				agentId,
+				tabId,
+				guard,
+				(runId) => {
+					if (runId)
+						void this.admission
+							.reconcile(itemId, 'accepted', runId)
+							.catch(this.deps.onReconcileError);
+				},
+				itemId,
+				{
+					queueOnly: true,
+					captured: () => {
+						if (callbackId) {
+							registry!.releaseQueueAdmission(callbackId, itemId);
+							registry!.noteSpawn(`${agentId}-ai-${tabId}`);
+						}
+					},
+					notStarted: () => {
+						if (callbackId) registry?.cancel(callbackId);
+						void this.admission.reconcile(itemId, 'rejected').catch(this.deps.onReconcileError);
+					},
+				}
+			);
+			return { reconciled: false as const, generation: released.generation };
 		});
 	}
 

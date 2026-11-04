@@ -10,6 +10,8 @@ import type { HarnessControlMode } from '../../../../shared/maestro-lib/provider
 export interface SpawnProcessConfig {
 	sessionId: string;
 	pianolaDispatchId?: string;
+	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

@@ -91,8 +91,8 @@ function fixture() {
 			const guard = pianolaNewTabSpawns.claim(key, control?.dispatchId);
 			guard();
 			events.push('spawn');
-			pianolaNewTabSpawns.captured(key, 'actual-spawn-generation');
-			pianolaNewTabSpawns.started(key);
+			pianolaNewTabSpawns.captured(key, 'actual-spawn-generation', control?.dispatchId);
+			pianolaNewTabSpawns.started(key, undefined, control?.dispatchId);
 			// First worker question can arrive before the renderer ack.
 			snapshot.tabs[0].cursor = { id: 'first-question', count: 1, textLength: 20 };
 			return { success: true, tabId: control?.tabId };

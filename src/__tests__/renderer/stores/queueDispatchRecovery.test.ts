@@ -535,3 +535,75 @@ describe('a slash command that fails to dispatch', () => {
 		expect(session().executionQueue.map((i) => i.id)).toEqual(['q1']);
 	});
 });
+
+describe('managed queue spawn consumption', () => {
+	it('keeps the held row until real capture acknowledgment and passes both exact markers', async () => {
+		const item: QueuedItem = {
+			id: 'managed',
+			tabId: TAB,
+			timestamp: 1,
+			type: 'message',
+			text: 'Managed prompt',
+			pendingAdmissionId: 'managed',
+		};
+		setSession({ ...session(), executionQueue: [item] });
+		mockSpawn.mockImplementationOnce(async (config) => {
+			expect(config).toMatchObject({
+				pianolaDispatchId: 'managed',
+				pianolaQueueItemId: 'managed',
+				prompt: item.text,
+			});
+			expect(session().state).toBe('idle');
+			expect(session().executionQueue).toEqual([item]);
+			return { success: true, pid: 42, pianolaRunId: 'captured-run' };
+		});
+		await useAgentStore.getState().processQueuedItem(SESSION, item, deps);
+		expect(session().executionQueue).toEqual([]);
+		expect(session().state).toBe('busy');
+		expect(cardsFor(item.id)).toBe(1);
+	});
+	it.each(['unknown', 'failed', 'lost-ack'] as const)(
+		'retains the immutable technical hold on %s without local recovery/resend',
+		async (outcome) => {
+			const item: QueuedItem = {
+				id: 'managed',
+				tabId: TAB,
+				timestamp: 1,
+				type: 'message',
+				text: 'Managed prompt',
+				pendingAdmissionId: 'managed',
+			};
+			setSession({ ...session(), executionQueue: [item] });
+			if (outcome === 'lost-ack') mockSpawn.mockRejectedValueOnce(new Error('Lost ack'));
+			else mockSpawn.mockResolvedValueOnce({ success: outcome === 'unknown', pid: 42 });
+			await expect(
+				useAgentStore.getState().processQueuedItem(SESSION, item, deps)
+			).rejects.toThrow();
+			expect(session().executionQueue).toEqual([item]);
+			expect(session().state).toBe('idle');
+			expect(cardsFor(item.id)).toBe(0);
+		}
+	);
+});
+
+it('reconciles a committed run after a lost spawn acknowledgment without marking it busy again', async () => {
+	const item: QueuedItem = {
+		id: 'managed',
+		tabId: TAB,
+		timestamp: 1,
+		type: 'message',
+		text: 'Managed prompt',
+		pendingAdmissionId: 'managed',
+	};
+	setSession({ ...session(), executionQueue: [item] });
+	mockSpawn.mockResolvedValueOnce({
+		success: true,
+		pid: -1,
+		pianolaRunId: 'previous-run',
+		pianolaQueueReconciled: true,
+	});
+	await useAgentStore.getState().processQueuedItem(SESSION, item, deps);
+	expect(session().executionQueue).toEqual([]);
+	expect(session().state).toBe('idle');
+	expect(cardsFor(item.id)).toBe(0);
+});

@@ -2,6 +2,10 @@ import {
 	cancelRelayConversationTurn,
 	getLiveRelayConversationTurns,
 } from '../../plugins/relay-conversations';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
+import { getPrompt } from '../../prompt-manager';
 import { getPendingPermissionSnapshot } from '../../permission-relay/registry';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
@@ -99,6 +103,7 @@ export interface ProcessHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	safeSend?: (channel: string, ...args: unknown[]) => void;
 	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
+	getWebServer?: () => import('../../web-server/WebServer').WebServer | null;
 	sessionsStore: Store<{ sessions: any[] }>;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
@@ -192,10 +197,107 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
-	ipcMain.handle(
-		'process:spawn',
-		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
-			handleProcessSpawn(config, {
+	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
+		const assertOwner = () => {
+			const agent = deps.sessionsStore
+				.get('sessions', [])
+				.find((s) =>
+					s.aiTabs?.some((t: { id: string }) => `${s.id}-ai-${t.id}` === config.sessionId)
+				);
+			const owner = agent && deps.getWindowForSession?.(agent.id);
+			if (
+				!agent ||
+				!owner ||
+				!event.sender ||
+				'clientId' in event ||
+				event.sender.id !== owner.webContents.id ||
+				event.sender.isDestroyed()
+			)
+				throw new Error('DispatchWindowOwnerMismatch');
+			const tab = agent.aiTabs.find(
+				(t: { id: string }) => `${agent.id}-ai-${t.id}` === config.sessionId
+			);
+			const item = agent.executionQueue?.find(
+				(i: { id: string }) => i.id === config.pianolaQueueItemId
+			);
+			const readOnly =
+				item?.readOnlyMode === true ||
+				tab.readOnlyMode === true ||
+				tab.permissionMode === 'readonly';
+			const expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
+			const settings = item?.turnSettings;
+			if (
+				!item ||
+				item.pendingAdmissionId !== config.pianolaDispatchId ||
+				item.type !== 'message' ||
+				item.crossAgentMention ||
+				item.agentContext ||
+				config.toolType !== agent.toolType ||
+				config.cwd !== agent.cwd ||
+				config.agentSessionId !== (tab.agentSessionId ?? undefined) ||
+				config.prompt !==
+					prependNewSessionMessageOnFirstTurn(
+						expected,
+						agent.newSessionMessage,
+						tab.agentSessionId
+					) ||
+				config.sessionCustomModel !==
+					(settings ? settings.model : (tab.customModel ?? agent.customModel)) ||
+				config.sessionCustomEffort !==
+					(settings ? settings.effort : (tab.customEffort ?? agent.customEffort)) ||
+				config.readOnlyMode !== readOnly ||
+				config.permissionMode !== (readOnly ? 'readonly' : resolveTabPermissionMode(tab)) ||
+				canonicalJson(config.images ?? []) !== canonicalJson(item.images ?? []) ||
+				[
+					'customPath',
+					'customArgs',
+					'customEnvVars',
+					'customContextWindow',
+					'additionalDirectories',
+					'sessionSshRemoteConfig',
+				].some(
+					(key) =>
+						canonicalJson(
+							config[
+								key === 'sessionSshRemoteConfig'
+									? key
+									: (`session${key[0].toUpperCase()}${key.slice(1)}` as keyof SpawnProcessConfig)
+							] ?? null
+						) !== canonicalJson(agent[key] ?? null)
+				)
+			)
+				throw new Error('DispatchQueueSpawnIntentMismatch');
+		};
+		return withIpcErrorLogging(handlerOpts('spawn'), async () => {
+			if (config.pianolaQueueItemId) {
+				assertOwner();
+				if (config.pianolaDispatchId !== config.pianolaQueueItemId)
+					throw new Error('DispatchIdentityMismatch');
+				const server = deps.getWebServer?.();
+				if (!server) throw new Error('DispatchQueueDrainUnavailable');
+				const agent = deps.sessionsStore
+					.get('sessions', [])
+					.find((s) =>
+						s.aiTabs?.some((t: { id: string }) => `${s.id}-ai-${t.id}` === config.sessionId)
+					);
+				const tab = agent?.aiTabs?.find(
+					(t: { id: string }) => `${agent.id}-ai-${t.id}` === config.sessionId
+				);
+				const prepared = await server.prepareQueueSpawnFromMain(
+					agent.id,
+					tab.id,
+					config.pianolaQueueItemId,
+					assertOwner
+				);
+				if (prepared.reconciled)
+					return {
+						success: true,
+						pid: -1,
+						pianolaRunId: prepared.runId,
+						pianolaQueueReconciled: true,
+					};
+			}
+			return handleProcessSpawn(config, {
 				getProcessManager,
 				getAgentDetector,
 				agentConfigsStore,
@@ -204,9 +306,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				safeSend,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
-			})
-		)
-	);
+				assertQueueOwner: config.pianolaQueueItemId ? assertOwner : undefined,
+			});
+		})(event);
+	});
 
 	// Write data to a process
 	ipcMain.handle(

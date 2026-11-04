@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	isRunnableQueueItem,
 	nextRunnableQueueItem,
+	nextQueueDrainItem,
 	hasRunnableQueueItem,
 	takeNextRunnableQueueItem,
 	reorderQueueItem,
@@ -1335,5 +1336,27 @@ describe('describeSteerBlocked', () => {
 		const fallback = describeSteerBlocked(undefined);
 		expect(describeSteerBlocked('some-future-reason')).toBe(fallback);
 		expect(describeSteerBlocked('toString')).toBe(fallback);
+	});
+});
+
+describe('host queue drain candidate selection', () => {
+	it('offers an unpaused managed item only to the host consumer, retaining its exact row', () => {
+		const held = { ...item('held'), pendingAdmissionId: 'dispatch' };
+		expect(nextQueueDrainItem([held])).toBe(held);
+		expect(nextRunnableQueueItem([held])).toBeUndefined();
+		expect(held.pendingAdmissionId).toBe('dispatch');
+	});
+	it('preserves a paused admission barrier for its own tab while other tabs proceed', () => {
+		const held = { ...item('held', true), pendingAdmissionId: 'dispatch' };
+		const same = item('same');
+		const other = tabItem('other', 'tab-2');
+		expect(nextQueueDrainItem([held, same, other])).toBe(other);
+	});
+	it('keeps connection and consult barriers and earlier eligible work ahead of managed work', () => {
+		const held = { ...item('held'), pendingAdmissionId: 'dispatch' };
+		const earlier = item('earlier');
+		expect(nextQueueDrainItem([earlier, held])).toBe(earlier);
+		expect(nextQueueDrainItem([{ ...earlier, waitingForConnection: true }, held])).toBeUndefined();
+		expect(nextQueueDrainItem([{ ...earlier, awaitingConsult: 'consult' }, held])).toBeUndefined();
 	});
 });

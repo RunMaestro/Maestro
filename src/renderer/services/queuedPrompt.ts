@@ -1,3 +1,4 @@
+import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 /**
  * queuedPrompt - put a prompt into an agent's execution queue from outside the
  * composer.
@@ -194,11 +195,17 @@ export function enqueuePromptForTab(options: {
  */
 export function removeQueuedItem(sessionId: string, itemId: string): boolean {
 	let removed = false;
+	let managed = false;
 	updateSessionWith(sessionId, (s) => {
 		if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
+		managed = !!s.executionQueue.find((i) => i.id === itemId)?.pendingAdmissionId;
 		removed = true;
 		return { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) };
 	});
+	if (managed)
+		void flushSessionPersistenceNow(useSessionStore.getState().sessions).catch((error) =>
+			logger.error('[Queue] Failed to persist managed cancellation', undefined, error)
+		);
 	return removed;
 }
 
@@ -229,8 +236,10 @@ function writeQueuedItemPaused(
 	next: (current: boolean) => boolean
 ): boolean {
 	let found = false;
+	let managed = false;
 	updateSessionWith(sessionId, (s) => {
 		if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
+		managed = !!s.executionQueue.find((i) => i.id === itemId)?.pendingAdmissionId;
 		found = true;
 		return {
 			...s,
@@ -239,6 +248,10 @@ function writeQueuedItemPaused(
 			),
 		};
 	});
+	if (managed)
+		void flushSessionPersistenceNow(useSessionStore.getState().sessions).catch((error) =>
+			logger.error('[Queue] Failed to persist managed pause', undefined, error)
+		);
 	return found;
 }
 
