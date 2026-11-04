@@ -14,6 +14,8 @@ import { execFileNoThrow } from '../utils/execFile';
 import { foldPathCase, isPathWithin } from '../utils/real-path-containment';
 import { execGitReadOnly } from '../utils/remote-git';
 import { discoverWorktreePullRequest } from './worktreePullRequests';
+import { inspectWorktreeCleanupConsumers } from './worktreePullRequestCleanupConsumers';
+import type { BranchSwitchGuardDeps } from '../utils/branch-switch-guard';
 type BlockerCode = WorktreePullRequestCleanupBlocker['code'];
 class CleanupBlocked extends Error {
 	readonly code: BlockerCode;
@@ -190,7 +192,8 @@ async function inspectCheckout(request: WorktreePullRequestCleanupPreflightReque
 }
 /** Read-only and advisory. This stage can never authorize checkout removal. */
 export async function preflightWorktreePullRequestCleanup(
-	request: WorktreePullRequestCleanupPreflightRequest
+	request: WorktreePullRequestCleanupPreflightRequest,
+	consumerDeps: BranchSwitchGuardDeps = {}
 ): Promise<WorktreePullRequestCleanupPreflight> {
 	try {
 		if (request?.sshRemoteId)
@@ -281,7 +284,7 @@ export async function preflightWorktreePullRequestCleanup(
 		return {
 			status: 'blocked',
 			blockers: [
-				{ code: 'active-consumer', message: 'Fresh native consumer inventory is not implemented.' },
+				...(await inspectWorktreeCleanupConsumers(request, consumerDeps)),
 				{ code: 'mutation-busy', message: 'Shared mutation exclusion is not implemented.' },
 			],
 		};

@@ -8,7 +8,8 @@ vi.mock('fs/promises', () => ({
 }));
 vi.mock('../../../main/stores/getters', () => ({ getSessionsStore: vi.fn() }));
 vi.mock('../../../main/git/worktreePullRequests', () => ({ discoverWorktreePullRequest: vi.fn() }));
-vi.mock('../../../main/utils/remote-git', () => ({ execGitReadOnly: vi.fn() }));
+vi.mock('../../../main/utils/remote-git', () => ({ execGitReadOnly: vi.fn(), execGit: vi.fn() }));
+vi.mock('../../../shared/cli-activity', () => ({ isSessionBusyWithCli: () => false }));
 vi.mock('../../../main/utils/execFile', () => ({ execFileNoThrow: vi.fn() }));
 vi.mock('../../../main/utils/cliDetection', () => ({
 	resolveGhPath: async () => 'gh',
@@ -16,7 +17,7 @@ vi.mock('../../../main/utils/cliDetection', () => ({
 }));
 import { getSessionsStore } from '../../../main/stores/getters';
 import { discoverWorktreePullRequest } from '../../../main/git/worktreePullRequests';
-import { execGitReadOnly } from '../../../main/utils/remote-git';
+import { execGit, execGitReadOnly } from '../../../main/utils/remote-git';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { preflightWorktreePullRequestCleanup } from '../../../main/git/worktreePullRequestCleanupPreflight';
 const main = '/repo/main',
@@ -93,6 +94,7 @@ beforeEach(() => {
 		},
 	});
 	vi.mocked(execFileNoThrow).mockImplementation(async () => ok(JSON.stringify(remote)));
+	vi.mocked(execGit).mockResolvedValue(ok(worktree));
 });
 describe('read-only worktree cleanup preflight', () => {
 	it.each(['b', 'c'])(
@@ -117,6 +119,26 @@ describe('read-only worktree cleanup preflight', () => {
 		).toMatchObject({ blockers: [{ code: 'ssh-unsupported' }] });
 		for (const probe of [getSessionsStore, fs.realpath, execGitReadOnly, execFileNoThrow])
 			expect(probe).not.toHaveBeenCalled();
+	});
+	it('inspects the native process source after independent merge confirmation', async () => {
+		const processes: Array<{ sessionId: string; cwd: string; isTerminal: boolean }> = [];
+		vi.mocked(execFileNoThrow).mockImplementation(async () => {
+			processes.push({ sessionId: 'child-terminal-tab', cwd: worktree, isTerminal: true });
+			return ok(JSON.stringify(remote));
+		});
+		const result = await preflightWorktreePullRequestCleanup(request, {
+			getProcessManager: () => ({ getAll: () => processes }),
+		});
+		expect(result).toMatchObject({
+			status: 'blocked',
+			blockers: expect.arrayContaining([
+				expect.objectContaining({
+					code: 'active-consumer',
+					message: expect.stringContaining('native AI or terminal'),
+				}),
+				expect.objectContaining({ code: 'mutation-busy' }),
+			]),
+		});
 	});
 	it.each([
 		['parentSessionId', 'missing', 'registration'],
