@@ -135,7 +135,7 @@ export class DispatchCallbackRegistry {
 		// this registration landed. The tab id is brand new, so a recent spawn
 		// against it can only be our dispatch.
 		let replayExit: { at: number; exitCode: number | null } | undefined;
-		if (registration.armFromRecentSpawn) {
+		if (registration.armFromRecentSpawn && !registration.pendingAdmissionId) {
 			const spawnedAt = this.recentSpawns.get(entry.processSessionId);
 			if (spawnedAt !== undefined && now - spawnedAt <= SPAWN_LOOKBACK_MS) {
 				entry.state = 'armed';
@@ -165,6 +165,14 @@ export class DispatchCallbackRegistry {
 	 * A process started. Flips the matching pending entry to `armed` so the next
 	 * exit of that tab is recognised as ours.
 	 */
+	/** Next-stage host drain calls this only after its exact admission/release guard. */
+	releaseQueueAdmission(callbackId: string, dispatchId: string): void {
+		const entry = this.entries.get(callbackId);
+		if (!entry || entry.state !== 'pending' || entry.pendingAdmissionId !== dispatchId)
+			throw new Error('DispatchCallbackAdmissionMismatch');
+		delete entry.pendingAdmissionId;
+	}
+
 	noteSpawn(processSessionId: string): void {
 		const now = this.now();
 		this.recentSpawns.set(processSessionId, now);
@@ -178,7 +186,7 @@ export class DispatchCallbackRegistry {
 				entry.retryPending = false;
 				continue;
 			}
-			if (entry.state !== 'pending') continue;
+			if (entry.state !== 'pending' || entry.pendingAdmissionId) continue;
 			entry.state = 'armed';
 			entry.startedAt = now;
 		}

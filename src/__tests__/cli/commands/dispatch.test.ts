@@ -662,6 +662,50 @@ describe('dispatch command', () => {
 	});
 
 	describe('--queue flow', () => {
+		it('preserves a supplied queue reconciliation ID and unknown receipt with no resend', async () => {
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				success: false,
+				unknown: true,
+				dispatchId,
+				itemId: dispatchId,
+				tabId: 'tab-1',
+				admission: { outcome: 'unknown', dispatchId },
+			});
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+			await dispatch('agent-abc', 'Second task', { queue: true, tab: 'tab-1', dispatchId });
+			expect(mockSendCommand).toHaveBeenCalledOnce();
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'enqueue_command', dispatchId }),
+				'enqueue_command_result'
+			);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				unknown: true,
+				code: 'DISPATCH_UNKNOWN',
+				dispatchId,
+				itemId: dispatchId,
+			});
+		});
+		it('returns the minted queue ID after transport acknowledgment loss', async () => {
+			const mockSendCommand = vi.fn().mockRejectedValue(new Error('Command timed out'));
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+			await dispatch('agent-abc', 'Second task', { queue: true, tab: 'tab-1' });
+			const input = mockSendCommand.mock.calls[0][0];
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				unknown: true,
+				code: 'DISPATCH_UNKNOWN',
+				dispatchId: input.dispatchId,
+			});
+			expect(mockSendCommand).toHaveBeenCalledOnce();
+		});
+
 		it('sends enqueue_command with the target tab and surfaces queue position when busy', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -683,6 +727,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'enqueue_command',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					command: 'Second task',
 					inputMode: 'ai',

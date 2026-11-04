@@ -1,3 +1,4 @@
+import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * The `MaestroClient` interface: the one surface the TUI programs against.
  *
@@ -51,6 +52,9 @@ export type ClientErrorCode =
 	| 'failed';
 
 export interface ClientError {
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	code: ClientErrorCode;
 	/** Safe to show a person. Never holds a token or a secret. */
 	message: string;
@@ -315,6 +319,8 @@ export interface TabsApi {
 // ---------------------------------------------------------------------------
 
 export interface TurnInput {
+	/** Reconcile a prior send with the same ID; changed intent is refused. */
+	dispatchId?: string;
 	/**
 	 * What the person typed. The host adds the system prompt, conductor
 	 * profile, nudge, and template variables (CH-2).
@@ -328,7 +334,15 @@ export type TurnSendReceipt =
 	/** The agent was idle; the turn is running now. */
 	| { status: 'started' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
-	| { status: 'queued'; itemId: string; position: number; queueLength: number };
+	| {
+			status: 'queued';
+			itemId: string;
+			position: number;
+			queueLength: number;
+			dispatchId?: string;
+			admission?: PianolaDispatchReceipt;
+			durable?: boolean;
+	  };
 
 export interface QueuedTurn {
 	itemId: string;

@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
@@ -21,7 +22,8 @@ export function createQueueRemoteApi() {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -35,7 +37,8 @@ export function createQueueRemoteApi() {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => {
 				try {
 					callback(
@@ -48,7 +51,8 @@ export function createQueueRemoteApi() {
 						background,
 						held,
 						mentionRouting,
-						dispatchCallback
+						dispatchCallback,
+						control
 					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

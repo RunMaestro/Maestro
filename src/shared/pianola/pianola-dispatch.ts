@@ -1,5 +1,5 @@
 import type { MentionRouting } from '../crossAgentContext';
-/** Public, nonsecret dispatch journal and receipt. No caller proof or prompt is persisted. */
+/** Dispatch receipts and the host-only admission journal. Queue prepares retain the exact held row. */
 import type { CallerRunIdentity } from '../agentDelegation';
 import { isPianolaScopeId } from './pianola-scope';
 
@@ -29,6 +29,7 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 	intentFingerprint: string;
 	policyFingerprint: string;
 	phase: 'prepared' | 'bound' | 'enrolled' | 'released' | 'settled';
+	queuePrepare?: { phase: 'unknown' | 'durable'; item: PianolaQueueItem; callbackId?: string };
 }
 
 /** Strict read boundary: a corrupt journal must never become a new dispatch. */
@@ -55,12 +56,32 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 		!['not-started', 'queued', 'accepted', 'unknown', 'rejected'].includes(r.outcome) ||
 		[r.targetTabId, r.queueItemId, r.runId].some((v) => v !== undefined && !id(v)) ||
 		(r.phase !== 'prepared' && !id(r.targetTabId)) ||
-		(['prepared', 'bound', 'enrolled'].includes(r.phase) && r.outcome !== 'not-started') ||
+		(['prepared', 'bound', 'enrolled'].includes(r.phase) &&
+			r.outcome !== 'not-started' &&
+			!r.queuePrepare) ||
 		(r.phase === 'released' && r.outcome !== 'unknown') ||
 		(r.phase === 'settled' && !['accepted', 'queued', 'unknown', 'rejected'].includes(r.outcome))
 	)
 		return null;
+	if (
+		r.queuePrepare &&
+		(r.phase !== 'bound' ||
+			!['unknown', 'durable'].includes(r.queuePrepare.phase) ||
+			!['unknown', 'queued'].includes(r.outcome) ||
+			r.queuePrepare.item?.id !== r.queueItemId ||
+			r.queuePrepare.item?.tabId !== r.targetTabId ||
+			r.queuePrepare.item?.pendingAdmissionId !== r.dispatchId ||
+			r.queuePrepare.item?.type !== 'message' ||
+			(r.queuePrepare.phase === 'durable') !== (r.outcome === 'queued'))
+	)
+		return null;
 	return r;
+}
+
+/** Only main can issue a held, fully specified queue prepare. No release is implied. */
+export interface PianolaQueueControl {
+	dispatchId: string;
+	item: PianolaQueueItem;
 }
 
 /** Host-to-owning-renderer protocol; never accepted from a WebSocket payload. */
@@ -87,3 +108,21 @@ export type NewAITabWithPromptCallback = (
 	mentionRouting?: MentionRouting,
 	control?: PianolaNewTabControl
 ) => Promise<NewAITabWithPromptResult>;
+
+/** The exact host-issued message row. This wire subset contains no renderer dependencies. */
+export interface PianolaQueueItem {
+	id: string;
+	timestamp: number;
+	type: 'message';
+	text: string;
+	tabId: string;
+	pendingAdmissionId: string;
+	images?: string[];
+	tabName?: string;
+	readOnlyMode?: boolean;
+	crossAgentMention?: boolean;
+	crossAgentOnly?: boolean;
+	mentionRouting?: MentionRouting;
+	turnSettings?: { model?: string; effort?: string };
+	paused?: boolean;
+}

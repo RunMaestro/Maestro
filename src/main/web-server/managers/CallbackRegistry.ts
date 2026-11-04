@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
@@ -723,7 +724,8 @@ export class CallbackRegistry {
 		background?: boolean,
 		held?: boolean,
 		mentionRouting?: MentionRouting,
-		dispatchCallback?: boolean
+		dispatchCallback?: boolean,
+		control?: PianolaQueueControl
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -735,7 +737,8 @@ export class CallbackRegistry {
 			background,
 			held,
 			mentionRouting,
-			dispatchCallback
+			dispatchCallback,
+			control
 		);
 	}
 

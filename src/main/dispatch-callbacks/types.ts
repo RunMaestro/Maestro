@@ -70,6 +70,8 @@ export interface DispatchCallbackRegistration {
 	 * arm (and then fire) the callback.
 	 */
 	armFromRecentSpawn?: boolean;
+	/** Held queue admission; unrelated spawns cannot arm this callback. */
+	pendingAdmissionId?: string;
 }
 
 export interface DispatchCallbackEntry extends DispatchCallbackRegistration {

@@ -174,7 +174,8 @@ describe('useRemoteIntegration', () => {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: import('../../../shared/crossAgentContext').MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 		  ) => void)
 		| undefined;
 	let onRemoteSetQueueItemPausedHandler:
@@ -2220,6 +2221,85 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote enqueue command (dispatch --queue)', () => {
+		it.each(['idle', 'busy'] as const)(
+			'holds host queue prepare even when %s and acknowledges only after save',
+			async (state) => {
+				const tab = createMockTab({ id: 'tab-1' });
+				const session = createMockSession({
+					id: 'session-1',
+					state,
+					aiTabs: [tab],
+					activeTabId: tab.id,
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				const deps = createDeps({ sessions: [session] });
+				const item = {
+					id: 'dispatch',
+					timestamp: 1,
+					type: 'message' as const,
+					text: 'held task',
+					tabId: tab.id,
+					pendingAdmissionId: 'dispatch',
+					turnSettings: { model: 'captured-model' },
+					images: ['maestro-image://store/test.png'],
+				};
+				let resolveSave!: (result: boolean) => void;
+				const save = vi.spyOn(window.maestro.sessions, 'setMany').mockImplementation(
+					() =>
+						new Promise((resolve) => {
+							resolveSave = resolve;
+						})
+				);
+				const events = vi.spyOn(window, 'dispatchEvent');
+				renderHook(() => useRemoteIntegration(deps));
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						session.id,
+						item.text,
+						'prepare',
+						'ai',
+						tab.id,
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						{ dispatchId: item.id, item }
+					);
+				});
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([item]);
+				expect(events).not.toHaveBeenCalled();
+				await act(async () => {
+					resolveSave(true);
+				});
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+					'prepare',
+					expect.objectContaining({ success: true, queued: true, itemId: item.id })
+				);
+				await act(async () => {
+					onRemoteEnqueueCommandHandler?.(
+						session.id,
+						item.text,
+						'duplicate',
+						'ai',
+						tab.id,
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						{ dispatchId: item.id, item }
+					);
+				});
+				expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+				expect(save).toHaveBeenCalledOnce();
+				save.mockRestore();
+				events.mockRestore();
+			}
+		);
+
 		it('enqueues a message on a busy session and acks the queue position', () => {
 			const tab = createMockTab({ id: 'tab-1', name: 'PR review' });
 			const session = createMockSession({

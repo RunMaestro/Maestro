@@ -234,8 +234,11 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		dispatchCallback?: boolean,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 	) => Promise<EnqueueCommandResult>;
+	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];

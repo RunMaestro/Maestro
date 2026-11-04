@@ -1,3 +1,4 @@
+import { planMentions } from '../../../../shared/maestro-lib/mentions/roster';
 /**
  * Tabs domain WebSocket message handlers.
  *
@@ -8,7 +9,10 @@
  */
 
 import * as pianolaStore from '../../../pianola/pianola-store-main';
-import { getSettingsStore } from '../../../stores/getters';
+import { getSettingsStore, getSessionsStore, getGroupsStore } from '../../../stores/getters';
+import { storeInlineImage } from '../../../storage/session-image-store';
+import { captureQueuedTurnSettings } from '../../../../shared/queuedTurnSettings';
+import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 import path from 'path';
 import { generateUUID } from '../../../../shared/uuid';
 import { dispatchSupervision } from './dispatchSupervision';
@@ -57,6 +61,47 @@ export function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispat
 				return createHash('sha256').update(canonicalJson(result.rules)).digest('hex');
 			},
 			executeCommand: (...args) => ctx.callbacks.executeCommand!(...args),
+			enqueueCommand: (...args) => ctx.callbacks.enqueueCommand!(...args),
+			confirmQueueItem: (request) =>
+				ctx.callbacks.confirmQueueItem?.(request) ??
+				Promise.resolve({ durable: false, reason: 'store-unavailable' }),
+			queueItem: async (request) => {
+				const sessions = getSessionsStore().get('sessions', []) as AgentRecord[];
+				const session = sessions.find((s) => s.id === request.targetAgentId);
+				const tab = session?.aiTabs?.find((t) => t.id === request.targetTabId);
+				if (!session || !tab) throw new Error('DispatchTargetUnavailable');
+				const mentionPlan = planMentions(
+					request.prompt,
+					sessions,
+					getGroupsStore().get('groups', []),
+					session.id
+				);
+				const routing = request.mentionRouting ?? mentionPlan?.routing;
+				return JSON.parse(
+					canonicalJson({
+						id: request.dispatchId,
+						timestamp: Date.now(),
+						type: 'message',
+						text: request.prompt,
+						tabId: tab.id,
+						tabName: tab.name ?? undefined,
+						readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
+						turnSettings: captureQueuedTurnSettings(tab, session),
+						...(mentionPlan
+							? {
+									crossAgentMention: true,
+									crossAgentOnly: routing === 'only' || routing === 'consult-first',
+									...(request.mentionRouting ? { mentionRouting: request.mentionRouting } : {}),
+								}
+							: {}),
+						...(request.images?.length
+							? { images: await Promise.all(request.images.map(storeInlineImage)) }
+							: {}),
+						...(request.held ? { paused: true } : {}),
+						pendingAdmissionId: request.dispatchId,
+					})
+				);
+			},
 			newTab: (...args) => ctx.callbacks.newAITabWithPrompt!(...args),
 			onReconcileError: (error) => {
 				void captureException(error, { area: 'pianola', handler: 'new_tab_reconcile' });

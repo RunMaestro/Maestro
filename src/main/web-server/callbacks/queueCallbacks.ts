@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
@@ -68,7 +69,8 @@ export function registerQueueCallbacks(
 			background?: boolean,
 			held?: boolean,
 			mentionRouting?: MentionRouting,
-			dispatchCallback?: boolean
+			dispatchCallback?: boolean,
+			control?: PianolaQueueControl
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -119,7 +121,8 @@ export function registerQueueCallbacks(
 					background,
 					held,
 					mentionRouting,
-					dispatchCallback
+					dispatchCallback,
+					...(control ? [control] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

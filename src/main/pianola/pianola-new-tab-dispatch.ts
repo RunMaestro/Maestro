@@ -127,10 +127,18 @@ export class PianolaNewTabDispatch {
 	private readonly startedRuns = new Map<string, string | undefined>();
 	private readonly callbacks = new Map<string, string | undefined>();
 	constructor(
-		deps: Omit<PianolaDispatchAdmissionDeps, 'readSnapshot' | 'assertTargetReady' | 'release'> & {
+		private readonly deps: Omit<
+			PianolaDispatchAdmissionDeps,
+			'readSnapshot' | 'assertTargetReady' | 'release'
+		> & {
 			snapshot(): PianolaScopeSnapshot;
 			newTab: NewAITabWithPromptCallback;
 			executeCommand?: ExecuteCommandCallback;
+			enqueueCommand?: import('../web-server/types').EnqueueCommandCallback;
+			confirmQueueItem?: import('../stores/queue-item-receipt').ConfirmQueueItem;
+			queueItem?(
+				request: PianolaExistingTabRequest & { held: boolean }
+			): Promise<import('../../shared/pianola/pianola-dispatch').PianolaQueueItem>;
 			onReconcileError(error: unknown): void;
 		}
 	) {
@@ -348,6 +356,79 @@ export class PianolaNewTabDispatch {
 					pianolaNewTabSpawns.cancelHold(request.targetAgentId, request.targetTabId);
 			}
 			return { receipt, callbackId: this.callbacks.get(request.dispatchId) };
+		});
+	}
+
+	/** Prepare only: persist a held queue row, never enroll/release or infer native execution. */
+	runQueue(
+		client: Client,
+		request: PianolaExistingTabRequest & { held: boolean; callbackIntent?: unknown },
+		armCallback: (tabId: string) => string | undefined
+	): Promise<{ receipt: PianolaDispatchReceipt; callbackId?: string; durable: boolean }> {
+		return this.queue.enqueue(request.dispatchId, async () => {
+			await this.admission.prepare(client, {
+				dispatchId: request.dispatchId,
+				targetAgentId: request.targetAgentId,
+				intent: request,
+			});
+			await this.admission.bind(
+				client,
+				request.dispatchId,
+				request.targetTabId,
+				request.dispatchId
+			);
+			let prepared = this.deps.store.readDispatchAdmission(request.dispatchId)?.queuePrepare;
+			try {
+				if (!prepared) {
+					if (!this.deps.queueItem || !this.deps.enqueueCommand || !this.deps.confirmQueueItem)
+						throw new Error('DispatchQueueUnavailable');
+					const item = await this.deps.queueItem(request);
+					const callbackId = armCallback(request.targetTabId);
+					prepared = await this.admission.prepareQueue(
+						client,
+						request.dispatchId,
+						item,
+						callbackId
+					);
+					// The journal commit above forbids ANY subsequent enqueue for this key,
+					// including failure/timeout/negative persistence proof and host restart.
+					await this.deps
+						.enqueueCommand(
+							request.targetAgentId,
+							request.prompt,
+							'ai',
+							request.targetTabId,
+							request.images,
+							request.background,
+							request.held,
+							request.mentionRouting,
+							undefined,
+							{ dispatchId: request.dispatchId, item: prepared.item }
+						)
+						.catch((error) => this.deps.onReconcileError(error));
+				}
+				const proof = await this.deps.confirmQueueItem?.({
+					agentId: request.targetAgentId,
+					tabId: request.targetTabId,
+					itemId: request.dispatchId,
+					pendingAdmissionId: request.dispatchId,
+					item: JSON.parse(JSON.stringify(prepared.item)),
+				});
+				const receipt = await this.admission.queueEvidence(
+					client,
+					request.dispatchId,
+					proof?.durable === true
+				);
+				return { receipt, callbackId: prepared.callbackId, durable: proof?.durable === true };
+			} catch (error) {
+				this.deps.onReconcileError(error);
+				const saved = this.deps.store.readDispatchAdmission(request.dispatchId)?.queuePrepare;
+				return {
+					receipt: { ...this.admission.status(client, request.dispatchId), outcome: 'unknown' },
+					callbackId: saved?.callbackId,
+					durable: false,
+				};
+			}
 		});
 	}
 

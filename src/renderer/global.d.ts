@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../shared/pianola/pianola-dispatch';
 import type {
 	TranslationRequest,
 	TranslationReport,
@@ -987,7 +988,8 @@ interface MaestroAPI {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

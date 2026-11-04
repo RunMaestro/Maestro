@@ -85,6 +85,8 @@ export interface DispatchOptions {
 const MAX_CALLBACK_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export interface DispatchResponse {
+	durable?: boolean;
+	queuedAccepted?: boolean;
 	dispatchId?: string;
 	admission?: PianolaDispatchReceipt;
 	unknown?: boolean;
@@ -321,10 +323,10 @@ export async function runDispatch(
 	message: string,
 	options: DispatchOptions
 ): Promise<DispatchResponse> {
-	if (options.dispatchId && (options.queue || !isPianolaScopeId(options.dispatchId)))
+	if (options.dispatchId && !isPianolaScopeId(options.dispatchId))
 		return {
 			success: false,
-			error: '--dispatch-id requires a direct dispatch and a UUID',
+			error: '--dispatch-id requires a UUID',
 			code: 'INVALID_OPTIONS',
 		};
 	if (options.newTab && options.tab) {
@@ -639,10 +641,16 @@ async function runQueueDispatch(
 	routingFields: Record<string, unknown>,
 	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
+	const dispatchId = options.dispatchId ?? generateUUID();
+	let awaitingQueueAck = false;
 	try {
-		const result = await withMaestroClient(async (client) =>
-			client.sendCommand<{
+		const result = await withMaestroClient(async (client) => {
+			awaitingQueueAck = true;
+			const reply = await client.sendCommand<{
 				success?: boolean;
+				durable?: boolean;
+				queuedAccepted?: boolean;
+				unknown?: boolean;
 				dispatchId?: string;
 				admission?: PianolaDispatchReceipt;
 				tabId?: string;
@@ -655,6 +663,7 @@ async function runQueueDispatch(
 			}>(
 				{
 					type: 'enqueue_command',
+					dispatchId,
 					sessionId: agentId,
 					command: message,
 					inputMode: 'ai',
@@ -666,9 +675,24 @@ async function runQueueDispatch(
 					...callerFields,
 				},
 				'enqueue_command_result'
-			)
-		);
+			);
+			awaitingQueueAck = false;
+			return reply;
+		});
 
+		if (result.unknown || result.admission?.outcome === 'unknown')
+			return {
+				success: false,
+				unknown: true,
+				code: 'DISPATCH_UNKNOWN',
+				agentId,
+				dispatchId,
+				tabId: result.tabId ?? options.tab ?? null,
+				itemId: result.itemId,
+				admission: result.admission,
+				error:
+					'Queue admission unknown. Reconcile with the same --dispatch-id; do not resend with a new ID.',
+			};
 		if (result.success === false) {
 			const err = result.error ?? 'Enqueue failed';
 			const lower = err.toLowerCase();
@@ -677,7 +701,7 @@ async function runQueueDispatch(
 				: lower.startsWith('tab not found')
 					? 'TAB_NOT_FOUND'
 					: 'ENQUEUE_FAILED';
-			return { success: false, error: err, code };
+			return { success: false, error: err, code, dispatchId, admission: result.admission };
 		}
 
 		const resolvedTabId = result.tabId ?? options.tab ?? null;
@@ -692,6 +716,10 @@ async function runQueueDispatch(
 			...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
 			...(result.admission ? { admission: result.admission } : {}),
 			queued: result.queued === true,
+			...(typeof result.durable === 'boolean' ? { durable: result.durable } : {}),
+			...(typeof result.queuedAccepted === 'boolean'
+				? { queuedAccepted: result.queuedAccepted }
+				: {}),
 			...(options.held && result.queued ? { held: true } : {}),
 			...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 			...(result.itemId ? { itemId: result.itemId } : {}),
@@ -701,6 +729,16 @@ async function runQueueDispatch(
 				: {}),
 		};
 	} catch (error) {
+		if (awaitingQueueAck)
+			return {
+				success: false,
+				unknown: true,
+				dispatchId,
+				agentId,
+				code: 'DISPATCH_UNKNOWN',
+				error:
+					'Queue acknowledgment lost. Reconcile with the same --dispatch-id; do not resend with a new ID.',
+			};
 		return mapDispatchError(error, agentId);
 	}
 }
@@ -731,6 +769,8 @@ export async function dispatch(
 				...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
 				...(result.admission ? { admission: result.admission } : {}),
 				...(result.queued !== undefined ? { queued: result.queued } : {}),
+				...(result.durable !== undefined ? { durable: result.durable } : {}),
+				...(result.queuedAccepted !== undefined ? { queuedAccepted: result.queuedAccepted } : {}),
 				...(result.held ? { held: true } : {}),
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 				...(result.itemId ? { itemId: result.itemId } : {}),

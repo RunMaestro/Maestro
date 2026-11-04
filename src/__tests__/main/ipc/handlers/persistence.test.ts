@@ -1,3 +1,7 @@
+import { PianolaNewTabDispatch } from '../../../../main/pianola/pianola-new-tab-dispatch';
+import { createPianolaFsStore } from '../../../../shared/pianola/fs-store';
+import { generateUUID } from '../../../../shared/uuid';
+import type { QueuedItem } from '../../../../renderer/types';
 /**
  * Tests for the persistence IPC handlers
  *
@@ -269,6 +273,216 @@ describe('persistence IPC handlers', () => {
 		afterEach(async () => {
 			await realFs.rm(directory, { recursive: true, force: true });
 		});
+
+		/** Reuse B01's real writer/reader instead of inventing a Boolean receipt. */
+		function queueAdapter(busy = false) {
+			const store = createPianolaFsStore({
+				resolveDir: () => path.join(directory, 'pianola'),
+				indent: 2,
+				trailingNewline: true,
+			});
+			const scopeId = generateUUID();
+			store.writeSupervisorTargets([
+				{
+					id: scopeId,
+					kind: 'watch-scope',
+					enabled: true,
+					createdAt: 1,
+					managerAgentId: 'manager',
+					selection: {
+						label: 'Workers',
+						mode: 'agents-and-groups',
+						agentIds: ['agent'],
+						groupIds: [],
+						excludedAgentIds: [],
+					},
+				},
+			]);
+			const client = { cliAuthenticated: true };
+			const dispatchId = generateUUID();
+			const input = {
+				dispatchId,
+				targetAgentId: 'agent',
+				targetTabId: 'tab',
+				prompt: 'Exact intent',
+				background: true,
+				hidden: false,
+				held: false,
+			};
+			current = [{ ...session(request.item), executionQueue: [] }];
+			const rendererQueue: QueuedItem[] = [];
+			let loseAck = false;
+			let skipSave = false;
+			const enqueue = vi.fn(async (...args: unknown[]) => {
+				const control = args[9] as { item: QueuedItem };
+				rendererQueue.push(control.item);
+				if (!skipSave) await save([{ ...current[0], executionQueue: rendererQueue }]);
+				if (loseAck) throw new Error('Lost renderer ack');
+				return { success: true, queued: true, itemId: control.item.id, tabId: 'tab' };
+			});
+			const confirmItem = vi.fn((r: QueueItemReceiptRequest) => server.confirmQueueItemFromMain(r));
+			const deps = {
+				store,
+				callers: {
+					resolve: () => ({
+						run: { agentId: 'manager', tabId: 'manager-tab', spawnGeneration: 'run' },
+						signal: new AbortController().signal,
+						unattended: true,
+						assertActive() {},
+					}),
+				},
+				featureEnabled: () => true,
+				snapshot: () => ({
+					complete: true,
+					capturedAt: 100,
+					owners: [
+						{ id: 'agent', cwd: process.cwd(), isPianola: false, remote: false, groupId: null },
+					],
+					tabs: [
+						{
+							agentId: 'agent',
+							tabId: 'tab',
+							createdAt: 1,
+							busy,
+							paused: false,
+							consult: false,
+							ephemeral: false,
+							cursorAvailable: false,
+							cursor: null,
+						},
+					],
+				}),
+				ruleSetRevision: () => 'rules',
+				newTab: vi.fn(),
+				onReconcileError: vi.fn(),
+				enqueueCommand: enqueue,
+				confirmQueueItem: confirmItem,
+				queueItem: async () =>
+					({
+						...request.item,
+						id: dispatchId,
+						pendingAdmissionId: dispatchId,
+					}) as unknown as QueuedItem,
+			};
+			const adapter = new PianolaNewTabDispatch(deps);
+			const arm = vi.fn(() => undefined);
+			return {
+				adapter,
+				deps,
+				store,
+				client,
+				input,
+				enqueue,
+				confirmItem,
+				rendererQueue,
+				arm,
+				scopeId,
+				loseAck: () => {
+					loseAck = true;
+				},
+				skipSave: () => {
+					skipSave = true;
+				},
+			};
+		}
+		it.each([false, true])(
+			'queue prepare composes actual disk proof and one held row with busy=%s, without enrollment',
+			async (busy) => {
+				const f = queueAdapter(busy);
+				const result = await f.adapter.runQueue(f.client, f.input, f.arm);
+				expect(result).toMatchObject({
+					durable: true,
+					receipt: {
+						outcome: 'queued',
+						queueItemId: f.input.dispatchId,
+						supervision: 'unavailable',
+					},
+				});
+				expect(f.store.readScopeCheckpoint(f.scopeId)).toBeNull();
+				expect(f.rendererQueue).toHaveLength(1);
+				expect(f.rendererQueue[0].pendingAdmissionId).toBe(f.input.dispatchId);
+				const disk = JSON.parse(await realFs.readFile(mockSessionsStore.path, 'utf8'));
+				expect(disk.sessions[0].executionQueue[0]).toEqual(f.rendererQueue[0]);
+				const restarted = new PianolaNewTabDispatch(f.deps);
+				expect(await restarted.runQueue(f.client, f.input, f.arm)).toMatchObject({ durable: true });
+				expect(f.enqueue).toHaveBeenCalledOnce();
+				expect(f.arm).toHaveBeenCalledOnce();
+				await expect(
+					restarted.runQueue(f.client, { ...f.input, prompt: 'other intent' }, f.arm)
+				).rejects.toThrow('DispatchIntentMismatch');
+			}
+		);
+		it('does not enqueue after an uncertain prepare journal commit, even on reconciliation', async () => {
+			const f = queueAdapter();
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				write(record);
+				if (record.queuePrepare && record.outcome === 'unknown')
+					throw new Error('Lost journal ack');
+			});
+			expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({
+				durable: false,
+				receipt: { outcome: 'unknown', queueItemId: f.input.dispatchId },
+			});
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)?.queuePrepare?.phase).toBe(
+				'unknown'
+			);
+			await f.adapter.runQueue(f.client, f.input, f.arm);
+			expect(f.enqueue).not.toHaveBeenCalled();
+		});
+
+		it('reconciles a lost renderer acknowledgment only through actual disk proof', async () => {
+			const f = queueAdapter();
+			f.loseAck();
+			expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({ durable: true });
+			expect(f.confirmItem).toHaveBeenCalledOnce();
+			expect(f.enqueue).toHaveBeenCalledOnce();
+		});
+		it.each(['session', 'item', 'payload'])(
+			'does not resend a prepared row after removed or changed %s',
+			async (removed) => {
+				const f = queueAdapter();
+				await f.adapter.runQueue(f.client, f.input, f.arm);
+				if (removed === 'session') current = [];
+				else if (removed === 'item') current[0].executionQueue = [];
+				else current[0].executionQueue![0].text = 'different';
+				expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({
+					durable: false,
+					receipt: { outcome: 'unknown', queueItemId: f.input.dispatchId },
+				});
+				expect(f.enqueue).toHaveBeenCalledOnce();
+			}
+		);
+		it.each(['write', 'read', 'flush', 'no-save', 'missing-di'])(
+			'keeps %s failure unknown without a second enqueue',
+			async (failure) => {
+				const f = queueAdapter();
+				const normalSet = mockSessionsStore.set.getMockImplementation();
+				const normalFlush = mockFlushSessionWrites.getMockImplementation();
+				if (failure === 'write')
+					mockSessionsStore.set.mockImplementation(() => {
+						throw new Error('write failed');
+					});
+				if (failure === 'read') vi.mocked(fs.readFile).mockRejectedValue(new Error('read failed'));
+				if (failure === 'flush')
+					mockFlushSessionWrites.mockRejectedValue(new Error('flush failed'));
+				if (failure === 'no-save') f.skipSave();
+				if (failure === 'missing-di') registerQueueCallbacks(server, { getMainWindow: () => null });
+				expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({
+					durable: false,
+					receipt: { outcome: 'unknown' },
+				});
+				mockSessionsStore.set.mockImplementation(normalSet!);
+				mockFlushSessionWrites.mockImplementation(normalFlush!);
+				vi.mocked(fs.readFile).mockImplementation(realFs.readFile);
+				registerQueueCallbacks(server, {
+					getMainWindow: () => null,
+					confirmQueueItem: persistence.confirmQueueItem,
+				});
+				await f.adapter.runQueue(f.client, f.input, f.arm);
+				expect(f.enqueue).toHaveBeenCalledOnce();
+			}
+		);
 
 		it('confirms the exact saved row and hold through the registered host adapter', async () => {
 			expect(await save(current)).toBe(true);

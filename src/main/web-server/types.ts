@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
@@ -614,7 +615,8 @@ export type EnqueueCommandCallback = (
 	 * The prompt is a `dispatch --notify-on-complete` wake, sent by main. The
 	 * queued item is marked so it can never be steered into a running turn.
 	 */
-	dispatchCallback?: boolean
+	dispatchCallback?: boolean,
+	control?: PianolaQueueControl
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI

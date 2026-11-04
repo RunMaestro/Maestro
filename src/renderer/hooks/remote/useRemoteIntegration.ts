@@ -1276,7 +1276,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// removable, and the closed-tab resolver (resolveQueuedItemTarget) applies at
 		// drain time.
 		const unsubscribeEnqueueCommand = window.maestro.process.onRemoteEnqueueCommand(
-			(
+			async (
 				sessionId: string,
 				command: string,
 				responseChannel: string,
@@ -1286,7 +1286,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1323,6 +1324,41 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 					const resolvedTabId = targetTab.id;
+					if (control) {
+						const item = control.item;
+						if (
+							item.tabId !== resolvedTabId ||
+							item.pendingAdmissionId !== control.dispatchId ||
+							item.text !== command ||
+							item.type !== 'message'
+						)
+							throw new Error('DispatchQueueIntentMismatch');
+						const existing = session.executionQueue.filter(
+							(q) => q.id === item.id || q.pendingAdmissionId === control.dispatchId
+						);
+						if (existing.length) throw new Error('DispatchQueueAlreadyPrepared');
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: [...s.executionQueue, item],
+						}));
+						const updated = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+						if (!updated) throw new Error('DispatchTargetUnavailable');
+						const saved = await window.maestro.sessions.setMany(
+							[prepareSessionForPersistence(updated)],
+							[],
+							[prepareSessionForPersistence(session)]
+						);
+						if (saved !== true) throw new Error('DispatchQueuePersistenceUnknown');
+						reply({
+							success: true,
+							tabId: resolvedTabId,
+							queued: true,
+							itemId: item.id,
+							queueLength: updated.executionQueue.length,
+							queuePosition: updated.executionQueue.length,
+						});
+						return;
+					}
 
 					// Idle target: no line to wait in, dispatch now through the shared
 					// remote-command path (identical to a plain `dispatch`). Respect the

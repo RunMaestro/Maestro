@@ -1,3 +1,7 @@
+import {
+	configureImageStore,
+	__resetImageStoreCacheForTests,
+} from '../../../main/storage/session-image-store';
 /** Production handler + admission journal + native transport composition. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
@@ -16,9 +20,11 @@ import type {
 import type { NewAITabWithPromptCallback } from '../../../shared/pianola/pianola-dispatch';
 
 vi.mock('electron', () => ({ app: { getPath: () => process.cwd() } }));
-const flags = vi.hoisted(() => ({ pianola: true }));
+const flags = vi.hoisted(() => ({ pianola: true, sessions: [] as unknown[] }));
 vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({ get: () => flags }),
+	getSessionsStore: () => ({ get: () => flags.sessions }),
+	getGroupsStore: () => ({ get: () => [] }),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/utils/logger', () => ({
@@ -28,6 +34,7 @@ const directories: string[] = [];
 let previousDataDir: string | undefined;
 afterEach(() => {
 	vi.restoreAllMocks();
+	__resetImageStoreCacheForTests();
 	flags.pianola = true;
 	if (previousDataDir === undefined) delete process.env.MAESTRO_USER_DATA;
 	else process.env.MAESTRO_USER_DATA = previousDataDir;
@@ -108,7 +115,7 @@ function fixture() {
 				];
 			} else {
 				expect(store.readScopeCheckpoint(scopeId)?.tabs[0].tabId).toBe(control.tabId);
-				pianolaNewTabSpawns.claim(`worker-ai-${control.tabId}`)();
+				pianolaNewTabSpawns.claim(`worker-ai-${control.tabId}`, control.dispatchId)();
 				pianolaNewTabSpawns.started(`worker-ai-${control.tabId}`, 'native-run');
 			}
 			return { success: true, tabId: control.tabId };
@@ -116,7 +123,7 @@ function fixture() {
 	);
 	const send = vi.fn();
 	const executeCommand = vi.fn(async (..._args: unknown[]) => true);
-	const enqueueCommand = vi.fn(async () => ({
+	const enqueueCommand = vi.fn(async (..._args: unknown[]) => ({
 		success: true,
 		tabId: 'tab',
 		queued: true,
@@ -142,6 +149,78 @@ function fixture() {
 	return { ctx, client, newTab, send, snapshot, scopeId, executeCommand, enqueueCommand };
 }
 describe('production new-tab handler supervision wiring', () => {
+	it.each([false, true])(
+		'consumes production queue admission with busy=%s and pins host intent rather than renderer ack',
+		async (busy) => {
+			const f = fixture();
+			await f.newTab('worker', '', true, false, undefined, {
+				phase: 'prepare',
+				dispatchId: generateUUID(),
+				tabId: 'tab',
+			});
+			(
+				f.snapshot.sessions[0] as { supervision: { busy: boolean; cursorAvailable: boolean } }
+			).supervision.busy = busy;
+			(
+				f.snapshot.sessions[0] as { supervision: { cursorAvailable: boolean } }
+			).supervision.cursorAvailable = false;
+			configureImageStore(process.env.MAESTRO_USER_DATA!);
+			flags.sessions = [
+				{
+					id: 'worker',
+					name: 'Worker',
+					toolType: 'codex',
+					customModel: 'host-model',
+					aiTabs: [{ id: 'tab', name: 'Work', customEffort: 'medium' }],
+				},
+			];
+			const proof = vi.fn(async (request: { item: unknown }) => ({ durable: true, request }));
+			Object.assign(f.ctx.callbacks, { confirmQueueItem: proof });
+			const message = {
+				type: 'enqueue_command',
+				sessionId: 'worker',
+				tabId: 'tab',
+				command: 'queue task',
+				images: ['data:image/png;base64,aA=='],
+				background: true,
+				dispatchId: generateUUID(),
+			};
+			handleEnqueueCommand(f.ctx, f.client, message);
+			await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+			expect(f.send.mock.calls[0][1]).toMatchObject({
+				success: true,
+				queuedAccepted: true,
+				durable: true,
+				queued: true,
+				itemId: message.dispatchId,
+				admission: { outcome: 'queued', supervision: 'unavailable' },
+			});
+			const expectedItem = (f.enqueueCommand.mock.calls[0][9] as { item: object }).item;
+			expect((expectedItem as { images: string[] }).images).toEqual([
+				expect.stringMatching(/^maestro-image:\/\/store\/[a-f0-9]{64}\.png$/),
+			]);
+			expect(expectedItem).toMatchObject({
+				id: message.dispatchId,
+				text: 'queue task',
+				tabId: 'tab',
+				pendingAdmissionId: message.dispatchId,
+				turnSettings: { model: 'host-model', effort: 'medium' },
+			});
+			expect(proof).toHaveBeenCalledWith(expect.objectContaining({ item: expectedItem }));
+			expect(store.readScopeCheckpoint(f.scopeId)).toBeNull();
+			handleEnqueueCommand(f.ctx, f.client, message);
+			await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(2));
+			expect(f.enqueueCommand).toHaveBeenCalledOnce();
+			handleEnqueueCommand(f.ctx, f.client, { ...message, command: 'changed intent' });
+			await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(3));
+			expect(f.send.mock.calls[2][1]).toMatchObject({
+				success: false,
+				error: 'DispatchIntentMismatch',
+			});
+			expect(f.enqueueCommand).toHaveBeenCalledOnce();
+		}
+	);
+
 	it.each([
 		['new', handleNewAITabWithPrompt],
 		['send', handleSendCommand],

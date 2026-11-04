@@ -1460,6 +1460,7 @@ export class WebServer {
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
 				this.callbackRegistry.noteAgentDelegation(notice),
+			confirmQueueItem: (request) => this.confirmQueueItemFromMain(request),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,
@@ -1468,7 +1469,9 @@ export class WebServer {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean,
+				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1478,7 +1481,9 @@ export class WebServer {
 					images,
 					background,
 					held,
-					mentionRouting
+					mentionRouting,
+					dispatchCallback,
+					control
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
