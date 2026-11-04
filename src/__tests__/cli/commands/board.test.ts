@@ -31,6 +31,7 @@ import {
 	expect,
 	vi,
 	beforeAll,
+	afterAll,
 	beforeEach,
 	afterEach,
 	type MockInstance,
@@ -152,6 +153,9 @@ import {
 import { answerBoardCommand } from '../../../shared/board/commands';
 import { executeBoardCommand } from '../../../main/board/board-command-host';
 import type { BoardCard } from '../../../shared/board/types';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+
+const isolationFixture = createBoardIsolationFixture();
 
 function card(id: string, overrides: Partial<BoardCard> = {}): BoardCard {
 	return {
@@ -209,7 +213,11 @@ describe('maestro-cli board', () => {
 	let databasePath = '';
 	let ownsDatabase = false;
 
-	beforeAll(() => configureIsolatedBoardSourceHost(requireBoardIsolation()));
+	beforeAll(() => {
+		isolationFixture.install();
+		configureIsolatedBoardSourceHost(requireBoardIsolation());
+	});
+	afterAll(async () => isolationFixture.cleanup());
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -274,6 +282,7 @@ describe('maestro-cli board', () => {
 		db = openBoardDb(databasePath);
 		facade = new BoardStorageFacade(db);
 		configureBoardStorage(facade);
+		await refreshBoardSources();
 		await boardCreateRole('Reviewer', { json: true });
 		const role = JSON.parse(logSpy.mock.calls.at(-1)![0]);
 		expect(facade.captureCatalog().profiles).toEqual([
@@ -314,7 +323,8 @@ describe('maestro-cli board', () => {
 
 	it('creates roles without a root or legacy profile and assigns/removes an exact role through the host', async () => {
 		db.close();
-		db = openBoardDb(path.join(projectRoot, 'empty.sqlite'));
+		for (const suffix of ['', '-wal', '-shm']) fs.rmSync(databasePath + suffix, { force: true });
+		db = openBoardDb(databasePath);
 		facade = new BoardStorageFacade(db);
 		configureBoardStorage(facade);
 		await boardCreateRole('Reviewer', { json: true });
@@ -324,10 +334,11 @@ describe('maestro-cli board', () => {
 		]);
 		registerBoardWorker(db, 'agent-1');
 		await boardSetWorkerRole(role.profileId, {
-			agent: 'Alpha',
+			agent: 'agent-1',
 			namespace: role.namespace,
 			json: true,
 		});
+		expect(exitSpy, JSON.stringify(logSpy.mock.calls.at(-1))).not.toHaveBeenCalled();
 		expect(
 			JSON.parse(
 				(db.prepare('SELECT payload_json FROM workers').get() as { payload_json: string })
@@ -335,7 +346,7 @@ describe('maestro-cli board', () => {
 			).roleRefs
 		).toEqual([role]);
 		await boardSetWorkerRole(role.profileId, {
-			agent: 'Alpha',
+			agent: 'agent-1',
 			namespace: role.namespace,
 			remove: true,
 			json: true,
@@ -346,7 +357,7 @@ describe('maestro-cli board', () => {
 					.payload_json
 			).roleRefs
 		).toEqual([]);
-		await boardSetWorkerRole(role.profileId, { agent: 'Alpha', namespace: 'wrong', json: true });
+		await boardSetWorkerRole(role.profileId, { agent: 'agent-1', namespace: 'wrong', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
 		expect(JSON.parse(logSpy.mock.calls.at(-1)![0])).toMatchObject({
 			type: 'error',
@@ -1319,9 +1330,13 @@ describe('maestro-cli board', () => {
 			expect(exitSpy).not.toHaveBeenCalled();
 		});
 
-		it('watches the host collections without an agent selector', async () => {
+		it('watches scoped host collections without an agent selector', async () => {
 			const board = createBoard(projectRoot, 'Global watch');
-			addCard(projectRoot, board.id, card('global-watch'));
+			addCard(
+				projectRoot,
+				board.id,
+				card('global-watch', { executionScope: { kind: 'agent', agentId: 'agent-1' } })
+			);
 			const watching = boardWatch({ interval: '5', json: true });
 			await vi.waitFor(() => {
 				expect(logSpy.mock.calls.some((call) => String(call[0]).includes('watch-tick'))).toBe(true);

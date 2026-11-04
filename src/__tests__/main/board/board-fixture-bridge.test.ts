@@ -18,6 +18,7 @@ import {
 	type FixtureBridgeAdmission,
 } from './fixtures/board-fixture-bridge';
 import type { FixtureBridgeManifest } from './fixtures/board-fixture-bridge-admission';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
 const io = vi.hoisted(() => ({ socket: vi.fn(), discovery: vi.fn() }));
 vi.mock('ws', async (original) => {
@@ -48,8 +49,10 @@ let manifest: FixtureBridgeManifest;
 let clients: BridgeConnection[];
 let received: Record<string, unknown>[];
 let responder: (socket: WebSocket, frame: Record<string, unknown>) => void;
+const isolationFixture = createBoardIsolationFixture();
 
 beforeAll(async () => {
+	isolationFixture.install();
 	contract = requireBoardIsolation();
 	readBoardIsolationRegistries(contract);
 	if (process.env.BOARD_ISOLATION_CONTRACT !== canonicalJson(contract))
@@ -116,6 +119,7 @@ afterEach(() => {
 afterAll(async () => {
 	if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
 	if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+	await isolationFixture.cleanup();
 });
 
 function writeManifest(value: unknown = manifest) {
@@ -347,11 +351,12 @@ describe('owned WebSocket request/reply protocol', () => {
 	it('exports the same production errors and supports a parent-admitted one-shot CLI wrapper', async () => {
 		vi.resetModules();
 		const fixture = await import('./fixtures/board-fixture-bridge');
-		const errors = await import('../../../shared/maestro-lib/client/bridge-errors');
+		const errors = await import('../../../shared/maestro-lib/client/bridge-connection');
+		const notRunning = await import('../../../shared/maestro-lib/client/not-running');
 		expect(fixture.ConnectionClosedError).toBe(errors.ConnectionClosedError);
 		expect(fixture.CommandTimeoutError).toBe(errors.CommandTimeoutError);
 		expect(fixture.UnsupportedCommandError).toBe(errors.UnsupportedCommandError);
-		expect(fixture.MaestroNotRunningError).toBe(errors.MaestroNotRunningError);
+		expect(fixture.MaestroNotRunningError).toBe(notRunning.MaestroNotRunningError);
 		fixture.admitFixtureBridge(proof);
 		expect(() => fixture.admitFixtureBridge({ ...proof, ownerPid: -1 })).toThrow();
 		let used: InstanceType<typeof fixture.BridgeConnection> | undefined;

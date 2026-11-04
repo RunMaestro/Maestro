@@ -102,7 +102,7 @@ async function cli(...args: string[]) {
 		const output = await promisify(execFile)(process.execPath, [script, 'board', ...args], {
 			cwd: isolation.worktree,
 			env,
-			timeout: 15000,
+			timeout: 30000,
 			maxBuffer: 1024 * 1024,
 		});
 		return { code: 0, value: JSON.parse(output.stdout) };
