@@ -34,6 +34,7 @@ import type {
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
 import { resolveHermesGatewayLaunch } from '../../../shared/maestro-lib/providers/hermes-launch';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'HermesGateway';
 
@@ -66,6 +67,24 @@ export class HermesApiSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(start, observe) => this.spawnAdmitted(config, start, observe),
+				(error) => {
+					void captureException(error);
+					logger.error('[HermesTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				}
+			);
+		} catch (error) {
+			return { pid: -1, success: false, error: String(error) };
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		startAdmittedTurn: typeof startTurn,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		if (config.toolType !== 'hermes' || config.harnessControlMode !== 'native') {
 			return this.fallbackToCli(config);
 		}
@@ -75,7 +94,13 @@ export class HermesApiSpawner {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new HermesTurn(this.context, resolveHermesGatewayLaunch(config), config).start();
+			return new HermesTurn(
+				this.context,
+				resolveHermesGatewayLaunch(config),
+				config,
+				startAdmittedTurn,
+				observeCompletion
+			).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -119,7 +144,9 @@ class HermesTurn {
 	constructor(
 		private readonly ctx: HermesTurnContext,
 		private readonly config: ProcessConfig,
-		private readonly fallbackConfig: ProcessConfig
+		private readonly fallbackConfig: ProcessConfig,
+		private readonly startAdmittedTurn: typeof startTurn,
+		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -152,7 +179,7 @@ class HermesTurn {
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
 				closed: this.closed.promise,
-				steer: (request) => this.steer(request),
+				steer: (request) => this.observeCompletion(this.steer(request)),
 				interrupt: async () => this.interrupt(),
 				close: async (options) => this.kill(options),
 			},
@@ -173,7 +200,7 @@ class HermesTurn {
 			config.extraPathDirs,
 			config.querySource
 		);
-		this.turn = startTurn(
+		this.turn = this.startAdmittedTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -201,8 +228,8 @@ class HermesTurn {
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.turn.done.then((exit) => this.handleChildExit(exit));
-		void this.run().catch((error) => this.handleRunError(error));
+		this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
+		this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -214,7 +241,7 @@ class HermesTurn {
 		this.connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'jsonrpc',
 			onNotification: (record) => this.onNotification(record),
-			onServerRequest: (record) => this.onServerRequest(record),
+			onServerRequest: (record) => this.observeCompletion(this.onServerRequest(record)),
 		});
 		if (config.agentSessionId) {
 			const resumed = await this.connection.request('session.resume', {
@@ -232,15 +259,19 @@ class HermesTurn {
 					pending_clarify?: unknown;
 				};
 				if (pending.pending_approval && typeof pending.pending_approval === 'object') {
-					void this.onGatewayInteraction(
-						'approval.request',
-						pending.pending_approval as Record<string, unknown>
+					this.observeCompletion(
+						this.onGatewayInteraction(
+							'approval.request',
+							pending.pending_approval as Record<string, unknown>
+						)
 					);
 				}
 				if (pending.pending_clarify && typeof pending.pending_clarify === 'object') {
-					void this.onGatewayInteraction(
-						'clarify.request',
-						pending.pending_clarify as Record<string, unknown>
+					this.observeCompletion(
+						this.onGatewayInteraction(
+							'clarify.request',
+							pending.pending_clarify as Record<string, unknown>
+						)
 					);
 				}
 			}
@@ -321,7 +352,7 @@ class HermesTurn {
 			case 'clarify.request':
 			case 'secret.request':
 			case 'sudo.request':
-				void this.onGatewayInteraction(method, params);
+				this.observeCompletion(this.onGatewayInteraction(method, params));
 				return;
 			case 'approval.expire':
 			case 'clarify.expire':
@@ -349,7 +380,7 @@ class HermesTurn {
 				this.forwardUsage(params.usage);
 				return;
 			case 'message.complete':
-				void this.onComplete(params);
+				this.observeCompletion(this.onComplete(params));
 				return;
 			case 'message.error':
 			case 'run.failed':
@@ -478,12 +509,14 @@ class HermesTurn {
 		if (!nativeId || !this.connection) return;
 		const base = method.slice(0, -'.request'.length);
 		if (base === 'approval') {
-			void this.connection
-				.request('approval.received', {
-					session_id: this.providerSessionId,
-					request_id: nativeId,
-				})
-				.catch(() => undefined);
+			this.observeCompletion(
+				this.connection
+					.request('approval.received', {
+						session_id: this.providerSessionId,
+						request_id: nativeId,
+					})
+					.catch(() => undefined)
+			);
 		}
 		try {
 			const response = await this.onServerRequest({
@@ -642,9 +675,11 @@ class HermesTurn {
 	private async interrupt(): Promise<void> {
 		this.cancelled = true;
 		if (this.connection && this.providerSessionId) {
-			void this.connection
-				.request('session.interrupt', { session_id: this.providerSessionId })
-				.catch(() => undefined);
+			this.observeCompletion(
+				this.connection
+					.request('session.interrupt', { session_id: this.providerSessionId })
+					.catch(() => undefined)
+			);
 		}
 		stopProcess(
 			{ child: this.turn.child },
@@ -660,9 +695,11 @@ class HermesTurn {
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
 		this.cancelled = true;
 		if (this.connection && this.providerSessionId) {
-			void this.connection
-				.request('session.interrupt', { session_id: this.providerSessionId })
-				.catch(() => undefined);
+			this.observeCompletion(
+				this.connection
+					.request('session.interrupt', { session_id: this.providerSessionId })
+					.catch(() => undefined)
+			);
 		}
 		stopProcess(
 			{ child: this.turn.child },
@@ -771,14 +808,16 @@ class HermesTurn {
 	private finish(code: number): void {
 		if (this.finished) return;
 		this.finished = true;
-		void this.ctx.exitHandler
-			.handleExit(this.config.sessionId, code, this.managedProcess)
-			.catch((error) => {
-				logger.error('[HermesTurn] handleExit failed', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
-			});
+		this.observeCompletion(
+			this.ctx.exitHandler
+				.handleExit(this.config.sessionId, code, this.managedProcess)
+				.catch((error) => {
+					logger.error('[HermesTurn] handleExit failed', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+				})
+		);
 	}
 
 	private isSuperseded(): boolean {

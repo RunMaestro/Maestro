@@ -96,7 +96,10 @@ vi.mock('../../../main/harness-control/rpc-interactions', () => ({
 	answerRpcExtensionRequest: probes.interaction,
 }));
 vi.mock('../../../main/harness-control/integration', () => ({
-	harnessInteractionBroker: { open: () => ({ completion: probes.interaction() }) },
+	harnessInteractionBroker: {
+		open: () => ({ request: { requestId: 'broker' }, completion: probes.interaction() }),
+		withdraw: vi.fn(),
+	},
 }));
 
 import { buildChildProcessEnv } from '../../../main/process-manager/utils/envBuilder';
@@ -1332,6 +1335,337 @@ describe('standalone Codex app-server activity', () => {
 			throw new Error('exit failed');
 		});
 		native.emit('error', new Error('transport failed'));
+		await drain();
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+});
+
+describe('standalone Hermes gateway activity', () => {
+	let hermes: import('../../../main/process-manager/spawners/HermesApiSpawner').HermesApiSpawner;
+	const input = (overrides: Partial<ProcessConfig> = {}) =>
+		config({
+			toolType: 'hermes',
+			command: 'python',
+			args: ['-m', 'tui_gateway.entry'],
+			harnessControlMode: 'native',
+			...overrides,
+		});
+	const notify = (method: string, params: unknown = {}) =>
+		connection().onNotification!({ method, params });
+	beforeEach(async () => {
+		probes.request.mockImplementation(async (method: string) =>
+			method === 'session.create' ? { session_id: 'session' } : {}
+		);
+		const { HermesApiSpawner } =
+			await import('../../../main/process-manager/spawners/HermesApiSpawner');
+		hermes = new HermesApiSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses before gateway/setup/fallback under %s',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				const unresolved = input();
+				Object.defineProperty(unresolved, 'args', {
+					get: () => {
+						throw new Error('gateway resolution');
+					},
+				});
+				for (const request of [
+					unresolved,
+					input({ permissionMode: 'readonly' }),
+					input({ toolType: 'terminal' }),
+					input({ cwd: '/remote', sshRemoteId: 'remote' }),
+				])
+					expect(hermes.spawn(request)).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+				expect(createOutputParser).not.toHaveBeenCalled();
+				expect(planSpawnShell).not.toHaveBeenCalled();
+				expect(buildChildProcessEnv).not.toHaveBeenCalled();
+				expect(spawn).not.toHaveBeenCalled();
+				expect(fallback).not.toHaveBeenCalled();
+				expect(stopProcess).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it('blocks a pending reservation and an attempt during shell preparation', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		let duringSetup!: Promise<void>;
+		vi.mocked(planSpawnShell).mockImplementationOnce((command, args) => {
+			duringSetup = blocked();
+			return { command, args, shell: false };
+		});
+		hermes.spawn(input());
+		await duringSetup;
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['session.create', 'session.resume', 'prompt.submit'])(
+		'retains pending %s after Stop and native close',
+		async (method) => {
+			const pending = Promise.withResolvers<unknown>();
+			const request = probes.request.getMockImplementation()!;
+			probes.request.mockImplementation((name: string, ...args: unknown[]) =>
+				name === method ? pending.promise : request(name, ...args)
+			);
+			hermes.spawn(input({ agentSessionId: method === 'session.resume' ? 'resume' : undefined }));
+			await drain();
+			await processes.get('rpc-session')!.harnessControl!.interrupt();
+			await close();
+			await blocked();
+			pending.resolve({ session_id: 'session' });
+			await drain();
+			(await reserve()).release();
+			if (method !== 'prompt.submit')
+				expect(probes.request).not.toHaveBeenCalledWith('prompt.submit', expect.anything());
+			expect(fallback).not.toHaveBeenCalled();
+		}
+	);
+	it.each(['result', 'error', 'exit', 'interrupt', 'kill'])(
+		'retains %s without independent close',
+		async (event) => {
+			hermes.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			if (event === 'result') notify('message.complete', { status: 'completed', output: 'done' });
+			if (event === 'error') native.emit('error', new Error('native failed'));
+			if (event === 'exit') native.emit('exit', 0, null);
+			if (event === 'interrupt') await managed.sdkController!.interrupt();
+			if (event === 'kill') await managed.sdkController!.kill();
+			await drain();
+			processes.clear();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('retains completion-state query after native close and reporting settlement', async () => {
+		hermes.spawn(input());
+		await drain();
+		const state = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(state.promise);
+		notify('message.complete', { output: 'done' });
+		await close();
+		await blocked();
+		state.reject(new Error('4007 not found'));
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['steer', 'interrupt', 'kill'])(
+		'retains pending %s RPC after close',
+		async (operation) => {
+			hermes.spawn(input());
+			await drain();
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(pending.promise);
+			const managed = processes.get('rpc-session')!;
+			const control =
+				operation === 'steer'
+					? managed.harnessControl!.steer({ id: 'steer', text: 'next' })
+					: operation === 'kill'
+						? managed.sdkController!.kill()
+						: managed.harnessControl!.interrupt();
+			await close();
+			await blocked();
+			pending.reject(new Error('control failed'));
+			await control;
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('holds gateway acknowledgement, permission response and reporting independently', async () => {
+		hermes.spawn(input());
+		await drain();
+		const ack = Promise.withResolvers<unknown>();
+		const interaction = Promise.withResolvers<unknown>();
+		const reply = Promise.withResolvers<unknown>();
+		const reporting = Promise.withResolvers<void>();
+		probes.request.mockReturnValueOnce(ack.promise).mockReturnValueOnce(reply.promise);
+		probes.interaction.mockReturnValueOnce(interaction.promise);
+		probes.exit.mockReturnValueOnce(reporting.promise);
+		notify('approval.request', { request_id: 'approval' });
+		await close();
+		await blocked();
+		interaction.resolve({ outcome: 'selected', optionId: 'once' });
+		await drain();
+		expect(probes.request).toHaveBeenCalledWith(
+			'approval.respond',
+			expect.objectContaining({ choice: 'once' })
+		);
+		reply.resolve({});
+		reporting.reject(new Error('report failed'));
+		await drain();
+		await blocked();
+		ack.reject(new Error('ack failed'));
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['direct', 'notification', 'resume-approval', 'resume-clarify'])(
+		'retains %s interaction beyond close through callback or gateway reply',
+		async (mode) => {
+			const interaction = Promise.withResolvers<unknown>();
+			const reply = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(interaction.promise);
+			if (mode.startsWith('resume'))
+				probes.request.mockResolvedValueOnce({
+					session_id: 'session',
+					[mode === 'resume-approval' ? 'pending_approval' : 'pending_clarify']: {
+						request_id: 'permission',
+					},
+				});
+			hermes.spawn(input({ agentSessionId: mode.startsWith('resume') ? 'resume' : undefined }));
+			await drain();
+			const response =
+				mode === 'direct'
+					? connection().onServerRequest!({ id: 'permission', method: 'approval', params: {} })
+					: undefined;
+			if (mode === 'notification') notify('secret.request', { request_id: 'permission' });
+			await close();
+			await blocked();
+			if (mode !== 'direct') probes.request.mockReturnValueOnce(reply.promise);
+			interaction.resolve({ outcome: 'answers', answers: { answer: 'fixture' } });
+			await response;
+			await drain();
+			if (mode !== 'direct') {
+				await blocked();
+				reply.reject(new Error('reply failed'));
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['gateway', 'parser', 'shell', 'env', 'nonstart'])(
+		'releases proven pre-native %s failure without recovery',
+		async (failure) => {
+			const fail = () => {
+				throw new Error('setup failed');
+			};
+			const request = input();
+			if (failure === 'gateway') Object.defineProperty(request, 'args', { get: fail });
+			if (failure === 'parser') vi.mocked(createOutputParser).mockImplementationOnce(fail);
+			if (failure === 'shell') vi.mocked(planSpawnShell).mockImplementationOnce(fail);
+			if (failure === 'env') vi.mocked(buildChildProcessEnv).mockImplementationOnce(fail);
+			if (failure === 'nonstart') vi.mocked(spawn).mockImplementationOnce(fail);
+			expect(hermes.spawn(request).success).toBe(false);
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['lost-handle', 'observer'])(
+		'keeps uncertain %s native state blocked',
+		async (failure) => {
+			if (failure === 'lost-handle')
+				vi.spyOn(native.stdin, 'on').mockImplementationOnce(() => {
+					throw new Error('postspawn');
+				});
+			else {
+				const on = native.on.bind(native);
+				let closes = 0;
+				vi.spyOn(native, 'on').mockImplementation((event, listener) => {
+					if (event === 'close' && ++closes === 2) throw new Error('observer failed');
+					return on(event, listener);
+				});
+			}
+			expect(hermes.spawn(input()).success).toBe(false);
+			await close();
+			await blocked();
+		}
+	);
+	it('retains superseded/unregistered generations and a failed registration child', async () => {
+		hermes.spawn(input());
+		await drain();
+		const old = native;
+		native = makeNative();
+		hermes.spawn(input());
+		await drain();
+		processes.clear();
+		await close();
+		await blocked();
+		await close(old);
+		(await reserve()).release();
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		native = makeNative();
+		expect(hermes.spawn(input()).success).toBe(false);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('composes failed asynchronous setup with independently admitted CLI fallback', async () => {
+		const pending = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(pending.promise);
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		hermes.spawn(input({ permissionMode: 'full' }));
+		pending.reject(new Error('create failed'));
+		await drain();
+		expect(fallback).toHaveBeenCalledWith(input({ permissionMode: 'full' }));
+		await close();
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+	it('releases failed direct fallback without starting a child', async () => {
+		fallback.mockImplementationOnce(() => {
+			throw new Error('fallback failed');
+		});
+		expect(hermes.spawn(input({ permissionMode: 'readonly' })).success).toBe(false);
+		expect(fallback).toHaveBeenCalledOnce();
+		expect(spawn).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+	it('retains missing-pid error through close and pending creation settlement', async () => {
+		Object.assign(native, { pid: undefined });
+		const pending = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(pending.promise);
+		expect(hermes.spawn(input())).toMatchObject({ success: true, pid: -1 });
+		native.emit('error', new Error('spawn failed'));
+		await close();
+		await blocked();
+		pending.reject(new Error('creation failed'));
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains failed registration and synchronous CLI fallback independently', async () => {
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		expect(hermes.spawn(input({ permissionMode: 'full' })).success).toBe(true);
+		await close();
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+	it('contains failed permission and throwing child-exit callbacks until close', async () => {
+		hermes.spawn(input());
+		await drain();
+		probes.interaction.mockRejectedValueOnce(new Error('permission failed'));
+		await expect(
+			connection().onServerRequest!({ id: 'permission', method: 'approval' })
+		).rejects.toThrow('permission failed');
+		probes.close.mockImplementationOnce(() => {
+			throw new Error('exit failed');
+		});
+		native.emit('error', new Error('native failed'));
 		await drain();
 		await blocked();
 		await close();
