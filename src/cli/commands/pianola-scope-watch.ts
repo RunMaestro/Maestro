@@ -23,6 +23,7 @@ import {
 import type { WatchTarget } from '../../shared/pianola/pianola-watcher';
 import { pausePianolaScopeDecisions } from '../../shared/pianola/pianola-decision-lifecycle';
 import type { PianolaMessage } from '../../shared/pianola/types';
+import { MAX_PERSISTED_SESSION_LOGS } from '../../shared/deferredSessionContent';
 import {
 	ensurePianolaEnabled,
 	pianolaEnabledNow,
@@ -113,6 +114,11 @@ export function createPianolaScopeWorkerDeps(
 				!Array.isArray(response.messages)
 			)
 				throw new Error(response.error ?? 'Incomplete scope transcript');
+			// The persisted window may already have discarded earlier entries in
+			// this turn. At the limit, completeness cannot be established from the
+			// history API, so do not classify or deliver from that window.
+			if (response.messages.length >= MAX_PERSISTED_SESSION_LOGS)
+				throw new Error('Scope transcript may be truncated; complete current turn unavailable');
 			return { agentId: response.agentId, tabId: response.tabId, messages: response.messages };
 		},
 		watch: {
