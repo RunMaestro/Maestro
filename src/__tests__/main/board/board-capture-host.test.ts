@@ -29,6 +29,7 @@ import {
 	setBoardWorkerPaused,
 } from '../../../main/board/board-workspace-storage';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { resolveBoardLocation } from '../../../main/board/board-location';
 import type { BoardDeleteCardsResult } from '../../../shared/board/commands';
 import {
 	BOARD_SOURCE_PROJECT_PREFIX,
@@ -1208,14 +1209,37 @@ describe('read-only current host diagnosis across capture and global reload', ()
 		expect((await facade.captureReadinessAsync(facade.read(dir, 'b'))).c).toEqual([
 			'occupancy-unknown',
 		]);
+		for (const session of [
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'other-host' } },
+			{ sshRemoteId: 'other-host' },
+			{
+				sshRemoteId: 'other-host',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'other-host' },
+			},
+		]) {
+			configureBoardReadinessHost(() => ({
+				dispatchEnabled: true,
+				agentStates: { a: { live: true, busy: false, location: resolveBoardLocation(session) } },
+			}));
+			expect((await facade.captureReadinessAsync(facade.read(dir, 'b'))).c).toEqual([
+				'worker-location-mismatch',
+			]);
+		}
 		configureBoardReadinessHost(() => ({
 			dispatchEnabled: true,
 			agentStates: {
-				a: { live: true, busy: false, location: { kind: 'ssh', remoteId: 'other-host' } },
+				a: {
+					live: true,
+					busy: false,
+					location: resolveBoardLocation({
+						sshRemoteId: 'other',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' },
+					}),
+				},
 			},
 		}));
 		expect((await facade.captureReadinessAsync(facade.read(dir, 'b'))).c).toEqual([
-			'worker-location-mismatch',
+			'worker-location-invalid',
 		]);
 		configureBoardReadinessHost(() => ({
 			dispatchEnabled: true,

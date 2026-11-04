@@ -240,6 +240,7 @@ export type BoardReadinessReason =
 	| 'worker-busy'
 	| 'worker-dormant'
 	| 'worker-location-mismatch'
+	| 'worker-location-invalid'
 	| 'occupancy-unknown'
 	| 'runtime-unknown'
 	| 'runtime-unavailable'

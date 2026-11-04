@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { BOARD_CONFIG_PATH, PROFILES_CONFIG_PATH } from '../../shared/maestro-paths';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { resolveBoardLocation } from './board-location';
 import {
 	boardRemoteTransport,
 	probeBoardRemoteRepository,
@@ -136,14 +137,21 @@ export async function discoverBoardSources(
 		{ location: { kind: 'ssh'; remoteId: string }; path: string }
 	>();
 	for (const session of registered) {
-		if (!session.sessionSshRemoteConfig?.enabled && !session.sshRemoteId) continue;
-		const remoteId = session.sessionSshRemoteConfig?.enabled
-			? session.sessionSshRemoteConfig.remoteId
-			: session.sshRemoteId;
+		let location = resolveBoardLocation(session);
+		// Retain the unresolved source diagnostic for an enabled configuration
+		// with no selected host, without guessing between conflicting identities.
+		if (
+			location.kind === 'invalid' &&
+			session.sessionSshRemoteConfig?.enabled &&
+			!session.sessionSshRemoteConfig.remoteId &&
+			!session.sshRemoteId
+		)
+			location = { kind: 'ssh', remoteId: '' };
+		if (location.kind !== 'ssh') continue;
 		const root = session.projectRoot || session.dir;
 		if (!root) continue;
 		// Missing remote ID remains visible but cannot be executed or mapped locally.
-		const source = { location: { kind: 'ssh' as const, remoteId: remoteId ?? '' }, path: root };
+		const source = { location, path: root };
 		remoteSources.set(boardMigrationSourceKey(source), source);
 	}
 	for (const [sourceKey, source] of remoteSources) {
@@ -204,7 +212,7 @@ export async function discoverBoardSources(
 	}
 	const roots = new Set(
 		registered
-			.filter((s) => !s.sessionSshRemoteConfig?.enabled && !s.sshRemoteId)
+			.filter((s) => resolveBoardLocation(s).kind === 'local')
 			.map((s) => s.projectRoot || s.dir)
 			.filter((root): root is string => !!root)
 	);
@@ -262,8 +270,7 @@ export async function discoverBoardSources(
 			registered.some(
 				(s) =>
 					s.boardWorker &&
-					!s.sessionSshRemoteConfig?.enabled &&
-					!s.sshRemoteId &&
+					resolveBoardLocation(s).kind === 'local' &&
 					(s.projectRoot || s.dir) === root
 			)
 		) {

@@ -97,6 +97,8 @@ const READINESS_LABELS: Record<BoardReadinessReason, string> = {
 	'worker-busy': 'Assigned worker is busy',
 	'worker-dormant': 'Assigned worker is dormant',
 	'worker-location-mismatch': 'Worker is in a different location',
+	'worker-location-invalid':
+		'Worker SSH identities conflict or are missing; check agent SSH settings',
 	'occupancy-unknown': 'Worker availability is unknown',
 	'runtime-unknown': 'Runtime status is unknown',
 	'runtime-unavailable': 'Runtime is unavailable',

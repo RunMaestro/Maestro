@@ -443,6 +443,29 @@ it('routes a claimed SSH repository through the selected worker SSH config and b
 	);
 	expect(ensureCardWorktree).not.toHaveBeenCalled();
 	executeCuePrompt.mockClear();
+	for (const session of [
+		{ sshRemoteId: 'remote-one' },
+		{
+			sshRemoteId: 'remote-one',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+		},
+	]) {
+		await createBoardRunService(context(session)).spawn(specification, hooks);
+		expect(executeCuePrompt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				sshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+			})
+		);
+	}
+	executeCuePrompt.mockClear();
+	const conflict = await createBoardRunService(
+		context({
+			sshRemoteId: 'other',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+		})
+	).spawn(specification, hooks);
+	expect(conflict.executionStarted).toBe(false);
+	expect(conflict.output).toContain('SSH identities conflict');
 	for (const session of [{}, { sessionSshRemoteConfig: { enabled: true, remoteId: 'other' } }]) {
 		const result = await createBoardRunService(context(session)).spawn(specification, hooks);
 		expect(result.executionStarted).toBe(false);

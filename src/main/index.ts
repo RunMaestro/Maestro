@@ -245,6 +245,7 @@ import { isBoardIsolationRequested } from './board/board-isolation';
 import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
 import { configureBoardRuntimeHost } from './board/board-runtime-host';
 import type { BoardClaimHostContext } from './board/board-claims';
+import { resolveBoardLocation } from './board/board-location';
 import type { BoardCardKey } from './board/board-workspace-storage';
 import { readCueEngineLock, isCueEngineLockOwnedByThisProcess } from './cue/cue-engine-lock';
 import { execGitReadOnly } from './utils/remote-git';
@@ -1564,9 +1565,7 @@ app
 						{
 							live: !isAgentDormant(session, flags),
 							busy: isAgentBusy(session as { id: string }, processManager, cliBusySessionIds),
-							location: session.sessionSshRemoteConfig?.enabled
-								? { kind: 'ssh' as const, remoteId: session.sessionSshRemoteConfig.remoteId }
-								: { kind: 'local' as const },
+							location: resolveBoardLocation(session),
 							baseValues: {
 								customModel: session.customModel,
 								customEffort: session.customEffort,

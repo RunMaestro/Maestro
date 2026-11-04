@@ -9,6 +9,7 @@ import { validateCapture } from '../../shared/board/domain';
 import { validateAgentProfile } from '../../shared/profiles/types';
 import type Database from 'better-sqlite3';
 import { selectPoolAgentIds } from '../../shared/board/pool';
+import { resolveBoardLocation } from './board-location';
 
 export interface BoardMigrationInput {
 	/** Canonical location and source path supplied by the caller, never inferred from a worker. */
@@ -573,11 +574,15 @@ function applyMigrationWorkerAccess(db: Database.Database, plan: BoardMigrationP
 						dir: typeof raw.dir === 'string' ? raw.dir : null,
 						boardWorker:
 							raw.boardWorker === true &&
-							(location.kind === 'ssh'
-								? (record(raw.sessionSshRemoteConfig)?.enabled === true
-										? record(raw.sessionSshRemoteConfig)?.remoteId
-										: raw.sshRemoteId) === location.remoteId
-								: record(raw.sessionSshRemoteConfig)?.enabled !== true && !raw.sshRemoteId),
+							canonicalJson(
+								resolveBoardLocation({
+									sshRemoteId: raw.sshRemoteId,
+									sessionSshRemoteConfig: record(raw.sessionSshRemoteConfig) as {
+										enabled?: boolean;
+										remoteId?: unknown;
+									} | null,
+								})
+							) === canonicalJson(location),
 					},
 				]
 			: [];

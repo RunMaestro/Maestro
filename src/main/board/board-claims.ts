@@ -79,7 +79,7 @@ export interface BoardClaimHostContext {
 			{
 				live: boolean;
 				busy: boolean;
-				location: ExecutionLocation;
+				location: ExecutionLocation | { kind: 'invalid' };
 				baseValues?: ProfileBaseAgentValues;
 			}
 		>
@@ -103,6 +103,7 @@ export type BoardClaimWaitReason =
 	| 'worker-busy'
 	| 'worker-dormant'
 	| 'worker-location-mismatch'
+	| 'worker-location-invalid'
 	| 'migration-blocked'
 	| 'worker-held'
 	| 'invalid-specification'
@@ -351,6 +352,7 @@ export function claimBoardCard(
 				const agent = host.agentStates[command.workerAgentId];
 				if (agent?.live !== true) return waiting('worker-dormant');
 				if (agent.busy !== false) return waiting('worker-busy');
+				if (agent.location.kind === 'invalid') return waiting('worker-location-invalid');
 				const repository = host.repository;
 				const repositoryRow = db
 					.prepare('SELECT payload_json FROM repositories WHERE id = ?')

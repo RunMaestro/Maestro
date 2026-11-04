@@ -443,6 +443,7 @@ export class BoardStorageFacade {
 						if (!state) return 'occupancy-unknown';
 						if (!state.live) return 'worker-dormant';
 						if (state.busy) return 'worker-busy';
+						if (state.location.kind === 'invalid') return 'worker-location-invalid';
 						if (
 							repository &&
 							canonicalJson(state.location) !==

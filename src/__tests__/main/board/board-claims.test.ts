@@ -31,6 +31,7 @@ import { claimBoardCard, type BoardRunSpecification } from '../../../main/board/
 import { resolveProfileSpawnOverrides } from '../../../shared/profiles/types';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
+import { resolveBoardLocation } from '../../../main/board/board-location';
 import { BOARD_SOURCE_PROJECT_PREFIX, type BoardCard } from '../../../shared/board/types';
 
 let contract: BoardIsolation;
@@ -870,8 +871,19 @@ describe('persistent global Board claims over real SQLite', () => {
 		);
 		expectWaiting('repository-unresolved');
 		host = hostFor(0);
-		host.agentStates.worker.location = { kind: 'ssh', remoteId: 'remote' };
-		expectWaiting('worker-location-mismatch');
+		for (const session of [
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' } },
+			{ sshRemoteId: 'remote' },
+			{ sshRemoteId: 'remote', sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' } },
+		]) {
+			host.agentStates.worker.location = resolveBoardLocation(session);
+			expectWaiting('worker-location-mismatch');
+		}
+		host.agentStates.worker.location = resolveBoardLocation({
+			sshRemoteId: 'other',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' },
+		});
+		expectWaiting('worker-location-invalid');
 	});
 	it('keeps migration blockers and global worker holds authoritative', () => {
 		const input = command();

@@ -65,6 +65,7 @@ import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prom
 import type { StoredSession } from '../stores/types';
 import { canonicalJson } from '../../shared/canonicalJson';
 import type { BoardRunService } from './board-runtime';
+import { resolveBoardLocation } from './board-location';
 
 /** Default per-card run budget (mirrors the Cue default `timeout_minutes: 30`). */
 const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
@@ -81,11 +82,14 @@ export function createBoardRunService(
 	return {
 		spawn: (spec, hooks) => {
 			const worker = ctx.getStoredSessions().find((session) => session.id === spec.workerAgentId);
-			const location = worker?.sessionSshRemoteConfig?.enabled
-				? { kind: 'ssh', remoteId: worker.sessionSshRemoteConfig.remoteId }
-				: worker?.sshRemoteId
-					? { kind: 'ssh', remoteId: worker.sshRemoteId }
-					: { kind: 'local' };
+			const location = worker && resolveBoardLocation(worker);
+			if (location?.kind === 'invalid')
+				return Promise.resolve({
+					...blockedSpawnResult(
+						'Worker SSH identities conflict or are missing; check agent SSH settings'
+					),
+					executionStarted: false,
+				});
 			if (!worker || canonicalJson(location) !== canonicalJson(spec.repository.location))
 				return Promise.resolve({
 					...blockedSpawnResult('Selected worker execution location changed'),
@@ -296,6 +300,13 @@ export async function spawnBoardCard(
 				...(request.lifecycle ? { executionStarted: false } : {}),
 			};
 		}
+		if (resolveBoardLocation(baseSession).kind === 'invalid')
+			return {
+				...blockedSpawnResult(
+					'Worker SSH identities conflict or are missing; check agent SSH settings'
+				),
+				executionStarted: false,
+			};
 		// Preserve the profile's role as a preamble alongside the canonical
 		// Maestro system prompt delivered by the shared runner,
 		// followed by the four-question handoff reminder (structured completion
@@ -358,7 +369,7 @@ async function provisionCardWorktree(
 > {
 	// SSH agents execute on the remote host; a locally-created worktree is
 	// invisible to them, so refuse the card instead of misleading the user.
-	if (baseSession.sessionSshRemoteConfig?.enabled) {
+	if (resolveBoardLocation(baseSession).kind !== 'local') {
 		return { ok: false, result: blockedSpawnResult(WORKTREE_SSH_UNSUPPORTED) };
 	}
 	const ensured = await ensureCardWorktree(projectRoot, card.worktree!);
@@ -520,7 +531,7 @@ async function runCardPrompt(
 		beforeLaunch: lifecycle?.beforeLaunch,
 		prepareLaunch: lifecycle
 			? async () => {
-					if (baseSession.sessionSshRemoteConfig?.enabled) return !card.reviewHandoff;
+					if (resolveBoardLocation(baseSession).kind !== 'local') return !card.reviewHandoff;
 					const artifact = await readBoardRunArtifact(
 						runCwd,
 						card.reviewHandoff?.artifact.diff?.baseCommit
@@ -559,7 +570,15 @@ async function runCardPrompt(
 		templateContext,
 		timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
 		// Honor the base agent's SSH + token-source config (never bypass the SSH path).
-		sshRemoteConfig: baseSession.sessionSshRemoteConfig,
+		sshRemoteConfig:
+			resolveBoardLocation(baseSession).kind === 'ssh'
+				? {
+						...baseSession.sessionSshRemoteConfig,
+						enabled: true,
+						remoteId: (resolveBoardLocation(baseSession) as { kind: 'ssh'; remoteId: string })
+							.remoteId,
+					}
+				: baseSession.sessionSshRemoteConfig,
 		customPath: resolvedAgentPath,
 		customArgs: overrides.customArgs,
 		customEnvVars: baseSession.customEnvVars,
@@ -583,7 +602,7 @@ async function runCardPrompt(
 		lifecycle &&
 		result.executionStarted &&
 		result.terminationConfirmed &&
-		!baseSession.sessionSshRemoteConfig?.enabled
+		resolveBoardLocation(baseSession).kind === 'local'
 	) {
 		try {
 			artifact =
