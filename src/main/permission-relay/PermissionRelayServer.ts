@@ -22,6 +22,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import { createPending, lookupBinding } from './registry';
 import { parseQuestionRequest } from './question-request';
 import type { BridgeToServerMessage, PermissionRequest, ServerToBridgeMessage } from './types';
@@ -39,7 +40,12 @@ export class PermissionRelayServer {
 
 	/** Set the callback that surfaces requests to the user (renderer). */
 	setOnRequest(cb: OnPermissionRequest): void {
-		this.onRequest = cb;
+		const release = beginGlobalWorktreeActivity();
+		try {
+			this.onRequest = cb;
+		} finally {
+			release();
+		}
 	}
 
 	/** True once the socket is listening. */
@@ -53,16 +59,22 @@ export class PermissionRelayServer {
 	 * bridge env.
 	 */
 	async ensureStarted(userDataDir: string): Promise<string> {
-		if (this.socketPath && this.server) {
-			return this.socketPath;
+		// This holds the request, not the listening server or its connections.
+		const release = beginGlobalWorktreeActivity();
+		try {
+			if (this.socketPath && this.server) {
+				return this.socketPath;
+			}
+			if (this.starting) {
+				return await this.starting;
+			}
+			this.starting = this.start(userDataDir).finally(() => {
+				this.starting = null;
+			});
+			return await this.starting;
+		} finally {
+			release();
 		}
-		if (this.starting) {
-			return this.starting;
-		}
-		this.starting = this.start(userDataDir).finally(() => {
-			this.starting = null;
-		});
-		return this.starting;
 	}
 
 	private resolveSocketPath(userDataDir: string): string {
@@ -252,18 +264,23 @@ export class PermissionRelayServer {
 
 	/** Stop the server and remove the socket file. */
 	stop(): void {
-		if (this.server) {
-			this.server.close();
-			this.server = null;
-		}
-		if (this.socketPath && process.platform !== 'win32') {
-			try {
-				fs.unlinkSync(this.socketPath);
-			} catch {
-				// Already gone.
+		const release = beginGlobalWorktreeActivity();
+		try {
+			if (this.server) {
+				this.server.close();
+				this.server = null;
 			}
+			if (this.socketPath && process.platform !== 'win32') {
+				try {
+					fs.unlinkSync(this.socketPath);
+				} catch {
+					// Already gone.
+				}
+			}
+			this.socketPath = null;
+		} finally {
+			release();
 		}
-		this.socketPath = null;
 	}
 }
 
