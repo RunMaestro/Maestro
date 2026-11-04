@@ -38,6 +38,21 @@ describe('worktree PR refresh', () => {
 		await refreshWorktreePullRequest(request);
 		expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(2);
 	});
+	it('shares one discovery across duplicate sessions for the same checkout', async () => {
+		let finish!: (result: { status: 'detached'; localSha: string }) => void;
+		vi.mocked(discoverWorktreePullRequest).mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+		);
+		const sessions = Array.from({ length: 8 }, () => refreshWorktreePullRequest({ ...request }));
+		await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+		finish({ status: 'detached', localSha: 'sha' });
+		expect(
+			(await Promise.all(sessions)).every((snapshot) => snapshot.discovery.status === 'detached')
+		).toBe(true);
+		expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(1);
+	});
 	it('rejects an in-flight result after a branch switch', async () => {
 		let finish!: (result: { status: 'detached'; localSha: string }) => void;
 		vi.mocked(discoverWorktreePullRequest).mockReturnValue(

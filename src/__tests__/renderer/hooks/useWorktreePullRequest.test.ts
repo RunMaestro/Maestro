@@ -11,6 +11,58 @@ afterEach(() => {
 });
 
 describe('useWorktreePullRequest', () => {
+	it('discovers an externally created PR on the next poll and clears its identity on branch change', async () => {
+		const repo = { host: 'github.com', owner: 'owner', name: 'repo' };
+		const head = { branch: 'feature', localSha: 'abc', repository: repo };
+		const identity = { repository: repo, number: 42 };
+		const refresh = vi
+			.fn()
+			.mockResolvedValueOnce({ discovery: { status: 'no-pr', head, repository: repo } })
+			.mockResolvedValueOnce({ discovery: { status: 'found', head, pullRequest: { identity } } })
+			.mockResolvedValue({ discovery: { status: 'no-pr', head, repository: repo } });
+		window.maestro.git.refreshWorktreePullRequest = refresh;
+		vi.useFakeTimers();
+		try {
+			const { result, rerender, unmount } = renderHook(
+				({ branch }) => useWorktreePullRequest('/repo', branch),
+				{ initialProps: { branch: 'feature' } }
+			);
+			await act(async () => {});
+			expect(result.current.snapshot?.discovery.status).toBe('no-pr');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60_000);
+			});
+			expect(result.current.snapshot?.discovery.status).toBe('found');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60_000);
+			});
+			expect(refresh.mock.calls[2][0].knownPullRequest).toEqual(identity);
+			rerender({ branch: 'other' });
+			await act(async () => {});
+			expect(refresh.mock.calls[3][0].knownPullRequest).toBeUndefined();
+			unmount();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60_000);
+			});
+			expect(refresh).toHaveBeenCalledTimes(4);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it.each(['authentication required', 'offline'])(
+		'exposes %s when no earlier snapshot exists',
+		async (message) => {
+			window.maestro.git.refreshWorktreePullRequest = vi.fn().mockResolvedValue({
+				discovery: { status: 'unavailable', reason: 'gh', message },
+			});
+			const { result } = renderHook(() => useWorktreePullRequest('/repo', 'main'));
+			await waitFor(() =>
+				expect(result.current.snapshot?.discovery).toMatchObject({ status: 'unavailable', message })
+			);
+			expect(result.current.stale).toBe(false);
+		}
+	);
 	it('discards a response from the previous branch and cleans up polling', async () => {
 		let resolveFirst!: (snapshot: WorktreePullRequestSnapshot) => void;
 		const first = new Promise<WorktreePullRequestSnapshot>((resolve) => (resolveFirst = resolve));

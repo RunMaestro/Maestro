@@ -333,6 +333,61 @@ describe('worktree PR summary', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 	});
+	it.each(['authentication required', 'offline'])(
+		'shows %s as unavailable rather than no PR',
+		(message) => {
+			prState.current = {
+				snapshot: { discovery: { status: 'unavailable', reason: 'gh', message } },
+			};
+			render(<SessionItem {...defaultProps} variant="worktree" session={createMockSession()} />);
+			expect(screen.getByRole('button', { name: /unavailable/i })).toHaveAttribute(
+				'title',
+				expect.stringContaining(message)
+			);
+			expect(screen.queryByRole('button', { name: /No PR/ })).not.toBeInTheDocument();
+		}
+	);
+
+	it('updates check details while the dialog remains open', () => {
+		const check = {
+			kind: 'check-run',
+			id: '1',
+			name: 'Build',
+			state: 'pending',
+			detailsUrl: null,
+			updatedAt: null,
+		};
+		prState.current = {
+			snapshot: {
+				discovery: {
+					status: 'found',
+					pullRequest: {
+						identity: { number: 42 },
+						title: 'Example',
+						url: 'https://github.com/a/b/pull/42',
+						state: 'OPEN',
+						baseBranch: 'rc',
+					},
+				},
+				ci: { status: 'available', checkedAt: '2026-11-04T10:00:00Z', checks: [check] },
+			},
+		};
+		const session = createMockSession();
+		const view = () => (
+			<LayerStackProvider>
+				<SessionItem {...defaultProps} variant="worktree" session={{ ...session }} />
+			</LayerStackProvider>
+		);
+		const { rerender } = render(view());
+		fireEvent.click(screen.getByRole('button', { name: 'Show PR and CI details' }));
+		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('pending');
+		check.state = 'passed';
+		rerender(view());
+		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('passed');
+		check.state = 'failed';
+		rerender(view());
+		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('failed');
+	});
 	it('shows CI transitions and refreshes without selecting the worktree', () => {
 		const onSelect = vi.fn();
 		const session = createMockSession({ worktreeBranch: 'feat/x' });
@@ -345,6 +400,16 @@ describe('worktree PR summary', () => {
 			<SessionItem {...defaultProps} variant="worktree" session={session} onSelect={onSelect} />
 		);
 		expect(screen.getByRole('button', { name: /PR #42 OPEN, CI pending/ })).toBeInTheDocument();
+		snapshot.ci.checks[0].state = 'passed';
+		rerender(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={{ ...session }}
+				onSelect={onSelect}
+			/>
+		);
+		expect(screen.getByRole('button', { name: /CI passed/ })).toBeInTheDocument();
 		snapshot.ci.checks[0].state = 'failed';
 		rerender(
 			<SessionItem
@@ -356,6 +421,33 @@ describe('worktree PR summary', () => {
 		);
 		fireEvent.click(screen.getByRole('button', { name: /CI failed/ }));
 		expect(prState.refresh).toHaveBeenCalled();
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it('keeps keyboard actions on the PR controls from selecting the worktree', () => {
+		const onSelect = vi.fn();
+		prState.refresh.mockClear();
+		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		render(
+			<LayerStackProvider>
+				<SessionItem
+					{...defaultProps}
+					variant="worktree"
+					session={createMockSession()}
+					onSelect={onSelect}
+				/>
+			</LayerStackProvider>
+		);
+		const refresh = screen.getByRole('button', { name: /No PR/ });
+		refresh.focus();
+		fireEvent.keyDown(refresh, { key: 'Enter' });
+		fireEvent.click(refresh);
+		expect(prState.refresh).toHaveBeenCalledOnce();
+		const details = screen.getByRole('button', { name: 'Show PR and CI details' });
+		details.focus();
+		fireEvent.keyDown(details, { key: ' ' });
+		fireEvent.click(details);
+		expect(screen.getByRole('dialog', { name: 'Worktree PR and CI' })).toBeInTheDocument();
 		expect(onSelect).not.toHaveBeenCalled();
 	});
 
