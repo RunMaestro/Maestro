@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+import type { ChildProcess } from 'child_process';
 import type { ExecResult } from '../../../main/utils/execFile';
 
 // Create mock function
@@ -34,13 +36,18 @@ vi.mock('util', async (importOriginal) => {
 			promisify: (fn: any) => {
 				// If it's our mock, return it wrapped
 				if (fn === mockExecFile) {
-					return async (...args: any[]) => {
-						return new Promise((resolve, reject) => {
-							mockExecFile(...args, (error: Error | null, stdout: string, stderr: string) => {
-								if (error) reject(error);
-								else resolve({ stdout, stderr });
-							});
+					return (...args: any[]) => {
+						let child: ChildProcess;
+						const completion = new Promise((resolve, reject) => {
+							child = mockExecFile(
+								...args,
+								(error: Error | null, stdout: string, stderr: string) => {
+									if (error) reject(error);
+									else resolve({ stdout, stderr });
+								}
+							);
 						});
+						return Object.assign(completion, { child: child! });
 					};
 				}
 				return actual.promisify(fn);
@@ -49,13 +56,15 @@ vi.mock('util', async (importOriginal) => {
 		promisify: (fn: any) => {
 			// If it's our mock, return it wrapped
 			if (fn === mockExecFile) {
-				return async (...args: any[]) => {
-					return new Promise((resolve, reject) => {
-						mockExecFile(...args, (error: Error | null, stdout: string, stderr: string) => {
+				return (...args: any[]) => {
+					let child: ChildProcess;
+					const completion = new Promise((resolve, reject) => {
+						child = mockExecFile(...args, (error: Error | null, stdout: string, stderr: string) => {
 							if (error) reject(error);
 							else resolve({ stdout, stderr });
 						});
 					});
+					return Object.assign(completion, { child: child! });
 				};
 			}
 			return actual.promisify(fn);
@@ -951,5 +960,105 @@ describe('execFile.ts', () => {
 				expect(result.exitCode).toBe(1);
 			});
 		});
+	});
+});
+
+describe('execFile native child observation', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		mockExecFile.mockReset();
+	});
+	it('exposes the exact buffered-exec child before result settlement', async () => {
+		const { execFileNoThrow } = await import('../../../main/utils/execFile');
+		const child = new EventEmitter();
+		let finish: (error: Error | null, stdout: string, stderr: string) => void;
+		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, callback) => {
+			finish = callback;
+			return child;
+		});
+		const onSpawn = vi.fn();
+		const result = execFileNoThrow('claude', ['--', '/help'], '/project', undefined, onSpawn);
+		expect(onSpawn).toHaveBeenCalledExactlyOnceWith(child);
+		finish!(null, 'commands', '');
+		await expect(result).resolves.toEqual({ stdout: 'commands', stderr: '', exitCode: 0 });
+	});
+
+	it('observes the actual buffered child on success and native launch error', async () => {
+		const actual = await vi.importActual<typeof import('child_process')>('child_process');
+		const { execFileNoThrow } = await import('../../../main/utils/execFile');
+		for (const command of [process.execPath, process.execPath + '-does-not-exist']) {
+			mockExecFile.mockImplementationOnce(actual.execFile);
+			let closed: Promise<unknown> | undefined;
+			const onSpawn = vi.fn((child: ChildProcess) => {
+				closed = new Promise((resolve) => child.once('close', resolve));
+			});
+			const result = await execFileNoThrow(
+				command,
+				['-e', 'process.stdout.write("observed")'],
+				undefined,
+				undefined,
+				onSpawn
+			);
+			expect(onSpawn).toHaveBeenCalledOnce();
+			expect(result).toMatchObject(
+				command === process.execPath ? { stdout: 'observed', exitCode: 0 } : { exitCode: 'ENOENT' }
+			);
+			expect(closed).toBeDefined();
+			await closed;
+		}
+	});
+
+	it('observes a real stdin child before input is written and independently sees close', async () => {
+		const { execFileNoThrow } = await import('../../../main/utils/execFile');
+		let closed: Promise<unknown> | undefined;
+		const result = execFileNoThrow(
+			process.execPath,
+			['-e', 'process.stdin.pipe(process.stdout)'],
+			undefined,
+			{ input: 'observed input' },
+			(child) => {
+				expect(child.stdin?.writableLength).toBe(0);
+				closed = new Promise((resolve) => child.once('close', resolve));
+			}
+		);
+		await expect(result).resolves.toEqual({ stdout: 'observed input', stderr: '', exitCode: 0 });
+		expect(closed).toBeDefined();
+		await closed;
+	});
+
+	it('finishes stdin delivery and native close when its observer fails', async () => {
+		const { execFileNoThrow } = await import('../../../main/utils/execFile');
+		let closed: Promise<unknown> | undefined;
+		const result = execFileNoThrow(
+			process.execPath,
+			['-e', 'process.stdin.pipe(process.stdout)'],
+			undefined,
+			{ input: 'still delivered', timeout: 2000 },
+			(child) => {
+				closed = new Promise((resolve) => child.once('close', resolve));
+				throw new Error('observer failed');
+			}
+		);
+		await expect(result).resolves.toMatchObject({
+			stdout: 'still delivered',
+			stderr: 'Error: observer failed',
+			exitCode: 1,
+		});
+		await closed;
+	});
+
+	it('observes rejected exec results even when the native observer throws', async () => {
+		const { execFileNoThrow } = await import('../../../main/utils/execFile');
+		const child = new EventEmitter();
+		let finish: (error: Error | null, stdout: string, stderr: string) => void;
+		mockExecFile.mockImplementationOnce((_cmd, _args, _opts, callback) => {
+			finish = callback;
+			return child;
+		});
+		const result = execFileNoThrow('claude', [], undefined, undefined, () => {
+			throw new Error('observer failed');
+		});
+		finish!(new Error('exec failed'), '', '');
+		await expect(result).resolves.toMatchObject({ exitCode: 1, stderr: 'observer failed' });
 	});
 });

@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
+import { EventEmitter } from 'events';
 import { ipcMain } from 'electron';
 import {
 	registerAgentsHandlers,
@@ -1730,10 +1731,15 @@ describe('agents IPC handlers', () => {
 			const disk = Promise.withResolvers<never[]>();
 			vi.mocked(fs.existsSync).mockReturnValue(true);
 			vi.mocked(fs.promises.readdir).mockReturnValueOnce(disk.promise);
-			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
-				exitCode: 0,
-				stderr: '',
-				stdout: JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/help'] }),
+			vi.mocked(execFileNoThrow).mockImplementationOnce((_command, _args, _cwd, _opts, onSpawn) => {
+				const child = new EventEmitter();
+				onSpawn?.(child as never);
+				queueMicrotask(() => child.emit('close'));
+				return Promise.resolve({
+					exitCode: 0,
+					stderr: '',
+					stdout: JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/help'] }),
+				});
 			});
 			const result = discover('claude-code');
 			await vi.waitFor(() => expect(fs.promises.readdir).toHaveBeenCalledOnce());
@@ -1817,7 +1823,9 @@ describe('agents IPC handlers', () => {
 					'--',
 					'/help',
 				],
-				'/test/project'
+				'/test/project',
+				undefined,
+				expect.any(Function)
 			);
 			expect(result).toEqual([{ name: '/help' }, { name: '/compact' }, { name: '/clear' }]);
 		});
@@ -1972,7 +1980,13 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			await handler!({} as any, 'claude-code', '/test', '/custom/claude');
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('/custom/claude', expect.any(Array), '/test');
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'/custom/claude',
+				expect.any(Array),
+				'/test',
+				undefined,
+				expect.any(Function)
+			);
 		});
 
 		it('should return null for unsupported agents', async () => {
