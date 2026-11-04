@@ -13,6 +13,8 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../../../main/process-manager/utils/spawnCwd', () => ({ unusableCwdReason: vi.fn() }));
+vi.mock('../../../main/process-manager/steering-client', () => ({ sendSteeringRequest: vi.fn() }));
+vi.mock('../../../main/codex-app-server/steering', () => ({ steerCodexAppServerTurn: vi.fn() }));
 vi.mock('../../../main/process-manager/spawners/AcpServerSpawner', () => ({
 	AcpServerSpawner: class {
 		spawn = vi.fn();
@@ -36,6 +38,11 @@ import { LocalCommandRunner } from '../../../main/process-manager/runners/LocalC
 import { SshCommandRunner } from '../../../main/process-manager/runners/SshCommandRunner';
 import { unusableCwdReason } from '../../../main/process-manager/utils/spawnCwd';
 import { logger } from '../../../main/utils/logger';
+import * as sentry from '../../../main/utils/sentry';
+import { sendSteeringRequest } from '../../../main/process-manager/steering-client';
+import { steerCodexAppServerTurn } from '../../../main/codex-app-server/steering';
+import type { HarnessControlRegistry } from '../../../main/harness-control/HarnessControlRegistry';
+import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import {
 	beginGlobalWorktreeActivity,
 	reserveWorktreeCleanup,
@@ -76,6 +83,7 @@ beforeEach(() => {
 	vi.spyOn(PtySpawner.prototype, 'spawn').mockReturnValue({ success: true, pid: 123 });
 	vi.spyOn(ChildProcessSpawner.prototype, 'spawn').mockReturnValue({ success: true, pid: 456 });
 });
+
 afterEach(() => {
 	for (const release of releases) release();
 	vi.restoreAllMocks();
@@ -333,4 +341,223 @@ describe('direct manager activity admission', () => {
 			(await reserve()).release();
 		}
 	);
+});
+
+describe('direct manager input and steering activity', () => {
+	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+		'refuses input before process/control lookup or mutation under %s',
+		async (root) => {
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			const lookup = vi.spyOn(entries, 'get');
+			const harness = Reflect.get(manager, 'harnessControls') as HarnessControlRegistry;
+			const has = vi.spyOn(harness, 'has');
+			await reserve(root);
+			expect(() => manager.write(config.sessionId, 'rm user-file\n')).toThrow(/reserved/);
+			expect(() => manager.resize(config.sessionId, 90, 30)).toThrow(/reserved/);
+			await expect(manager.steer(config.sessionId, 'change files')).rejects.toThrow(/reserved/);
+			for (const probe of [lookup, has, logger.error, sendSteeringRequest, steerCodexAppServerTurn])
+				expect(probe).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(['write', 'resize'] as const)(
+		'protects retained PTY %s state under reservation, then permits retry',
+		async (operation) => {
+			const pty = { write: vi.fn(), resize: vi.fn() };
+			const proc = {
+				sessionId: config.sessionId,
+				isTerminal: true,
+				ptyProcess: pty,
+				lastCommand: 'previous',
+			} as unknown as ManagedProcess;
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(
+				config.sessionId,
+				proc
+			);
+			const invoke = () =>
+				operation === 'write'
+					? manager.write(config.sessionId, 'echo next\n')
+					: manager.resize(config.sessionId, 90, 30);
+			const hold = await reserve();
+			expect(invoke).toThrow(/reserved/);
+			expect(proc.lastCommand).toBe('previous');
+			expect(pty[operation]).not.toHaveBeenCalled();
+			hold.release();
+			expect(invoke()).toBe(true);
+			expect(pty[operation]).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['write', 'resize'] as const)(
+		'releases synchronous PTY %s failure and reports the error',
+		async (operation) => {
+			const error = new Error('native dispatch failed');
+			const capture = vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+			const fail = vi.fn(() => {
+				throw error;
+			});
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+				isTerminal: true,
+				ptyProcess: { write: fail, resize: fail },
+			} as unknown as ManagedProcess);
+			expect(
+				operation === 'write'
+					? manager.write(config.sessionId, 'text')
+					: manager.resize(config.sessionId, 90, 30)
+			).toBe(false);
+			expect(capture).toHaveBeenCalledWith(error);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['success', 'error'])(
+		'holds each buffered stdin callback across removal/replacement and %s',
+		async (outcome) => {
+			const capture = vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+			const callbacks: Array<(error?: Error | null) => void> = [];
+			const write = vi.fn((_data: string, callback: (error?: Error | null) => void) => {
+				callbacks.push(callback);
+				return false; // Backpressure does not change the manager's accepted verdict.
+			});
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			const proc = { childProcess: { stdin: { write } } } as unknown as ManagedProcess;
+			entries.set(config.sessionId, proc);
+			expect(manager.write(config.sessionId, 'first')).toBe(true);
+			entries.delete(config.sessionId);
+			manager.emit('exit', config.sessionId, 0);
+			manager.emit('query-complete', config.sessionId);
+			await blocked();
+			entries.set(config.sessionId, { ...proc });
+			expect(manager.write(config.sessionId, 'replacement')).toBe(true);
+			callbacks[1]();
+			await blocked();
+			const error = new Error('late stdin error');
+			callbacks[0](outcome === 'error' ? error : undefined);
+			await vi.waitFor(async () => (await reserve()).release());
+			if (outcome === 'error') expect(capture).toHaveBeenCalledWith(error);
+			else expect(capture).not.toHaveBeenCalled();
+		}
+	);
+
+	it('releases a synchronous stdin throw without changing the false verdict', async () => {
+		const error = new Error('write threw');
+		const capture = vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+		(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+			childProcess: {
+				stdin: {
+					write: () => {
+						throw error;
+					},
+				},
+			},
+		} as unknown as ManagedProcess);
+		expect(manager.write(config.sessionId, 'text')).toBe(false);
+		await vi.waitFor(async () => (await reserve()).release());
+		expect(capture).toHaveBeenCalledExactlyOnceWith(error);
+	});
+
+	it('blocks an already pending reservation until stdin acknowledgement', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockImplementationOnce(() => canonical.promise);
+		const pending = reserveWorktreeCleanup(target);
+		let acknowledge!: () => void;
+		(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+			childProcess: {
+				stdin: {
+					write: (_data: string, callback: () => void) => {
+						acknowledge = callback;
+					},
+				},
+			},
+		} as unknown as ManagedProcess);
+		manager.write(config.sessionId, 'text');
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		acknowledge();
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it.each(['harness', 'codex', 'maestro-p'] as const)(
+		'holds complete %s steering through entry replacement and settlement',
+		async (route) => {
+			const completion = Promise.withResolvers<SteeringResultFrame>();
+			const harness = Reflect.get(manager, 'harnessControls') as HarnessControlRegistry;
+			vi.spyOn(harness, 'has').mockReturnValue(route === 'harness');
+			const steer = vi.spyOn(harness, 'steer').mockReturnValue(completion.promise);
+			vi.mocked(steerCodexAppServerTurn).mockReturnValue(completion.promise);
+			vi.mocked(sendSteeringRequest).mockReturnValue(completion.promise);
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			entries.set(config.sessionId, {
+				codexAppServer: route === 'codex' ? {} : undefined,
+			} as ManagedProcess);
+			const pending = manager.steer(config.sessionId, 'text');
+			entries.delete(config.sessionId);
+			manager.emit('exit', config.sessionId, 0);
+			await blocked();
+			entries.set(config.sessionId, {} as ManagedProcess);
+			const verdict = { type: 'steering', id: 'reply', verdict: 'delivered' } as const;
+			completion.resolve(verdict);
+			await expect(pending).resolves.toEqual(verdict);
+			expect(
+				route === 'harness'
+					? steer
+					: route === 'codex'
+						? steerCodexAppServerTurn
+						: sendSteeringRequest
+			).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['throw', 'reject'] as const)(
+		'releases steering %s and preserves failure',
+		async (outcome) => {
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(
+				config.sessionId,
+				{} as ManagedProcess
+			);
+			const error = new Error('control failed');
+			vi.mocked(sendSteeringRequest).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw error;
+				return Promise.reject(error);
+			});
+			await expect(manager.steer(config.sessionId, 'text')).rejects.toBe(error);
+			(await reserve()).release();
+		}
+	);
+
+	it('keeps independent native activity after write and steering acknowledgements', async () => {
+		const releaseNative = beginGlobalWorktreeActivity();
+		releases.push(releaseNative);
+		(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+			childProcess: { stdin: { write: (_data: string, callback: () => void) => callback() } },
+		} as unknown as ManagedProcess);
+		vi.mocked(sendSteeringRequest).mockResolvedValue({
+			type: 'steering',
+			id: 'reply',
+			verdict: 'unknown',
+		});
+		expect(manager.write(config.sessionId, 'text')).toBe(true);
+		await manager.steer(config.sessionId, 'text');
+		await blocked();
+		releaseNative();
+		(await reserve()).release();
+	});
+
+	it('preserves no-process and unsupported-input verdicts without retaining activity', async () => {
+		expect(manager.write(config.sessionId, 'text')).toBe(false);
+		expect(manager.resize(config.sessionId, 90, 30)).toBe(false);
+		await expect(manager.steer(config.sessionId, 'text')).resolves.toMatchObject({
+			verdict: 'refused',
+			refusal: 'not-running',
+		});
+		(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(
+			config.sessionId,
+			{} as ManagedProcess
+		);
+		expect(manager.write(config.sessionId, 'text')).toBe(false);
+		expect(manager.resize(config.sessionId, 90, 30)).toBe(false);
+		(await reserve()).release();
+	});
 });

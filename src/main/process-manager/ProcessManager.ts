@@ -52,6 +52,7 @@ import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-si
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
 import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
+import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -496,8 +497,9 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Ask a running turn to take `text` into the turn in flight (chat steering):
 	 * a Claude turn on maestro-p, or a Codex turn on the app-server transport.
-	 * Resolves with a verdict for the UI; never rejects. The later verdict for a
-	 * delivered steer is emitted as `steering-verdict` with the same id: for
+	 * Resolves with a verdict for the UI. Cleanup reservation refusal rejects
+	 * before control lookup. The later verdict for a delivered steer is emitted
+	 * as `steering-verdict` with the same id: for
 	 * maestro-p it arrives on stdout (StdoutHandler), for Codex it comes from
 	 * `steerCodexAppServerTurn`.
 	 *
@@ -517,6 +519,15 @@ export class ProcessManager extends EventEmitter {
 	 * turn.
 	 */
 	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return await this.steerAdmitted(sessionId, text);
+		} finally {
+			release();
+		}
+	}
+
+	private async steerAdmitted(sessionId: string, text: string): Promise<SteeringResultFrame> {
 		const id = randomUUID();
 		const process = this.processes.get(sessionId);
 		if (!process) {
@@ -543,6 +554,17 @@ export class ProcessManager extends EventEmitter {
 	 * Write data to a process's stdin
 	 */
 	write(sessionId: string, data: string): boolean {
+		return withWorktreeTurnActivity(
+			(_start, observe) => this.writeAdmitted(sessionId, data, observe),
+			(error) => void captureException(error)
+		);
+	}
+
+	private writeAdmitted(
+		sessionId: string,
+		data: string,
+		observe: <Result>(completion: Promise<Result>) => Promise<Result>
+	): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process) {
 			logger.error('[ProcessManager] write() - No process found for session', 'ProcessManager', {
@@ -560,7 +582,19 @@ export class ProcessManager extends EventEmitter {
 				process.ptyProcess.write(data);
 				return true;
 			} else if (process.childProcess?.stdin) {
-				process.childProcess.stdin.write(data);
+				// Retain buffered input independently of map removal or native close.
+				// The callback acknowledges the stream write, not the agent's work.
+				const pending = Promise.withResolvers<void>();
+				observe(pending.promise);
+				try {
+					process.childProcess.stdin.write(data, (error) => {
+						if (error) pending.reject(error);
+						else pending.resolve();
+					});
+				} catch (error) {
+					pending.resolve();
+					throw error;
+				}
 				return true;
 			}
 			return false;
@@ -578,6 +612,15 @@ export class ProcessManager extends EventEmitter {
 	 * Resize terminal (for pty processes)
 	 */
 	resize(sessionId: string, cols: number, rows: number): boolean {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return this.resizeAdmitted(sessionId, cols, rows);
+		} finally {
+			release();
+		}
+	}
+
+	private resizeAdmitted(sessionId: string, cols: number, rows: number): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process || !process.isTerminal || !process.ptyProcess) return false;
 
