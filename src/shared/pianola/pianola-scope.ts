@@ -17,6 +17,9 @@ export function isPianolaScopeId(id: string): boolean {
 export interface PianolaAgentGroupSelection {
 	label: string;
 	mode: 'agents-and-groups';
+	/** Explicit standing owner selection; baseline identities are stamped by the host. */
+	futureLocalAgents?: boolean;
+	futureAgentBaselineIds?: string[];
 	agentIds: string[];
 	groupIds: string[];
 	excludedAgentIds: string[];
@@ -140,7 +143,20 @@ export function validatePianolaScopeSelection(raw: unknown): PianolaScopeSelecti
 	if (value.mode === 'agents-and-groups') {
 		const agentIds = selectionIds(value.agentIds);
 		const groupIds = selectionIds(value.groupIds);
-		if (!agentIds || !groupIds || agentIds.length + groupIds.length === 0) return null;
+		if (value.futureLocalAgents !== undefined && typeof value.futureLocalAgents !== 'boolean')
+			return null;
+		const futureAgentBaselineIds = selectionIds(value.futureAgentBaselineIds ?? []);
+		if (
+			!futureAgentBaselineIds ||
+			(!value.futureLocalAgents && value.futureAgentBaselineIds !== undefined)
+		)
+			return null;
+		if (
+			!agentIds ||
+			!groupIds ||
+			(agentIds.length + groupIds.length === 0 && value.futureLocalAgents !== true)
+		)
+			return null;
 		// Worktrees are inherent to whole-agent selection. Reject mixed schemas
 		// rather than silently accepting a path or a legacy worktree opt-out.
 		if (
@@ -154,6 +170,9 @@ export function validatePianolaScopeSelection(raw: unknown): PianolaScopeSelecti
 			mode: value.mode,
 			agentIds,
 			groupIds,
+			...(value.futureLocalAgents === true
+				? { futureLocalAgents: true, futureAgentBaselineIds }
+				: {}),
 			excludedAgentIds,
 		};
 	}
@@ -227,6 +246,9 @@ function ownerMatches(
 		// Missing group metadata is never interpreted as current membership.
 		if (
 			selection.agentIds.includes(current.id) ||
+			(selection.futureLocalAgents === true &&
+				Array.isArray(selection.futureAgentBaselineIds) &&
+				!selection.futureAgentBaselineIds.includes(current.id)) ||
 			(typeof current.groupId === 'string' && selection.groupIds.includes(current.groupId))
 		)
 			selected = true;

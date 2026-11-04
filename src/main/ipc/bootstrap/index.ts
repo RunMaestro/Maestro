@@ -272,14 +272,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		flushSessionWrites: flushPendingSessionWrites,
 		onSessionsPersisted: async (added, current, removedIds) => {
 			try {
-				await deps
-					.getPianolaSupervisor()
-					?.autoWatchNewSessions(
-						added,
-						current,
-						deps.settingsStore.get('pianolaAutoWatchNewAgents', false) === true,
-						removedIds
-					);
+				await deps.getPianolaSupervisor()?.autoWatchNewSessions(added, current, removedIds);
 			} catch (error) {
 				logger.error('Could not register new Pianola watches', '[Pianola]', error);
 				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });

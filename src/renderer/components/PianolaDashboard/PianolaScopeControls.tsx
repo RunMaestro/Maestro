@@ -10,9 +10,11 @@ export function PianolaScopeControls({
 	theme,
 	supervisor,
 	requestedAgent,
+	autoWatchControl = false,
 }: {
 	theme: Theme;
 	supervisor: PianolaSupervisorState;
+	autoWatchControl?: boolean;
 	requestedAgent?: { agentId: string; agentName: string } | null;
 }): React.ReactElement {
 	const sessions = useSessionStore((s) => s.sessions);
@@ -41,7 +43,16 @@ export function PianolaScopeControls({
 			excludedAgentIds: [],
 		});
 	}, [requestedAgent]);
-	const scopes = supervisor.targets.filter((target) => target.kind === 'watch-scope');
+	const scopes = supervisor.targets.filter(
+		(target) =>
+			target.kind === 'watch-scope' &&
+			(!autoWatchControl ||
+				(target.selection?.mode === 'agents-and-groups' && target.selection.futureLocalAgents))
+	);
+	const futureScopes = scopes.filter(
+		(target) => target.selection?.mode === 'agents-and-groups' && target.selection.futureLocalAgents
+	);
+	const futureScope = futureScopes.length === 1 ? futureScopes[0] : undefined;
 	const start = (target?: PianolaSupervisedTarget): void => {
 		setEditing(target ?? null);
 		setCreating(!target);
@@ -50,7 +61,8 @@ export function PianolaScopeControls({
 			target?.selection?.mode === 'agents-and-groups'
 				? { ...target.selection }
 				: {
-						label: target?.selection?.label ?? '',
+						label: target?.selection?.label ?? (autoWatchControl ? 'Future local agents' : ''),
+						...(autoWatchControl ? { futureLocalAgents: true } : {}),
 						mode: 'agents-and-groups',
 						agentIds: [],
 						groupIds: [],
@@ -68,6 +80,34 @@ export function PianolaScopeControls({
 	};
 	return (
 		<section className="mb-5" style={{ color: theme.colors.textMain }}>
+			{autoWatchControl && (
+				<label className="flex items-center gap-2 text-xs mb-2">
+					<input
+						type="checkbox"
+						checked={!!futureScope?.enabled}
+						disabled={saving || futureScopes.length > 1}
+						onChange={() => {
+							if (futureScope) void supervisor.setEnabled(futureScope.id, !futureScope.enabled);
+							else start();
+						}}
+					/>{' '}
+					Automatically watch future local agents (all chats and worktree children)
+				</label>
+			)}
+			{autoWatchControl && futureScopes.length > 1 && (
+				<p className="text-xs">
+					Multiple future-agent selections: use each selection's Pause/Resume controls and chosen
+					manager below.
+				</p>
+			)}
+			{autoWatchControl && futureScopes.length === 0 && (
+				<p className="text-xs">
+					NeedsConfiguration: select the actual manager and save a standing future-agent policy.
+					{supervisor.autoWatchNewAgents
+						? ' Legacy Auto-Watch is enabled without a manager policy.'
+						: ''}
+				</p>
+			)}
 			<div className="flex items-center justify-between mb-2">
 				<h3 className="text-xs font-bold uppercase">Agent and group selections</h3>
 				<button type="button" disabled={saving} onClick={() => start()} className="text-xs">
@@ -105,9 +145,12 @@ export function PianolaScopeControls({
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
 							{scope.selection?.mode === 'agents-and-groups'
-								? `Selected: ${scope.selection.agentIds.length} agents, ${scope.selection.groupIds.length} groups; ${scope.selection.excludedAgentIds.length} exclusions`
+								? `Selected: ${scope.selection.agentIds.length} agents, ${scope.selection.groupIds.length} groups${scope.selection.futureLocalAgents ? ', future local agents' : ''}; ${scope.selection.excludedAgentIds.length} exclusions`
 								: 'Legacy selection requires reconfiguration'}{' '}
-							· Worker health does not establish individual chat coverage.
+							· Manager:{' '}
+							{sessions.find((session) => session.id === scope.managerAgentId)?.name ??
+								scope.managerAgentId}
+							. Worker health does not establish individual chat coverage.
 							{health?.lastError ? ` ${health.lastError}` : ''}
 						</div>
 						{evidence?.error && (
@@ -180,6 +223,21 @@ export function PianolaScopeControls({
 							))}
 						</select>
 					</label>
+					<label>
+						<input
+							type="checkbox"
+							checked={selection.futureLocalAgents === true}
+							onChange={(event) => {
+								const { futureAgentBaselineIds: _baseline, ...rest } = selection;
+								setSelection(
+									event.target.checked
+										? { ...rest, futureLocalAgents: true }
+										: { ...rest, futureLocalAgents: undefined }
+								);
+							}}
+						/>{' '}
+						Include future new local agents, all their chats and worktree children
+					</label>
 					<div className="text-xs font-bold">Groups</div>
 					{groups.map((group) => (
 						<label key={group.id}>
@@ -219,7 +277,11 @@ export function PianolaScopeControls({
 							disabled={
 								!manager ||
 								!selection.label.trim() ||
-								!(selection.agentIds.length || selection.groupIds.length)
+								!(
+									selection.agentIds.length ||
+									selection.groupIds.length ||
+									selection.futureLocalAgents
+								)
 							}
 							onClick={async () => {
 								setSaving(true);

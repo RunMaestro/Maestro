@@ -200,65 +200,57 @@ describe('PianolaSupervisor automatic watches', () => {
 		sup.stopAll();
 	});
 
-	it('registers only new top-level agents and waits for an AI tab', async () => {
-		const newAgent = { id: 'new', aiTabs: [] as Array<{ id: string }>, activeTabId: 'file' };
-		const pianola = { id: 'manager', isPianola: true, aiTabs: [{ id: 'manager-tab' }] };
-		const child = { id: 'child', parentSessionId: 'new', aiTabs: [{ id: 'child-tab' }] };
-		await sup.autoWatchNewSessions([newAgent, pianola, child], [newAgent, pianola, child], true);
+	it('keeps bool-only configuration inert for session and plugin lifecycle calls', async () => {
+		const agent = { id: 'new', aiTabs: [{ id: 'chat' }] };
+		await sup.autoWatchNewSessions([agent], [agent]);
 		expect(readSupervisorTargets()).toEqual([]);
-		const ready = { ...newAgent, aiTabs: [{ id: 'ai-tab' }] };
-		await sup.autoWatchNewSessions([], [ready, pianola, child], true);
-		const targets = readSupervisorTargets();
-		expect(targets).toEqual([
-			expect.objectContaining({ kind: 'watch', agentId: 'new', tabId: 'ai-tab', enabled: true }),
-		]);
-		expect(sup.getHealth()[0]).toMatchObject({ id: targets[0].id, state: 'running' });
-		await sup.autoWatchNewSessions([], [ready], true);
-		expect(readSupervisorTargets()).toEqual(targets);
+		expect(spawned).toHaveLength(0);
 	});
-	it('preserves both new agents when registrations wait behind the same store lock', async () => {
-		let release!: () => void;
-		let first = true;
-		let previous: Promise<unknown> = Promise.resolve();
-		const gate = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		vi.mocked(updateSupervisorTargetsAsync).mockImplementation((update) => {
-			const ready = first ? gate : previous;
-			first = false;
-			const operation = ready.then(() => {
-				const targets = update(readSupervisorTargets());
-				setTargets(targets);
-				return targets;
-			});
-			previous = operation;
-			return operation;
-		});
-		const a = { id: 'a', aiTabs: [{ id: 'a-tab' }] };
-		const b = { id: 'b', aiTabs: [{ id: 'b-tab' }] };
-		const registrationA = sup.autoWatchNewSessions([a], [a], true);
-		const registrationB = sup.autoWatchNewSessions([b], [a, b], true);
-		release();
-		await Promise.all([registrationA, registrationB]);
-		expect(
-			readSupervisorTargets()
-				.map((target) => target.agentId)
-				.sort()
-		).toEqual(['a', 'b']);
-		expect(sup.getHealth().map((target) => target.state)).toEqual(['running', 'running']);
+	it('uses one standing whole-agent worker across concurrent session/plugin calls and new tabs/children', async () => {
+		const scope: PianolaSupervisedTarget = {
+			id: '11111111-1111-4111-8111-111111111111',
+			kind: 'watch-scope',
+			createdAt: 1,
+			enabled: true,
+			managerAgentId: 'manager',
+			selection: {
+				label: 'Future',
+				mode: 'agents-and-groups',
+				agentIds: [],
+				groupIds: [],
+				excludedAgentIds: [],
+				futureLocalAgents: true,
+				futureAgentBaselineIds: [],
+			},
+		};
+		setTargets([scope]);
+		const a = { id: 'a', aiTabs: [{ id: 'a-chat' }] };
+		const child = { id: 'child', parentSessionId: 'a', aiTabs: [{ id: 'child-chat' }] };
+		await Promise.all([
+			sup.autoWatchNewSessions([a], [a]),
+			sup.autoWatchNewSessions([child], [a, child]),
+		]);
+		await sup.autoWatchNewSessions([], [{ ...a, aiTabs: [...a.aiTabs, { id: 'another' }] }, child]);
+		expect(readSupervisorTargets()).toEqual([scope]);
+		expect(spawned).toHaveLength(1);
+		expect(spawnArgs[0]).toContain('watch-scope');
+		enabled = false;
+		await sup.autoWatchNewSessions([], [a]);
+		expect(spawned[0].killed).toBe(true);
+		sup.stopAll();
 	});
 
-	it('respects the option, Encore gate, and existing disabled watches', async () => {
+	it('respects missing standing configuration, Encore gate, and existing disabled watches', async () => {
 		const fresh = { id: 'fresh', aiTabs: [{ id: 'tab' }] };
-		await sup.autoWatchNewSessions([fresh], [fresh], false);
+		await sup.autoWatchNewSessions([fresh], [fresh]);
 		expect(readSupervisorTargets()).toEqual([]);
 		enabled = false;
-		await sup.autoWatchNewSessions([fresh], [fresh], true);
+		await sup.autoWatchNewSessions([fresh], [fresh]);
 		expect(readSupervisorTargets()).toEqual([]);
 		enabled = true;
 		const disabled = { ...watchTarget(), agentId: 'fresh', enabled: false };
 		setTargets([disabled]);
-		await sup.autoWatchNewSessions([fresh], [fresh], true);
+		await sup.autoWatchNewSessions([fresh], [fresh]);
 		expect(readSupervisorTargets()).toEqual([disabled]);
 		expect(sup.getHealth()).toEqual([]);
 	});
@@ -267,7 +259,7 @@ describe('PianolaSupervisor automatic watches', () => {
 		const automatic = { ...watchTarget('auto'), agentId: 'closed', autoCreated: true };
 		const manual = { ...watchTarget('manual'), agentId: 'closed' };
 		setTargets([automatic, manual]);
-		await sup.autoWatchNewSessions([], [], false, ['closed']);
+		await sup.autoWatchNewSessions([], [], ['closed']);
 		expect(readSupervisorTargets()).toEqual([manual]);
 	});
 });

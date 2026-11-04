@@ -961,8 +961,7 @@ function WatchedSection({
 	supervisor: PianolaSupervisorState;
 	onSelectAgent: (agent: { agentId: string; agentName: string }) => void;
 }): React.ReactElement {
-	const { watched, watchable, unwatch, setEnabled, autoWatchNewAgents, setAutoWatchNewAgents } =
-		supervisor;
+	const { watched, watchable, unwatch, setEnabled } = supervisor;
 	const [pickerOpen, setPickerOpen] = React.useState(false);
 	const [expanded, setExpanded] = React.useState(false);
 	const canCollapse = watched.length > 5;
@@ -1061,19 +1060,7 @@ function WatchedSection({
 					{addButton}
 				</div>
 			}
-			controlRow={
-				<label
-					className="flex items-center gap-2 text-xs mb-2 px-1 cursor-pointer"
-					style={{ color: theme.colors.textDim }}
-				>
-					<input
-						type="checkbox"
-						checked={autoWatchNewAgents}
-						onChange={(event) => void setAutoWatchNewAgents(event.target.checked)}
-					/>
-					Automatically watch new agents (legacy initial chat only)
-				</label>
-			}
+			controlRow={<PianolaScopeControls theme={theme} supervisor={supervisor} autoWatchControl />}
 		>
 			{watched.slice(0, collapsed ? 5 : undefined).map((row) => (
 				<div

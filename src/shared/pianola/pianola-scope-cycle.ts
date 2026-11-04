@@ -119,7 +119,16 @@ export function pianolaScopeConfigurationFingerprint(scope: PianolaScopeCandidat
 		managerAgentId: scope.managerAgentId,
 		mode: selection.mode,
 		...(selection.mode === 'agents-and-groups'
-			? { agentIds: [...selection.agentIds].sort(), groupIds: [...selection.groupIds].sort() }
+			? {
+					agentIds: [...selection.agentIds].sort(),
+					groupIds: [...selection.groupIds].sort(),
+					...(selection.futureLocalAgents === true
+						? {
+								futureLocalAgents: true,
+								futureAgentBaselineIds: [...(selection.futureAgentBaselineIds ?? [])].sort(),
+							}
+						: {}),
+				}
 			: {
 					projectRoots: [...selection.projectRoots].sort(),
 					ownerRoots: selection.ownerRoots,
@@ -549,6 +558,11 @@ export async function runPianolaScopeCycle(
 		// its prepared checkpoint. Busy historical asks never become new work.
 		const historicalAtHandover =
 			(scope.legacyMigration !== undefined && tab.createdAt <= scope.legacyMigration.completedAt) ||
+			// A late/imported future identity is not evidence of a new current ask.
+			// Only tabs created after the last native census may expose first work.
+			(scope.selection.futureLocalAgents === true &&
+				!saved &&
+				tab.createdAt <= (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt)) ||
 			// A host-prepared historical baseline stays historical on resume, even
 			// when the same assistant entry grew while its tab was busy/paused.
 			(!!saved?.baseline &&

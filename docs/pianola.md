@@ -42,7 +42,9 @@ Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab 
 
 Who needs you, who is working, who just finished. The **Watching** section lists what Pianola is babysitting, and the **+** button adds one of your other agents. Lists with more than five watches start collapsed; use **Show agents** to expand them.
 
-Turn on **Automatically watch new agents** in this section to watch newly created top-level agents as soon as they have an AI tab. This option is off by default and does not add existing agents or worktree children. A manually paused watch stays paused. Automatic watches are removed when their agent is closed.
+Use **Automatically watch future local agents** in this section to configure a standing selection with an explicitly chosen manager. Save the selection, then resume it to enable monitoring. New local agents, all their AI chats, and local worktree descendants share one scope worker. Existing identities are recorded by the host at configuration time and are not implicitly selected; add existing agents or groups in the selection editor. Paused scopes/tabs and exclusions remain effective. Remote, consult, and ephemeral chats are excluded.
+
+An older Auto-Watch boolean without a manager policy displays **NeedsConfiguration** and cannot create legacy tab watchers. Both persisted sessions and plugin-created agents use the same dynamic scope path. Repeated creation notifications do not register another watcher or reset checkpoints. Closed agents lose coverage when absent from the native census. Disabling Pianola stops its supervised workers. This observation policy adds no global answer rule.
 
 The collapsed watch list still shows a count of failed or backing-off watches. On startup, Pianola removes automatic watches whose agents are no longer stored; manually added watches are preserved.
 

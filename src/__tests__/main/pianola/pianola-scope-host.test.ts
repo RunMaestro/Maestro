@@ -2,13 +2,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { once } from 'node:events';
+import { once, EventEmitter } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
+import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
 import { createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import {
 	startPianolaDecision,
 	updatePianolaDecision,
 } from '../../../shared/pianola/pianola-decision-lifecycle';
+import { resolvePianolaScopeOwnership } from '../../../shared/pianola/pianola-scope';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
@@ -823,5 +826,219 @@ describe('owner scope configuration through production adapters', () => {
 		expect(store.readSupervisorTargets().find((entry) => entry.id === 'legacy')?.enabled).toBe(
 			true
 		);
+	});
+});
+
+describe('standing future local agents', () => {
+	it('owner configures one dynamic scope with host baseline and restart-safe whole-agent coverage', async () => {
+		const request = target();
+		request.selection = {
+			label: 'Future agents',
+			mode: 'agents-and-groups',
+			agentIds: [],
+			groupIds: [],
+			excludedAgentIds: ['excluded'],
+			futureLocalAgents: true,
+			futureAgentBaselineIds: [],
+		};
+		expect((await nativeSave(request)).migration?.status).toBe('registered');
+		const saved = store.readSupervisorTargets()[0];
+		expect(saved.selection).toMatchObject({
+			futureLocalAgents: true,
+			futureAgentBaselineIds: ['agent', 'manager'],
+		});
+		const owner = (id: string, extra = {}) => ({
+			...census.owners[0],
+			id,
+			parentSessionId: null,
+			...extra,
+		});
+		const owners = [
+			...census.owners,
+			owner('fresh'),
+			owner('child', { parentSessionId: 'fresh' }),
+			owner('excluded'),
+			owner('remote', { remote: true }),
+		];
+		const reopened = createPianolaFsStore({ resolveDir: () => directory });
+		const scope = reopened.readSupervisorTargets()[0];
+		const resolve = (id: string, extra = {}, enabled = true) =>
+			resolvePianolaScopeOwnership(
+				{
+					agentId: id,
+					tabId: 'new-chat',
+					paused: false,
+					consult: false,
+					ephemeral: false,
+					...extra,
+				},
+				owners,
+				[{ ...scope, enabled, selection: scope.selection!, managerAgentId: scope.managerAgentId! }],
+				[]
+			);
+		for (const id of ['fresh', 'child']) expect(resolve(id)).toEqual({ kind: 'scope', scopeId });
+		for (const id of ['agent', 'excluded', 'remote', 'missing'])
+			expect(resolve(id).kind).toBe('excluded');
+		expect(resolve('fresh', { paused: true }).kind).toBe('excluded');
+		expect(resolve('fresh', { consult: true }).kind).toBe('excluded');
+		expect(resolve('fresh', { ephemeral: true }).kind).toBe('excluded');
+		expect(resolve('fresh', {}, false).kind).toBe('excluded');
+		census.owners.push(owner('fresh'));
+		await nativeSave({
+			...request,
+			selection: { ...request.selection, futureAgentBaselineIds: [] },
+		});
+		expect(store.readSupervisorTargets()).toEqual([saved]);
+		// Both production creation consumers enter this same method. No per-agent
+		// registration, checkpoint rewrite or second worker is needed.
+		const spawnChild = vi.fn(
+			() =>
+				Object.assign(new EventEmitter(), {
+					exitCode: null,
+					signalCode: null,
+					kill: vi.fn(),
+					stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+					stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+				}) as unknown as ChildProcess
+		);
+		const supervisor = new PianolaSupervisor({
+			isEnabled: () => feature,
+			getPianolaAgentId: () => undefined,
+			spawnChild,
+		});
+		const checkpointBefore = store.readScopeCheckpoint(scopeId);
+		await Promise.all([
+			supervisor.autoWatchNewSessions([{ id: 'fresh' }], [{ id: 'fresh' }]),
+			supervisor.autoWatchNewSessions(
+				[{ id: 'child', parentSessionId: 'fresh' }],
+				[{ id: 'fresh' }, { id: 'child', parentSessionId: 'fresh' }]
+			),
+		]);
+		expect(spawnChild).toHaveBeenCalledTimes(1);
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpointBefore);
+		census.owners = owners;
+		census.capturedAt = 200;
+		census.tabs = ['fresh', 'child', 'excluded', 'remote'].map((id) => ({
+			...census.tabs[0],
+			agentId: id,
+			tabId: `${id}-chat`,
+			createdAt: 150,
+			busy: false,
+			paused: id === 'child',
+		}));
+		const deps: PianolaScopeCycleDeps = {
+			store: reopened,
+			readSnapshot: async () => structuredClone(census),
+			readTranscript: async (t) => ({ ...t, messages: [] }),
+			watch: {
+				readRules: () => store.readRules(),
+				recordDecision: (r) => store.appendDecision(r),
+				now: () => '2026-11-04T00:01:00Z',
+				genId: () => 'future-decision',
+				log: vi.fn(),
+				notify: vi.fn(),
+			},
+			dispatch: vi.fn(async () => ({ status: 'accepted' as const })),
+		};
+		try {
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(store.readScopeCheckpoint(scopeId)?.tabs.map((t) => [t.agentId, t.status])).toEqual([
+				['fresh', 'active'],
+				['child', 'suspended'],
+			]);
+			census.capturedAt++;
+			census.tabs.push({ ...census.tabs[0], tabId: 'second-chat', createdAt: 201 });
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(
+				store.readScopeCheckpoint(scopeId)?.tabs.find((t) => t.tabId === 'second-chat')?.status
+			).toBe('active');
+			census.capturedAt++;
+			census.tabs = census.tabs.filter((t) => t.agentId !== 'fresh');
+			census.owners = census.owners.filter((o) => o.id !== 'fresh');
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(
+				store.readScopeCheckpoint(scopeId)?.tabs.find((t) => t.agentId === 'fresh')?.status
+			).toBe('closed');
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			expect(spawnChild).toHaveBeenCalledTimes(1);
+		} finally {
+			supervisor.stopAll();
+		}
+	});
+	it('baselines a late historical busy chat before restart and allows a later fresh question', async () => {
+		const request = target();
+		request.selection = {
+			label: 'Future',
+			mode: 'agents-and-groups',
+			agentIds: [],
+			groupIds: [],
+			excludedAgentIds: [],
+			futureLocalAgents: true,
+		};
+		await nativeSave(request);
+		census.owners.push({ ...census.owners[0], id: 'late' });
+		census.tabs = [{ ...census.tabs[0], agentId: 'late', tabId: 'late-chat', createdAt: 1 }];
+		census.capturedAt = 200;
+		const historical = {
+			id: 'historic',
+			role: 'assistant' as const,
+			source: 'ai' as const,
+			content: 'Should I name the local variable count?',
+			timestamp: '2026-11-04T00:00:00Z',
+		};
+		census.tabs[0].cursor = { id: historical.id, count: 1, textLength: historical.content.length };
+		store.writeRules([
+			{
+				id: 'naming',
+				enabled: true,
+				scope: 'global',
+				match: { kinds: ['question'], maxRisk: 'low' },
+				action: 'auto_answer',
+				answer: 'Use count.',
+				priority: 1,
+				createdAt: 1,
+				updatedAt: 1,
+			},
+		]);
+		const deps: PianolaScopeCycleDeps = {
+			store,
+			readSnapshot: async () => structuredClone(census),
+			readTranscript: async (t) => ({ ...t, messages: [historical] }),
+			watch: {
+				readRules: () => store.readRules(),
+				recordDecision: (r) => store.appendDecision(r),
+				now: () => '2026-11-04T00:01:00Z',
+				genId: () => 'future-fresh',
+				log: vi.fn(),
+				notify: vi.fn(),
+			},
+			dispatch: vi.fn(async (_t, answer, guard) => {
+				admitPianolaScopeReply(guard, answer, census, deps.store);
+				return { status: 'accepted' as const };
+			}),
+		};
+		await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+		deps.store = createPianolaFsStore({ resolveDir: () => directory });
+		census.capturedAt++;
+		census.tabs[0].busy = false;
+		await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+		expect(deps.dispatch).not.toHaveBeenCalled();
+		const fresh = { ...historical, id: 'fresh' };
+		census.tabs[0].cursor = { id: fresh.id, count: 2, textLength: fresh.content.length };
+		census.capturedAt++;
+		deps.readTranscript = async (t) => ({ ...t, messages: [historical, fresh] });
+		await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+		expect(deps.dispatch).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses future policy from an unverified owner', async () => {
+		desktopOwner = false;
+		const request = target();
+		request.selection = {
+			...request.selection!,
+			futureLocalAgents: true,
+		} as typeof request.selection;
+		expect((await nativeSave(request)).migration?.status).toBe('NeedsConfiguration');
+		expect(store.readSupervisorTargets()).toEqual([]);
 	});
 });

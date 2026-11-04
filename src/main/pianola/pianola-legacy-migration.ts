@@ -385,6 +385,23 @@ export async function configurePianolaScope(
 		...deps,
 		prepare: (current, snapshot) => {
 			const ownerAuthorized = deps.ownerAuthorized();
+			if (
+				ownerAuthorized &&
+				target.selection?.mode === 'agents-and-groups' &&
+				target.selection.futureLocalAgents
+			) {
+				const previous = current.find((entry) => entry.id === target.id)?.selection;
+				const baseline =
+					previous?.mode === 'agents-and-groups' && previous.futureLocalAgents
+						? previous.futureAgentBaselineIds
+						: snapshot.owners.map((owner) => owner.id).sort();
+				if (!baseline || baseline.length > 500)
+					return 'Future-agent baseline unavailable or exceeds supported selection size';
+				target = {
+					...target,
+					selection: { ...target.selection, futureAgentBaselineIds: baseline },
+				};
+			}
 			const requestedFingerprint = pianolaScopeConfigurationFingerprint({
 				...target,
 				selection: target.selection!,

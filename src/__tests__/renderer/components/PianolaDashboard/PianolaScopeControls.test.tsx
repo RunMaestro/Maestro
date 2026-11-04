@@ -33,9 +33,15 @@ const scope: PianolaSupervisedTarget = {
 let persisted: PianolaSupervisorSnapshot;
 let original: typeof window.maestro;
 
-function Controls() {
+function Controls({ autoWatchControl = false }: { autoWatchControl?: boolean }) {
 	const supervisor = usePianolaSupervisor();
-	return <PianolaScopeControls theme={mockTheme} supervisor={supervisor} />;
+	return (
+		<PianolaScopeControls
+			theme={mockTheme}
+			supervisor={supervisor}
+			autoWatchControl={autoWatchControl}
+		/>
+	);
 }
 
 beforeEach(() => {
@@ -269,4 +275,41 @@ describe('PianolaScopeControls production hook composition', () => {
 		expect(window.maestro.pianola.supervisor.add).not.toHaveBeenCalled();
 		expect(screen.getByText('Fixture selection')).toBeInTheDocument();
 	});
+});
+
+it('configures standing future coverage at Auto-Watch with an explicitly chosen manager', async () => {
+	persisted.targets = [];
+	render(<Controls autoWatchControl />);
+	await screen.findByText(/NeedsConfiguration/);
+	fireEvent.click(screen.getByRole('checkbox', { name: /Automatically watch future/ }));
+	expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+	expect(window.maestro.pianola.supervisor.add).not.toHaveBeenCalled();
+	fireEvent.change(screen.getByRole('combobox', { name: 'Manager' }), {
+		target: { value: 'manager' },
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+	await waitFor(() =>
+		expect(window.maestro.pianola.supervisor.add).toHaveBeenCalledWith(
+			expect.objectContaining({
+				managerAgentId: 'manager',
+				enabled: false,
+				selection: expect.objectContaining({ futureLocalAgents: true, agentIds: [], groupIds: [] }),
+			})
+		)
+	);
+	fireEvent.click(screen.getByRole('checkbox', { name: /Automatically watch future/ }));
+	await waitFor(() =>
+		expect(window.maestro.pianola.supervisor.setEnabled).toHaveBeenCalledWith(scope.id, true)
+	);
+});
+
+it('does not choose a manager implicitly when multiple future scopes exist', async () => {
+	persisted.targets = [
+		scope,
+		{ ...scope, id: '22222222-2222-4222-8222-222222222222', managerAgentId: 'other' },
+	].map((t) => ({ ...t, selection: { ...t.selection!, futureLocalAgents: true } }));
+	render(<Controls autoWatchControl />);
+	await screen.findByText(/Multiple future-agent selections/);
+	expect(screen.getByRole('checkbox', { name: /Automatically watch future/ })).toBeDisabled();
+	expect(window.maestro.pianola.supervisor.setEnabled).not.toHaveBeenCalled();
 });

@@ -17,6 +17,7 @@
  */
 
 import * as fs from 'fs';
+import { generateUUID } from '../../shared/uuid';
 import { hostCallerRuns } from '../agent-run/caller-identity';
 import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../shared/agentDelegation';
 import type { PluginToolRunProofFile } from '../plugins/plugin-tool-run-proof-file';
@@ -47,11 +48,6 @@ import { pausePianolaScopeDecisions } from '../../shared/pianola/pianola-decisio
 import { planProgress } from '../../shared/pianola/pianola-tasks';
 import { PIANOLA_PROGRAMS_FILENAME, PIANOLA_PLANS_FILENAME } from '../../shared/pianola/storage';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
-import {
-	resolvePianolaScopeOwnership,
-	type PianolaScopeCandidate,
-} from '../../shared/pianola/pianola-scope';
-import { generateUUID } from '../../shared/uuid';
 
 const LOG_CONTEXT = '[PianolaSupervisor]';
 
@@ -124,7 +120,7 @@ export interface PianolaSupervisorDeps {
 	spawnChild?: PianolaChildSpawner;
 }
 
-/** Only fields needed to register a newly persisted agent's first AI tab. */
+/** Native session metadata passed by persistence and plugin lifecycle consumers. */
 export interface AutoWatchSession {
 	id: string;
 	cwd?: string;
@@ -158,12 +154,6 @@ export function staleTargets(
 export class PianolaSupervisor {
 	private readonly deps: PianolaSupervisorDeps;
 	private readonly children = new Map<string, SupervisedChild>();
-	/**
-	 * Defensive same-process retry for incomplete writes. All supported creation
-	 * paths (modal, wizard, CLI/remote, plugin) persist their initial AI tab with
-	 * the agent, so no supported creation path relies on this set across restart.
-	 */
-	private readonly pendingAutoWatchIds = new Set<string>();
 	private watcher: fs.FSWatcher | null = null;
 	private reconcileTimer: ReturnType<typeof setTimeout> | undefined;
 	private started = false;
@@ -197,100 +187,26 @@ export class PianolaSupervisor {
 		return !!entry?.child && !entry.stopping && !!entry.legacyProof;
 	}
 
-	/** Register future top-level agents and retire their watches when they close. */
+	/** Both persistence and plugin creation use the same dynamic whole-agent registry.
+	 * The legacy boolean cannot grant authority or choose a manager. Scope cycles
+	 * discover new agents/chats and enroll them under the standing owner policy.
+	 */
 	async autoWatchNewSessions(
-		added: readonly AutoWatchSession[],
+		_added: readonly AutoWatchSession[],
 		current: readonly AutoWatchSession[],
-		autoWatchEnabled: boolean,
 		removedIds: readonly string[] = []
 	): Promise<void> {
-		const canAdd = autoWatchEnabled && this.deps.isEnabled();
-		if (!canAdd) {
-			this.pendingAutoWatchIds.clear();
-		} else {
-			for (const session of added) {
-				if (session.id && !session.isPianola && !session.parentSessionId) {
-					this.pendingAutoWatchIds.add(session.id);
-				}
-			}
+		if (removedIds.length) {
+			const live = new Set(current.map((session) => session.id));
+			const removed = new Set(removedIds.filter((id) => !live.has(id)));
+			await updateSupervisorTargetsAsync((targets) =>
+				targets.filter(
+					(target) =>
+						!(target.kind === 'watch' && target.autoCreated && removed.has(target.agentId ?? ''))
+				)
+			);
 		}
-		if (this.pendingAutoWatchIds.size === 0 && removedIds.length === 0) return;
-
-		const sessionsById = new Map(current.map((session) => [session.id, session]));
-		const removed = new Set(removedIds.filter((id) => !sessionsById.has(id)));
-		const pendingIds = [...this.pendingAutoWatchIds];
-		const registered: string[] = [];
-		let changed = false;
-		await updateSupervisorTargetsAsync((targets) => {
-			const next = targets.filter(
-				(target) =>
-					!(target.kind === 'watch' && target.autoCreated && removed.has(target.agentId ?? ''))
-			);
-			changed = next.length !== targets.length;
-			const watchedIds = new Set(
-				next.filter((target) => target.kind === 'watch').map((target) => target.agentId)
-			);
-			const scopes: PianolaScopeCandidate[] = next.flatMap((target) =>
-				target.kind === 'watch-scope' && target.selection && target.managerAgentId
-					? [{ ...target, selection: target.selection, managerAgentId: target.managerAgentId }]
-					: []
-			);
-			const owners = current.map((session) => ({
-				id: session.id,
-				cwd: session.cwd ?? '',
-				groupId: session.groupId ?? null,
-				parentSessionId: session.parentSessionId ?? null,
-				isPianola: session.isPianola === true,
-				remote:
-					!!session.sshRemoteId ||
-					!!session.sshRemote ||
-					session.sessionSshRemoteConfig?.enabled === true,
-			}));
-			for (const id of pendingIds) {
-				const session = sessionsById.get(id);
-				if (!session || session.isPianola || session.parentSessionId || watchedIds.has(id)) {
-					this.pendingAutoWatchIds.delete(id);
-					continue;
-				}
-				const aiTabIds = Array.isArray(session.aiTabs)
-					? session.aiTabs.flatMap((tab) => (typeof tab?.id === 'string' && tab.id ? [tab.id] : []))
-					: [];
-				const tabId =
-					session.activeTabId && aiTabIds.includes(session.activeTabId)
-						? session.activeTabId
-						: aiTabIds[0];
-				if (!tabId) continue;
-				if (scopes.length) {
-					const ownership = resolvePianolaScopeOwnership(
-						{ agentId: id, tabId, paused: false, consult: false, ephemeral: false },
-						owners,
-						scopes,
-						[]
-					);
-					if (
-						ownership.kind === 'scope' ||
-						(ownership.kind === 'excluded' && ownership.reason !== 'outside selected scope')
-					) {
-						this.pendingAutoWatchIds.delete(id);
-						continue;
-					}
-				}
-				next.push({
-					id: generateUUID(),
-					kind: 'watch',
-					agentId: id,
-					tabId,
-					enabled: true,
-					createdAt: Date.now(),
-					autoCreated: true,
-				});
-				watchedIds.add(id);
-				registered.push(id);
-			}
-			return next;
-		});
-		for (const id of registered) this.pendingAutoWatchIds.delete(id);
-		if (changed || registered.length > 0) this.reconcile();
+		this.reconcile();
 	}
 
 	private hasUnfinishedPlan(target: PianolaSupervisedTarget): boolean {

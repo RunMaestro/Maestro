@@ -2625,11 +2625,10 @@ app
 			setPluginSessionsRaw([...previousSessions, session]);
 			if (!previousSessions.some((existing) => existing.id === sessionId)) {
 				try {
-					await pianolaSupervisor?.autoWatchNewSessions(
-						[session],
-						[...previousSessions, session] as AutoWatchSession[],
-						store.get('pianolaAutoWatchNewAgents', false) === true
-					);
+					await pianolaSupervisor?.autoWatchNewSessions([session], [
+						...previousSessions,
+						session,
+					] as AutoWatchSession[]);
 				} catch (error) {
 					logger.error('Could not register new Pianola watch', '[Pianola]', error);
 					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
@@ -2675,7 +2674,6 @@ app
 				await pianolaSupervisor?.autoWatchNewSessions(
 					[],
 					remaining as unknown as AutoWatchSession[],
-					store.get('pianolaAutoWatchNewAgents', false) === true,
 					[sessionId]
 				);
 			} catch (error) {
