@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
 import { BUNDLED_FONTS, BUNDLED_FONT_NAMES, isBundledFont } from '../../shared/bundledFonts';
 import { displayFontLabel, withMonoFallback, FONT_PREVIEW_PROSE } from '../../shared/fontStack';
+import { isImeComposing } from '../utils/ime';
 
 /**
  * Common monospace fonts that are typically available across different systems.
@@ -287,7 +288,11 @@ export function FontConfigurationPanel({
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (e.key === 'Enter') {
-			handleAddCustomFont();
+			e.stopPropagation();
+			if (!isImeComposing(e)) {
+				e.preventDefault();
+				handleAddCustomFont();
+			}
 		}
 	};
 

@@ -493,6 +493,52 @@ describe('ThoughtStreamPanel steering', () => {
 		expect(useAutoRunSteeringStore.getState().notes[SID]).toHaveLength(1);
 	});
 
+	it('does not send or preventDefault when Enter is pressed during IME composition', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+		fireEvent.change(box, { target: { value: 'steer draft' } });
+
+		// Standard IME composition (isComposing: true)
+		const composingEvent = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			bubbles: true,
+			cancelable: true,
+		});
+		Object.defineProperty(composingEvent, 'isComposing', { value: true });
+		box.dispatchEvent(composingEvent);
+
+		expect(composingEvent.defaultPrevented).toBe(false);
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toBeUndefined();
+
+		// Safari IME confirmation (keyCode: 229)
+		const safariEvent = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			keyCode: 229,
+			which: 229,
+			bubbles: true,
+			cancelable: true,
+		});
+		box.dispatchEvent(safariEvent);
+
+		expect(safariEvent.defaultPrevented).toBe(false);
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toBeUndefined();
+
+		// Normal Enter commits and prevents default
+		const normalEnter = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			bubbles: true,
+			cancelable: true,
+		});
+		box.dispatchEvent(normalEnter);
+
+		expect(normalEnter.defaultPrevented).toBe(true);
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toHaveLength(1);
+	});
+
 	it('cancels a pending note from its row', () => {
 		runFor(SID);
 		useAutoRunSteeringStore.getState().addNote(SID, 'never mind');

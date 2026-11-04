@@ -8,6 +8,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getParentDir } from '../../shared/formatters';
+import { isImeComposing } from '../utils/ime';
 import { openUrl } from '../utils/openUrl';
 import { ResizeHandles } from './ui/ResizeHandles';
 
@@ -404,8 +405,12 @@ export function WorktreeConfigModal({
 								value={newBranchName}
 								onChange={(e) => setNewBranchName(e.target.value)}
 								onKeyDown={(e) => {
-									if (e.key === 'Enter' && newBranchName.trim()) {
-										handleCreateWorktree();
+									if (e.key === 'Enter') {
+										e.stopPropagation();
+										if (newBranchName.trim() && !isImeComposing(e)) {
+											e.preventDefault();
+											handleCreateWorktree();
+										}
 									}
 								}}
 								placeholder="feature-xyz"
