@@ -791,7 +791,8 @@ describe('agent-detector', () => {
 					'which',
 					expect.any(Array),
 					undefined,
-					expect.any(Object)
+					expect.any(Object),
+					expect.any(Function)
 				);
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
@@ -820,7 +821,8 @@ describe('agent-detector', () => {
 					'where',
 					expect.any(Array),
 					undefined,
-					expect.any(Object)
+					expect.any(Object),
+					expect.any(Function)
 				);
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
@@ -867,7 +869,8 @@ describe('agent-detector', () => {
 				undefined,
 				expect.objectContaining({
 					PATH: expect.stringContaining(expectedPath),
-				})
+				}),
+				expect.any(Function)
 			);
 
 			const expectedPath2 =
@@ -879,7 +882,8 @@ describe('agent-detector', () => {
 				undefined,
 				expect.objectContaining({
 					PATH: expect.stringContaining(expectedPath2),
-				})
+				}),
+				expect.any(Function)
 			);
 		});
 
@@ -901,7 +905,8 @@ describe('agent-detector', () => {
 				undefined,
 				expect.objectContaining({
 					PATH: expect.stringContaining(`${actualHome}/.local/bin`),
-				})
+				}),
+				expect.any(Function)
 			);
 
 			expect(mockExecFileNoThrow).toHaveBeenCalledWith(
@@ -910,7 +915,8 @@ describe('agent-detector', () => {
 				undefined,
 				expect.objectContaining({
 					PATH: expect.stringContaining(`${actualHome}/.claude/local`),
-				})
+				}),
+				expect.any(Function)
 			);
 
 			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
@@ -929,7 +935,8 @@ describe('agent-detector', () => {
 				undefined,
 				expect.objectContaining({
 					PATH: expect.stringContaining('/existing/path'),
-				})
+				}),
+				expect.any(Function)
 			);
 
 			process.env.PATH = originalPath;
@@ -975,7 +982,8 @@ describe('agent-detector', () => {
 				undefined,
 				expect.objectContaining({
 					PATH: expect.stringContaining('/opt/homebrew/bin'),
-				})
+				}),
+				expect.any(Function)
 			);
 
 			process.env.PATH = originalPath;

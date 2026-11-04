@@ -141,6 +141,20 @@ describe('desktop login-shell PATH activity', () => {
 		vi.restoreAllMocks();
 	});
 
+	it('retains a path-prober fallback shell until native close after timeout', async () => {
+		const prober = await import('../../agents/path-prober');
+		const pending = prober.getExpandedEnvWithShell();
+		expect(spawn).toHaveBeenCalledOnce();
+		await vi.advanceTimersByTimeAsync(2000);
+		expect((await pending).PATH).toBeTruthy();
+		expect(children[0].kill).toHaveBeenCalled();
+		children[0].emit('error', new Error('late error'));
+		children[0].emit('exit', 1);
+		await blocked();
+		close();
+		await reserve();
+	});
+
 	describe.each(['getShellPath', 'refreshShellPath'] as const)('%s', (method) => {
 		const request = () => desktop[method]();
 		it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
