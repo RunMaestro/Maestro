@@ -11,6 +11,8 @@ import type { ProcessConfig } from '../types';
 import { buildChildProcessEnv } from '../utils/envBuilder';
 import { resolveCopilotRuntimeExecutable } from '../../../shared/maestro-lib/providers/copilot-runtime';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import { captureException } from '../../utils/sentry';
 
 export interface CopilotInteractionHandlers {
 	onPermissionRequest: PermissionHandler;
@@ -55,6 +57,17 @@ export class CopilotConnectionManager {
 		config: ProcessConfig,
 		handlers: CopilotInteractionHandlers
 	): Promise<CopilotConnectionLease> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.acquireAdmitted(config, handlers, observe)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async acquireAdmitted(
+		config: ProcessConfig,
+		handlers: CopilotInteractionHandlers,
+		observe: <T>(completion: Promise<T>) => Promise<T>
+	): Promise<CopilotConnectionLease> {
 		const owner = config.tabId ?? config.sessionId;
 		const identity = connectionIdentity(config);
 		const existing = this.leases.get(owner);
@@ -98,6 +111,11 @@ export class CopilotConnectionManager {
 		// initializing another runtime for the same owner.
 		this.leases.set(owner, lease);
 		try {
+			// SDK 1.0.26 owns async spawning without a public spawn/child-close hook.
+			// Retain unknown native ownership for this main-process lifetime: even
+			// start rejection or forceStop success cannot independently prove close.
+			// Never resolve this from SDK status, refs, cache removal or shutdown.
+			observe(new Promise<void>(() => {}));
 			await client.start();
 			const sessionConfig = {
 				model: config.modelId,
@@ -135,6 +153,13 @@ export class CopilotConnectionManager {
 	}
 
 	async close(lease: CopilotConnectionLease): Promise<void> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.closeAdmitted(lease)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async closeAdmitted(lease: CopilotConnectionLease): Promise<void> {
 		if (lease.closed) return;
 		lease.closed = true;
 		lease.initializing = false;
@@ -143,11 +168,25 @@ export class CopilotConnectionManager {
 	}
 
 	async closeAll(): Promise<void> {
-		await Promise.all([...this.leases.values()].map((lease) => this.close(lease)));
-		this.leases.clear();
+		return withWorktreeTurnActivity(
+			(_start, observe) =>
+				observe(
+					Promise.all([...this.leases.values()].map((lease) => this.close(lease))).then(() => {
+						this.leases.clear();
+					})
+				),
+			(error) => void captureException(error)
+		);
 	}
 
 	async closeAgent(agentId: string): Promise<void> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.closeAdmittedAgent(agentId)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async closeAdmittedAgent(agentId: string): Promise<void> {
 		await Promise.all(
 			[...this.leases.values()]
 				.filter((lease) => lease.agentId === agentId)

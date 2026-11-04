@@ -29,6 +29,20 @@ const probes = vi.hoisted(() => ({
 	opencodeSdk: vi.fn(),
 	opencodeClient: vi.fn(),
 	http: vi.fn(),
+	copilotClient: vi.fn(),
+	copilotStdio: vi.fn(),
+	copilotRuntime: vi.fn(),
+}));
+vi.mock('@github/copilot-sdk', () => ({
+	CopilotClient: class {
+		constructor(options: unknown) {
+			return probes.copilotClient(options);
+		}
+	},
+	RuntimeConnection: { forStdio: probes.copilotStdio },
+}));
+vi.mock('../../../shared/maestro-lib/providers/copilot-runtime', () => ({
+	resolveCopilotRuntimeExecutable: probes.copilotRuntime,
 }));
 vi.mock('../../../main/utils/fetchWithTimeout', () => ({ fetchWithTimeout: probes.http }));
 vi.mock('../../../main/opencode-server/sdk-loader', () => ({
@@ -2643,5 +2657,283 @@ describe('OpenCode per-turn activity', () => {
 		reporting.resolve();
 		await drain();
 		(await reserve()).release();
+	});
+});
+
+describe('Copilot connection manager activity with unavailable native observer', () => {
+	let manager: import('../../../main/process-manager/spawners/CopilotConnectionManager').CopilotConnectionManager;
+	let client: {
+		start: ReturnType<typeof vi.fn<() => Promise<void>>>;
+		createSession: ReturnType<typeof vi.fn<(options: unknown) => Promise<{ sessionId: string }>>>;
+		resumeSession: ReturnType<
+			typeof vi.fn<(id: string, options: unknown) => Promise<{ sessionId: string }>>
+		>;
+		forceStop: ReturnType<typeof vi.fn<() => Promise<void>>>;
+	};
+	const copilotConfig = (overrides: Partial<ProcessConfig> = {}) =>
+		config({ toolType: 'copilot-cli', command: 'copilot', tabId: 'copilot-tab', ...overrides });
+	const handlers = () => ({
+		onPermissionRequest: vi.fn(),
+		onUserInputRequest: vi.fn(),
+		onElicitationRequest: vi.fn(),
+	});
+
+	beforeEach(async () => {
+		const { CopilotConnectionManager } =
+			await import('../../../main/process-manager/spawners/CopilotConnectionManager');
+		manager = new CopilotConnectionManager();
+		client = {
+			start: vi.fn().mockResolvedValue(undefined),
+			createSession: vi.fn().mockResolvedValue({ sessionId: 'copilot-provider' }),
+			resumeSession: vi.fn().mockResolvedValue({ sessionId: 'resumed-provider' }),
+			forceStop: vi.fn().mockResolvedValue(undefined),
+		};
+		probes.copilotClient.mockReturnValue(client);
+		probes.copilotStdio.mockReturnValue({ kind: 'stdio' });
+		probes.copilotRuntime.mockReturnValue('/fixture/copilot-runtime');
+	});
+
+	it.each([target, path.join(target, 'child'), path.resolve('unrelated')])(
+		'refuses acquisition before identity/env/SDK setup under reservation %s',
+		async (root) => {
+			const hold = await reserve(root);
+			const input = copilotConfig();
+			const identity = vi.fn(() => 'copilot-tab');
+			Object.defineProperty(input, 'tabId', { get: identity });
+			try {
+				await expect(manager.acquire(input, handlers())).rejects.toThrow('reserved');
+				expect(identity).not.toHaveBeenCalled();
+				expect(buildChildProcessEnv).not.toHaveBeenCalled();
+				expect(probes.copilotClient).not.toHaveBeenCalled();
+				expect(probes.copilotStdio).not.toHaveBeenCalled();
+				expect(probes.copilotRuntime).not.toHaveBeenCalled();
+				expect(client.forceStop).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+
+	it.each(['close', 'closeAll', 'closeAgent'] as const)(
+		'refuses %s before touching lease/SDK state or recovery',
+		async (method) => {
+			const hold = await reserve();
+			try {
+				const lease =
+					{} as import('../../../main/process-manager/spawners/CopilotConnectionManager').CopilotConnectionLease;
+				const access = vi.fn(() => false);
+				Object.defineProperty(lease, 'closed', { get: access });
+				const result =
+					method === 'close'
+						? manager.close(lease)
+						: method === 'closeAgent'
+							? manager.closeAgent('rpc-session')
+							: manager.closeAll();
+				await expect(result).rejects.toThrow('reserved');
+				expect(access).not.toHaveBeenCalled();
+				expect(client.forceStop).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+
+	it.each(['identity', 'runtime', 'env', 'constructor'])(
+		'releases a proven pre-start %s failure without SDK recovery',
+		async (stage) => {
+			const input = copilotConfig();
+			const fail = () => {
+				throw new Error(`${stage} failed`);
+			};
+			if (stage === 'identity') Object.defineProperty(input, 'tabId', { get: fail });
+			if (stage === 'runtime') probes.copilotRuntime.mockImplementation(fail);
+			if (stage === 'env') vi.mocked(buildChildProcessEnv).mockImplementation(fail);
+			if (stage === 'constructor') probes.copilotClient.mockImplementation(fail);
+			await expect(manager.acquire(input, handlers())).rejects.toThrow(`${stage} failed`);
+			expect(client.start).not.toHaveBeenCalled();
+			expect(client.forceStop).not.toHaveBeenCalled();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it('admits before reentrant setup and preserves stdio, environment and session payloads', async () => {
+		let duringSetup: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+		vi.mocked(buildChildProcessEnv).mockImplementation(() => {
+			duringSetup = gate.reserveWorktreeCleanup(target);
+			return { FIXTURE: 'value' };
+		});
+		const nextHandlers = handlers();
+		const lease = await manager.acquire(
+			copilotConfig({
+				modelId: 'model',
+				effort: 'high',
+				appendSystemPrompt: 'system',
+				customEnvVars: { CUSTOM: 'yes' },
+				shellEnvVars: { SHELL_ENV: 'yes' },
+			}),
+			nextHandlers
+		);
+		expect(await duringSetup).toMatchObject({ status: 'blocked' });
+		expect(probes.copilotStdio).toHaveBeenCalledWith({ path: '/fixture/copilot-runtime' });
+		expect(probes.copilotClient).toHaveBeenCalledWith({
+			connection: { kind: 'stdio' },
+			workingDirectory: target,
+			env: { FIXTURE: 'value' },
+			logLevel: 'error',
+		});
+		expect(buildChildProcessEnv).toHaveBeenCalledWith({ CUSTOM: 'yes' }, false, {
+			SHELL_ENV: 'yes',
+		});
+		const payload = client.createSession.mock.calls[0][0] as typeof nextHandlers;
+		expect(payload).toMatchObject({
+			model: 'model',
+			reasoningEffort: 'high',
+			workingDirectory: target,
+			streaming: true,
+			systemMessage: { mode: 'append', content: 'system' },
+		});
+		expect(lease.refs).toBe(1);
+		payload.onUserInputRequest({ question: 'fixture' });
+		expect(nextHandlers.onUserInputRequest).toHaveBeenCalledWith({ question: 'fixture' });
+		manager.release(lease);
+		await manager.closeAll();
+		await drain();
+		await blocked();
+	});
+
+	it('retains pending start and uncertainty after shutdown resolves before startup', async () => {
+		const start = Promise.withResolvers<void>();
+		client.start.mockReturnValue(start.promise);
+		const acquiring = manager.acquire(copilotConfig(), handlers());
+		await blocked();
+		await expect(manager.acquire(copilotConfig(), handlers())).rejects.toThrow('still running');
+		await manager.closeAll();
+		await blocked();
+		start.resolve();
+		const lease = await acquiring;
+		manager.release(lease);
+		await manager.close(lease);
+		await drain();
+		await blocked();
+	});
+
+	it.each(['start', 'createSession', 'resumeSession'] as const)(
+		'retains uncertainty after rejected %s and successful forceStop',
+		async (stage) => {
+			client[stage].mockRejectedValue(new Error('SDK failure'));
+			await expect(
+				manager.acquire(
+					copilotConfig({
+						agentSessionId: stage === 'resumeSession' ? 'resume-me' : undefined,
+					}),
+					handlers()
+				)
+			).rejects.toThrow('SDK failure');
+			expect(client.forceStop).toHaveBeenCalledTimes(1);
+			await drain();
+			await blocked();
+		}
+	);
+
+	it('retains pending resume and forceStop work, even after failed shutdown and cache removal', async () => {
+		const session = Promise.withResolvers<{ sessionId: string }>();
+		client.resumeSession.mockReturnValue(session.promise);
+		const acquiring = manager.acquire(copilotConfig({ agentSessionId: 'resume-me' }), handlers());
+		await drain();
+		expect(client.resumeSession).toHaveBeenCalledWith(
+			'resume-me',
+			expect.objectContaining({ streaming: true })
+		);
+		await blocked();
+		session.resolve({ sessionId: 'resume-me' });
+		const lease = await acquiring;
+		const stop = Promise.withResolvers<void>();
+		client.forceStop.mockReturnValue(stop.promise);
+		const closing = manager.close(lease);
+		const rejected = expect(closing).rejects.toThrow('stop failed');
+		await blocked();
+		stop.reject(new Error('stop failed'));
+		await rejected;
+		await manager.closeAll();
+		await drain();
+		await blocked();
+	});
+
+	it('preserves cached reuse and dispatches session callbacks to the current handlers', async () => {
+		const first = await manager.acquire(copilotConfig(), handlers());
+		const payload = client.createSession.mock.calls[0][0] as ReturnType<typeof handlers>;
+		manager.release(first);
+		const nextHandlers = handlers();
+		const reused = await manager.acquire(copilotConfig(), nextHandlers);
+		expect(reused).toBe(first);
+		expect(reused.refs).toBe(1);
+		expect(probes.copilotClient).toHaveBeenCalledTimes(1);
+		payload.onElicitationRequest({ fixture: true });
+		payload.onPermissionRequest({ fixture: true }, { sessionId: 'copilot-provider' });
+		expect(nextHandlers.onElicitationRequest).toHaveBeenCalledWith({ fixture: true });
+		expect(nextHandlers.onPermissionRequest).toHaveBeenCalledWith(
+			{ fixture: true },
+			{ sessionId: 'copilot-provider' }
+		);
+		await manager.closeAgent('rpc-session');
+		await drain();
+		await blocked();
+	});
+
+	it('excludes overlapping replacement and never releases the old runtime uncertainty', async () => {
+		const first = await manager.acquire(copilotConfig(), handlers());
+		manager.release(first);
+		const nextClient = { ...client, start: vi.fn().mockResolvedValue(undefined) };
+		const stop = Promise.withResolvers<void>();
+		client.forceStop.mockReturnValueOnce(stop.promise);
+		probes.copilotClient.mockReturnValueOnce(nextClient);
+		const replacing = manager.acquire(copilotConfig({ modelId: 'different' }), handlers());
+		await expect(manager.acquire(copilotConfig(), handlers())).rejects.toThrow('still running');
+		await blocked();
+		stop.resolve();
+		const replacement = await replacing;
+		expect(replacement).not.toBe(first);
+		expect(nextClient.start).toHaveBeenCalledTimes(1);
+		manager.release(replacement);
+		await manager.closeAll();
+		await close(); // An unrelated/old local child cannot prove this SDK runtime ended.
+		await blocked();
+	});
+
+	it('keeps unknown native ownership when startup and its recovery both reject', async () => {
+		client.start.mockRejectedValue(new Error('start failed'));
+		client.forceStop.mockRejectedValue(new Error('recovery failed'));
+		await expect(manager.acquire(copilotConfig(), handlers())).rejects.toThrow('recovery failed');
+		await drain();
+		await blocked();
+	});
+
+	it('does not accept a synchronous SDK exception as authoritative nonstart proof', async () => {
+		const { TurnNotStartedError } = await import('../../../shared/maestro-lib/run/start-turn');
+		client.start.mockImplementation(() => {
+			throw new TurnNotStartedError(new Error('unobserved SDK start'));
+		});
+		await expect(manager.acquire(copilotConfig(), handlers())).rejects.toThrow(
+			'unobserved SDK start'
+		);
+		expect(client.forceStop).toHaveBeenCalledTimes(1);
+		await drain();
+		await blocked();
+	});
+
+	it('retains pending create work after closeAgent clears the lease', async () => {
+		const session = Promise.withResolvers<{ sessionId: string }>();
+		client.createSession.mockReturnValue(session.promise);
+		const acquiring = manager.acquire(copilotConfig(), handlers());
+		await drain();
+		await manager.closeAgent('rpc-session');
+		expect(client.forceStop).toHaveBeenCalledTimes(1);
+		await blocked();
+		session.resolve({ sessionId: 'late-session' });
+		const lease = await acquiring;
+		expect(lease.closed).toBe(true);
+		await drain();
+		await blocked();
 	});
 });
