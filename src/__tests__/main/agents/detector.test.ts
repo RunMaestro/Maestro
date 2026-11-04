@@ -1745,7 +1745,8 @@ describe('agent-detector', () => {
 				'/usr/bin/opencode',
 				['models'],
 				undefined,
-				expect.any(Object)
+				expect.any(Object),
+				expect.any(Function)
 			);
 			expect(logger.debug).toHaveBeenCalledWith(
 				expect.stringContaining('Returning cached models'),
@@ -1779,7 +1780,8 @@ describe('agent-detector', () => {
 				'/usr/bin/opencode',
 				['models'],
 				undefined,
-				expect.any(Object)
+				expect.any(Object),
+				expect.any(Function)
 			);
 		});
 
@@ -2058,7 +2060,8 @@ describe('agent-detector', () => {
 				'/usr/bin/opencode',
 				['models'],
 				undefined,
-				expect.any(Object)
+				expect.any(Object),
+				expect.any(Function)
 			);
 
 			// Advance time past TTL
@@ -2083,7 +2086,8 @@ describe('agent-detector', () => {
 				'/usr/bin/opencode',
 				['models'],
 				undefined,
-				expect.any(Object)
+				expect.any(Object),
+				expect.any(Function)
 			);
 
 			vi.useRealTimers();
@@ -2140,7 +2144,8 @@ describe('agent-detector', () => {
 				'/usr/bin/opencode',
 				['models'],
 				undefined,
-				expect.any(Object)
+				expect.any(Object),
+				expect.any(Function)
 			);
 		});
 

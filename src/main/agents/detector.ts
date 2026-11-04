@@ -40,6 +40,7 @@ import {
 	buildOmpPrimeEnv,
 } from './omp-model-catalog';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -363,6 +364,15 @@ export class AgentDetector {
 	 * Uses promise deduplication to prevent parallel detection when multiple calls arrive simultaneously
 	 */
 	async detectAgents(): Promise<AgentConfig[]> {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return await this.detectAgentsAdmitted();
+		} finally {
+			release();
+		}
+	}
+
+	private async detectAgentsAdmitted(): Promise<AgentConfig[]> {
 		if (this.cachedAgents) {
 			return this.cachedAgents;
 		}
@@ -554,8 +564,13 @@ export class AgentDetector {
 	 * Get a specific agent by ID
 	 */
 	async getAgent(agentId: string): Promise<AgentConfig | null> {
-		const agents = await this.detectAgents();
-		return agents.find((a) => a.id === agentId) || null;
+		const release = beginGlobalWorktreeActivity();
+		try {
+			const agents = await this.detectAgents();
+			return agents.find((a) => a.id === agentId) || null;
+		} finally {
+			release();
+		}
 	}
 
 	/**
@@ -592,6 +607,15 @@ export class AgentDetector {
 	 * @returns Array of model names, or empty array if agent doesn't support model discovery
 	 */
 	async discoverModels(agentId: string, forceRefresh = false): Promise<string[]> {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return await this.discoverModelsAdmitted(agentId, forceRefresh);
+		} finally {
+			release();
+		}
+	}
+
+	private async discoverModelsAdmitted(agentId: string, forceRefresh: boolean): Promise<string[]> {
 		const agent = await this.getAgent(agentId);
 
 		if (!agent || !agent.available) {
@@ -628,6 +652,16 @@ export class AgentDetector {
 		this.modelCache.set(agentId, { models, timestamp: Date.now() });
 
 		return models;
+	}
+
+	/** Direct probes own native close separately from request/cache settlement. */
+	private execDiscoveryCommand(command: string, args: string[], env: NodeJS.ProcessEnv) {
+		// Unknown launch/observer state stays busy. PATH probes, caller continuations
+		// and descendants require independent coverage before cleanup is safe.
+		const releaseNative = beginGlobalWorktreeActivity();
+		return execFileNoThrow(command, args, undefined, env, (child) =>
+			child.once('close', releaseNative)
+		);
 	}
 
 	/**
@@ -729,7 +763,7 @@ export class AgentDetector {
 					const models: string[] = [];
 
 					// Source 1: CLI discovery
-					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					const result = await this.execDiscoveryCommand(command, ['models'], env);
 					if (result.exitCode === 0) {
 						const cliModels = result.stdout
 							.split('\n')
@@ -797,10 +831,9 @@ export class AgentDetector {
 					// discovery with the shared `getExpandedEnv()` result instead would let
 					// it fail (or resolve differently) where the primes succeed, and it feeds
 					// `setOmpModelCatalog` below, so the catalogs must stay in lockstep.
-					const result = await execFileNoThrow(
+					const result = await this.execDiscoveryCommand(
 						command,
 						['models', '--json'],
-						undefined,
 						buildOmpPrimeEnv(command)
 					);
 					if (result.exitCode !== 0) {
@@ -819,7 +852,7 @@ export class AgentDetector {
 							models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
 						}>(result.stdout);
 					} catch (parseError) {
-						captureException(parseError, {
+						await captureException(parseError, {
 							operation: 'agent:modelDiscovery',
 							agentId,
 						});
@@ -878,7 +911,7 @@ export class AgentDetector {
 					// Fallback: parse `grok models` output. Model lines are bulleted, e.g.
 					//   * grok-4.5 (default)
 					//   - grok-composer-2.5-fast
-					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					const result = await this.execDiscoveryCommand(command, ['models'], env);
 					if (result.exitCode === 0) {
 						const models: string[] = [];
 						for (const line of result.stdout.split('\n')) {
@@ -912,7 +945,7 @@ export class AgentDetector {
 			}
 		} catch (error) {
 			logger.error(`Model discovery threw exception for ${agentId}`, LOG_CONTEXT, { error });
-			captureException(error, { operation: 'agent:modelDiscovery', agentId });
+			await captureException(error, { operation: 'agent:modelDiscovery', agentId });
 			return [];
 		}
 	}
@@ -929,6 +962,19 @@ export class AgentDetector {
 		agentId: string,
 		optionKey: string,
 		forceRefresh = false
+	): Promise<string[]> {
+		const release = beginGlobalWorktreeActivity();
+		try {
+			return await this.discoverConfigOptionsAdmitted(agentId, optionKey, forceRefresh);
+		} finally {
+			release();
+		}
+	}
+
+	private async discoverConfigOptionsAdmitted(
+		agentId: string,
+		optionKey: string,
+		forceRefresh: boolean
 	): Promise<string[]> {
 		const agent = await this.getAgent(agentId);
 
@@ -966,7 +1012,7 @@ export class AgentDetector {
 
 						// Primary: parse --help output. Older CLI builds list the levels
 						// inline, e.g. `--effort <level>  Effort level ... (low, medium, high, max)`.
-						const help = await execFileNoThrow(command, ['--help'], undefined, env);
+						const help = await this.execDiscoveryCommand(command, ['--help'], env);
 						if (help.exitCode === 0) {
 							const match = help.stdout.match(/--effort\s+<\w+>\s+.*?\(([^)]+)\)/);
 							if (match) {
@@ -990,10 +1036,9 @@ export class AgentDetector {
 						//     `error: option '--effort <level>' argument 'x' is invalid. It must be one of: low, medium, high, xhigh, max`
 						//   - soft warning (exit 0, still runs --version):
 						//     `Warning: Unknown --effort value 'x' - ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.`
-						const probe = await execFileNoThrow(
+						const probe = await this.execDiscoveryCommand(
 							command,
 							['--effort', '__maestro_probe__', '--version'],
-							undefined,
 							env
 						);
 						const probeOutput = `${probe.stderr}\n${probe.stdout}`;
@@ -1090,7 +1135,7 @@ export class AgentDetector {
 				}
 			}
 		} catch (error) {
-			void captureException(error);
+			await captureException(error);
 			logger.debug(`Config option discovery failed for ${agentId}:${optionKey}`, LOG_CONTEXT, {
 				error,
 			});
