@@ -221,6 +221,33 @@ describe('mergeQueuedItemIntoPrevious', () => {
 });
 
 describe('reorderQueueItem', () => {
+	it('keeps admission holds and same-tab work in order in both queue views', () => {
+		const held = { ...tabItem('held', 'tab-1'), pendingAdmissionId: 'dispatch-1' };
+		const q = [
+			tabItem('before', 'tab-1'),
+			held,
+			tabItem('other', 'tab-2'),
+			tabItem('after', 'tab-1'),
+		];
+		expect(reorderQueueItem(q, 1, 3)).toBe(q);
+		expect(reorderQueueItem(q, 3, 0)).toBe(q);
+		expect(reorderQueueItem(q, 0, 3)).toBe(q);
+		expect(reorderQueueItem(q, 1, 2, 'tab-1')).toBe(q);
+		expect(reorderQueueItem(q, 2, 0, 'tab-1')).toBe(q);
+		expect(nextRunnableQueueItem(reorderQueueItem(q, 3, 0))?.id).toBe('before');
+	});
+
+	it('allows other tabs and same-tab work on one side of an admission hold to reorder', () => {
+		const held = { ...tabItem('held', 'tab-1'), pendingAdmissionId: 'dispatch-1' };
+		const q = [held, tabItem('a', 'tab-1'), tabItem('other', 'tab-2'), tabItem('b', 'tab-1')];
+		expect(reorderQueueItem(q, 2, 0).map((i) => i.id)).toEqual(['other', 'held', 'a', 'b']);
+		expect(reorderQueueItem(q, 2, 1, 'tab-1').map((i) => i.id)).toEqual([
+			'held',
+			'b',
+			'other',
+			'a',
+		]);
+	});
 	it('moves an item within the whole queue when no tabId is given', () => {
 		const q = [item('a'), item('b'), item('c')];
 		expect(reorderQueueItem(q, 0, 2).map((i) => i.id)).toEqual(['b', 'c', 'a']);

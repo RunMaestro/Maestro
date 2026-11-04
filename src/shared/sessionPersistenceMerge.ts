@@ -110,7 +110,28 @@ function mergeRows(
 			.map((row) => merged.get(key(row)))
 			.filter((row): row is RecordData => row !== undefined);
 		let index = 0;
-		return result.map((row) => (incomingIds.has(key(row)) ? ordered[index++] : row));
+		const reordered = result.map((row) => (incomingIds.has(key(row)) ? ordered[index++] : row));
+		if (queueRows) {
+			// A client may have started dragging before another client installed a
+			// technical hold. Preserve each held tab's existing relative order across
+			// the rebase, even when the hold was absent from the client's baseline.
+			const positions = new Map(reordered.map((row, position) => [key(row), position]));
+			for (let heldIndex = 0; heldIndex < result.length; heldIndex++) {
+				const held = result[heldIndex];
+				if (!held.pendingAdmissionId) continue;
+				const newHeldIndex = positions.get(key(held))!;
+				if (
+					result.some((row, oldIndex) => {
+						const newIndex = positions.get(key(row))!;
+						const wasBefore = oldIndex < heldIndex;
+						const isBefore = newIndex < newHeldIndex;
+						return row.tabId === held.tabId && wasBefore !== isBefore;
+					})
+				)
+					return result;
+			}
+		}
+		return reordered;
 	}
 	return result;
 }

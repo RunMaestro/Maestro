@@ -92,6 +92,40 @@ describe('observed session changes', () => {
 		);
 	});
 
+	it('does not rebase a stale drag across a newly installed admission hold', () => {
+		const before = { id: 'a', tabId: 'tab-1', type: 'message' };
+		const held = { id: 'held', tabId: 'tab-1', type: 'message' };
+		const after = { id: 'b', tabId: 'tab-1', type: 'message' };
+		const baseline = { executionQueue: [before, held, after] };
+		const stored = { executionQueue: [before, { ...held, pendingAdmissionId: 'dispatch' }, after] };
+		const incoming = { executionQueue: [after, before, held] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue).toEqual(
+			stored.executionQueue
+		);
+	});
+
+	it('does not move same-tab work across a peer-only admission hold during a stale drag', () => {
+		const before = { id: 'a', tabId: 'tab-1', type: 'message' };
+		const after = { id: 'b', tabId: 'tab-1', type: 'message' };
+		const held = { id: 'held', tabId: 'tab-1', type: 'message', pendingAdmissionId: 'dispatch' };
+		const baseline = { executionQueue: [before, after] };
+		const stored = { executionQueue: [before, held, after] };
+		const incoming = { executionQueue: [after, before] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue).toEqual(
+			stored.executionQueue
+		);
+	});
+
+	it('keeps independent tab reordering when rebasing around an admission hold', () => {
+		const held = { id: 'held', tabId: 'tab-1', type: 'message', pendingAdmissionId: 'dispatch' };
+		const other = { id: 'other', tabId: 'tab-2', type: 'message' };
+		const baseline = { executionQueue: [held, other] };
+		const incoming = { executionQueue: [other, held] };
+		expect(mergeSessionPersistenceChanges(incoming, baseline, baseline).executionQueue).toEqual(
+			incoming.executionQueue
+		);
+	});
+
 	it('preserves an owning ConPTY terminal with PID zero across stale remote saves and live peer reconciliation', () => {
 		const baseline = {
 			terminalTabs: [{ id: 'owned', pid: 0, ptyInitialized: true, name: 'Terminal' }],

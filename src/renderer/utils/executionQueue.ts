@@ -440,7 +440,8 @@ export function resetSpawnCollisionsForTest(): void {
  * among themselves and written back to their original slots, so queued items
  * belonging to other tabs keep their absolute positions. Without `tabId` the
  * whole queue is reordered. Out-of-range or no-op moves return the queue
- * unchanged (same reference).
+ * unchanged (same reference). Pending admission holds cannot move or be crossed
+ * by work on their tab: reordering must not let that work bypass the hold.
  */
 export function reorderQueueItem(
 	queue: QueuedItem[],
@@ -456,6 +457,15 @@ export function reorderQueueItem(
 			fromIndex >= len ||
 			toIndex < 0 ||
 			toIndex >= len
+		) {
+			return queue;
+		}
+		const moved = queue[fromIndex];
+		if (
+			moved.pendingAdmissionId ||
+			queue
+				.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1)
+				.some((item) => item.pendingAdmissionId && item.tabId === moved.tabId)
 		) {
 			return queue;
 		}
@@ -476,6 +486,13 @@ export function reorderQueueItem(
 	});
 	const len = items.length;
 	if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) {
+		return queue;
+	}
+	if (
+		items
+			.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1)
+			.some((item) => item.pendingAdmissionId)
+	) {
 		return queue;
 	}
 	const reordered = [...items];
