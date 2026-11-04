@@ -1603,6 +1603,202 @@ describe('standalone Hermes gateway activity', () => {
 		hermes = new HermesApiSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
 	});
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses late steering and direct interactions before lookup under %s',
+		async (root) => {
+			hermes.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			const callbacks = connection();
+			await close();
+			processes.clear();
+			const hold = await reserve(root);
+			const lookup = vi.fn(() => 'approval');
+			const record = {
+				id: 'late',
+				get method() {
+					return lookup();
+				},
+			};
+			const request = {
+				text: 'next',
+				get id() {
+					return lookup();
+				},
+			};
+			vi.clearAllMocks();
+			try {
+				await expect(managed.harnessControl!.steer(request)).rejects.toThrow('reserved');
+				await expect(callbacks.onServerRequest!(record)).rejects.toThrow('reserved');
+				for (const probe of [
+					lookup,
+					probes.request,
+					probes.interaction,
+					probes.exit,
+					probes.output,
+					fallback,
+					captureException,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			await expect(
+				managed.harnessControl!.steer({ id: 'late', text: 'next' })
+			).resolves.toMatchObject({ verdict: 'refused', refusal: 'not-running' });
+			await expect(
+				callbacks.onServerRequest!({ id: 'late', method: 'approval' })
+			).resolves.toMatchObject({ kind: 'result', value: { choice: 'deny' } });
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['approval', 'clarify', 'secret'] as const)(
+		'owns late %s interaction work after original close/removal through replacement',
+		async (method) => {
+			hermes.spawn(input());
+			await drain();
+			const callbacks = connection();
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const pending = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(pending.promise);
+			const response = callbacks.onServerRequest!({
+				id: 'late',
+				method,
+				params: { questions: [{ id: 'answer', question: 'fixture' }] },
+			});
+			await blocked();
+			native = makeNative();
+			hermes.spawn(input());
+			await drain();
+			await close();
+			processes.clear();
+			await blocked();
+			pending.resolve(
+				method === 'approval'
+					? { outcome: 'selected', optionId: 'once' }
+					: { outcome: 'answers', answers: { answer: 'fixture' } }
+			);
+			await expect(response).resolves.toEqual({
+				kind: 'result',
+				value:
+					method === 'approval'
+						? { choice: 'once' }
+						: method === 'clarify'
+							? { answers: { answer: 'fixture' } }
+							: { value: 'fixture' },
+			});
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'holds each concurrent late request independently on %s',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			const callbacks = connection();
+			await close();
+			const first = Promise.withResolvers<unknown>();
+			const second = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			const a = callbacks.onServerRequest!({ id: 'first', method: 'approval' });
+			const b = callbacks.onServerRequest!({ id: 'second', method: 'secret' });
+			await blocked();
+			first.resolve({ outcome: 'cancelled' });
+			await a;
+			await drain();
+			await blocked();
+			if (outcome === 'resolve') {
+				second.resolve({ outcome: 'cancelled' });
+				await expect(b).resolves.toMatchObject({ kind: 'error', code: -32601 });
+			} else {
+				const failed = expect(b).rejects.toThrow('late interaction failed');
+				second.reject(new Error('late interaction failed'));
+				await failed;
+				expect(captureException).toHaveBeenCalledWith(
+					expect.objectContaining({
+						message: 'late interaction failed',
+					})
+				);
+			}
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['steer', 'request'] as const)(
+		'blocks an earlier pending reservation while a newly admitted %s is pending',
+		async (action) => {
+			hermes.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			const callbacks = connection();
+			if (action === 'request') await close();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			const pending = Promise.withResolvers<unknown>();
+			if (action === 'steer') probes.request.mockReturnValueOnce(pending.promise);
+			else probes.interaction.mockReturnValueOnce(pending.promise);
+			const result =
+				action === 'steer'
+					? managed.harnessControl!.steer({ id: 'late', text: 'next' })
+					: callbacks.onServerRequest!({ id: 'late', method: 'approval' });
+			if (action === 'steer') await close();
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			pending.resolve(action === 'steer' ? { status: 'queued' } : { outcome: 'cancelled' });
+			await result;
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['queued', 'rejected', 'failure'] as const)(
+		'holds steering through native close and preserves the %s verdict',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(pending.promise);
+			const response = managed.harnessControl!.steer({ id: 'steer', text: 'next' });
+			expect(probes.request).toHaveBeenLastCalledWith('session.steer', {
+				session_id: 'session',
+				text: 'next',
+			});
+			processes.clear();
+			await close();
+			await blocked();
+			if (outcome === 'failure') pending.reject(new Error('steer failed'));
+			else pending.resolve({ status: outcome });
+			await expect(response).resolves.toMatchObject({
+				id: 'steer',
+				verdict: outcome === 'queued' ? 'queued' : outcome === 'failure' ? 'unknown' : 'refused',
+			});
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('releases failed late request setup even if diagnostics throw', async () => {
+		hermes.spawn(input());
+		await drain();
+		const callbacks = connection();
+		await close();
+		vi.mocked(captureException).mockImplementationOnce(() => {
+			throw new Error('diagnostic');
+		});
+		const record = {
+			id: 'late',
+			get method(): string {
+				throw new Error('record failed');
+			},
+		};
+		await expect(callbacks.onServerRequest!(record)).rejects.toThrow('record failed');
+		await drain();
+		(await reserve()).release();
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses before gateway/setup/fallback under %s',
 		async (root) => {
 			const hold = await reserve(root);

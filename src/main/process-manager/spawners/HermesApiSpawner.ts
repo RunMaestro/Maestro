@@ -179,7 +179,7 @@ class HermesTurn {
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
 				closed: this.closed.promise,
-				steer: (request) => this.observeCompletion(this.steer(request)),
+				steer: (request) => this.steer(request),
 				interrupt: async () => this.interrupt(),
 				close: async (options) => this.kill(options),
 			},
@@ -241,7 +241,7 @@ class HermesTurn {
 		this.connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'jsonrpc',
 			onNotification: (record) => this.onNotification(record),
-			onServerRequest: (record) => this.observeCompletion(this.onServerRequest(record)),
+			onServerRequest: (record) => this.onServerRequest(record),
 		});
 		if (config.agentSessionId) {
 			const resumed = await this.connection.request('session.resume', {
@@ -462,6 +462,13 @@ class HermesTurn {
 	}
 
 	private async steer(request: { id: string; text: string }): Promise<SteeringResultFrame> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.steerAdmitted(request)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async steerAdmitted(request: { id: string; text: string }): Promise<SteeringResultFrame> {
 		if (!this.connection || !this.providerSessionId || this.finished) {
 			return {
 				type: 'steering',
@@ -553,6 +560,15 @@ class HermesTurn {
 	}
 
 	private async onServerRequest(record: NdJsonRecord): Promise<NdJsonServerResponse> {
+		// Retained callbacks need fresh admission even after the original native
+		// turn and its observer have settled. Refuse before broker or record access.
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.onServerRequestAdmitted(record)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async onServerRequestAdmitted(record: NdJsonRecord): Promise<NdJsonServerResponse> {
 		const method = typeof record.method === 'string' ? record.method.replace(/\.request$/, '') : '';
 		const params = (record.params ?? {}) as Record<string, unknown>;
 		const nativeId =
