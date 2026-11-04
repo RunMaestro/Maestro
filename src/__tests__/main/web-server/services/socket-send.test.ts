@@ -11,6 +11,44 @@ import {
 } from '../../../../main/web-server/services/socket-send';
 
 describe('bounded WebSocket output', () => {
+	it('does not revive a chunk transfer when ACK and close race a yielded continuation', async () => {
+		const frames: Array<{ data: string; offset: number; final: boolean }> = [];
+		const socket = Object.assign(new EventEmitter(), {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: vi.fn((data: string, _options: unknown, callback: () => void) => {
+				const frame = JSON.parse(data);
+				frames.push(frame);
+				process.nextTick(() => {
+					acknowledgeWebSocketChunk(socket, frame.offset + frame.data.length);
+					callback();
+				});
+			}),
+			close: vi.fn(),
+			terminate: vi.fn(),
+		}) as unknown as WebSocket;
+		enableWebSocketChunks(socket);
+		const payload = 'a😀漢'.repeat(600_000);
+		const sentinel = new Promise<void>((resolve) => setImmediate(resolve));
+		expect(sendBounded(socket, payload)).toBe(true);
+		await sentinel;
+		expect(frames.length).toBeGreaterThan(0);
+		expect(frames.at(-1)?.final).toBe(false);
+		const sentBeforeClose = frames.length;
+		const last = frames.at(-1)!;
+		acknowledgeWebSocketChunk(socket, last.offset + last.data.length);
+		Object.assign(socket, { readyState: WebSocket.CLOSED });
+		socket.emit('close');
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(frames).toHaveLength(sentBeforeClose);
+		let offset = 0;
+		for (const frame of frames) {
+			expect(frame.offset).toBe(offset);
+			expect(frame.data).toBe(payload.slice(offset, offset + frame.data.length));
+			offset += frame.data.length;
+		}
+	});
+
 	it('rejects an oversized queued message and prevents pending completion from sending more', async () => {
 		let completion!: (error?: Error) => void;
 		const socket = Object.assign(new EventEmitter(), {
