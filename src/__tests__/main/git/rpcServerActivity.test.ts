@@ -20,6 +20,17 @@ const probes = vi.hoisted(() => ({
 	connected: vi.fn<(options: ConstructorParameters<typeof NdJsonConnection>[1]) => void>(),
 	acpClient: vi.fn(),
 	notify: vi.fn(),
+	respond: vi.fn(),
+}));
+vi.mock('../../../main/codex-app-server/rpc-client', async (original) => ({
+	...(await original<typeof import('../../../main/codex-app-server/rpc-client')>()),
+	CodexAppServerRpc: class {
+		request = probes.request;
+		notify = probes.notify;
+		close = probes.close;
+		respond = probes.respond;
+		isClosed = false;
+	},
 }));
 vi.mock('@agentclientprotocol/sdk', () => ({
 	PROTOCOL_VERSION: 1,
@@ -63,6 +74,7 @@ vi.mock('../../../main/process-manager/handlers/ExitHandler', () => ({
 }));
 vi.mock('../../../main/process-manager/utils/envBuilder', () => ({
 	buildChildProcessEnv: vi.fn(() => ({})),
+	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
 vi.mock('../../../main/process-manager/utils/windowsSpawnShell', () => ({
 	planSpawnShell: vi.fn((command, args) => ({ command, args, shell: false })),
@@ -1029,6 +1041,300 @@ describe('standalone ACP activity', () => {
 		await close();
 		await blocked();
 		releaseFallback();
+		(await reserve()).release();
+	});
+});
+
+describe('standalone Codex app-server activity', () => {
+	let codex: import('../../../main/process-manager/spawners/CodexAppServerSpawner').CodexAppServerSpawner;
+	const replies: Record<string, unknown> = {
+		initialize: {},
+		'thread/start': { thread: { id: 'thread' } },
+		'thread/resume': { thread: { id: 'thread' } },
+		'turn/start': { turn: { id: 'turn' } },
+	};
+	const input = (overrides: Partial<ProcessConfig> = {}) =>
+		config({ toolType: 'codex', command: 'codex', args: ['exec', '--json'], ...overrides });
+	const line = (method: string, params: unknown, id?: number) =>
+		native.stdout.emit('data', JSON.stringify({ method, params, id }) + '\n');
+	beforeEach(async () => {
+		probes.request.mockImplementation(async (method: string) => replies[method]);
+		const { CodexAppServerSpawner } =
+			await import('../../../main/process-manager/spawners/CodexAppServerSpawner');
+		codex = new CodexAppServerSpawner(
+			processes,
+			new EventEmitter(),
+			{} as DataBufferManager,
+			fallback
+		);
+	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses before parsing, native setup or fallback under %s',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				vi.mocked(fs.realpath).mockClear();
+				const unparsed = input();
+				Object.defineProperty(unparsed, 'prompt', {
+					get: () => {
+						throw new Error('parsed');
+					},
+				});
+				for (const request of [
+					unparsed,
+					input({ images: ['fixture'], permissionMode: 'full' }),
+					input({ cwd: '/remote', sshRemoteId: 'remote' }),
+				])
+					expect(codex.spawn(request)).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+				for (const probe of [
+					createOutputParser,
+					planSpawnShell,
+					buildChildProcessEnv,
+					spawn,
+					fallback,
+					fs.realpath,
+					probes.request,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+			} finally {
+				hold.release();
+			}
+			codex.spawn(input());
+			await drain();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it('admits before environment setup and a pending reservation resolves', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		let during!: Promise<void>;
+		vi.mocked(buildChildProcessEnv).mockImplementationOnce(() => {
+			during = blocked();
+			return {};
+		});
+		expect(codex.spawn(input()).success).toBe(true);
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await during;
+		await close();
+		(await reserve()).release();
+	});
+	it.each(['initialize', 'thread/start', 'thread/resume', 'turn/start'])(
+		'retains pending %s after Stop and native close',
+		async (method) => {
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockImplementation((name: string) =>
+				name === method ? pending.promise : Promise.resolve(replies[name])
+			);
+			codex.spawn(
+				input(method === 'thread/resume' ? { args: ['exec', 'resume', 'thread', '--json'] } : {})
+			);
+			await drain();
+			expect(probes.request).toHaveBeenCalledWith(method, expect.anything(), expect.anything());
+			processes.get('rpc-session')!.sdkController!.interrupt();
+			await close();
+			await blocked();
+			pending.resolve(replies[method]);
+			await drain();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['exit', 'error', 'result', 'interrupt', 'kill'])(
+		'retains the native child after %s until independent close',
+		async (event) => {
+			codex.spawn(input());
+			await drain();
+			if (event === 'exit') native.emit('exit', 0, null);
+			if (event === 'error') native.emit('error', new Error('transport failed'));
+			if (event === 'result')
+				line('turn/completed', { threadId: 'thread', turn: { id: 'turn', status: 'completed' } });
+			if (event === 'interrupt') processes.get('rpc-session')!.sdkController!.interrupt();
+			if (event === 'kill') processes.get('rpc-session')!.sdkController!.kill();
+			await drain();
+			if (event === 'result') expect(probes.exit).toHaveBeenCalledOnce();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+	it.each(['request', 'steer', 'interrupt', 'kill'])(
+		'retains pending %s control after native close',
+		async (action) => {
+			codex.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			const pending = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(pending.promise);
+			let completion: Promise<unknown> | undefined;
+			if (action === 'request') completion = managed.codexAppServer!.sendRequest('thread/read');
+			if (action === 'steer')
+				completion = managed.harnessControl!.steer!({ id: 'steer', text: 'follow up' });
+			if (action === 'interrupt') managed.sdkController!.interrupt();
+			if (action === 'kill') managed.sdkController!.kill();
+			await close();
+			await blocked();
+			pending.resolve({});
+			await completion;
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'retains interactive %s and failed exit reporting independently after close',
+		async (outcome) => {
+			const interaction = Promise.withResolvers<unknown>();
+			const reporting = Promise.withResolvers<void>();
+			probes.interaction.mockReturnValueOnce(interaction.promise);
+			probes.exit.mockReturnValueOnce(reporting.promise);
+			codex.spawn(input());
+			await drain();
+			line(
+				'item/commandExecution/requestApproval',
+				{ threadId: 'thread', turnId: 'turn', itemId: 'tool' },
+				4
+			);
+			expect(probes.interaction).toHaveBeenCalledOnce();
+			await close();
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			await blocked();
+			if (outcome === 'resolve') interaction.resolve({ outcome: 'cancelled' });
+			else interaction.reject(new Error('permission failed'));
+			await drain();
+			expect(probes.respond).toHaveBeenCalledWith(4, expect.anything());
+			(await reserve()).release();
+		}
+	);
+	it.each(['parser', 'shell', 'env', 'nonstart'])(
+		'releases proven pre-native %s failure without Standard fallback',
+		async (failure) => {
+			const fail = () => {
+				throw new Error('setup failed');
+			};
+			if (failure === 'parser') vi.mocked(createOutputParser).mockImplementationOnce(fail);
+			if (failure === 'shell') vi.mocked(planSpawnShell).mockImplementationOnce(fail);
+			if (failure === 'env') vi.mocked(buildChildProcessEnv).mockImplementationOnce(fail);
+			if (failure === 'nonstart') vi.mocked(spawn).mockImplementationOnce(fail);
+			expect(codex.spawn(input()).success).toBe(false);
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each(['lost-handle', 'observer'])(
+		'retains uncertain %s native state even after close',
+		async (failure) => {
+			if (failure === 'lost-handle')
+				vi.spyOn(native.stdin, 'on').mockImplementationOnce(() => {
+					throw new Error('postspawn');
+				});
+			else {
+				const on = native.on.bind(native);
+				let closes = 0;
+				vi.spyOn(native, 'on').mockImplementation((event, listener) => {
+					if (event === 'close' && ++closes === 2) throw new Error('observer failed');
+					return on(event, listener);
+				});
+			}
+			expect(codex.spawn(input()).success).toBe(false);
+			await close();
+			await blocked();
+		}
+	);
+	it('retains superseded and unregistered children and a failed registration', async () => {
+		codex.spawn(input());
+		await drain();
+		const old = native;
+		native = makeNative();
+		codex.spawn(input());
+		await drain();
+		processes.clear();
+		await close();
+		await blocked();
+		await close(old);
+		(await reserve()).release();
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		native = makeNative();
+		expect(codex.spawn(input()).success).toBe(false);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+	it('retains failed asynchronous setup and independently admitted CLI fallback', async () => {
+		const setup = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(setup.promise);
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		codex.spawn(input({ permissionMode: 'full' }));
+		setup.reject(new Error('initialize failed'));
+		await drain();
+		expect(fallback).toHaveBeenCalledOnce();
+		expect(stopProcess).toHaveBeenCalled();
+		await blocked();
+		await close();
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+	it('releases a failing direct fallback before any native child', async () => {
+		fallback.mockImplementationOnce(() => {
+			throw new Error('fallback failed');
+		});
+		expect(codex.spawn(input({ images: ['fixture'], permissionMode: 'full' })).success).toBe(false);
+		expect(fallback).toHaveBeenCalledOnce();
+		expect(spawn).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+	it('retains a missing-pid error until close and pending initialization settle', async () => {
+		Object.assign(native, { pid: undefined });
+		const pending = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(pending.promise);
+		expect(codex.spawn(input())).toMatchObject({ success: true, pid: -1 });
+		native.emit('error', new Error('native failed'));
+		await close();
+		await blocked();
+		pending.reject(new Error('initialize failed'));
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains a failed registration child independently of synchronous CLI fallback', async () => {
+		vi.spyOn(processes, 'set').mockImplementationOnce(() => {
+			throw new Error('registration failed');
+		});
+		let releaseFallback!: () => void;
+		fallback.mockImplementationOnce(() => {
+			releaseFallback = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 999 };
+		});
+		expect(codex.spawn(input({ permissionMode: 'full' })).success).toBe(true);
+		await blocked();
+		await close();
+		await blocked();
+		releaseFallback();
+		(await reserve()).release();
+	});
+	it('contains throwing exit callbacks without releasing a still-live child', async () => {
+		codex.spawn(input());
+		await drain();
+		probes.close.mockImplementationOnce(() => {
+			throw new Error('exit failed');
+		});
+		native.emit('error', new Error('transport failed'));
+		await drain();
+		await blocked();
+		await close();
 		(await reserve()).release();
 	});
 });

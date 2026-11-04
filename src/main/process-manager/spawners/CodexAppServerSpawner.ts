@@ -46,11 +46,8 @@ import { argsResumeSession } from '../utils/resumeArgs';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { isWindows } from '../../../shared/platformDetection';
-import {
-	startTurn,
-	type TurnExit,
-	type TurnHandle,
-} from '../../../shared/maestro-lib/run/start-turn';
+import type { startTurn, TurnExit, TurnHandle } from '../../../shared/maestro-lib/run/start-turn';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
@@ -163,6 +160,26 @@ export class CodexAppServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(start, observe) => this.spawnAdmitted(config, start, observe),
+				(error) => {
+					void captureException(error);
+					logger.error('[CodexAppServerSpawner] Completion failed', LOG_CONTEXT, {
+						error: String(error),
+					});
+				}
+			);
+		} catch (error) {
+			return { pid: -1, success: false, error: String(error) };
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		startAdmittedTurn: typeof startTurn,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		const parsed = parseCodexAppServerInvocation(config);
 		if (!parsed.ok) {
 			logger.info(
@@ -183,9 +200,15 @@ export class CodexAppServerSpawner {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new CodexAppServerTurn(this.context, config, parsed.invocation).start();
+			return new CodexAppServerTurn(
+				this.context,
+				config,
+				parsed.invocation,
+				startAdmittedTurn,
+				observeCompletion
+			).start();
 		} catch (error) {
-			// startTurn throws only on a bad spawn option; exec gets the turn.
+			// Setup may have created a child; admission retains any native uncertainty.
 			void captureException(error);
 			logger.warn('[CodexAppServerSpawner] Could not start app-server; using exec', LOG_CONTEXT, {
 				sessionId: config.sessionId,
@@ -225,7 +248,9 @@ class CodexAppServerTurn {
 	constructor(
 		private readonly ctx: TurnContext,
 		private readonly config: ProcessConfig,
-		private readonly invocation: CodexAppServerInvocation
+		private readonly invocation: CodexAppServerInvocation,
+		private readonly startAdmittedTurn: typeof startTurn,
+		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 	) {
 		this.rpc = new CodexAppServerRpc((line) => this.writeLine(line));
 
@@ -269,7 +294,7 @@ class CodexAppServerTurn {
 					method: string,
 					params?: unknown,
 					options?: { timeoutMs?: number }
-				) => rpc.request<T>(method, params, options),
+				) => this.observeCompletion(rpc.request<T>(method, params, options)),
 				onUserMessage: (listener) => translator.onUserMessage(listener),
 				onTurnEnd: (listener) => this.onTurnEnd(listener),
 			},
@@ -287,8 +312,10 @@ class CodexAppServerTurn {
 					resume: true,
 				}),
 				steer: ({ id, text }) =>
-					steerCodexAppServerTurn(this.managedProcess.codexAppServer!, { id, text }, (verdict) =>
-						this.ctx.emitter.emit('steering-verdict', sessionId, verdict)
+					this.observeCompletion(
+						steerCodexAppServerTurn(this.managedProcess.codexAppServer!, { id, text }, (verdict) =>
+							this.ctx.emitter.emit('steering-verdict', sessionId, verdict)
+						)
 					),
 				interrupt: async () => this.interrupt(),
 				close: async (options) => this.kill(options),
@@ -325,7 +352,7 @@ class CodexAppServerTurn {
 					shell: config.shell,
 				});
 
-		this.turn = startTurn(
+		this.turn = this.startAdmittedTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -358,8 +385,8 @@ class CodexAppServerTurn {
 		managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, managedProcess);
 
-		void this.turn.done.then((exit) => this.handleChildExit(exit));
-		void this.run().catch((error) => this.handleRunError(error));
+		this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
+		this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
 
 		logger.info('[CodexAppServerSpawner] Started app-server turn', LOG_CONTEXT, {
 			sessionId,
@@ -532,21 +559,23 @@ class CodexAppServerTurn {
 				spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
 			});
 			if (interaction) {
-				void this.answerInteractiveServerRequest(request, interaction).catch((error) => {
-					logger.warn(
-						'[CodexAppServerSpawner] Interactive request failed; declining',
-						LOG_CONTEXT,
-						{
-							sessionId: this.config.sessionId,
-							method: request.method,
-							error: String(error),
-						}
-					);
-					this.respondToServerRequest(
-						request,
-						answerCodexServerRequest(request, { grantApprovals: false })
-					);
-				});
+				this.observeCompletion(
+					this.answerInteractiveServerRequest(request, interaction).catch((error) => {
+						logger.warn(
+							'[CodexAppServerSpawner] Interactive request failed; declining',
+							LOG_CONTEXT,
+							{
+								sessionId: this.config.sessionId,
+								method: request.method,
+								error: String(error),
+							}
+						);
+						this.respondToServerRequest(
+							request,
+							answerCodexServerRequest(request, { grantApprovals: false })
+						);
+					})
+				);
 				return;
 			}
 		}
@@ -746,18 +775,20 @@ class CodexAppServerTurn {
 		const threadId = this.translator.threadId;
 		const turnId = this.translator.activeTurnId;
 		if (!threadId || !turnId || this.phase !== 'committed' || this.rpc.isClosed) return false;
-		this.rpc
-			.request(
-				'turn/interrupt',
-				{ threadId, turnId },
-				{ timeoutMs: CODEX_APP_SERVER_EXIT_GRACE_MS }
-			)
-			.catch((error) => {
-				logger.debug('[CodexAppServerSpawner] turn/interrupt failed', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
-			});
+		this.observeCompletion(
+			this.rpc
+				.request(
+					'turn/interrupt',
+					{ threadId, turnId },
+					{ timeoutMs: CODEX_APP_SERVER_EXIT_GRACE_MS }
+				)
+				.catch((error) => {
+					logger.debug('[CodexAppServerSpawner] turn/interrupt failed', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+				})
+		);
 		return true;
 	}
 
@@ -897,14 +928,16 @@ class CodexAppServerTurn {
 	private finish(code: number, signal?: NodeJS.Signals | null): void {
 		if (this.finished) return;
 		this.finished = true;
-		void this.ctx.exitHandler
-			.handleExit(this.config.sessionId, code, this.managedProcess, signal)
-			.catch((error) => {
-				logger.error('[CodexAppServerSpawner] handleExit threw', LOG_CONTEXT, {
-					sessionId: this.config.sessionId,
-					error: String(error),
-				});
-			});
+		this.observeCompletion(
+			this.ctx.exitHandler
+				.handleExit(this.config.sessionId, code, this.managedProcess, signal)
+				.catch((error) => {
+					logger.error('[CodexAppServerSpawner] handleExit threw', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+				})
+		);
 	}
 
 	private emitAgentError(error: unknown): void {
