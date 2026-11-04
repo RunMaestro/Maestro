@@ -282,7 +282,7 @@ describe('standalone permission relay setup and cleanup activity', () => {
 	});
 
 	it.each(['registry', 'unlink'] as const)(
-		'preserves %s cleanup failure behavior and retries registry cleanup',
+		'preserves %s cleanup errors and retries the complete cleanup',
 		async (step) => {
 			await relay.preparePermissionRelayArgs(params);
 			const error = new Error('cleanup failed');
@@ -296,13 +296,156 @@ describe('standalone permission relay setup and cleanup activity', () => {
 				vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
 					throw error;
 				});
-				expect(relay.cleanupSessionRelay(params.sessionId)).toBeUndefined();
+				expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow(error);
+				await blocked();
 			}
 			relay.cleanupSessionRelay(params.sessionId);
-			expect(cleanups[0]).toHaveBeenCalledTimes(step === 'registry' ? 2 : 1);
+			expect(cleanups[0]).toHaveBeenCalledTimes(2);
 			await reserve();
 		}
 	);
+
+	it.each(['EACCES', 'EPERM', 'EBUSY', 'EIO', 'ENOTDIR', undefined])(
+		'keeps known config cleanup retryable after unlink failure %s',
+		async (code) => {
+			await relay.preparePermissionRelayArgs(params);
+			const error = Object.assign(new Error('config unlink failed'), { code });
+			vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+				throw error;
+			});
+			expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow(error);
+			expect(cleanups[0]).toHaveBeenCalledOnce();
+			for (const root of [target, path.join(target, 'child'), path.resolve('other-repository')])
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			expect(synchronousHolds).toBe(1);
+			relay.cleanupSessionRelay(params.sessionId);
+			expect(syncFs.unlinkSync).toHaveBeenCalledTimes(2);
+			relay.cleanupSessionRelay(params.sessionId);
+			expect(syncFs.unlinkSync).toHaveBeenCalledTimes(2);
+			await reserve();
+		}
+	);
+
+	it.each(['explicit', 'exit', 'replacement'] as const)(
+		'retains file recovery after real token retirement and retries through %s',
+		async (route) => {
+			const registry = await vi.importActual<
+				typeof import('../../../main/permission-relay/registry')
+			>('../../../main/permission-relay/registry');
+			vi.mocked(registerSpawn).mockImplementation((binding) => {
+				const result = registry.registerSpawn(binding);
+				const cleanup = vi.fn(result.cleanup);
+				cleanups.push(cleanup);
+				return { ...result, cleanup };
+			});
+			const manager = new EventEmitter();
+			relay.initPermissionRelay(() => null, manager);
+			await relay.preparePermissionRelayArgs(params);
+			const token = vi.mocked(buildRelayArgs).mock.calls[0][3];
+			const decision = registry.createPending('file-cleanup', token);
+			const error = Object.assign(new Error('config is busy'), { code: 'EBUSY' });
+			vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+				throw error;
+			});
+			if (route === 'replacement')
+				await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(error);
+			else
+				expect(() =>
+					route === 'exit'
+						? manager.emit('exit', params.sessionId)
+						: relay.cleanupSessionRelay(params.sessionId)
+				).toThrow(error);
+			await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+			expect(registry.lookupBinding(token)).toBeUndefined();
+			expect(registerSpawn).toHaveBeenCalledOnce();
+			expect(buildRelayArgs).toHaveBeenCalledOnce();
+			await blocked();
+			if (route === 'replacement') await relay.preparePermissionRelayArgs(params);
+			else if (route === 'exit') manager.emit('exit', params.sessionId);
+			else relay.cleanupSessionRelay(params.sessionId);
+			expect(cleanups[0]).toHaveBeenCalledTimes(2);
+			if (route === 'replacement') relay.cleanupSessionRelay(params.sessionId);
+			await reserve();
+		}
+	);
+
+	it.each([false, true])(
+		'accepts only ENOENT as confirmed absence (previous failure: %s)',
+		async (retry) => {
+			await relay.preparePermissionRelayArgs(params);
+			if (retry) {
+				vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+					throw new Error('unknown unlink failure');
+				});
+				expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow('unknown unlink failure');
+				await blocked();
+			}
+			vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+				throw Object.assign(new Error('already removed'), { code: 'ENOENT' });
+			});
+			relay.cleanupSessionRelay(params.sessionId);
+			expect(syncFs.unlinkSync).toHaveBeenCalledTimes(retry ? 2 : 1);
+			await reserve();
+		}
+	);
+
+	it('retains a single recovery hold through repeated reentrant unlink failures', async () => {
+		await relay.preparePermissionRelayArgs(params);
+		const error = new Error('reentrant unlink failure');
+		vi.mocked(syncFs.unlinkSync).mockImplementation(() => {
+			relay.cleanupSessionRelay(params.sessionId);
+			throw error;
+		});
+		for (let attempt = 1; attempt <= 2; attempt++) {
+			expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow(error);
+			expect(syncFs.unlinkSync).toHaveBeenCalledTimes(attempt);
+			expect(synchronousHolds).toBe(1);
+			await blocked();
+		}
+		vi.mocked(syncFs.unlinkSync).mockImplementation(() => undefined);
+		relay.cleanupSessionRelay(params.sessionId);
+		await reserve();
+	});
+
+	it('keeps independent failed configs busy when another session recovers', async () => {
+		const other = { ...params, sessionId: 'other-ai' };
+		await relay.preparePermissionRelayArgs(params);
+		await relay.preparePermissionRelayArgs(other);
+		for (const session of [params, other]) {
+			vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+				throw new Error('file cleanup failed');
+			});
+			expect(() => relay.cleanupSessionRelay(session.sessionId)).toThrow('file cleanup failed');
+		}
+		expect(synchronousHolds).toBe(2);
+		relay.cleanupSessionRelay(other.sessionId);
+		expect(synchronousHolds).toBe(1);
+		await blocked();
+		relay.cleanupSessionRelay(params.sessionId);
+		await reserve();
+	});
+
+	it('keeps a pending reservation blocked when unlink retires the token then fails', async () => {
+		await relay.preparePermissionRelayArgs(params);
+		let reservation: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+		const error = new Error('unlink failed while canonicalizing');
+		vi.mocked(syncFs.unlinkSync).mockImplementationOnce(() => {
+			reservation = gate.reserveWorktreeCleanup(target);
+			throw error;
+		});
+		let caught: unknown;
+		try {
+			relay.cleanupSessionRelay(params.sessionId);
+		} catch (failure) {
+			caught = failure;
+		}
+		const result = await reservation;
+		if (result?.status === 'reserved-partially') releases.push(result.release);
+		expect(caught).toBe(error);
+		expect(result).toMatchObject({ status: 'blocked' });
+		relay.cleanupSessionRelay(params.sessionId);
+		await reserve();
+	});
 
 	it.each(['explicit', 'exit', 'replacement'] as const)(
 		'retries failed registry cleanup through %s without losing its owner',

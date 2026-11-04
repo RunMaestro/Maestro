@@ -172,13 +172,21 @@ export async function preparePermissionRelayArgs(params: {
 			);
 
 			// Wrap the registry cleanup so process exit also deletes the temp MCP config.
+			let releaseRecovery: (() => void) | undefined;
 			entry.cleanup = () => {
 				cleanup();
 				try {
 					fs.unlinkSync(configPath);
-				} catch {
-					// Already gone - fine.
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
+						// Token cleanup may already have released its hold. Keep this
+						// session's recovery busy and reachable until unlink succeeds.
+						releaseRecovery ??= beginGlobalWorktreeActivity();
+						throw error;
+					}
 				}
+				releaseRecovery?.();
+				releaseRecovery = undefined;
 			};
 
 			logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
