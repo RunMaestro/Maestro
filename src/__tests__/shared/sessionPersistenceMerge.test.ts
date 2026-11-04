@@ -104,6 +104,39 @@ describe('observed session changes', () => {
 		);
 	});
 
+	it('retains an existing admission hold across observed and baseline-less renderer saves', () => {
+		const item = { id: 'held', type: 'message', tabId: 'tab', pendingAdmissionId: 'dispatch' };
+		const stored = { executionQueue: [item] };
+		for (const replacement of [undefined, 'different-dispatch']) {
+			const incoming = { executionQueue: [{ ...item, pendingAdmissionId: replacement }] };
+			for (const baseline of [stored, undefined]) {
+				expect(
+					mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue[0]
+						.pendingAdmissionId
+				).toBe('dispatch');
+			}
+		}
+		const renamedType: {
+			executionQueue: { id: string; type: string; tabId: string; pendingAdmissionId?: string }[];
+		} = {
+			executionQueue: [{ ...item, type: 'other', pendingAdmissionId: undefined }],
+		};
+		expect(
+			mergeSessionPersistenceChanges(renamedType, stored, undefined).executionQueue[0]
+				.pendingAdmissionId
+		).toBe('dispatch');
+	});
+
+	it('still permits cancellation of a held item without transferring its hold to another row', () => {
+		const held = { id: 'held', type: 'message', pendingAdmissionId: 'dispatch' };
+		const other = { id: 'other', type: 'message' };
+		const stored = { executionQueue: [held, other] };
+		const incoming = { executionQueue: [other] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, stored).executionQueue).toEqual([
+			other,
+		]);
+	});
+
 	it('does not move same-tab work across a peer-only admission hold during a stale drag', () => {
 		const before = { id: 'a', tabId: 'tab-1', type: 'message' };
 		const after = { id: 'b', tabId: 'tab-1', type: 'message' };

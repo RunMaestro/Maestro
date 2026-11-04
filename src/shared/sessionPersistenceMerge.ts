@@ -183,10 +183,28 @@ export function mergeSessionPersistenceChanges<T extends RecordData>(
 	preserveLive = false,
 	remoteQueue = false
 ): T {
-	const result =
+	let result =
 		!stored || !baseline
 			? incoming
 			: (mergeRecord(incoming, stored, baseline, preserveClient, preserveLive) as T);
+	if (Array.isArray(result.executionQueue) && Array.isArray(stored?.executionQueue)) {
+		// A renderer save cannot release or replace a host admission hold. The
+		// future host-authorized drain must clear it through a separate boundary.
+		// Removing the whole row remains a queue cancellation.
+		const held = new Map(
+			stored.executionQueue
+				.filter((item: RecordData) => item?.pendingAdmissionId && typeof item.id === 'string')
+				.map((item: RecordData) => [item.id, item.pendingAdmissionId])
+		);
+		result = {
+			...result,
+			executionQueue: result.executionQueue.map((item: RecordData) => {
+				if (!item || typeof item.id !== 'string') return item;
+				const pendingAdmissionId = held.get(item.id);
+				return pendingAdmissionId ? { ...item, pendingAdmissionId } : item;
+			}),
+		};
+	}
 	if (!remoteQueue || !Array.isArray(result.executionQueue)) return result;
 	// Remote persistence may retain an unchanged Host-observed human turn, but
 	// cannot create one or reuse its origin after changing the queued operation.
