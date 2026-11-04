@@ -47,7 +47,10 @@ import {
 	type PianolaSupervisorSnapshot,
 } from '../../../main/ipc/handlers/pianola';
 import { handleBridgeInvoke } from '../../../main/web-server/handlers/bridgeHandlers';
-import { pianolaSuperviseScope } from '../../../cli/commands/pianola-supervise';
+import {
+	pianolaSuperviseList,
+	pianolaSuperviseScope,
+} from '../../../cli/commands/pianola-supervise';
 
 let directory: string;
 let server: WebSocketServer;
@@ -830,6 +833,27 @@ describe('owner scope configuration through production adapters', () => {
 });
 
 describe('standing future local agents', () => {
+	it('CLI live status reads the host registry and coverage snapshot over the bridge', async () => {
+		await nativeSave();
+		await pianolaSuperviseList({ live: true, json: true });
+		expect(lastOutput().targets).toEqual([expect.objectContaining({ id: scopeId })]);
+		expect(lastOutput().health).toEqual(expect.any(Array));
+		expect(lastOutput().checkpoints).toEqual([expect.objectContaining({ scopeId })]);
+	});
+
+	it('CLI reconciles an existing future selection without granting authority to change it', async () => {
+		const future = target();
+		future.selection = { ...future.selection!, mode: 'agents-and-groups', futureLocalAgents: true };
+		await nativeSave(future);
+		const before = store.readSupervisorTargets();
+		await cli({ id: scopeId, futureLocalAgents: true });
+		expect(lastOutput().success).toBe(true);
+		expect(store.readSupervisorTargets()).toEqual(before);
+		await cli({ id: scopeId, futureLocalAgents: true, agents: 'other' });
+		expect(lastOutput().success).toBe(false);
+		expect(store.readSupervisorTargets()).toEqual(before);
+	});
+
 	it('owner configures one dynamic scope with host baseline and restart-safe whole-agent coverage', async () => {
 		const request = target();
 		request.selection = {

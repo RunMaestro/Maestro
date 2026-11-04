@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PianolaScopeControls } from '../../../../renderer/components/PianolaDashboard/PianolaScopeControls';
 import { usePianolaSupervisor } from '../../../../renderer/components/PianolaDashboard/usePianolaSupervisor';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../../renderer/stores/notificationStore';
 import { createMockSession, resetAllStores } from '../../../helpers';
@@ -280,7 +281,7 @@ describe('PianolaScopeControls production hook composition', () => {
 it('configures standing future coverage at Auto-Watch with an explicitly chosen manager', async () => {
 	persisted.targets = [];
 	render(<Controls autoWatchControl />);
-	await screen.findByText(/NeedsConfiguration/);
+	await screen.findByText('No selections registered.');
 	fireEvent.click(screen.getByRole('checkbox', { name: /Automatically watch future/ }));
 	expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
 	expect(window.maestro.pianola.supervisor.add).not.toHaveBeenCalled();
@@ -312,4 +313,35 @@ it('does not choose a manager implicitly when multiple future scopes exist', asy
 	await screen.findByText(/Multiple future-agent selections/);
 	expect(screen.getByRole('checkbox', { name: /Automatically watch future/ })).toBeDisabled();
 	expect(window.maestro.pianola.supervisor.setEnabled).not.toHaveBeenCalled();
+});
+
+it('distinguishes registry pause from actual worker health and identifies selected members', async () => {
+	persisted.targets[0].enabled = false;
+	persisted.health = [
+		{ id: scope.id, kind: 'watch-scope', state: 'running', restarts: 0, recentLogs: [] },
+	];
+	render(<Controls />);
+	await screen.findByText('Fixture selection');
+	expect(screen.getByText(/Registry: Paused/)).toBeInTheDocument();
+	expect(screen.getByText(/Worker: running/)).toBeInTheDocument();
+	expect(screen.getByText(/Agents: Owner/)).toBeInTheDocument();
+	expect(screen.getByText(/Groups: Native group/)).toBeInTheDocument();
+	expect(screen.getByText(/Excluded: Excluded agent/)).toBeInTheDocument();
+});
+
+it('does not label an unused Auto-Watch as a legacy configuration problem', async () => {
+	persisted.targets = [];
+	render(<Controls autoWatchControl />);
+	await screen.findByText('No selections registered.');
+	expect(screen.queryByText(/NeedsConfiguration/)).not.toBeInTheDocument();
+});
+
+it('shows NeedsConfiguration for a legacy auto-watch boolean without a policy', async () => {
+	persisted.targets = [];
+	useSettingsStore.setState({ pianolaAutoWatchNewAgents: true });
+	render(<Controls autoWatchControl />);
+	await screen.findByText(/NeedsConfiguration/);
+	expect(
+		screen.getByText(/Legacy Auto-Watch is enabled without a manager policy/)
+	).toBeInTheDocument();
 });

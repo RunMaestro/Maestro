@@ -402,6 +402,28 @@ export async function configurePianolaScope(
 					selection: { ...target.selection, futureAgentBaselineIds: baseline },
 				};
 			}
+			// Non-owner callers may only reconcile a stored future selection. Its
+			// host-stamped baseline is part of the fingerprint, not CLI authority.
+			if (
+				!ownerAuthorized &&
+				target.selection?.mode === 'agents-and-groups' &&
+				target.selection.futureLocalAgents
+			) {
+				const previous = current.find((entry) => entry.id === target.id)?.selection;
+				if (
+					previous?.mode === 'agents-and-groups' &&
+					previous.futureLocalAgents &&
+					previous.futureAgentBaselineIds
+				) {
+					target = {
+						...target,
+						selection: {
+							...target.selection,
+							futureAgentBaselineIds: previous.futureAgentBaselineIds,
+						},
+					};
+				}
+			}
 			const requestedFingerprint = pianolaScopeConfigurationFingerprint({
 				...target,
 				selection: target.selection!,

@@ -28,7 +28,7 @@ The host supervisor API can transfer legacy tab watches into a selected agent/gr
 
 The existing selection editor uses the verified native owner connection to authorize observation. The host verifies the chosen manager against its native census and derives the rule revision from the actual saved rules. It creates a standing observation policy without changing answer rules. Repeating an identical selection reuses its scope under the registry lock and retains pauses and existing policies.
 
-`maestro-cli pianola supervise scope` uses the same host service over the bridge. The CLI can reconcile an exact selection with an existing enabled standing policy, including legacy takeover. It cannot create owner consent or change the selected agents, manager, policy, or pause state. Save a new selection in the owner UI first; otherwise the host returns `NeedsConfiguration` without changing ownership. A CLI secret, agent environment variable, or supplied manager field does not establish human ownership.
+`maestro-cli pianola supervise scope` uses the same host service over the bridge. The CLI can reconcile an exact selection with an existing enabled standing policy, including legacy takeover. It cannot create owner consent or change the selected agents, manager, policy, or pause state. Save a new selection in the owner UI first; otherwise the host returns `NeedsConfiguration` without changing ownership. A future-agent selection can be reconciled by passing its existing `--id` and `--future-local-agents` along with its exact selection. The host supplies its recorded baseline. A CLI secret, agent environment variable, or supplied manager field does not establish human ownership.
 
 The registry retains the handover receipt and retired-owner fences across restart. Existing questions are baselined before publication, and uncertain deliveries are not resent. This transfer changes observation coverage; it does not add answer rules.
 
@@ -280,12 +280,13 @@ host-verified handover; if configuration is missing, the selection stays open
 with the reason and the old ownership remains unchanged. Selecting agents does
 not itself grant permission to answer their questions.
 
-The **Automatically watch new agents** switch currently registers only each new
-agent's initial chat as a legacy tab watch. It does not extend that watch to
-later chats. Existing legacy tab watches are shown separately in the dashboard.
+The **Automatically watch future local agents** switch uses the owner-configured
+selection described above for all eligible chats and local worktree children.
+Existing legacy tab watches are shown separately in the dashboard.
 
 ```bash
-maestro-cli pianola supervise list
+maestro-cli pianola supervise list             # stored registry
+maestro-cli pianola supervise list --live --json # host worker and coverage evidence
 maestro-cli pianola supervise watch <tab-id>
 maestro-cli pianola supervise disable <id>
 ```

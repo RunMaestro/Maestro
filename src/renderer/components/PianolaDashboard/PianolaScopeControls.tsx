@@ -100,7 +100,7 @@ export function PianolaScopeControls({
 					manager below.
 				</p>
 			)}
-			{autoWatchControl && futureScopes.length === 0 && (
+			{autoWatchControl && futureScopes.length === 0 && supervisor.autoWatchNewAgents && (
 				<p className="text-xs">
 					NeedsConfiguration: select the actual manager and save a standing future-agent policy.
 					{supervisor.autoWatchNewAgents
@@ -121,7 +121,7 @@ export function PianolaScopeControls({
 			)}
 			{scopes.map((scope) => {
 				const health = supervisor.health.find((item) => item.id === scope.id);
-				const state = !scope.enabled ? 'Paused' : (health?.state ?? 'Not running');
+				const state = health?.state ?? 'Unknown';
 				const evidence = supervisor.checkpoints.find((item) => item.scopeId === scope.id);
 				return (
 					<div
@@ -131,6 +131,7 @@ export function PianolaScopeControls({
 					>
 						<div className="flex gap-2 items-center">
 							<span className="font-medium flex-1">{scope.selection?.label ?? scope.id}</span>
+							<span className="text-xs">Registry: {scope.enabled ? 'Enabled' : 'Paused'}</span>
 							<span className="text-xs">Worker: {state}</span>
 							<button type="button" disabled={saving} onClick={() => start(scope)}>
 								Edit
@@ -153,6 +154,28 @@ export function PianolaScopeControls({
 							. Worker health does not establish individual chat coverage.
 							{health?.lastError ? ` ${health.lastError}` : ''}
 						</div>
+						{scope.selection?.mode === 'agents-and-groups' && (
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								<div>
+									Agents:{' '}
+									{scope.selection.agentIds
+										.map((id) => sessions.find((s) => s.id === id)?.name ?? id)
+										.join(', ') || 'none'}
+								</div>
+								<div>
+									Groups:{' '}
+									{scope.selection.groupIds
+										.map((id) => groups.find((g) => g.id === id)?.name ?? id)
+										.join(', ') || 'none'}
+								</div>
+								<div>
+									Excluded:{' '}
+									{scope.selection.excludedAgentIds
+										.map((id) => sessions.find((s) => s.id === id)?.name ?? id)
+										.join(', ') || 'none'}
+								</div>
+							</div>
+						)}
 						{evidence?.error && (
 							<div className="text-xs">Checkpoint unavailable: {evidence.error}</div>
 						)}

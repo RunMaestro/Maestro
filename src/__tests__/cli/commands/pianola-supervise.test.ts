@@ -11,6 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	pianolaSuperviseWatch,
+	pianolaSuperviseList,
 	pianolaSuperviseProgram,
 	pianolaSuperviseOrchestrate,
 } from '../../../cli/commands/pianola-supervise';
@@ -72,6 +73,25 @@ afterEach(() => {
 	else process.env.MAESTRO_USER_DATA = prevEnv;
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 	vi.restoreAllMocks();
+});
+
+describe('pianolaSuperviseList live status', () => {
+	it('reports the host snapshot separately from the offline registry', async () => {
+		sendCommand.mockResolvedValueOnce({
+			ok: true,
+			result: { targets: [], health: [], checkpoints: [] },
+		});
+		await pianolaSuperviseList({ json: true, live: true });
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ channel: 'pianola:supervisor-list' }),
+			'bridge.response'
+		);
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)![0]))).toEqual({
+			targets: [],
+			health: [],
+			checkpoints: [],
+		});
+	});
 });
 
 describe('pianolaSuperviseWatch dedupe', () => {

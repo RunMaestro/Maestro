@@ -43,6 +43,7 @@ export interface PianolaSuperviseOrchestrateOptions {
 
 export interface PianolaSuperviseCommonOptions {
 	json?: boolean;
+	live?: boolean;
 }
 
 export interface PianolaSuperviseScopeOptions {
@@ -52,6 +53,7 @@ export interface PianolaSuperviseScopeOptions {
 	agents?: string;
 	groups?: string;
 	exclude?: string;
+	futureLocalAgents?: boolean;
 	json?: boolean;
 }
 
@@ -76,6 +78,8 @@ function parsePositiveInt(raw: string | undefined, min: number): number | undefi
 /** Ask the host to reconcile an owner-authorized whole-agent selection. */
 export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
+	if (options.futureLocalAgents && !options.id)
+		fail('--future-local-agents requires an existing --id', options.json);
 	const ids = (value?: string): string[] =>
 		(value ?? '')
 			.split(',')
@@ -103,6 +107,7 @@ export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOption
 							agentIds: ids(options.agents),
 							groupIds: ids(options.groups),
 							excludedAgentIds: ids(options.exclude),
+							...(options.futureLocalAgents ? { futureLocalAgents: true } : {}),
 						},
 					},
 				],
@@ -273,9 +278,45 @@ function describeTarget(target: PianolaSupervisedTarget): string {
 	}, interval ${target.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS}s)`;
 }
 
-/** List the registered supervised targets (read-only; live health lives in the app). */
-export function pianolaSuperviseList(options: PianolaSuperviseCommonOptions): void {
+/** List stored targets, or request actual worker and coverage evidence from the host. */
+export async function pianolaSuperviseList(options: PianolaSuperviseCommonOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
+	if (options.live) {
+		const client = new MaestroClient();
+		try {
+			await client.connect();
+			const response = await client.sendCommand<{
+				ok: boolean;
+				error?: string;
+				result: PianolaSupervisorSnapshot;
+			}>(
+				{ type: 'bridge.invoke', channel: 'pianola:supervisor-list', args: [] },
+				'bridge.response'
+			);
+			if (!response.ok) fail(response.error ?? 'Supervisor status unavailable', options.json);
+			if (options.json) console.log(JSON.stringify(response.result));
+			else {
+				for (const target of response.result.targets) {
+					const health = response.result.health.find((item) => item.id === target.id);
+					const coverage = response.result.checkpoints.find((item) => item.scopeId === target.id);
+					console.log(
+						`${target.id} registry: ${target.enabled ? 'enabled' : 'paused'}; worker: ${health?.state ?? 'unknown'}; ${describeTarget(target)}`
+					);
+					if (target.kind === 'watch-scope')
+						console.log(
+							`  coverage: ${coverage?.coverage ? `${coverage.coverage.status} (${coverage.coverage.fresh ? 'fresh' : 'not fresh'}): ${coverage.coverage.reason}` : 'unknown'}${coverage?.error ? `; ${coverage.error}` : ''}`
+						);
+				}
+				if (!response.result.targets.length) console.log('No supervised targets registered.');
+			}
+			return;
+		} catch (error) {
+			exitIfMaestroNotRunning(error, options);
+			throw error;
+		} finally {
+			client.disconnect();
+		}
+	}
 	const targets = readPianolaSupervisorTargets();
 	if (options.json) {
 		console.log(JSON.stringify({ targets }));
