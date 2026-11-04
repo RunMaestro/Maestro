@@ -185,6 +185,24 @@ export async function migratePianolaLegacyWatches(
 		);
 		if (!existing) next.push(replacement);
 		if (legacy.length) {
+			// Check the registry that would actually be published, after retiring
+			// legacy watches. An overlapping older scope has no handover baseline
+			// or receipt and could replay a historical busy question on idle.
+			const scopes = next.flatMap((entry) =>
+				entry.kind === 'watch-scope' && entry.selection && entry.managerAgentId
+					? [{ ...entry, selection: entry.selection, managerAgentId: entry.managerAgentId }]
+					: []
+			);
+			const watches = next.filter((entry) => entry.kind === 'watch');
+			for (const tab of snapshot.tabs.filter((tab) => matches(tab.agentId, tab.tabId))) {
+				const owner = resolvePianolaScopeOwnership(tab, snapshot.owners, scopes, watches);
+				if (owner.kind === 'scope' && owner.scopeId !== scope.id) {
+					result.reason = `Legacy takeover would assign ${tab.agentId}/${tab.tabId} to scope ${owner.scopeId} without a handover baseline; reconcile overlapping scopes first`;
+					return current;
+				}
+			}
+		}
+		if (legacy.length) {
 			const checkpoint = deps.store.readScopeCheckpoint(scope.id) ?? {
 				version: 1 as const,
 				scopeId: scope.id,

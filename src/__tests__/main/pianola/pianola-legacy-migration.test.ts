@@ -22,7 +22,7 @@ vi.mock('../../../shared/maestro-lib/control/termination', () => ({
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
 import { migratePianolaLegacyWatches } from '../../../main/pianola/pianola-legacy-migration';
-import { hostCallerRuns } from '../../../main/agent-run/caller-identity';
+import { HostCallerRuns, hostCallerRuns } from '../../../main/agent-run/caller-identity';
 import { runWatchIteration, initialWatchState } from '../../../shared/pianola/pianola-watcher';
 import type { PianolaMessage } from '../../../shared/pianola/types';
 import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../shared/agentDelegation';
@@ -106,6 +106,15 @@ beforeEach(() => {
 	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
 	fs.mkdirSync(root, { recursive: true });
 	directory = fs.mkdtempSync(path.join(root, 'legacy-migration-'));
+	// The checkout's ancestors are group writable on this CI host. Simulate
+	// private host ancestors only; all fixture files/proof bytes remain real.
+	const lstat = fs.lstatSync;
+	vi.spyOn(fs, 'lstatSync').mockImplementation(((file: fs.PathLike, options?: unknown) => {
+		const stat = lstat(file, options as never);
+		return directory.startsWith(String(file) + path.sep) && String(file) !== directory
+			? Object.assign(Object.create(stat), { mode: stat.mode & ~0o022 })
+			: stat;
+	}) as typeof fs.lstatSync);
 	vi.stubEnv('MAESTRO_USER_DATA', directory);
 	store = createPianolaFsStore({ resolveDir: () => directory, indent: 2, trailingNewline: true });
 	enabled = true;
@@ -130,16 +139,28 @@ beforeEach(() => {
 		complete: true,
 		capturedAt: 100,
 		owners: [
-			{ id: 'owner', cwd: '/project', groupId: null, remote: false, isPianola: false },
+			{
+				id: 'owner',
+				cwd: path.join(directory, 'project'),
+				groupId: null,
+				remote: false,
+				isPianola: false,
+			},
 			{
 				id: 'child',
-				cwd: '/worktree',
+				cwd: path.join(directory, 'worktree'),
 				parentSessionId: 'owner',
 				groupId: null,
 				remote: false,
 				isPianola: false,
 			},
-			{ id: 'manager', cwd: '/manager', groupId: null, remote: false, isPianola: true },
+			{
+				id: 'manager',
+				cwd: path.join(directory, 'manager'),
+				groupId: null,
+				remote: false,
+				isPianola: true,
+			},
 		],
 		tabs: [tab('old'), tab('paused'), tab('sibling'), tab('child-tab', 'child')],
 	};
@@ -154,15 +175,6 @@ afterEach(() => {
 
 describe('atomic legacy handover', () => {
 	it('fences a real active owner at host ingress before stop, preserves a concrete pause and covers siblings/worktrees with one scope', async () => {
-		// The checkout's ancestors are group writable on this CI host. Simulate
-		// private host ancestors only; all fixture files/proof bytes remain real.
-		const lstat = fs.lstatSync;
-		vi.spyOn(fs, 'lstatSync').mockImplementation(((file: fs.PathLike, options?: unknown) => {
-			const stat = lstat(file, options as never);
-			return directory.startsWith(String(file) + path.sep) && String(file) !== directory
-				? Object.assign(Object.create(stat), { mode: stat.mode & ~0o022 })
-				: stat;
-		}) as typeof fs.lstatSync);
 		supervisor.reconcile();
 		const proofPath = spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!;
 		expect(proofPath).toBeTruthy();
@@ -224,7 +236,7 @@ describe('atomic legacy handover', () => {
 				log: vi.fn(),
 				dispatch: async () => ({ success: true }),
 				resolveProfile: () => ({
-					projectPath: '/project',
+					projectPath: path.join(directory, 'project'),
 					profile: 'Choose short variable names.',
 					updatedAt: 1,
 				}),
@@ -254,6 +266,112 @@ describe('atomic legacy handover', () => {
 		expect(restored.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
 		expect(await migrate()).toMatchObject({ status: 'already-migrated' });
 	});
+
+	it.each([0, 2])(
+		'checks the resulting registry against an existing overlapping scope created at %s before handing over a busy question',
+		async (createdAt) => {
+			const callerRuns = new HostCallerRuns();
+			vi.spyOn(hostCallerRuns, 'issue').mockImplementation(callerRuns.issue.bind(callerRuns));
+			const overlappingId = '22222222-2222-4222-8222-222222222222';
+			store.upsertSupervisorTarget({ ...scope(), id: overlappingId, createdAt });
+			snapshot.tabs[0].busy = true;
+			const history: PianolaMessage[] = [
+				{
+					id: 'historical',
+					role: 'assistant',
+					source: 'ai',
+					content: 'Should I name it count or total?',
+					timestamp: '2026-11-04T10:00:00.000Z',
+				},
+			];
+			snapshot.tabs[0].cursor.textLength = history[0].content.length;
+			store.writeRules([
+				{
+					id: 'rule',
+					enabled: true,
+					scope: 'global',
+					priority: 1,
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			]);
+			let activeStore = store;
+			const dispatch = vi.fn<PianolaScopeCycleDeps['dispatch']>(async (_target, answer, guard) => {
+				admitPianolaScopeReply(guard, answer, snapshot, activeStore);
+				return { status: 'accepted' };
+			});
+			const cycle = (id: string) =>
+				runPianolaScopeCycle(
+					id,
+					{
+						store: activeStore,
+						watch: {
+							readRules: activeStore.readRules,
+							recordDecision: activeStore.appendDecision,
+							now: () => '2026-11-04T10:01:00.000Z',
+							genId: () => 'replayed',
+							log: vi.fn(),
+						},
+						readSnapshot: async () => ({ ...snapshot, capturedAt: ++snapshot.capturedAt }),
+						readTranscript: async (target) => ({
+							...target,
+							messages: target.tabId === 'old' ? history : [],
+						}),
+						dispatch,
+					},
+					{ dryRun: false }
+				);
+			supervisor.reconcile();
+			expect(supervisor.canFenceLegacyWatch('legacy')).toBe(true);
+			const client = { cliAuthenticated: true };
+			const proofPath = spawned.find((child) => child.args.includes('watch'))!.opts.env![
+				CALLER_RUN_PROOF_FILE_ENV_VAR
+			]!;
+			callerRuns.bind(client, fs.readFileSync(proofPath, 'utf8'));
+			expect(callerRuns.resolve(client)).toBeDefined();
+			await cycle(overlappingId);
+			const before = activeStore.readSupervisorTargets();
+			const overlappingCheckpoint = activeStore.readScopeCheckpoint(overlappingId);
+			const result = await migrate();
+			if (createdAt === 0) {
+				expect(result).toMatchObject({
+					status: 'NeedsConfiguration',
+					reason: expect.stringContaining(overlappingId),
+				});
+				expect(activeStore.readSupervisorTargets()).toEqual(before);
+				expect(activeStore.readScopeCheckpoint(scopeId)).toBeNull();
+				expect(activeStore.readScopeCheckpoint(overlappingId)).toEqual(overlappingCheckpoint);
+				expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+				expect(callerRuns.resolve(client)).toBeDefined();
+				expect(supervisor.canFenceLegacyWatch('legacy')).toBe(true);
+			} else {
+				expect(result.status).toBe('migrated');
+				expect(callerRuns.resolve(client)).toBeUndefined();
+				expect(ownership('old')).toEqual({ kind: 'scope', scopeId });
+			}
+			await cycle(overlappingId);
+			if (createdAt !== 0) await cycle(scopeId);
+			snapshot.tabs[0].busy = false;
+			await cycle(overlappingId);
+			if (createdAt !== 0) await cycle(scopeId);
+			// Reopen real storage and restart the supervisor while the same old question remains.
+			supervisor.stopAll();
+			activeStore = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			supervisor.reconcile();
+			await cycle(overlappingId);
+			if (createdAt !== 0) await cycle(scopeId);
+			expect(dispatch).not.toHaveBeenCalled();
+			expect(activeStore.readDecisions()).toEqual([]);
+			callerRuns.stop();
+		}
+	);
 
 	it('saves a migrated scope label without rearming, changing its receipt or rebaselining', async () => {
 		await migrate(scope(), () => true);
