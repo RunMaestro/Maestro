@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import type { AgentRun } from '../../../../shared/agent-run';
 import { handleEnqueueCommand } from '../../../../main/web-server/handlers/messageHandlers/queue';
 import * as queueSupervision from '../../../../main/web-server/handlers/messageHandlers/dispatchSupervision';
 import * as tabAdmission from '../../../../main/web-server/handlers/messageHandlers/tabs';
@@ -316,6 +318,23 @@ describe('persistence IPC handlers', () => {
 					},
 				},
 			]);
+			const ledgerPath = path.join(directory, 'native-runs.json');
+			const readNativeRuns = (): AgentRun[] =>
+				existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, 'utf8')) : [];
+			const upsertNativeRun = (run: AgentRun) => {
+				writeFileSync(
+					ledgerPath,
+					JSON.stringify([...readNativeRuns().filter((r) => r.id !== run.id), run])
+				);
+				return run;
+			};
+			const capture = new AgentRunCaptureService({
+				getAgentRun: (id) => readNativeRuns().find((r) => r.id === id),
+				upsertAgentRun: upsertNativeRun,
+				appendAgentRunEvent: (event) => event,
+				findActiveRunBySession: (id) =>
+					readNativeRuns().find((r) => r.sessionId === id && r.status === 'running'),
+			});
 			const client = { cliAuthenticated: true };
 			const dispatchId = generateUUID();
 			const input = {
@@ -341,6 +360,7 @@ describe('persistence IPC handlers', () => {
 			const confirmItem = vi.fn((r: QueueItemReceiptRequest) => server.confirmQueueItemFromMain(r));
 			let active = true;
 			const deps = {
+				readNativeRuns,
 				store,
 				callers: {
 					resolve: () => ({
@@ -380,17 +400,19 @@ describe('persistence IPC handlers', () => {
 				confirmQueueItem: confirmItem,
 				releaseQueueItem: (...args: Parameters<typeof persistence.releaseQueueItem>) =>
 					server.releaseQueueItemFromMain(...args),
-				queueItem: async () =>
+				queueItem: async (queued: { dispatchId: string } = { dispatchId }) =>
 					({
 						...request.item,
-						id: dispatchId,
-						pendingAdmissionId: dispatchId,
+						id: queued.dispatchId,
+						pendingAdmissionId: queued.dispatchId,
 					}) as unknown as QueuedItem,
 			};
 			const adapter = new PianolaNewTabDispatch(deps);
 			const arm = vi.fn(() => undefined);
 			return {
 				adapter,
+				capture,
+				upsertNativeRun,
 				deps,
 				store,
 				client,
@@ -555,6 +577,214 @@ describe('persistence IPC handlers', () => {
 				expect(spawn).toHaveBeenCalledOnce();
 			}
 		);
+
+		it.each(['two-prepared', 'behind-unannounced'] as const)(
+			'drains initial provider continuity from disk/capture/announcement after restart (%s)',
+			async (placement) => {
+				const f = queueAdapter(false);
+				const snapshot = f.deps.snapshot();
+				snapshot.tabs[0].cursorAvailable = true;
+				f.deps.snapshot = () => snapshot;
+				const first = { ...f.input, dispatchId: generateUUID() };
+				const second = { ...f.input, dispatchId: generateUUID() };
+				const events = new EventEmitter();
+				const spawn = vi.fn((config) => {
+					const run = f.capture.captureSpawn({
+						sessionId: config.sessionId,
+						toolType: config.toolType,
+						cwd: config.cwd,
+						tabId: 'tab',
+						nativeTabSession: {
+							agentId: 'agent',
+							tabId: 'tab',
+							createdAt: 1,
+							initialSessionId: current[0].aiTabs![0].agentSessionId,
+						},
+					})!;
+					pianolaNewTabSpawns.captured(
+						config.sessionId,
+						run.id,
+						config.pianolaDispatchId,
+						config.pianolaQueueItemId
+					);
+					return { success: true, pid: 42 };
+				});
+				const manager = Object.assign(events, { spawn, get: () => undefined, getAll: () => [] });
+				const definition = getAgentDefinition('codex')!;
+				const start = async (dispatchId?: string) => {
+					await handleProcessSpawn(
+						{
+							sessionId: 'agent-ai-tab',
+							tabId: 'tab',
+							...(dispatchId
+								? { pianolaDispatchId: dispatchId, pianolaQueueItemId: dispatchId }
+								: {}),
+							toolType: 'codex',
+							cwd: process.cwd(),
+							command: definition.command,
+							args: [],
+							prompt: 'Queued work',
+							agentSessionId: current[0].aiTabs![0].agentSessionId,
+						},
+						{
+							getProcessManager: () => manager as never,
+							getAgentDetector: () =>
+								({
+									getAgent: async () => ({
+										...definition,
+										available: true,
+										path: '/usr/local/bin/codex',
+										capabilities: getAgentCapabilities('codex'),
+									}),
+								}) as never,
+							agentConfigsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+							settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+							sessionsStore: mockSessionsStore as never,
+							getMainWindow: () => null,
+						}
+					);
+					snapshot.tabs[0].busy = true;
+					return f.deps.readNativeRuns().at(-1)!;
+				};
+				let firstRun: AgentRun;
+				if (placement === 'two-prepared') {
+					await f.adapter.runQueue(f.client, first, f.arm);
+					await f.adapter.runQueue(f.client, second, f.arm);
+					await f.adapter.prepareQueueSpawn('agent', 'tab', first.dispatchId, () => {});
+					firstRun = await start(first.dispatchId);
+				} else {
+					firstRun = await start();
+					await f.adapter.runQueue(f.client, second, f.arm);
+					expect(
+						f.store.readDispatchAdmission(second.dispatchId)?.queueAuthority?.initialSession
+					).toEqual({ runId: firstRun.id });
+				}
+				f.capture.captureSessionAnnouncement('agent-ai-tab', 'first-provider-session');
+				await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+				events.emit('exit', 'agent-ai-tab', 0);
+				snapshot.tabs[0].busy = false;
+				Object.assign(snapshot.tabs[0], { agentSessionId: 'first-provider-session' });
+				current[0].aiTabs![0].agentSessionId = 'first-provider-session';
+				// Actual renderer consumption of the captured first row, then durable idle state.
+				await save([
+					{
+						...current[0],
+						executionQueue: current[0].executionQueue!.filter((row) => row.id !== first.dispatchId),
+					},
+				]);
+				f.revoke();
+				const restart = new PianolaNewTabDispatch({
+					...f.deps,
+					store: createPianolaFsStore({ resolveDir: () => path.join(directory, 'pianola') }),
+				});
+				await restart.prepareQueueSpawn('agent', 'tab', second.dispatchId, () => {});
+				const secondRun = await start(second.dispatchId);
+				await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+				events.emit('exit', 'agent-ai-tab', 0);
+				await new Promise((resolve) => setImmediate(resolve));
+				expect(secondRun.id).not.toBe(firstRun.id);
+				expect(f.store.readDispatchAdmission(second.dispatchId)).toMatchObject({
+					outcome: 'accepted',
+					runId: secondRun.id,
+				});
+				expect(
+					await restart.prepareQueueSpawn('agent', 'tab', second.dispatchId, () => {})
+				).toEqual({ reconciled: true, runId: secondRun.id });
+				expect(() =>
+					pianolaNewTabSpawns.claim('agent-ai-tab', second.dispatchId, second.dispatchId)
+				).toThrow();
+				expect(spawn).toHaveBeenCalledTimes(2);
+			}
+		);
+
+		it.each([
+			'missing',
+			'foreign-tab',
+			'foreign-run',
+			'reset',
+			'reset-empty',
+			'recreated',
+			'ambiguous',
+			'unknown',
+			'no-announcement',
+			'legacy',
+			'pinned-foreign-run',
+			'native-guard',
+			'conflicting',
+			'pause',
+			'policy',
+		] as const)('refuses initial provider continuity with %s evidence', async (mutation) => {
+			const f = queueAdapter(false);
+			const snapshot = f.deps.snapshot();
+			snapshot.tabs[0].cursorAvailable = true;
+			f.deps.snapshot = () => snapshot;
+			await f.adapter.runQueue(f.client, f.input, f.arm);
+			const run = f.capture.captureSpawn({
+				sessionId: 'agent-ai-tab',
+				toolType: 'codex',
+				cwd: process.cwd(),
+				tabId: 'tab',
+				nativeTabSession: { agentId: 'agent', tabId: 'tab', createdAt: 1 },
+			})!;
+			if (mutation !== 'no-announcement')
+				f.capture.captureSessionAnnouncement('agent-ai-tab', 'provider');
+			if (mutation === 'conflicting')
+				f.capture.captureSessionAnnouncement('agent-ai-tab', 'replacement');
+			await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+			const captured = f.deps.readNativeRuns()[0];
+			if (mutation === 'foreign-tab') f.upsertNativeRun({ ...captured, tabId: 'other' });
+			if (mutation === 'foreign-run') f.upsertNativeRun({ ...captured, sessionId: 'other-ai-tab' });
+			if (mutation === 'missing') f.upsertNativeRun({ ...captured, metadata: {} });
+			if (mutation === 'unknown') f.upsertNativeRun({ ...captured, status: 'running' });
+			if (mutation === 'ambiguous') f.upsertNativeRun({ ...captured, id: `${run.id}:other` });
+			Object.assign(snapshot.tabs[0], {
+				agentSessionId:
+					mutation === 'reset'
+						? 'replacement'
+						: mutation === 'reset-empty'
+							? undefined
+							: 'provider',
+				...(mutation === 'recreated' ? { createdAt: 2 } : {}),
+				paused: mutation === 'pause',
+			});
+			current[0].aiTabs![0].agentSessionId = snapshot.tabs[0].agentSessionId;
+			await save(current);
+			if (mutation === 'policy') f.store.writeSupervisorTargets([]);
+			if (mutation === 'legacy' || mutation === 'pinned-foreign-run') {
+				const journal = f.store.readDispatchAdmission(f.input.dispatchId)!;
+				if (mutation === 'legacy') delete journal.queueAuthority!.initialSession;
+				else journal.queueAuthority!.initialSession = { runId: 'foreign-capture' };
+				f.store.writeDispatchAdmission(journal);
+			}
+			if (mutation === 'native-guard') {
+				await new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+					'agent',
+					'tab',
+					f.input.dispatchId,
+					() => {}
+				);
+				f.upsertNativeRun({ ...captured, metadata: {} });
+				expect(() =>
+					pianolaNewTabSpawns.claim('agent-ai-tab', f.input.dispatchId, f.input.dispatchId)
+				).toThrow('DispatchTargetIdentityChangedOrBusy');
+				expect(current[0].executionQueue![0].pendingAdmissionId).toBe(f.input.dispatchId);
+				await new Promise((resolve) => setImmediate(resolve));
+				return;
+			}
+			await expect(
+				new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+					'agent',
+					'tab',
+					f.input.dispatchId,
+					() => {}
+				)
+			).rejects.toThrow();
+			expect(current[0].executionQueue![0]).not.toHaveProperty('admissionRelease');
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)).toMatchObject({
+				phase: 'bound',
+				outcome: 'queued',
+			});
+		});
 
 		it.each(['pause', 'delete', 'model', 'conversation', 'owner', 'policy', 'cancel'] as const)(
 			'revalidates %s immediately before a managed native claim',

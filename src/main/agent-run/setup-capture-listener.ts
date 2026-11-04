@@ -7,6 +7,7 @@
  * filtered inside the service (ISC-1.7).
  */
 
+import { getSessionsStore } from '../stores/getters';
 import { pianolaNewTabSpawns } from '../pianola/pianola-new-tab-dispatch';
 import type { ProcessManager } from '../process-manager';
 import type { ProcessConfig, TurnSettlement } from '../process-manager/types';
@@ -37,6 +38,27 @@ export function setupAgentRunCapture(
 	options: CaptureListenerOptions = {}
 ): AgentRunCaptureService {
 	const service = new AgentRunCaptureService({
+		resolveNativeTabSession: (input) => {
+			const matches = getSessionsStore()
+				.get('sessions', [])
+				.flatMap((agent) =>
+					(agent.aiTabs ?? [])
+						.filter((tab: { id: string }) => input.sessionId === `${agent.id}-ai-${tab.id}`)
+						.map((tab: { id: string; createdAt: number; agentSessionId?: string | null }) => ({
+							agent,
+							tab,
+						}))
+				);
+			const target = matches.length === 1 ? matches[0] : undefined;
+			return target && (target.tab.agentSessionId ?? undefined) === input.agentSessionId
+				? {
+						agentId: target.agent.id,
+						tabId: target.tab.id,
+						createdAt: target.tab.createdAt,
+						initialSessionId: target.tab.agentSessionId,
+					}
+				: undefined;
+		},
 		getAgentRun,
 		upsertAgentRun: (run) => {
 			const saved = upsertAgentRun(run);
@@ -62,6 +84,7 @@ export function setupAgentRunCapture(
 			toolType: config.toolType,
 			cwd: config.cwd,
 			tabId: config.tabId,
+			agentSessionId: config.agentSessionId,
 			prompt: config.prompt,
 			worktreePath: config.projectPath,
 		});
@@ -72,6 +95,10 @@ export function setupAgentRunCapture(
 				config.pianolaDispatchId,
 				config.pianolaQueueItemId
 			);
+	});
+
+	processManager.on('session-id', (sessionId: string, agentSessionId: string) => {
+		service.captureSessionAnnouncement(sessionId, agentSessionId);
 	});
 
 	processManager.on('agent-error', (sessionId: string, error: AgentError) => {

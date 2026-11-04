@@ -38,6 +38,11 @@ vi.mock('../../../main/agent-run/broadcast', () => ({
 	broadcastRunUpdated: vi.fn(),
 	broadcastEventAppended: vi.fn(),
 }));
+vi.mock('../../../main/stores/getters', () => ({
+	getSessionsStore: () => ({
+		get: () => [{ id: 'worker', aiTabs: [{ id: 'tab', createdAt: 7 }] }],
+	}),
+}));
 vi.mock('../../../main/agent-run/producers', () => ({ buildEnrichHook: () => () => ({}) }));
 
 import { setupAgentRunCapture } from '../../../main/agent-run/setup-capture-listener';
@@ -51,6 +56,53 @@ describe('ProcessManager -> AgentRun capture', () => {
 	beforeEach(() => {
 		runs.clear();
 		events.length = 0;
+	});
+
+	it('persists first native session announcement on the exact captured tab generation', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const run = spawn(manager);
+		manager.emit('session-id', 'other-ai-tab', 'foreign');
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).not.toHaveProperty('announcedSessionId');
+		manager.emit('session-id', 'worker-ai-tab', 'first-session');
+		manager.emit('session-id', 'worker-ai-tab', 'first-session');
+		manager.emit('exit', 'worker-ai-tab', 0);
+		await vi.waitFor(() => expect(runs.get(run.id)?.status).toBe('completed'));
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).toEqual({
+			agentId: 'worker',
+			tabId: 'tab',
+			createdAt: 7,
+			announcedSessionId: 'first-session',
+		});
+		manager.emit('session-id', 'worker-ai-tab', 'late-replacement');
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).toHaveProperty(
+			'announcedSessionId',
+			'first-session'
+		);
+	});
+
+	it('does not certify a native resume into a different conversation than the tab', () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		manager.emit('spawn', {
+			sessionId: 'worker-ai-tab',
+			tabId: 'tab',
+			toolType: 'codex',
+			cwd: '/fixture',
+			agentSessionId: 'foreign-resume',
+		});
+		manager.emit('session-id', 'worker-ai-tab', 'foreign-resume');
+		expect([...runs.values()][0].metadata?.nativeTabSession).toBeUndefined();
+	});
+
+	it('retains conflicting announcements as unusable evidence', () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const run = spawn(manager);
+		manager.emit('session-id', 'worker-ai-tab', 'one');
+		manager.emit('session-id', 'worker-ai-tab', 'two');
+		manager.emit('session-id', 'worker-ai-tab', 'one');
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).toHaveProperty('conflicted', true);
 	});
 
 	it('binds the exact captured run, even after a fast exit, rather than an older run or spawn generation', async () => {

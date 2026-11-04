@@ -1,5 +1,7 @@
 /** Host-only pre-start boundary. Adapters prepare a held target, then bind/enroll/release.
  * One service per host; no watcher, timer, plugin activation or answer permission. */
+import { readAgentRuns } from '../../cli/services/agent-run-store';
+import { initialQueueSession, queueSessionMatches } from './pianola-queue-session';
 import { randomUUID, createHash } from 'crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
@@ -43,6 +45,8 @@ type Store = Pick<
 >;
 export interface PianolaDispatchAdmissionDeps {
 	store: Store;
+	/** Host ledger only; never supplied by an IPC caller. */
+	readNativeRuns?: typeof readAgentRuns;
 	/** Host-only atomic session mutation; never a renderer-supplied receipt. */
 	releaseQueueItem?: import('../stores/queue-item-receipt').ReleaseQueueItem;
 	queueSnapshot?(): PianolaScopeSnapshot;
@@ -383,7 +387,12 @@ export class PianolaDispatchAdmissionService {
 				(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
 			)!;
 			const acceptedAt = (this.deps.now ?? Date.now)();
+			const initialSession = initialQueueSession(
+				tab.agentSessionId ? [] : (this.deps.readNativeRuns ?? readAgentRuns)(),
+				tab
+			);
 			record.queueAuthority = {
+				...(initialSession ? { initialSession } : {}),
 				acceptedAt,
 				expiresAt: acceptedAt + 86_400_000,
 				bindingFingerprint: pianolaScopeBindingFingerprint(
@@ -459,7 +468,11 @@ export class PianolaDispatchAdmissionService {
 					tab.consult ||
 					tab.ephemeral ||
 					tab.createdAt !== authority.createdAt ||
-					tab.agentSessionId !== authority.agentSessionId ||
+					!queueSessionMatches(
+						record,
+						tab.agentSessionId,
+						authority.initialSession ? (this.deps.readNativeRuns ?? readAgentRuns)() : []
+					) ||
 					pianolaScopeBindingFingerprint(auth.scope, record.targetAgentId, snapshot.owners) !==
 						authority.bindingFingerprint
 				)
@@ -492,6 +505,9 @@ export class PianolaDispatchAdmissionService {
 				this.deps.assertTargetReady(this.receipt(record), authority.bindingFingerprint);
 			};
 			guard();
+			const releaseTab = this.deps.queueSnapshot!().tabs.find(
+				(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
+			)!;
 			const release = await this.deps.releaseQueueItem(
 				{
 					agentId: record.targetAgentId,
@@ -501,8 +517,8 @@ export class PianolaDispatchAdmissionService {
 					item: JSON.parse(canonicalJson(record.queuePrepare.item)),
 					tabIdentity: {
 						createdAt: authority.createdAt,
-						...(authority.agentSessionId !== undefined
-							? { agentSessionId: authority.agentSessionId }
+						...(releaseTab.agentSessionId !== undefined
+							? { agentSessionId: releaseTab.agentSessionId }
 							: {}),
 					},
 				},

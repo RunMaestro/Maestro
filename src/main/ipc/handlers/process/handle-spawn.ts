@@ -1285,6 +1285,8 @@ async function handleProcessSpawnImpl(
 	proofCleanup.notStarted = false;
 	const result = processManager.spawn({
 		...config,
+		// Native capture must see the resolved resume identity, including argument-based resumes.
+		agentSessionId,
 		command: commandToSpawn,
 		args: argsToSpawn,
 		// When using SSH, use user's home directory as local cwd

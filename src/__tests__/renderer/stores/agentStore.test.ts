@@ -1261,18 +1261,23 @@ describe('agentStore', () => {
 			mockGetAgent.mockResolvedValue(mockAgent);
 		});
 
-		it('refuses a pending-admission item at the direct dispatch boundary', async () => {
-			useSessionStore.getState().setSessions([createMockSession({ id: 'session-1' })]);
+		it('enters the owning-host path with exact markers and retains the row without capture', async () => {
+			const item = createQueuedItem({ pendingAdmissionId: 'dispatch-1' });
+			useSessionStore
+				.getState()
+				.setSessions([createMockSession({ id: 'session-1', executionQueue: [item] })]);
 			await expect(
-				useAgentStore
-					.getState()
-					.processQueuedItem(
-						'session-1',
-						createQueuedItem({ pendingAdmissionId: 'dispatch-1' }),
-						defaultDeps
-					)
-			).rejects.toThrow('DispatchAdmissionPending');
-			expect(mockSpawn).not.toHaveBeenCalled();
+				useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+			).rejects.toThrow('DispatchCaptureUnknown');
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					pianolaDispatchId: 'dispatch-1',
+					pianolaQueueItemId: 'item-1',
+					sessionId: 'session-1-ai-default-tab',
+				})
+			);
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([item]);
 		});
 
 		it.each(['user', 'auto', undefined] as const)(

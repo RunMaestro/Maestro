@@ -53,6 +53,8 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 		bindingFingerprint: string;
 		createdAt: number;
 		agentSessionId?: string | null;
+		/** Native capture frontier at authenticated prepare; absent on legacy journals. */
+		initialSession?: { runId?: string };
 	};
 	queueCancelled?: true;
 	queueRelease?: { generation: string; baseline: PianolaScopeCursor | null };
@@ -148,7 +150,14 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 			r.queueAuthority.expiresAt - r.queueAuthority.acceptedAt > 86_400_000 ||
 			!Number.isSafeInteger(r.queueAuthority.createdAt) ||
 			!/^[a-f0-9]{64}$/.test(r.queueAuthority.bindingFingerprint) ||
-			(r.queueAuthority.agentSessionId != null && !id(r.queueAuthority.agentSessionId)))
+			(r.queueAuthority.agentSessionId != null && !id(r.queueAuthority.agentSessionId)) ||
+			(r.queueAuthority.initialSession !== undefined &&
+				(!r.queueAuthority.initialSession ||
+					typeof r.queueAuthority.initialSession !== 'object' ||
+					Array.isArray(r.queueAuthority.initialSession) ||
+					!!r.queueAuthority.agentSessionId ||
+					(r.queueAuthority.initialSession.runId !== undefined &&
+						!id(r.queueAuthority.initialSession.runId)))))
 	)
 		return null;
 	if (

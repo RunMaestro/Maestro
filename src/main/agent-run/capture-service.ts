@@ -30,6 +30,7 @@ import {
 	type AgentRunEvent,
 	type AgentRunStatus,
 } from '../../shared/agent-run';
+import { nativeTabSession, type NativeTabSession } from '../pianola/pianola-queue-session';
 import type { AgentError } from '../../shared/types';
 import type { TurnSettlement } from '../process-manager/types';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -38,6 +39,8 @@ const GROUP_CHAT_PREFIX = 'group-chat-';
 
 /** Minimal shape of a spawn we capture, projected from ProcessConfig. */
 export interface CaptureSpawnInput {
+	nativeTabSession?: NativeTabSession;
+	agentSessionId?: string;
 	sessionId: string;
 	toolType: string;
 	cwd: string;
@@ -62,6 +65,7 @@ export interface CaptureExitInput {
 
 /** Everything the service touches that is not pure. Injected for testability. */
 export interface CaptureServiceDeps {
+	resolveNativeTabSession?: (input: CaptureSpawnInput) => NativeTabSession | undefined;
 	getAgentRun: (runId: string) => AgentRun | undefined;
 	upsertAgentRun: (run: AgentRun) => AgentRun;
 	appendAgentRunEvent: (event: AgentRunEvent) => AgentRunEvent;
@@ -124,6 +128,7 @@ export class AgentRunCaptureService {
 			}
 
 			const prepared = (this.deps.preparePrompt ?? ((p) => p))(input.prompt);
+			const nativeIdentity = this.deps.resolveNativeTabSession?.(input) ?? input.nativeTabSession;
 			const run: AgentRun = {
 				id: runId,
 				createdAt: ts,
@@ -134,7 +139,7 @@ export class AgentRunCaptureService {
 				agentId: input.agentId,
 				agentName: input.agentName,
 				sessionId: input.sessionId,
-				tabId: input.tabId,
+				tabId: nativeIdentity?.tabId ?? input.tabId,
 				cwd: input.cwd,
 				repo: input.repo,
 				worktreePath: input.worktreePath,
@@ -142,6 +147,7 @@ export class AgentRunCaptureService {
 				baseBranch: input.baseBranch,
 				prompt: prepared,
 				source: input.source,
+				...(nativeIdentity ? { metadata: { nativeTabSession: nativeIdentity } } : {}),
 				artifacts: [],
 				touchedFiles: [],
 				checks: [],
@@ -153,6 +159,32 @@ export class AgentRunCaptureService {
 		} catch (error) {
 			this.report('error', `captureSpawn failed for ${input.sessionId}`, error);
 			return undefined;
+		}
+	}
+
+	/** The native session announcement belongs only to this live capture. */
+	captureSessionAnnouncement(sessionId: string, announcedSessionId: string): void {
+		try {
+			const run = this.deps.findActiveRunBySession(sessionId);
+			const identity = run && nativeTabSession(run);
+			if (!run || !identity || !announcedSessionId) return;
+			this.deps.upsertAgentRun({
+				...run,
+				metadata: {
+					...run.metadata,
+					nativeTabSession: {
+						...identity,
+						announcedSessionId,
+						...((identity.announcedSessionId &&
+							identity.announcedSessionId !== announcedSessionId) ||
+						(identity.initialSessionId && identity.initialSessionId !== announcedSessionId)
+							? { conflicted: true }
+							: {}),
+					},
+				},
+			});
+		} catch (error) {
+			this.report('error', `captureSessionAnnouncement failed for ${sessionId}`, error);
 		}
 	}
 
