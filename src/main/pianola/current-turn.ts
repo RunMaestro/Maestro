@@ -34,7 +34,8 @@ export class NativeCurrentTurns {
 	private revision = 0;
 	private retainedBytes = 0;
 	private states = new Map<string, State>();
-	private observers = new Set<string>();
+	private observers = new Map<string, { expiresAt: number; client?: object }>();
+	private observerClients = new WeakSet<object>();
 	constructor(
 		private limits = {
 			tabs: 2048,
@@ -56,23 +57,47 @@ export class NativeCurrentTurns {
 		this.retainedBytes = 0;
 	}
 
-	/** Explicit generic current-turn reads observe only this tab, independently of Pianola.
-	 * Interest and retained rows share the tab cap; eviction never reconstructs old history. */
-	observe(agentId: string, tabId: string): void {
+	/** Generic reads lease one tab for 30 seconds from the latest read. The latest
+	 * client owns that lease; its disconnect releases it. Internal Pianola reads
+	 * never lease: feature enablement alone owns their capture lifetime. */
+	observe(
+		agentId: string,
+		tabId: string,
+		client?: { once(event: 'close', listener: () => void): unknown }
+	): void {
+		this.expireObservers();
 		const key = this.key(agentId, tabId);
 		this.observers.delete(key);
-		this.observers.add(key);
-		while (this.observers.size > this.limits.tabs) {
-			const first = this.observers.values().next().value!;
-			this.observers.delete(first);
-			if (!this.enabled) {
-				this.retainedBytes -= this.states.get(first)?.bytes ?? 0;
-				this.states.delete(first);
-			}
+		this.observers.set(key, { expiresAt: Date.now() + 30_000, client });
+		if (client && !this.observerClients.has(client)) {
+			this.observerClients.add(client);
+			client.once('close', () => {
+				for (const [key, interest] of this.observers) {
+					if (interest.client === client) this.removeObserver(key);
+				}
+			});
+		}
+		while (this.observers.size > this.limits.tabs)
+			this.removeObserver(this.observers.keys().next().value!);
+	}
+
+	private removeObserver(key: string): void {
+		this.observers.delete(key);
+		if (!this.enabled) {
+			this.retainedBytes -= this.states.get(key)?.bytes ?? 0;
+			this.states.delete(key);
+		}
+	}
+
+	private expireObservers(): void {
+		const now = Date.now();
+		for (const [key, interest] of this.observers) {
+			if (interest.expiresAt <= now) this.removeObserver(key);
 		}
 	}
 
 	commit(patch: SessionTranscriptPatch): CurrentTurnCursor | undefined {
+		if (!this.enabled) this.expireObservers();
 		if (!this.enabled && !this.observers.size) return;
 		if (!patch.tabId) return;
 		const key = this.key(patch.sessionId, patch.tabId);
@@ -334,6 +359,7 @@ export class NativeCurrentTurns {
 		includeMessages = true,
 		deltaBase?: CurrentTurnCursor
 	): CurrentTurnRead {
+		if (!this.enabled) this.expireObservers();
 		const state = this.states.get(this.key(binding.agentId, binding.tabId));
 		const cursor: CurrentTurnCursor = state
 			? { ...state.cursor }

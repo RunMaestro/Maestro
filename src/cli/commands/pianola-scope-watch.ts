@@ -141,6 +141,7 @@ export function createPianolaScopeWorkerDeps(
 						type: 'get_session_history',
 						tabId: target.tabId,
 						currentTurn: true,
+						currentTurnInterest: 'pianola',
 						expectedCursor: expected,
 						...(delta && base ? { deltaBase: base.cursor } : {}),
 					},

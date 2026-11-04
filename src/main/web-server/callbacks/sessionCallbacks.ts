@@ -294,7 +294,8 @@ export function registerSessionCallbacks(
 			const tab = findStoredAiTab(s, tabId) as Record<string, any> | undefined;
 			if (!tab) continue;
 			if (options?.currentTurn) {
-				nativeCurrentTurns.observe(s.id, tabId);
+				if (options.currentTurnInterest !== 'pianola')
+					nativeCurrentTurns.observe(s.id, tabId, options.observationClient);
 				const currentTurn = nativeCurrentTurns.read(
 					{
 						agentId: s.id,

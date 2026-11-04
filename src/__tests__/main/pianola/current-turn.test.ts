@@ -436,6 +436,61 @@ describe('bounded observation and cached row byte accounting', () => {
 		expect(f.read().status).toBe('incomplete');
 	});
 
+	it('releases generic interest on client end and expires stopped readers without timers', () => {
+		vi.useFakeTimers();
+		try {
+			const index = new NativeCurrentTurns(undefined, false);
+			let close!: () => void;
+			const client = {
+				once: vi.fn((_event, callback) => {
+					close = callback;
+				}),
+			};
+			index.observe('agent', 'tab', client);
+			const f = fixture(index);
+			f.begin('user');
+			expect(f.read().status).toBe('complete');
+			index.observe('agent', 'tab', client);
+			expect(client.once).toHaveBeenCalledTimes(1);
+			close();
+			const clone = vi.spyOn(globalThis, 'structuredClone');
+			f.commit([row('disconnected')]);
+			expect(clone).not.toHaveBeenCalled();
+			expect(f.read().status).toBe('unknown');
+			index.observe('agent', 'tab', { once: vi.fn() }); // reconnect is a fresh lease
+			f.commit([row('tail')]);
+			expect(f.read().status).toBe('incomplete');
+			clone.mockClear();
+			vi.advanceTimersByTime(30_000);
+			f.commit([row('expired')]);
+			expect(clone).not.toHaveBeenCalled();
+			expect(f.read().status).toBe('unknown');
+			clone.mockRestore();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('preserves a renewed generic lease when an older reader disconnects', () => {
+		const index = new NativeCurrentTurns(undefined, false);
+		let closeOld!: () => void;
+		index.observe('agent', 'tab', {
+			once: (_event, close) => {
+				closeOld = close;
+			},
+		});
+		const f = fixture(index);
+		f.begin('user');
+		index.observe('agent', 'tab', { once: vi.fn() });
+		closeOld();
+		f.commit([row('still-observed')]);
+		expect(f.read().status).toBe('complete');
+		index.setEnabled(true);
+		expect(f.read().status).toBe('unknown');
+		f.commit([row('tail-only')]);
+		expect(f.read().status).toBe('incomplete');
+	});
+
 	it('accounts overwrites, snapshots, removals and fresh turns without old-row serialization', () => {
 		const f = fixture(
 			new NativeCurrentTurns({ tabs: 2, messages: 10, bytes: 1024, totalBytes: 1024 })

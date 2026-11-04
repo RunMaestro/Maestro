@@ -236,9 +236,14 @@ describe('persistence IPC handlers', () => {
 	describe('native transcript commit -> captured turn -> host -> history wire', () => {
 		it('measures owning IPC and history wire with feature off, enable and explicit observation', async () => {
 			const measurements = [];
-			for (const mode of ['off-unobserved', 'enabled', 'off-explicit'] as const) {
+			for (const mode of [
+				'off-unobserved',
+				'enabled-worker-disabled',
+				'enabled',
+				'off-explicit',
+			] as const) {
 				const agentId = generateUUID();
-				nativeCurrentTurns.setEnabled(mode === 'enabled');
+				nativeCurrentTurns.setEnabled(mode === 'enabled' || mode === 'enabled-worker-disabled');
 				const owner = {
 					isDestroyed: () => false,
 					webContents: { id: 42, isDestroyed: () => false },
@@ -266,9 +271,12 @@ describe('persistence IPC handlers', () => {
 					groupsStore: deps.groupsStore,
 					getProcessManager: () => ({ get: () => undefined }) as never,
 				});
-				const read = () =>
+				const read = (interest?: string) =>
 					(
-						callbacks.setGetSessionHistoryCallback('stream-tab', { currentTurn: true }) as {
+						callbacks.setGetSessionHistoryCallback('stream-tab', {
+							currentTurn: true,
+							currentTurnInterest: interest,
+						}) as {
 							currentTurn: CurrentTurnRead;
 						}
 					).currentTurn;
@@ -311,6 +319,17 @@ describe('persistence IPC handlers', () => {
 					nativeTabSession: { agentId, tabId: 'stream-tab', createdAt: 7 },
 				})!;
 				nativeCurrentTurns.begin(run, user.id);
+				if (mode === 'enabled-worker-disabled') {
+					// Real internal host read before disable must not create a generic observer.
+					expect(read('pianola').status).toBe('complete');
+					const cursor = read('pianola').cursor;
+					nativeCurrentTurns.setEnabled(false);
+					expect(() => nativeCurrentTurns.assertDelivery(cursor, 1, undefined, '')).toThrow();
+				}
+				const framesBefore = vi
+					.mocked(broadcastBridgeEvent)
+					.mock.calls.filter(([channel]) => channel === 'sessions:transcriptCommitted').length;
+				const bytes = vi.spyOn(Buffer, 'byteLength');
 				const clone = vi.spyOn(globalThis, 'structuredClone');
 				const cpu = process.cpuUsage(),
 					rss = process.memoryUsage().rss,
@@ -324,10 +343,18 @@ describe('persistence IPC handlers', () => {
 					const cloneCalls = clone.mock.calls.length;
 					const elapsedMs = performance.now() - start,
 						used = process.cpuUsage(cpu);
-					const result = read(); // actual registered host history callback
-					expect(result.status).toBe(mode === 'off-unobserved' ? 'unknown' : 'complete');
-					if (mode === 'off-unobserved') expect(cloneCalls).toBe(0);
-					else expect(result.messages.at(-1)?.text).toHaveLength(128 * 1024 + 2);
+					const result = read('pianola'); // actual registered host history callback
+					const inactive = mode === 'off-unobserved' || mode === 'enabled-worker-disabled';
+					expect(result.status).toBe(inactive ? 'unknown' : 'complete');
+					if (inactive) {
+						expect(cloneCalls).toBe(0);
+						expect(bytes).not.toHaveBeenCalled();
+						expect(
+							vi
+								.mocked(broadcastBridgeEvent)
+								.mock.calls.filter(([channel]) => channel === 'sessions:transcriptCommitted')
+						).toHaveLength(framesBefore);
+					} else expect(result.messages.at(-1)?.text).toHaveLength(128 * 1024 + 2);
 					measurements.push({
 						mode,
 						patches: 100,
@@ -341,6 +368,7 @@ describe('persistence IPC handlers', () => {
 					});
 				} finally {
 					clone.mockRestore();
+					bytes.mockRestore();
 				}
 				if (mode === 'enabled') {
 					const cpu = process.cpuUsage(),
@@ -472,6 +500,7 @@ describe('persistence IPC handlers', () => {
 					type: 'get_session_history',
 					tabId: 'tab',
 					currentTurn: true,
+					currentTurnInterest: 'pianola',
 					tail: 1,
 					requestId: 'read',
 					...extra,
@@ -576,6 +605,7 @@ describe('persistence IPC handlers', () => {
 					censusCount++;
 					return { success: true, ...callbacks.setListDesktopSessionsCallback() } as never;
 				}
+				expect(message).toHaveProperty('currentTurnInterest', 'pianola');
 				handleGetSessionHistory(ctx, {} as WebClient, message as never);
 				return send.mock.calls.at(-1)![1] as never;
 			});
@@ -616,6 +646,23 @@ describe('persistence IPC handlers', () => {
 				connection!.onClose?.(1006, 'stop');
 				await vi.advanceTimersByTimeAsync(20000);
 				await worker;
+				const cursor = request().currentTurn.cursor;
+				nativeCurrentTurns.setEnabled(false);
+				const clone = vi.spyOn(globalThis, 'structuredClone');
+				const bytes = vi.spyOn(Buffer, 'byteLength');
+				const hintsBefore = committedFrames().length;
+				try {
+					for (let i = 0; i < 100; i++)
+						publish([{ id: 'stream', source: 'ai', text: 'x'.repeat(128 * 1024), timestamp: 300 }]);
+					expect(clone).not.toHaveBeenCalled();
+					expect(bytes).not.toHaveBeenCalled();
+					expect(committedFrames()).toHaveLength(hintsBefore);
+					expect(request().currentTurn.status).toBe('unknown');
+					expect(() => nativeCurrentTurns.assertDelivery(cursor, 1, undefined, '')).toThrow();
+				} finally {
+					clone.mockRestore();
+					bytes.mockRestore();
+				}
 				vi.mocked(broadcastBridgeEvent).mockImplementation(() => {});
 				vi.restoreAllMocks();
 				vi.useRealTimers();

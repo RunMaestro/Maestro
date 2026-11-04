@@ -606,7 +606,15 @@ export function handleGetSessionHistory(
 	}
 	const result = ctx.callbacks.getSessionHistory(
 		tabId,
-		currentTurn ? { currentTurn, expectedCursor, deltaBase } : { sinceMs, tail }
+		currentTurn
+			? {
+					currentTurn,
+					expectedCursor,
+					deltaBase,
+					currentTurnInterest: message.currentTurnInterest === 'pianola' ? 'pianola' : undefined,
+					observationClient: client.socket,
+				}
+			: { sinceMs, tail }
 	);
 	if (!result) {
 		ctx.send(client, {

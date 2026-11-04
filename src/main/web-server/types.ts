@@ -1057,6 +1057,10 @@ export interface SessionHistoryResult {
 export interface GetSessionHistoryOptions {
 	/** Explicit full native current-turn observation; legacy filters do not apply. */
 	currentTurn?: boolean;
+	/** Internal reads do not establish generic capture interest. Grants no send authority. */
+	currentTurnInterest?: 'pianola';
+	/** Host-only socket identity; never populated from a payload. */
+	observationClient?: { once(event: 'close', listener: () => void): unknown };
 	expectedCursor?: import('../../shared/currentTurn').CurrentTurnCursor;
 	deltaBase?: import('../../shared/currentTurn').CurrentTurnCursor;
 	/** Drop messages with timestamp ≤ this epoch ms. Use for poll-friendly cursoring. */

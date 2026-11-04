@@ -43,7 +43,9 @@ function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
 	const cursor = record.lifecycle!.guard.cursor;
 	const history = callbacks.getSessionHistory?.(
 		record.tabId,
-		cursor.native ? { currentTurn: true, expectedCursor: cursor.native } : undefined
+		cursor.native
+			? { currentTurn: true, currentTurnInterest: 'pianola', expectedCursor: cursor.native }
+			: undefined
 	);
 	if (cursor.native) {
 		if (!history?.currentTurn || !sameCurrentTurnCursor(history.currentTurn.cursor, cursor.native))

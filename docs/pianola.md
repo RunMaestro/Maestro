@@ -328,6 +328,25 @@ revision. `list_desktop_sessions` includes the same cursor and completeness stat
 under each tab's `supervision.currentTurn`, without copying transcript content.
 Legacy history reads retain their existing `sinceMs` and `tail` behavior.
 
+Pianola scope workers and native decision checks send
+`currentTurnInterest: "pianola"`. These reads never create generic observation
+interest: feature enablement owns their capture lifetime. Disable clears retained
+rows and invalidates delivery cursors; stopping or disconnecting a worker leaves
+no generic lease behind. The interest field only controls capture and grants no
+send authority.
+
+Generic `currentTurn: true` reads without that field remain supported while
+Pianola is off. Each read renews a 30-second lease on that single tab, within the
+2,048-tab cap. The latest reader owns the lease; closing its host-identified
+socket releases it. Other readers renew on their next read. Expiry is checked
+lazily before off-mode commits and reads, without background timers; expired tabs
+do no row cloning or serialization and emit no commit hints. Direct host readers
+without a socket expire on the same lease. Tab-cap eviction releases the oldest
+lease and its off-mode retained rows. When capture was lost through disconnect,
+expiry, eviction, or an Off-to-On transition, reconnect never restores earlier
+evidence: a fresh submitted boundary and native spawn must establish a complete
+turn again.
+
 A cursor identifies the host generation, native renderer incarnation, agent,
 tab creation, provider session, captured AgentRun, submitted user-log boundary,
 and monotone revision. Equal-length rewrites and streaming updates advance the
