@@ -282,7 +282,7 @@ describe('standalone permission relay setup and cleanup activity', () => {
 	});
 
 	it.each(['registry', 'unlink'] as const)(
-		'preserves %s cleanup failure behavior and releases',
+		'preserves %s cleanup failure behavior and retries registry cleanup',
 		async (step) => {
 			await relay.preparePermissionRelayArgs(params);
 			const error = new Error('cleanup failed');
@@ -299,10 +299,185 @@ describe('standalone permission relay setup and cleanup activity', () => {
 				expect(relay.cleanupSessionRelay(params.sessionId)).toBeUndefined();
 			}
 			relay.cleanupSessionRelay(params.sessionId);
-			expect(cleanups[0]).toHaveBeenCalledOnce();
+			expect(cleanups[0]).toHaveBeenCalledTimes(step === 'registry' ? 2 : 1);
 			await reserve();
 		}
 	);
+
+	it.each(['explicit', 'exit', 'replacement'] as const)(
+		'retries failed registry cleanup through %s without losing its owner',
+		async (route) => {
+			const manager = new EventEmitter();
+			relay.initPermissionRelay(() => null, manager);
+			await relay.preparePermissionRelayArgs(params);
+			const error = new Error('registry cleanup failed');
+			cleanups[0].mockImplementationOnce(() => {
+				throw error;
+			});
+			expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow(error);
+			expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+			if (route === 'explicit') relay.cleanupSessionRelay(params.sessionId);
+			if (route === 'exit') manager.emit('exit', params.sessionId);
+			if (route === 'replacement') await relay.preparePermissionRelayArgs(params);
+			expect(cleanups[0]).toHaveBeenCalledTimes(2);
+			expect(syncFs.unlinkSync).toHaveBeenCalledTimes(1);
+			if (route === 'replacement') relay.cleanupSessionRelay(params.sessionId);
+			relay.cleanupSessionRelay(params.sessionId);
+			expect(cleanups[0]).toHaveBeenCalledTimes(2);
+			await reserve();
+		}
+	);
+
+	it('retains the outer owner when reentrant cleanup returns before an error', async () => {
+		await relay.preparePermissionRelayArgs(params);
+		const error = new Error('outer cleanup failed');
+		cleanups[0].mockImplementationOnce(() => {
+			relay.cleanupSessionRelay(params.sessionId);
+			throw error;
+		});
+		expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow(error);
+		expect(cleanups[0]).toHaveBeenCalledOnce();
+		expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+		relay.cleanupSessionRelay(params.sessionId);
+		expect(cleanups[0]).toHaveBeenCalledTimes(2);
+		expect(syncFs.unlinkSync).toHaveBeenCalledOnce();
+		await reserve();
+	});
+
+	it('refuses retry under reservation and preserves it until later admission', async () => {
+		await relay.preparePermissionRelayArgs(params);
+		cleanups[0].mockImplementationOnce(() => {
+			throw new Error('retry needed');
+		});
+		expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow('retry needed');
+		const hold = await reserve(path.resolve('other-repository'));
+		expect(() => relay.cleanupSessionRelay(params.sessionId)).toThrow(/reserved/);
+		expect(cleanups[0]).toHaveBeenCalledOnce();
+		hold.release();
+		relay.cleanupSessionRelay(params.sessionId);
+		expect(cleanups[0]).toHaveBeenCalledTimes(2);
+		await reserve();
+	});
+
+	it('stops replacement before new registration or config writes until prior cleanup succeeds', async () => {
+		await relay.preparePermissionRelayArgs(params);
+		const error = new Error('prior cleanup failed');
+		cleanups[0].mockImplementationOnce(() => {
+			throw error;
+		});
+		await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(error);
+		expect(registerSpawn).toHaveBeenCalledOnce();
+		expect(buildRelayArgs).toHaveBeenCalledOnce();
+		await relay.preparePermissionRelayArgs(params);
+		expect(cleanups[0]).toHaveBeenCalledTimes(2);
+		expect(registerSpawn).toHaveBeenCalledTimes(2);
+	});
+
+	it.each(['explicit', 'exit', 'replacement'] as const)(
+		'keeps known binding cleanup reachable after argument failure for %s',
+		async (route) => {
+			const manager = new EventEmitter();
+			relay.initPermissionRelay(() => null, manager);
+			const error = new Error('argument construction failed');
+			vi.mocked(buildRelayArgs).mockImplementationOnce(() => {
+				throw error;
+			});
+			await expect(relay.preparePermissionRelayArgs(params)).rejects.toBe(error);
+			expect(cleanups[0]).not.toHaveBeenCalled();
+			if (route === 'explicit') relay.cleanupSessionRelay(params.sessionId);
+			if (route === 'exit') manager.emit('exit', params.sessionId);
+			if (route === 'replacement') await relay.preparePermissionRelayArgs(params);
+			expect(cleanups[0]).toHaveBeenCalledOnce();
+			expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+		}
+	);
+
+	it('keeps concurrent replacement starts from overwriting a failed cleanup owner', async () => {
+		await relay.preparePermissionRelayArgs(params);
+		const pending = Promise.withResolvers<string>();
+		vi.mocked(server.ensureStarted).mockReturnValueOnce(pending.promise);
+		const waiting = relay.preparePermissionRelayArgs(params);
+		cleanups[0].mockImplementationOnce(() => {
+			throw new Error('prior cleanup failed');
+		});
+		await expect(relay.preparePermissionRelayArgs(params)).rejects.toThrow('prior cleanup failed');
+		await blocked();
+		expect(registerSpawn).toHaveBeenCalledOnce();
+		pending.resolve('/relay.sock');
+		await expect(waiting).resolves.toBe(args);
+		expect(cleanups[0]).toHaveBeenCalledTimes(2);
+		expect(registerSpawn).toHaveBeenCalledTimes(2);
+	});
+
+	it.each([false, true])(
+		'keeps reentrant argument-construction cleanup reachable after setup (failure: %s)',
+		async (fail) => {
+			vi.mocked(buildRelayArgs).mockImplementationOnce(() => {
+				relay.cleanupSessionRelay(params.sessionId);
+				expect(cleanups[0]).not.toHaveBeenCalled();
+				if (fail) throw new Error('argument failure');
+				return { args, configPath: 'owned-config' };
+			});
+			const startup = relay.preparePermissionRelayArgs(params);
+			if (fail) await expect(startup).rejects.toThrow('argument failure');
+			else await expect(startup).resolves.toBe(args);
+			relay.cleanupSessionRelay(params.sessionId);
+			expect(cleanups[0]).toHaveBeenCalledOnce();
+			expect(syncFs.unlinkSync).toHaveBeenCalledTimes(fail ? 0 : 1);
+		}
+	);
+
+	it('keeps real registry binding busy after argument failure until known-binding cleanup', async () => {
+		const registry = await vi.importActual<
+			typeof import('../../../main/permission-relay/registry')
+		>('../../../main/permission-relay/registry');
+		vi.mocked(registerSpawn).mockImplementation(registry.registerSpawn);
+		vi.mocked(buildRelayArgs).mockImplementationOnce(() => {
+			throw new Error('argument failure');
+		});
+		await expect(relay.preparePermissionRelayArgs(params)).rejects.toThrow('argument failure');
+		const token = vi.mocked(buildRelayArgs).mock.calls[0][3];
+		expect(registry.lookupBinding(token)).toMatchObject({ sessionId: params.sessionId });
+		await blocked();
+		relay.cleanupSessionRelay(params.sessionId);
+		expect(registry.lookupBinding(token)).toBeUndefined();
+		expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+		await reserve();
+	});
+
+	it('retains real registry activity after native-exit cleanup fails and releases only on retry', async () => {
+		const registry = await vi.importActual<
+			typeof import('../../../main/permission-relay/registry')
+		>('../../../main/permission-relay/registry');
+		vi.mocked(registerSpawn).mockImplementation((binding) => {
+			const result = registry.registerSpawn(binding);
+			const cleanup = vi.fn(result.cleanup);
+			cleanups.push(cleanup);
+			return { ...result, cleanup };
+		});
+		const manager = new EventEmitter();
+		relay.initPermissionRelay(() => null, manager);
+		await relay.preparePermissionRelayArgs(params);
+		const token = vi.mocked(buildRelayArgs).mock.calls[0][3];
+		const decision = registry.createPending('request', token);
+		const error = new Error('notification failed');
+		const listener = vi.fn(() => {
+			relay.cleanupSessionRelay(params.sessionId);
+			throw error;
+		});
+		const unsubscribe = registry.subscribePendingPermissions(listener);
+		expect(() => manager.emit('exit', params.sessionId)).toThrow(error);
+		await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+		unsubscribe();
+		expect(registry.lookupBinding(token)).toBeUndefined();
+		await blocked();
+		expect(syncFs.unlinkSync).not.toHaveBeenCalled();
+		expect(cleanups[0]).toHaveBeenCalledOnce();
+		relay.cleanupSessionRelay(params.sessionId);
+		expect(cleanups[0]).toHaveBeenCalledTimes(2);
+		expect(syncFs.unlinkSync).toHaveBeenCalledOnce();
+		await reserve();
+	});
 
 	it('keeps concurrent starts independently busy until both settle', async () => {
 		const one = Promise.withResolvers<string>();

@@ -25,7 +25,7 @@ const LOG_CONTEXT = '[PermissionRelay]';
 export const PERMISSION_REQUEST_CHANNEL = 'process:permission-request';
 
 /** Per-spawn token cleanups, keyed by the (compound) spawn session id. */
-const sessionCleanups = new Map<string, () => void>();
+const sessionCleanups = new Map<string, { cleanup: () => void; running: boolean }>();
 
 let initialized = false;
 
@@ -114,10 +114,16 @@ export function resolvePermissionResponse(
 export function cleanupSessionRelay(sessionId: string): void {
 	const release = beginGlobalWorktreeActivity();
 	try {
-		const cleanup = sessionCleanups.get(sessionId);
-		if (cleanup) {
-			sessionCleanups.delete(sessionId);
-			cleanup();
+		const entry = sessionCleanups.get(sessionId);
+		if (entry && !entry.running) {
+			entry.running = true;
+			try {
+				entry.cleanup();
+				// Keep retry ownership on failure; nested cleanup cannot retire it.
+				if (sessionCleanups.get(sessionId) === entry) sessionCleanups.delete(sessionId);
+			} finally {
+				entry.running = false;
+			}
 		}
 	} finally {
 		release();
@@ -152,31 +158,40 @@ export async function preparePermissionRelayArgs(params: {
 			sessionId: params.sessionId,
 			tabId: params.tabId,
 		});
+		// Argument construction may throw after registration. Keep the known
+		// binding reachable by spawn-failure, exit and replacement cleanup.
+		const entry = { cleanup, running: true };
+		sessionCleanups.set(params.sessionId, entry);
+		try {
+			const { args, configPath } = buildRelayArgs(
+				params.execPath,
+				bridgeScriptPath,
+				socketPath,
+				token,
+				params.userDataDir
+			);
 
-		const { args, configPath } = buildRelayArgs(
-			params.execPath,
-			bridgeScriptPath,
-			socketPath,
-			token,
-			params.userDataDir
-		);
+			// Wrap the registry cleanup so process exit also deletes the temp MCP config.
+			entry.cleanup = () => {
+				cleanup();
+				try {
+					fs.unlinkSync(configPath);
+				} catch {
+					// Already gone - fine.
+				}
+			};
 
-		// Wrap the registry cleanup so process exit also deletes the temp MCP config.
-		sessionCleanups.set(params.sessionId, () => {
-			cleanup();
-			try {
-				fs.unlinkSync(configPath);
-			} catch {
-				// Already gone - fine.
-			}
-		});
+			logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
+				sessionId: params.sessionId,
+				socketPath,
+			});
 
-		logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
-			sessionId: params.sessionId,
-			socketPath,
-		});
-
-		return args;
+			return args;
+		} finally {
+			// Reentrant cleanup during construction cannot retire a partial owner.
+			// Once setup unwinds, failure/exit/replacement callers can retry it.
+			entry.running = false;
+		}
 	} finally {
 		release();
 	}
