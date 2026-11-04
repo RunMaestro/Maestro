@@ -38,8 +38,9 @@ export function registerGithubHandlers(): void {
 	);
 	ipcMain.handle(
 		'git:invalidateWorktreePullRequest',
-		withIpcErrorLogging(handlerOpts('invalidateWorktreePullRequest'), (worktreePath: string) =>
-			invalidateWorktreePullRequest(worktreePath)
+		withIpcErrorLogging(
+			handlerOpts('invalidateWorktreePullRequest'),
+			async (worktreePath: string) => invalidateWorktreePullRequest(worktreePath)
 		)
 	);
 	// Create a PR from the worktree branch to a base branch
