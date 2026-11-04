@@ -1,9 +1,56 @@
+/**
+ * `maestro-cli cue list` - every agent's Cue subscriptions.
+ *
+ * The peer serving the data directory answers: the desktop app, or a headless
+ * `maestro-cli host` from the Cue engine it runs. A host that cannot answer
+ * (its Cue is held by another engine or did not start, or it is an older
+ * build) leaves the list to be read from each agent's cue.yaml, through the
+ * same query the engine answers with for an agent it is not running. An
+ * absent desktop app is reported as ever (exit 3).
+ */
+
 import { withMaestroClient } from '../services/maestro-client';
-import { exitIfMaestroNotRunning } from '../services/session-command';
+import { diskFallbackPeer, exitIfMaestroNotRunning } from '../services/session-command';
+import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
+import { readLiveSessions } from '../services/storage';
 import { formatCueTurnSettings, type CueTurnSettings } from '../../shared/cue/turn-settings';
+import { createCueQueryService } from '../../main/cue/cue-query-service';
+import { loadCueConfigDetailed } from '../../main/cue/cue-yaml-loader';
+import { toCueSubscriptionInfos } from '../../main/cue/cue-subscription-entries';
+import type { CueSubscriptionInfo } from '../../main/web-server/types';
 
 interface CueListOptions {
 	json?: boolean;
+	/** Explicit data directory; decides which host (or desktop) is asked and whose cue.yaml is read. */
+	dataDir?: string;
+}
+
+/** On stderr beside a list read from disk, so stdout stays what the peer's answer prints. */
+export const CUE_YAML_FALLBACK_NOTE =
+	"Read from each agent's cue.yaml: the headless host (`maestro-cli host`) is not running Cue here, or is an older build that cannot answer.";
+
+/**
+ * Subscriptions read from disk, as the engine's `getGraphData()` reports an
+ * agent it has not started: the same live agents the headless engine reads,
+ * the same validating loader, the same participant filter, the same mapping.
+ */
+export function readCueSubscriptionsFromDisk(sessionId?: string): CueSubscriptionInfo[] {
+	const query = createCueQueryService({
+		getAllSessions: () =>
+			readLiveSessions().map((session) => ({
+				id: session.id,
+				name: session.name,
+				toolType: session.toolType,
+				projectRoot: session.projectRoot,
+			})),
+		getSessionStates: () => new Map(),
+		getActiveRunCount: () => 0,
+		loadConfigForProjectRoot: (projectRoot) => {
+			const result = loadCueConfigDetailed(projectRoot);
+			return result.ok ? result.config : null;
+		},
+	});
+	return toCueSubscriptionInfos(query.getGraphData(), sessionId);
 }
 
 interface CueSubscription {
@@ -23,20 +70,33 @@ interface CueSubscription {
 }
 
 export async function cueList(options: CueListOptions): Promise<void> {
+	// First, so the discovery file, the agent list and every cue.yaml come from the one directory.
+	if (options.dataDir !== undefined) {
+		applyDataDirOption(options.dataDir);
+		requireDataDirOrExit({ json: options.json });
+	}
 	try {
-		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				type: string;
-				subscriptions: CueSubscription[];
-			}>(
-				{
-					type: 'get_cue_subscriptions',
-				},
-				'cue_subscriptions'
-			);
-		});
-
-		const subs = result.subscriptions ?? [];
+		let subs: CueSubscription[];
+		try {
+			const result = await withMaestroClient(async (client) => {
+				return client.sendCommand<{
+					type: string;
+					subscriptions: CueSubscription[];
+				}>(
+					{
+						type: 'get_cue_subscriptions',
+					},
+					'cue_subscriptions'
+				);
+			});
+			subs = result.subscriptions ?? [];
+		} catch (error) {
+			// Only a headless host that could not answer falls back. An absent
+			// desktop, an old desktop build, or a timeout is reported below.
+			if (diskFallbackPeer(error) !== 'headless-host') throw error;
+			subs = readCueSubscriptionsFromDisk();
+			if (!options.json) console.error(CUE_YAML_FALLBACK_NOTE);
+		}
 
 		if (options.json) {
 			console.log(JSON.stringify(subs, null, 2));
