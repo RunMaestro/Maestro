@@ -110,6 +110,8 @@ async function sendClaimedDecision(
 					const current = store.readDecisions().find((row) => row.id === record.id);
 					if (
 						!current?.lifecycle ||
+						current.lifecycle.status === 'done' ||
+						current.lifecycle.status === 'paused' ||
 						current.lifecycle.phase !== phase ||
 						(current.lifecycle.delivery !== 'intent' &&
 							current.lifecycle.delivery !== 'accepted') ||
@@ -180,6 +182,8 @@ async function sendClaimedDecision(
 	const current = store.readDecisions().find((candidate) => candidate.id === record.id);
 	if (
 		current?.lifecycle?.phase === phase &&
+		current.lifecycle.status !== 'done' &&
+		current.lifecycle.status !== 'paused' &&
 		(current.lifecycle.delivery === 'intent' || current.lifecycle.delivery === 'unknown') &&
 		canonicalJson(current.lifecycle.source) === canonicalJson(record.lifecycle!.source)
 	) {

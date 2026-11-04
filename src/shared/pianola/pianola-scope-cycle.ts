@@ -710,11 +710,17 @@ export async function runPianolaScopeCycle(
 			((positions.get(a.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length) -
 			((positions.get(b.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length)
 	);
+	const unattempted = new Set(
+		working
+			.filter(({ saved }) => saved.coverage?.status !== 'blocked')
+			.map(({ tab }) => canonicalJson([tab.agentId, tab.tabId]))
+	);
 	for (const { tab, saved } of eligible.slice(0, maxTabs)) {
 		if (options.shouldStop?.() || externallySuspended) break;
 		options.sweep?.add(canonicalJson([tab.agentId, tab.tabId]));
 		checkpoint.nextTabIndex = (positions.get(tab)! + 1) % snapshot.tabs.length;
 		persist();
+		unattempted.delete(canonicalJson([tab.agentId, tab.tabId]));
 		try {
 			const target: WatchTarget = {
 				agentId: tab.agentId,
@@ -997,17 +1003,22 @@ export async function runPianolaScopeCycle(
 						// must not overwrite a manager response received during its await.
 						if (
 							current?.lifecycle &&
-							(current.deliveryStatus === 'admitted' || current.lifecycle.delivery !== 'intent')
+							(current.lifecycle.status === 'done' ||
+								current.deliveryStatus === 'admitted' ||
+								current.lifecycle.delivery !== 'intent')
 						) {
 							latestRecord = current;
 							return;
 						}
+						const expectedRevision =
+							latestRecord?.id === record.id ? latestRecord.mutationRevision : undefined;
 						latestRecord = startPianolaDecision(
 							record,
 							deliveryGuard(record),
 							scope.managerAgentId,
 							snapshot.owners.find((owner) => owner.id === tab.agentId)?.groupId ?? null
 						);
+						latestRecord.mutationRevision = expectedRevision;
 						// A definitive refusal before native admission has no native
 						// outcome writer. Keep it retryable instead of inventing an
 						// interrupted/unknown delivery on the next poll.
@@ -1055,6 +1066,8 @@ export async function runPianolaScopeCycle(
 					.find((candidate) => candidate.id === saved.unresolvedIntent!.decisionId);
 				if (
 					record?.lifecycle &&
+					record.lifecycle.status !== 'done' &&
+					record.lifecycle.status !== 'paused' &&
 					(record.lifecycle.delivery === 'intent' || record.lifecycle.delivery === 'unknown')
 				)
 					deps.watch.recordDecision(
@@ -1095,7 +1108,7 @@ export async function runPianolaScopeCycle(
 	const due = [
 		...checkpoint.tabs
 			.filter((tab) => tab.status === 'active' && !!tab.state.pendingRetry)
-			.map((tab) => tab.nextWatchAt),
+			.map((tab) => ({ at: tab.nextWatchAt, key: canonicalJson([tab.agentId, tab.tabId]) })),
 		...deps.store
 			.readDecisions()
 			.filter(
@@ -1103,9 +1116,19 @@ export async function runPianolaScopeCycle(
 					record.lifecycle?.guard.scopeId === scopeId &&
 					record.lifecycle.status === 'mira_processing'
 			)
-			.map((record) => record.lifecycle?.deadlineAt),
-	].filter((at): at is number => at !== undefined);
-	if (due.length) result.nextDueAt = Math.min(...due) <= now ? now + 50 : Math.min(...due);
+			.map((record) => ({
+				at: record.lifecycle?.deadlineAt,
+				key: canonicalJson([record.agentId, record.tabId]),
+			})),
+	].flatMap(({ at, key }) => {
+		if (at === undefined) return [];
+		if (at > now) return [at];
+		// Only healthy work omitted by the bounded sweep needs another drain.
+		// Due work already attempted (including failed reads) uses the existing
+		// recovery census; a past deadline alone must never drive a 50ms loop.
+		return unattempted.has(key) ? [now + 50] : [];
+	});
+	if (due.length) result.nextDueAt = Math.min(...due);
 	return result;
 }
 

@@ -183,6 +183,8 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 	it.each([
 		'answer',
 		'ordered-append',
+		'stale-admission',
+		'stale-receipt',
 		'append-reorder',
 		'reorder-restore',
 		'after-claim-reorder',
@@ -211,6 +213,30 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			indent: 2,
 			trailingNewline: true,
 		});
+		const append = store.appendDecision;
+		let injected = false;
+		store.appendDecision = (record) => {
+			if (
+				!injected &&
+				record.lifecycle &&
+				((mode === 'stale-admission' && record.deliveryStatus === 'admitted') ||
+					(mode === 'stale-receipt' && record.lifecycle.delivery === 'accepted'))
+			) {
+				injected = true;
+				const current = store.readDecisions().find((row) => row.id === record.id)!;
+				append({
+					...current,
+					lifecycle: {
+						...current.lifecycle!,
+						status: 'done',
+						nextActor: 'none',
+						nextAction: 'Resolved concurrently',
+						source: { kind: 'manager', actorId: 'manager' },
+					},
+				});
+			}
+			append(record);
+		};
 		const callbacks: Partial<MessageHandlerCallbacks> = {};
 		const scopeId = '11111111-1111-4111-8111-111111111111';
 		let busy = false;
@@ -398,7 +424,12 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			if (mode === 'human-read') humanDuringRead = true;
 			await cycle();
 			expect(sends).toHaveBeenCalledTimes(
-				mode === 'answer' || mode === 'ordered-append' || mode === 'unknown' ? 1 : 0
+				mode === 'answer' ||
+					mode === 'ordered-append' ||
+					mode === 'unknown' ||
+					mode === 'stale-receipt'
+					? 1
+					: 0
 			);
 			if (orderRegression) {
 				if (mode === 'ordered-append') expect(assert.mock.results.at(-1)?.value).toBe(true);
@@ -412,13 +443,22 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			const calls = sendCommand.mock.calls.length;
 			await cycle();
 			expect(sends).toHaveBeenCalledTimes(
-				mode === 'answer' || mode === 'ordered-append' || mode === 'unknown' ? 1 : 0
+				mode === 'answer' ||
+					mode === 'ordered-append' ||
+					mode === 'unknown' ||
+					mode === 'stale-receipt'
+					? 1
+					: 0
 			);
 			if (mode === 'answer') {
 				expect(sendCommand.mock.calls.length).toBe(calls); // unchanged tabs never read history
 				f.commit([f.row('tool-append', 'Done', 'tool')]);
 				await cycle();
 				expect(sends).toHaveBeenCalledTimes(1); // tool appends never replay a question
+			}
+			if (mode === 'stale-admission' || mode === 'stale-receipt') {
+				expect(injected).toBe(true);
+				expect(store.readDecisions().at(-1)?.lifecycle?.status).toBe('done');
 			}
 			if (mode === 'unknown')
 				expect(store.readScopeCheckpoint(scopeId)?.tabs[0].unresolvedIntent).toBeTruthy();
@@ -439,6 +479,165 @@ import { PianolaScopeWakeups, pianolaWatchScope } from '../../../cli/commands/pi
 import type { BridgeConnectionOptions } from '../../../shared/maestro-lib/client/bridge-connection';
 
 describe('production scope loop event drain', () => {
+	it.each(['cursor', 'history'])(
+		'uses recovery censuses for an expired manager deadline with unavailable %s',
+		async (failure) => {
+			vi.useFakeTimers();
+			vi.setSystemTime(100000);
+			// Isolate deadline scheduling from OS file-event delivery; the store and worker are real.
+			vi.spyOn(fs, 'watch').mockReturnValue({ on: vi.fn(), close: vi.fn() } as never);
+			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			fs.mkdirSync(root, { recursive: true });
+			const directory = fs.mkdtempSync(path.join(root, 'K01-deadline-'));
+			vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
+			vi.spyOn(cliStorage, 'getSyncDir').mockReturnValue(directory);
+			vi.spyOn(cliStorage, 'readSettingValue').mockImplementation(() => ({
+				pianola: settings.enabled,
+			}));
+			const store = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const scopeId = '11111111-1111-4111-8111-111111111111';
+			store.writeSupervisorTargets([
+				{
+					id: scopeId,
+					kind: 'watch-scope',
+					enabled: true,
+					createdAt: 1,
+					managerAgentId: 'manager',
+					selection: {
+						mode: 'agents-and-groups',
+						label: 'Selected',
+						agentIds: ['agent'],
+						groupIds: [],
+						excludedAgentIds: [],
+					},
+				},
+			]);
+			vi.spyOn(scopeStore, 'readPianolaSupervisorTargets').mockImplementation(
+				store.readSupervisorTargets
+			);
+			vi.spyOn(scopeStore, 'readPianolaScopeCheckpoint').mockImplementation(
+				store.readScopeCheckpoint
+			);
+			vi.spyOn(scopeStore, 'writePianolaScopeCheckpoint').mockImplementation(
+				store.writeScopeCheckpoint
+			);
+			vi.spyOn(scopeStore, 'readPianolaDecisions').mockImplementation(store.readDecisions);
+			vi.spyOn(scopeStore, 'appendPianolaDecision').mockImplementation(store.appendDecision);
+			vi.spyOn(scopeStore, 'readPianolaRules').mockReturnValue([]);
+			vi.spyOn(scopeStore, 'getPianolaProfile').mockReturnValue({ entry: undefined } as never);
+			vi.spyOn(ScopeClient.prototype, 'connect').mockResolvedValue();
+			vi.spyOn(ScopeClient.prototype, 'isOpen', 'get').mockReturnValue(true);
+			vi.spyOn(ScopeClient.prototype, 'disconnect').mockImplementation(() => {});
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			const f = fixture();
+			let unavailable = false;
+			let censuses = 0;
+			vi.spyOn(ScopeClient.prototype, 'sendCommand').mockImplementation(async (message) => {
+				if (message.type === 'list_desktop_sessions') {
+					censuses++;
+					return {
+						success: true,
+						supervisionVersion: 1,
+						complete: true,
+						capturedAt: Date.now(),
+						owners: [
+							{
+								id: 'agent',
+								cwd: directory,
+								isPianola: false,
+								remote: false,
+								parentSessionId: null,
+							},
+						],
+						sessions: [
+							{
+								agentId: 'agent',
+								tabId: 'tab',
+								createdAt: 7,
+								supervision: {
+									cwd: directory,
+									parentSessionId: null,
+									isPianola: false,
+									remote: false,
+									lineageComplete: true,
+									paused: false,
+									busy: false,
+									consult: false,
+									ephemeral: false,
+									cursorAvailable: !(unavailable && failure === 'cursor'),
+									currentTurn:
+										unavailable && failure === 'cursor'
+											? { ...f.read(), status: 'unavailable' }
+											: f.read(),
+								},
+							},
+						],
+					} as never;
+				}
+				if (message.type === 'get_session_history') {
+					if (unavailable && failure === 'history') throw new Error('History unavailable');
+					return {
+						success: true,
+						agentId: 'agent',
+						tabId: 'tab',
+						currentTurn: f.index.read(
+							binding,
+							message.expectedCursor as never,
+							true,
+							message.deltaBase as never
+						),
+					} as never;
+				}
+				if (message.type === 'notify_toast') return { success: true } as never;
+				throw new Error('Unexpected send: ' + message.type);
+			});
+			let running: Promise<void> | undefined;
+			try {
+				await pianolaWatchScope(scopeId, { once: true });
+				f.commit([f.row('question', 'Should I name it count or total?')]);
+				await pianolaWatchScope(scopeId, { once: true });
+				const record = store.readDecisions()[0];
+				expect(record.lifecycle?.status).toBe('waiting_human');
+				store.appendDecision({
+					...record,
+					lifecycle: {
+						...record.lifecycle!,
+						phase: 'judgment',
+						delivery: 'accepted',
+						status: 'mira_processing',
+						deadlineAt: Date.now() - 1,
+					},
+				});
+				unavailable = true;
+				censuses = 0;
+				running = pianolaWatchScope(scopeId, {});
+				await vi.advanceTimersByTimeAsync(0);
+				expect(censuses).toBe(1);
+				await vi.advanceTimersByTimeAsync(19999);
+				expect(censuses).toBe(1);
+				await vi.advanceTimersByTimeAsync(1);
+				expect(censuses).toBe(2);
+				await vi.advanceTimersByTimeAsync(20000);
+				expect(censuses).toBe(3);
+				unavailable = false;
+				await vi.advanceTimersByTimeAsync(20000);
+				expect(store.readDecisions()[0].lifecycle?.status).toBe('waiting_human');
+			} finally {
+				settings.enabled = false;
+				await vi.advanceTimersByTimeAsync(20000);
+				await running;
+				settings.enabled = true;
+				vi.restoreAllMocks();
+				vi.useRealTimers();
+				fs.rmSync(directory, { recursive: true, force: true });
+			}
+		}
+	);
+
 	it('coalesces native commit frames, retains in-cycle signals, recovers idle/disconnect, and stops cleanly', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1000);

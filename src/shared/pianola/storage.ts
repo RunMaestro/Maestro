@@ -146,6 +146,8 @@ export interface RulesLoadResult {
 
 /** One recorded decision in the audit log. */
 export interface PianolaDecisionRecord {
+	/** Store-issued compare-and-append token. Preserve the token of the row being changed. */
+	mutationRevision?: string;
 	id: string;
 	/** ISO-8601 timestamp of when the decision was made. */
 	timestamp: string;
@@ -356,6 +358,11 @@ export function validatePianolaDecisionRecord(raw: unknown): PianolaDecisionReco
 	if (typeof raw.dispatched !== 'boolean' || typeof raw.dryRun !== 'boolean') return null;
 	if (raw.projectPath !== undefined && typeof raw.projectPath !== 'string') return null;
 	if (raw.error !== undefined && typeof raw.error !== 'string') return null;
+	if (
+		raw.mutationRevision !== undefined &&
+		(typeof raw.mutationRevision !== 'string' || !/^[a-f0-9]{64}$/.test(raw.mutationRevision))
+	)
+		return null;
 	if (raw.deliveryStatus !== undefined && raw.deliveryStatus !== 'admitted') return null;
 	if (raw.lifecycle !== undefined && !isValidLifecycle(raw.lifecycle)) return null;
 	if (!isValidClassification(raw.classification)) return null;

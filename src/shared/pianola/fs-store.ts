@@ -87,6 +87,8 @@ export interface PianolaFsStore {
 	readRulesResult(): RulesLoadResult;
 	readRules(): PianolaRule[];
 	writeRules(rules: unknown): PianolaRule[];
+	/** Compare-and-append under the decision lock; updates the supplied revision on success.
+	 * Conflicts throw before a caller may send; reread rather than retrying stale state. */
 	appendDecision(record: PianolaDecisionRecord): void;
 	readDecisions(limit?: number): PianolaDecisionRecord[];
 	readPlans(): PianolaPlan[];
@@ -276,20 +278,73 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	}
 
 	function appendDecision(record: PianolaDecisionRecord): void {
-		const line = `${JSON.stringify(record)}\n`;
-		// Scope audit-before-send must fail closed rather than silently dropping
-		// an oversized or unreadable lifecycle and then losing its durable claim.
-		if (
-			record.lifecycle &&
-			(!validatePianolaDecisionRecord(record) ||
-				Buffer.byteLength(line, 'utf-8') > PIANOLA_DECISION_RECORD_MAX_BYTES)
-		)
-			throw new Error('Invalid or oversized Pianola decision lifecycle');
-		const dir = resolveDir();
-		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-		const file = path.join(dir, PIANOLA_DECISIONS_FILENAME);
-		appendDecisionLine(file, line);
-		compactDecisionLog(file, PIANOLA_DECISIONS_MAX_RECORDS, PIANOLA_DECISIONS_COMPACT_BYTES);
+		// All lifecycle writers (CLI, native admission, receipts and resolutions)
+		// compare their source row and append/compact under this same short lock.
+		// Throwing on conflict also prevents a stale native claim from sending.
+		withFileLock(PIANOLA_DECISIONS_FILENAME, 'decisions', () => {
+			const records = readDecisions();
+			const current = records.find((candidate) => candidate.id === record.id);
+			if (current?.lifecycle || record.lifecycle) {
+				if (
+					current?.mutationRevision !== record.mutationRevision ||
+					(current && !record.lifecycle) ||
+					(!current && record.mutationRevision) ||
+					(current &&
+						(current.agentId !== record.agentId ||
+							current.tabId !== record.tabId ||
+							current.classification.evidence.messageId !==
+								record.classification.evidence.messageId))
+				)
+					throw new Error('Pianola decision mutation conflict; reread the current decision');
+				if (current?.lifecycle?.status === 'done' && record.lifecycle?.status !== 'done')
+					throw new Error('Pianola decision mutation conflict; decision already done');
+				if (
+					!record.dryRun &&
+					record.lifecycle &&
+					(!current ||
+						record.deliveryStatus === 'admitted' ||
+						record.lifecycle.delivery === 'intent') &&
+					records.some(
+						(candidate) =>
+							candidate.id !== record.id &&
+							!candidate.dryRun &&
+							candidate.agentId === record.agentId &&
+							candidate.tabId === record.tabId &&
+							candidate.lifecycle?.guard.scopeId === record.lifecycle!.guard.scopeId &&
+							candidate.lifecycle.guard.messageId === record.lifecycle!.guard.messageId &&
+							candidate.lifecycle.delivery !== 'rejected' &&
+							(candidate.lifecycle.delivery === 'intent' ||
+								candidate.lifecycle.delivery === 'unknown' ||
+								candidate.deliveryStatus === 'admitted' ||
+								candidate.dispatched)
+					)
+				)
+					throw new Error('Pianola decision already claimed this ask');
+			}
+			const next = record.lifecycle
+				? {
+						...record,
+						mutationRevision: createHash('sha256').update(canonicalJson(record)).digest('hex'),
+					}
+				: record;
+			const line = `${JSON.stringify(next)}\n`;
+			if (
+				record.lifecycle &&
+				(!validatePianolaDecisionRecord(next) ||
+					Buffer.byteLength(line, 'utf-8') > PIANOLA_DECISION_RECORD_MAX_BYTES)
+			)
+				throw new Error('Invalid or oversized Pianola decision lifecycle');
+			const file = filePath(PIANOLA_DECISIONS_FILENAME);
+			appendDecisionLine(file, line);
+			compactDecisionLog(
+				file,
+				PIANOLA_DECISIONS_MAX_RECORDS,
+				PIANOLA_DECISIONS_COMPACT_BYTES,
+				true
+			);
+			// Let the caller continue from precisely the successfully persisted row.
+			if (next.mutationRevision) record.mutationRevision = next.mutationRevision;
+		});
 	}
 
 	function readPlans(): PianolaPlan[] {
