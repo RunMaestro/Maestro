@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PianolaScopeControls } from '../../../../renderer/components/PianolaDashboard/PianolaScopeControls';
 import { usePianolaSupervisor } from '../../../../renderer/components/PianolaDashboard/usePianolaSupervisor';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
 import { createMockSession, resetAllStores } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { PianolaSupervisorSnapshot } from '../../../../main/ipc/handlers/pianola';
@@ -81,6 +82,23 @@ afterEach(() => {
 });
 
 describe('PianolaScopeControls production hook composition', () => {
+	it('keeps the edited selection open when saving fails', async () => {
+		vi.mocked(window.maestro.pianola.supervisor.add).mockRejectedValueOnce(new Error('disk full'));
+		render(<Controls />);
+		await screen.findByText('Fixture selection');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		fireEvent.change(screen.getByRole('textbox', { name: 'Label' }), {
+			target: { value: 'Unsaved selection' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+		expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Unsaved selection');
+		expect(persisted.targets[0].selection?.label).toBe('Fixture selection');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'Could not save selection: disk full' })
+		);
+	});
+
 	it('saves native group/whole-agent/exclusion identities and reloads the persisted edit', async () => {
 		const view = render(<Controls />);
 		await screen.findByText('Fixture selection');

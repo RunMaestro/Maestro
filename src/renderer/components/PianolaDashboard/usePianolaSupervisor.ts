@@ -105,7 +105,7 @@ export interface PianolaSupervisorState {
 	targets: PianolaSupervisedTarget[];
 	health: PianolaSupervisorHealth[];
 	checkpoints: PianolaSupervisorSnapshot['checkpoints'];
-	saveScope: (target: Partial<PianolaSupervisedTarget>) => Promise<void>;
+	saveScope: (target: Partial<PianolaSupervisedTarget>) => Promise<boolean>;
 	watched: WatchedAgentRow[];
 	watchable: WatchableAgent[];
 	autoWatchNewAgents: boolean;
@@ -195,7 +195,7 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 	}, [load]);
 
 	const mutate = useCallback(
-		async (op: Promise<PianolaSupervisorSnapshot>, action: string): Promise<void> => {
+		async (op: Promise<PianolaSupervisorSnapshot>, action: string): Promise<boolean> => {
 			mutationEpochRef.current += 1; // invalidate polls issued before this mutation
 			try {
 				const snap = await op;
@@ -205,6 +205,7 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 					setHealth(snap.health);
 					setCheckpoints(snap.checkpoints ?? []);
 				}
+				return true;
 			} catch (err) {
 				mutationEpochRef.current += 1;
 				const error = err instanceof Error ? err : new Error(String(err));
@@ -219,30 +220,34 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 				});
 				if (!isPianolaDisabled(error))
 					captureException(error, { tags: { feature: 'pianola' }, extra: { action } });
+				return false;
 			}
 		},
 		[]
 	);
 
 	const watch = useCallback(
-		(agentId: string, tabId: string) =>
-			mutate(
+		async (agentId: string, tabId: string) => {
+			await mutate(
 				window.maestro.pianola.supervisor.add({ kind: 'watch', agentId, tabId, enabled: true }),
 				'start watching the agent'
-			),
+			);
+		},
 		[mutate]
 	);
 	const unwatch = useCallback(
-		(targetId: string) =>
-			mutate(window.maestro.pianola.supervisor.remove(targetId), 'stop watching the agent'),
+		async (targetId: string) => {
+			await mutate(window.maestro.pianola.supervisor.remove(targetId), 'stop watching the agent');
+		},
 		[mutate]
 	);
 	const setEnabled = useCallback(
-		(targetId: string, enabled: boolean) =>
-			mutate(
+		async (targetId: string, enabled: boolean) => {
+			await mutate(
 				window.maestro.pianola.supervisor.setEnabled(targetId, enabled),
 				enabled ? 'resume watching' : 'pause watching'
-			),
+			);
+		},
 		[mutate]
 	);
 

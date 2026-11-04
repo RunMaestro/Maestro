@@ -17,6 +17,7 @@ export function PianolaScopeControls({
 	const groups = useSessionStore((s) => s.groups);
 	const [editing, setEditing] = useState<PianolaSupervisedTarget | null>(null);
 	const [creating, setCreating] = useState(false);
+	const [saving, setSaving] = useState(false);
 	const [manager, setManager] = useState('');
 	const [selection, setSelection] = useState<PianolaAgentGroupSelection>({
 		label: '',
@@ -54,7 +55,7 @@ export function PianolaScopeControls({
 		<section className="mb-5" style={{ color: theme.colors.textMain }}>
 			<div className="flex items-center justify-between mb-2">
 				<h3 className="text-xs font-bold uppercase">Agent and group selections</h3>
-				<button type="button" onClick={() => start()} className="text-xs">
+				<button type="button" disabled={saving} onClick={() => start()} className="text-xs">
 					+ Add selection
 				</button>
 			</div>
@@ -76,11 +77,12 @@ export function PianolaScopeControls({
 						<div className="flex gap-2 items-center">
 							<span className="font-medium flex-1">{scope.selection?.label ?? scope.id}</span>
 							<span className="text-xs">Worker: {state}</span>
-							<button type="button" onClick={() => start(scope)}>
+							<button type="button" disabled={saving} onClick={() => start(scope)}>
 								Edit
 							</button>
 							<button
 								type="button"
+								disabled={saving}
 								onClick={() => void supervisor.setEnabled(scope.id, !scope.enabled)}
 							>
 								{scope.enabled ? 'Pause' : 'Resume'}
@@ -135,7 +137,8 @@ export function PianolaScopeControls({
 				);
 			})}
 			{(creating || editing) && (
-				<div
+				<fieldset
+					disabled={saving}
 					className="rounded p-3 mt-2 flex flex-col gap-2"
 					style={{ backgroundColor: theme.colors.bgSidebar }}
 				>
@@ -203,16 +206,23 @@ export function PianolaScopeControls({
 								!selection.label.trim() ||
 								!(selection.agentIds.length || selection.groupIds.length)
 							}
-							onClick={() => {
-								void supervisor.saveScope({
-									...editing,
-									kind: 'watch-scope',
-									enabled: editing?.enabled ?? false,
-									managerAgentId: manager,
-									selection,
-								});
-								setCreating(false);
-								setEditing(null);
+							onClick={async () => {
+								setSaving(true);
+								try {
+									const saved = await supervisor.saveScope({
+										...editing,
+										kind: 'watch-scope',
+										enabled: editing?.enabled ?? false,
+										managerAgentId: manager,
+										selection,
+									});
+									if (saved) {
+										setCreating(false);
+										setEditing(null);
+									}
+								} finally {
+									setSaving(false);
+								}
 							}}
 						>
 							Save
@@ -227,7 +237,7 @@ export function PianolaScopeControls({
 							Cancel
 						</button>
 					</div>
-				</div>
+				</fieldset>
 			)}
 		</section>
 	);
