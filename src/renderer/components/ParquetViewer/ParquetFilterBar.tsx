@@ -137,6 +137,8 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 					return;
 				}
 				if (event.key === 'Tab' || (event.key === 'Enter' && suggestionIndex >= 0)) {
+					event.stopPropagation();
+					if (event.key === 'Enter' && isImeComposing(event)) return;
 					event.preventDefault();
 					applySuggestion(suggestions[suggestionIndex]);
 					return;

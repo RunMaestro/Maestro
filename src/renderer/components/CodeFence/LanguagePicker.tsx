@@ -7,6 +7,7 @@ import {
 	getBundledLanguageEntries,
 } from '../../utils/shiki/highlighterManager';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { isImeComposing } from '../../utils/ime';
 
 let cachedEntries: LanguageEntry[] | null = null;
 let cachedEntriesPromise: Promise<LanguageEntry[]> | null = null;
@@ -145,9 +146,12 @@ export const LanguagePicker = memo(function LanguagePicker({
 				return;
 			}
 			if (e.key === 'Enter') {
-				e.preventDefault();
-				const choice = filtered[selectedIndex];
-				if (choice) handleSelect(choice.id);
+				e.stopPropagation();
+				if (!isImeComposing(e)) {
+					e.preventDefault();
+					const choice = filtered[selectedIndex];
+					if (choice) handleSelect(choice.id);
+				}
 			}
 		},
 		[filtered, selectedIndex, handleSelect]

@@ -4,6 +4,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { isImeComposing } from '../../utils/ime';
 
 export interface AutoRunSearchBarProps {
 	theme: Theme;
@@ -54,12 +55,16 @@ export function AutoRunSearchBar({
 	// Note: Escape is now handled by the layer stack, not here
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
-				e.preventDefault();
-				onNextMatch();
-			} else if (e.key === 'Enter' && e.shiftKey) {
-				e.preventDefault();
-				onPrevMatch();
+			if (e.key === 'Enter') {
+				e.stopPropagation();
+				if (!isImeComposing(e)) {
+					e.preventDefault();
+					if (!e.shiftKey) {
+						onNextMatch();
+					} else {
+						onPrevMatch();
+					}
+				}
 			}
 		},
 		[onNextMatch, onPrevMatch]

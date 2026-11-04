@@ -320,6 +320,7 @@ export function AgentSessionsBrowser({
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (viewingSession) {
 			if (e.key === 'Enter') {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				handleResume();
 			}
@@ -332,6 +333,7 @@ export function AgentSessionsBrowser({
 			e.preventDefault();
 			setSelectedIndex((prev) => Math.max(prev - 1, 0));
 		} else if (e.key === 'Enter') {
+			if (isImeComposing(e)) return;
 			e.preventDefault();
 			const selected = filteredSessions[selectedIndex];
 			if (selected) handleViewSession(selected);

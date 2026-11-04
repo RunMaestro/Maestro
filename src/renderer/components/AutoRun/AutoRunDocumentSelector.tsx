@@ -560,10 +560,13 @@ export const AutoRunDocumentSelector = forwardRef<
 													(i) => (i - 1 + visibleFiles.length) % visibleFiles.length
 												);
 											} else if (e.key === 'Enter') {
-												const target = visibleFiles[highlightedIndex];
-												if (target) {
-													e.preventDefault();
-													handleSelectDocument(target);
+												e.stopPropagation();
+												if (!isImeComposing(e)) {
+													const target = visibleFiles[highlightedIndex];
+													if (target) {
+														e.preventDefault();
+														handleSelectDocument(target);
+													}
 												}
 											}
 										}}

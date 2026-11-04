@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { EscCloseButton } from '../../ui/EscCloseButton';
+import { isImeComposing } from '../../../utils/ime';
 
 interface OutputSearchBarProps {
 	theme: Theme;
@@ -43,12 +44,16 @@ export function OutputSearchBar({
 						value={outputSearchQuery}
 						onChange={(e) => setOutputSearchQuery(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter' && !e.shiftKey) {
-								e.preventDefault();
-								goToNextMatch();
-							} else if (e.key === 'Enter' && e.shiftKey) {
-								e.preventDefault();
-								goToPrevMatch();
+							if (e.key === 'Enter') {
+								e.stopPropagation();
+								if (!isImeComposing(e)) {
+									e.preventDefault();
+									if (!e.shiftKey) {
+										goToNextMatch();
+									} else {
+										goToPrevMatch();
+									}
+								}
 							}
 						}}
 						placeholder={

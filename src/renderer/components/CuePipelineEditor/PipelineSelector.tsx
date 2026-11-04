@@ -236,6 +236,8 @@ export function PipelineSelector({
 	const handleFilterKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
 			if (e.key !== 'Enter') return;
+			e.stopPropagation();
+			if (isImeComposing(e)) return;
 			e.preventDefault();
 			if (visiblePipelines.length > 0) handleSelect(visiblePipelines[0].id);
 			else if (visibleAgents.length > 0) handleSelectAgent(visibleAgents[0]);

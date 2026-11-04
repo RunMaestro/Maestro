@@ -137,8 +137,11 @@ export function EnvVarKeyInput({
 			event.preventDefault();
 			setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
 		} else if (event.key === 'Enter') {
-			event.preventDefault();
-			commitSuggestion(suggestions[activeIndex].key);
+			event.stopPropagation();
+			if (!isImeComposing(event)) {
+				event.preventDefault();
+				commitSuggestion(suggestions[activeIndex].key);
+			}
 		} else if (event.key === 'Tab') {
 			setOpen(false);
 		}

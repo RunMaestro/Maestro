@@ -71,10 +71,13 @@ export const CommandHistoryPopover = memo(function CommandHistoryPopover({
 							e.preventDefault();
 							setSelectedIndex(Math.max(selectedIndex - 1, 0));
 						} else if (e.key === 'Enter') {
-							e.preventDefault();
-							if (visibleHistory[selectedIndex]) {
-								setInputValue(visibleHistory[selectedIndex]);
-								closeAndFocusInput();
+							e.stopPropagation();
+							if (!isImeComposing(e)) {
+								e.preventDefault();
+								if (visibleHistory[selectedIndex]) {
+									setInputValue(visibleHistory[selectedIndex]);
+									closeAndFocusInput();
+								}
 							}
 						} else if (e.key === 'Escape' && !isImeComposing(e)) {
 							e.preventDefault();
