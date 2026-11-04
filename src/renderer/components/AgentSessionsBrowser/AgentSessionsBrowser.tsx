@@ -360,7 +360,7 @@ export function AgentSessionsBrowser({
 						onRenameChange={setRenameValue}
 						onRenameKeyDown={(e) => {
 							e.stopPropagation();
-							if (e.key === 'Enter') {
+							if (e.key === 'Enter' && !isImeComposing(e)) {
 								e.preventDefault();
 								submitRename(viewingSession.sessionId);
 							} else if (e.key === 'Escape' && !isImeComposing(e)) {

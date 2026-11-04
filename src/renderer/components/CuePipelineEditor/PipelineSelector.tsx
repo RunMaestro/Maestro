@@ -257,9 +257,13 @@ export function PipelineSelector({
 
 	const handleRenameKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			e.stopPropagation();
 			if (e.key === 'Enter') {
+				if (isImeComposing(e)) return;
+				e.preventDefault();
 				handleFinishRename();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
+				e.preventDefault();
 				setRenamingId(null);
 			}
 		},

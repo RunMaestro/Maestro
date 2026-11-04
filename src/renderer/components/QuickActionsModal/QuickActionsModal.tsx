@@ -1132,7 +1132,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// Handle rename mode separately
 		if (renamingSession) {
 			if (e.key === 'Enter') {
+				if (isImeComposing(e)) {
+					e.stopPropagation();
+					return;
+				}
 				e.preventDefault();
+				e.stopPropagation();
 				handleRenameSession();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
@@ -1146,7 +1151,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// Escape-to-close fires while the input is focused.
 		if (renamingWindow) {
 			if (e.key === 'Enter') {
+				if (isImeComposing(e)) {
+					e.stopPropagation();
+					return;
+				}
 				e.preventDefault();
+				e.stopPropagation();
 				commitRenameCurrentWindow();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
