@@ -29,6 +29,7 @@ import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
 import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -152,75 +153,83 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					claudeTokenSource?: ClaudeTokenSourceFields;
 				}
 			): Promise<string> => {
-				const processManager = requireDependency(getProcessManager, 'Process manager');
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+				// Configuration and result access can outlive nested grooming admission.
+				const release = beginGlobalWorktreeActivity();
+				try {
+					const processManager = requireDependency(getProcessManager, 'Process manager');
+					const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-				// Resolve the agent: use the utility agent if configured, otherwise the
-				// requested agent. Null/empty leaves behavior unchanged (session agent).
-				const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
-				const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
-				const effectiveAgentType = utilityAgentId || agentType;
+					// Resolve the agent: use the utility agent if configured, otherwise the
+					// requested agent. Null/empty leaves behavior unchanged (session agent).
+					const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
+					const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+					const effectiveAgentType = utilityAgentId || agentType;
 
-				// Look up agent-level config values for override resolution
-				const allConfigs = agentConfigsStore.get('configs', {});
-				const agentConfigValues = allConfigs[effectiveAgentType] || {};
+					// Look up agent-level config values for override resolution
+					const allConfigs = agentConfigsStore.get('configs', {});
+					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 
-				// The session's executable overrides describe the SESSION's agent: a
-				// pinned binary path, its CLI flags, its env. Carrying them onto a
-				// different utility agent would launch the wrong executable, or feed
-				// one agent's flags to another. The utility agent's own settings come
-				// from `agentConfigValues`, which is already keyed by the effective id.
-				//
-				// `sshRemoteConfig` is deliberately NOT dropped: it says WHERE the work
-				// runs, not WHICH binary runs it, and grooming a remote agent's context
-				// on the local machine would look at the wrong filesystem.
-				const usingUtilityAgent = !!utilityAgentId && effectiveAgentType !== agentType;
+					// The session's executable overrides describe the SESSION's agent: a
+					// pinned binary path, its CLI flags, its env. Carrying them onto a
+					// different utility agent would launch the wrong executable, or feed
+					// one agent's flags to another. The utility agent's own settings come
+					// from `agentConfigValues`, which is already keyed by the effective id.
+					//
+					// `sshRemoteConfig` is deliberately NOT dropped: it says WHERE the work
+					// runs, not WHICH binary runs it, and grooming a remote agent's context
+					// on the local machine would look at the wrong filesystem.
+					const usingUtilityAgent = !!utilityAgentId && effectiveAgentType !== agentType;
 
-				// Only summarization opts in (see `cheapTurn` above). Left undefined
-				// for grooming and transfer, which keep the agent's configured model.
-				const cheapTurn = options?.cheapTurn ? cheapTurnSettings(agentType as ToolType) : undefined;
+					// Only summarization opts in (see `cheapTurn` above). Left undefined
+					// for grooming and transfer, which keep the agent's configured model.
+					const cheapTurn = options?.cheapTurn
+						? cheapTurnSettings(agentType as ToolType)
+						: undefined;
 
-				// Use the shared groomContext utility
-				const result = await groomContext(
-					{
-						projectRoot,
-						agentType: effectiveAgentType,
-						prompt,
-						// Only apply the model override when a utility agent is actually in use.
-						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
-						// Pass SSH and custom config for remote execution support.
-						// The store lets groomContext resolve `remoteId` and actually
-						// wrap the spawn with ssh - without it grooming would run the
-						// prompt locally (issue #1416).
-						sessionSshRemoteConfig: options?.sshRemoteConfig,
-						sshStore: options?.sshRemoteConfig?.enabled
-							? createSshRemoteStoreAdapter(getSettingsStore())
-							: undefined,
-						// A utility agent runs as ITSELF, so the calling session's own
-						// binary path / args / env must not leak into its spawn.
-						sessionCustomPath: usingUtilityAgent ? undefined : options?.customPath,
-						sessionCustomArgs: usingUtilityAgent ? undefined : options?.customArgs,
-						sessionCustomEnvVars: usingUtilityAgent ? undefined : options?.customEnvVars,
-						// Undefined unless the caller asked for a cheap turn, and
-						// undefined means "inherit the agent's own value" all the way
-						// down - so grooming and transfer are untouched by this. An
-						// explicit tier is not the caller's own setting leaking, so it
-						// applies to a utility agent too.
-						sessionCustomModel: cheapTurn?.model,
-						sessionCustomEffort: cheapTurn?.effort,
-						// The token source belongs to the session's agent, like its path
-						// and env above, so a utility agent runs on its own default.
-						claudeTokenSource: usingUtilityAgent ? undefined : options?.claudeTokenSource,
-						agentConfigValues,
-						readOnlyMode: options?.readOnly,
-						disableTools: options?.disableTools,
-						timeoutMs: options?.timeoutMs,
-					},
-					processManager,
-					agentDetector
-				);
+					// Use the shared groomContext utility
+					const result = await groomContext(
+						{
+							projectRoot,
+							agentType: effectiveAgentType,
+							prompt,
+							// Only apply the model override when a utility agent is actually in use.
+							modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
+							// Pass SSH and custom config for remote execution support.
+							// The store lets groomContext resolve `remoteId` and actually
+							// wrap the spawn with ssh - without it grooming would run the
+							// prompt locally (issue #1416).
+							sessionSshRemoteConfig: options?.sshRemoteConfig,
+							sshStore: options?.sshRemoteConfig?.enabled
+								? createSshRemoteStoreAdapter(getSettingsStore())
+								: undefined,
+							// A utility agent runs as ITSELF, so the calling session's own
+							// binary path / args / env must not leak into its spawn.
+							sessionCustomPath: usingUtilityAgent ? undefined : options?.customPath,
+							sessionCustomArgs: usingUtilityAgent ? undefined : options?.customArgs,
+							sessionCustomEnvVars: usingUtilityAgent ? undefined : options?.customEnvVars,
+							// Undefined unless the caller asked for a cheap turn, and
+							// undefined means "inherit the agent's own value" all the way
+							// down - so grooming and transfer are untouched by this. An
+							// explicit tier is not the caller's own setting leaking, so it
+							// applies to a utility agent too.
+							sessionCustomModel: cheapTurn?.model,
+							sessionCustomEffort: cheapTurn?.effort,
+							// The token source belongs to the session's agent, like its path
+							// and env above, so a utility agent runs on its own default.
+							claudeTokenSource: usingUtilityAgent ? undefined : options?.claudeTokenSource,
+							agentConfigValues,
+							readOnlyMode: options?.readOnly,
+							disableTools: options?.disableTools,
+							timeoutMs: options?.timeoutMs,
+						},
+						processManager,
+						agentDetector
+					);
 
-				return result.response;
+					return result.response;
+				} finally {
+					release();
+				}
 			}
 		)
 	);
@@ -229,8 +238,13 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 	ipcMain.handle(
 		'context:cancelGrooming',
 		withIpcErrorLogging(handlerOpts('cancelGrooming'), async (): Promise<void> => {
-			logger.info('Cancelling all grooming sessions via IPC', LOG_CONTEXT);
-			cancelAllGroomingSessions();
+			const release = beginGlobalWorktreeActivity();
+			try {
+				logger.info('Cancelling all grooming sessions via IPC', LOG_CONTEXT);
+				cancelAllGroomingSessions();
+			} finally {
+				release();
+			}
 		})
 	);
 }

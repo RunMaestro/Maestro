@@ -176,6 +176,40 @@ describe('context grooming request activity', () => {
 		children[0].emit('close');
 		await reserve();
 	});
+	it.each([target, path.join(target, 'descendant'), path.resolve('other-repository')])(
+		'refuses standalone cancellation before logging or session access under %s',
+		async (root) => {
+			await reserve(root);
+			expect(() => grooming.cancelAllGroomingSessions()).toThrow(/reserved/);
+			expect(logger.info).not.toHaveBeenCalled();
+			expect(manager.kill).not.toHaveBeenCalled();
+		}
+	);
+	it.each([false, true])(
+		'holds standalone cancellation diagnostics until return or throw (fail=%s)',
+		async (fail) => {
+			let active = 0;
+			const admit = gate.beginGlobalWorktreeActivity;
+			vi.spyOn(gate, 'beginGlobalWorktreeActivity').mockImplementation(() => {
+				const release = admit();
+				active++;
+				return () => {
+					active--;
+					release();
+				};
+			});
+			let during: number | undefined;
+			vi.mocked(logger.info).mockImplementationOnce(() => {
+				during = active;
+				if (fail) throw new Error('cancel diagnostics');
+			});
+			if (fail) expect(() => grooming.cancelAllGroomingSessions()).toThrow('cancel diagnostics');
+			else expect(grooming.cancelAllGroomingSessions()).toBeUndefined();
+			expect(during).toBe(1);
+			expect(active).toBe(0);
+			await reserve();
+		}
+	);
 	it('holds detection and collection even when native close precedes the result', async () => {
 		const detection = Promise.withResolvers<AgentConfig>();
 		detector.getAgent.mockReturnValueOnce(detection.promise);

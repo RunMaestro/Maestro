@@ -116,15 +116,20 @@ const activeGroomingSessions = new Map<
  * Called when user cancels a summarization operation.
  */
 export function cancelAllGroomingSessions(): void {
-	logger.info('Cancelling all grooming sessions', LOG_CONTEXT, {
-		count: activeGroomingSessions.size,
-	});
+	const release = beginGlobalWorktreeActivity();
+	try {
+		logger.info('Cancelling all grooming sessions', LOG_CONTEXT, {
+			count: activeGroomingSessions.size,
+		});
 
-	for (const [sessionId, session] of activeGroomingSessions) {
-		if (session.cancel) {
-			logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
-			session.cancel();
+		for (const [sessionId, session] of activeGroomingSessions) {
+			if (session.cancel) {
+				logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
+				session.cancel();
+			}
 		}
+	} finally {
+		release();
 	}
 }
 
