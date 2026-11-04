@@ -4,10 +4,10 @@
  * transactional rollback, quarantine, DAG and historical state preservation.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'node:os';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import * as yaml from 'js-yaml';
 import { BOARD_CONFIG_PATH } from '../../../shared/maestro-paths';
 import {
@@ -26,7 +26,7 @@ import {
 	BoardStorageError,
 } from '../../../main/board/board-storage';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
-import { openBoardDb } from '../../../main/board/board-db';
+import { BOARD_SCHEMA_VERSION, openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import { BoardStorageFacade, configureBoardStorage } from '../../../main/board/board-storage';
 import { BoardWorkspaceStorageError } from '../../../main/board/board-workspace-storage';
@@ -43,19 +43,25 @@ vi.mock('../../../main/utils/logger', () => ({
 let projectRoot: string;
 let db: ReturnType<typeof openBoardDb>;
 let facade: BoardStorageFacade;
+const fixture = createBoardIsolationFixture();
+
+beforeAll(() => fixture.install());
+afterAll(async () => fixture.cleanup());
 
 beforeEach(() => {
-	projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-storage-test-'));
-	db = openBoardDb(path.join(projectRoot, 'board.sqlite'));
+	projectRoot = fixture.sources.one;
+	db = openBoardDb(fixture.contract.db);
 	facade = new BoardStorageFacade(db);
 	configureBoardStorage(facade);
 });
 
 afterEach(() => {
-	configureBoardStorage(null);
 	db.close();
 	vi.restoreAllMocks();
-	fs.rmSync(projectRoot, { recursive: true, force: true });
+	for (const name of fs.readdirSync(projectRoot))
+		fs.rmSync(path.join(projectRoot, name), { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(fixture.contract.db + suffix, { force: true });
 });
 
 function card(overrides: Partial<BoardCard> & { id: string }): BoardCard {
@@ -101,9 +107,8 @@ function seedBoards(root: string, boards: Board[]): void {
 }
 
 function reopen(): void {
-	configureBoardStorage(null);
 	db.close();
-	db = openBoardDb(path.join(projectRoot, 'board.sqlite'));
+	db = openBoardDb(fixture.contract.db);
 	facade = new BoardStorageFacade(db);
 	configureBoardStorage(facade);
 }
@@ -174,10 +179,10 @@ describe('central bootstrap and revision boundaries', () => {
 		const ledger = db.prepare('SELECT * FROM migrations').all();
 		const runs = db.prepare('SELECT * FROM runs').all();
 		db.exec(
-			'DROP TABLE board_source_locations; DROP TABLE board_sources; ALTER TABLE runs DROP COLUMN lifecycle_json; PRAGMA user_version = 3'
+			'DROP TABLE board_source_suppressions; DROP TABLE board_source_locations; DROP TABLE board_sources; ALTER TABLE runs DROP COLUMN lifecycle_json; PRAGMA user_version = 3'
 		);
 		reopen();
-		expect(db.pragma('user_version', { simple: true })).toBe(6);
+		expect(db.pragma('user_version', { simple: true })).toBe(BOARD_SCHEMA_VERSION);
 		expect(loadBoards(projectRoot)).toEqual(before);
 		expect(db.prepare('SELECT * FROM migrations').all()).toEqual(ledger);
 		expect(db.prepare('SELECT * FROM runs').all()).toEqual(runs);
@@ -885,7 +890,7 @@ describe('deleteCard referential integrity', () => {
 
 describe('central storage fixture', () => {
 	it('shares revisioned CRUD across sources without changing YAML or referenced runs', () => {
-		const dbPath = path.join(projectRoot, 'board.sqlite');
+		const dbPath = fixture.contract.db;
 		let db = openBoardDb(dbPath);
 		const inputs = ['a', 'b'].map((name) => {
 			const project = path.join(projectRoot, name);
@@ -938,14 +943,13 @@ describe('central storage fixture', () => {
 			expect(db.prepare('SELECT * FROM runs ORDER BY run_id').all()).toEqual(runs);
 			expect(db.pragma('foreign_key_check')).toEqual([]);
 			for (const item of inputs) expect(fs.readFileSync(item.file)).toEqual(item.bytes);
-			configureBoardStorage(null);
 			db.close();
 			db = openBoardDb(dbPath);
 			configureBoardStorage(new BoardStorageFacade(db));
 			expect(getBoard(a.project, 'board')!.cards[0].title).toBe('Updated');
 			expect(applyBoardMigration(db, a.plan).status).toBe('already-imported');
 		} finally {
-			configureBoardStorage(null);
+			configureBoardStorage(facade);
 			db.close();
 		}
 	});

@@ -29,7 +29,7 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import WebSocket from 'ws';
-import { build } from 'esbuild';
+import { context, type BuildContext } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { execFile } from 'node:child_process';
@@ -62,6 +62,7 @@ vi.mock('../../../main/utils/logger', () => ({
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 let cliBuildDir: string;
+let cliBuild: BuildContext | undefined;
 let proof: FixtureBridgeAdmission;
 const isolationFixture = createBoardIsolationFixture();
 beforeAll(async () => {
@@ -74,6 +75,7 @@ beforeAll(async () => {
 	cliBuildDir = fs.mkdtempSync(path.join(isolation.root, 'board-cli-build-'));
 });
 afterAll(async () => {
+	await cliBuild?.dispose();
 	if (cliBuildDir) fs.rmSync(cliBuildDir, { recursive: true, force: true });
 	await isolationFixture.cleanup();
 });
@@ -261,7 +263,7 @@ beforeEach(async () => {
 		ownerPid: process.pid,
 	};
 	const fixture = path.resolve('src/__tests__/main/board/fixtures/board-fixture-bridge.ts');
-	await build({
+	cliBuild ??= await context({
 		entryPoints: ['src/cli/index.ts'],
 		outfile: path.join(cliBuildDir, 'cli.cjs'),
 		bundle: true,
@@ -288,6 +290,7 @@ beforeEach(async () => {
 			},
 		],
 	});
+	await cliBuild.rebuild();
 	connection = new BridgeConnection({ fixture: proof, strictReplies: true });
 	await connection.connect();
 });
