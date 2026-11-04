@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import { execFileNoThrow } from '../../../utils/execFile';
+import { beginWorktreeGitActivity } from '../../../git/worktreeActivity';
 import { logger } from '../../../utils/logger';
 import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
@@ -234,10 +235,12 @@ export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 				// already creating the child session directly. Keep the mark only when
 				// setup returns a usable worktree; otherwise an external retry during the
 				// TTL must still be discoverable.
-				const requestedMarks = await markWorktreeCreationAliases(resolvedWorktree);
+				const release = await beginWorktreeGitActivity();
+				const requestedMarks: string[] = [];
 				const retainedMarks = new Set<string>();
 				let keepRequestedMark = false;
 				try {
+					requestedMarks.push(...(await markWorktreeCreationAliases(resolvedWorktree)));
 					// Check if worktree path is inside the main repo (nested worktree)
 					// This can cause issues because git and Claude Code search upward for .git
 					// and may resolve to the parent repo instead of the worktree
@@ -404,12 +407,16 @@ export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 						branchMismatch: false,
 					};
 				} finally {
-					if (!keepRequestedMark) {
-						for (const markedPath of requestedMarks) {
-							if (!retainedMarks.has(normalizeWorktreePath(markedPath))) {
-								clearWorktreeCreatedByMaestro(markedPath);
+					try {
+						if (!keepRequestedMark) {
+							for (const markedPath of requestedMarks) {
+								if (!retainedMarks.has(normalizeWorktreePath(markedPath))) {
+									clearWorktreeCreatedByMaestro(markedPath);
+								}
 							}
 						}
+					} finally {
+						release();
 					}
 				}
 			}
@@ -459,90 +466,100 @@ export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 				sshRemoteId?: string
 			) => {
 				const guardRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				const blocker = await branchSwitchBlocker(
-					deps,
-					worktreePath,
-					guardRemote,
-					guardRemote ? worktreePath : undefined
-				);
-				if (blocker) return { success: false, hasUncommittedChanges: false, error: blocker };
-
-				// SSH remote: dispatch to remote git operations
-				if (sshRemoteId) {
-					const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
-					}
-					logger.debug(
-						`${LOG_CONTEXT} worktreeCheckout via SSH: ${JSON.stringify({ worktreePath, branchName, createIfMissing })}`,
-						LOG_CONTEXT
-					);
-					const result = await worktreeCheckoutRemote(
+				if (sshRemoteId && !guardRemote) throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				const release = sshRemoteId ? undefined : await beginWorktreeGitActivity();
+				try {
+					const blocker = await branchSwitchBlocker(
+						deps,
 						worktreePath,
-						branchName,
-						createIfMissing,
-						sshConfig
+						guardRemote,
+						guardRemote ? worktreePath : undefined
 					);
-					if (!result.success) {
-						throw new Error(result.error || 'Remote worktreeCheckout failed');
+					if (blocker) return { success: false, hasUncommittedChanges: false, error: blocker };
+
+					// SSH remote: dispatch to remote git operations
+					if (sshRemoteId) {
+						const sshConfig = guardRemote;
+						if (!sshConfig) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						}
+						logger.debug(
+							`${LOG_CONTEXT} worktreeCheckout via SSH: ${JSON.stringify({ worktreePath, branchName, createIfMissing })}`,
+							LOG_CONTEXT
+						);
+						const result = await worktreeCheckoutRemote(
+							worktreePath,
+							branchName,
+							createIfMissing,
+							sshConfig
+						);
+						if (!result.success) {
+							throw new Error(result.error || 'Remote worktreeCheckout failed');
+						}
+						return result.data;
 					}
-					return result.data;
-				}
 
-				// Local execution (existing code)
-				// Check for uncommitted changes
-				const statusResult = await execFileNoThrow('git', ['status', '--porcelain'], worktreePath);
-				if (statusResult.exitCode !== 0) {
-					return {
-						success: false,
-						hasUncommittedChanges: false,
-						error: 'Failed to check git status',
-					};
-				}
-
-				const uncommittedChanges = statusResult.stdout.trim().length > 0;
-				if (uncommittedChanges) {
-					return {
-						success: false,
-						hasUncommittedChanges: true,
-						error: 'Worktree has uncommitted changes. Please commit or stash them first.',
-					};
-				}
-
-				// Check if branch exists
-				const branchExistsResult = await execFileNoThrow(
-					'git',
-					['rev-parse', '--verify', branchName],
-					worktreePath
-				);
-				const branchExists = branchExistsResult.exitCode === 0;
-
-				let checkoutResult;
-				if (branchExists) {
-					checkoutResult = await execFileNoThrow('git', ['checkout', branchName], worktreePath);
-				} else if (createIfMissing) {
-					checkoutResult = await execFileNoThrow(
+					// Local execution (existing code)
+					// Check for uncommitted changes
+					const statusResult = await execFileNoThrow(
 						'git',
-						['checkout', '-b', branchName],
+						['status', '--porcelain'],
 						worktreePath
 					);
-				} else {
-					return {
-						success: false,
-						hasUncommittedChanges: false,
-						error: `Branch '${branchName}' does not exist`,
-					};
-				}
+					if (statusResult.exitCode !== 0) {
+						return {
+							success: false,
+							hasUncommittedChanges: false,
+							error: 'Failed to check git status',
+						};
+					}
 
-				if (checkoutResult.exitCode !== 0) {
-					return {
-						success: false,
-						hasUncommittedChanges: false,
-						error: checkoutResult.stderr || 'Checkout failed',
-					};
-				}
+					const uncommittedChanges = statusResult.stdout.trim().length > 0;
+					if (uncommittedChanges) {
+						return {
+							success: false,
+							hasUncommittedChanges: true,
+							error: 'Worktree has uncommitted changes. Please commit or stash them first.',
+						};
+					}
 
-				return { success: true, hasUncommittedChanges: false };
+					// Check if branch exists
+					const branchExistsResult = await execFileNoThrow(
+						'git',
+						['rev-parse', '--verify', branchName],
+						worktreePath
+					);
+					const branchExists = branchExistsResult.exitCode === 0;
+
+					let checkoutResult;
+					if (branchExists) {
+						checkoutResult = await execFileNoThrow('git', ['checkout', branchName], worktreePath);
+					} else if (createIfMissing) {
+						checkoutResult = await execFileNoThrow(
+							'git',
+							['checkout', '-b', branchName],
+							worktreePath
+						);
+					} else {
+						return {
+							success: false,
+							hasUncommittedChanges: false,
+							error: `Branch '${branchName}' does not exist`,
+						};
+					}
+
+					if (checkoutResult.exitCode !== 0) {
+						return {
+							success: false,
+							hasUncommittedChanges: false,
+							error: checkoutResult.stderr || 'Checkout failed',
+						};
+					}
+
+					return { success: true, hasUncommittedChanges: false };
+				} finally {
+					release?.();
+				}
 			}
 		)
 	);
@@ -699,6 +716,7 @@ export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('removeWorktree'),
 			async (worktreePath: string, force: boolean = false) => {
+				const release = await beginWorktreeGitActivity();
 				try {
 					// First check if the directory exists
 					await fs.access(worktreePath);
@@ -741,6 +759,8 @@ export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 					const errorMessage = err instanceof Error ? err.message : String(err);
 					logger.error(`${LOG_CONTEXT} Failed to remove worktree ${worktreePath}: ${errorMessage}`);
 					return { success: false, error: errorMessage };
+				} finally {
+					release();
 				}
 			}
 		)

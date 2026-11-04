@@ -16,6 +16,7 @@ import {
 } from '../../../../main/ipc/handlers/git/worktreeCreationMarks';
 import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
+import fs from 'fs/promises';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { reserveWorktreeCleanup } from '../../../../main/git/worktreeActivity';
 
@@ -75,6 +76,7 @@ vi.mock('fs/promises', () => ({
 		access: vi.fn(),
 		readdir: vi.fn(),
 		rmdir: vi.fn(),
+		rm: vi.fn(),
 		// stat: resolves by default so every scanned subdirectory looks like it
 		// carries a `.git` entry and the git-based classification below runs.
 		// Tests for the precheck itself reject for specific paths.
@@ -115,6 +117,8 @@ vi.mock('../../../../shared/maestro-lib/launch/getShellPath', () => ({
 // Mock remote-git
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
+	worktreeSetupRemote: vi.fn(),
+	worktreeCheckoutRemote: vi.fn(),
 	execGit: vi.fn(),
 	execGitReadOnly: vi.fn(),
 	isGitTimeout: (result: { exitCode: number | string }) => result.exitCode === 'ETIMEDOUT',
@@ -175,6 +179,10 @@ vi.mock('child_process', () => {
 	// Also expose as default for modules that import via CJS interop
 	return { ...mock, default: mock };
 });
+
+vi.mock('../../../../main/agent-run/worktree-stale', () => ({
+	markStaleForDeletedWorktreeUsingStore: vi.fn(),
+}));
 
 vi.mock('../../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -2685,6 +2693,241 @@ export function Component() {
 				success: false,
 				error: 'Error: Not a git repository',
 			});
+		});
+	});
+
+	describe('worktree lifecycle activity exclusion', () => {
+		const main = path.resolve('activity-main');
+		const target = path.resolve('activity-target');
+		const cleanup = path.resolve('activity-unrelated-checkout');
+		const success = { stdout: '', stderr: '', exitCode: 0 };
+		const operations = [
+			['git:worktreeSetup', [main, target, 'topic']],
+			['git:worktreeCheckout', [target, 'topic', false]],
+			['git:removeWorktree', [target]],
+		] as const;
+
+		beforeEach(() => {
+			vi.mocked(execFile.execFileNoThrow).mockReset().mockResolvedValue(success);
+			vi.mocked(fs.access).mockReset().mockResolvedValue(undefined);
+			vi.mocked(fs.realpath)
+				.mockReset()
+				.mockImplementation(async (p) => String(p).replace(/\\/g, '/'));
+		});
+
+		it.each(operations)(
+			'%s blocks cleanup during pending setup and every Git command',
+			async (channel, args) => {
+				let finishSetup!: () => void;
+				const pending = new Promise<void>((resolve, reject) => {
+					finishSetup =
+						channel === 'git:worktreeSetup' ? () => reject(new Error('ENOENT')) : resolve;
+				});
+				if (channel === 'git:worktreeCheckout') {
+					mockBranchSwitchBlocker.mockImplementationOnce(async () => {
+						await pending;
+						return null;
+					});
+				} else {
+					vi.mocked(fs.access).mockImplementationOnce(() => pending);
+				}
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async () => {
+					expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+					return success;
+				});
+				const run = handlers.get(channel)!({}, ...args);
+				try {
+					expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+					expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				} finally {
+					finishSetup();
+				}
+				await expect(run).resolves.toMatchObject({ success: true });
+				expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(
+					channel === 'git:worktreeSetup' ? 2 : channel === 'git:worktreeCheckout' ? 3 : 1
+				);
+				const hold = await reserveWorktreeCleanup(cleanup);
+				expect(hold.status).toBe('reserved-partially');
+				if (hold.status === 'reserved-partially') hold.release();
+			}
+		);
+
+		it.each(operations)(
+			'%s refuses new operations before setup under a reservation',
+			async (channel, args) => {
+				const hold = await reserveWorktreeCleanup(cleanup);
+				expect(hold.status).toBe('reserved-partially');
+				vi.mocked(fs.realpath).mockClear();
+				try {
+					await expect(handlers.get(channel)!({}, ...args)).rejects.toThrow('reserved');
+					expect(fs.access).not.toHaveBeenCalled();
+					expect(fs.realpath).not.toHaveBeenCalled();
+					expect(fs.rm).not.toHaveBeenCalled();
+					expect(mockBranchSwitchBlocker).not.toHaveBeenCalled();
+					expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
+			}
+		);
+
+		it.each(operations)(
+			'%s retains activity until the child result settles',
+			async (channel, args) => {
+				let finish!: (result: typeof success) => void;
+				vi.mocked(execFile.execFileNoThrow).mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							finish = resolve;
+						})
+				);
+				if (channel === 'git:worktreeSetup')
+					vi.mocked(fs.access).mockRejectedValueOnce(new Error('ENOENT'));
+				const run = handlers.get(channel)!({}, ...args);
+				await vi.waitFor(() => expect(execFile.execFileNoThrow).toHaveBeenCalledOnce());
+				try {
+					expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+				} finally {
+					finish(success);
+				}
+				await expect(run).resolves.toMatchObject({ success: true });
+				const hold = await reserveWorktreeCleanup(cleanup);
+				expect(hold.status).toBe('reserved-partially');
+				if (hold.status === 'reserved-partially') hold.release();
+			}
+		);
+
+		it.each(operations)('%s releases activity when a command throws', async (channel, args) => {
+			vi.mocked(execFile.execFileNoThrow).mockRejectedValueOnce(new Error('spawn failed'));
+			if (channel === 'git:worktreeSetup')
+				vi.mocked(fs.access).mockRejectedValueOnce(new Error('ENOENT'));
+			const run = handlers.get(channel)!({}, ...args);
+			if (channel === 'git:removeWorktree') {
+				await expect(run).resolves.toMatchObject({ success: false, error: 'spawn failed' });
+			} else {
+				await expect(run).rejects.toThrow('spawn failed');
+			}
+			const hold = await reserveWorktreeCleanup(cleanup);
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status === 'reserved-partially') hold.release();
+		});
+
+		it('retains setup activity through already-used branch recovery and alias marking', async () => {
+			vi.mocked(fs.access).mockRejectedValueOnce(new Error('ENOENT'));
+			const existing = path.resolve('activity-existing');
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce(success)
+				.mockResolvedValueOnce({
+					...success,
+					exitCode: 128,
+					stderr: `fatal: 'topic' is already used by worktree at '${existing}'`,
+				})
+				.mockImplementationOnce(async () => {
+					expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+					return { ...success, stdout: `worktree ${existing}\nbranch refs/heads/topic\n` };
+				});
+			const aliasInspections: string[] = [];
+			vi.mocked(fs.realpath).mockImplementation(async (p) => {
+				if (String(p) === cleanup) return cleanup;
+				const hold = await reserveWorktreeCleanup(cleanup);
+				aliasInspections.push(hold.status);
+				if (hold.status === 'reserved-partially') hold.release();
+				return String(p);
+			});
+			await expect(
+				handlers.get('git:worktreeSetup')!({}, main, target, 'topic')
+			).resolves.toMatchObject({
+				success: true,
+				alreadyExisted: true,
+				existingPath: existing,
+			});
+			expect(aliasInspections).toEqual(['blocked', 'blocked']);
+			const hold = await reserveWorktreeCleanup(cleanup);
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status === 'reserved-partially') hold.release();
+			vi.mocked(fs.realpath).mockImplementation(async (p) => String(p).replace(/\\/g, '/'));
+		});
+
+		it('retains activity throughout the legacy manual removal fallback', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({ ...success, exitCode: 1 });
+			vi.mocked(fs.rm).mockImplementationOnce(async () => {
+				expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+				throw new Error('mock removal failed');
+			});
+			await expect(handlers.get('git:removeWorktree')!({}, target)).resolves.toMatchObject({
+				success: false,
+				error: 'mock removal failed',
+			});
+			const hold = await reserveWorktreeCleanup(cleanup);
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status === 'reserved-partially') hold.release();
+		});
+
+		it('releases activity on early branch guard and setup failures', async () => {
+			mockBranchSwitchBlocker.mockResolvedValueOnce('busy');
+			await expect(
+				handlers.get('git:worktreeCheckout')!({}, target, 'topic', false)
+			).resolves.toMatchObject({ success: false });
+			vi.mocked(fs.access).mockRejectedValueOnce(new Error('ENOENT'));
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				...success,
+				exitCode: 1,
+				stderr: 'failed',
+			});
+			await expect(
+				handlers.get('git:worktreeSetup')!({}, main, target, 'topic')
+			).resolves.toMatchObject({ success: false });
+			const hold = await reserveWorktreeCleanup(cleanup);
+			expect(hold.status).toBe('reserved-partially');
+			if (hold.status === 'reserved-partially') hold.release();
+		});
+
+		it.each(['git:worktreeSetup', 'git:worktreeCheckout'])(
+			'%s routes SSH without local admission or probes',
+			async (channel) => {
+				const remote = await import('../../../../main/utils/remote-git');
+				mockSettingsStore.get.mockReturnValue([{ id: 'remote' }]);
+				vi.mocked(remote.worktreeSetupRemote).mockResolvedValue({
+					success: true,
+					data: {
+						success: true,
+						created: true,
+						currentBranch: 'topic',
+						requestedBranch: 'topic',
+						branchMismatch: false,
+					},
+				});
+				vi.mocked(remote.worktreeCheckoutRemote).mockResolvedValue({
+					success: true,
+					data: { success: true, hasUncommittedChanges: false },
+				});
+				const hold = await reserveWorktreeCleanup(cleanup);
+				expect(hold.status).toBe('reserved-partially');
+				vi.mocked(fs.realpath).mockClear();
+				try {
+					const args =
+						channel === 'git:worktreeSetup'
+							? [main, target, 'topic', 'remote']
+							: [target, 'topic', false, 'remote'];
+					await expect(handlers.get(channel)!({}, ...args)).resolves.toMatchObject({
+						success: true,
+					});
+					expect(fs.realpath).not.toHaveBeenCalled();
+					expect(fs.access).not.toHaveBeenCalled();
+					expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
+			}
+		);
+
+		it('rejects an unresolved SSH checkout before the branch guard or local probes', async () => {
+			await expect(
+				handlers.get('git:worktreeCheckout')!({}, target, 'topic', false, 'missing')
+			).rejects.toThrow('SSH remote not found');
+			expect(mockBranchSwitchBlocker).not.toHaveBeenCalled();
+			expect(fs.realpath).not.toHaveBeenCalled();
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 
