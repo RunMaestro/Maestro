@@ -18,6 +18,7 @@ import { killProcessTreeNow, sweepStragglers } from '../utils/commandKill';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { getDefaultShell } from '../../stores/defaults';
+import { beginWorktreeActivity } from '../../git/worktreeActivity';
 
 /**
  * Exit code reported when a command had to be SIGKILLed and never told us how it
@@ -66,14 +67,47 @@ export class LocalCommandRunner {
 	/**
 	 * Run a single command and capture stdout/stderr cleanly
 	 */
-	run(
+	async run(
 		sessionId: string,
 		command: string,
 		cwd: string,
 		shell?: string,
 		shellEnvVars?: Record<string, string>
 	): Promise<CommandResult> {
-		return new Promise((resolve) => {
+		// Commands and shell rc files may touch any repository or launch children
+		// outside cwd. Register globally before yielding, without probing cwd.
+		const admission = beginWorktreeActivity([]);
+		let cancelled = false;
+		const cancelPending = () => {
+			cancelled = true;
+		};
+		this.running.set(sessionId, cancelPending);
+		try {
+			const release = await admission;
+			if (cancelled) {
+				try {
+					this.emitter.emit('command-exit', sessionId, SIGKILL_EXIT_CODE);
+					return { exitCode: SIGKILL_EXIT_CODE };
+				} finally {
+					release();
+				}
+			}
+			return this.runAdmitted(sessionId, command, cwd, release, shell, shellEnvVars);
+		} finally {
+			if (this.running.get(sessionId) === cancelPending) this.running.delete(sessionId);
+		}
+	}
+
+	private runAdmitted(
+		sessionId: string,
+		command: string,
+		cwd: string,
+		release: () => void,
+		shell?: string,
+		shellEnvVars?: Record<string, string>
+	): Promise<CommandResult> {
+		let spawned = false;
+		const result = new Promise<CommandResult>((resolve) => {
 			const shellToUse = shell || getDefaultShell();
 
 			logger.debug('[ProcessManager] runCommand()', 'ProcessManager', {
@@ -156,6 +190,7 @@ export class LocalCommandRunner {
 						cwd,
 						env: env as Record<string, string>,
 					});
+					spawned = true;
 				} catch (error) {
 					if (!this.isRecoverablePtySpawnError(error)) {
 						captureException(error, {
@@ -194,6 +229,21 @@ export class LocalCommandRunner {
 					this.emitter.emit('command-exit', sessionId, exitCode);
 					resolve({ exitCode });
 				};
+
+				// Stop settles the UI immediately; only an observed native exit releases
+				// activity. Missing exit remains blocked. Detached descendants and the
+				// background sweep are still unsupported cleanup coverage.
+				ptyProcess.onExit(({ exitCode }) => {
+					try {
+						logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
+							sessionId,
+							exitCode,
+						});
+						settle(exitCode);
+					} finally {
+						release();
+					}
+				});
 
 				this.running.set(sessionId, () => {
 					// SIGKILL the whole tree, synchronously, right now. No SIGTERM grace
@@ -235,14 +285,6 @@ export class LocalCommandRunner {
 					}
 				});
 
-				ptyProcess.onExit(({ exitCode }) => {
-					logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
-						sessionId,
-						exitCode,
-					});
-					settle(exitCode);
-				});
-
 				return;
 			}
 
@@ -261,6 +303,11 @@ export class LocalCommandRunner {
 				env,
 				shell: shellPath,
 			});
+
+			spawned = true;
+			// exit/error/Stop can settle the UI before stdio closes. Never infer
+			// child termination from .killed or release after an unobserved close.
+			childProcess.once('close', release);
 
 			// Windows path. Same contract as the PTY branch above: kill the whole
 			// tree at once (`taskkill /t /f`, since child.kill() takes only the
@@ -352,6 +399,11 @@ export class LocalCommandRunner {
 				this.emitter.emit('stderr', sessionId, `Error: ${error.message}`);
 				settleChild(1);
 			});
+		});
+		return result.finally(() => {
+			// Setup/spawn failure created no child. Once spawned, only its native
+			// completion event may release, even if listener setup or reporting fails.
+			if (!spawned) release();
 		});
 	}
 }
