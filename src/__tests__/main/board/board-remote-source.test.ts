@@ -1,8 +1,7 @@
 import { executeBoardCommand } from '../../../main/board/board-command-host';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { findPortableShell } from '../../helpers/portableShell';
 import { openBoardDb } from '../../../main/board/board-db';
@@ -29,16 +28,20 @@ import type { SshRemoteConfig } from '../../../shared/types';
 import { readBinaryFileRemoteAsBase64 } from '../../../main/utils/remote-fs';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { execGitReadOnly } from '../../../main/utils/remote-git';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
 vi.mock('node:fs', { spy: true });
 
+const isolation = createBoardIsolationFixture();
 let dir = '';
+beforeAll(() => isolation.install());
+afterAll(async () => isolation.cleanup());
 afterEach(() => {
 	vi.restoreAllMocks();
 	configureBoardCaptureHost(() => ({ agents: [], groups: [] }));
-	configureBoardSourceHost(() => []);
-	configureBoardStorage(null);
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(isolation.contract.db + suffix, { force: true });
 });
 const config: SshRemoteConfig = {
 	id: 'one',
@@ -67,8 +70,8 @@ function transport(root: string): BoardRemoteTransport {
 	};
 }
 function fixture() {
-	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-recovery-09-remote-fixture-'));
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'remote-fixture-'));
+	const db = openBoardDb(isolation.contract.db);
 	return { db, storage: new BoardStorageFacade(db) };
 }
 
