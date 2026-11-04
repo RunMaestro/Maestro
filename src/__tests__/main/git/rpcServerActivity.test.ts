@@ -11,6 +11,8 @@ import type {
 import type { DataBufferManager } from '../../../main/process-manager/handlers/DataBufferManager';
 import type { NdJsonConnection } from '../../../shared/maestro-lib/harness/rpc/connection';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Event } from '@opencode-ai/sdk';
+import type { OpencodeCurrentPermissionRequest } from '../../../main/opencode-server/permission-requests';
 
 const probes = vi.hoisted(() => ({
 	request: vi.fn(),
@@ -26,7 +28,9 @@ const probes = vi.hoisted(() => ({
 	stderr: vi.fn(),
 	opencodeSdk: vi.fn(),
 	opencodeClient: vi.fn(),
+	http: vi.fn(),
 }));
+vi.mock('../../../main/utils/fetchWithTimeout', () => ({ fetchWithTimeout: probes.http }));
 vi.mock('../../../main/opencode-server/sdk-loader', () => ({
 	loadOpencodeSdk: probes.opencodeSdk,
 }));
@@ -2275,6 +2279,369 @@ describe('shared OpenCode server activity', () => {
 		manager.shutdown();
 		await blocked();
 		await close();
+		(await reserve()).release();
+	});
+});
+
+describe('OpenCode per-turn activity', () => {
+	let oc: import('../../../main/process-manager/spawners/OpencodeServerSpawner').OpencodeServerSpawner;
+	let manager: typeof import('../../../main/opencode-server/OpencodeServerManager').opencodeServerManager;
+	let client: ReturnType<typeof makeClient>;
+	let ending: ReturnType<typeof Promise.withResolvers<void>>;
+	let events: Array<
+		Event | { type: 'permission.asked'; properties: OpencodeCurrentPermissionRequest }
+	>;
+	const idle: Event = { type: 'session.idle', properties: { sessionID: 'oc-turn' } };
+	function stream() {
+		return (async function* () {
+			for (const event of events) yield event;
+			await ending.promise;
+		})();
+	}
+	function makeClient() {
+		return {
+			session: {
+				create: vi.fn().mockResolvedValue({ data: { id: 'oc-turn' } }),
+				promptAsync: vi.fn().mockResolvedValue({}),
+				abort: vi.fn().mockResolvedValue({}),
+			},
+			event: { subscribe: vi.fn().mockImplementation(async () => ({ stream: stream() })) },
+			postSessionIdPermissionsPermissionId: vi.fn().mockResolvedValue({ data: true }),
+		};
+	}
+	beforeEach(async () => {
+		ending = Promise.withResolvers<void>();
+		events = [];
+		client = makeClient();
+		Object.assign(native, { kill: vi.fn() });
+		Object.assign(native.stdout, { resume: vi.fn() });
+		Object.assign(native.stderr, { resume: vi.fn() });
+		probes.opencodeSdk.mockResolvedValue({ createOpencodeClient: probes.opencodeClient });
+		probes.opencodeClient.mockReturnValue(client);
+		probes.http.mockResolvedValue({ ok: true });
+		({ opencodeServerManager: manager } =
+			await import('../../../main/opencode-server/OpencodeServerManager'));
+		const { OpencodeServerSpawner } =
+			await import('../../../main/process-manager/spawners/OpencodeServerSpawner');
+		oc = new OpencodeServerSpawner(
+			processes,
+			new EventEmitter(),
+			{} as DataBufferManager,
+			fallback
+		);
+	});
+	afterEach(() => manager.shutdown());
+	const cfg = (overrides: Partial<ProcessConfig> = {}) =>
+		config({ toolType: 'opencode', command: 'oc-fixture', permissionMode: 'full', ...overrides });
+	async function start(overrides: Partial<ProcessConfig> = {}) {
+		expect(oc.spawn(cfg(overrides))).toMatchObject({ success: true });
+		const managed = processes.get('rpc-session')!;
+		native.stdout.emit('data', 'opencode server listening on http://127.0.0.1:4321\n');
+		await drain();
+		return managed;
+	}
+	async function end() {
+		ending.resolve();
+		await close();
+	}
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses standalone setup before parser/map/server/fallback under %s reservation',
+		async (root) => {
+			const hold = await reserve(root);
+			try {
+				expect(oc.spawn(cfg())).toMatchObject({
+					success: false,
+					error: expect.stringContaining('reserved'),
+				});
+				expect(createOutputParser).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+				expect(spawn).not.toHaveBeenCalled();
+				expect(probes.opencodeSdk).not.toHaveBeenCalled();
+				expect(fallback).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		}
+	);
+	it('admits before reentrant parser setup and preserves scoped HTTP arguments', async () => {
+		let pending: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+		vi.mocked(createOutputParser).mockImplementationOnce(() => {
+			pending = gate.reserveWorktreeCleanup(target);
+			return null;
+		});
+		await start({ args: ['--model', 'provider/model', '--agent', 'plan'] });
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		expect(client.session.create).toHaveBeenCalledWith({ query: { directory: target } });
+		expect(client.session.promptAsync).toHaveBeenCalledWith({
+			path: { id: 'oc-turn' },
+			query: { directory: target },
+			body: {
+				parts: [{ type: 'text', text: 'fixture' }],
+				model: { providerID: 'provider', modelID: 'model' },
+				agent: 'plan',
+			},
+		});
+		await end();
+		(await reserve()).release();
+	});
+	it('releases synchronous prestart parser failure without recovery', async () => {
+		vi.mocked(createOutputParser).mockImplementationOnce(() => {
+			throw new Error('parser');
+		});
+		expect(oc.spawn(cfg())).toMatchObject({ success: false });
+		expect(spawn).not.toHaveBeenCalled();
+		expect(fallback).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+	it.each(['create', 'subscribe', 'promptAsync'] as const)(
+		'holds pending %s after stream/native completion',
+		async (stage) => {
+			const pending = Promise.withResolvers<unknown>();
+			const fn = stage === 'subscribe' ? client.event.subscribe : client.session[stage];
+			fn.mockReturnValueOnce(pending.promise);
+			await start();
+			await end();
+			await blocked();
+			pending.resolve(
+				stage === 'create'
+					? { data: { id: 'oc-turn' } }
+					: stage === 'subscribe'
+						? { stream: stream() }
+						: {}
+			);
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['create', 'subscribe', 'promptAsync'] as const)(
+		'holds killed/deleted setup until %s settles without restarting it',
+		async (stage) => {
+			const pending = Promise.withResolvers<unknown>();
+			(stage === 'subscribe' ? client.event.subscribe : client.session[stage]).mockReturnValueOnce(
+				pending.promise
+			);
+			const managed = await start();
+			managed.sdkController!.kill();
+			processes.clear();
+			await end();
+			await blocked();
+			pending.resolve(
+				stage === 'create'
+					? { data: { id: 'oc-turn' } }
+					: stage === 'subscribe'
+						? { stream: stream() }
+						: {}
+			);
+			await drain();
+			expect(client.session.promptAsync).toHaveBeenCalledTimes(stage === 'promptAsync' ? 1 : 0);
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it('holds SSE independently after server close and HTTP completion', async () => {
+		await start({ agentSessionId: 'oc-turn' });
+		expect(client.session.create).not.toHaveBeenCalled();
+		await close();
+		await blocked();
+		ending.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('holds prompt acknowledgement after idle and independent server close', async () => {
+		events.push(idle);
+		const prompt = Promise.withResolvers<unknown>();
+		client.session.promptAsync.mockReturnValueOnce(prompt.promise);
+		await start();
+		await close();
+		expect(probes.exit).toHaveBeenCalledOnce();
+		await blocked();
+		prompt.resolve({});
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['resolve', 'reject'] as const)(
+		'holds pending exit reporting through %s',
+		async (outcome) => {
+			const reporting = Promise.withResolvers<void>();
+			probes.exit.mockReturnValueOnce(reporting.promise);
+			await start();
+			await end();
+			await blocked();
+			if (outcome === 'resolve') reporting.resolve();
+			else reporting.reject(new Error('reporting'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['legacy', 'current'] as const)(
+		'holds %s broker decision and HTTP reply after native/turn end',
+		async (protocol) => {
+			const properties = {
+				id: 'permission',
+				sessionID: 'oc-turn',
+				permission: 'bash',
+				patterns: ['fixture'],
+				always: [],
+				type: 'shell',
+				title: 'fixture',
+				messageID: 'fixture-message',
+				time: { created: 1 },
+				metadata: {},
+			};
+			events.push(
+				protocol === 'legacy'
+					? { type: 'permission.updated', properties }
+					: { type: 'permission.asked', properties }
+			);
+			const decision = Promise.withResolvers<unknown>();
+			const reply = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(decision.promise);
+			const request =
+				protocol === 'legacy' ? client.postSessionIdPermissionsPermissionId : probes.http;
+			request.mockReturnValueOnce(reply.promise);
+			await start();
+			expect(probes.interaction).toHaveBeenCalledOnce();
+			await end();
+			await blocked();
+			decision.resolve({ outcome: 'selected', optionId: 'once' });
+			await drain();
+			expect(request).toHaveBeenCalledOnce();
+			if (protocol === 'current')
+				expect(request.mock.calls[0][0]).toContain('/permission/permission/reply?directory=');
+			else
+				expect(request).toHaveBeenCalledWith({
+					path: { id: 'oc-turn', permissionID: 'permission' },
+					query: { directory: target },
+					body: { response: 'once' },
+				});
+			await blocked();
+			reply.resolve(protocol === 'legacy' ? { data: true } : { ok: true });
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('retains recovery abort after permission decision rejection', async () => {
+		events.push({
+			type: 'permission.asked',
+			properties: {
+				id: 'permission',
+				sessionID: 'oc-turn',
+				permission: 'bash',
+				patterns: [],
+				always: [],
+				metadata: {},
+			},
+		});
+		const decision = Promise.withResolvers<unknown>();
+		const abort = Promise.withResolvers<unknown>();
+		probes.interaction.mockReturnValueOnce(decision.promise);
+		client.session.abort.mockReturnValueOnce(abort.promise);
+		await start();
+		await end();
+		decision.reject(new Error('broker'));
+		await drain();
+		expect(client.session.abort).toHaveBeenCalledOnce();
+		await blocked();
+		abort.resolve({});
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['sdk-interrupt', 'sdk-kill', 'harness-interrupt', 'harness-close'] as const)(
+		'admits late %s afresh before SDK access and holds its HTTP work',
+		async (action) => {
+			const managed = await start();
+			await end();
+			processes.clear();
+			const call = () => {
+				switch (action) {
+					case 'sdk-interrupt':
+						return managed.sdkController!.interrupt();
+					case 'sdk-kill':
+						return managed.sdkController!.kill();
+					case 'harness-interrupt':
+						return managed.harnessControl!.interrupt();
+					case 'harness-close':
+						return managed.harnessControl!.close();
+				}
+			};
+			const hold = await reserve();
+			try {
+				await expect(Promise.resolve().then(call)).rejects.toThrow('reserved');
+				expect(client.session.abort).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			const abort = Promise.withResolvers<unknown>();
+			client.session.abort.mockReturnValueOnce(abort.promise);
+			await call();
+			await blocked();
+			abort.reject(new Error('abort failed'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('retains independent pump if prompt error reporting throws out of run', async () => {
+		client.session.promptAsync.mockRejectedValueOnce(new Error('prompt'));
+		oc = new (
+			await import('../../../main/process-manager/spawners/OpencodeServerSpawner')
+		).OpencodeServerSpawner(
+			processes,
+			{
+				emit: () => {
+					throw new Error('listener');
+				},
+			} as unknown as EventEmitter,
+			{} as DataBufferManager,
+			fallback
+		);
+		await start();
+		await close();
+		await blocked();
+		ending.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['fallback', 'throw', 'standard', 'replaced'] as const)(
+		'holds setup failure/recovery boundary: %s',
+		async (mode) => {
+			client.session.create.mockRejectedValueOnce(new Error('setup'));
+			let reservation: ReturnType<typeof gate.reserveWorktreeCleanup> | undefined;
+			let releaseFallback: (() => void) | undefined;
+			fallback.mockImplementationOnce(() => {
+				reservation = gate.reserveWorktreeCleanup(target);
+				if (mode === 'throw') throw new Error('fallback');
+				releaseFallback = gate.beginGlobalWorktreeActivity();
+				return { pid: 999, success: true };
+			});
+			const replacing = Promise.withResolvers<unknown>();
+			if (mode === 'replaced')
+				client.session.create.mockReset().mockReturnValueOnce(replacing.promise);
+			await start({ permissionMode: mode === 'standard' ? 'standard' : 'full' });
+			if (mode === 'replaced') {
+				const replacement = { pid: 777 } as ManagedProcess;
+				processes.set('rpc-session', replacement);
+				replacing.reject(new Error('old setup'));
+				await drain();
+				expect(processes.get('rpc-session')).toBe(replacement);
+			}
+			expect(fallback).toHaveBeenCalledTimes(mode === 'standard' || mode === 'replaced' ? 0 : 1);
+			if (reservation) expect(await reservation).toMatchObject({ status: 'blocked' });
+			await close();
+			if (releaseFallback) {
+				await blocked();
+				releaseFallback();
+			}
+			(await reserve()).release();
+		}
+	);
+	it('retains no-prompt exit reporting without starting a server', async () => {
+		const reporting = Promise.withResolvers<void>();
+		probes.exit.mockReturnValueOnce(reporting.promise);
+		expect(oc.spawn(cfg({ prompt: '' }))).toMatchObject({ success: true });
+		expect(spawn).not.toHaveBeenCalled();
+		await blocked();
+		reporting.resolve();
+		await drain();
 		(await reserve()).release();
 	});
 });
