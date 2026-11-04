@@ -14,6 +14,7 @@ import { buildSshCommand, RemoteCommandOptions } from './ssh-command-builder';
 import { logger } from './logger';
 import { isWorktreeAlreadyUsedError, parseWorktreePathForBranch } from '../../shared/gitUtils';
 import { shellEscapeRemotePath } from './shell-escape';
+import { beginWorktreeGitActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[RemoteGit]';
 
@@ -111,6 +112,26 @@ export async function execGit(
 	remoteCwd?: string,
 	options: { timeout?: number; env?: Record<string, string> } = {}
 ): Promise<ExecResult> {
+	// Capture argv before admission yields; callers may retain and change it.
+	args = [...args];
+	if (sshRemote) return execGitCommand(args, localCwd, sshRemote, remoteCwd, options);
+	const release = await beginWorktreeGitActivity();
+	try {
+		return await execGitCommand(args, localCwd, sshRemote, remoteCwd, options);
+	} finally {
+		release();
+	}
+}
+
+// Private execution path. Only exact fixed cleanup queries may skip admission;
+// neither an exported flag nor a caller's environment can select this path.
+async function execGitCommand(
+	args: string[],
+	localCwd: string,
+	sshRemote?: SshRemoteConfig | null,
+	remoteCwd?: string,
+	options: { timeout?: number; env?: Record<string, string> } = {}
+): Promise<ExecResult> {
 	const { timeout, env } = options;
 	if (sshRemote) {
 		return execGitRemote(args, {
@@ -164,6 +185,32 @@ const readOnlyGitInFlight = new Map<string, Promise<ExecResult>>();
  */
 const NO_OPTIONAL_LOCKS_ENV = { GIT_OPTIONAL_LOCKS: '0' } as const;
 
+// Exact argv only. In particular, symbolic-ref setters, config writes, worktree
+// mutations, global -C/-c/--git-dir overrides and additional flags are excluded.
+// Keep status hooks/caches disabled so that this probe cannot start fsmonitor.
+const CLEANUP_READ_PROBES: readonly (readonly string[])[] = [
+	['rev-parse', '--git-common-dir'],
+	['rev-parse', '--git-dir'],
+	['rev-parse', '--show-toplevel'],
+	['rev-parse', '--verify', 'HEAD'],
+	['symbolic-ref', '--quiet', '--short', 'HEAD'],
+	['worktree', 'list', '--porcelain', '-z'],
+	['ls-files', '--stage', '-v', '-z'],
+	['remote', 'get-url', 'origin'],
+	[
+		'-c',
+		'core.fsmonitor=false',
+		'-c',
+		'core.untrackedCache=false',
+		'status',
+		'--porcelain=v1',
+		'-z',
+		'--untracked-files=all',
+		'--ignored=traditional',
+		'--ignore-submodules=none',
+	],
+];
+
 /**
  * Run a read-only git query that the UI polls in the background.
  *
@@ -177,6 +224,8 @@ const NO_OPTIONAL_LOCKS_ENV = { GIT_OPTIONAL_LOCKS: '0' } as const;
  *
  * Callers always settle within `timeoutMs`, even if the child has not exited
  * yet; later callers keep joining that child until it does.
+ * Local commands still require Git activity admission, except the exact fixed
+ * cleanup probes above. Calling this helper never declares arbitrary argv safe.
  */
 export async function execGitReadOnly(
 	args: string[],
@@ -185,10 +234,18 @@ export async function execGitReadOnly(
 	remoteCwd?: string,
 	timeoutMs: number = READ_ONLY_GIT_TIMEOUT_MS
 ): Promise<ExecResult> {
+	args = [...args];
 	const key = [sshRemote?.id ?? '', sshRemote ? (remoteCwd ?? '') : localCwd, ...args].join('\0');
 	let run = readOnlyGitInFlight.get(key);
 	if (!run) {
-		run = execGit(args, localCwd, sshRemote, remoteCwd, {
+		const cleanupProbe = CLEANUP_READ_PROBES.some(
+			(probe) => probe.length === args.length && probe.every((arg, i) => arg === args[i])
+		);
+		const exempt = cleanupProbe && !sshRemote;
+		const execute = exempt ? execGitCommand : execGit;
+		// Also disable fsmonitor for index-reading probes such as ls-files.
+		const commandArgs = exempt ? ['-c', 'core.fsmonitor=false', ...args] : args;
+		run = execute(commandArgs, localCwd, sshRemote, remoteCwd, {
 			timeout: timeoutMs,
 			env: NO_OPTIONAL_LOCKS_ENV,
 		}).finally(() => {

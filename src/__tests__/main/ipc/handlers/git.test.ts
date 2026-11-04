@@ -1413,9 +1413,15 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 				try {
 					await vi.waitFor(() => expect(execFile.execFileStreaming).toHaveBeenCalled());
 					expect(await reserveWorktreeCleanup(cwd)).toMatchObject({ status: 'blocked' });
+					expect(await reserveWorktreeCleanup(`${cwd}-sibling`)).toMatchObject({
+						status: 'blocked',
+					});
 					await handlers.get('git:cancelCommand')!({} as any, 'cleanup-race');
 					expect(cancel).toHaveBeenCalled();
 					expect(await reserveWorktreeCleanup(cwd)).toMatchObject({ status: 'blocked' });
+					expect(await reserveWorktreeCleanup(`${cwd}-sibling`)).toMatchObject({
+						status: 'blocked',
+					});
 				} finally {
 					finish({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
 					await running;
@@ -1426,27 +1432,30 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			}
 		);
 
-		it('refuses a new native Git run before branch or process setup under reservation', async () => {
-			const cwd = path.resolve('cleanup-streaming-fixture');
-			const hold = await reserveWorktreeCleanup(cwd);
-			expect(hold.status).toBe('reserved-partially');
-			try {
-				const result = await handlers.get('git:runCommand')!({} as any, {
-					runId: 'cleanup-blocked',
-					operation: 'push',
-					cwd,
-					setUpstream: true,
-				});
-				expect(result).toMatchObject({
-					success: false,
-					error: expect.stringContaining('reserved'),
-				});
-				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
-				expect(execFile.execFileStreaming).not.toHaveBeenCalled();
-			} finally {
-				if (hold.status === 'reserved-partially') hold.release();
+		it.each(['same', 'sibling'])(
+			'refuses a new native Git run in %s checkout before setup under reservation',
+			async (target) => {
+				const cwd = path.resolve('cleanup-streaming-fixture');
+				const hold = await reserveWorktreeCleanup(cwd);
+				expect(hold.status).toBe('reserved-partially');
+				try {
+					const result = await handlers.get('git:runCommand')!({} as any, {
+						runId: 'cleanup-blocked',
+						operation: 'push',
+						cwd: target === 'same' ? cwd : `${cwd}-sibling`,
+						setUpstream: true,
+					});
+					expect(result).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+					expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+					expect(execFile.execFileStreaming).not.toHaveBeenCalled();
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
 			}
-		});
+		);
 
 		it('holds activity across async branch setup and releases when setup throws', async () => {
 			const cwd = path.resolve('cleanup-streaming-fixture');

@@ -345,7 +345,8 @@ describe('remote-git.ts', () => {
 
 			const first = execGitReadOnly(['status', '--porcelain'], '/repo');
 			const second = execGitReadOnly(['status', '--porcelain'], '/repo');
-			await Promise.resolve();
+			// Admission precedes spawning; observe the child instead of a microtask count.
+			await vi.waitFor(() => expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1));
 			finish(successResult('?? new.ts\n'));
 
 			expect((await first).stdout).toBe('?? new.ts\n');

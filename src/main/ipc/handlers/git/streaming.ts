@@ -12,7 +12,7 @@ import { processCarriageReturns, stripAnsiCodes } from '../../../../shared/strin
 import type { GitRunCommandResult, GitStreamingOperation } from '../../../../shared/gitUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { beginRemoteSync } from '../../../utils/branch-switch-guard';
-import { beginWorktreeActivity } from '../../../git/worktreeActivity';
+import { beginWorktreeGitActivity } from '../../../git/worktreeActivity';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
 // Cancel callbacks for in-flight streaming git commands, keyed by runId.
@@ -261,7 +261,7 @@ export function registerStreamingHandlers(): void {
 			try {
 				// Admit before branch/PATH/host setup. Fetch also writes shared refs.
 				// SSH never probes a local path; remote cleanup remains unsupported.
-				if (!sshRemoteId) releaseActivity = await beginWorktreeActivity([cwd]);
+				if (!sshRemoteId) releaseActivity = await beginWorktreeGitActivity();
 				return await runStreamingGitCommand(event, {
 					runId,
 					operation,

@@ -53,6 +53,16 @@ export async function beginWorktreeActivity(paths: readonly string[]): Promise<(
 	}
 }
 
+/**
+ * Git can change common metadata from a sibling checkout, via -C/--git-dir,
+ * environment overrides or hooks. Until repository domains are verified, track
+ * participating local Git globally, including its setup. Empty paths deliberately
+ * retain unknown roots, blocking every reservation and admission under any hold.
+ */
+export function beginWorktreeGitActivity(): Promise<() => void> {
+	return beginWorktreeActivity([]);
+}
+
 export type WorktreeCleanupReservation =
 	| { status: 'blocked'; blockers: WorktreePullRequestCleanupBlocker[] }
 	| {
