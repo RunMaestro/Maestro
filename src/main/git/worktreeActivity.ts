@@ -58,6 +58,11 @@ export async function beginWorktreeActivity(paths: readonly string[]): Promise<(
  * environment overrides or hooks. Until repository domains are verified, track
  * participating local Git globally, including its setup. Empty paths deliberately
  * retain unknown roots, blocking every reservation and admission under any hold.
+ * A canonical --git-common-dir result alone cannot narrow this activity: hooks
+ * and arbitrary setup scripts can start Git in another repository, and .git or
+ * symlink targets can change between identity lookup and a later command. Keep
+ * the global hold across those lookups and complete caller lifetimes until all
+ * affected domains and identity changes can be excluded, including descendants.
  */
 export function beginWorktreeGitActivity(): Promise<() => void> {
 	return beginWorktreeActivity([]);

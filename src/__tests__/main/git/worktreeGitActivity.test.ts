@@ -29,6 +29,7 @@ beforeEach(async () => {
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
 });
 
@@ -65,6 +66,138 @@ describe('shared local Git admission', () => {
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 		hold.release();
 		await expect(git.execGit(['checkout', 'topic'], sibling)).resolves.toEqual(success);
+	});
+
+	it.each([
+		['sibling checkout', sibling],
+		['symlink alias', path.resolve('git-activity-alias')],
+		['nested repository', path.join(sibling, 'nested')],
+		['not-yet-created target', path.join(sibling, 'missing', 'new-checkout')],
+		['unrelated repository', path.resolve('git-activity-unrelated')],
+	])('keeps the global fallback for an in-flight %s', async (_label, cwd) => {
+		// Git admission must not depend on a successful cwd/common-directory probe.
+		vi.mocked(fs.realpath).mockImplementation(async (p) => {
+			if (p === cwd) throw new Error('Identity lookup is unavailable');
+			return String(p);
+		});
+		let finish!: (result: ExecResult) => void;
+		vi.mocked(execFileNoThrow).mockImplementationOnce(
+			() => new Promise((resolve) => (finish = resolve))
+		);
+		const run = git.execGit(['fetch'], cwd);
+		await vi.waitFor(() => expect(execFileNoThrow).toHaveBeenCalledOnce());
+		expect(fs.realpath).not.toHaveBeenCalled();
+		expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+		finish(success);
+		await run;
+		const hold = await reserve();
+		expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
+		hold.release();
+	});
+
+	it.each(['inherited', 'explicit'] as const)(
+		'blocks %s environment repository redirects before starting any child',
+		async (source) => {
+			const env = {
+				GIT_DIR: path.join(root, '.git'),
+				GIT_COMMON_DIR: path.join(root, '.git'),
+				GIT_WORK_TREE: root,
+				GIT_INDEX_FILE: path.join(root, 'other-index'),
+				GIT_OBJECT_DIRECTORY: path.join(root, '.git', 'objects'),
+				GIT_CONFIG_COUNT: '1',
+				GIT_CONFIG_KEY_0: 'core.worktree',
+				GIT_CONFIG_VALUE_0: root,
+			};
+			if (source === 'inherited')
+				for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+			const hold = await reserve();
+			await expect(
+				git.execGit(['fetch'], sibling, null, undefined, source === 'explicit' ? { env } : {})
+			).rejects.toThrow('reserved');
+			await expect(git.execGitReadOnly(['fetch'], sibling)).rejects.toThrow('reserved');
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+			hold.release();
+		}
+	);
+
+	it.each([
+		['-C', sibling, '-C', root, 'fetch'],
+		['--git-dir', path.join(root, '.git'), '--work-tree', root, 'fetch'],
+		[`--git-dir=${path.join(root, '.git')}`, `--work-tree=${root}`, 'fetch'],
+		['--config-env=core.worktree=WORKTREE_TARGET', 'fetch'],
+		['-c', 'core.hooksPath=elsewhere', 'commit', '--allow-empty', '-m', 'hook'],
+		['-c', 'alias.redirect=!git -C elsewhere fetch', 'redirect'],
+		['-C', sibling, 'rev-parse', '--git-common-dir'],
+		['rev-parse', '--git-common-dir', '--resolve-git-dir', sibling],
+	])('never exempts repository or hook overrides in read-only argv %j', async (...args) => {
+		const hold = await reserve();
+		await expect(git.execGitReadOnly(args, sibling)).rejects.toThrow('reserved');
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+		hold.release();
+	});
+
+	it('a common-directory probe cannot narrow the outer hold across identity changes', async () => {
+		const alias = path.resolve('git-identity-alias');
+		let destination = sibling;
+		vi.mocked(fs.realpath).mockImplementation(async (p) => (p === alias ? destination : String(p)));
+		const release = await gate.beginWorktreeGitActivity();
+		let identityReady!: (result: ExecResult) => void;
+		vi.mocked(execFileNoThrow).mockImplementationOnce(
+			() => new Promise((resolve) => (identityReady = resolve))
+		);
+		const probe = git.execGitReadOnly(['rev-parse', '--git-common-dir'], alias);
+		expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+		identityReady({ ...success, stdout: path.join(sibling, '.git') });
+		await probe;
+		// A later command can see a different .git pointer or symlink target.
+		destination = root;
+		expect(await fs.realpath(alias)).toBe(root);
+		for (const target of [root, sibling, path.join(root, 'nested')])
+			expect(await gate.reserveWorktreeCleanup(target)).toMatchObject({
+				status: 'blocked',
+				blockers: [{ code: 'mutation-busy' }],
+			});
+		release();
+		(await reserve()).release();
+	});
+
+	it('Git admitted during cleanup target resolution wins before the reservation is installed', async () => {
+		let targetReady!: (value: string) => void;
+		vi.mocked(fs.realpath).mockImplementationOnce(
+			() => new Promise<string>((resolve) => (targetReady = resolve))
+		);
+		const pending = gate.reserveWorktreeCleanup(root);
+		let finish!: (result: ExecResult) => void;
+		vi.mocked(execFileNoThrow).mockImplementationOnce(
+			() => new Promise((resolve) => (finish = resolve))
+		);
+		const run = git.execGit(['fetch'], sibling);
+		await vi.waitFor(() => expect(execFileNoThrow).toHaveBeenCalledOnce());
+		targetReady(root);
+		expect(await pending).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+		finish(success);
+		await run;
+		(await reserve()).release();
+	});
+
+	it('keeps arbitrary hook/setup work global between commands and concurrent operations', async () => {
+		const releaseSetup = await gate.beginWorktreeGitActivity();
+		const releaseHook = await gate.beginWorktreeGitActivity();
+		await git.execGit(['rev-parse', '--git-common-dir'], sibling);
+		expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+		releaseSetup();
+		await git.execGit(['fetch'], root);
+		expect(await gate.reserveWorktreeCleanup(sibling)).toMatchObject({ status: 'blocked' });
+		releaseHook();
+		const hold = await reserve();
+		await expect(gate.beginWorktreeGitActivity()).rejects.toThrow('reserved');
+		hold.release();
 	});
 
 	it('streaming and generic Git participants share the same conservative guard', async () => {
@@ -107,7 +240,12 @@ describe('shared local Git admission', () => {
 	});
 
 	it.each([
+		['rev-parse', '--git-common-dir'],
+		['rev-parse', '--git-dir'],
+		['rev-parse', '--show-toplevel'],
 		['rev-parse', '--verify', 'HEAD'],
+		['ls-files', '--stage', '-v', '-z'],
+		['remote', 'get-url', 'origin'],
 		['worktree', 'list', '--porcelain', '-z'],
 		['symbolic-ref', '--quiet', '--short', 'HEAD'],
 		[
