@@ -9,6 +9,7 @@ vi.mock('../../../main/utils/execFile', () => ({ execFileNoThrow: vi.fn() }));
 import { execGitReadOnly } from '../../../main/utils/remote-git';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { discoverWorktreePullRequest } from '../../../main/git/worktreePullRequests';
+import { readWorktreePullRequestCi } from '../../../main/git/worktreePullRequests';
 
 const ok = (stdout: string) => ({ stdout, stderr: '', exitCode: 0 });
 const repository = (owner: string) => ({ name: 'project', owner: { login: owner } });
@@ -78,6 +79,36 @@ describe('worktree PR discovery', () => {
 			reason: 'gh',
 		});
 	});
+	it('reports an offline PR lookup as unavailable instead of no PR', async () => {
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+			.mockResolvedValueOnce({ stdout: '', stderr: 'network unreachable', exitCode: 1 });
+		expect(await discoverWorktreePullRequest({ worktreePath: '/checkout' })).toMatchObject({
+			status: 'unavailable',
+			reason: 'gh',
+			message: 'network unreachable',
+		});
+	});
+	it('reports a retained closed PR and rejects one belonging to another fork', async () => {
+		const knownPullRequest = {
+			repository: { host: 'github.com', owner: 'upstream', name: 'project' },
+			number: 3,
+		};
+		const closed = { ...pull(), state: 'closed', merged_at: null };
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+			.mockResolvedValueOnce(ok('[[]]'))
+			.mockResolvedValueOnce(ok(JSON.stringify(closed)))
+			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+			.mockResolvedValueOnce(ok('[[]]'))
+			.mockResolvedValueOnce(ok(JSON.stringify(pull('other', 'closed'))));
+		expect(
+			await discoverWorktreePullRequest({ worktreePath: '/checkout', knownPullRequest })
+		).toMatchObject({ status: 'found', pullRequest: { state: 'CLOSED' } });
+		expect(
+			await discoverWorktreePullRequest({ worktreePath: '/checkout', knownPullRequest })
+		).toMatchObject({ status: 'no-pr' });
+	});
 	it('retains a merged PR by number after it leaves the open list', async () => {
 		vi.mocked(execFileNoThrow)
 			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
@@ -109,6 +140,64 @@ describe('worktree PR discovery', () => {
 });
 
 describe('worktree PR checks', () => {
+	it('keeps an unavailable local comparison separate from check states', async () => {
+		const local = 'a'.repeat(40);
+		const remote = 'b'.repeat(40);
+		const repo = { host: 'github.com', owner: 'fork', name: 'project' };
+		const found = {
+			status: 'found' as const,
+			head: { branch: 'feature', localSha: local, repository: repo },
+			pullRequest: {
+				identity: { repository: { ...repo, owner: 'upstream' }, number: 3 },
+				title: 'Change',
+				url: 'https://github.com/upstream/project/pull/3',
+				state: 'OPEN' as const,
+				isDraft: false,
+				headRepository: repo,
+				headBranch: 'feature',
+				headSha: remote,
+				baseBranch: 'rc',
+			},
+		};
+		vi.mocked(execGitReadOnly).mockImplementation(async (args) =>
+			args[0] === 'rev-list'
+				? { stdout: '', stderr: 'unknown revision', exitCode: 1 }
+				: ok(args[0] === 'symbolic-ref' ? 'feature' : local)
+		);
+		vi.mocked(execFileNoThrow).mockImplementation(async (_gh, args) => {
+			const endpoint = args.find((arg) => arg.startsWith('repos/')) || '';
+			if (endpoint.includes('check-runs'))
+				return ok(
+					JSON.stringify([
+						{
+							check_runs: [
+								{ id: 1, name: 'queued', status: 'queued' },
+								{ id: 2, name: 'running', status: 'in_progress' },
+								{ id: 3, name: 'failed', status: 'completed', conclusion: 'failure' },
+								{ id: 4, name: 'skipped', status: 'completed', conclusion: 'skipped' },
+								{ id: 5, name: 'cancelled', status: 'completed', conclusion: 'cancelled' },
+							],
+						},
+					])
+				);
+			if (endpoint.includes('statuses')) return ok('[[]]');
+			if (endpoint.includes('actions/runs')) return ok('[{"workflow_runs":[]}]');
+			return ok(JSON.stringify({ ...pull(), head: { ...pull().head, sha: remote } }));
+		});
+		const result = await readWorktreePullRequestCi({ worktreePath: '/checkout' }, found);
+		expect(result.divergence).toMatchObject({ status: 'unavailable', message: 'unknown revision' });
+		expect(result.ci).toMatchObject({
+			status: 'available',
+			headSha: remote,
+			checks: [
+				{ id: '1', state: 'pending' },
+				{ id: '2', state: 'running' },
+				{ id: '3', state: 'failed' },
+				{ id: '4', state: 'skipped' },
+				{ id: '5', state: 'cancelled' },
+			],
+		});
+	});
 	it('reads current head checks and separately reports local divergence', async () => {
 		const { readWorktreePullRequestCi } = await import('../../../main/git/worktreePullRequests');
 		const local = 'a'.repeat(40);
@@ -166,5 +255,46 @@ describe('worktree PR checks', () => {
 			headSha: remote,
 			checks: [{ state: 'passed', workflow: { id: '55', name: 'CI' } }],
 		});
+	});
+
+	it('rejects checks if the PR head changes while they are being fetched', async () => {
+		const sha = 'a'.repeat(40);
+		const repo = { host: 'github.com', owner: 'fork', name: 'project' };
+		vi.mocked(execGitReadOnly).mockImplementation(async (args) =>
+			ok(args[0] === 'symbolic-ref' ? 'feature' : sha)
+		);
+		vi.mocked(execFileNoThrow).mockImplementation(async (_gh, args) => {
+			const endpoint = args.find((arg) => arg.startsWith('repos/')) || '';
+			if (endpoint.includes('check-runs')) return ok('[{"check_runs":[]}]');
+			if (endpoint.includes('statuses')) return ok('[[]]');
+			if (endpoint.includes('actions/runs')) return ok('[{"workflow_runs":[]}]');
+			return ok(JSON.stringify({ ...pull(), head: { ...pull().head, sha: 'b'.repeat(40) } }));
+		});
+		const found = {
+			status: 'found' as const,
+			head: { branch: 'feature', localSha: sha, repository: repo },
+			pullRequest: {
+				identity: { repository: { ...repo, owner: 'upstream' }, number: 3 },
+				title: 'Change',
+				url: 'https://github.com/upstream/project/pull/3',
+				state: 'OPEN' as const,
+				isDraft: false,
+				headRepository: repo,
+				headBranch: 'feature',
+				headSha: sha,
+				baseBranch: 'rc',
+			},
+		};
+		expect(await readWorktreePullRequestCi({ worktreePath: '/checkout' }, found)).toMatchObject({
+			ci: { status: 'unavailable', message: expect.stringContaining('changed') },
+			divergence: { status: 'unavailable' },
+		});
+		vi.mocked(execGitReadOnly).mockClear();
+		vi.mocked(execFileNoThrow).mockClear();
+		expect(
+			await readWorktreePullRequestCi({ worktreePath: '/remote', sshRemoteId: 'remote' }, found)
+		).toMatchObject({ ci: { status: 'unavailable', message: expect.stringContaining('SSH') } });
+		expect(execGitReadOnly).not.toHaveBeenCalled();
+		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
 });
