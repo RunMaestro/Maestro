@@ -233,31 +233,47 @@ class AcpTurn {
 		if (!child.stdin || !child.stdout) throw new Error('ACP child requires stdin and stdout');
 		const stream = acpStdioStream(child);
 		const connectionStream = acp.ndJsonStream(stream.writable, stream.readable);
+		// Retained SDK callbacks need fresh admission after run/child ownership ends.
+		// The SDK's subsequent response serialization/write is a separate boundary.
 		const app = acp
 			.client({ name: 'maestro' })
-			.onRequest(acp.methods.client.session.requestPermission, ({ params }) =>
-				this.observeCompletion(
-					(async () => {
-						if (this.providerSessionId && params.sessionId !== this.providerSessionId) {
-							return { outcome: { outcome: 'cancelled' as const } };
-						}
-						const opened = harnessInteractionBroker.open(
-							acpPermissionOpenRequest(params, {
-								sessionId: config.sessionId,
-								tabId: config.tabId,
-								spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
-								provider: config.toolType,
-							})
-						);
-						return acpPermissionResponse(await opened.completion);
-					})()
+			.onRequest(acp.methods.client.session.requestPermission, async (request) =>
+				withWorktreeTurnActivity(
+					(_start, observe) =>
+						observe(
+							(async () => {
+								const { params } = request;
+								if (this.providerSessionId && params.sessionId !== this.providerSessionId) {
+									return { outcome: { outcome: 'cancelled' as const } };
+								}
+								const opened = harnessInteractionBroker.open(
+									acpPermissionOpenRequest(params, {
+										sessionId: config.sessionId,
+										tabId: config.tabId,
+										spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
+										provider: config.toolType,
+									})
+								);
+								return acpPermissionResponse(await opened.completion);
+							})()
+						),
+					(error) => {
+						void captureException(error);
+						logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+					}
 				)
 			)
-			.onNotification(acp.methods.client.session.update, ({ params }) => {
-				if (!this.promptSent) return;
-				if (this.providerSessionId && params.sessionId !== this.providerSessionId) return;
-				this.forwardUpdate(params);
-			});
+			.onNotification(acp.methods.client.session.update, (notification) =>
+				withWorktreeTurnActivity(
+					() => {
+						const { params } = notification;
+						if (!this.promptSent) return;
+						if (this.providerSessionId && params.sessionId !== this.providerSessionId) return;
+						this.forwardUpdate(params);
+					},
+					(error) => void captureException(error)
+				)
+			);
 		this.connection = app.connect(connectionStream);
 		const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
 			protocolVersion: acp.PROTOCOL_VERSION,

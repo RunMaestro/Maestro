@@ -18,6 +18,11 @@ import type {
 	CopilotConnectionLease,
 } from '../../../main/process-manager/spawners/CopilotConnectionManager';
 import type { OpencodeCurrentPermissionRequest } from '../../../main/opencode-server/permission-requests';
+import type {
+	RequestPermissionRequest,
+	RequestPermissionResponse,
+	SessionNotification,
+} from '@agentclientprotocol/sdk';
 
 const probes = vi.hoisted(() => ({
 	request: vi.fn(),
@@ -1092,6 +1097,239 @@ describe('standalone ACP activity', () => {
 		const { AcpServerSpawner } =
 			await import('../../../main/process-manager/spawners/AcpServerSpawner');
 		acp = new AcpServerSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
+	});
+	describe('retained ACP client callbacks', () => {
+		let ask: (request: { params: RequestPermissionRequest }) => Promise<RequestPermissionResponse>;
+		let update: (notification: { params: SessionNotification }) => void;
+		const request: { params: RequestPermissionRequest } = {
+			params: { sessionId: 'acp-session', toolCall: { toolCallId: 'tool' }, options: [] },
+		};
+		const notification: { params: SessionNotification } = {
+			params: {
+				sessionId: 'acp-session',
+				update: {
+					sessionUpdate: 'agent_message_chunk',
+					content: { type: 'text', text: 'late' },
+				},
+			},
+		};
+		beforeEach(async () => {
+			acp.spawn(input());
+			await drain();
+			ask = app.onRequest.mock.calls.at(-1)![1];
+			update = app.onNotification.mock.calls.at(-1)![1];
+			await close();
+			processes.clear();
+			vi.clearAllMocks();
+		});
+		it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+			'refuses late permission/update before request lookup or recovery under %s',
+			async (root) => {
+				const lookup = vi.fn();
+				const hold = await reserve(root);
+				try {
+					await expect(
+						ask({
+							get params() {
+								lookup();
+								return request.params;
+							},
+						})
+					).rejects.toThrow('reserved');
+					expect(() =>
+						update({
+							get params() {
+								lookup();
+								return notification.params;
+							},
+						})
+					).toThrow('reserved');
+					for (const probe of [
+						lookup,
+						probes.interaction,
+						probes.output,
+						probes.exit,
+						probes.close,
+						probes.request,
+						probes.notify,
+						spawn,
+						stopProcess,
+						fallback,
+						captureException,
+					])
+						expect(probe).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+			}
+		);
+		it.each(['resolve', 'reject'] as const)(
+			'owns parallel late permission decisions through replacement and %s',
+			async (outcome) => {
+				const first = Promise.withResolvers<unknown>();
+				const second = Promise.withResolvers<unknown>();
+				probes.interaction.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+				const a = ask(request);
+				const b = ask(request);
+				await blocked();
+				native = makeNative();
+				acp.spawn(input());
+				await drain();
+				processes.clear();
+				await close();
+				await blocked();
+				if (outcome === 'reject') {
+					second.reject(new Error('permission failed'));
+					await expect(b).rejects.toThrow('permission failed');
+				} else {
+					second.resolve({ outcome: 'cancelled' });
+					await expect(b).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
+				}
+				await drain();
+				await blocked();
+				first.resolve({ outcome: 'selected', optionId: 'allow-once' });
+				await expect(a).resolves.toEqual({
+					outcome: { outcome: 'selected', optionId: 'allow-once' },
+				});
+				await drain();
+				(await reserve()).release();
+			}
+		);
+		it('admits late permission before an earlier pending reservation resolves', async () => {
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			const decision = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(decision.promise);
+			const response = ask(request);
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			decision.resolve({ outcome: 'cancelled' });
+			await response;
+			await drain();
+			(await reserve()).release();
+		});
+		it.each(['params', 'session', 'broker', 'mapping'] as const)(
+			'releases rejected late permission on %s failure even if diagnostics throw',
+			async (failure) => {
+				const error = new Error('callback failed');
+				const fail = () => {
+					throw error;
+				};
+				vi.mocked(captureException).mockImplementationOnce(fail);
+				let value = request;
+				if (failure === 'params')
+					value = {
+						get params() {
+							return fail();
+						},
+					};
+				if (failure === 'session')
+					value = {
+						params: {
+							...request.params,
+							get sessionId() {
+								return fail();
+							},
+						},
+					};
+				if (failure === 'broker')
+					vi.spyOn(harnessInteractionBroker, 'open').mockImplementationOnce(fail);
+				if (failure === 'mapping')
+					probes.interaction.mockResolvedValueOnce({
+						get outcome() {
+							return fail();
+						},
+					});
+				await expect(ask(value)).rejects.toBe(error);
+				await drain();
+				expect(fallback).not.toHaveBeenCalled();
+				expect(stopProcess).not.toHaveBeenCalled();
+				(await reserve()).release();
+			}
+		);
+		it('preserves synchronous late update output and session filtering', async () => {
+			update(notification);
+			update({ params: { ...notification.params, sessionId: 'different' } });
+			update({
+				params: {
+					...notification.params,
+					update: {
+						sessionUpdate: 'agent_thought_chunk',
+						content: { type: 'text', text: 'next' },
+					},
+				},
+			});
+			expect(probes.output.mock.calls.map(([, line]) => JSON.parse(line))).toEqual([
+				{ type: 'acp.text', sessionId: 'acp-session', text: 'late' },
+				{ type: 'acp.text', sessionId: 'acp-session', text: 'next', reasoning: true },
+			]);
+			await expect(ask({ params: { ...request.params, sessionId: 'different' } })).resolves.toEqual(
+				{ outcome: { outcome: 'cancelled' } }
+			);
+			expect(probes.interaction).not.toHaveBeenCalled();
+			(await reserve()).release();
+		});
+		it.each(['params', 'output'] as const)(
+			'preserves synchronous update %s errors and releases even if reporting fails',
+			async (failure) => {
+				const error = new Error('update failed');
+				const fail = () => {
+					throw error;
+				};
+				vi.mocked(captureException).mockImplementationOnce(fail);
+				if (failure === 'output') probes.output.mockImplementationOnce(fail);
+				expect(() =>
+					update(
+						failure === 'params'
+							? {
+									get params() {
+										return fail();
+									},
+								}
+							: notification
+					)
+				).toThrow(error);
+				expect(fallback).not.toHaveBeenCalled();
+				expect(stopProcess).not.toHaveBeenCalled();
+				(await reserve()).release();
+			}
+		);
+		it('keeps independent native activity while a late permission settles', async () => {
+			const decision = Promise.withResolvers<unknown>();
+			probes.interaction.mockReturnValueOnce(decision.promise);
+			const response = ask(request);
+			native = makeNative();
+			acp.spawn(input());
+			await drain();
+			native.emit('exit', 0, null);
+			processes.clear();
+			decision.resolve({ outcome: 'cancelled' });
+			await response;
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		});
+		it('filters updates before prompt and suppresses a replaced generation', async () => {
+			native = makeNative();
+			const initialized = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(initialized.promise);
+			acp.spawn(input());
+			const nextUpdate = app.onNotification.mock.calls.at(-1)![1];
+			probes.output.mockClear();
+			nextUpdate(notification);
+			update(notification);
+			expect(probes.output).not.toHaveBeenCalled();
+			await blocked();
+			initialized.resolve(replies.initialize);
+			await drain();
+			probes.output.mockClear();
+			nextUpdate(notification);
+			expect(probes.output).toHaveBeenCalledOnce();
+			await close();
+			(await reserve()).release();
+		});
 	});
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses setup and fallback before any local inspection under %s',
