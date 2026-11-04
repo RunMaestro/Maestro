@@ -789,6 +789,29 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual([]);
 		});
 
+		it('propagates a durable managed queue outcome without claiming a native start', async () => {
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const admission = { dispatchId, outcome: 'queued', supervision: 'unavailable' };
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', {
+					queued: true,
+					queuedAccepted: true,
+					durable: true,
+					unknown: false,
+					itemId: dispatchId,
+					dispatchId,
+					admission,
+				})
+			);
+			expect(await client.turns.send(A1, A1_TAB, { text: 'task', dispatchId })).toMatchObject({
+				ok: true,
+				value: { status: 'queued', dispatchId, admission, durable: true, itemId: dispatchId },
+			});
+			expect(bridge.sent('enqueue_command')).toHaveLength(1);
+			expect(turnKinds()).toEqual([]);
+		});
+
 		it('reports a queued message with its place in line', async () => {
 			bridge.typed.set(
 				'enqueue_command',

@@ -336,7 +336,7 @@ export class PianolaDispatchAdmissionService {
 	) {
 		return this.queue.enqueue('admissions', async () => {
 			const record = this.record(client, dispatchId);
-			if (record.queuePrepare) return record.queuePrepare;
+			if (record.queuePrepare) return this.queueOutcome(record);
 			if (
 				record.phase !== 'bound' ||
 				record.targetTabId !== item.tabId ||
@@ -352,20 +352,51 @@ export class PianolaDispatchAdmissionService {
 				...(callbackId ? { callbackId } : {}),
 			};
 			record.outcome = 'unknown';
-			this.deps.store.writeDispatchAdmission(record);
-			return record.queuePrepare;
+			try {
+				this.deps.store.writeDispatchAdmission(record);
+			} catch (commitError) {
+				// A failed acknowledgment cannot prove that the uncertainty write did not land.
+				return { ...this.queueOutcome(record), commitFailed: true, commitError };
+			}
+			return this.queueOutcome(record);
 		});
 	}
 
-	queueEvidence(client: Client, dispatchId: string, durable: boolean) {
-		return this.queue.enqueue('admissions', async () => {
-			const record = this.record(client, dispatchId);
-			if (!record.queuePrepare) throw new Error('DispatchQueueNotPrepared');
-			record.queuePrepare.phase = durable ? 'durable' : 'unknown';
-			record.outcome = durable ? 'queued' : 'unknown';
-			this.deps.store.writeDispatchAdmission(record);
-			return this.receipt(record);
-		});
+	/** Minted only by authenticated prepareQueue after attempting the uncertainty commit.
+	 * A failed commit acknowledgment is outcome-only uncertainty and forbids enqueue.
+	 * The closure pins one caller/intent/row, takes no wire ID, and can only record evidence.
+	 * Caller lifetime fences sending; it must not erase an already committed outcome.
+	 */
+	private queueOutcome(record: PianolaDispatchAdmission) {
+		const pinned: PianolaDispatchAdmission = JSON.parse(canonicalJson(record));
+		return {
+			prepared: JSON.parse(canonicalJson(pinned.queuePrepare!)) as NonNullable<
+				PianolaDispatchAdmission['queuePrepare']
+			>,
+			commitFailed: false,
+			commitError: undefined as unknown,
+			receipt: this.receipt(pinned),
+			recordEvidence: (durable: boolean) =>
+				this.queue.enqueue('admissions', async () => {
+					const record = this.deps.store.readDispatchAdmission(pinned.dispatchId);
+					if (
+						!record ||
+						canonicalJson({
+							...record,
+							outcome: pinned.outcome,
+							queuePrepare: record.queuePrepare
+								? { ...record.queuePrepare, phase: pinned.queuePrepare!.phase }
+								: undefined,
+						}) !== canonicalJson(pinned)
+					)
+						throw new Error('DispatchIntentMismatch');
+					if (!record.queuePrepare) throw new Error('DispatchQueueNotPrepared');
+					record.queuePrepare.phase = durable ? 'durable' : 'unknown';
+					record.outcome = durable ? 'queued' : 'unknown';
+					this.deps.store.writeDispatchAdmission(record);
+					return this.receipt(record);
+				}),
+		};
 	}
 
 	status(client: Client, dispatchId: string): PianolaDispatchReceipt {

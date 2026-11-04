@@ -87,7 +87,9 @@ function fixture() {
 					run: { agentId: 'manager', tabId: 'caller-tab', spawnGeneration: 'caller-run' },
 					signal: controller.signal,
 					unattended: true,
-					assertActive() {},
+					assertActive() {
+						if (controller.signal.aborted) throw new Error('CallerRunUnavailable');
+					},
 				}
 			: undefined
 	);
@@ -146,9 +148,75 @@ function fixture() {
 		send,
 		sendError: vi.fn(),
 	} as unknown as MessageHandlerContext;
-	return { ctx, client, newTab, send, snapshot, scopeId, executeCommand, enqueueCommand };
+	return {
+		ctx,
+		client,
+		newTab,
+		send,
+		snapshot,
+		scopeId,
+		executeCommand,
+		enqueueCommand,
+		controller,
+	};
 }
 describe('production new-tab handler supervision wiring', () => {
+	it.each(['ack', 'readback', 'no-proof', 'outcome-write', 'fallback-read'])(
+		'returns truthful WS/CLI queue semantics after caller ends at %s',
+		async (boundary) => {
+			const f = fixture();
+			await f.newTab('worker', '', true, false, undefined, {
+				phase: 'prepare',
+				dispatchId: generateUUID(),
+				tabId: 'tab',
+			});
+			flags.sessions = [{ id: 'worker', toolType: 'codex', aiTabs: [{ id: 'tab' }] }];
+			const enqueue = f.enqueueCommand.getMockImplementation()!;
+			f.enqueueCommand.mockImplementation(async (...args) => {
+				if (boundary === 'ack') f.controller.abort();
+				return enqueue(...args);
+			});
+			Object.assign(f.ctx.callbacks, {
+				confirmQueueItem: async (request: unknown) => {
+					f.controller.abort();
+					if (boundary === 'fallback-read') {
+						vi.spyOn(store, 'readDispatchAdmission').mockImplementation(() => {
+							throw new Error('Read failed');
+						});
+						throw new Error('Readback failed');
+					}
+					return { durable: boundary !== 'no-proof', request };
+				},
+			});
+			const write = store.writeDispatchAdmission;
+			vi.spyOn(store, 'writeDispatchAdmission').mockImplementation((record) => {
+				if (boundary === 'outcome-write' && record.outcome === 'queued')
+					throw new Error('Write failed');
+				write(record);
+			});
+			const message = {
+				type: 'enqueue_command',
+				sessionId: 'worker',
+				tabId: 'tab',
+				command: 'work',
+				dispatchId: generateUUID(),
+			};
+			handleEnqueueCommand(f.ctx, f.client, message);
+			await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+			const durable = boundary === 'ack' || boundary === 'readback';
+			expect(f.send.mock.calls[0][1]).toMatchObject({
+				success: durable,
+				durable,
+				queued: durable,
+				queuedAccepted: durable,
+				unknown: !durable,
+				admission: { outcome: durable ? 'queued' : 'unknown' },
+			});
+			if (!durable) expect(f.send.mock.calls[0][1].error).toMatch(/Do not resend/);
+			expect(f.enqueueCommand).toHaveBeenCalledOnce();
+		}
+	);
+
 	it.each([false, true])(
 		'consumes production queue admission with busy=%s and pins host intent rather than renderer ack',
 		async (busy) => {

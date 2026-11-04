@@ -1,3 +1,10 @@
+import { handleEnqueueCommand } from '../../../../main/web-server/handlers/messageHandlers/queue';
+import * as queueSupervision from '../../../../main/web-server/handlers/messageHandlers/dispatchSupervision';
+import * as tabAdmission from '../../../../main/web-server/handlers/messageHandlers/tabs';
+import type {
+	MessageHandlerContext,
+	WebClient,
+} from '../../../../main/web-server/handlers/messageHandlers/types';
 import { PianolaNewTabDispatch } from '../../../../main/pianola/pianola-new-tab-dispatch';
 import { createPianolaFsStore } from '../../../../shared/pianola/fs-store';
 import { generateUUID } from '../../../../shared/uuid';
@@ -321,6 +328,7 @@ describe('persistence IPC handlers', () => {
 				return { success: true, queued: true, itemId: control.item.id, tabId: 'tab' };
 			});
 			const confirmItem = vi.fn((r: QueueItemReceiptRequest) => server.confirmQueueItemFromMain(r));
+			let active = true;
 			const deps = {
 				store,
 				callers: {
@@ -328,7 +336,9 @@ describe('persistence IPC handlers', () => {
 						run: { agentId: 'manager', tabId: 'manager-tab', spawnGeneration: 'run' },
 						signal: new AbortController().signal,
 						unattended: true,
-						assertActive() {},
+						assertActive() {
+							if (!active) throw new Error('CallerRunUnavailable');
+						},
 					}),
 				},
 				featureEnabled: () => true,
@@ -377,6 +387,12 @@ describe('persistence IPC handlers', () => {
 				rendererQueue,
 				arm,
 				scopeId,
+				revoke: () => {
+					active = false;
+				},
+				restore: () => {
+					active = true;
+				},
 				loseAck: () => {
 					loseAck = true;
 				},
@@ -412,6 +428,124 @@ describe('persistence IPC handlers', () => {
 				).rejects.toThrow('DispatchIntentMismatch');
 			}
 		);
+		it.each(['enqueue-ack', 'readback', 'journal-ack'])(
+			'reconciles real B01 evidence after caller revocation at %s without a second enqueue',
+			async (boundary) => {
+				const f = queueAdapter();
+				const enqueue = f.enqueue.getMockImplementation()!;
+				f.enqueue.mockImplementation(async (...args) => {
+					const result = await enqueue(...args);
+					if (boundary === 'enqueue-ack') f.revoke();
+					return result;
+				});
+				const confirm = f.confirmItem.getMockImplementation()!;
+				f.confirmItem.mockImplementation(async (request) => {
+					if (boundary === 'readback') f.revoke();
+					return confirm(request);
+				});
+				const write = f.store.writeDispatchAdmission.bind(f.store);
+				vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+					if (boundary === 'journal-ack' && record.outcome === 'queued') f.revoke();
+					write(record);
+				});
+				expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({
+					durable: true,
+					receipt: { outcome: 'queued' },
+				});
+				f.restore();
+				expect(
+					await new PianolaNewTabDispatch(f.deps).runQueue(f.client, f.input, f.arm)
+				).toMatchObject({ durable: true });
+				expect(f.enqueue).toHaveBeenCalledOnce();
+				expect(f.rendererQueue).toHaveLength(1);
+			}
+		);
+		it.each([false, true])(
+			'host handler composes journal and B01 after caller ends, outcome write fails=%s',
+			async (failWrite) => {
+				const f = queueAdapter();
+				const send = vi.fn();
+				const ctx = { callbacks: {}, send } as unknown as MessageHandlerContext;
+				// Inject host routing/adapter ownership only; admission, disk journal and B01 stay real.
+				const routing = vi
+					.spyOn(queueSupervision, 'dispatchSupervision')
+					.mockReturnValue({ managed: true });
+				const adapter = vi.spyOn(tabAdmission, 'newTabAdmission').mockReturnValue(f.adapter);
+				const confirm = f.confirmItem.getMockImplementation()!;
+				f.confirmItem.mockImplementation(async (request) => {
+					const proof = await confirm(request);
+					f.revoke();
+					return proof;
+				});
+				const write = f.store.writeDispatchAdmission.bind(f.store);
+				vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+					if (failWrite && record.outcome === 'queued')
+						throw new Error('Outcome persistence failed');
+					write(record);
+				});
+				const message = {
+					type: 'enqueue_command',
+					sessionId: 'agent',
+					tabId: 'tab',
+					command: f.input.prompt,
+					background: true,
+					dispatchId: f.input.dispatchId,
+				};
+				try {
+					handleEnqueueCommand(ctx, f.client as WebClient, message);
+					await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+					expect(send.mock.calls[0][1]).toMatchObject({
+						success: !failWrite,
+						durable: !failWrite,
+						unknown: failWrite,
+						admission: { outcome: failWrite ? 'unknown' : 'queued' },
+					});
+					if (failWrite) expect(send.mock.calls[0][1].error).toMatch(/Do not resend/);
+					f.restore();
+					handleEnqueueCommand(ctx, f.client as WebClient, message);
+					await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+					expect(f.enqueue).toHaveBeenCalledOnce();
+				} finally {
+					routing.mockRestore();
+					adapter.mockRestore();
+				}
+			}
+		);
+
+		it('refuses caller revocation before the uncertainty commit', async () => {
+			const f = queueAdapter();
+			const item = f.deps.queueItem;
+			f.deps.queueItem = async () => {
+				f.revoke();
+				return item();
+			};
+			await expect(f.adapter.runQueue(f.client, f.input, f.arm)).rejects.toThrow(
+				'CallerRunUnavailable'
+			);
+			expect(f.enqueue).not.toHaveBeenCalled();
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)?.queuePrepare).toBeUndefined();
+		});
+		it('keeps failed outcome persistence unknown after real durable readback and caller revocation', async () => {
+			const f = queueAdapter();
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				if (record.outcome === 'queued') {
+					f.revoke();
+					throw new Error('Outcome disk failure');
+				}
+				write(record);
+			});
+			expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({
+				durable: false,
+				receipt: { outcome: 'unknown' },
+			});
+			expect(f.store.readDispatchAdmission(f.input.dispatchId)?.outcome).toBe('unknown');
+			f.restore();
+			vi.mocked(f.store.writeDispatchAdmission).mockImplementation(write);
+			expect(await f.adapter.runQueue(f.client, f.input, f.arm)).toMatchObject({ durable: true });
+			expect(f.enqueue).toHaveBeenCalledOnce();
+		});
+
 		it('does not enqueue after an uncertain prepare journal commit, even on reconciliation', async () => {
 			const f = queueAdapter();
 			const write = f.store.writeDispatchAdmission.bind(f.store);

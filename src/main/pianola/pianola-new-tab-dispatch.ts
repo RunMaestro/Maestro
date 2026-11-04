@@ -378,18 +378,18 @@ export class PianolaNewTabDispatch {
 				request.dispatchId
 			);
 			let prepared = this.deps.store.readDispatchAdmission(request.dispatchId)?.queuePrepare;
+			let outcome: Awaited<ReturnType<PianolaDispatchAdmissionService['prepareQueue']>> | undefined;
 			try {
+				if (prepared)
+					outcome = await this.admission.prepareQueue(client, request.dispatchId, prepared.item);
 				if (!prepared) {
 					if (!this.deps.queueItem || !this.deps.enqueueCommand || !this.deps.confirmQueueItem)
 						throw new Error('DispatchQueueUnavailable');
 					const item = await this.deps.queueItem(request);
 					const callbackId = armCallback(request.targetTabId);
-					prepared = await this.admission.prepareQueue(
-						client,
-						request.dispatchId,
-						item,
-						callbackId
-					);
+					outcome = await this.admission.prepareQueue(client, request.dispatchId, item, callbackId);
+					prepared = outcome.prepared;
+					if (outcome.commitFailed) throw outcome.commitError;
 					// The journal commit above forbids ANY subsequent enqueue for this key,
 					// including failure/timeout/negative persistence proof and host restart.
 					await this.deps
@@ -414,18 +414,16 @@ export class PianolaNewTabDispatch {
 					pendingAdmissionId: request.dispatchId,
 					item: JSON.parse(JSON.stringify(prepared.item)),
 				});
-				const receipt = await this.admission.queueEvidence(
-					client,
-					request.dispatchId,
-					proof?.durable === true
-				);
+				const receipt = await outcome!.recordEvidence(proof?.durable === true);
 				return { receipt, callbackId: prepared.callbackId, durable: proof?.durable === true };
 			} catch (error) {
+				if (!outcome) throw error;
 				this.deps.onReconcileError(error);
-				const saved = this.deps.store.readDispatchAdmission(request.dispatchId)?.queuePrepare;
+				// No store read or caller lookup here: either can fail after durable acceptance.
+				// Only the pinned receipt is needed to report uncertainty without resending.
 				return {
-					receipt: { ...this.admission.status(client, request.dispatchId), outcome: 'unknown' },
-					callbackId: saved?.callbackId,
+					receipt: { ...outcome.receipt, outcome: 'unknown' },
+					callbackId: outcome.prepared.callbackId,
 					durable: false,
 				};
 			}
