@@ -5,6 +5,11 @@ import * as syncFs from 'fs';
 import * as net from 'net';
 import path from 'path';
 import { logger } from '../../../main/utils/logger';
+import { RELAY_DECISION_TIMEOUT_MS } from '../../../main/permission-relay/types';
+import type {
+	BridgeToServerMessage,
+	PermissionRequest,
+} from '../../../main/permission-relay/types';
 
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
 vi.mock('fs', () => ({ unlinkSync: vi.fn(), chmodSync: vi.fn() }));
@@ -26,6 +31,35 @@ describe('permission relay server request and native lifetime activity', () => {
 	let sockets: EventEmitter[];
 	let releases: Array<() => void>;
 	let active: number;
+	let registry: typeof import('../../../main/permission-relay/registry');
+	let cleanups: Array<() => void>;
+	let requests: Promise<void>[];
+	const decision = { behavior: 'allow' as const, updatedInput: { command: 'example' } };
+	function decisionRequest(
+		token = 'unknown',
+		msg: Extract<BridgeToServerMessage, { type: 'permission-request' }> = {
+			type: 'permission-request',
+			token,
+			requestId: 'bridge-id',
+			toolName: 'Bash',
+			input: { command: 'example' },
+		}
+	) {
+		const socket = { destroyed: false, write: vi.fn() };
+		const result = Reflect.get(server, 'handlePermissionRequest').call(
+			server,
+			socket,
+			msg
+		) as Promise<void>;
+		requests.push(result);
+		void result.catch(() => {});
+		return { socket, result };
+	}
+	function binding() {
+		const spawn = registry.registerSpawn({ sessionId: 'agent-ai', tabId: 'tab' });
+		cleanups.push(spawn.cleanup);
+		return spawn;
+	}
 	async function reserve(root = target) {
 		const hold = await gate.reserveWorktreeCleanup(root);
 		if (hold.status === 'reserved-partially') releases.push(hold.release);
@@ -64,6 +98,8 @@ describe('permission relay server request and native lifetime activity', () => {
 		releases = [];
 		active = 0;
 		sockets = [];
+		cleanups = [];
+		requests = [];
 		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 		vi.spyOn(process, 'umask').mockReturnValue(0o022);
 		endpoint = Object.assign(new EventEmitter(), { listen: vi.fn(), close: vi.fn() });
@@ -88,13 +124,17 @@ describe('permission relay server request and native lifetime activity', () => {
 		const { PermissionRelayServer } =
 			await import('../../../main/permission-relay/PermissionRelayServer');
 		server = new PermissionRelayServer();
+		registry = await import('../../../main/permission-relay/registry');
 	});
-	afterEach(() => {
+	afterEach(async () => {
 		for (const release of releases) release();
+		for (const cleanup of cleanups) cleanup();
+		await Promise.allSettled(requests);
 		for (const socket of sockets) socket.emit('close');
 		server.stop();
 		endpoint.emit('close');
 		expect(active).toBe(0);
+		expect(registry.relayRegistryStats()).toEqual({ bindings: 0, pending: 0 });
 		vi.restoreAllMocks();
 	});
 
@@ -574,6 +614,323 @@ describe('permission relay server request and native lifetime activity', () => {
 		// The old emitter cannot release a later endpoint or release twice.
 		prior.emit('close');
 		expect(active).toBe(0);
+		await idle();
+	});
+
+	it.each([target, path.join(target, 'child'), path.resolve('unrelated-repository')])(
+		'refuses async decisions before binding or payload inspection under %s',
+		async (root) => {
+			const lookup = vi.spyOn(registry, 'lookupBinding');
+			const inspect = vi.fn(() => 'unknown');
+			const hold = await idle(root);
+			const msg = {
+				type: 'permission-request' as const,
+				requestId: 'bridge-id',
+				toolName: 'Bash',
+				input: {},
+				get token() {
+					return inspect();
+				},
+			};
+			const refused = decisionRequest('unknown', msg);
+			await expect(refused.result).rejects.toThrow(/reserved/);
+			expect(inspect).not.toHaveBeenCalled();
+			expect(lookup).not.toHaveBeenCalled();
+			expect(refused.socket.write).not.toHaveBeenCalled();
+			hold.release();
+			await decisionRequest().result;
+			await idle();
+		}
+	);
+
+	it('blocks a pending reservation before asynchronous decision setup can yield', async () => {
+		const spawn = binding();
+		let requestId = '';
+		server.setOnRequest((request) => {
+			requestId = request.requestId;
+		});
+		const reserving = reserve();
+		const pending = decisionRequest(spawn.token);
+		expect(await reserving).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+		registry.resolvePending(requestId, decision);
+		await pending.result;
+		await idle();
+	});
+
+	it.each(['unknown token', 'missing UI'])(
+		'holds immediate %s denial through delivery',
+		async (mode) => {
+			const token = mode === 'missing UI' ? binding().token : 'unknown';
+			const writes: string[] = [];
+			let deliveryActive = -1;
+			const socket = {
+				destroyed: false,
+				write: (line: string) => {
+					deliveryActive = active;
+					writes.push(line);
+				},
+			};
+			await Reflect.get(server, 'handlePermissionRequest').call(server, socket, {
+				type: 'permission-request',
+				token,
+				requestId: 'original-id',
+				toolName: 'Bash',
+				input: {},
+			});
+			expect(deliveryActive).toBe(1);
+			expect(JSON.parse(writes[0])).toEqual({
+				type: 'permission-response',
+				requestId: 'original-id',
+				decision: {
+					behavior: 'deny',
+					message:
+						mode === 'missing UI'
+							? 'Permission UI unavailable.'
+							: 'Unrecognized permission relay token.',
+				},
+			});
+			await idle();
+		}
+	);
+
+	it('keeps concurrent decisions independently busy through forwarding and response settlement', async () => {
+		const spawn = binding();
+		const forwarded: PermissionRequest[] = [];
+		server.setOnRequest((request) => {
+			expect(active).toBeGreaterThan(0);
+			forwarded.push(request);
+		});
+		const first = decisionRequest(spawn.token);
+		const second = decisionRequest(spawn.token);
+		expect(forwarded[0]).toMatchObject({
+			token: spawn.token,
+			sessionId: 'agent-ai',
+			tabId: 'tab',
+			toolName: 'Bash',
+			input: { command: 'example' },
+			createdAt: expect.any(Number),
+		});
+		expect(forwarded[0].requestId).not.toBe(forwarded[1].requestId);
+		await busy();
+		registry.resolvePending(forwarded[0].requestId, decision);
+		expect(active).toBe(2);
+		await first.result;
+		expect(active).toBe(1);
+		await busy();
+		registry.resolvePending(forwarded[1].requestId, decision);
+		let deliveryActive = -1;
+		second.socket.write.mockImplementationOnce(() => {
+			deliveryActive = active;
+		});
+		await second.result;
+		expect(deliveryActive).toBe(1);
+		for (const item of [first, second])
+			expect(JSON.parse(item.socket.write.mock.calls[0][0])).toEqual({
+				type: 'permission-response',
+				requestId: 'bridge-id',
+				decision,
+			});
+		await idle();
+	});
+
+	it('holds socket-dispatched decisions after native close through resumed writes', async () => {
+		const spawn = binding();
+		let requestId = '';
+		server.setOnRequest((request) => {
+			requestId = request.requestId;
+		});
+		await start();
+		const socket = connect();
+		socket.emit(
+			'data',
+			JSON.stringify({
+				type: 'permission-request',
+				token: spawn.token,
+				requestId: 'wire-id',
+				toolName: 'Bash',
+				input: {},
+			}) + '\n'
+		);
+		expect(active).toBe(3);
+		server.stop();
+		endpoint.emit('close');
+		socket.emit('close');
+		expect(active).toBe(1);
+		await busy();
+		let deliveryActive = -1;
+		socket.write.mockImplementationOnce(() => {
+			deliveryActive = active;
+		});
+		registry.resolvePending(requestId, decision);
+		expect(active).toBe(1);
+		await Promise.resolve();
+		expect(deliveryActive).toBe(1);
+		expect(JSON.parse(socket.write.mock.calls[0][0])).toEqual({
+			type: 'permission-response',
+			requestId: 'wire-id',
+			decision,
+		});
+		await idle();
+	});
+
+	it.each(['lookup', 'payload', 'pending creation', 'forwarding', 'decision rejection'])(
+		'preserves async %s failure and releases only the failed request scope',
+		async (stage) => {
+			const spawn = binding();
+			const error = new Error(stage);
+			const fail = () => {
+				expect(active).toBe(1);
+				throw error;
+			};
+			server.setOnRequest(stage === 'forwarding' ? fail : vi.fn());
+			if (stage === 'lookup') vi.spyOn(registry, 'lookupBinding').mockImplementationOnce(fail);
+			if (stage === 'pending creation')
+				vi.spyOn(registry, 'createPending').mockImplementationOnce(fail);
+			if (stage === 'decision rejection')
+				vi.spyOn(registry, 'createPending').mockRejectedValueOnce(error);
+			const msg = {
+				type: 'permission-request' as const,
+				token: spawn.token,
+				requestId: 'bridge-id',
+				toolName: 'Bash',
+				get input() {
+					if (stage === 'payload') return fail();
+					return {};
+				},
+			};
+			const failed = decisionRequest(spawn.token, msg);
+			await expect(failed.result).rejects.toBe(error);
+			expect(failed.socket.write).not.toHaveBeenCalled();
+			// A forwarding throw historically leaves a pending registry entry; this
+			// request scope must not pretend to own that independent registry lifetime.
+			expect(registry.relayRegistryStats().pending).toBe(stage === 'forwarding' ? 1 : 0);
+			spawn.cleanup();
+			await idle();
+		}
+	);
+
+	it.each(['destroyed socket', 'destroyed getter', 'write failure', 'report failure'])(
+		'holds resumed %s handling and preserves its outcome',
+		async (stage) => {
+			const spawn = binding();
+			let requestId = '';
+			server.setOnRequest((request) => {
+				requestId = request.requestId;
+			});
+			const pending = decisionRequest(spawn.token);
+			const error = new Error(stage);
+			const fail = () => {
+				expect(active).toBe(1);
+				throw error;
+			};
+			if (stage === 'destroyed socket') pending.socket.destroyed = true;
+			if (stage === 'destroyed getter')
+				Object.defineProperty(pending.socket, 'destroyed', { get: fail });
+			if (stage === 'write failure' || stage === 'report failure')
+				pending.socket.write.mockImplementationOnce(fail);
+			if (stage === 'write failure' || stage === 'report failure')
+				vi.mocked(logger.debug).mockImplementationOnce(() => {
+					expect(active).toBe(1);
+					if (stage === 'report failure') throw error;
+				});
+			registry.resolvePending(requestId, decision);
+			expect(active).toBe(1);
+			if (stage === 'destroyed getter' || stage === 'report failure')
+				await expect(pending.result).rejects.toBe(error);
+			else await expect(pending.result).resolves.toBeUndefined();
+			if (stage === 'destroyed socket' || stage === 'destroyed getter')
+				expect(pending.socket.write).not.toHaveBeenCalled();
+			if (stage === 'write failure' || stage === 'report failure')
+				expect(logger.debug).toHaveBeenCalledWith(
+					'Failed to write to relay socket',
+					'[PermissionRelay]',
+					{ error: stage }
+				);
+			await idle();
+		}
+	);
+
+	it.each(['timeout', 'spawn exit'])(
+		'holds %s denial through asynchronous response delivery',
+		async (mode) => {
+			vi.useFakeTimers();
+			try {
+				const spawn = binding();
+				server.setOnRequest(vi.fn());
+				const pending = decisionRequest(spawn.token);
+				let deliveryActive = -1;
+				pending.socket.write.mockImplementationOnce(() => {
+					deliveryActive = active;
+				});
+				if (mode === 'timeout') await vi.advanceTimersByTimeAsync(RELAY_DECISION_TIMEOUT_MS);
+				else {
+					spawn.cleanup();
+					expect(active).toBe(1);
+				}
+				await pending.result;
+				expect(deliveryActive).toBe(1);
+				expect(JSON.parse(pending.socket.write.mock.calls[0][0]).decision).toEqual({
+					behavior: 'deny',
+					message:
+						mode === 'timeout'
+							? 'Permission request timed out with no response.'
+							: 'Agent process exited.',
+				});
+				await idle();
+			} finally {
+				vi.useRealTimers();
+			}
+		}
+	);
+
+	it('retains native socket and server ownership after a decision completes', async () => {
+		const spawn = binding();
+		let requestId = '';
+		server.setOnRequest((request) => {
+			requestId = request.requestId;
+		});
+		await start();
+		const socket = connect();
+		socket.emit(
+			'data',
+			JSON.stringify({
+				type: 'permission-request',
+				token: spawn.token,
+				requestId: 'wire-id',
+				toolName: 'Bash',
+				input: {},
+			}) + '\n'
+		);
+		registry.resolvePending(requestId, decision);
+		await Promise.resolve();
+		expect(active).toBe(2);
+		await busy();
+		socket.emit('close');
+		expect(active).toBe(1);
+		await busy();
+		endpoint.emit('close');
+		await idle();
+	});
+
+	it('holds reentrant permission forwarding as independent decision scopes', async () => {
+		const spawn = binding();
+		const forwarded: PermissionRequest[] = [];
+		server.setOnRequest((request) => {
+			forwarded.push(request);
+			if (forwarded.length === 1) {
+				decisionRequest(spawn.token);
+				expect(active).toBe(2);
+			}
+		});
+		const first = decisionRequest(spawn.token);
+		expect(active).toBe(2);
+		for (const request of forwarded) registry.resolvePending(request.requestId, decision);
+		expect(active).toBe(2);
+		await first.result;
+		await Promise.all(requests);
 		await idle();
 	});
 });

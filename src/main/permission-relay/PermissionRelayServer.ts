@@ -240,58 +240,63 @@ export class PermissionRelayServer {
 		socket: net.Socket,
 		msg: Extract<BridgeToServerMessage, { type: 'permission-request' }>
 	): Promise<void> {
-		const binding = lookupBinding(msg.token);
-		// The bridge's `requestId` is its local correlation id; echo it back so
-		// the bridge can match the response to its outstanding tools/call.
-		const bridgeRequestId = msg.requestId;
+		const release = beginGlobalWorktreeActivity();
+		try {
+			const binding = lookupBinding(msg.token);
+			// The bridge's `requestId` is its local correlation id; echo it back so
+			// the bridge can match the response to its outstanding tools/call.
+			const bridgeRequestId = msg.requestId;
 
-		if (!binding) {
-			// Unknown/expired token: deny. Never leak that the token was invalid
-			// as an "allow".
+			if (!binding) {
+				// Unknown/expired token: deny. Never leak that the token was invalid
+				// as an "allow".
+				this.send(socket, {
+					type: 'permission-response',
+					requestId: bridgeRequestId,
+					decision: { behavior: 'deny', message: 'Unrecognized permission relay token.' },
+				});
+				return;
+			}
+
+			if (!this.onRequest) {
+				// No UI wired: fail closed.
+				this.send(socket, {
+					type: 'permission-response',
+					requestId: bridgeRequestId,
+					decision: { behavior: 'deny', message: 'Permission UI unavailable.' },
+				});
+				return;
+			}
+
+			// Server-side globally-unique id used as the pending key + renderer id.
+			const requestId = randomUUID();
+			const input = msg.input ?? {};
+			// AskUserQuestion is surfaced as a question picker, not an allow/deny
+			// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
+			const questionFields = parseQuestionRequest(msg.toolName, input);
+			const request: PermissionRequest = {
+				requestId,
+				token: msg.token,
+				sessionId: binding.sessionId,
+				tabId: binding.tabId,
+				toolName: msg.toolName,
+				input,
+				createdAt: Date.now(),
+				...(questionFields ?? {}),
+			};
+
+			const decisionPromise = createPending(requestId, msg.token);
+			this.onRequest(request);
+			const decision = await decisionPromise;
+
 			this.send(socket, {
 				type: 'permission-response',
 				requestId: bridgeRequestId,
-				decision: { behavior: 'deny', message: 'Unrecognized permission relay token.' },
+				decision,
 			});
-			return;
+		} finally {
+			release();
 		}
-
-		if (!this.onRequest) {
-			// No UI wired: fail closed.
-			this.send(socket, {
-				type: 'permission-response',
-				requestId: bridgeRequestId,
-				decision: { behavior: 'deny', message: 'Permission UI unavailable.' },
-			});
-			return;
-		}
-
-		// Server-side globally-unique id used as the pending key + renderer id.
-		const requestId = randomUUID();
-		const input = msg.input ?? {};
-		// AskUserQuestion is surfaced as a question picker, not an allow/deny
-		// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
-		const questionFields = parseQuestionRequest(msg.toolName, input);
-		const request: PermissionRequest = {
-			requestId,
-			token: msg.token,
-			sessionId: binding.sessionId,
-			tabId: binding.tabId,
-			toolName: msg.toolName,
-			input,
-			createdAt: Date.now(),
-			...(questionFields ?? {}),
-		};
-
-		const decisionPromise = createPending(requestId, msg.token);
-		this.onRequest(request);
-		const decision = await decisionPromise;
-
-		this.send(socket, {
-			type: 'permission-response',
-			requestId: bridgeRequestId,
-			decision,
-		});
 	}
 
 	private send(socket: net.Socket, msg: ServerToBridgeMessage): void {
