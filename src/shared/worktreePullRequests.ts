@@ -163,7 +163,12 @@ export type WorktreePullRequestMergePreflight =
 
 /** A merged or queued outcome requires a fresh, matching GitHub state read. */
 export type WorktreePullRequestMergeResult =
-	| { status: 'merged'; pullRequest: WorktreePullRequest }
+	| {
+			status: 'merged';
+			pullRequest: WorktreePullRequest;
+			/** Observation timing, not proof of who performed the merge. */
+			observed: 'before-attempt' | 'after-attempt';
+	  }
 	| { status: 'queued'; pullRequest: WorktreePullRequest }
 	| { status: 'blocked'; blockers: WorktreePullRequestMergeBlocker[] }
 	| { status: 'unknown'; message: string };
