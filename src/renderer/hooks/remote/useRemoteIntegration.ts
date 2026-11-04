@@ -1,3 +1,5 @@
+import { prepareSessionForPersistence } from '../utils/useDebouncedPersistence';
+import type { PianolaNewTabControl } from '../../../shared/pianola/pianola-dispatch';
 import { dispatchToastClickAction } from '../../services/toastClickActions';
 import { jumpToAgent } from '../../services/agentNavigation';
 import { startNotificationHistorySync } from '../../stores/notificationStore';
@@ -746,14 +748,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Ack the renderer result on responseChannel so the CLI only reports
 		// success when a tab was actually created - and reports the REASON when it
 		// was not, rather than leaving the CLI to infer one from a missing tab id.
+		const releasedAdmissions = new Set<string>();
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(
+			async (
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: PianolaNewTabControl
 			) => {
 				const ack = (result: {
 					success: boolean;
@@ -761,119 +765,176 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queued?: boolean;
 					error?: string;
 				}) => window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, result);
-				// A missing agent is the one unrecoverable case: there is nothing to
-				// create the tab on. Check before creating so we never leave an
-				// orphan tab behind a failed ack.
-				const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
-				if (!targetSession) {
-					logger.warn(
-						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session not found, dropping prompt'
-					);
-					ack({ success: false, error: `Agent not found: ${sessionId}` });
-					return;
-				}
-				if (targetSession.toolType === 'terminal') {
-					ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
-					return;
-				}
-				// A BUSY agent is deliberately NOT a refusal here. Busy is an
-				// agent-level state, so a brand-new tab inherits it even though it
-				// owns no process, and `dispatch --new-tab` rejects both --force and
-				// --queue as meaningless ("a fresh tab is never busy") - which left
-				// no flag able to express what the caller wanted and turned every
-				// dispatch at a working agent into a dropped prompt (#1602). The
-				// prompt is queued below instead.
-				let createdTabId: string | undefined;
-				flushSync(() => {
-					updateSessionWith(sessionId, (s) => {
-						const result = createTab(s, {
-							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking,
-							// Background dispatch is the default (`--focus` opts into the
-							// foreground): create the tab without making it active so the
-							// user's current view is preserved.
-							activate: !background,
-							hidden: background && hidden === true,
-						});
-						if (!result) return s;
-						createdTabId = result.tab.id;
-						return result.session;
-					});
-					if (createdTabId && !background) {
-						setActiveSessionId(sessionId);
-						// Same reason as the plain new-tab handler above: without this
-						// the poll broadcasts the new active tab with
-						// `activeTabChanged: false`, and a browser watching this agent
-						// keeps rendering the tab the user was already on.
-						noteDesktopAiTabSelection(sessionId, createdTabId);
-					}
-				});
-				if (!createdTabId) {
-					logger.warn(
-						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
-					);
-					ack({ success: false, error: 'Could not create a new AI tab' });
-					return;
-				}
-				// Re-read the agent rather than trusting the snapshot taken before
-				// the tab was created: the store write above is the only thing that
-				// ran in between, but the decision below is about live state.
-				const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
-				const commandName = prompt.trim().split(/\s/, 1)[0];
-				const isSlashCommand =
-					commandName.startsWith('/') &&
-					[
-						...(deps.customAICommandsRef?.current ?? []),
-						...(deps.speckitCommandsRef?.current ?? []),
-						...(deps.openspecCommandsRef?.current ?? []),
-						...(deps.bmadCommandsRef?.current ?? []),
-						...(targetSession.agentCommands ?? []),
-					].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
-				if (isBusy || isSlashCommand) {
-					// Busy agents wait for their current turn. Slash commands also use
-					// the command queue on idle agents, as the composer does: its drain
-					// resolves custom and project commands and substitutes $ARGUMENTS.
-					// Sending them as plain messages would skip that resolution when
-					// busy, while the direct remote-command path lacks project commands.
-					const queued = enqueuePromptForTab({
-						sessionId,
-						tabId: createdTabId,
-						text: prompt,
-						slashCommand: isSlashCommand,
-						mentionRouting,
-					});
-					if (!queued) {
+				try {
+					// A missing agent is the one unrecoverable case: there is nothing to
+					// create the tab on. Check before creating so we never leave an
+					// orphan tab behind a failed ack.
+					const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!targetSession) {
 						logger.warn(
-							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: could not queue prompt for the new tab'
+							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session not found, dropping prompt'
 						);
-						ack({
-							success: false,
-							tabId: createdTabId,
-							error: 'Created the tab but could not queue the prompt for it',
-						});
+						ack({ success: false, error: `Agent not found: ${sessionId}` });
 						return;
 					}
-					ack({ success: true, tabId: createdTabId, queued: true });
-					return;
-				}
-				// Pass the new tab id explicitly so the renderer writes into the tab
-				// we just created - without it, useRemoteHandlers would fall back to
-				// activeTabId, which is correct here but would race in any future
-				// caller that doesn't atomically setActiveSessionId.
-				window.dispatchEvent(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: {
+					if (targetSession.toolType === 'terminal') {
+						ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
+						return;
+					}
+					// A BUSY agent is deliberately NOT a refusal here. Busy is an
+					// agent-level state, so a brand-new tab inherits it even though it
+					// owns no process, and `dispatch --new-tab` rejects both --force and
+					// --queue as meaningless ("a fresh tab is never busy") - which left
+					// no flag able to express what the caller wanted and turned every
+					// dispatch at a working agent into a dropped prompt (#1602). The
+					// prompt is queued below instead.
+					let createdTabId: string | undefined;
+					if (control?.phase === 'release') {
+						if (releasedAdmissions.has(control.dispatchId)) {
+							ack({ success: false, error: 'DispatchAlreadyReleased' });
+							return;
+						}
+						const tab = targetSession.aiTabs.find((t) => t.id === control.tabId);
+						if (
+							!tab ||
+							targetSession.agentErrorPaused ||
+							tab.agentError ||
+							targetSession.state === 'busy' ||
+							tab.logs.length ||
+							tab.state === 'busy' ||
+							tab.wizardState?.isActive
+						) {
+							ack({ success: false, error: 'DispatchTargetUnavailable' });
+							return;
+						}
+						createdTabId = tab.id;
+					}
+					if (!createdTabId) {
+						flushSync(() => {
+							updateSessionWith(sessionId, (s) => {
+								if (control && s.aiTabs.some((t) => t.id === control.tabId)) {
+									createdTabId = control.tabId;
+									return s;
+								}
+								const result = createTab(s, {
+									...(control ? { id: control.tabId } : {}),
+									saveToHistory: defaultSaveToHistory,
+									showThinking: defaultShowThinking,
+									// Background dispatch is the default (`--focus` opts into the
+									// foreground): create the tab without making it active so the
+									// user's current view is preserved.
+									activate: !background,
+									hidden: background && hidden === true,
+								});
+								if (!result) return s;
+								createdTabId = result.tab.id;
+								return result.session;
+							});
+							if (createdTabId && !background) {
+								setActiveSessionId(sessionId);
+								// Same reason as the plain new-tab handler above: without this
+								// the poll broadcasts the new active tab with
+								// `activeTabChanged: false`, and a browser watching this agent
+								// keeps rendering the tab the user was already on.
+								noteDesktopAiTabSelection(sessionId, createdTabId);
+							}
+						});
+					}
+					if (!createdTabId) {
+						logger.warn(
+							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
+						);
+						ack({ success: false, error: 'Could not create a new AI tab' });
+						return;
+					}
+					if (control?.phase === 'prepare') {
+						try {
+							const updated = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+							if (!updated) throw new Error('DispatchTargetUnavailable');
+							const saved = await window.maestro.sessions.setMany(
+								[prepareSessionForPersistence(updated)],
+								[],
+								[prepareSessionForPersistence(targetSession)]
+							);
+							if (saved === false) throw new Error('DispatchTabPersistenceFailed');
+							ack({ success: true, tabId: createdTabId });
+						} catch (error) {
+							ack({
+								success: false,
+								error: error instanceof Error ? error.message : 'DispatchTabPersistenceFailed',
+							});
+						}
+						return;
+					}
+
+					// Re-read the agent rather than trusting the snapshot taken before
+					// the tab was created: the store write above is the only thing that
+					// ran in between, but the decision below is about live state.
+					const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
+					const commandName = prompt.trim().split(/\s/, 1)[0];
+					const isSlashCommand =
+						commandName.startsWith('/') &&
+						[
+							...(deps.customAICommandsRef?.current ?? []),
+							...(deps.speckitCommandsRef?.current ?? []),
+							...(deps.openspecCommandsRef?.current ?? []),
+							...(deps.bmadCommandsRef?.current ?? []),
+							...(targetSession.agentCommands ?? []),
+						].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
+					if (control && (isBusy || isSlashCommand)) {
+						ack({ success: false, error: 'Supervised new-tab queue admission is unavailable' });
+						return;
+					}
+					if (isBusy || isSlashCommand) {
+						// Busy agents wait for their current turn. Slash commands also use
+						// the command queue on idle agents, as the composer does: its drain
+						// resolves custom and project commands and substitutes $ARGUMENTS.
+						// Sending them as plain messages would skip that resolution when
+						// busy, while the direct remote-command path lacks project commands.
+						const queued = enqueuePromptForTab({
 							sessionId,
-							command: prompt,
-							inputMode: 'ai',
 							tabId: createdTabId,
-							// Unexpanded provider commands go to the provider as typed.
-							literalPrompt: commandName.startsWith('/'),
+							text: prompt,
+							slashCommand: isSlashCommand,
 							mentionRouting,
-						},
-					})
-				);
-				ack({ success: true, tabId: createdTabId });
+						});
+						if (!queued) {
+							logger.warn(
+								'[useRemoteIntegration] onRemoteNewAITabWithPrompt: could not queue prompt for the new tab'
+							);
+							ack({
+								success: false,
+								tabId: createdTabId,
+								error: 'Created the tab but could not queue the prompt for it',
+							});
+							return;
+						}
+						ack({ success: true, tabId: createdTabId, queued: true });
+						return;
+					}
+					if (control) releasedAdmissions.add(control.dispatchId);
+					// Pass the new tab id explicitly so the renderer writes into the tab
+					// we just created - without it, useRemoteHandlers would fall back to
+					// activeTabId, which is correct here but would race in any future
+					// caller that doesn't atomically setActiveSessionId.
+					window.dispatchEvent(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId,
+								command: prompt,
+								inputMode: 'ai',
+								tabId: createdTabId,
+								// Unexpanded provider commands go to the provider as typed.
+								literalPrompt: commandName.startsWith('/'),
+								mentionRouting,
+							},
+						})
+					);
+					ack({ success: true, tabId: createdTabId });
+				} catch (error) {
+					ack({ success: false, error: 'Remote new-tab preparation failed' });
+					void captureException(error, { tags: { operation: 'remote-new-tab' } });
+				}
 			}
 		);
 

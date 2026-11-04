@@ -216,8 +216,9 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+		mentionRouting?: MentionRouting,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	) => Promise<import('../../types').NewAITabWithPromptResult>;
 	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
 	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */

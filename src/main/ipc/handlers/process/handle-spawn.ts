@@ -1,3 +1,4 @@
+import { pianolaNewTabSpawns } from '../../../pianola/pianola-new-tab-dispatch';
 import {
 	acquireProviderSessionWriter,
 	bindProviderSessionWriter,
@@ -133,6 +134,7 @@ export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
+	const admissionGuard = pianolaNewTabSpawns.claim(config.sessionId);
 	const proofCleanup: { release?: () => void } = {};
 	const manager = requireProcessManager(deps.getProcessManager);
 	const controller = new AbortController();
@@ -226,7 +228,13 @@ export async function handleProcessSpawn(
 			manager.on('session-id', onSessionId);
 		}
 		try {
-			const result = await handleProcessSpawnImpl(config, deps, proofCleanup, controller.signal);
+			const result = await handleProcessSpawnImpl(
+				config,
+				deps,
+				proofCleanup,
+				controller.signal,
+				admissionGuard
+			);
 			if (!result.success) cleanupSessionRelay(config.sessionId);
 			if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
 			return result;
@@ -254,8 +262,10 @@ async function handleProcessSpawnImpl(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies,
 	proofCleanup: { release?: () => void },
-	signal: AbortSignal
+	signal: AbortSignal,
+	admissionGuard: () => void
 ) {
+	const callerSpawnGeneration = generateUUID();
 	const {
 		getProcessManager,
 		getAgentDetector,
@@ -623,7 +633,7 @@ async function handleProcessSpawnImpl(
 	) {
 		try {
 			callerRunProof = hostCallerRuns.issue(
-				{ agentId: baseSessionId, tabId: callerTabId, spawnGeneration: generateUUID() },
+				{ agentId: baseSessionId, tabId: callerTabId, spawnGeneration: callerSpawnGeneration },
 				{
 					signal,
 					unattended: config.querySource !== 'user',
@@ -1263,6 +1273,7 @@ async function handleProcessSpawnImpl(
 	}
 
 	if (signal.aborted) throw new Error('Agent run cancelled');
+	admissionGuard();
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -1321,6 +1332,7 @@ async function handleProcessSpawnImpl(
 		// SSH app-server launch, when this Codex turn wants app-server.
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
+	if (result.success) pianolaNewTabSpawns.started(config.sessionId, callerSpawnGeneration);
 	const callerProcess = processManager.get(config.sessionId);
 	spawnReturned = true;
 	if (!result.success) exitListener.current?.(config.sessionId);

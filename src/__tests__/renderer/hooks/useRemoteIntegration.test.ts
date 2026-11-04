@@ -1649,6 +1649,87 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote new AI tab with prompt', () => {
+		it('prepares and persists an empty exact tab, then releases once without moving focus', async () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			const persist = vi.spyOn(window.maestro.sessions, 'setMany').mockResolvedValue(true);
+			renderHook(() => useRemoteIntegration(deps));
+			const control = { phase: 'prepare' as const, dispatchId: 'host-dispatch', tabId: 'host-tab' };
+			await act(async () => {
+				await onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'',
+					'prepare',
+					true,
+					false,
+					undefined,
+					control
+				);
+			});
+			expect(persist).toHaveBeenCalledOnce();
+			expect(
+				useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'host-tab')?.logs
+			).toEqual([]);
+			expect(
+				dispatchEventSpy.mock.calls.some(([event]) => event.type === 'maestro:remoteCommand')
+			).toBe(false);
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('prepare', {
+				success: true,
+				tabId: 'host-tab',
+			});
+			await act(async () => {
+				await onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'Hello',
+					'release',
+					true,
+					false,
+					undefined,
+					{ ...control, phase: 'release' }
+				);
+			});
+			await act(async () => {
+				await onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'Hello',
+					'duplicate',
+					true,
+					false,
+					undefined,
+					{ ...control, phase: 'release' }
+				);
+			});
+			expect(
+				dispatchEventSpy.mock.calls.filter(([event]) => event.type === 'maestro:remoteCommand')
+			).toHaveLength(1);
+			expect(useSessionStore.getState().activeSessionId).toBe('other-session');
+		});
+		it('keeps a prepared tab empty when persistence fails', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			vi.spyOn(window.maestro.sessions, 'setMany').mockResolvedValue(false);
+			renderHook(() => useRemoteIntegration(deps));
+			await act(async () => {
+				await onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'',
+					'prepare-failed',
+					true,
+					false,
+					undefined,
+					{ phase: 'prepare', dispatchId: 'host-dispatch', tabId: 'host-tab' }
+				);
+			});
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'prepare-failed',
+				{ success: false, error: 'DispatchTabPersistenceFailed' }
+			);
+			expect(
+				dispatchEventSpy.mock.calls.some(([event]) => event.type === 'maestro:remoteCommand')
+			).toBe(false);
+		});
+
 		it.each(['idle', 'busy'] as const)(
 			'creates a visible background tab on a %s agent without moving the view',
 			(state) => {

@@ -7,7 +7,17 @@
  * open_document_graph.
  */
 
+import * as pianolaStore from '../../../pianola/pianola-store-main';
+import { getSettingsStore } from '../../../stores/getters';
 import path from 'path';
+import { generateUUID } from '../../../../shared/uuid';
+import { hostCallerRuns } from '../../../agent-run/caller-identity';
+import { PianolaNewTabDispatch } from '../../../pianola/pianola-new-tab-dispatch';
+import { pianolaScopeSnapshotFromDesktop } from '../../../../shared/pianola/pianola-scope-cycle';
+import { createHash } from 'crypto';
+import { canonicalJson } from '../../../../shared/canonicalJson';
+import { captureException } from '../../../utils/sentry';
+
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
 import { isRemoteMediaUrl, type MediaOpenMode } from '../../../../shared/mediaTypes';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
@@ -27,6 +37,34 @@ import {
 } from '../../../../shared/uiSurfaces';
 import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults';
 import { normalizeRenameTabResult } from '../../types';
+
+const newTabAdmissions = new WeakMap<MessageHandlerContext['callbacks'], PianolaNewTabDispatch>();
+function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispatch {
+	let adapter = newTabAdmissions.get(ctx.callbacks);
+	if (!adapter) {
+		const store = pianolaStore;
+		adapter = new PianolaNewTabDispatch({
+			store,
+			featureEnabled: () => readEncoreFeatures().pianola,
+			snapshot: () =>
+				pianolaScopeSnapshotFromDesktop({
+					...ctx.callbacks.listDesktopSessions?.(),
+					success: true,
+				}),
+			ruleSetRevision: () => {
+				const result = store.readRulesResult();
+				if (result.malformed) throw new Error('PianolaRulesUnavailable');
+				return createHash('sha256').update(canonicalJson(result.rules)).digest('hex');
+			},
+			newTab: (...args) => ctx.callbacks.newAITabWithPrompt!(...args),
+			onReconcileError: (error) => {
+				void captureException(error, { area: 'pianola', handler: 'new_tab_reconcile' });
+			},
+		});
+		newTabAdmissions.set(ctx.callbacks, adapter);
+	}
+	return adapter;
+}
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -754,6 +792,64 @@ export function handleNewAITabWithPrompt(
 		return;
 	}
 
+	// Only the host-bound run is authority. Public caller/callback fields cannot opt in.
+	if (hostCallerRuns.resolve(client) || hostCallerRuns.isRunClient(client)) {
+		const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
+		void newTabAdmission(ctx)
+			.run(
+				client,
+				{
+					dispatchId,
+					targetAgentId: sessionId,
+					prompt,
+					background,
+					hidden,
+					mentionRouting: routingField.routing,
+				},
+				(tabId) => {
+					const armed = armDispatchCallback(ctx, message, {
+						agentId: sessionId,
+						tabId,
+						prompt,
+						isNewTab: true,
+					});
+					if (armed.error) throw new Error(armed.error);
+					return armed.callbackId;
+				}
+			)
+			.then(({ receipt, callbackId }) => {
+				ctx.send(client, {
+					type: 'new_ai_tab_with_prompt_result',
+					success: receipt.outcome === 'accepted',
+					sessionId,
+					tabId: receipt.targetTabId,
+					dispatchId,
+					admission: receipt,
+					...(receipt.outcome === 'unknown' ? { unknown: true } : {}),
+					...(callbackId ? { callbackId } : {}),
+					requestId: message.requestId,
+				});
+				if (receipt.outcome === 'accepted')
+					noteDispatchDelegation(ctx, message, {
+						targetSessionId: sessionId,
+						targetTabId: receipt.targetTabId,
+						prompt,
+						newTab: true,
+					});
+			})
+			.catch((error) =>
+				ctx.send(client, {
+					type: 'new_ai_tab_with_prompt_result',
+					success: false,
+					sessionId,
+					dispatchId,
+					error: error instanceof Error ? error.message : 'PianolaAdmissionUnavailable',
+					requestId: message.requestId,
+				})
+			);
+		return;
+	}
+
 	ctx.callbacks
 		.newAITabWithPrompt(sessionId, prompt, background, hidden, routingField.routing)
 		.then((result) => {
@@ -1098,8 +1194,6 @@ export function handleOpenDocumentGraph(
 function readEncoreFeatures(): ReturnType<typeof resolveEncoreFeatures> {
 	let raw: unknown;
 	try {
-		const { getSettingsStore } =
-			require('../../../stores/getters') as typeof import('../../../stores/getters');
 		raw = getSettingsStore().get('encoreFeatures');
 	} catch {
 		raw = undefined;

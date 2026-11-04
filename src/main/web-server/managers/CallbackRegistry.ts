@@ -683,10 +683,18 @@ export class CallbackRegistry {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	): Promise<{ success: boolean; tabId?: string }> {
+		mentionRouting?: MentionRouting,
+		control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	): Promise<import('../types').NewAITabWithPromptResult> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, mentionRouting);
+		return this.callbacks.newAITabWithPrompt(
+			sessionId,
+			prompt,
+			background,
+			hidden,
+			mentionRouting,
+			control
+		);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {

@@ -1419,14 +1419,16 @@ export class WebServer {
 				prompt: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: import('../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) =>
 				this.callbackRegistry.newAITabWithPrompt(
 					sessionId,
 					prompt,
 					background,
 					hidden,
-					mentionRouting
+					mentionRouting,
+					control
 				),
 			interruptSession: (sessionId: string, tabId?: string) =>
 				this.callbackRegistry.interruptSession(sessionId, tabId),

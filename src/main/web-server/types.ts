@@ -566,21 +566,10 @@ export type NoteAgentDelegationCallback = (notice: AgentDelegationNotice) => voi
  * a refusal, so the CLI can report what actually happened instead of inferring
  * one from a missing tab id.
  */
-export type NewAITabWithPromptResult = {
-	success: boolean;
-	tabId?: string;
-	queued?: boolean;
-	error?: string;
-};
-export type NewAITabWithPromptCallback = (
-	sessionId: string,
-	prompt: string,
-	background?: boolean,
-	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
-	hidden?: boolean,
-	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
-	mentionRouting?: MentionRouting
-) => Promise<NewAITabWithPromptResult>;
+export type {
+	NewAITabWithPromptResult,
+	NewAITabWithPromptCallback,
+} from '../../shared/pianola/pianola-dispatch';
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
  * renderer's authoritative execution queue. When the target session is busy the

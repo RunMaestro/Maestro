@@ -110,6 +110,54 @@ describe('dispatch command', () => {
 	});
 
 	describe('--new-tab flow', () => {
+		it('preserves the dispatch ID on a transport timeout and never retries', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const sendCommand = vi.fn().mockRejectedValue(new Error('WebSocket request timed out'));
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			const result = await runDispatch('agent-abc', 'Hello', { newTab: true });
+			expect(result).toMatchObject({
+				success: false,
+				unknown: true,
+				code: 'DISPATCH_UNKNOWN',
+				dispatchId: sendCommand.mock.calls[0][0].dispatchId,
+			});
+			expect(sendCommand).toHaveBeenCalledOnce();
+		});
+
+		it('returns an unknown receipt and the same dispatch ID without retrying', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const admission = {
+				version: 1,
+				dispatchId,
+				outcome: 'unknown',
+				targetTabId: 'held-tab',
+				supervision: 'enrolled',
+			};
+			const sendCommand = vi.fn().mockResolvedValue({
+				success: false,
+				unknown: true,
+				dispatchId,
+				tabId: 'held-tab',
+				admission,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			const result = await runDispatch('agent-abc', 'Hello', { newTab: true, dispatchId });
+			expect(result).toMatchObject({
+				success: false,
+				unknown: true,
+				dispatchId,
+				admission,
+				code: 'DISPATCH_UNKNOWN',
+			});
+			expect(sendCommand).toHaveBeenCalledOnce();
+			expect(sendCommand.mock.calls[0][0].dispatchId).toBe(dispatchId);
+		});
+
 		it('sends new_ai_tab_with_prompt hidden and in the background by default and returns the freshly-created tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -127,6 +175,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'new_ai_tab_with_prompt',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
 					// The dispatched tab is created in the background; the tabId we
@@ -270,6 +319,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'new_ai_tab_with_prompt',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
 				},
@@ -294,6 +344,7 @@ describe('dispatch command', () => {
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
 					type: 'new_ai_tab_with_prompt',
+					dispatchId: expect.any(String),
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
 					background: true,
@@ -843,6 +894,7 @@ describe('dispatch command', () => {
 
 			expect(sendCommand.mock.calls[0][0]).toMatchObject({
 				type: 'new_ai_tab_with_prompt',
+				dispatchId: expect.any(String),
 				fromSessionId: 'caller-agent',
 			});
 			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromTabId');
@@ -939,6 +991,7 @@ describe('dispatch command', () => {
 
 			expect(sendCommand.mock.calls[0][0]).toMatchObject({
 				type: 'new_ai_tab_with_prompt',
+				dispatchId: expect.any(String),
 				mentionRouting: 'only',
 			});
 		});

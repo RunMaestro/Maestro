@@ -244,7 +244,8 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -254,10 +255,11 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting);
+					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting, control);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

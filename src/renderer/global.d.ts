@@ -937,7 +937,8 @@ interface MaestroAPI {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				control?: import('../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (

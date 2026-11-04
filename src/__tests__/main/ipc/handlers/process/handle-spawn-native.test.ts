@@ -1,3 +1,5 @@
+import { pianolaNewTabSpawns } from '../../../../../main/pianola/pianola-new-tab-dispatch';
+import { generateUUID } from '../../../../../shared/uuid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import { hostCallerRuns } from '../../../../../main/agent-run/caller-identity';
@@ -192,6 +194,31 @@ async function spawnNative(
 }
 
 describe('native spawn configuration', () => {
+	it('blocks an unadmitted new tab before any spawn preflight', async () => {
+		const tabId = generateUUID();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+		).rejects.toThrow('DispatchAdmissionPending');
+	});
+	it('rechecks the admission after asynchronous spawn preflight', async () => {
+		const tabId = generateUUID();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		const guard = vi
+			.fn()
+			.mockImplementationOnce(() => {})
+			.mockImplementation(() => {
+				throw new Error('PausedDuringSpawn');
+			});
+		const started = vi.fn();
+		pianolaNewTabSpawns.arm('worker', tabId, guard, started);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+		).rejects.toThrow('PausedDuringSpawn');
+		expect(guard).toHaveBeenCalledTimes(2);
+		expect(started).not.toHaveBeenCalled();
+	});
+
 	it('passes effective model and effort with session-over-agent precedence', async () => {
 		const session = await spawnNative(
 			'copilot-cli',

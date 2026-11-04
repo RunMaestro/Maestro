@@ -222,6 +222,7 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 				expect(JSON.stringify(host.resolve(client))).not.toContain(resource.runTokenFile);
 				controller.abort();
 				expect(host.resolve(client)).toBeUndefined();
+				expect(host.isRunClient(client)).toBe(true);
 				expect(fs.existsSync(resource.runTokenFile)).toBe(false);
 				expect(() => host.bind({ cliAuthenticated: true }, proof)).toThrow('CallerRunUnavailable');
 			} finally {
@@ -284,6 +285,7 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 				resource.signal.addEventListener('abort', duringAbort);
 				generation = 'spawn-2';
 				expect(host.resolve(client)).toBeUndefined();
+				expect(host.isRunClient(client)).toBe(true);
 				expect(duringAbort).toHaveBeenCalledOnce();
 				expect(fs.existsSync(resource.runTokenFile)).toBe(false);
 				const next = host.issue(
@@ -314,6 +316,7 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 				expect(host.resolve(client)?.run.spawnGeneration).toBe('spawn-1');
 				host.stop();
 				expect(host.resolve(client)).toBeUndefined();
+				expect(host.isRunClient(client)).toBe(true);
 				expect(fs.existsSync(resource.runTokenFile)).toBe(false);
 			} finally {
 				host.stop();

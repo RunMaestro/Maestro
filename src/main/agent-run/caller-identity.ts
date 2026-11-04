@@ -16,6 +16,7 @@ export interface HostCallerRun extends PluginToolRunAuthority {
 export class HostCallerRuns {
 	private readonly identities = new PluginToolRunIdentity();
 	private readonly clients = new WeakMap<object, PluginToolCallerContext>();
+	private readonly runClients = new WeakSet<object>();
 	private files?: PluginToolRunProofFiles;
 
 	/** Host spawn only; the base must be the host's canonical private user-data directory. */
@@ -32,10 +33,16 @@ export class HostCallerRuns {
 			const context = this.identities.resolveVerified(proof);
 			if (!context.run) throw new Error('CallerRunUnavailable');
 			this.clients.set(client, context);
+			this.runClients.add(client);
 		} catch (error) {
 			if (error instanceof PluginAuthorityError) throw new Error('CallerRunUnavailable');
 			throw error;
 		}
+	}
+
+	/** A revoked bound run must fail admission, never fall back to an ordinary human send. */
+	isRunClient(client: object): boolean {
+		return this.runClients.has(client);
 	}
 
 	/** Recheck on every admission, even for an already connected CLI. No wire IDs are read. */

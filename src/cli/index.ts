@@ -589,6 +589,10 @@ program
 // callers can address the same tab again without owning a persistent channel.
 program
 	.command('dispatch <agent-id> <message>')
+	.option(
+		'--dispatch-id <uuid>',
+		'With --new-tab: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
+	)
 	.description(
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)

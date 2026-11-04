@@ -1,3 +1,6 @@
+import { generateUUID } from '../../shared/uuid';
+import { isPianolaScopeId } from '../../shared/pianola/pianola-scope';
+import type { PianolaDispatchReceipt } from '../../shared/pianola/pianola-dispatch';
 // Dispatch command - hand off a prompt to the Maestro desktop app and return
 // addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
 // the same tab on follow-up calls without owning a persistent channel.
@@ -22,6 +25,7 @@ import { parseMentionRoutingField, type MentionRouting } from '../../shared/cros
 import { resolveMentionedTargetSessionIds } from '../../shared/maestro-lib/mentions/roster';
 
 export interface DispatchOptions {
+	dispatchId?: string;
 	newTab?: boolean;
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
@@ -81,6 +85,9 @@ export interface DispatchOptions {
 const MAX_CALLBACK_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export interface DispatchResponse {
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	success: boolean;
 	agentId?: string;
 	/** Tab id the prompt was delivered to. Identical to `tabId` - the duplicate
@@ -246,6 +253,9 @@ function callbackNotArmedResponse(agentId: string, tabId: string | null): Dispat
 
 /** What an accepted `new_ai_tab_with_prompt` or `send_command` reply said. */
 interface DispatchedPrompt {
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	tabId?: string;
 	callbackId?: string;
 	queued: boolean;
@@ -310,6 +320,12 @@ export async function runDispatch(
 	message: string,
 	options: DispatchOptions
 ): Promise<DispatchResponse> {
+	if (options.dispatchId && (!options.newTab || !isPianolaScopeId(options.dispatchId)))
+		return {
+			success: false,
+			error: '--dispatch-id requires --new-tab and a UUID',
+			code: 'INVALID_OPTIONS',
+		};
 	if (options.newTab && options.tab) {
 		return {
 			success: false,
@@ -429,11 +445,17 @@ export async function runDispatch(
 			caller
 		);
 	}
+	const newTabDispatchId = options.newTab ? (options.dispatchId ?? generateUUID()) : undefined;
+	let awaitingNewTabAck = false;
 	try {
 		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
 			if (options.newTab) {
+				awaitingNewTabAck = true;
 				const result = await client.sendCommand<{
 					success?: boolean;
+					dispatchId?: string;
+					admission?: PianolaDispatchReceipt;
+					unknown?: boolean;
 					tabId?: string;
 					callbackId?: string;
 					queued?: boolean;
@@ -441,6 +463,7 @@ export async function runDispatch(
 				}>(
 					{
 						type: 'new_ai_tab_with_prompt',
+						dispatchId: newTabDispatchId,
 						sessionId: agentId,
 						prompt: message,
 						// Background by default: a dispatched prompt is an agent talking to
@@ -455,12 +478,13 @@ export async function runDispatch(
 					},
 					'new_ai_tab_with_prompt_result'
 				);
+				awaitingNewTabAck = false;
 				// An explicit refusal is reported with the desktop's OWN reason.
 				// `sendCommand` resolves on any reply, success or not, so a refusal
 				// carrying no tab id used to fall through to the NEW_TAB_NO_ID branch
 				// below and be reported as a protocol fault - which is the one thing
 				// it is not (#1602).
-				if (result.success === false) {
+				if (result.success === false && !result.unknown) {
 					throw new Error(
 						`NEW_TAB_REFUSED:${result.error || 'Maestro desktop refused the dispatch'}`
 					);
@@ -476,6 +500,9 @@ export async function runDispatch(
 				}
 				return {
 					tabId: result.tabId,
+					...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+					...(result.admission ? { admission: result.admission } : {}),
+					...(result.unknown ? { unknown: true } : {}),
 					callbackId: result.callbackId,
 					queued: result.queued === true,
 				};
@@ -532,11 +559,21 @@ export async function runDispatch(
 		// build / no active tab known), fall back to the value the caller
 		// supplied so callers can still chain dispatches deterministically.
 		const resolvedTabId = dispatched.tabId ?? options.tab ?? null;
-		if (callback.callerAgentId && !dispatched.callbackId) {
+		if (callback.callerAgentId && !dispatched.callbackId && !dispatched.unknown) {
 			return callbackNotArmedResponse(agentId, resolvedTabId);
 		}
 		return {
-			success: true,
+			success: !dispatched.unknown,
+			...(dispatched.dispatchId ? { dispatchId: dispatched.dispatchId } : {}),
+			...(dispatched.admission ? { admission: dispatched.admission } : {}),
+			...(dispatched.unknown
+				? {
+						unknown: true,
+						code: 'DISPATCH_UNKNOWN',
+						error:
+							'Delivery is unknown; reconcile with the same dispatch ID. Do not send a new dispatch.',
+					}
+				: {}),
 			agentId,
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
@@ -551,6 +588,16 @@ export async function runDispatch(
 			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};
 	} catch (error) {
+		if (awaitingNewTabAck)
+			return {
+				success: false,
+				unknown: true,
+				dispatchId: newTabDispatchId,
+				agentId,
+				code: 'DISPATCH_UNKNOWN',
+				error:
+					'The host acknowledgment was lost. Reconcile with the same dispatch ID; do not send a new dispatch.',
+			};
 		return mapDispatchError(error, agentId);
 	}
 }
@@ -642,7 +689,8 @@ export async function dispatch(
 	const result = await runDispatch(agentIdArg, message, options);
 
 	if (!result.success) {
-		emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
+		if (result.unknown) console.log(JSON.stringify(result, null, 2));
+		else emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
 		process.exit(
 			result.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError
 		);
@@ -656,6 +704,8 @@ export async function dispatch(
 				agentId: result.agentId,
 				sessionId: result.sessionId,
 				tabId: result.tabId,
+				...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+				...(result.admission ? { admission: result.admission } : {}),
 				...(result.queued !== undefined ? { queued: result.queued } : {}),
 				...(result.held ? { held: true } : {}),
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),

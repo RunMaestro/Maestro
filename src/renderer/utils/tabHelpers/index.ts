@@ -1138,8 +1138,9 @@ export interface CreateTabOptions {
 	 *  tab is never activated: focusing a tab the strip does not draw strands the
 	 *  user on it, so this overrides `activate`. Default false. */
 	hidden?: boolean;
-	/** Adopt an id minted elsewhere instead of generating one. The only caller
-	 *  is a web-desktop client drawing the tab the DESKTOP just created for it
+	/** Adopt an id minted elsewhere instead of generating one. Callers are
+	 *  the host admission adapter reserving an exact empty tab, and a web-desktop
+	 *  client drawing the tab the DESKTOP just created for it
 	 *  (see `createNewAITab`): the id has to match, or the inventory broadcast
 	 *  that follows adds the same tab a second time under the desktop's id.
 	 *  Omit everywhere else - a caller that passes an id it did not receive

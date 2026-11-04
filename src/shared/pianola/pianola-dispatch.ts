@@ -1,3 +1,4 @@
+import type { MentionRouting } from '../crossAgentContext';
 /** Public, nonsecret dispatch journal and receipt. No caller proof or prompt is persisted. */
 import type { CallerRunIdentity } from '../agentDelegation';
 import { isPianolaScopeId } from './pianola-scope';
@@ -59,3 +60,28 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 		return null;
 	return r;
 }
+
+/** Host-to-owning-renderer protocol; never accepted from a WebSocket payload. */
+export interface PianolaNewTabControl {
+	phase: 'prepare' | 'release';
+	dispatchId: string;
+	tabId: string;
+}
+
+export type NewAITabWithPromptResult = {
+	unknown?: boolean;
+	success: boolean;
+	tabId?: string;
+	queued?: boolean;
+	error?: string;
+};
+export type NewAITabWithPromptCallback = (
+	sessionId: string,
+	prompt: string,
+	background?: boolean,
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
+	hidden?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting,
+	control?: PianolaNewTabControl
+) => Promise<NewAITabWithPromptResult>;
