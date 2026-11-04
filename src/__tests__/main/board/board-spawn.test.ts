@@ -393,6 +393,31 @@ it('stops a live decomposition process and discards its late reply', async () =>
 	expect(await pending).toBeNull();
 });
 
+it.each([
+	{ sshRemoteId: 'other', sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' } },
+	{ sessionSshRemoteConfig: { enabled: true } },
+])('refuses decomposition with invalid SSH identity before preparation', async (session) => {
+	const ctx = context(session);
+	ctx.getPoolAgentIds = () => ['agent-1'];
+	ctx.getAgentConfig = vi.fn(() => ({}));
+	ctx.resolveAgentPath = vi.fn();
+	buildSystemPrompt.mockClear();
+	expect(await decomposeBoardCard(PROJECT_ROOT, card(), 'Plan children', ctx)).toBeNull();
+	expect(ctx.getAgentConfig).not.toHaveBeenCalled();
+	expect(ctx.resolveAgentPath).not.toHaveBeenCalled();
+	expect(buildSystemPrompt).not.toHaveBeenCalled();
+	expect(executeCuePrompt).not.toHaveBeenCalled();
+});
+
+it('routes decomposition with a runtime-only SSH identity to that remote', async () => {
+	const ctx = context({ sshRemoteId: 'remote-one' });
+	ctx.getPoolAgentIds = () => ['agent-1'];
+	expect(await decomposeBoardCard(PROJECT_ROOT, card(), 'Plan children', ctx)).toBe('ok');
+	expect(executeCuePrompt).toHaveBeenCalledWith(
+		expect.objectContaining({ sshRemoteConfig: { enabled: true, remoteId: 'remote-one' } })
+	);
+});
+
 it('authorizes writes in the isolated checkout even when the base agent has fullPath', async () => {
 	buildSystemPrompt.mockImplementationOnce(async (record: any) =>
 		substituteTemplateVariables('Write only within {{AGENT_PATH}}', { session: record })

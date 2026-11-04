@@ -485,6 +485,15 @@ async function runCardPrompt(
 	run?: { runId: string; controller: Pick<AbortController, 'signal'> },
 	lifecycle?: CardSpawnRequest['lifecycle']
 ): Promise<CardSpawnResult> {
+	const location = resolveBoardLocation(baseSession);
+	if (location.kind === 'invalid')
+		return {
+			...blockedSpawnResult(
+				'Worker SSH identities conflict or are missing; check agent SSH settings'
+			),
+			error: 'Worker SSH identities conflict or are missing; check agent SSH settings',
+			executionStarted: false,
+		};
 	const runCwd = card.reviewHandoff?.artifact.worktreePath ?? worktree?.path ?? projectRoot;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
 	// into both the string `toolType` config field and the enum `session.toolType`
@@ -531,7 +540,7 @@ async function runCardPrompt(
 		beforeLaunch: lifecycle?.beforeLaunch,
 		prepareLaunch: lifecycle
 			? async () => {
-					if (resolveBoardLocation(baseSession).kind !== 'local') return !card.reviewHandoff;
+					if (location.kind !== 'local') return !card.reviewHandoff;
 					const artifact = await readBoardRunArtifact(
 						runCwd,
 						card.reviewHandoff?.artifact.diff?.baseCommit
@@ -571,12 +580,11 @@ async function runCardPrompt(
 		timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
 		// Honor the base agent's SSH + token-source config (never bypass the SSH path).
 		sshRemoteConfig:
-			resolveBoardLocation(baseSession).kind === 'ssh'
+			location.kind === 'ssh'
 				? {
 						...baseSession.sessionSshRemoteConfig,
 						enabled: true,
-						remoteId: (resolveBoardLocation(baseSession) as { kind: 'ssh'; remoteId: string })
-							.remoteId,
+						remoteId: location.remoteId,
 					}
 				: baseSession.sessionSshRemoteConfig,
 		customPath: resolvedAgentPath,
@@ -602,7 +610,7 @@ async function runCardPrompt(
 		lifecycle &&
 		result.executionStarted &&
 		result.terminationConfirmed &&
-		resolveBoardLocation(baseSession).kind === 'local'
+		location.kind === 'local'
 	) {
 		try {
 			artifact =
