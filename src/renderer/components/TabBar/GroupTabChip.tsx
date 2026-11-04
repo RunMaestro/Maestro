@@ -151,7 +151,6 @@ export const GroupTabChip = memo(function GroupTabChip({
 
 	const handleRenameKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			e.stopPropagation();
 			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				commitRename();

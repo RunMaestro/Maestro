@@ -287,12 +287,8 @@ export function FontConfigurationPanel({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter') {
-			e.stopPropagation();
-			if (!isImeComposing(e)) {
-				e.preventDefault();
-				handleAddCustomFont();
-			}
+		if (e.key === 'Enter' && !isImeComposing(e)) {
+			handleAddCustomFont();
 		}
 	};
 

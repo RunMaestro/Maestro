@@ -235,9 +235,7 @@ export function PipelineSelector({
 	// Enter takes the first match, pipelines before agents (the order drawn).
 	const handleFilterKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key !== 'Enter') return;
-			e.stopPropagation();
-			if (isImeComposing(e)) return;
+			if (e.key !== 'Enter' || isImeComposing(e)) return;
 			e.preventDefault();
 			if (visiblePipelines.length > 0) handleSelect(visiblePipelines[0].id);
 			else if (visibleAgents.length > 0) handleSelectAgent(visibleAgents[0]);
@@ -259,13 +257,9 @@ export function PipelineSelector({
 
 	const handleRenameKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			e.stopPropagation();
-			if (e.key === 'Enter') {
-				if (isImeComposing(e)) return;
-				e.preventDefault();
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				handleFinishRename();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
-				e.preventDefault();
 				setRenamingId(null);
 			}
 		},

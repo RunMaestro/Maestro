@@ -1131,13 +1131,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Handle rename mode separately
 		if (renamingSession) {
-			if (e.key === 'Enter') {
-				if (isImeComposing(e)) {
-					e.stopPropagation();
-					return;
-				}
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
-				e.stopPropagation();
 				handleRenameSession();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
@@ -1150,13 +1145,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// the command list. Handled here so neither the list nav nor the modal's
 		// Escape-to-close fires while the input is focused.
 		if (renamingWindow) {
-			if (e.key === 'Enter') {
-				if (isImeComposing(e)) {
-					e.stopPropagation();
-					return;
-				}
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
-				e.stopPropagation();
 				commitRenameCurrentWindow();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();

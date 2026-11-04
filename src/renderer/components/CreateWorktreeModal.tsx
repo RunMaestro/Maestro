@@ -141,12 +141,8 @@ export function CreateWorktreeModal({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter') {
-			e.stopPropagation();
-			if (branchName.trim() && !isCreating && !isImeComposing(e)) {
-				e.preventDefault();
-				handleCreate();
-			}
+		if (e.key === 'Enter' && branchName.trim() && !isCreating && !isImeComposing(e)) {
+			handleCreate();
 		}
 	};
 

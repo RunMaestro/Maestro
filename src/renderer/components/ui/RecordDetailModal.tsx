@@ -150,12 +150,9 @@ export function RecordDetailModal({
 		// runs - "Escape clears the filter first" is not implementable here, and
 		// Escape closing every modal outright is the app-wide contract anyway.
 		if (e.target === searchRef.current) {
-			if (e.key === 'Enter') {
-				e.stopPropagation();
-				if (!isImeComposing(e)) {
-					e.preventDefault();
-					scrollRef.current?.focus();
-				}
+			if (e.key === 'Enter' && !isImeComposing(e)) {
+				e.preventDefault();
+				scrollRef.current?.focus();
 			}
 			return;
 		}

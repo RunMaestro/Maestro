@@ -559,14 +559,11 @@ export const AutoRunDocumentSelector = forwardRef<
 												setHighlightedIndex(
 													(i) => (i - 1 + visibleFiles.length) % visibleFiles.length
 												);
-											} else if (e.key === 'Enter') {
-												e.stopPropagation();
-												if (!isImeComposing(e)) {
-													const target = visibleFiles[highlightedIndex];
-													if (target) {
-														e.preventDefault();
-														handleSelectDocument(target);
-													}
+											} else if (e.key === 'Enter' && !isImeComposing(e)) {
+												const target = visibleFiles[highlightedIndex];
+												if (target) {
+													e.preventDefault();
+													handleSelectDocument(target);
 												}
 											}
 										}}

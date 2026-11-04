@@ -33,13 +33,11 @@ describe('OutputSearchBar IME composition', () => {
 		const input = screen.getByRole('textbox');
 		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
 		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-		const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
 
 		input.dispatchEvent(event);
 
 		expect(goToNextMatch).toHaveBeenCalledTimes(1);
 		expect(preventDefaultSpy).toHaveBeenCalled();
-		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 
 	it('steps to previous match on normal Shift+Enter', () => {
@@ -54,13 +52,11 @@ describe('OutputSearchBar IME composition', () => {
 			cancelable: true,
 		});
 		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-		const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
 
 		input.dispatchEvent(event);
 
 		expect(goToPrevMatch).toHaveBeenCalledTimes(1);
 		expect(preventDefaultSpy).toHaveBeenCalled();
-		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 
 	it('does not step match on Enter during active IME composition (isComposing: true)', () => {
@@ -71,13 +67,11 @@ describe('OutputSearchBar IME composition', () => {
 		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
 		Object.defineProperty(event, 'isComposing', { value: true });
 		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-		const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
 
 		input.dispatchEvent(event);
 
 		expect(goToNextMatch).not.toHaveBeenCalled();
 		expect(preventDefaultSpy).not.toHaveBeenCalled();
-		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 
 	it('does not step match on Enter during Safari IME candidate confirmation (keyCode 229)', () => {
@@ -88,12 +82,10 @@ describe('OutputSearchBar IME composition', () => {
 		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
 		Object.defineProperty(event, 'keyCode', { value: 229 });
 		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-		const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
 
 		input.dispatchEvent(event);
 
 		expect(goToNextMatch).not.toHaveBeenCalled();
 		expect(preventDefaultSpy).not.toHaveBeenCalled();
-		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 });

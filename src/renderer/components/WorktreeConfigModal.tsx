@@ -405,12 +405,8 @@ export function WorktreeConfigModal({
 								value={newBranchName}
 								onChange={(e) => setNewBranchName(e.target.value)}
 								onKeyDown={(e) => {
-									if (e.key === 'Enter') {
-										e.stopPropagation();
-										if (newBranchName.trim() && !isImeComposing(e)) {
-											e.preventDefault();
-											handleCreateWorktree();
-										}
+									if (e.key === 'Enter' && newBranchName.trim() && !isImeComposing(e)) {
+										handleCreateWorktree();
 									}
 								}}
 								placeholder="feature-xyz"

@@ -127,14 +127,12 @@ describe('CommandHistoryPopover', () => {
 		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
 		Object.defineProperty(event, 'isComposing', { value: true });
 		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-		const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
 
 		filter.dispatchEvent(event);
 
 		expect(setInputValue).not.toHaveBeenCalled();
 		expect(setOpen).not.toHaveBeenCalled();
 		expect(preventDefaultSpy).not.toHaveBeenCalled();
-		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 
 	it('does not select or close on Enter during Safari IME confirmation (keyCode 229)', () => {
@@ -146,13 +144,11 @@ describe('CommandHistoryPopover', () => {
 		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
 		Object.defineProperty(event, 'keyCode', { value: 229 });
 		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-		const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
 
 		filter.dispatchEvent(event);
 
 		expect(setInputValue).not.toHaveBeenCalled();
 		expect(setOpen).not.toHaveBeenCalled();
 		expect(preventDefaultSpy).not.toHaveBeenCalled();
-		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 });

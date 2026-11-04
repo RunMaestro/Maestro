@@ -377,13 +377,7 @@ export function CaptureRulesEditor({
 						value={manualApp}
 						onChange={(e) => setManualApp(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter') {
-								e.stopPropagation();
-								if (!isImeComposing(e)) {
-									e.preventDefault();
-									addManualApp();
-								}
-							}
+							if (e.key === 'Enter' && !isImeComposing(e)) addManualApp();
 						}}
 						placeholder={
 							mode === 'include'
@@ -481,13 +475,7 @@ export function CaptureRulesEditor({
 						value={domainDraft}
 						onChange={(e) => setDomainDraft(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter') {
-								e.stopPropagation();
-								if (!isImeComposing(e)) {
-									e.preventDefault();
-									addDomain();
-								}
-							}
+							if (e.key === 'Enter' && !isImeComposing(e)) addDomain();
 						}}
 						placeholder="bank.example.com"
 						className="flex-1 px-2 py-1 rounded border text-sm outline-none"

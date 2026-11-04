@@ -136,12 +136,9 @@ export function EnvVarKeyInput({
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
 			setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
-		} else if (event.key === 'Enter') {
-			event.stopPropagation();
-			if (!isImeComposing(event)) {
-				event.preventDefault();
-				commitSuggestion(suggestions[activeIndex].key);
-			}
+		} else if (event.key === 'Enter' && !isImeComposing(event)) {
+			event.preventDefault();
+			commitSuggestion(suggestions[activeIndex].key);
 		} else if (event.key === 'Tab') {
 			setOpen(false);
 		}

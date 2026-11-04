@@ -77,3 +77,55 @@ describe('GroupTabChip close group', () => {
 		expect(screen.queryByText('Close group')).toBeNull();
 	});
 });
+
+describe('GroupTabChip rename during IME composition', () => {
+	function startRenaming(onRename: (groupId: string, name: string) => void) {
+		render(
+			<GroupTabChip
+				group={group}
+				isActive
+				theme={mockTheme}
+				onSelect={vi.fn()}
+				onRename={onRename}
+			/>
+		);
+		fireEvent.doubleClick(screen.getByTitle('Terminal 1'));
+		return screen.getByDisplayValue('Terminal 1') as HTMLInputElement;
+	}
+
+	it.each([
+		['isComposing', { isComposing: true }],
+		['keyCode 229', { keyCode: 229 }],
+	])('leaves a composing Enter (%s) to the input method', (_label, composing) => {
+		const onRename = vi.fn();
+		const input = startRenaming(onRename);
+		fireEvent.change(input, { target: { value: 'Renamed' } });
+
+		const notPrevented = fireEvent.keyDown(input, { key: 'Enter', ...composing });
+
+		expect(notPrevented).toBe(true);
+		expect(onRename).not.toHaveBeenCalled();
+		expect(screen.getByDisplayValue('Renamed')).toBeTruthy();
+	});
+
+	it('still commits on a normal Enter', () => {
+		const onRename = vi.fn();
+		const input = startRenaming(onRename);
+		fireEvent.change(input, { target: { value: 'Renamed' } });
+
+		fireEvent.keyDown(input, { key: 'Enter' });
+
+		expect(onRename).toHaveBeenCalledWith(group.id, 'Renamed');
+	});
+
+	it('lets keys other than Enter and Escape bubble out of the rename input', () => {
+		const onRename = vi.fn();
+		const input = startRenaming(onRename);
+		const parentKeyDown = vi.fn();
+		input.parentElement?.addEventListener('keydown', parentKeyDown);
+
+		fireEvent.keyDown(input, { key: 'w', metaKey: true });
+
+		expect(parentKeyDown).toHaveBeenCalledTimes(1);
+	});
+});

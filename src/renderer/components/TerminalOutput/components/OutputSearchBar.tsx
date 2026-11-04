@@ -44,16 +44,13 @@ export function OutputSearchBar({
 						value={outputSearchQuery}
 						onChange={(e) => setOutputSearchQuery(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter') {
-								e.stopPropagation();
-								if (!isImeComposing(e)) {
-									e.preventDefault();
-									if (!e.shiftKey) {
-										goToNextMatch();
-									} else {
-										goToPrevMatch();
-									}
-								}
+							if (isImeComposing(e)) return;
+							if (e.key === 'Enter' && !e.shiftKey) {
+								e.preventDefault();
+								goToNextMatch();
+							} else if (e.key === 'Enter' && e.shiftKey) {
+								e.preventDefault();
+								goToPrevMatch();
 							}
 						}}
 						placeholder={

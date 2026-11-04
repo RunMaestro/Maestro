@@ -145,13 +145,10 @@ export const LanguagePicker = memo(function LanguagePicker({
 				setSelectedIndex((i) => Math.max(i - 1, 0));
 				return;
 			}
-			if (e.key === 'Enter') {
-				e.stopPropagation();
-				if (!isImeComposing(e)) {
-					e.preventDefault();
-					const choice = filtered[selectedIndex];
-					if (choice) handleSelect(choice.id);
-				}
+			if (e.key === 'Enter' && !isImeComposing(e)) {
+				e.preventDefault();
+				const choice = filtered[selectedIndex];
+				if (choice) handleSelect(choice.id);
 			}
 		},
 		[filtered, selectedIndex, handleSelect]

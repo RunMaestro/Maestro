@@ -55,16 +55,13 @@ export function AutoRunSearchBar({
 	// Note: Escape is now handled by the layer stack, not here
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'Enter') {
-				e.stopPropagation();
-				if (!isImeComposing(e)) {
-					e.preventDefault();
-					if (!e.shiftKey) {
-						onNextMatch();
-					} else {
-						onPrevMatch();
-					}
-				}
+			if (isImeComposing(e)) return;
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				onNextMatch();
+			} else if (e.key === 'Enter' && e.shiftKey) {
+				e.preventDefault();
+				onPrevMatch();
 			}
 		},
 		[onNextMatch, onPrevMatch]
