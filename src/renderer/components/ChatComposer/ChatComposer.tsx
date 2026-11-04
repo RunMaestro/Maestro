@@ -35,8 +35,12 @@ import {
 	type MentionPickerItem,
 } from '../../hooks/input/useMentionPicker';
 import type { AtMentionSuggestion } from '../../hooks/input/useAtMentionCompletion';
-import { buildKnownMentionNameSet } from '../../hooks/input/useAgentMentionCompletion';
 import {
+	buildKnownMentionNameSet,
+	useAgentMentionCompletion,
+} from '../../hooks/input/useAgentMentionCompletion';
+import {
+	handleComposerAgentTabKey,
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
@@ -176,6 +180,12 @@ export const ChatComposer = React.memo(function ChatComposer({
 		fileSuggestions: NO_FILE_SUGGESTIONS,
 	});
 
+	const { getSuggestions: getAgentSuggestions } = useAgentMentionCompletion(
+		sessions,
+		groups,
+		undefined
+	);
+
 	const hasMentionCandidate = value.includes('@');
 	const knownMentionNames = useMemo(
 		() =>
@@ -274,6 +284,32 @@ export const ChatComposer = React.memo(function ChatComposer({
 			) {
 				return;
 			}
+			if (
+				handleComposerAgentTabKey(e, {
+					inputRef,
+					getInputValue: () => value,
+					getAgentSuggestions,
+					accept: (selected, startIndex, filter) => {
+						const accept = buildMentionAccept(value, startIndex, filter, selected);
+						onChange(accept.value);
+						closeAtMention();
+						inputRef.current?.focus();
+						requestAnimationFrame(() => {
+							const el = inputRef.current;
+							if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+						});
+					},
+					openPicker: (startIndex, filter) => {
+						setAtMentionOpen(true);
+						setAtMentionFilter(filter);
+						setAtMentionStartIndex(startIndex);
+						setSelectedAtMentionIndex(0);
+					},
+					isolateFromWindowKeys,
+				})
+			) {
+				return;
+			}
 			handleComposerSendKey(e, {
 				enterToSend,
 				send: handleSend,
@@ -292,6 +328,9 @@ export const ChatComposer = React.memo(function ChatComposer({
 			inputRef,
 			enterToSend,
 			handleSend,
+			value,
+			getAgentSuggestions,
+			onChange,
 		]
 	);
 

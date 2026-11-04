@@ -36,6 +36,8 @@ const mockInputContext = {
 	setAtMentionStartIndex: vi.fn(),
 	selectedAtMentionIndex: 0,
 	setSelectedAtMentionIndex: vi.fn(),
+	atMentionCategory: 'all' as string,
+	setAtMentionCategory: vi.fn(),
 	commandHistoryOpen: false,
 	setCommandHistoryOpen: vi.fn(),
 	commandHistoryFilter: '',
@@ -2463,6 +2465,148 @@ describe('IME composition leaves the AI composer branches alone', () => {
 
 			act(() => result.current.handleInputKeyDown(createKeyEvent('Tab')));
 			expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('completes a single matching agent when Tab is pressed on a partial @name', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-sess',
+						name: 'Codex',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @co',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Codex ');
+		});
+
+		it('opens the picker filtered to the partial term when multiple agents match', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-1',
+						name: 'Codex',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-2',
+						name: 'Copilot',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @co',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(true);
+			expect(mockInputContext.setAtMentionFilter).toHaveBeenCalledWith('co');
+			expect(mockInputContext.setAtMentionStartIndex).toHaveBeenCalledWith(4);
+			expect(mockInputContext.setSelectedAtMentionIndex).toHaveBeenCalledWith(0);
+			expect(mockInputContext.setAtMentionCategory).toHaveBeenCalledWith('agents');
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+
+		it('does not complete or open picker for a group name target', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-1',
+						name: 'Peer Agent',
+						toolType: 'claude-code',
+						groupId: 'grp-core',
+						inputMode: 'ai',
+					} as any,
+				],
+				groups: [
+					{
+						id: 'grp-core',
+						name: 'Core-Team',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @Core',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		});
+
+		it('excludes the active agent itself from Tab completion matches', () => {
+			setActiveSession({ id: 'active-sess', name: 'Codex' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Codex',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @co',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
 		});
 	});
 });

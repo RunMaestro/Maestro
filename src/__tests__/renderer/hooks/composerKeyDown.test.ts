@@ -1,12 +1,15 @@
 import type React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	findPartialMentionAtCursor,
+	handleComposerAgentTabKey,
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
 	PICKER_KEYS,
 	yieldKeyToIme,
 } from '../../../renderer/hooks/input/composerKeyDown';
+import type { AgentMentionSuggestion } from '../../../shared/maestro-lib/mentions/roster';
 import { isImeComposing } from '../../../renderer/utils/ime';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../../../renderer/hooks/ui/useOutputSearchLayer';
@@ -490,5 +493,346 @@ describe('handleComposerSendKey', () => {
 				expect(stopPropagation).toHaveBeenCalled();
 			}
 		});
+	});
+});
+
+describe('findPartialMentionAtCursor', () => {
+	it('detects a partial reference at the end of input', () => {
+		expect(findPartialMentionAtCursor('ask @co', 7)).toEqual({
+			startIndex: 4,
+			filter: 'co',
+		});
+	});
+
+	it('detects a partial reference with cursor in mid-word', () => {
+		expect(findPartialMentionAtCursor('ask @co and more', 7)).toEqual({
+			startIndex: 4,
+			filter: 'co',
+		});
+		expect(findPartialMentionAtCursor('ask @co-dy more', 7)).toEqual({
+			startIndex: 4,
+			filter: 'co-dy',
+		});
+	});
+
+	it('detects bare @ trigger', () => {
+		expect(findPartialMentionAtCursor('ask @', 5)).toEqual({
+			startIndex: 4,
+			filter: '',
+		});
+	});
+
+	it('detects a completed name without a trailing space', () => {
+		expect(findPartialMentionAtCursor('ask @cody', 9)).toEqual({
+			startIndex: 4,
+			filter: 'cody',
+		});
+	});
+
+	it('returns null when preceded by non-whitespace (email address)', () => {
+		expect(findPartialMentionAtCursor('user@example.com', 8)).toBeNull();
+	});
+
+	it('returns null when cursor is past a trailing space', () => {
+		expect(findPartialMentionAtCursor('ask @cody ', 10)).toBeNull();
+		expect(findPartialMentionAtCursor('ask @cody please', 12)).toBeNull();
+	});
+
+	it('returns null when newline sits between @ and cursor', () => {
+		expect(findPartialMentionAtCursor('ask @cody\nnext', 13)).toBeNull();
+	});
+
+	it('stops tail before sentence punctuation', () => {
+		expect(findPartialMentionAtCursor('ask @cody, please', 9)).toEqual({
+			startIndex: 4,
+			filter: 'cody',
+		});
+	});
+});
+
+describe('handleComposerAgentTabKey', () => {
+	const agentA: AgentMentionSuggestion = {
+		kind: 'agent',
+		displayText: 'Codex',
+		value: '@Codex ',
+		targetSessionId: 'sess-a',
+		score: 10,
+	};
+	const agentB: AgentMentionSuggestion = {
+		kind: 'agent',
+		displayText: 'Copilot',
+		value: '@Copilot ',
+		targetSessionId: 'sess-b',
+		score: 8,
+	};
+	const groupA: AgentMentionSuggestion = {
+		kind: 'group',
+		displayText: 'Core Team',
+		value: '@Core-Team ',
+		groupId: 'grp-1',
+		memberMentionValue: '@Codex @Copilot ',
+		score: 12,
+	};
+
+	it('ignores non-Tab keys and Tab with modifiers', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const enter = keyEvent({ key: 'Enter' });
+		expect(
+			handleComposerAgentTabKey(enter.event, {
+				inputRef,
+				getInputValue: () => 'ask @co',
+				getAgentSuggestions: () => [agentA],
+				accept: vi.fn(),
+				openPicker: vi.fn(),
+			})
+		).toBe(false);
+
+		for (const mod of [
+			{ shiftKey: true },
+			{ altKey: true },
+			{ metaKey: true },
+			{ ctrlKey: true },
+		]) {
+			const tabMod = keyEvent({ key: 'Tab', ...mod });
+			expect(
+				handleComposerAgentTabKey(tabMod.event, {
+					inputRef,
+					getInputValue: () => 'ask @co',
+					getAgentSuggestions: () => [agentA],
+					accept: vi.fn(),
+					openPicker: vi.fn(),
+				})
+			).toBe(false);
+		}
+	});
+
+	it('leaves Tab to the IME during an active composition', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		for (const ime of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+			const { event, preventDefault } = keyEvent({ key: 'Tab', ...ime });
+			const accept = vi.fn();
+			const openPicker = vi.fn();
+
+			const handled = handleComposerAgentTabKey(event, {
+				inputRef,
+				getInputValue: () => 'ask @co',
+				getAgentSuggestions: () => [agentA],
+				accept,
+				openPicker,
+			});
+
+			expect(handled).toBe(false);
+			expect(preventDefault).not.toHaveBeenCalled();
+			expect(accept).not.toHaveBeenCalled();
+			expect(openPicker).not.toHaveBeenCalled();
+		}
+	});
+
+	it('ignores Tab when text is selected', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = 4;
+		inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [agentA],
+			accept: vi.fn(),
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+	});
+
+	it('ignores Tab when there is no @ reference under cursor', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask something';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 13;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask something',
+			getAgentSuggestions: () => [agentA],
+			accept: vi.fn(),
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+	});
+
+	it('completes when exactly one agent matches', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('co');
+				return [agentA];
+			},
+			accept,
+			openPicker,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
+		expect(openPicker).not.toHaveBeenCalled();
+	});
+
+	it('stops propagation when isolated from window keys', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [agentA],
+			accept,
+			openPicker: vi.fn(),
+			isolateFromWindowKeys: true,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(stopPropagation).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
+	});
+
+	it('opens the picker when multiple agents match', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [agentA, agentB],
+			accept,
+			openPicker,
+			isolateFromWindowKeys: true,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(stopPropagation).toHaveBeenCalled();
+		expect(openPicker).toHaveBeenCalledWith(4, 'co');
+		expect(accept).not.toHaveBeenCalled();
+	});
+
+	it('does not complete or open picker when only a group matches', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @core';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 9;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @core',
+			getAgentSuggestions: () => [groupA],
+			accept,
+			openPicker,
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(accept).not.toHaveBeenCalled();
+		expect(openPicker).not.toHaveBeenCalled();
+	});
+
+	it('completes the single matching agent even when a group also matches', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [groupA, agentA],
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
+	});
+
+	it('completes when token is already a full name without space', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @Codex';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 10;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @Codex',
+			getAgentSuggestions: () => [agentA],
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'Codex');
+	});
+
+	it('completes with cursor mid-token', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co-dex please';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co-dex please',
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('co-dex');
+				return [agentA];
+			},
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co-dex');
 	});
 });

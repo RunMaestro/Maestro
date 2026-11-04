@@ -353,18 +353,19 @@ When AI command mode proposes a command, the card owns the keyboard until you an
 | Move Run / Cancel  | `Left/Right Arrow` |
 | Take the selection | `Enter`            |
 
-## @ File Mentions (AI Terminal)
+## @ Mentions (AI Terminal & Group Chat)
 
-In AI mode, use `@` to reference files in your prompts:
+Use `@` in AI chat and Group Chat rooms to reference files or mention agents:
 
-| Action               | Key                                |
-| -------------------- | ---------------------------------- |
-| Open File Picker     | Type `@` followed by a search term |
-| Navigate Suggestions | `Up/Down Arrow`                    |
-| Select File          | `Tab` or `Enter`                   |
-| Close Dropdown       | `Esc`                              |
+| Action                    | Key                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| Open Mention Picker       | Type `@` followed by a search term                                            |
+| Navigate Suggestions      | `Up/Down Arrow`                                                               |
+| Select Suggestion         | `Tab` or `Enter`                                                              |
+| Complete @agent Reference | `Tab` (picker closed: completes single match, or reopens picker for multiple) |
+| Close Dropdown            | `Esc`                                                                         |
 
-**Example**: Type `@readme` to see matching files, then select to insert the file reference into your prompt. The AI will have context about the referenced file.
+**Example**: Type `@readme` to see matching files, or type `@backend` and press `Tab` to complete the agent mention into your prompt.
 
 ## Navigation & Search
 

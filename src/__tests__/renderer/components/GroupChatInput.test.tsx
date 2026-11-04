@@ -1041,6 +1041,92 @@ describe('GroupChatInput', () => {
 			});
 		});
 
+		describe('Tab with @ picker closed', () => {
+			it('completes a single matching agent reference and appends a space', () => {
+				const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Maestro ');
+			});
+
+			it('opens the picker when multiple agents match', () => {
+				const sessions = [
+					createMockSession('session-1', 'Maestro-1', 'claude-code'),
+					createMockSession('session-2', 'Maestro-2', 'claude-code'),
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(screen.queryByText('Maestro-1')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(screen.getByText('Maestro-1')).toBeInTheDocument();
+				expect(screen.getByText('Maestro-2')).toBeInTheDocument();
+				expect(textarea.value).toBe('@Mae');
+			});
+
+			it('does not complete group mentions on Tab with picker closed', () => {
+				const groups = [createMockGroup('group-1', 'PROJECTS')];
+				const sessions = [
+					{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@PROJ');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+				textarea.dispatchEvent(event);
+
+				expect(textarea.value).toBe('@PROJ');
+				expect(event.defaultPrevented).toBe(false);
+			});
+
+			it('does not prevent default on plain Tab with no @ token', () => {
+				render(<GroupChatInput {...createDefaultProps()} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, 'hello world');
+
+				const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+				textarea.dispatchEvent(event);
+
+				expect(event.defaultPrevented).toBe(false);
+				expect(textarea.value).toBe('hello world');
+			});
+
+			it('yields Tab to an active IME composition', () => {
+				const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				const event = new KeyboardEvent('keydown', {
+					key: 'Tab',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(event, 'isComposing', { value: true });
+				textarea.dispatchEvent(event);
+
+				expect(textarea.value).toBe('@Mae');
+				expect(event.defaultPrevented).toBe(false);
+			});
+		});
+
 		describe('Cmd+F', () => {
 			beforeEach(() => {
 				useUIStore.setState({ outputSearchByKey: {} });
