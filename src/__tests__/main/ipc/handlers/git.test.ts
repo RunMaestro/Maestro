@@ -19,6 +19,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { reserveWorktreeCleanup } from '../../../../main/git/worktreeActivity';
+import { resolveGhPath } from '../../../../main/utils/cliDetection';
+import { getShellPath } from '../../../../main/runtime/getShellPath';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -3933,6 +3935,206 @@ export function Component() {
 	});
 
 	describe('git:createPR', () => {
+		describe('whole-operation Git activity', () => {
+			const target = path.resolve('pr-activity-target');
+			const cleanup = path.resolve('pr-activity-unrelated');
+			const success = { stdout: '', stderr: '', exitCode: 0 };
+			const pr = { ...success, stdout: 'https://github.com/user/repo/pull/123' };
+
+			beforeEach(() => {
+				vi.mocked(resolveGhPath).mockReset().mockResolvedValue('gh');
+				vi.mocked(getShellPath).mockReset().mockResolvedValue('/shell/path');
+				vi.mocked(execFile.execFileNoThrow)
+					.mockReset()
+					.mockImplementation(async (command) => (command === 'git' ? success : pr));
+				vi.mocked(fs.realpath)
+					.mockReset()
+					.mockImplementation(async (p) => String(p));
+			});
+
+			afterEach(() => {
+				vi.mocked(resolveGhPath).mockReset().mockResolvedValue('gh');
+				vi.mocked(getShellPath)
+					.mockReset()
+					.mockResolvedValue('/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin');
+				vi.mocked(execFile.execFileNoThrow).mockReset();
+				vi.mocked(fs.realpath)
+					.mockReset()
+					.mockImplementation(async (p) => String(p).replace(/\\/g, '/'));
+			});
+
+			it.each(['gh', 'PATH', 'push', 'create'])(
+				'blocks reservations while %s is pending, including after push settles',
+				async (stage) => {
+					let finish!: () => void;
+					let entered = false;
+					const pending = new Promise<void>((resolve) => (finish = resolve));
+					if (stage === 'gh') {
+						vi.mocked(resolveGhPath).mockImplementationOnce(async () => {
+							entered = true;
+							await pending;
+							return 'gh';
+						});
+					} else if (stage === 'PATH') {
+						vi.mocked(getShellPath).mockImplementationOnce(async () => {
+							entered = true;
+							await pending;
+							return '/shell/path';
+						});
+					} else {
+						vi.mocked(execFile.execFileNoThrow).mockImplementation(async (command) => {
+							if ((stage === 'push') === (command === 'git')) {
+								entered = true;
+								await pending;
+							}
+							return command === 'git' ? success : pr;
+						});
+					}
+					const run = handlers.get('git:createPR')!({}, target, 'main', 'Title', 'Body');
+					try {
+						expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+						await vi.waitFor(() => expect(entered).toBe(true));
+						for (const root of [target, path.join(target, 'child'), cleanup]) {
+							expect(await reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+						}
+						expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(
+							stage === 'gh' || stage === 'PATH' ? 0 : stage === 'push' ? 1 : 2
+						);
+					} finally {
+						finish();
+						await run;
+					}
+					await expect(run).resolves.toMatchObject({ success: true, prUrl: pr.stdout });
+					const hold = await reserveWorktreeCleanup(cleanup);
+					try {
+						expect(hold).toMatchObject({ status: 'reserved-partially' });
+						if (hold.status === 'reserved-partially')
+							expect(hold.blockers.length).toBeGreaterThan(0);
+					} finally {
+						if (hold.status === 'reserved-partially') hold.release();
+					}
+				}
+			);
+
+			it('refuses new PR operations before gh/PATH setup for every target under a hold', async () => {
+				const hold = await reserveWorktreeCleanup(cleanup);
+				vi.mocked(fs.realpath).mockClear();
+				try {
+					expect(hold.status).toBe('reserved-partially');
+					for (const cwd of [target, path.join(target, 'child'), cleanup, 'alias', '']) {
+						await expect(
+							handlers.get('git:createPR')!({}, cwd, 'main', 'Title', 'Body')
+						).rejects.toThrow('reserved');
+					}
+					expect(resolveGhPath).not.toHaveBeenCalled();
+					expect(getShellPath).not.toHaveBeenCalled();
+					expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+					expect(fs.realpath).not.toHaveBeenCalled();
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
+				await expect(
+					handlers.get('git:createPR')!({}, target, 'main', 'Title', 'Body')
+				).resolves.toMatchObject({ success: true });
+			});
+
+			it('retains activity through recoverable PATH failure and both child calls', async () => {
+				vi.mocked(getShellPath).mockRejectedValueOnce(new Error('PATH unavailable'));
+				const snapshots: string[] = [];
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (command) => {
+					const snapshot = await reserveWorktreeCleanup(cleanup);
+					snapshots.push(snapshot.status);
+					if (snapshot.status === 'reserved-partially') snapshot.release();
+					return command === 'git' ? success : pr;
+				});
+				await expect(
+					handlers.get('git:createPR')!({}, target, 'main', 'Title', 'Body')
+				).resolves.toMatchObject({ success: true });
+				expect(snapshots).toEqual(['blocked', 'blocked']);
+				expect(execFile.execFileNoThrow).toHaveBeenNthCalledWith(
+					1,
+					'git',
+					['push', '-u', 'origin', 'HEAD'],
+					target,
+					undefined
+				);
+				const hold = await reserveWorktreeCleanup(cleanup);
+				try {
+					expect(hold.status).toBe('reserved-partially');
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
+			});
+
+			it('one cancelled PR does not release a second in-flight operation', async () => {
+				const sibling = path.resolve('pr-activity-sibling');
+				let finishFirst!: (result: execFile.ExecResult) => void;
+				let finishSecond!: (result: execFile.ExecResult) => void;
+				const firstChild = new Promise<execFile.ExecResult>((resolve) => (finishFirst = resolve));
+				const secondChild = new Promise<execFile.ExecResult>((resolve) => (finishSecond = resolve));
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (command, _args, cwd) => {
+					return command === 'git' ? (cwd === target ? firstChild : secondChild) : pr;
+				});
+				const first = handlers.get('git:createPR')!({}, target, 'main', 'Title', 'Body');
+				const second = handlers.get('git:createPR')!({}, sibling, 'main', 'Title', 'Body');
+				try {
+					await vi.waitFor(() => expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(2));
+					finishFirst({ ...success, exitCode: 'SIGTERM', stderr: 'cancelled' });
+					await expect(first).resolves.toMatchObject({ success: false });
+					expect(await reserveWorktreeCleanup(cleanup)).toMatchObject({ status: 'blocked' });
+				} finally {
+					finishFirst(success);
+					finishSecond(success);
+					await Promise.all([first, second]);
+				}
+				await expect(second).resolves.toMatchObject({ success: true });
+				const hold = await reserveWorktreeCleanup(cleanup);
+				try {
+					expect(hold.status).toBe('reserved-partially');
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
+			});
+
+			it.each([
+				['gh', 'throw'],
+				['push', 'throw'],
+				['create', 'throw'],
+				['push', 'failure'],
+				['create', 'failure'],
+				['push', 'SIGTERM'],
+				['create', 'SIGTERM'],
+			])('releases activity after %s ends with %s', async (stage, outcome) => {
+				if (stage === 'gh')
+					vi.mocked(resolveGhPath).mockRejectedValueOnce(new Error('setup failed'));
+				else {
+					vi.mocked(execFile.execFileNoThrow).mockImplementation(async (command) => {
+						if ((stage === 'push') === (command === 'git')) {
+							if (outcome === 'throw') throw new Error('child failed');
+							return {
+								...success,
+								exitCode: outcome === 'SIGTERM' ? 'SIGTERM' : 1,
+								stderr: 'failed',
+							};
+						}
+						return success;
+					});
+				}
+				const run = handlers.get('git:createPR')!({}, target, 'main', 'Title', 'Body');
+				if (outcome === 'throw') await expect(run).rejects.toThrow('failed');
+				else await expect(run).resolves.toMatchObject({ success: false });
+				expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(
+					stage === 'gh' ? 0 : stage === 'push' ? 1 : 2
+				);
+				const hold = await reserveWorktreeCleanup(cleanup);
+				try {
+					expect(hold.status).toBe('reserved-partially');
+				} finally {
+					if (hold.status === 'reserved-partially') hold.release();
+				}
+			});
+		});
+
 		it('should create PR successfully via gh CLI', async () => {
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({

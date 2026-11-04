@@ -5,6 +5,7 @@ import {
 	invalidateWorktreePullRequest,
 } from '../../../git/worktreePullRequestRefresh';
 import { execFileNoThrow } from '../../../utils/execFile';
+import { beginWorktreeGitActivity } from '../../../git/worktreeActivity';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
 import {
@@ -56,61 +57,66 @@ export function registerGithubHandlers(): void {
 				body: string,
 				ghPath?: string
 			) => {
-				// Resolve gh CLI path (uses cached detection or custom path)
-				const ghCommand = await resolveGhPath(ghPath);
-				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
-
-				// Build env with the user's full shell PATH so git hooks
-				// (e.g. Husky pre-push running npm) can find Node/npm binaries
-				let shellEnv: NodeJS.ProcessEnv | undefined;
+				const releaseActivity = await beginWorktreeGitActivity();
 				try {
-					const shellPath = await getShellPath();
-					if (shellPath) {
-						shellEnv = { ...process.env, PATH: shellPath };
+					// Resolve gh CLI path (uses cached detection or custom path)
+					const ghCommand = await resolveGhPath(ghPath);
+					logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
+
+					// Build env with the user's full shell PATH so git hooks
+					// (e.g. Husky pre-push running npm) can find Node/npm binaries
+					let shellEnv: NodeJS.ProcessEnv | undefined;
+					try {
+						const shellPath = await getShellPath();
+						if (shellPath) {
+							shellEnv = { ...process.env, PATH: shellPath };
+						}
+					} catch (error) {
+						captureMessage(
+							`git:createPR falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
+							'warning'
+						);
 					}
-				} catch (error) {
-					captureMessage(
-						`git:createPR falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
-						'warning'
+
+					// First, push the current branch to origin
+					const pushResult = await execFileNoThrow(
+						'git',
+						['push', '-u', 'origin', 'HEAD'],
+						worktreePath,
+						shellEnv
 					);
-				}
-
-				// First, push the current branch to origin
-				const pushResult = await execFileNoThrow(
-					'git',
-					['push', '-u', 'origin', 'HEAD'],
-					worktreePath,
-					shellEnv
-				);
-				if (pushResult.exitCode !== 0) {
-					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
-				}
-
-				// Create the PR using gh CLI
-				const prResult = await execFileNoThrow(
-					ghCommand,
-					['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
-					worktreePath,
-					shellEnv
-				);
-
-				if (prResult.exitCode !== 0) {
-					// Check if gh CLI is not installed
-					if (
-						prResult.stderr.includes('command not found') ||
-						prResult.stderr.includes('not recognized')
-					) {
-						return {
-							success: false,
-							error: 'GitHub CLI (gh) is not installed. Please install it to create PRs.',
-						};
+					if (pushResult.exitCode !== 0) {
+						return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
 					}
-					return { success: false, error: prResult.stderr || 'Failed to create PR' };
-				}
 
-				// The PR URL is typically in stdout
-				const prUrl = prResult.stdout.trim();
-				return { success: true, prUrl };
+					// Create the PR using gh CLI
+					const prResult = await execFileNoThrow(
+						ghCommand,
+						['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
+						worktreePath,
+						shellEnv
+					);
+
+					if (prResult.exitCode !== 0) {
+						// Check if gh CLI is not installed
+						if (
+							prResult.stderr.includes('command not found') ||
+							prResult.stderr.includes('not recognized')
+						) {
+							return {
+								success: false,
+								error: 'GitHub CLI (gh) is not installed. Please install it to create PRs.',
+							};
+						}
+						return { success: false, error: prResult.stderr || 'Failed to create PR' };
+					}
+
+					// The PR URL is typically in stdout
+					const prUrl = prResult.stdout.trim();
+					return { success: true, prUrl };
+				} finally {
+					releaseActivity();
+				}
 			}
 		)
 	);
