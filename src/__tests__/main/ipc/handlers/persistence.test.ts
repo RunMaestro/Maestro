@@ -374,6 +374,8 @@ describe('persistence IPC handlers', () => {
 			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
 			mkdirSync(root, { recursive: true });
 			const directory = mkdtempSync(path.join(root, 'J02-owner-loop-'));
+			vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
+			vi.spyOn(cliStorage, 'getSyncDir').mockReturnValue(directory);
 			const store = createPianolaFsStore({
 				resolveDir: () => directory,
 				indent: 2,

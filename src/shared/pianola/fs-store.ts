@@ -82,6 +82,12 @@ export interface PianolaFsStoreConfig {
 	trailingNewline: boolean;
 }
 
+/** Exact content around a successful mutation while its file lock is held. */
+export interface PianolaFileMutationReceipt {
+	before: string | null;
+	after: string | null;
+}
+
 /** The store surface shared by the desktop and CLI Pianola stores. */
 export interface PianolaFsStore {
 	readRulesResult(): RulesLoadResult;
@@ -89,7 +95,10 @@ export interface PianolaFsStore {
 	writeRules(rules: unknown): PianolaRule[];
 	/** Compare-and-append under the decision lock; updates the supplied revision on success.
 	 * Conflicts throw before a caller may send; reread rather than retrying stale state. */
-	appendDecision(record: PianolaDecisionRecord): void;
+	appendDecision(
+		record: PianolaDecisionRecord,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void;
 	readDecisions(limit?: number): PianolaDecisionRecord[];
 	readPlans(): PianolaPlan[];
 	writePlans(plans: PianolaPlan[]): PianolaPlan[];
@@ -148,7 +157,11 @@ export interface PianolaFsStore {
 	writeDispatchAdmission(admission: PianolaDispatchAdmission): void;
 	/** A missing checkpoint is a first enrollment; a corrupt one throws. */
 	readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null;
-	writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint, durable?: boolean): void;
+	writeScopeCheckpoint(
+		checkpoint: PianolaScopeCheckpoint,
+		durable?: boolean,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void;
 	writeSupervisorTargetsAsync(
 		targets: PianolaSupervisedTarget[]
 	): Promise<PianolaSupervisedTarget[]>;
@@ -165,6 +178,14 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	const { resolveDir, indent, trailingNewline } = config;
 
 	const filePath = (name: string): string => path.join(resolveDir(), name);
+	function readMutationContent(name: string): string | null {
+		try {
+			return fs.readFileSync(filePath(name), 'utf8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+	}
 
 	/** Atomically persist a JSON value (temp file + rename) so a reader never sees a partial file. */
 	function writeJsonAtomic(name: string, value: unknown, durable = false): void {
@@ -277,11 +298,15 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return records;
 	}
 
-	function appendDecision(record: PianolaDecisionRecord): void {
+	function appendDecision(
+		record: PianolaDecisionRecord,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
 		// All lifecycle writers (CLI, native admission, receipts and resolutions)
 		// compare their source row and append/compact under this same short lock.
 		// Throwing on conflict also prevents a stale native claim from sending.
 		withFileLock(PIANOLA_DECISIONS_FILENAME, 'decisions', () => {
+			const before = receipt ? readMutationContent(PIANOLA_DECISIONS_FILENAME) : null;
 			const records = readDecisions();
 			const current = records.find((candidate) => candidate.id === record.id);
 			if (current?.lifecycle || record.lifecycle) {
@@ -344,6 +369,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			);
 			// Let the caller continue from precisely the successfully persisted row.
 			if (next.mutationRevision) record.mutationRevision = next.mutationRevision;
+			receipt?.({ before, after: readMutationContent(PIANOLA_DECISIONS_FILENAME) });
 		});
 	}
 
@@ -873,7 +899,11 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return checkpoint;
 	}
 
-	function writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint, durable = false): void {
+	function writeScopeCheckpoint(
+		checkpoint: PianolaScopeCheckpoint,
+		durable = false,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
 		const name = checkpointName(checkpoint.scopeId);
 		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
 			throw new Error('Invalid Pianola scope checkpoint');
@@ -885,6 +915,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			throw new Error('Pianola checkpoint too large');
 		}
 		withFileLock(name, 'scope checkpoint', () => {
+			const before = receipt ? readMutationContent(name) : null;
 			const current = readScopeCheckpoint(checkpoint.scopeId);
 			if ((current?.enrollmentRevision ?? 0) > (checkpoint.enrollmentRevision ?? 0))
 				throw new Error('Scope enrollment changed; discard the old cycle and reload');
@@ -907,6 +938,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			)
 				throw new Error('Pianola checkpoint too large');
 			writeJsonAtomic(name, checkpoint, durable);
+			receipt?.({ before, after: readMutationContent(name) });
 		});
 	}
 

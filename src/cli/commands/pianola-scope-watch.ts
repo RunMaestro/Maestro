@@ -1,5 +1,9 @@
 /** One desktop-supervised scope worker; never one child per historical chat. */
 import { MaestroClient, CommandTimeoutError } from '../services/maestro-client';
+import * as path from 'path';
+import { getConfigDirectory } from '../services/storage';
+import { PIANOLA_DECISIONS_FILENAME } from '../../shared/pianola/storage';
+import { PianolaScopeFiles } from './pianola-scope-files';
 import { ConnectionClosedError } from '../../shared/maestro-lib/client/bridge-connection';
 import { MaestroNotRunningError } from '../services/maestro-not-running';
 import {
@@ -12,13 +16,17 @@ import {
 	getPianolaProfile,
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
-import { isPianolaScopeId } from '../../shared/pianola/pianola-scope';
+import {
+	isPianolaScopeId,
+	type PianolaAgentGroupSelection,
+} from '../../shared/pianola/pianola-scope';
 import {
 	runPianolaScopeCycle,
 	PianolaCensusError,
 	type PianolaScopeCycleDeps,
 	type PianolaScopeDeliveryResult,
 	type PianolaScopeDeliveryGuard,
+	type PianolaScopeSnapshot,
 } from '../../shared/pianola/pianola-scope-cycle';
 import type { WatchTarget } from '../../shared/pianola/pianola-watcher';
 import { pausePianolaScopeDecisions } from '../../shared/pianola/pianola-decision-lifecycle';
@@ -44,7 +52,8 @@ export interface PianolaScopeWatchOptions {
 
 /** Production composition also exposed for isolated transport/store fixtures. */
 export function createPianolaScopeWorkerDeps(
-	client: Pick<MaestroClient, 'sendCommand'>
+	client: Pick<MaestroClient, 'sendCommand'>,
+	files?: PianolaScopeFiles
 ): PianolaScopeCycleDeps {
 	const turns = new Map<string, CurrentTurnRead>();
 	const deliver = async (
@@ -85,7 +94,13 @@ export function createPianolaScopeWorkerDeps(
 		store: {
 			readSupervisorTargets: readPianolaSupervisorTargets,
 			readScopeCheckpoint: readPianolaScopeCheckpoint,
-			writeScopeCheckpoint: writePianolaScopeCheckpoint,
+			writeScopeCheckpoint: (checkpoint, durable) => {
+				if (!files) return writePianolaScopeCheckpoint(checkpoint, durable);
+				files.ownWrite(
+					path.join(getConfigDirectory(), `maestro-pianola-scope-${checkpoint.scopeId}.json`),
+					(receipt) => writePianolaScopeCheckpoint(checkpoint, durable, receipt)
+				);
+			},
 			readDecisions: readPianolaDecisions,
 		},
 		readSnapshot: async () => {
@@ -169,7 +184,12 @@ export function createPianolaScopeWorkerDeps(
 		watch: {
 			resolveProfile: (projectPath) => getPianolaProfile(projectPath).entry,
 			readRules: readPianolaRules,
-			recordDecision: appendPianolaDecision,
+			recordDecision: (record) => {
+				if (!files) return appendPianolaDecision(record);
+				files.ownWrite(path.join(getConfigDirectory(), PIANOLA_DECISIONS_FILENAME), (receipt) =>
+					appendPianolaDecision(record, receipt)
+				);
+			},
 			now: () => new Date().toISOString(),
 			genId: generateUUID,
 			log: (line) => console.log(line),
@@ -192,6 +212,62 @@ export class PianolaScopeWakeups {
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private wake: (() => void) | undefined;
 	private stopped = false;
+	private unselected = new Set<string>();
+	private membershipGeneration = 0;
+	invalidate = (): void => {
+		this.membershipGeneration++;
+		this.unselected.clear();
+		this.signal();
+	};
+	get generation(): number {
+		return this.membershipGeneration;
+	}
+	setMembership(
+		snapshot: PianolaScopeSnapshot,
+		selection: PianolaAgentGroupSelection,
+		generation: number
+	): void {
+		if (generation !== this.membershipGeneration) return;
+		const owners = new Map(snapshot.owners.map((owner) => [owner.id, owner]));
+		const unselected = new Set<string>();
+		for (const owner of snapshot.owners) {
+			let current = owner;
+			const seen = new Set<string>();
+			let safe = true;
+			while (true) {
+				if (
+					seen.has(current.id) ||
+					seen.size >= 100 ||
+					current.remote !== false ||
+					current.isPianola !== false ||
+					(selection.groupIds.length > 0 &&
+						current.groupId !== null &&
+						(typeof current.groupId !== 'string' || !current.groupId.trim()))
+				) {
+					safe = false;
+					break;
+				}
+				seen.add(current.id);
+				if (
+					selection.agentIds.includes(current.id) ||
+					(typeof current.groupId === 'string' && selection.groupIds.includes(current.groupId)) ||
+					(selection.futureLocalAgents && !selection.futureAgentBaselineIds?.includes(current.id))
+				) {
+					safe = false;
+					break;
+				}
+				if (!current.parentSessionId) break;
+				const parent = owners.get(current.parentSessionId);
+				if (!parent) {
+					safe = false;
+					break;
+				}
+				current = parent;
+			}
+			if (safe) unselected.add(owner.id);
+		}
+		this.unselected = unselected;
+	}
 	signal = (): void => {
 		if (this.stopped) return;
 		this.dirtyAt ??= Date.now() + 50;
@@ -199,6 +275,16 @@ export class PianolaScopeWakeups {
 	};
 	onFrame = (frame: Record<string, unknown>): void => {
 		if (frame.type === 'bridge.event') {
+			if (frame.channel === 'sessions:transcriptCommitted') {
+				const cursor = Array.isArray(frame.args) ? frame.args[0] : undefined;
+				const agentId =
+					cursor && typeof cursor === 'object'
+						? (cursor as { agentId?: unknown }).agentId
+						: undefined;
+				if (typeof agentId === 'string' && this.unselected.has(agentId)) return;
+				this.signal();
+				return;
+			}
 			if (
 				[
 					'sessions:transcriptCommitted',
@@ -209,7 +295,7 @@ export class PianolaScopeWakeups {
 					'agentRun:updated',
 				].includes(String(frame.channel))
 			)
-				this.signal();
+				this.invalidate();
 		} else if (
 			[
 				'connected',
@@ -219,7 +305,7 @@ export class PianolaScopeWakeups {
 				'tabs_changed',
 			].includes(String(frame.type))
 		)
-			this.signal();
+			this.invalidate();
 	};
 	/** Consume before the cycle so events arriving during awaits survive it. */
 	consume(): void {
@@ -255,7 +341,8 @@ export async function pianolaWatchScope(
 	ensurePianolaEnabled(options.json);
 	if (!isPianolaScopeId(scopeId)) throw new Error('Invalid Pianola scope ID');
 	const wakeups = new PianolaScopeWakeups();
-	const client = new MaestroClient({ onFrame: wakeups.onFrame, onClose: wakeups.signal });
+	const files = new PianolaScopeFiles(scopeId, wakeups.invalidate);
+	const client = new MaestroClient({ onFrame: wakeups.onFrame, onClose: wakeups.invalidate });
 	const sweep = new Set<string>();
 	let stopped = false;
 	const onSignal = () => {
@@ -266,8 +353,10 @@ export async function pianolaWatchScope(
 	process.on('SIGTERM', onSignal);
 	try {
 		await client.connect();
-		const deps = createPianolaScopeWorkerDeps(client);
+		files.refresh();
+		const deps = createPianolaScopeWorkerDeps(client, files);
 		while (!stopped && pianolaEnabledNow()) {
+			files.refresh();
 			const target = readPianolaSupervisorTargets().find(
 				(candidate) => candidate.id === scopeId && candidate.kind === 'watch-scope'
 			);
@@ -291,12 +380,27 @@ export async function pianolaWatchScope(
 			let nextDueAt = Date.now() + 20000;
 			let moreWork = false;
 			try {
-				const result = await runPianolaScopeCycle(scopeId, deps, {
-					dryRun: !!options.dryRun,
-					maxTabs: 20,
-					sweep,
-					shouldStop: () => stopped || !pianolaEnabledNow(),
-				});
+				const generation = wakeups.generation;
+				const observed: { census?: PianolaScopeSnapshot } = {};
+				const readSnapshot = deps.readSnapshot;
+				const result = await runPianolaScopeCycle(
+					scopeId,
+					{
+						...deps,
+						readSnapshot: async () => {
+							const snapshot = await readSnapshot();
+							observed.census = snapshot;
+							return snapshot;
+						},
+					},
+					{
+						dryRun: !!options.dryRun,
+						maxTabs: 20,
+						sweep,
+						shouldStop: () => stopped || !pianolaEnabledNow(),
+					}
+				);
+				if (observed.census) wakeups.setMembership(observed.census, target.selection, generation);
 				moreWork = result.moreWork === true;
 				nextDueAt = Math.min(nextDueAt, result.nextDueAt ?? Infinity);
 				if (options.json) console.log(JSON.stringify({ scopeId, ...result }));
@@ -313,6 +417,7 @@ export async function pianolaWatchScope(
 		process.off('SIGINT', onSignal);
 		process.off('SIGTERM', onSignal);
 		wakeups.dispose();
+		files.dispose();
 		client.disconnect();
 	}
 }

@@ -244,14 +244,14 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			{
 				id: 'agent',
 				name: 'Agent',
-				cwd: '/project',
+				cwd: directory,
 				toolType: 'codex',
 				aiTabs: [{ id: 'tab', createdAt: 7, logs: [] }],
 			},
 			{
 				id: 'manager',
 				name: 'Manager',
-				cwd: '/project',
+				cwd: directory,
 				toolType: 'codex',
 				isPianola: true,
 				aiTabs: [],
@@ -297,7 +297,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				id: 'rule',
 				enabled: true,
 				scope: 'project',
-				scopeId: '/project',
+				scopeId: directory,
 				match: { kinds: ['question'], maxRisk: 'low' },
 				action: 'auto_answer',
 				answer: 'Use count.',
@@ -647,6 +647,8 @@ describe('production scope loop event drain', () => {
 		const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
 		fs.mkdirSync(root, { recursive: true });
 		const directory = fs.mkdtempSync(path.join(root, 'J02-loop-'));
+		vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
+		vi.spyOn(cliStorage, 'getSyncDir').mockReturnValue(directory);
 		const store = createPianolaFsStore({
 			resolveDir: () => directory,
 			indent: 2,
@@ -691,11 +693,16 @@ describe('production scope loop event drain', () => {
 		const f = fixture();
 		let censuses = 0;
 		let signalDuringRead = false;
+		let managerDuringCensus: ReturnType<typeof store.readDecisions>[number] | undefined;
 		const send = vi
 			.spyOn(ScopeClient.prototype, 'sendCommand')
 			.mockImplementation(async (message) => {
 				if (message.type === 'list_desktop_sessions') {
 					censuses++;
+					if (managerDuringCensus) {
+						store.appendDecision(managerDuringCensus);
+						managerDuringCensus = undefined;
+					}
 					const turn = f.read();
 					return {
 						success: true,
@@ -705,7 +712,14 @@ describe('production scope loop event drain', () => {
 						owners: [
 							{
 								id: 'agent',
-								cwd: '/project',
+								cwd: directory,
+								parentSessionId: null,
+								isPianola: false,
+								remote: false,
+							},
+							{
+								id: 'unselected',
+								cwd: directory,
 								parentSessionId: null,
 								isPianola: false,
 								remote: false,
@@ -717,7 +731,7 @@ describe('production scope loop event drain', () => {
 								tabId: 'tab',
 								createdAt: 7,
 								supervision: {
-									cwd: '/project',
+									cwd: directory,
 									parentSessionId: null,
 									isPianola: false,
 									remote: false,
@@ -757,6 +771,14 @@ describe('production scope loop event drain', () => {
 		try {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(censuses).toBe(1);
+			for (let i = 0; i < 1000; i++)
+				bridge!.onFrame!({
+					type: 'bridge.event',
+					channel: 'sessions:transcriptCommitted',
+					args: [{ ...f.read().cursor, agentId: 'unselected' }],
+				});
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(1);
 			// An unowned sync and provider output are not a native commit wakeup.
 			bridge!.onFrame!({ type: 'bridge.event', channel: 'sessions:transcriptSync', args: [{}] });
 			await vi.advanceTimersByTimeAsync(5000);
@@ -790,8 +812,85 @@ describe('production scope loop event drain', () => {
 			await vi.advanceTimersByTimeAsync(50);
 			expect(censuses).toBe(6);
 			expect(ScopeClient.prototype.connect).toHaveBeenCalledTimes(2);
-			settings.enabled = false;
+			// A manager update to the same decision log wakes the real worker.
+			const original = store.readDecisions()[0];
+			expect(original).toBeDefined();
+			expect(original.lifecycle).toBeDefined();
+			const fileEvent = new Promise<void>((resolve) => {
+				const observer = fs.watch(directory, (_event, filename) => {
+					if (filename?.toString() !== 'pianola-decisions.jsonl') return;
+					observer.close();
+					resolve();
+				});
+			});
+			managerDuringCensus = {
+				...original,
+				lifecycle: {
+					...original.lifecycle!,
+					status: 'done',
+					nextActor: 'none',
+					nextAction: 'Resolved by manager',
+					phase: 'none',
+					source: { kind: 'manager', actorId: 'manager' },
+				},
+			};
+			bridge!.onFrame!({ type: 'session_state_change' });
+			await vi.advanceTimersByTimeAsync(50);
+			await fileEvent;
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(8);
+			expect(store.readDecisions()[0].lifecycle?.status).toBe('done');
+			// A new identity may be a future agent, group member, or worktree child.
+			for (const agentId of ['new-future', 'new-group-member', 'new-child']) {
+				const previous = censuses;
+				bridge!.onFrame!({
+					type: 'bridge.event',
+					channel: 'sessions:transcriptCommitted',
+					args: [{ agentId }],
+				});
+				await vi.advanceTimersByTimeAsync(50);
+				expect(censuses).toBe(previous + 1);
+			}
+			// A registry edit invalidates the old membership before more hints arrive.
+			const target = store.readSupervisorTargets()[0];
+			store.writeSupervisorTargets([
+				{
+					...target,
+					selection: {
+						...target.selection!,
+						mode: 'agents-and-groups',
+						agentIds: ['agent', 'unselected'],
+						groupIds: [],
+						excludedAgentIds: [],
+					},
+				},
+			]);
 			bridge!.onFrame!({ type: 'bridge.event', channel: 'settings:externalChange' });
+			const previous = censuses;
+			bridge!.onFrame!({
+				type: 'bridge.event',
+				channel: 'sessions:transcriptCommitted',
+				args: [{ agentId: 'unselected' }],
+			});
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(previous + 1);
+			bridge!.onFrame!({
+				type: 'bridge.event',
+				channel: 'sessions:transcriptCommitted',
+				args: [{ agentId: 'unselected' }],
+			});
+			await vi.advanceTimersByTimeAsync(50);
+			expect(censuses).toBe(previous + 2);
+			settings.enabled = false;
+			const settingsEvent = new Promise<void>((resolve) => {
+				const observer = fs.watch(directory, (_event, filename) => {
+					if (filename?.toString() !== 'maestro-settings.json') return;
+					observer.close();
+					resolve();
+				});
+			});
+			fs.writeFileSync(path.join(directory, 'maestro-settings.json'), '{}');
+			await settingsEvent;
 			await vi.advanceTimersByTimeAsync(50);
 			await running;
 			expect(disconnect).toHaveBeenCalledTimes(1);
@@ -831,6 +930,85 @@ describe('production scope loop event drain', () => {
 			expect(vi.getTimerCount()).toBe(0);
 			wakeups.signal();
 			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			wakeups.dispose();
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps group, future and descendant identities eligible for a resync', async () => {
+		vi.useFakeTimers();
+		const wakeups = new PianolaScopeWakeups();
+		const owner = (id: string, groupId: string | null, parentSessionId: string | null = null) => ({
+			id,
+			groupId,
+			parentSessionId,
+			cwd: path.resolve('.'),
+			isPianola: false,
+			remote: false,
+		});
+		const snapshot = {
+			capturedAt: 1,
+			complete: true,
+			tabs: [],
+			owners: [
+				owner('outside', null),
+				owner('selected', null),
+				owner('child', null, 'selected'),
+				owner('group', 'selected-group'),
+				owner('future', null),
+			],
+		};
+		const selection = {
+			mode: 'agents-and-groups' as const,
+			label: 'Selected',
+			agentIds: ['selected'],
+			groupIds: ['selected-group'],
+			excludedAgentIds: [],
+			futureLocalAgents: true,
+			futureAgentBaselineIds: ['outside', 'selected', 'child', 'group'],
+		};
+		try {
+			wakeups.setMembership(snapshot, selection, wakeups.generation);
+			for (const [id, expected] of [
+				['outside', false],
+				['selected', true],
+				['child', true],
+				['group', true],
+				['future', true],
+				['unknown', true],
+			] as const) {
+				let woke = false;
+				const waiting = wakeups.wait(Date.now() + 1000).then(() => {
+					woke = true;
+				});
+				wakeups.onFrame({
+					type: 'bridge.event',
+					channel: 'sessions:transcriptCommitted',
+					args: [{ agentId: id }],
+				});
+				await vi.advanceTimersByTimeAsync(50);
+				expect(woke, id).toBe(expected);
+				if (!expected) await vi.advanceTimersByTimeAsync(950);
+				await waiting;
+				wakeups.consume();
+			}
+			const staleGeneration = wakeups.generation;
+			wakeups.invalidate();
+			wakeups.consume();
+			wakeups.setMembership(snapshot, selection, staleGeneration);
+			let woke = false;
+			const waiting = wakeups.wait(Date.now() + 1000).then(() => {
+				woke = true;
+			});
+			wakeups.onFrame({
+				type: 'bridge.event',
+				channel: 'sessions:transcriptCommitted',
+				args: [{ agentId: 'outside' }],
+			});
+			await vi.advanceTimersByTimeAsync(50);
+			await waiting;
+			expect(woke).toBe(true);
 		} finally {
 			wakeups.dispose();
 			vi.useRealTimers();
