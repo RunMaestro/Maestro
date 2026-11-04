@@ -846,13 +846,39 @@ export class ProcessManager extends EventEmitter {
 		proc: ManagedProcess,
 		child: NonNullable<ManagedProcess['childProcess']>
 	): void {
-		if (!proc.sshRemotePidFile) return;
-		const timer = setTimeout(() => {
-			if (child.exitCode === null && child.signalCode === null) {
-				this.signalRemote(sessionId, proc, 'terminate');
-			}
-		}, INTERACTIVE_STOP_GRACE_MS);
-		child.once('exit', () => clearTimeout(timer));
+		withWorktreeTurnActivity(
+			(_start, observe) => {
+				if (!proc.sshRemotePidFile) return;
+				// Registry removal or native close cannot cancel a scheduled callback.
+				// Own its lifetime separately from the signal adapter's SSH child.
+				const scheduled = Promise.withResolvers<void>();
+				observe(scheduled.promise);
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const finish = (): void => {
+					clearTimeout(timer);
+					child.removeListener('exit', finish);
+					scheduled.resolve();
+				};
+				try {
+					timer = setTimeout(() => {
+						try {
+							if (child.exitCode === null && child.signalCode === null) {
+								this.signalRemote(sessionId, proc, 'terminate');
+							}
+						} finally {
+							finish();
+						}
+					}, INTERACTIVE_STOP_GRACE_MS);
+					child.once('exit', finish);
+				} catch (error) {
+					// A failed listener setup must not leave an admitted timer behind.
+					// If cancellation itself fails, the unresolved hold stays blocked.
+					finish();
+					throw error;
+				}
+			},
+			(error) => void captureException(error)
+		);
 	}
 
 	/**

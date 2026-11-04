@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
 	ProcessConfig,
@@ -48,6 +49,7 @@ import { sendSteeringRequest } from '../../../main/process-manager/steering-clie
 import { steerCodexAppServerTurn } from '../../../main/codex-app-server/steering';
 import type { HarnessControlRegistry } from '../../../main/harness-control/HarnessControlRegistry';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
+import { INTERACTIVE_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
 import {
 	beginGlobalWorktreeActivity,
 	reserveWorktreeCleanup,
@@ -92,6 +94,226 @@ beforeEach(() => {
 afterEach(() => {
 	for (const release of releases) release();
 	vi.restoreAllMocks();
+});
+
+describe('delayed remote termination activity', () => {
+	let child: EventEmitter & { exitCode: number | null; signalCode: NodeJS.Signals | null };
+	let proc: ManagedProcess;
+	let schedule: () => void;
+	let signal: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null });
+		proc = { sessionId: config.sessionId, sshRemotePidFile: 'remote-agent.pid' } as ManagedProcess;
+		const control = manager as unknown as {
+			scheduleRemoteTerminate: (id: string, p: ManagedProcess, c: unknown) => void;
+			signalRemote: (id: string, p: ManagedProcess, mode: string) => void;
+		};
+		schedule = () => control.scheduleRemoteTerminate(config.sessionId, proc, child);
+		signal = vi.spyOn(control, 'signalRemote').mockImplementation(() => {});
+		vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it.each([target, path.join(target, 'child'), path.resolve('other-repository')])(
+		'refuses before target getters, timers or listeners under %s',
+		async (root) => {
+			const hold = await reserve(root);
+			const getter = vi.fn(() => 'remote-agent.pid');
+			Object.defineProperty(proc, 'sshRemotePidFile', { get: getter });
+			const timers = vi.spyOn(globalThis, 'setTimeout');
+			const listen = vi.spyOn(child, 'once');
+			expect(schedule).toThrow(/reserved/);
+			for (const probe of [getter, timers, listen, signal, sentry.captureException])
+				expect(probe).not.toHaveBeenCalled();
+			hold.release();
+			schedule();
+			child.emit('exit');
+			await vi.advanceTimersByTimeAsync(0);
+			(await reserve()).release();
+		}
+	);
+
+	it('holds through registry replacement and close until the callback completes', async () => {
+		schedule();
+		const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+		entries.set(config.sessionId, proc);
+		entries.delete(config.sessionId);
+		entries.set(config.sessionId, { sessionId: config.sessionId } as ManagedProcess);
+		manager.emit('exit', config.sessionId, 0);
+		child.on('error', () => {});
+		child.emit('error', new Error('transport failed'));
+		child.emit('close');
+		await blocked();
+		await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS - 1);
+		expect(signal).not.toHaveBeenCalled();
+		await blocked();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(signal).toHaveBeenCalledExactlyOnceWith(config.sessionId, proc, 'terminate');
+		expect(child.listenerCount('exit')).toBe(0);
+		(await reserve()).release();
+	});
+
+	it('cancels on observed exit without waiting for close or delivering a late signal', async () => {
+		schedule();
+		child.exitCode = 0;
+		child.emit('exit', 0, null);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(vi.getTimerCount()).toBe(0);
+		expect(child.listenerCount('exit')).toBe(0);
+		const hold = await reserve();
+		await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+		expect(signal).not.toHaveBeenCalled();
+		hold.release();
+	});
+
+	it.each(['exitCode', 'signalCode'] as const)(
+		'skips signalling on an observed %s even if the exit listener was missed',
+		async (field) => {
+			schedule();
+			Object.assign(child, field === 'exitCode' ? { exitCode: 0 } : { signalCode: 'SIGTERM' });
+			await blocked();
+			await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+			expect(signal).not.toHaveBeenCalled();
+			expect(child.listenerCount('exit')).toBe(0);
+			(await reserve()).release();
+		}
+	);
+
+	it('keeps concurrent generations independent and refuses a new timer during reservation', async () => {
+		schedule();
+		const first = child;
+		child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null });
+		proc = { ...proc, sshRemotePidFile: 'replacement.pid' };
+		schedule();
+		first.emit('exit');
+		await vi.advanceTimersByTimeAsync(0);
+		await blocked();
+		await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+		expect(signal).toHaveBeenCalledExactlyOnceWith(config.sessionId, proc, 'terminate');
+		const hold = await reserve();
+		expect(schedule).toThrow(/reserved/);
+		expect(vi.getTimerCount()).toBe(0);
+		hold.release();
+	});
+
+	it.each(['cancel', 'callback'] as const)(
+		'preserves an independently owned native hold after timer %s',
+		async (outcome) => {
+			let releaseNative = beginGlobalWorktreeActivity();
+			releases.push(() => releaseNative());
+			signal.mockImplementation(() => {
+				releaseNative();
+				releaseNative = beginGlobalWorktreeActivity();
+			});
+			schedule();
+			if (outcome === 'cancel') child.emit('exit');
+			await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+			await blocked();
+			releaseNative();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['timer', 'listener', 'registered-listener'] as const)(
+		'cancels all scheduled work and reports a %s setup failure',
+		async (stage) => {
+			const error = new Error('scheduling failed');
+			if (stage === 'timer')
+				vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce(() => {
+					throw error;
+				});
+			else {
+				const once = child.once;
+				vi.spyOn(child, 'once').mockImplementationOnce((event, listener) => {
+					if (stage === 'registered-listener') once.call(child, event, listener);
+					throw error;
+				});
+			}
+			expect(schedule).toThrow(error);
+			expect(sentry.captureException).toHaveBeenCalledWith(error);
+			await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+			expect(vi.getTimerCount()).toBe(0);
+			expect(child.listenerCount('exit')).toBe(0);
+			expect(signal).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+
+	it('finishes timer bookkeeping while letting an unexpected callback exception propagate', async () => {
+		const error = new Error('unexpected signal failure');
+		signal.mockImplementation(() => {
+			throw error;
+		});
+		schedule();
+		expect(() => vi.advanceTimersByTime(INTERACTIVE_STOP_GRACE_MS)).toThrow(error);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(child.listenerCount('exit')).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+		(await reserve()).release();
+	});
+
+	it('stays busy if exit cancellation fails until the pending callback really finishes', async () => {
+		schedule();
+		child.exitCode = 0;
+		const error = new Error('timer cancellation failed');
+		vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce(() => {
+			throw error;
+		});
+		expect(() => child.emit('exit')).toThrow(error);
+		await blocked();
+		await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+		expect(signal).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+		(await reserve()).release();
+	});
+
+	it('settles an exit delivered during listener registration without leaving a timer', async () => {
+		const once = child.once;
+		vi.spyOn(child, 'once').mockImplementationOnce((event, listener) => {
+			once.call(child, event, listener);
+			child.emit('exit');
+			return child;
+		});
+		schedule();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(vi.getTimerCount()).toBe(0);
+		expect(child.listenerCount('exit')).toBe(0);
+		expect(signal).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+
+	it('admits while reservation canonicalization is pending and blocks that reservation', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = reserveWorktreeCleanup(target);
+		schedule();
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		child.emit('exit');
+		await vi.advanceTimersByTimeAsync(0);
+		(await reserve()).release();
+	});
+
+	it('preserves no-op local targets and releases failed target lookup before timer creation', async () => {
+		delete proc.sshRemotePidFile;
+		schedule();
+		(await reserve()).release();
+		const error = new Error('target unavailable');
+		Object.defineProperty(proc, 'sshRemotePidFile', {
+			get: () => {
+				throw error;
+			},
+		});
+		expect(schedule).toThrow(error);
+		expect(sentry.captureException).toHaveBeenCalledWith(error);
+		expect(vi.getTimerCount()).toBe(0);
+		(await reserve()).release();
+	});
 });
 
 describe('direct manager activity admission', () => {
