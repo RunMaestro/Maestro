@@ -263,6 +263,8 @@ describe('Git IPC handlers', () => {
 				'git:worktreeCheckout',
 				'git:createPR',
 				'git:discoverWorktreePullRequest',
+				'git:refreshWorktreePullRequest',
+				'git:invalidateWorktreePullRequest',
 				'git:checkGhCli',
 				'git:getDefaultBranch',
 				'git:listWorktrees',

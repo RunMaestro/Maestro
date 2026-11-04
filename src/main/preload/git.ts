@@ -13,6 +13,7 @@ import { ipcRenderer } from 'electron';
 import type {
 	WorktreePullRequestDiscoveryRequest,
 	WorktreePullRequestDiscoveryResult,
+	WorktreePullRequestSnapshot,
 } from '../../shared/worktreePullRequests';
 import type {
 	GitCommandOutputChunk,
@@ -467,6 +468,12 @@ export function createGitApi() {
 			request: WorktreePullRequestDiscoveryRequest
 		): Promise<WorktreePullRequestDiscoveryResult> =>
 			ipcRenderer.invoke('git:discoverWorktreePullRequest', request),
+		refreshWorktreePullRequest: (
+			request: WorktreePullRequestDiscoveryRequest
+		): Promise<WorktreePullRequestSnapshot> =>
+			ipcRenderer.invoke('git:refreshWorktreePullRequest', request),
+		invalidateWorktreePullRequest: (worktreePath: string): Promise<void> =>
+			ipcRenderer.invoke('git:invalidateWorktreePullRequest', worktreePath),
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

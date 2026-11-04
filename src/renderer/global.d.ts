@@ -5,6 +5,7 @@ import type {
 import type {
 	WorktreePullRequestDiscoveryRequest,
 	WorktreePullRequestDiscoveryResult,
+	WorktreePullRequestSnapshot,
 } from '../shared/worktreePullRequests';
 import type {
 	HarnessInteractionRequest,
@@ -1776,6 +1777,10 @@ interface MaestroAPI {
 		discoverWorktreePullRequest: (
 			request: WorktreePullRequestDiscoveryRequest
 		) => Promise<WorktreePullRequestDiscoveryResult>;
+		refreshWorktreePullRequest: (
+			request: WorktreePullRequestDiscoveryRequest
+		) => Promise<WorktreePullRequestSnapshot>;
+		invalidateWorktreePullRequest: (worktreePath: string) => Promise<void>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

@@ -97,3 +97,10 @@ export type WorktreePullRequestDiscoveryResult =
 			reason: 'ssh-unsupported' | 'git' | 'repository' | 'gh' | 'invalid-response';
 			message: string;
 	  };
+
+/** A coherent refresh: CI and divergence are present only for a discovered PR. */
+export interface WorktreePullRequestSnapshot {
+	discovery: WorktreePullRequestDiscoveryResult;
+	ci?: WorktreePullRequestCi;
+	divergence?: WorktreePullRequestDivergence;
+}

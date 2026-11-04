@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron';
 import type { WorktreePullRequestDiscoveryRequest } from '../../../../shared/worktreePullRequests';
-import { discoverWorktreePullRequest } from '../../../git/worktreePullRequests';
+import {
+	refreshWorktreePullRequest,
+	invalidateWorktreePullRequest,
+} from '../../../git/worktreePullRequestRefresh';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
@@ -22,7 +25,21 @@ export function registerGithubHandlers(): void {
 		'git:discoverWorktreePullRequest',
 		withIpcErrorLogging(
 			handlerOpts('discoverWorktreePullRequest'),
-			(request: WorktreePullRequestDiscoveryRequest) => discoverWorktreePullRequest(request)
+			async (request: WorktreePullRequestDiscoveryRequest) =>
+				(await refreshWorktreePullRequest(request)).discovery
+		)
+	);
+	ipcMain.handle(
+		'git:refreshWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('refreshWorktreePullRequest'),
+			(request: WorktreePullRequestDiscoveryRequest) => refreshWorktreePullRequest(request)
+		)
+	);
+	ipcMain.handle(
+		'git:invalidateWorktreePullRequest',
+		withIpcErrorLogging(handlerOpts('invalidateWorktreePullRequest'), (worktreePath: string) =>
+			invalidateWorktreePullRequest(worktreePath)
 		)
 	);
 	// Create a PR from the worktree branch to a base branch
