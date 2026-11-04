@@ -39,7 +39,8 @@ import { isWindows } from '../../../shared/platformDetection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
-import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
+import { startTurn, TurnNotStartedError } from '../../../shared/maestro-lib/run/start-turn';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 import {
 	INTERACTIVE_STOP_GRACE_MS,
 	stopProcess,
@@ -97,6 +98,72 @@ export class ChildProcessSpawner {
 	 * Spawn a child process for a session
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		let releaseActivity: (() => void) | undefined;
+		let setupSettled = false;
+		let nativeMayExist = false;
+		let closed = false;
+		let reportingPending = false;
+		const releaseIfSettled = (): void => {
+			if (setupSettled && (!nativeMayExist || closed) && !reportingPending) releaseActivity?.();
+		};
+		try {
+			// Agents and local SSH clients can affect paths beyond their cwd.
+			// Refuse before prompt/temp-file setup, without probing remote paths.
+			releaseActivity = beginGlobalWorktreeActivity();
+			return this.spawnAdmitted(
+				config,
+				(spec, handlers, options) => {
+					nativeMayExist = true;
+					let turn;
+					try {
+						turn = startTurn(spec, handlers, options);
+					} catch (error) {
+						// A later library failure may orphan a child without returning it.
+						if (error instanceof TurnNotStartedError) nativeMayExist = false;
+						throw error;
+					}
+					// turn.done also settles on error; supervision may force UI completion.
+					// Neither establishes that the native child and its stdio are gone.
+					turn.child.on('close', () => {
+						closed = true;
+						releaseIfSettled();
+					});
+					return turn;
+				},
+				(completion) => {
+					reportingPending = true;
+					void completion
+						.catch((error) => {
+							void captureException(error);
+							logger.error('[ProcessManager] Child completion failed', 'ProcessManager', {
+								sessionId: config.sessionId,
+								error: String(error),
+							});
+						})
+						.finally(() => {
+							reportingPending = false;
+							releaseIfSettled();
+						});
+				}
+			);
+		} catch (error) {
+			if (releaseActivity) void captureException(error);
+			return {
+				pid: -1,
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		} finally {
+			setupSettled = true;
+			releaseIfSettled();
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		startAdmittedTurn: typeof startTurn,
+		observeCompletion: (completion: Promise<unknown>) => void
+	): SpawnResult {
 		const {
 			sessionId,
 			toolType,
@@ -467,7 +534,7 @@ export class ChildProcessSpawner {
 			const isSuperseded = (): boolean =>
 				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 
-			const turn = startTurn(
+			const turn = startAdmittedTurn(
 				{
 					command: spawnCommand,
 					args: spawnArgs,
@@ -699,7 +766,7 @@ export class ChildProcessSpawner {
 				this.emitter.on('parsed-event', onParsedEvent);
 				this.supervisions.set(sessionId, supersedeSupervision);
 			}
-			void Promise.race([turn.done, forced]).then((completed) => {
+			const completion = Promise.race([turn.done, forced]).then((completed) => {
 				disposeSupervision();
 				const exit = completed
 					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
@@ -796,6 +863,7 @@ export class ChildProcessSpawner {
 					})
 					.finally(() => this.emitter.off('exit', onSupervisedExit));
 			});
+			observeCompletion(completion);
 
 			// The run layer settles on `close`, which waits on every holder of the
 			// stdio pipes, and an SSH ControlMaster or a stray grandchild can hold
