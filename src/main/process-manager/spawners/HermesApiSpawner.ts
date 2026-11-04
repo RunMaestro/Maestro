@@ -512,11 +512,22 @@ class HermesTurn {
 		method: string,
 		params: Record<string, unknown>
 	): Promise<void> {
+		return withWorktreeTurnActivity(
+			(_start, observe) => observe(this.onGatewayInteractionAdmitted(method, params, observe)),
+			(error) => void captureException(error)
+		);
+	}
+
+	private async onGatewayInteractionAdmitted(
+		method: string,
+		params: Record<string, unknown>,
+		observe: <T>(completion: Promise<T>) => Promise<T>
+	): Promise<void> {
 		const nativeId = typeof params.request_id === 'string' ? params.request_id : '';
 		if (!nativeId || !this.connection) return;
 		const base = method.slice(0, -'.request'.length);
 		if (base === 'approval') {
-			this.observeCompletion(
+			observe(
 				this.connection
 					.request('approval.received', {
 						session_id: this.providerSessionId,

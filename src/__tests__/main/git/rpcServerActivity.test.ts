@@ -1603,6 +1603,186 @@ describe('standalone Hermes gateway activity', () => {
 		hermes = new HermesApiSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
 	});
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses late gateway setup before request lookup or acknowledgement under %s',
+		async (root) => {
+			hermes.spawn(input());
+			await drain();
+			await close();
+			processes.clear();
+			const hold = await reserve(root);
+			const lookup = vi.fn(() => 'late');
+			const callbacks = connection();
+			vi.clearAllMocks();
+			try {
+				for (const method of ['approval', 'clarify', 'secret', 'sudo']) {
+					callbacks.onNotification!({
+						method: `${method}.request`,
+						params: {
+							get request_id() {
+								return lookup();
+							},
+						},
+					});
+				}
+				await drain();
+				for (const probe of [
+					lookup,
+					probes.request,
+					probes.interaction,
+					probes.output,
+					probes.exit,
+					fallback,
+					logger.warn,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				// The existing notification caller reports rejected callbacks.
+				expect(captureException).toHaveBeenCalledWith(
+					expect.objectContaining({ message: expect.stringContaining('reserved') })
+				);
+			} finally {
+				hold.release();
+			}
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'owns late approval acknowledgement independently after response on %s',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const ack = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(ack.promise);
+			notify('approval.request', { request_id: 'late' });
+			await drain();
+			expect(probes.request).toHaveBeenLastCalledWith('approval.respond', {
+				session_id: 'session',
+				request_id: 'late',
+				choice: 'deny',
+			});
+			await blocked();
+			if (outcome === 'reject') ack.reject(new Error('ack failed'));
+			else ack.resolve({});
+			await drain();
+			(await reserve()).release();
+			expect(logger.warn).not.toHaveBeenCalled();
+		}
+	);
+	it.each(['approval', 'clarify', 'secret', 'sudo'] as const)(
+		'owns late %s response after original close and replacement',
+		async (method) => {
+			hermes.spawn(input());
+			await drain();
+			await close();
+			processes.clear();
+			(await reserve()).release();
+			const reply = Promise.withResolvers<unknown>();
+			probes.request.mockImplementation((name) =>
+				name === `${method}.respond` ? reply.promise : Promise.resolve({})
+			);
+			notify(`${method}.request`, { request_id: 'late' });
+			await drain();
+			expect(probes.request).toHaveBeenCalledWith(`${method}.respond`, {
+				session_id: 'session',
+				request_id: 'late',
+				...(method === 'approval'
+					? { choice: 'deny' }
+					: method === 'clarify'
+						? { answers: {} }
+						: method === 'sudo'
+							? { password: '' }
+							: { value: '' }),
+			});
+			await blocked();
+			native = makeNative();
+			hermes.spawn(input());
+			await drain();
+			await close();
+			processes.clear();
+			await blocked();
+			reply.resolve({});
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject'] as const)(
+		'owns concurrent late gateway responses independently on %s',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			await close();
+			const first = Promise.withResolvers<unknown>();
+			const second = Promise.withResolvers<unknown>();
+			probes.request.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			notify('secret.request', { request_id: 'first' });
+			notify('clarify.request', { request_id: 'second' });
+			await drain();
+			await blocked();
+			first.resolve({});
+			await drain();
+			await blocked();
+			if (outcome === 'reject') second.reject(new Error('late reply failed'));
+			else second.resolve({});
+			await drain();
+			expect(logger.warn).toHaveBeenCalledTimes(outcome === 'reject' ? 1 : 0);
+			(await reserve()).release();
+		}
+	);
+	it('blocks earlier pending canonicalization with newly admitted acknowledgement', async () => {
+		hermes.spawn(input());
+		await drain();
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const ack = Promise.withResolvers<unknown>();
+		probes.request.mockReturnValueOnce(ack.promise);
+		notify('approval.request', { request_id: 'late' });
+		await drain();
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await blocked();
+		ack.resolve({});
+		await drain();
+		(await reserve()).release();
+	});
+	it.each(['lookup', 'ack', 'reply', 'report'] as const)(
+		'releases failed late gateway %s setup without changing failure handling',
+		async (stage) => {
+			hermes.spawn(input());
+			await drain();
+			await close();
+			const callbacks = connection();
+			vi.clearAllMocks();
+			const fail = () => {
+				throw new Error('gateway failed');
+			};
+			if (stage === 'ack' || stage === 'reply') probes.request.mockImplementationOnce(fail);
+			if (stage === 'report') {
+				probes.request.mockRejectedValueOnce(new Error('reply failed'));
+				vi.mocked(logger.warn).mockImplementationOnce(fail);
+				vi.mocked(captureException).mockImplementation(fail);
+			}
+			callbacks.onNotification!({
+				method: stage === 'ack' ? 'approval.request' : 'secret.request',
+				params: {
+					get request_id() {
+						return stage === 'lookup' ? fail() : 'late';
+					},
+				},
+			});
+			await drain();
+			if (stage === 'lookup' || stage === 'ack') {
+				expect(probes.interaction).not.toHaveBeenCalled();
+				expect(logger.warn).not.toHaveBeenCalled();
+			} else expect(logger.warn).toHaveBeenCalledOnce();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses late steering and direct interactions before lookup under %s',
 		async (root) => {
 			hermes.spawn(input());
