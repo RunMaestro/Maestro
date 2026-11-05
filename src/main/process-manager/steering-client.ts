@@ -74,7 +74,7 @@ export async function sendSteeringRequest(options: {
 }): Promise<SteeringResultFrame> {
 	return withWorktreeTurnActivity(
 		(_start, observe) => observe(sendSteeringRequestAdmitted(options, observe)),
-		(error) => void captureException(error)
+		(error) => captureException(error)
 	);
 }
 
@@ -228,26 +228,26 @@ async function sendSteeringRequestAdmitted(
 			socket.once('close', () => closed.resolve());
 			socket.setEncoding('utf8');
 			socket.on('connect', () =>
-				withWorktreeTurnActivity(onConnect, (error) => void captureException(error))
+				withWorktreeTurnActivity(onConnect, (error) => captureException(error))
 			);
 			socket.on('data', (chunk: string) =>
 				withWorktreeTurnActivity(
 					() => onData(chunk),
-					(error) => void captureException(error)
+					(error) => captureException(error)
 				)
 			);
 			socket.on('error', (error: NodeJS.ErrnoException) =>
 				withWorktreeTurnActivity(
 					() => onError(error),
-					(failure) => void captureException(failure)
+					(failure) => captureException(failure)
 				)
 			);
 			socket.on('close', () =>
-				withWorktreeTurnActivity(onClose, (error) => void captureException(error))
+				withWorktreeTurnActivity(onClose, (error) => captureException(error))
 			);
 			if (!settled) {
 				timer = setTimeout(
-					() => withWorktreeTurnActivity(onTimeout, (error) => void captureException(error)),
+					() => withWorktreeTurnActivity(onTimeout, (error) => captureException(error)),
 					timeoutMs
 				);
 			}

@@ -241,3 +241,164 @@ describe('maestro-p steering socket activity', () => {
 		await reserve();
 	});
 });
+
+describe('steering asynchronous diagnostic activity', () => {
+	it.each(['resolve', 'reject', 'throw'])(
+		'preserves setup rejection while diagnostics %s independently',
+		async (settlement) => {
+			const failure = new Error('connection setup failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(net.createConnection).mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (settlement === 'throw') throw new Error('synchronous diagnostic failure');
+				return reporting.promise;
+			});
+			await expect(sendSteeringRequest(options)).rejects.toBe(failure);
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			expect(sockets).toHaveLength(0);
+			expect(vi.getTimerCount()).toBe(0);
+			if (settlement !== 'throw') {
+				await blocked();
+				if (settlement === 'reject') reporting.reject(new Error('diagnostic rejection'));
+				else reporting.resolve();
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledTimes(1);
+			await reserve();
+		}
+	);
+
+	it.each(['report-first', 'close-first'])(
+		'keeps failed native setup and diagnostics independently held: %s',
+		async (order) => {
+			const reporting = Promise.withResolvers<void>();
+			const failure = new Error('encoding setup failed');
+			const socket = makeSocket();
+			socket.setEncoding.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(net.createConnection).mockImplementationOnce(() => {
+				sockets.push(socket);
+				return socket as unknown as net.Socket;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			await expect(sendSteeringRequest(options)).rejects.toBe(failure);
+			await drain();
+			expect(socket.destroy).toHaveBeenCalledOnce();
+			if (order === 'report-first') reporting.resolve();
+			else socket.emit('close');
+			await drain();
+			await blocked();
+			if (order === 'report-first') socket.emit('close');
+			else reporting.resolve();
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await reserve();
+		}
+	);
+
+	it.each(
+		['connect', 'data', 'error', 'close', 'timeout'].flatMap((event) =>
+			['resolve', 'reject'].map((settlement) => ({ event, settlement }))
+		)
+	)(
+		'retains $event callback diagnostics after verdict/native close until $settlement',
+		async ({ event, settlement }) => {
+			const reporting = Promise.withResolvers<void>();
+			const failure = new Error(`${event} callback failed`);
+			const readId = vi.fn(() => options.id);
+			const timer = vi.spyOn(globalThis, 'setTimeout');
+			const result = sendSteeringRequest({
+				...options,
+				get id() {
+					return readId();
+				},
+			});
+			const timeout = timer.mock.calls[0][0] as () => void;
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			readId.mockImplementationOnce(() => {
+				throw failure;
+			});
+			if (event === 'connect') {
+				sockets[0].write.mockImplementationOnce(() => {
+					throw new Error('write failed');
+				});
+			}
+			const dispatch = () => {
+				if (event === 'timeout') timeout();
+				else if (event === 'data')
+					sockets[0].emit('data', '{"type":"steering","id":"steer","verdict":"delivered"}\n');
+				else sockets[0].emit(event, new Error('channel failed'));
+			};
+			expect(dispatch).toThrow(failure);
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			// A fresh close callback recovers the unchanged pending verdict. Neither
+			// that verdict nor native close owns the earlier callback's diagnostics.
+			sockets[0].emit('close');
+			await expect(result).resolves.toMatchObject({ verdict: 'unknown', id: options.id });
+			await drain();
+			expect(vi.getTimerCount()).toBe(0);
+			await blocked();
+			if (settlement === 'reject') reporting.reject(new Error('diagnostic rejection'));
+			else reporting.resolve();
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(1);
+			await reserve();
+		}
+	);
+
+	it('keeps concurrent diagnostics and a successor socket independently owned', async () => {
+		const firstReport = Promise.withResolvers<void>();
+		const secondReport = Promise.withResolvers<void>();
+		const failure = new Error('setup failure');
+		vi.mocked(net.createConnection)
+			.mockImplementationOnce(() => {
+				throw failure;
+			})
+			.mockImplementationOnce(() => {
+				throw failure;
+			});
+		vi.mocked(captureException)
+			.mockReturnValueOnce(firstReport.promise)
+			.mockReturnValueOnce(secondReport.promise);
+		await expect(sendSteeringRequest(options)).rejects.toBe(failure);
+		await expect(sendSteeringRequest(options)).rejects.toBe(failure);
+		await drain();
+		firstReport.resolve();
+		await drain();
+		await blocked();
+		const successor = sendSteeringRequest(options);
+		secondReport.reject(new Error('second report failed'));
+		await drain();
+		await blocked();
+		sockets[0].emit('close');
+		await expect(successor).resolves.toMatchObject({ verdict: 'unknown' });
+		await drain();
+		expect(captureException).toHaveBeenCalledTimes(2);
+		await reserve();
+	});
+
+	it('wins a pending canonical reservation while setup diagnostics remain in flight', async () => {
+		const canonical = Promise.withResolvers<string>();
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = reserveWorktreeCleanup(target);
+		const failure = new Error('setup failure');
+		vi.mocked(net.createConnection).mockImplementationOnce(() => {
+			throw failure;
+		});
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		await expect(sendSteeringRequest(options)).rejects.toBe(failure);
+		await drain();
+		canonical.resolve(target);
+		const held = await reservation;
+		if (held.status === 'reserved-partially') releases.push(held.release);
+		expect(held).toMatchObject({ status: 'blocked' });
+		reporting.resolve();
+		await drain();
+		await reserve();
+	});
+});
