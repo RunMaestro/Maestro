@@ -121,6 +121,7 @@ export const removeSupervisorTarget = store.removeSupervisorTarget;
 
 export const readScopeCheckpoint = store.readScopeCheckpoint;
 export const writeScopeCheckpoint = store.writeScopeCheckpoint;
+export const withScopeCheckpointLockAsync = store.withScopeCheckpointLockAsync;
 export const writeSupervisorTargetsAsync = store.writeSupervisorTargetsAsync;
 export const updateSupervisorTargetsAsync = store.updateSupervisorTargetsAsync;
 export const upsertSupervisorTargetAsync = store.upsertSupervisorTargetAsync;

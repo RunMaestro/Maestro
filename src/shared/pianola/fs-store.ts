@@ -81,7 +81,7 @@ export interface PianolaFsStoreConfig {
 	indent: string | number;
 	/** Append a trailing newline to object files (CLI does; main does not). */
 	trailingNewline: boolean;
-	/** Main must refuse contended synchronous decision claims without waiting. */
+	/** Main must refuse all contended synchronous mutations without waiting. */
 	decisionLockMode?: 'try';
 }
 
@@ -169,6 +169,14 @@ export interface PianolaFsStore {
 		durable?: boolean,
 		receipt?: (value: PianolaFileMutationReceipt) => void
 	): void;
+	/** Desktop preflight: acquire the same checkpoint lock while yielding, then
+	 * reread native authority and mutate through the scoped, already-locked writer.
+	 * The writer is valid only during this operation. Final sync fences use try-lock.
+	 */
+	withScopeCheckpointLockAsync<T>(
+		scopeId: string,
+		operation: (write: PianolaFsStore['writeScopeCheckpoint']) => T | Promise<T>
+	): Promise<T>;
 	writeSupervisorTargetsAsync(
 		targets: PianolaSupervisedTarget[]
 	): Promise<PianolaSupervisedTarget[]>;
@@ -576,7 +584,12 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			} else fs.rmSync(lock, { force: true });
 		};
 	}
-	function withFileLock<T>(name: string, label: string, operation: () => T, immediate = false): T {
+	function withFileLock<T>(
+		name: string,
+		label: string,
+		operation: () => T,
+		immediate = config.decisionLockMode === 'try'
+	): T {
 		const acquisition = acquireFileLock(name, label, false, immediate);
 		let attempt = acquisition.next();
 		while (!attempt.done) {
@@ -892,6 +905,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			return next === current ? current : persistSupervisorTargets(next);
 		});
 	}
+
 	function writeSupervisorTargetsAsync(
 		targets: PianolaSupervisedTarget[]
 	): Promise<PianolaSupervisedTarget[]> {
@@ -984,63 +998,95 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
 			throw new Error('Invalid Pianola scope checkpoint');
 		}
-		withFileLock(name, 'scope checkpoint', () => {
-			const before = receipt ? readMutationContent(name) : null;
-			const current = readScopeCheckpoint(checkpoint.scopeId);
-			if ((current?.enrollmentRevision ?? 0) > (checkpoint.enrollmentRevision ?? 0))
-				throw new Error('Scope enrollment changed; discard the old cycle and reload');
-			// A CLI cycle may have captured its census before host admission. Preserve
-			// only newly enrolled tabs it never saw, under the same configuration.
-			if (current?.configurationFingerprint === checkpoint.configurationFingerprint) {
-				const members = new Set(
-					checkpoint.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))
-				);
-				for (const tab of current.tabs) {
-					if (tab.dispatchEnrollmentId && !members.has(canonicalJson([tab.agentId, tab.tabId])))
-						checkpoint.tabs.push(tab);
-				}
+		withFileLock(name, 'scope checkpoint', () =>
+			persistScopeCheckpoint(checkpoint, durable, receipt)
+		);
+	}
+
+	function persistScopeCheckpoint(
+		checkpoint: PianolaScopeCheckpoint,
+		durable = false,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
+		const name = checkpointName(checkpoint.scopeId);
+		const before = receipt ? readMutationContent(name) : null;
+		const current = readScopeCheckpoint(checkpoint.scopeId);
+		if ((current?.enrollmentRevision ?? 0) > (checkpoint.enrollmentRevision ?? 0))
+			throw new Error('Scope enrollment changed; discard the old cycle and reload');
+		// A CLI cycle may have captured its census before host admission. Preserve
+		// only newly enrolled tabs it never saw, under the same configuration.
+		if (current?.configurationFingerprint === checkpoint.configurationFingerprint) {
+			const members = new Set(
+				checkpoint.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))
+			);
+			for (const tab of current.tabs) {
+				if (tab.dispatchEnrollmentId && !members.has(canonicalJson([tab.agentId, tab.tabId])))
+					checkpoint.tabs.push(tab);
 			}
-			if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId))
-				throw new Error('Invalid Pianola scope checkpoint');
-			if (
-				Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf8') + 1 >
-				20 * 1024 * 1024
-			)
-				throw new Error('Pianola checkpoint too large');
-			// Observation clocks and the sweep position alone do not justify rewriting
-			// the whole fleet. Refresh their durable projection at most every 20s.
-			const observationState = (value: PianolaScopeCheckpoint): unknown => ({
-				...value,
-				lastSnapshotAt: undefined,
-				nextTabIndex: undefined,
-				tabs: value.tabs.map((tab) => ({
-					...tab,
-					// The cycle may set these optional fields to undefined. JSON
-					// omits object members with that value on the next disk read.
-					nextWatchAt: tab.nextWatchAt,
-					emptyEnrollment: tab.emptyEnrollment,
-					coverage: tab.coverage ? { ...tab.coverage, observedAt: undefined } : undefined,
-				})),
-			});
-			if (current && isDeepStrictEqual(current, checkpoint)) {
-				receipt?.({ before, after: before });
-				return;
-			}
-			if (
-				!durable &&
-				current &&
-				(checkpoint.lastSnapshotAt ?? 0) >= (current.lastSnapshotAt ?? 0) &&
-				(checkpoint.lastSnapshotAt ?? 0) - (current.lastSnapshotAt ?? 0) < 20_000 &&
-				isDeepStrictEqual(observationState(current), observationState(checkpoint))
-			) {
-				receipt?.({ before, after: before });
-				return;
-			}
-			// All changed authority/cursor/enrollment states survive a crash, even
-			// when the caller is flushing a batch of passive observations.
-			writeJsonAtomic(name, checkpoint, true);
-			receipt?.({ before, after: readMutationContent(name) });
+		}
+		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId))
+			throw new Error('Invalid Pianola scope checkpoint');
+		if (Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf8') + 1 > 20 * 1024 * 1024)
+			throw new Error('Pianola checkpoint too large');
+		// Observation clocks and the sweep position alone do not justify rewriting
+		// the whole fleet. Refresh their durable projection at most every 20s.
+		const observationState = (value: PianolaScopeCheckpoint): unknown => ({
+			...value,
+			lastSnapshotAt: undefined,
+			nextTabIndex: undefined,
+			tabs: value.tabs.map((tab) => ({
+				...tab,
+				// The cycle may set these optional fields to undefined. JSON
+				// omits object members with that value on the next disk read.
+				nextWatchAt: tab.nextWatchAt,
+				emptyEnrollment: tab.emptyEnrollment,
+				coverage: tab.coverage ? { ...tab.coverage, observedAt: undefined } : undefined,
+			})),
 		});
+		if (current && isDeepStrictEqual(current, checkpoint)) {
+			receipt?.({ before, after: before });
+			return;
+		}
+		if (
+			!durable &&
+			current &&
+			(checkpoint.lastSnapshotAt ?? 0) >= (current.lastSnapshotAt ?? 0) &&
+			(checkpoint.lastSnapshotAt ?? 0) - (current.lastSnapshotAt ?? 0) < 20_000 &&
+			isDeepStrictEqual(observationState(current), observationState(checkpoint))
+		) {
+			receipt?.({ before, after: before });
+			return;
+		}
+		// All changed authority/cursor/enrollment states survive a crash, even
+		// when the caller is flushing a batch of passive observations.
+		writeJsonAtomic(name, checkpoint, true);
+		receipt?.({ before, after: readMutationContent(name) });
+	}
+
+	function withScopeCheckpointLockAsync<T>(
+		scopeId: string,
+		operation: (write: PianolaFsStore['writeScopeCheckpoint']) => T | Promise<T>
+	): Promise<T> {
+		return withFileLockAsync(
+			checkpointName(scopeId),
+			'scope checkpoint',
+			async () => {
+				let active = true;
+				try {
+					return await operation((checkpoint, durable, receipt) => {
+						if (!active || checkpoint.scopeId !== scopeId)
+							throw new Error('Scope checkpoint lock unavailable');
+						if (!validatePianolaScopeCheckpoint(checkpoint, scopeId))
+							throw new Error('Invalid Pianola scope checkpoint');
+						persistScopeCheckpoint(checkpoint, durable, receipt);
+					});
+				} finally {
+					active = false;
+				}
+			},
+			false,
+			true
+		);
 	}
 
 	function readProgramLoopMemo(): ProgramLoopMemo {
@@ -1139,6 +1185,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		writeDispatchAdmission,
 		readScopeCheckpoint,
 		writeScopeCheckpoint,
+		withScopeCheckpointLockAsync,
 		writeSupervisorTargetsAsync,
 		updateSupervisorTargetsAsync,
 		upsertSupervisorTargetAsync,

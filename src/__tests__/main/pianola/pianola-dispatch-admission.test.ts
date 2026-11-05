@@ -1,3 +1,5 @@
+import { spawn } from 'child_process';
+import { once } from 'events';
 import * as os from 'os';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +20,8 @@ import {
 } from '../../../shared/pianola/storage';
 import { validatePianolaDispatchAdmission } from '../../../shared/pianola/pianola-dispatch';
 
+vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
+
 const scopeId = '11111111-1111-4111-8111-111111111111';
 const dispatchId = '22222222-2222-4222-8222-222222222222';
 const directories: string[] = [];
@@ -31,7 +35,12 @@ function fixture() {
 	fs.mkdirSync(root, { recursive: true });
 	const dir = fs.mkdtempSync(path.join(root, 'admission-'));
 	directories.push(dir);
-	const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+	const store = createPianolaFsStore({
+		resolveDir: () => dir,
+		indent: 2,
+		trailingNewline: true,
+		decisionLockMode: 'try',
+	});
 	const scope: PianolaSupervisedTarget = {
 		id: scopeId,
 		kind: 'watch-scope',
@@ -228,11 +237,107 @@ describe('host Pianola dispatch admission', () => {
 		expect(f.service.status(f.client, dispatchId)).not.toHaveProperty('intentFingerprint');
 	});
 
+	it.each([
+		'current-baseline',
+		'paused',
+		'revoked',
+		'feature-off',
+		'suspended',
+		'disk-full',
+	] as const)(
+		'yields behind a native checkpoint lock and revalidates %s before enrollment',
+		async (change) => {
+			const f = fixture();
+			await f.service.prepare(f.client, f.request);
+			await f.service.bind(f.client, dispatchId, 'target');
+			const file = path.join(f.dir, `maestro-pianola-scope-${scopeId}.json`);
+			const child = spawn(
+				process.execPath,
+				[
+					'-e',
+					`
+				const fs = require('fs'); const file = process.argv[1];
+				fs.writeFileSync(file + '.lock', process.pid + '.held', { flag: 'wx' });
+				process.stdout.write('ready');
+				process.stdin.once('data', (data) => {
+					const value = JSON.parse(data.toString());
+					if (value) fs.writeFileSync(file, JSON.stringify(value));
+					fs.unlinkSync(file + '.lock'); process.exit(0);
+				});
+			`,
+					file,
+				],
+				{ stdio: ['pipe', 'pipe', 'pipe'] }
+			);
+			try {
+				await once(child.stdout, 'data');
+				const wait = vi.spyOn(Atomics, 'wait');
+				let settled = false;
+				const pending = f.service.enroll(f.client, dispatchId);
+				void pending.then(
+					() => {
+						settled = true;
+					},
+					() => {
+						settled = true;
+					}
+				);
+				await new Promise<void>((resolve) => setTimeout(resolve, 30));
+				expect(settled).toBe(false);
+				expect(wait).not.toHaveBeenCalled();
+				expect(f.store.readScopeCheckpoint(scopeId)).toBeNull();
+				expect(f.store.readDispatchAdmission(dispatchId)?.phase).toBe('bound');
+				expect(f.release).not.toHaveBeenCalled();
+				f.snapshot.tabs[0].cursor = { id: 'after-wait', count: 1, textLength: 17 };
+				if (change === 'paused') f.snapshot.tabs[0].busy = true;
+				if (change === 'revoked') f.controller.abort();
+				if (change === 'feature-off') f.deps.featureEnabled = () => false;
+				if (change === 'disk-full') {
+					vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+						throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+					});
+				}
+				const exited = once(child, 'exit');
+				child.stdin.write(
+					JSON.stringify(
+						change === 'suspended'
+							? {
+									version: 1,
+									scopeId,
+									configurationFingerprint: 'a'.repeat(64),
+									activatedAt: 100,
+									status: 'suspended',
+									tabs: [],
+									enrollmentRevision: 2,
+								}
+							: null
+					)
+				);
+				await exited;
+				if (change === 'current-baseline') {
+					await pending;
+					expect(f.store.readScopeCheckpoint(scopeId)?.tabs[0].baseline?.id).toBe('after-wait');
+					expect(f.store.readDispatchAdmission(dispatchId)?.phase).toBe('enrolled');
+				} else {
+					await expect(pending).rejects.toThrow();
+					expect(f.store.readDispatchAdmission(dispatchId)?.phase).toBe('bound');
+				}
+				expect(f.release).not.toHaveBeenCalled();
+				expect(wait).not.toHaveBeenCalled();
+			} finally {
+				if (child.exitCode === null) {
+					child.kill();
+					await once(child, 'exit');
+				}
+			}
+		}
+	);
+
 	it('does not release after checkpoint persistence failure', async () => {
 		const f = fixture();
 		await f.service.prepare(f.client, f.request);
 		await f.service.bind(f.client, dispatchId, 'target');
-		vi.spyOn(f.store, 'writeScopeCheckpoint').mockImplementation(() => {
+		vi.spyOn(f.store, 'withScopeCheckpointLockAsync').mockImplementation(() => {
 			throw new Error('Disk full');
 		});
 		await expect(f.service.enroll(f.client, dispatchId)).rejects.toThrow('Disk full');

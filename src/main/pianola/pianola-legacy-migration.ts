@@ -30,7 +30,10 @@ export type PianolaLegacyMigrationResult = {
 
 type MigrationStore = Pick<
 	PianolaFsStore,
-	'updateSupervisorTargetsAsync' | 'readScopeCheckpoint' | 'writeScopeCheckpoint' | 'readDecisions'
+	| 'updateSupervisorTargetsAsync'
+	| 'readScopeCheckpoint'
+	| 'withScopeCheckpointLockAsync'
+	| 'readDecisions'
 >;
 
 export async function migratePianolaLegacyWatches(
@@ -69,7 +72,11 @@ export async function migratePianolaLegacyWatches(
 		selection: target.selection,
 		managerAgentId: target.managerAgentId,
 	};
-	await deps.store.updateSupervisorTargetsAsync((current) => {
+	let lockedScopeId = scope.id;
+	const migrateLocked = (
+		current: PianolaSupervisedTarget[],
+		write: PianolaFsStore['writeScopeCheckpoint']
+	) => {
 		if (!deps.featureEnabled()) {
 			result.reason = 'Pianola is disabled';
 			return current;
@@ -102,6 +109,9 @@ export async function migratePianolaLegacyWatches(
 			};
 			result.scopeId = scope.id;
 		}
+		// Automation can propose a different ID for an existing standing scope.
+		// Resolve that host identity without mutating, then reacquire its own lock.
+		if (scope.id !== lockedScopeId) return current;
 		const matches = (agentId: string, tabId: string) =>
 			resolvePianolaScopeOwnership(
 				{ agentId, tabId, paused: false, consult: false, ephemeral: false },
@@ -364,7 +374,7 @@ export async function migratePianolaLegacyWatches(
 			checkpoint.configurationFingerprint = pianolaScopeConfigurationFingerprint(scope);
 			checkpoint.enrollmentRevision = (checkpoint.enrollmentRevision ?? 0) + 1;
 			checkpoint.lastSnapshotAt = snapshot.capturedAt;
-			deps.store.writeScopeCheckpoint(checkpoint, true);
+			write(checkpoint, true);
 		}
 		result = {
 			status: active.length ? 'migrated' : 'registered',
@@ -372,8 +382,17 @@ export async function migratePianolaLegacyWatches(
 			watchIds: replacement.legacyMigration?.watchIds ?? [],
 		};
 		return next;
-	});
-	return result;
+	};
+	// Checkpoint then registry: capture native state and publish both commits
+	// synchronously after both lock waits, with no stale census across an await.
+	for (let attempt = 0; attempt < 2; attempt++) {
+		lockedScopeId = scope.id;
+		await deps.store.withScopeCheckpointLockAsync(lockedScopeId, (write) =>
+			deps.store.updateSupervisorTargetsAsync((current) => migrateLocked(current, write))
+		);
+		if (scope.id === lockedScopeId) return result;
+	}
+	throw new Error('Scope identity changed; reload before configuration');
 }
 
 /** Shared native UI / bridge configuration path. Only a verified human owner may

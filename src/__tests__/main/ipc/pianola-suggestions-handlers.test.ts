@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAsActingUser } from '../../../main/web-server/auth/acting-user';
 import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
+import type { PianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaScopeCheckpoint } from '../../../shared/pianola/pianola-scope-checkpoint';
 import type { PianolaRule } from '../../../shared/pianola/types';
 import type { PianolaSuggestionsFile } from '../../../shared/pianola/storage';
@@ -65,6 +66,12 @@ const store = vi.hoisted(() => ({
 	readDecisions: vi.fn(() => []),
 	readScopeCheckpoint: vi.fn(() => null as PianolaScopeCheckpoint | null),
 	writeScopeCheckpoint: vi.fn(),
+	withScopeCheckpointLockAsync: vi.fn(
+		async <T>(
+			_id: string,
+			operation: (write: PianolaFsStore['writeScopeCheckpoint']) => T | Promise<T>
+		): Promise<T> => operation(store.writeScopeCheckpoint)
+	),
 	readSupervisorTargets: vi.fn(() => [] as PianolaSupervisedTarget[]),
 	writeSupervisorTargetsAsync: vi.fn(async (targets: PianolaSupervisedTarget[]) => targets),
 	updateSupervisorTargetsAsync: vi.fn(

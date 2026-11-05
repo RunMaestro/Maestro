@@ -462,12 +462,58 @@ describe('atomic legacy handover', () => {
 		expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
 	});
 
+	it.each(['current-baseline', 'feature-off', 'incomplete-census'] as const)(
+		'revalidates migration %s after yielding for the checkpoint lock',
+		async (change) => {
+			const lock = path.join(
+				process.env.MAESTRO_USER_DATA!,
+				`maestro-pianola-scope-${scopeId}.json.lock`
+			);
+			fs.writeFileSync(lock, process.pid + '.held', { flag: 'wx' });
+			const wait = vi.spyOn(Atomics, 'wait');
+			let settled = false;
+			const pending = migrate(scope(), () => true).then((result) => {
+				settled = true;
+				return result;
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 30));
+			expect(settled).toBe(false);
+			expect(wait).not.toHaveBeenCalled();
+			expect(store.readScopeCheckpoint(scopeId)).toBeNull();
+			expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+			snapshot.tabs[0].cursor = { id: 'after-lock', count: 5, textLength: 40 };
+			if (change === 'feature-off') enabled = false;
+			if (change === 'incomplete-census') snapshot.complete = false;
+			fs.rmSync(lock);
+			const result = await pending;
+			if (change === 'current-baseline') {
+				expect(result.status).toBe('migrated');
+				expect(
+					store
+						.readScopeCheckpoint(scopeId)
+						?.tabs.find((tab) => tab.tabId === snapshot.tabs[0].tabId)?.baseline?.id
+				).toBe('after-lock');
+			} else {
+				expect(result.status).toBe('NeedsConfiguration');
+				expect(store.readScopeCheckpoint(scopeId)).toBeNull();
+				expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+			}
+			expect(wait).not.toHaveBeenCalled();
+		}
+	);
+
 	it('recovers a crash after checkpoint preparation but before registry publication', async () => {
-		const original = store.writeScopeCheckpoint;
-		const failure = vi.spyOn(store, 'writeScopeCheckpoint').mockImplementation((checkpoint) => {
-			original(checkpoint);
-			throw new Error('crash');
-		});
+		const original = store.withScopeCheckpointLockAsync;
+		const failure = vi
+			.spyOn(store, 'withScopeCheckpointLockAsync')
+			.mockImplementation((scopeId, operation) =>
+				original(scopeId, (write) =>
+					operation((checkpoint, ...args) => {
+						write(checkpoint, ...args);
+						throw new Error('crash');
+					})
+				)
+			);
 		await expect(migrate(scope(), () => true)).rejects.toThrow('crash');
 		expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
 		expect(store.readSupervisorTargets().some((t) => t.kind === 'watch-scope')).toBe(false);

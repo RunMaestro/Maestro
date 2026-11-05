@@ -60,6 +60,8 @@ The audit trail, and the most important tab in the feature. For every decision i
 
 Decision claims and receipts share one revision check and append/compaction lock across desktop and CLI writers. Desktop receipt and resolution writes yield while another writer owns the log. The final synchronous claim tries the lock once and refuses a busy log before sending; it never waits for the other process. A stale revision is refused even after the lock becomes available. Re-read the pending decision before retrying a refused claim; an uncertain admitted answer remains blocked until native acknowledgment, rather than being sent again.
 
+Scope enrollment and owner configuration also yield while another process holds the checkpoint lock. The host captures the current native baseline and verifies authority after acquiring the lock, then commits the durable checkpoint before publishing enrollment or registry changes. Final synchronous queue and answer fences refuse a busy checkpoint immediately. If a decision claim was already committed, that refusal preserves the claim and prevents an automatic resend. CLI workers retain the same file locks, enrollment revision checks, and durable receipts.
+
 ### Suggestions
 
 Pianola can read your own past CLI transcripts and propose rules and a decision profile that match how you already answer. Proposals sit here until you approve them. Approving only writes config, and an approved rule still goes through every safety check at runtime.

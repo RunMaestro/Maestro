@@ -131,6 +131,32 @@ describe('scope checkpoint validation', () => {
 });
 
 describe('scope checkpoint filesystem storage', () => {
+	it('retains enrollment revision CAS and bounds the locked writer lifetime and scope', async () => {
+		const stale = checkpoint();
+		const current = { ...checkpoint(), enrollmentRevision: 2 };
+		let escaped: PianolaFsStore['writeScopeCheckpoint'] | undefined;
+		await store.withScopeCheckpointLockAsync(scopeId, (write) => {
+			escaped = write;
+			expect(() => write({ ...current, scopeId: otherScopeId })).toThrow('lock unavailable');
+			write(current, true);
+		});
+		expect(() => escaped!(stale)).toThrow('lock unavailable');
+		await expect(
+			store.withScopeCheckpointLockAsync(scopeId, (write) => write(stale, true))
+		).rejects.toThrow('enrollment changed');
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(current);
+		const receipts: unknown[] = [];
+		await store.withScopeCheckpointLockAsync(scopeId, (write) => {
+			write({ ...current, status: 'suspended' }, true, (receipt) => {
+				expect(fs.existsSync(checkpointPath() + '.lock')).toBe(true);
+				expect(JSON.parse(receipt.after!).status).toBe('suspended');
+				receipts.push(receipt);
+			});
+		});
+		expect(receipts).toHaveLength(1);
+		expect(fs.existsSync(checkpointPath() + '.lock')).toBe(false);
+	});
+
 	it('ignores absent optional tab fields but persists real authority and ordered membership changes', () => {
 		const value = checkpoint();
 		store.writeScopeCheckpoint(value);

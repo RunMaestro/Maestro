@@ -167,7 +167,7 @@ describe('native new-tab Pianola admission adapter', () => {
 		async (failure) => {
 			const f = fixture();
 			if (failure === 'checkpoint')
-				vi.spyOn(f.store, 'writeScopeCheckpoint').mockImplementationOnce(() => {
+				vi.spyOn(f.store, 'withScopeCheckpointLockAsync').mockImplementationOnce(() => {
 					throw new Error('WriteFailed');
 				});
 			else if (failure === 'callback')
@@ -319,7 +319,7 @@ describe('native new-tab Pianola admission adapter', () => {
 		).rejects.toThrow('PianolaFeatureOff');
 		await expect(f.adapter.run({}, f.request, f.arm)).rejects.toThrow('CallerRunUnavailable');
 		expect(f.newTab).not.toHaveBeenCalled();
-		vi.spyOn(f.store, 'writeScopeCheckpoint').mockImplementation(() => {
+		vi.spyOn(f.store, 'withScopeCheckpointLockAsync').mockImplementation(() => {
 			throw new Error('DiskFull');
 		});
 		await expect(f.adapter.run(f.client, f.request, f.arm)).rejects.toThrow('DiskFull');

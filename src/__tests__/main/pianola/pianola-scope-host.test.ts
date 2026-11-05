@@ -1380,9 +1380,14 @@ describe('standing future local agents', () => {
 });
 
 describe('L02 main decision claims', () => {
-	it.each(['human', 'manager'] as const)(
-		'refuses a contended %s claim and persists its outcome and ack after release',
-		async (actor) => {
+	it.each([
+		['human', 'decisions'],
+		['manager', 'decisions'],
+		['human', 'checkpoint'],
+		['manager', 'checkpoint'],
+	] as const)(
+		'refuses a contended %s claim on %s without blocking or sending',
+		async (actor, lockedFile) => {
 			census.tabs[0].busy = false;
 			const messages = [
 				{
@@ -1461,7 +1466,12 @@ describe('L02 main decision claims', () => {
 			fs.writeFileSync(lock, process.pid + '.held', { flag: 'wx' }); process.stdout.write('ready');
 			process.stdin.once('data', () => { fs.unlinkSync(lock); process.exit(0); });
 		`,
-					path.join(directory, 'pianola-decisions.jsonl.lock'),
+					path.join(
+						directory,
+						lockedFile === 'decisions'
+							? 'pianola-decisions.jsonl.lock'
+							: `maestro-pianola-scope-${record.lifecycle!.guard.scopeId}.json.lock`
+					),
 				],
 				{ stdio: ['pipe', 'pipe', 'pipe'] }
 			);
@@ -1474,10 +1484,18 @@ describe('L02 main decision claims', () => {
 				expect(performance.now() - started).toBeLessThan(250);
 				expect(wait).not.toHaveBeenCalled();
 				expect(callbacks.executeCommand).not.toHaveBeenCalled();
-				expect(store.readDecisions()).toEqual(before);
+				if (lockedFile === 'decisions') expect(store.readDecisions()).toEqual(before);
+				else expect(store.readDecisions()[0].lifecycle?.delivery).toBe('intent');
 				const exited = once(child, 'exit');
 				child.stdin.write('release');
 				await exited;
+				if (lockedFile === 'checkpoint') {
+					// The preceding journal claim is durable. Even definite refusal at
+					// the second lock does not silently reset it into resend authority.
+					await expect(resolve()).rejects.toThrow('already claimed');
+					expect(callbacks.executeCommand).not.toHaveBeenCalled();
+					return;
+				}
 				expect(await resolve()).toEqual({ status: 'accepted' });
 				expect(store.readDecisions()[0].lifecycle).toMatchObject({
 					source: { kind: actor },

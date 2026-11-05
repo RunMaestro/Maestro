@@ -59,6 +59,7 @@ type Store = Pick<
 	| 'readSupervisorTargets'
 	| 'readScopeCheckpoint'
 	| 'writeScopeCheckpoint'
+	| 'withScopeCheckpointLockAsync'
 	| 'readDispatchAdmission'
 	| 'writeDispatchAdmission'
 >;
@@ -267,16 +268,24 @@ export class PianolaDispatchAdmissionService {
 				if (record.phase === 'prepared') throw new Error('DispatchNotBound');
 				return this.receipt(record);
 			}
-			const auth = await this.authorize(client, record.targetAgentId, record.targetTabId);
-			this.checkPolicy(record, auth);
-			this.enrollRecord(record, auth);
+			await this.deps.store.withScopeCheckpointLockAsync(record.scopeId, async (write) => {
+				// Capture the baseline and authority AFTER any lock wait.
+				if (canonicalJson(this.record(client, dispatchId)) !== canonicalJson(record))
+					throw new Error('DispatchIntentMismatch');
+				const auth = await this.authorize(client, record.targetAgentId, record.targetTabId);
+				this.checkPolicy(record, auth);
+				if (canonicalJson(this.record(client, dispatchId)) !== canonicalJson(record))
+					throw new Error('DispatchIntentMismatch');
+				this.enrollRecord(record, auth, write);
+			});
 			return this.receipt(record);
 		});
 	}
 
 	private enrollRecord(
 		record: PianolaDispatchAdmission,
-		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorizeOwner']>>
+		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorizeOwner']>>,
+		write = this.deps.store.writeScopeCheckpoint
 	) {
 		const tab = auth.snapshot.tabs.find(
 			(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
@@ -322,7 +331,7 @@ export class PianolaDispatchAdmissionService {
 				unresolvedIntent: null,
 			});
 		// Checkpoint commit precedes journal commit; a crash here may safely reuse coverage.
-		this.deps.store.writeScopeCheckpoint(checkpoint, true);
+		write(checkpoint, true);
 		record.supervision = saved ? 'already-covered' : 'enrolled';
 		record.phase = 'enrolled';
 		this.deps.store.writeDispatchAdmission(record);
