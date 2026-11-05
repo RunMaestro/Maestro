@@ -1,3 +1,4 @@
+import { observeElementOffsetWhileMounted } from '../utils/virtualizer';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { isSessionRemote } from '../utils/sessionHelpers';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
@@ -2499,6 +2500,7 @@ function BoardCardList({
 	);
 	const virtualizer = useVirtualizer({
 		count: cards.length,
+		observeElementOffset: observeElementOffsetWhileMounted,
 		getScrollElement: () => scrollRef.current,
 		estimateSize: useCallback(() => 168, []),
 		getItemKey: useCallback((index: number) => cards[index].key, [cards]),

@@ -3635,7 +3635,7 @@ describe('BoardModal windowed columns', () => {
 		for (let index = 1; index <= 20; index++) {
 			fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
 			expect(
-				await screen.findByRole('button', { name: `Window card ${index}, To Do` })
+				await within(list).findByRole('button', { name: `Window card ${index}, To Do` })
 			).toHaveFocus();
 		}
 		fireEvent.scroll(list, { target: { scrollTop: 35000 } });

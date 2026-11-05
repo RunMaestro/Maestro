@@ -1063,23 +1063,33 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 		expect(facade.read(roots[0], 'b')).toEqual(before);
 	});
 
-	it('rejects stale revisions, foreign pins, repository escapes, membership changes and authority flags without writes', async () => {
-		const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
-		const captureArgs = ['add-card', 'b', '--title', 'Invalid', '--scope-group', 'g'];
-		for (const flags of [
-			['--assignee-agent', 'foreign'],
-			['--repository', 'repo0', '--working-directory', roots[1]],
-			['--revision', '999'],
-			['--start-mode', 'direct'],
-			['--scope-agent', 'a'],
-			['--revision', '-1'],
-		]) {
-			const reply = await cli(...captureArgs, ...flags, ...common);
+	it.each([
+		['foreign pin', ['--assignee-agent', 'foreign']],
+		['repository escape', ['--repository', 'repo0', '--working-directory', 'foreign-root']],
+		['stale revision', ['--revision', '999']],
+		['unauthorized direct capture', ['--start-mode', 'direct']],
+		['conflicting scope', ['--scope-agent', 'a']],
+		['negative revision', ['--revision', '-1']],
+	] as const)(
+		'rejects stale revisions, foreign pins and authority flags: %s without writes',
+		async (_name, flags) => {
+			const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
+			const before = facade.read(roots[0], 'b');
+			const reply = await cli(
+				'add-card',
+				'b',
+				'--title',
+				'Invalid',
+				'--scope-group',
+				'g',
+				...flags.map((flag) => (flag === 'foreign-root' ? roots[1] : flag)),
+				...common
+			);
 			expect(reply.code).toBe(1);
 			expect(reply.value.details).toMatchObject({ code: expect.any(String) });
+			expect(facade.read(roots[0], 'b')).toEqual(before);
 		}
-		expect(facade.read(roots[0], 'b').cards).toEqual([]);
-	});
+	);
 
 	it('rejects forged authority and changed group membership without writes', async () => {
 		const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];

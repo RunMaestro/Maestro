@@ -1264,16 +1264,16 @@ describe('maestro-cli board', () => {
 						: { kind: 'local' },
 				},
 			}),
-			{
-				...nativeService,
-				spawn: (spec, hooks) => {
-					const task = nativeService.spawn(spec, hooks);
-					runTasks.push(task);
-					return task;
-				},
-			},
+			nativeService,
 			() => 'unknown'
 		);
+		// Settlement includes result persistence and reservation release after spawn.
+		const start = owner.start.bind(owner);
+		vi.spyOn(owner, 'start').mockImplementation((token) => {
+			const task = start(token);
+			runTasks.push(task);
+			return task;
+		});
 		expect(owner.acquire()).toMatchObject({ ok: true });
 		configureBoardRuntimeHost(() => owner);
 	}
@@ -1532,9 +1532,9 @@ describe('maestro-cli board', () => {
 			seedBoard({ path: worktreePath, branch });
 
 			await boardTick({ agent: 'Alpha', json: true });
-			await vi.waitFor(() =>
-				expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0)
-			);
+			expect(runTasks).toHaveLength(1);
+			await Promise.all(runTasks);
+			expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0);
 
 			expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
 			// spawnAgent(toolType, cwd, prompt, ...) - the cwd is the checkout.
