@@ -254,7 +254,7 @@ import { isAgentDormant } from '../shared/agentVisibility';
 import { autoDecomposeBoard } from './board/board-decompose';
 import { buildBoardCardToastPayload } from './board/board-toast';
 import { prepareBoardReviewHandoff } from './board/board-review';
-import { boardWorkerCanStart } from './board/board-claims';
+import { createBoardAgentAdmission } from './board/board-claims';
 import { configureAgentAdmission } from './utils/headless-agent-activity';
 import { startBoardRunPr, startCardPr } from './board/board-pr';
 import { PROMPT_IDS } from '../shared/promptDefinitions';
@@ -1740,8 +1740,12 @@ app
 			onWait: (key, reason) =>
 				logger.cue(`[Board] ${key.collectionKey}/${key.cardId}: ${reason}`, 'Cue'),
 		});
-		configureAgentAdmission((agentId, runId) =>
-			boardWorkerCanStart(getBoardStorage().db, agentId, runId)
+		configureAgentAdmission(
+			createBoardAgentAdmission(
+				store,
+				() => getBoardStorage().db,
+				(error) => logger.error(`Board agent admission failed: ${String(error)}`, 'Board')
+			)
 		);
 		configureBoardRuntimeHost(globalBoardHost.runtimeFor);
 

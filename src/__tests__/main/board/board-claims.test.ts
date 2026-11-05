@@ -1,5 +1,5 @@
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
@@ -28,7 +28,11 @@ import type {
 	BoardClaimHostContext,
 	BoardClaimResult,
 } from '../../../main/board/board-claims';
-import { claimBoardCard, type BoardRunSpecification } from '../../../main/board/board-claims';
+import {
+	claimBoardCard,
+	createBoardAgentAdmission,
+	type BoardRunSpecification,
+} from '../../../main/board/board-claims';
 import { resolveProfileSpawnOverrides } from '../../../shared/profiles/types';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
@@ -51,6 +55,37 @@ let namespaces: string[];
 let agents: { id: string; groupId: string }[];
 let registryRevision: number;
 let host: BoardClaimHostContext;
+
+describe('global Board agent admission', () => {
+	it('reads both flags live, skips storage when disabled, and fails closed on errors', () => {
+		let flags = { board: false, maestroCue: false };
+		const settings = { get: () => flags };
+		const getDb = vi.fn(() => db);
+		const onError = vi.fn();
+		const admit = createBoardAgentAdmission(settings, getDb, onError);
+		for (const state of [
+			{ board: false, maestroCue: false },
+			{ board: true, maestroCue: false },
+			{ board: false, maestroCue: true },
+		]) {
+			flags = state;
+			expect(admit('worker')).toBe(true);
+		}
+		expect(getDb).not.toHaveBeenCalled();
+		flags = { board: true, maestroCue: true };
+		db.prepare('INSERT INTO migration_worker_holds VALUES (?, ?)').run('worker', '[]');
+		expect(admit('worker')).toBe(false);
+		expect(admit('other')).toBe(true);
+		const failure = new Error('storage unavailable');
+		getDb.mockImplementationOnce(() => {
+			throw failure;
+		});
+		expect(admit('other')).toBe(false);
+		expect(onError).toHaveBeenCalledWith(failure);
+		flags.board = false;
+		expect(admit('worker')).toBe(true);
+	});
+});
 
 beforeAll(async () => {
 	fixture.install();

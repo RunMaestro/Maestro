@@ -7,6 +7,10 @@ import { hasLegacyDirectStart, hasUnresolvedMigrationBlockers } from './board-mi
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import {
+	isEncoreFeatureEnabled,
+	type EncoreSettingsReader,
+} from '../../shared/encoreFeatureDefaults';
+import {
 	evaluateClaimWorker,
 	persistedCaptureInput,
 	type BoardWorkerWaitReason,
@@ -502,4 +506,25 @@ export function boardWorkerCanStart(
 		.prepare('SELECT run_id FROM reservations WHERE worker_agent_id=?')
 		.get(agentId) as { run_id: string } | undefined;
 	return !reservation || (runId !== undefined && reservation.run_id === runId);
+}
+
+/** Check live feature settings before touching Board storage; failures deny admission. */
+export function createBoardAgentAdmission(
+	settings: EncoreSettingsReader,
+	getDb: () => Database.Database,
+	onError: (error: unknown) => void
+): (agentId: string, runId?: string) => boolean {
+	return (agentId, runId) => {
+		try {
+			if (
+				!isEncoreFeatureEnabled(settings, 'board') ||
+				!isEncoreFeatureEnabled(settings, 'maestroCue')
+			)
+				return true;
+			return boardWorkerCanStart(getDb(), agentId, runId);
+		} catch (error) {
+			onError(error);
+			return false;
+		}
+	};
 }
