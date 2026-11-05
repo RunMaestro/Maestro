@@ -1,22 +1,13 @@
 /** Discover only registered roots through explicit local or SSH adapters. Legacy files are immutable import input;
  * central data owns subsequent edits. No recursive scan or remote/local fallback. */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { BOARD_CONFIG_PATH, PROFILES_CONFIG_PATH } from '../../shared/maestro-paths';
 import { canonicalJson } from '../../shared/canonicalJson';
-import { resolveBoardLocation } from './board-location';
 import { boardRemoteTransport, type BoardRemoteTransport } from './board-remote-source';
 import {
+	discoverLocalBoardSources,
 	discoverRemoteBoardSources,
 	executeBoardSourceOperation,
 	type BoardSourceSession,
 } from './board-source-core';
-import { execGitReadOnly } from '../utils/remote-git';
-import {
-	applyBoardMigration,
-	boardMigrationSourceKey,
-	planBoardMigration,
-} from './board-migration';
 import { BoardStorageError, getBoardStorage, type BoardStorageFacade } from './board-storage';
 import {
 	assertBoardIsolationPath,
@@ -172,100 +163,18 @@ export async function discoverBoardSources(
 		];
 	}
 	await discoverRemoteBoardSources(storage, registered, remote);
-	const roots = new Set(
-		registered
-			.filter((s) => resolveBoardLocation(s).kind === 'local')
-			.map((s) => s.projectRoot || s.dir)
-			.filter((root): root is string => !!root)
+	await discoverLocalBoardSources(
+		storage,
+		registered,
+		admitted
+			? {
+					roots: admitted,
+					assertInputPath: (file) => {
+						assertBoardIsolationPath(requireBoardIsolation(), file);
+					},
+				}
+			: undefined
 	);
-	for (const root of roots) {
-		let physical: string;
-		try {
-			physical = await fs.promises.realpath(root);
-		} catch (error) {
-			if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
-			throw error;
-		}
-		if (admitted && (physical !== root || !admitted.has(physical)))
-			throw new Error('Board isolation source physical identity changed');
-		const source = { location: { kind: 'local' as const }, path: physical };
-		const sourceKey = boardMigrationSourceKey(source);
-		if (
-			storage.db
-				.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
-				.get(sourceKey)
-		)
-			continue;
-		// An import is a point-in-time transfer, never a YAML synchronization loop.
-		const existing = storage.db
-			.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-			.get(sourceKey) as { snapshot: Uint8Array } | undefined;
-		if (existing) {
-			applyBoardMigration(storage.db, JSON.parse(Buffer.from(existing.snapshot).toString('utf8')));
-			continue;
-		}
-		if (
-			storage.db.prepare('SELECT 1 FROM board_sources WHERE source_key=?').get(sourceKey) &&
-			storage.db.prepare('SELECT 1 FROM repositories WHERE id=?').get(`source:${sourceKey}`)
-		)
-			continue;
-		const read = async (relative: string): Promise<Buffer | null> => {
-			try {
-				const file = path.join(physical, relative);
-				if (admitted) assertBoardIsolationPath(requireBoardIsolation(), file);
-				return await fs.promises.readFile(file);
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-				throw error;
-			}
-		};
-		const boardBytes = await read(BOARD_CONFIG_PATH);
-		const profileBytes = await read(PROFILES_CONFIG_PATH);
-		const git = await execGitReadOnly(['rev-parse', '--show-toplevel'], physical);
-		const repository =
-			git.exitCode === 0 && (await fs.promises.realpath(git.stdout.trim())) === physical
-				? { id: `source:${sourceKey}`, workingDirectory: physical, validated: true }
-				: null;
-		if (
-			boardBytes ||
-			profileBytes ||
-			registered.some(
-				(s) =>
-					s.boardWorker &&
-					resolveBoardLocation(s).kind === 'local' &&
-					(s.projectRoot || s.dir) === root
-			)
-		) {
-			applyBoardMigration(
-				storage.db,
-				planBoardMigration({ source, repository, boardBytes, profileBytes, workers: registered })
-			);
-		} else {
-			storage.db
-				.transaction(() => {
-					if (
-						storage.db
-							.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
-							.get(sourceKey)
-					)
-						return;
-					const inserted = storage.db
-						.prepare('INSERT OR IGNORE INTO board_sources VALUES (?)')
-						.run(sourceKey);
-					storage.db
-						.prepare('INSERT OR IGNORE INTO board_source_locations VALUES (?, ?)')
-						.run(sourceKey, canonicalJson(source));
-					const repositoryAdded = repository
-						? storage.db
-								.prepare('INSERT OR IGNORE INTO repositories VALUES (?, ?)')
-								.run(repository.id, canonicalJson(repository)).changes
-						: 0;
-					if (inserted.changes || repositoryAdded)
-						storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
-				})
-				.immediate();
-		}
-	}
 }
 
 /** Admit the retained process, registries and persisted source identity before running the algorithm. */

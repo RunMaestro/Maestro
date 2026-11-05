@@ -1,27 +1,55 @@
-import { createScratchDir } from '../../shared/maestro-lib/run/fakeAgent';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
-import { BoardStorageFacade } from '../../../main/board/board-storage';
+import { BoardStorageFacade, configureBoardStorage } from '../../../main/board/board-storage';
 import { boardMigrationSourceKey } from '../../../main/board/board-migration';
-import { discoverBoardSources } from '../../../main/board/board-source-host';
+import {
+	configureIsolatedBoardSourceHost,
+	discoverBoardSources,
+	refreshBoardSources,
+} from '../../../main/board/board-source-host';
+import {
+	discoverLocalBoardSources,
+	discoverRemoteBoardSources,
+	executeBoardSourceOperation,
+} from '../../../main/board/board-source-core';
+import type { BoardRemoteTransport } from '../../../main/board/board-remote-source';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { listBoardWorkers } from '../../../main/board/board-workspace-storage';
 
+const isolation = createBoardIsolationFixture();
+const refuseTransport = vi.fn((): never => {
+	throw new Error('Unexpected SSH/network transport');
+});
+const remote: BoardRemoteTransport = {
+	config: refuseTransport,
+	read: refuseTransport,
+	git: refuseTransport,
+	shell: refuseTransport,
+};
 let dir = '';
+beforeAll(() => {
+	isolation.install();
+	configureIsolatedBoardSourceHost(isolation.contract);
+});
+afterAll(async () => isolation.cleanup());
 afterEach(() => {
 	vi.restoreAllMocks();
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(isolation.contract.db + suffix, { force: true });
+	refuseTransport.mockClear();
 });
 it('discovers asynchronously outside transactions and preserves filesystem errors', async () => {
-	dir = createScratchDir('maestro-board-source-async', { canonical: true }).dir;
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'maestro-board-source-async-'));
 	const root = path.join(dir, 'root');
 	fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
 	fs.writeFileSync(path.join(root, '.maestro/board.yaml'), '{"boards":[]}');
 	const file = path.join(dir, 'file');
 	fs.writeFileSync(file, 'not a directory');
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+	const db = openBoardDb(isolation.contract.db);
 	try {
 		const storage = new BoardStorageFacade(db);
 		const realpath = fs.promises.realpath.bind(fs.promises);
@@ -34,7 +62,7 @@ it('discovers asynchronously outside transactions and preserves filesystem error
 			expect(db.inTransaction).toBe(false);
 			return readFile(...args);
 		});
-		await discoverBoardSources(storage, [
+		await discoverLocalBoardSources(storage, [
 			{ id: 'missing', dir: path.join(dir, 'missing') },
 			{ id: 'not-dir', dir: path.join(file, 'child') },
 			{ id: 'worker', dir: root, boardWorker: true },
@@ -47,7 +75,7 @@ it('discovers asynchronously outside transactions and preserves filesystem error
 		const badRoot = path.join(dir, 'bad');
 		fs.mkdirSync(path.join(badRoot, '.maestro', 'board.yaml'), { recursive: true });
 		await expect(
-			discoverBoardSources(storage, [{ id: 'bad', dir: badRoot }])
+			discoverLocalBoardSources(storage, [{ id: 'bad', dir: badRoot }])
 		).rejects.toMatchObject({
 			code: 'EISDIR',
 		});
@@ -57,7 +85,7 @@ it('discovers asynchronously outside transactions and preserves filesystem error
 	}
 });
 it('cold-discovers registered repositories and legacy input, retains closed sources, and edits roles centrally', async () => {
-	dir = createScratchDir('maestro-board-source-host', { canonical: true }).dir;
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'maestro-board-source-host-'));
 	const roots = ['a', 'b'].map((name) => {
 		const root = path.join(dir, name);
 		fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
@@ -72,12 +100,13 @@ it('cold-discovers registered repositories and legacy input, retains closed sour
 		JSON.stringify({ profiles: [{ id: 'legacy-role', name: 'Legacy role' }] })
 	);
 	fs.writeFileSync(path.join(roots[0], '.maestro/profiles.yaml'), profiles);
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+	const db = openBoardDb(isolation.contract.db);
 	try {
 		const storage = new BoardStorageFacade(db);
 		const sessions = roots.map((root, i) => ({ id: `worker-${i}`, dir: root, boardWorker: true }));
-		await discoverBoardSources(storage, sessions);
+		await discoverLocalBoardSources(storage, sessions);
 		const first = storage.query();
+		const snapshots = db.prepare('SELECT * FROM migrations ORDER BY source_key').all();
 		expect(first.sources.map((s) => s.location?.path).sort()).toEqual(roots);
 		expect(first.collections).toHaveLength(1);
 		expect(storage.captureCatalog().repositories).toHaveLength(2);
@@ -93,26 +122,162 @@ it('cold-discovers registered repositories and legacy input, retains closed sour
 				.profiles.find((p) => p.namespace === role.namespace && p.profile.id === role.profileId)
 				?.profile.name
 		).toBe('Central role');
-		await discoverBoardSources(storage, []);
-		await discoverBoardSources(storage, [...sessions].reverse());
+		await discoverLocalBoardSources(storage, []);
+		await discoverLocalBoardSources(storage, [...sessions].reverse());
 		expect(storage.query().collections).toEqual(first.collections);
 		expect(storage.captureCatalog().profiles).toHaveLength(2);
 		expect(fs.readFileSync(path.join(roots[0], '.maestro/board.yaml'))).toEqual(original);
 		expect(fs.readFileSync(path.join(roots[0], '.maestro/profiles.yaml'))).toEqual(profiles);
 		expect(db.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: 2 });
+		expect(db.prepare('SELECT * FROM migrations ORDER BY source_key').all()).toEqual(snapshots);
 	} finally {
 		db.close();
 	}
 });
 
-it('never treats an SSH session directory as a local migration source', async () => {
-	dir = createScratchDir('maestro-board-source-remote', { canonical: true }).dir;
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+it('captures local workers and grants before asynchronous filesystem discovery can mutate the inputs', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'local-snapshot-'));
+	execFileSync('git', ['init', '--quiet', dir]);
+	const db = openBoardDb(isolation.contract.db);
 	try {
 		const storage = new BoardStorageFacade(db);
-		await discoverBoardSources(storage, [
-			{ id: 'remote', dir, boardWorker: true, sessionSshRemoteConfig: { enabled: true } },
+		const sessions = [{ id: 'original-worker', dir, boardWorker: true }];
+		const realpath = fs.promises.realpath.bind(fs.promises);
+		vi.spyOn(fs.promises, 'realpath').mockImplementationOnce(async (...args) => {
+			expect(db.inTransaction).toBe(false);
+			sessions[0].id = 'forged-worker';
+			sessions[0].dir = isolation.sources.two;
+			sessions.push({ ...sessions[0], id: 'late-worker' });
+			return realpath(...args);
+		});
+		await discoverLocalBoardSources(storage, sessions);
+		const sourceKey = boardMigrationSourceKey({ location: { kind: 'local' }, path: dir });
+		expect(listBoardWorkers(db)).toMatchObject([
+			{ agentId: 'original-worker', payload: { allowedRepositoryIds: [`source:${sourceKey}`] } },
 		]);
+		expect(listBoardWorkers(db)).toHaveLength(1);
+		expect(storage.query().sources.map((source) => source.sourceKey)).toEqual([sourceKey]);
+	} finally {
+		db.close();
+	}
+});
+
+it('discovers actual admitted local roots through the host and replays immutable input without network', async () => {
+	const root = isolation.sources.one;
+	const inputDir = path.join(root, '.maestro');
+	fs.mkdirSync(inputDir);
+	fs.writeFileSync(
+		path.join(inputDir, 'board.yaml'),
+		JSON.stringify({ boards: [{ id: 'host', name: 'Admitted host', cards: [] }] })
+	);
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		configureBoardStorage(storage);
+		await refreshBoardSources();
+		expect(
+			storage
+				.query()
+				.sources.map((source) => source.location?.path)
+				.sort()
+		).toEqual(Object.values(isolation.sources).sort());
+		expect(storage.query().collections.map((entry) => entry.board.name)).toEqual(['Admitted host']);
+		const before = db.prepare('SELECT * FROM migrations').all();
+		expect(before).toHaveLength(1);
+		fs.writeFileSync(path.join(inputDir, 'board.yaml'), 'broken: [');
+		await refreshBoardSources();
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual(before);
+		expect(storage.query().collections.map((entry) => entry.board.name)).toEqual(['Admitted host']);
+	} finally {
+		db.close();
+		fs.rmSync(inputDir, { recursive: true });
+	}
+});
+
+it('refuses an unadmitted provider or transport before any source read or write', async () => {
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const before = storage.query();
+		const read = vi.spyOn(fs.promises, 'readFile');
+		await expect(
+			discoverBoardSources(
+				storage,
+				[{ id: 'ssh', dir: isolation.sources.one, sshRemoteId: 'unadmitted' }],
+				remote
+			)
+		).rejects.toThrow('not admitted');
+		expect(read).not.toHaveBeenCalled();
+		expect(refuseTransport).not.toHaveBeenCalled();
+		expect(storage.query()).toEqual(before);
+	} finally {
+		db.close();
+	}
+});
+
+it('checks retained registry admission before opening implicit storage', () => {
+	const file = isolation.contract.sourceRegistry;
+	const original = fs.readFileSync(file);
+	try {
+		const changed = JSON.parse(original.toString('utf8'));
+		changed.sources.reverse();
+		fs.writeFileSync(file, JSON.stringify(changed));
+		expect(() => refreshBoardSources()).toThrow('not admitted');
+		expect(fs.existsSync(isolation.contract.db)).toBe(false);
+	} finally {
+		fs.writeFileSync(file, original);
+	}
+});
+
+it.each(['other-admitted-root', 'outside-admitted-roots'])(
+	'refuses post-realpath identity changes to %s before input reads',
+	async (target) => {
+		dir = fs.mkdtempSync(path.join(isolation.contract.root, 'unregistered-root-'));
+		const db = openBoardDb(isolation.contract.db);
+		try {
+			const storage = new BoardStorageFacade(db);
+			configureBoardStorage(storage);
+			const read = vi.spyOn(fs.promises, 'readFile');
+			vi.spyOn(fs.promises, 'realpath').mockResolvedValueOnce(
+				target === 'other-admitted-root' ? isolation.sources.two : dir
+			);
+			await expect(refreshBoardSources()).rejects.toThrow('source physical identity changed');
+			expect(read).not.toHaveBeenCalled();
+			expect(storage.query().sources).toEqual([]);
+		} finally {
+			db.close();
+		}
+	}
+);
+
+it('retains the host input-path guard when an admitted root contains a filesystem alias', async () => {
+	const alias = path.join(isolation.sources.one, '.maestro');
+	fs.symlinkSync(isolation.contract.worktree, alias, 'junction');
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		configureBoardStorage(storage);
+		const read = vi.spyOn(fs.promises, 'readFile');
+		await expect(refreshBoardSources()).rejects.toThrow('Board isolation');
+		expect(read).not.toHaveBeenCalled();
+		expect(storage.query().sources).toEqual([]);
+	} finally {
+		db.close();
+		fs.unlinkSync(alias);
+	}
+});
+
+it('never treats an SSH session directory as a local migration source', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'maestro-board-source-remote-'));
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const sessions = [
+			{ id: 'remote', dir, boardWorker: true, sessionSshRemoteConfig: { enabled: true } },
+		];
+		await discoverRemoteBoardSources(storage, sessions, remote);
+		await discoverLocalBoardSources(storage, sessions);
+		expect(refuseTransport).not.toHaveBeenCalled();
 		expect(storage.query().sources).toMatchObject([
 			{ location: { location: { kind: 'ssh', remoteId: '' }, path: dir } },
 		]);
@@ -126,13 +291,13 @@ it('never treats an SSH session directory as a local migration source', async ()
 });
 
 it('completes repository discovery when the first collection was created before the first catalog read', async () => {
-	dir = createScratchDir('maestro-board-source-bootstrap', { canonical: true }).dir;
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'maestro-board-source-bootstrap-'));
 	// Windows os.tmpdir() can contain RUNNER~1. Both host paths must hash the
 	// identical physical spelling before creating or discovering any source.
 	expect(dir).toBe(fs.realpathSync(dir));
 	expect(dir).toBe(await fs.promises.realpath(dir));
 	execFileSync('git', ['init', '--quiet', dir]);
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+	const db = openBoardDb(isolation.contract.db);
 	try {
 		const storage = new BoardStorageFacade(db);
 		const sourceKey = boardMigrationSourceKey({ location: { kind: 'local' }, path: dir });
@@ -143,7 +308,7 @@ it('completes repository discovery when the first collection was created before 
 			expectedRevision: null,
 			set: { name: 'First' },
 		});
-		await discoverBoardSources(storage, [{ id: 'creator', dir }]);
+		await discoverLocalBoardSources(storage, [{ id: 'creator', dir }]);
 		expect(storage.sourceKeys(dir)).toEqual([sourceKey]);
 		expect(await storage.prepareQuery({ projectRoot: dir })).toEqual({ projectRoot: dir });
 		expect((await storage.queryAsync({ projectRoot: dir })).sources).toMatchObject([{ sourceKey }]);
@@ -160,8 +325,8 @@ it('completes repository discovery when the first collection was created before 
 });
 
 it('explicitly revalidates unresolved imported sources without rewriting original bytes, blockers, holds or runs', async () => {
-	dir = createScratchDir('maestro-board-source-repair', { canonical: true }).dir;
-	const db = openBoardDb(path.join(dir, 'board.sqlite'));
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'maestro-board-source-repair-'));
+	const db = openBoardDb(isolation.contract.db);
 	try {
 		const storage = new BoardStorageFacade(db);
 		fs.mkdirSync(path.join(dir, '.maestro'));
@@ -186,7 +351,7 @@ it('explicitly revalidates unresolved imported sources without rewriting origina
 				],
 			})
 		);
-		await discoverBoardSources(storage, [{ id: 'worker', dir, boardWorker: true }]);
+		await discoverLocalBoardSources(storage, [{ id: 'worker', dir, boardWorker: true }]);
 		const sourceKey = storage.query().sources[0].sourceKey;
 		db.prepare('INSERT INTO runtime_owner VALUES (1, ?, 31, 100)').run('unproven-owner');
 		const run = db.prepare('SELECT run_id, collection_key, card_id FROM runs').get() as {
@@ -215,14 +380,15 @@ it('explicitly revalidates unresolved imported sources without rewriting origina
 				'reservations',
 			].map((table) => db.prepare(`SELECT * FROM ${table}`).all());
 		const original = frozen();
-		const { executeBoardSourceCommand } = await import('../../../main/board/board-source-host');
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage)
+			await executeBoardSourceOperation({ action: 'revalidate', sourceKey }, storage, [], remote)
 		).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
 		execFileSync('git', ['init', '--quiet', dir]);
 		// Changed legacy files are never a repair source and never silently reimported.
 		fs.writeFileSync(path.join(dir, '.maestro/board.yaml'), 'broken: [');
-		expect(await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage)).toEqual({
+		expect(
+			await executeBoardSourceOperation({ action: 'revalidate', sourceKey }, storage, [], remote)
+		).toEqual({
 			ok: true,
 		});
 		expect(new BoardStorageFacade(db).captureCatalog().repositories).toEqual([
@@ -231,7 +397,7 @@ it('explicitly revalidates unresolved imported sources without rewriting origina
 		expect(frozen()).toEqual(original);
 		fs.renameSync(path.join(dir, '.git'), path.join(dir, 'old-git'));
 		expect(
-			await executeBoardSourceCommand({ action: 'revalidate', sourceKey }, storage)
+			await executeBoardSourceOperation({ action: 'revalidate', sourceKey }, storage, [], remote)
 		).toMatchObject({ ok: false });
 		expect(storage.captureCatalog().repositories[0].validated).toBe(false);
 		expect(frozen()).toEqual(original);
