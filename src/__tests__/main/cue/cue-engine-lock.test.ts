@@ -335,6 +335,24 @@ describe('cue-engine-lock', () => {
 			expect(lock && isCueEngineLockOwnedByThisProcess(lock)).toBe(true);
 		});
 
+		// What another process (the CLI) uses to tell a host's own engine from
+		// another engine that shares its pid: the token the host publishes.
+		it('matches the published owner token, never a pid', async () => {
+			const {
+				acquireCueEngineLock,
+				readCueEngineLock,
+				cueEngineLockOwnerToken,
+				isCueEngineLockOwnedBy,
+			} = await freshModule();
+			expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+			const lock = readCueEngineLock()!;
+			expect(isCueEngineLockOwnedBy(lock, cueEngineLockOwnerToken())).toBe(true);
+			expect(isCueEngineLockOwnedBy(lock, 'another-process')).toBe(false);
+			expect(isCueEngineLockOwnedBy(lock, undefined)).toBe(false);
+			const { token: _token, ...tokenless } = lock;
+			expect(isCueEngineLockOwnedBy(tokenless, cueEngineLockOwnerToken())).toBe(false);
+		});
+
 		// A lock that records our pid but whose namespace cannot be proven to be
 		// ours (no inode recorded, as off Linux or without /proc) may belong to
 		// another container's PID 1, so it keeps the heartbeat wait.

@@ -40,9 +40,9 @@
  * Ownership is a per-process random TOKEN, not the PID. Two containers that
  * share a data directory both run their engine as PID 1 under tini, so a PID
  * comparison would let each one believe the other's lock is its own. The
- * token is minted once per process and never leaves it except through the
- * lock file, so "the token matches" is the only proof that THIS process wrote
- * the lock. PID liveness still matters for a lock in our own PID namespace,
+ * token is minted once per process and leaves it only through the lock file
+ * and a headless host's `cli-server.json`, so "the token matches" is the only
+ * proof that THIS process wrote the lock. PID liveness still matters for a lock in our own PID namespace,
  * but a PID from a different namespace (another container) means nothing to
  * `kill(pid, 0)` here, so such a lock is judged by its heartbeat alone. On
  * Linux the lock records the PID namespace inode to tell the two apart.
@@ -222,6 +222,28 @@ export function isCueEngineLockInForeignPidNamespace(info: CueEngineLockInfo): b
 export function isCueEngineLockOwnedByThisProcess(info: CueEngineLockInfo): boolean {
 	if (info.token !== undefined) return info.token === processToken;
 	return info.pid === process.pid && !isCueEngineLockInForeignPidNamespace(info);
+}
+
+/**
+ * This process's owner token, for a process that has to say elsewhere which
+ * engine is its own: `maestro-cli host` publishes it in `cli-server.json`.
+ */
+export function cueEngineLockOwnerToken(): string {
+	return processToken;
+}
+
+/**
+ * Whether the lock is the engine of the process that published `ownerToken`
+ * (see {@link cueEngineLockOwnerToken}). Only a token answers this from
+ * another process: a PID can name two containers' engines at once, or a
+ * stranger after reuse. A token-less lock, or no published token, is never a
+ * match.
+ */
+export function isCueEngineLockOwnedBy(
+	info: CueEngineLockInfo,
+	ownerToken: string | undefined
+): boolean {
+	return info.token !== undefined && ownerToken !== undefined && info.token === ownerToken;
 }
 
 /** Milliseconds until the lock's heartbeat goes stale; 0 when it already has or cannot be read. */
