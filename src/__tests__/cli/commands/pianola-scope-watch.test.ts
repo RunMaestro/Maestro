@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as net from 'node:net';
+import { setTimeout as realSetTimeout } from 'node:timers';
 import { PermissionRelayServer } from '../../../main/permission-relay/PermissionRelayServer';
 import {
 	registerSpawn,
@@ -939,7 +940,7 @@ describe('production scope loop event drain', () => {
 		}
 	);
 
-	it('coalesces native commit frames, retains in-cycle signals, recovers idle/disconnect, and stops cleanly', async () => {
+	it.each(['native', 'delayed'])('coalesces and stops: %s', async (delivery) => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1000);
 		vi.spyOn(cliStorage, 'readSettingValue').mockImplementation(() => ({
@@ -948,6 +949,25 @@ describe('production scope loop event drain', () => {
 		const root = os.tmpdir();
 		fs.mkdirSync(root, { recursive: true });
 		const directory = fs.mkdtempSync(path.join(root, 'J02-loop-'));
+		// Keep real directory watchers, but exercise a legal ordering where the
+		// worker receives the settings hint after the first fake debounce tick.
+		if (delivery === 'delayed') {
+			const watch = fs.watch;
+			let firstWatcher = true;
+			vi.spyOn(fs, 'watch').mockImplementation(((
+				dir: fs.PathLike,
+				listener: fs.WatchListener<string>
+			) => {
+				const worker = firstWatcher;
+				firstWatcher = false;
+				return watch(dir, (event, filename) => {
+					if (worker && filename === 'maestro-settings.json')
+						realSetTimeout(() => listener(event, filename), 100);
+					else listener(event, filename);
+				});
+			}) as typeof fs.watch);
+			syncBuiltinESMExports();
+		}
 		vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
 		vi.spyOn(cliStorage, 'getSyncDir').mockReturnValue(directory);
 		const store = createPianolaFsStore({
@@ -1081,7 +1101,10 @@ describe('production scope loop event drain', () => {
 				});
 			await vi.advanceTimersByTimeAsync(50);
 			expect(censuses).toBe(1);
-			finishUnrelatedMeasurement('unrelated-events', { frames: 1000, extraCensuses: censuses - 1 });
+			finishUnrelatedMeasurement('unrelated-events', {
+				frames: 1000,
+				extraCensuses: censuses - 1,
+			});
 			// An unowned sync and provider output are not a native commit wakeup.
 			bridge!.onFrame!({ type: 'bridge.event', channel: 'sessions:transcriptSync', args: [{}] });
 			await vi.advanceTimersByTimeAsync(5000);
@@ -1119,13 +1142,6 @@ describe('production scope loop event drain', () => {
 			const original = store.readDecisions()[0];
 			expect(original).toBeDefined();
 			expect(original.lifecycle).toBeDefined();
-			const fileEvent = new Promise<void>((resolve) => {
-				const observer = fs.watch(directory, (_event, filename) => {
-					if (filename?.toString() !== 'pianola-decisions.jsonl') return;
-					observer.close();
-					resolve();
-				});
-			});
 			managerDuringCensus = {
 				...original,
 				lifecycle: {
@@ -1139,9 +1155,9 @@ describe('production scope loop event drain', () => {
 			};
 			bridge!.onFrame!({ type: 'session_state_change' });
 			await vi.advanceTimersByTimeAsync(50);
-			await fileEvent;
-			await vi.advanceTimersByTimeAsync(50);
-			expect(censuses).toBe(8);
+			// A separate fs.watch observer cannot establish that the worker has
+			// received its hint. Drive fake debounce time until the worker acts.
+			await vi.waitFor(() => expect(censuses).toBe(8));
 			expect(store.readDecisions()[0].lifecycle?.status).toBe('done');
 			// A new identity may be a future agent, group member, or worktree child.
 			for (const agentId of ['new-future', 'new-group-member', 'new-child']) {
@@ -1185,18 +1201,9 @@ describe('production scope loop event drain', () => {
 			await vi.advanceTimersByTimeAsync(50);
 			expect(censuses).toBe(previous + 2);
 			settings.enabled = false;
-			const settingsEvent = new Promise<void>((resolve) => {
-				const observer = fs.watch(directory, (_event, filename) => {
-					if (filename?.toString() !== 'maestro-settings.json') return;
-					observer.close();
-					resolve();
-				});
-			});
 			fs.writeFileSync(path.join(directory, 'maestro-settings.json'), '{}');
-			await settingsEvent;
-			await vi.advanceTimersByTimeAsync(50);
+			await vi.waitFor(() => expect(disconnect).toHaveBeenCalledTimes(1));
 			await running;
-			expect(disconnect).toHaveBeenCalledTimes(1);
 			expect(process.listenerCount('SIGTERM')).toBe(listeners);
 			expect(vi.getTimerCount()).toBe(0);
 			expect(send.mock.calls.some(([m]) => m.type === 'pianola_scope_reply')).toBe(false);
@@ -1207,6 +1214,7 @@ describe('production scope loop event drain', () => {
 			await running;
 			settings.enabled = true;
 			vi.restoreAllMocks();
+			syncBuiltinESMExports();
 			vi.useRealTimers();
 			fs.rmSync(directory, { recursive: true, force: true });
 		}
