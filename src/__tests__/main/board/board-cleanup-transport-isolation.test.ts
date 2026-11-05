@@ -1,6 +1,7 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
 	readBoardIsolationRegistries,
@@ -16,14 +17,18 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
-const contract = requireBoardIsolation();
+const fixture = createBoardIsolationFixture();
+const contract = fixture.contract;
 let db: ReturnType<typeof openBoardDb>;
 let scratch: string;
 let sourceKey: string;
 
 beforeAll(() => {
+	fixture.install();
+	requireBoardIsolation({ expected: contract });
 	readBoardIsolationRegistries(contract);
 });
+afterAll(() => fixture.cleanup());
 beforeEach(() => {
 	for (const suffix of ['', '-wal', '-shm'])
 		if (fs.existsSync(contract.db + suffix)) throw new Error('Fixture database must be fresh');

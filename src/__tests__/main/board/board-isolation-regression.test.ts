@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fork } from 'node:child_process';
 import { buildSync } from 'esbuild';
 import Database from 'better-sqlite3';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import {
 	assertBoardIsolationRegistrations,
 	boardIsolationChildEnv,
@@ -18,12 +19,14 @@ import {
 	getBoardStorage,
 } from '../../../main/board/board-storage';
 
+const fixture = createBoardIsolationFixture();
 let contract: BoardIsolation;
 let scratch: string;
 let bundle: string;
 let childEnv: NodeJS.ProcessEnv;
 
 beforeAll(() => {
+	fixture.install();
 	contract = requireBoardIsolation();
 	readBoardIsolationRegistries(contract);
 	if (fs.existsSync(contract.db)) throw new Error('Regression database must be fresh');
@@ -40,8 +43,9 @@ beforeAll(() => {
 	});
 	childEnv = boardIsolationChildEnv(contract);
 });
-afterAll(() => {
+afterAll(async () => {
 	if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+	await fixture.cleanup();
 });
 
 function child(

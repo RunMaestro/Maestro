@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as path from 'node:path';
 import type Database from 'better-sqlite3';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { requireBoardIsolation } from '../../../main/board/board-isolation';
 import {
 	exportBoardSourceCleanup,
@@ -8,6 +9,10 @@ import {
 	restoreBoardSource,
 	suppressBoardSource,
 } from '../../../main/board/board-source-cleanup';
+
+const fixture = createBoardIsolationFixture();
+beforeAll(() => fixture.install());
+afterAll(() => fixture.cleanup());
 
 describe('isolated Board cleanup boundary', () => {
 	it('rejects an unadmitted connection before database or backup file access', () => {
