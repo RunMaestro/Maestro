@@ -555,6 +555,28 @@ describe('native current-turn revision and completeness', () => {
 });
 
 describe('native current-turn delta and final spawn revision fence', () => {
+	it('does not treat a delta row as proof that its content changed after the baseline', () => {
+		const f = fixture();
+		f.begin('user');
+		const historical = row('question', 'Should I run tests?');
+		f.commit([historical]);
+		const baseline = f.read();
+
+		// An authenticated publisher can upsert an unchanged row. A delta reports
+		// that upsert, but it does not prove that the question is new.
+		f.commit([historical]);
+		const delta = f.index.read(binding, f.read().cursor, true, baseline.cursor);
+		expect(delta.messages).toEqual([historical]);
+		expect(composeCurrentTurn(delta, baseline).messages).toEqual(baseline.messages);
+
+		// A later submitted reply must still be fenced if any earlier row was
+		// upserted after the cursor used for the decision.
+		f.commit([row('reply', 'Run them.', 'user')]);
+		expect(() => f.index.assertDelivery(baseline.cursor, 2, 'reply', 'Run them.')).toThrow(
+			'Native turn changed during delivery'
+		);
+	});
+
 	it('reconstructs append and same-length replacement deltas without losing earlier risk', () => {
 		const f = fixture();
 		f.begin('user');
