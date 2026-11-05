@@ -2353,6 +2353,58 @@ describe('useAgentListeners', () => {
 			expect(updatedOrphan?.logs.some((l) => l.text === 'finish the refactor')).toBe(true);
 		});
 
+		it.each([
+			{ event: 'exit', remainingState: 'idle' },
+			{ event: 'error', remainingState: 'idle' },
+			{ event: 'exit', remainingState: 'busy' },
+			{ event: 'error', remainingState: 'busy' },
+		] as const)(
+			'keeps state consistent on orphan $event with a $remainingState orphan remaining',
+			async ({ event, remainingState }) => {
+				const deps = createMockDeps();
+				const session = createMockSession({
+					id: 'sess-1',
+					state: 'busy',
+					busySource: 'ai',
+					thinkingStartTime: 123,
+					aiTabs: [createMockTab({ id: 'tab-fresh', state: 'idle' })],
+					activeTabId: 'tab-fresh',
+					orphanedThinkingTabs: [
+						createMockTab({ id: 'tab-a', state: 'busy' }),
+						createMockTab({ id: 'tab-waiting', state: remainingState }),
+					],
+					executionQueue: [
+						{
+							id: 'held',
+							tabId: 'tab-waiting',
+							type: 'message',
+							text: 'held follow-up',
+							timestamp: Date.now(),
+							paused: true,
+						},
+					],
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+				renderHook(() => useAgentListeners(deps));
+				if (event === 'exit') {
+					await onExitHandler?.('sess-1-ai-tab-a');
+				} else {
+					await onAgentErrorHandler?.('sess-1-ai-tab-a', {
+						type: 'unknown',
+						message: 'Turn failed',
+						timestamp: Date.now(),
+						agentId: 'opencode',
+					});
+				}
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.state).toBe(remainingState);
+				expect(updated.busySource).toBe(remainingState === 'busy' ? 'ai' : undefined);
+				expect(updated.thinkingStartTime).toBe(remainingState === 'busy' ? 123 : undefined);
+				expect(updated.orphanedThinkingTabs?.map((tab) => tab.id)).toEqual(['tab-waiting']);
+				expect(updated.executionQueue).toEqual(session.executionQueue);
+			}
+		);
+
 		it('retires a closed orphan once its queue is empty', async () => {
 			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
 			const deps = createMockDeps({

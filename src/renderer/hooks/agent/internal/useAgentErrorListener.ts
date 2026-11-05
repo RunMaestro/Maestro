@@ -276,7 +276,8 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							(tab) => tab.id !== tabIdFromSession
 						);
 						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-						const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
+						const stillThinking =
+							anyAiTabStillBusy || updatedOrphans.some((tab) => tab.state === 'busy');
 						return {
 							...s,
 							orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,

@@ -548,7 +548,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 
 					// Nothing to dispatch - retire the orphan and recompute thinking state.
 					const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-					const stillThinking = anyAiTabStillBusy || orphansWithoutExited.length > 0;
+					const stillThinking =
+						anyAiTabStillBusy || orphansWithoutExited.some((tab) => tab.state === 'busy');
 					return {
 						...s,
 						orphanedThinkingTabs:
