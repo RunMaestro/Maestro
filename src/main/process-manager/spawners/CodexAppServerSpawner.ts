@@ -164,11 +164,15 @@ export class CodexAppServerSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(start, observe) => this.spawnAdmitted(config, start, observe),
-				(error) => {
-					void captureException(error);
-					logger.error('[CodexAppServerSpawner] Completion failed', LOG_CONTEXT, {
-						error: String(error),
-					});
+				async (error) => {
+					const reporting = Promise.resolve().then(() => captureException(error));
+					try {
+						logger.error('[CodexAppServerSpawner] Completion failed', LOG_CONTEXT, {
+							error: String(error),
+						});
+					} finally {
+						await reporting;
+					}
 				}
 			);
 		} catch (error) {
@@ -210,7 +214,11 @@ export class CodexAppServerSpawner {
 			).start();
 		} catch (error) {
 			// Setup may have created a child; admission retains any native uncertainty.
-			void captureException(error);
+			observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			logger.warn('[CodexAppServerSpawner] Could not start app-server; using exec', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				error: String(error),
@@ -304,7 +312,7 @@ class CodexAppServerTurn {
 				) =>
 					withWorktreeTurnActivity(
 						(_start, observe) => observe(rpc.request<T>(method, params, options)),
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 				onUserMessage: (listener) =>
 					withWorktreeTurnActivity(
@@ -314,14 +322,14 @@ class CodexAppServerTurn {
 								admitted = (message) =>
 									withWorktreeTurnActivity(
 										() => listener(message),
-										(error) => void captureException(error)
+										(error) => captureException(error)
 									);
 								messageListeners.set(listener, admitted);
 							}
 							const off = translator.onUserMessage(admitted);
-							return () => withWorktreeTurnActivity(off, (error) => void captureException(error));
+							return () => withWorktreeTurnActivity(off, (error) => captureException(error));
 						},
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 				onTurnEnd: (listener) =>
 					withWorktreeTurnActivity(
@@ -329,13 +337,13 @@ class CodexAppServerTurn {
 							let admitted = endListeners.get(listener);
 							if (!admitted) {
 								admitted = () =>
-									withWorktreeTurnActivity(listener, (error) => void captureException(error));
+									withWorktreeTurnActivity(listener, (error) => captureException(error));
 								endListeners.set(listener, admitted);
 							}
 							const off = this.onTurnEnd(admitted);
-							return () => withWorktreeTurnActivity(off, (error) => void captureException(error));
+							return () => withWorktreeTurnActivity(off, (error) => captureException(error));
 						},
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 			},
 			harnessControl: {
@@ -358,11 +366,11 @@ class CodexAppServerTurn {
 								steerCodexAppServerTurn(this.managedProcess.codexAppServer!, request, (verdict) =>
 									withWorktreeTurnActivity(
 										() => this.ctx.emitter.emit('steering-verdict', sessionId, verdict),
-										(error) => void captureException(error)
+										(error) => captureException(error)
 									)
 								)
 							),
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 				interrupt: async () => this.interrupt(),
 				close: async (options) => this.kill(options),
@@ -412,12 +420,12 @@ class CodexAppServerTurn {
 				onLine: (line) =>
 					withWorktreeTurnActivity(
 						(_start, observe) => this.handleLine(line, observe),
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 				onStderr: (text) =>
 					withWorktreeTurnActivity(
 						() => this.handleStderr(text),
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 				onStdinError: (error) =>
 					withWorktreeTurnActivity(
@@ -426,7 +434,7 @@ class CodexAppServerTurn {
 								sessionId,
 								error: String(error),
 							}),
-						(error) => void captureException(error)
+						(error) => captureException(error)
 					),
 			},
 			{
@@ -713,7 +721,15 @@ class CodexAppServerTurn {
 		try {
 			this.ctx.emitter.emit('raw-stdout', sessionId, chunk);
 		} catch (error) {
-			void captureException(error);
+			withWorktreeTurnActivity(
+				(_start, observe) =>
+					observe(
+						Promise.resolve()
+							.then(() => captureException(error))
+							.catch(() => {})
+					),
+				(error) => captureException(error)
+			);
 		}
 		this.ctx.stdoutHandler.handleData(sessionId, chunk);
 	}
@@ -800,7 +816,7 @@ class CodexAppServerTurn {
 					throw error;
 				}
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -818,7 +834,7 @@ class CodexAppServerTurn {
 	private interrupt(): void {
 		withWorktreeTurnActivity(
 			(_start, observe) => this.interruptAdmitted(observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -846,7 +862,7 @@ class CodexAppServerTurn {
 	private kill(options: { sync?: boolean; shutdown?: boolean } = {}): void {
 		withWorktreeTurnActivity(
 			(_start, observe) => this.killAdmitted(options, observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -970,7 +986,11 @@ class CodexAppServerTurn {
 				return;
 			}
 		} catch (fallbackError) {
-			void captureException(fallbackError);
+			this.observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(fallbackError))
+					.catch(() => {})
+			);
 		}
 		this.emitAgentError(error);
 		this.finish(1);
@@ -980,7 +1000,11 @@ class CodexAppServerTurn {
 	private handleRunError(error: unknown): void {
 		if (this.finished || this.cancelled || this.isSuperseded()) return;
 		if (!(error instanceof Error && error.name.startsWith('CodexRpc')))
-			void captureException(error);
+			this.observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 		logger.warn('[CodexAppServerSpawner] app-server turn failed', LOG_CONTEXT, {
 			sessionId: this.config.sessionId,
 			error: String(error),
@@ -1019,7 +1043,15 @@ class CodexAppServerTurn {
 			try {
 				listener();
 			} catch (error) {
-				void captureException(error);
+				withWorktreeTurnActivity(
+					(_start, observe) =>
+						observe(
+							Promise.resolve()
+								.then(() => captureException(error))
+								.catch(() => {})
+						),
+					(error) => captureException(error)
+				);
 			}
 		}
 	}
@@ -1041,7 +1073,7 @@ class CodexAppServerTurn {
 						})
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 

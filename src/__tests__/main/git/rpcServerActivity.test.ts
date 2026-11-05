@@ -2743,6 +2743,260 @@ describe('standalone Codex app-server activity', () => {
 		emitter = new EventEmitter();
 		codex = new CodexAppServerSpawner(processes, emitter, {} as DataBufferManager, fallback);
 	});
+	describe('Codex asynchronous diagnostics', () => {
+		beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+		afterEach(() => vi.useRealTimers());
+		it.each(['resolve', 'reject', 'throw'] as const)(
+			'owns Codex setup diagnostics on %s without replacing fallback',
+			async (outcome) => {
+				const failure = new Error('setup failed');
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(planSpawnShell).mockImplementationOnce(() => {
+					throw failure;
+				});
+				vi.mocked(captureException).mockImplementationOnce(() => {
+					if (outcome === 'throw') throw new Error('report failed');
+					return reporting.promise;
+				});
+				expect(codex.spawn(input({ permissionMode: 'full' }))).toEqual({ success: true, pid: 999 });
+				expect(fallback).toHaveBeenCalledOnce();
+				expect(spawn).not.toHaveBeenCalled();
+				await drain();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+				if (outcome !== 'throw') {
+					await blocked();
+					if (outcome === 'resolve') reporting.resolve();
+					else reporting.reject(new Error('report failed'));
+					await drain();
+				}
+				expect(captureException).toHaveBeenCalledOnce();
+				(await reserve()).release();
+			}
+		);
+		it.each([false, true])(
+			'owns Codex outer reporting despite logger failure: %s',
+			async (loggerFails) => {
+				const failure = new Error('fallback failed');
+				const reporting = Promise.withResolvers<void>();
+				fallback.mockImplementationOnce(() => {
+					throw failure;
+				});
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				if (loggerFails)
+					vi.mocked(logger.error).mockImplementationOnce(() => {
+						throw new Error('logger');
+					});
+				expect(codex.spawn(input({ images: ['fixture'], permissionMode: 'full' }))).toEqual({
+					success: false,
+					pid: -1,
+					error: String(failure),
+				});
+				await drain();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+				await blocked();
+				reporting.reject(new Error('report failed'));
+				await drain();
+				expect(captureException).toHaveBeenCalledOnce();
+				(await reserve()).release();
+			}
+		);
+		it.each([false, true])(
+			'owns Codex run reporting independently of native close (report first: %s)',
+			async (reportFirst) => {
+				const failure = new Error('turn failed');
+				const reporting = Promise.withResolvers<void>();
+				probes.request.mockImplementation(async (method: string) => {
+					if (method === 'turn/start') throw failure;
+					return replies[method];
+				});
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				expect(codex.spawn(input()).success).toBe(true);
+				await drain();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+				expect(probes.exit.mock.calls[0][1]).toBe(1);
+				if (reportFirst) reporting.resolve();
+				else await close();
+				await drain();
+				await blocked();
+				if (reportFirst) await close();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+				expect(fallback).not.toHaveBeenCalled();
+				expect(captureException).toHaveBeenCalledOnce();
+				(await reserve()).release();
+			}
+		);
+		it.each([false, true])(
+			'owns Codex native completion reporting despite logger failure: %s',
+			async (loggerFails) => {
+				codex.spawn(input());
+				await drain();
+				const failure = new Error('close failed');
+				const reporting = Promise.withResolvers<void>();
+				probes.close.mockImplementationOnce(() => {
+					throw failure;
+				});
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				if (loggerFails)
+					vi.mocked(logger.error).mockImplementationOnce(() => {
+						throw new Error('logger');
+					});
+				await close();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+				await blocked();
+				reporting.reject(new Error('report failed'));
+				await drain();
+				expect(captureException).toHaveBeenCalledOnce();
+				(await reserve()).release();
+			}
+		);
+		it.each(['fallback', 'output', 'listener', 'exit'] as const)(
+			'owns Codex caught %s reporting after native close',
+			async (stage) => {
+				const failure = new Error('callback failed');
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockReturnValue(reporting.promise);
+				if (stage === 'fallback') {
+					probes.request.mockRejectedValueOnce(new Error('initialize failed'));
+					fallback.mockImplementationOnce(() => {
+						throw failure;
+					});
+				}
+				codex.spawn(input({ permissionMode: 'full' }));
+				await drain();
+				if (stage === 'output') {
+					emitter.on('raw-stdout', () => {
+						throw failure;
+					});
+					line('item/completed', {
+						threadId: 'thread',
+						turnId: 'turn',
+						item: { id: 'm', type: 'agentMessage', text: 'hello' },
+					});
+					expect(probes.output.mock.calls.at(-1)![1]).toContain('hello');
+				}
+				if (stage === 'listener')
+					processes.get('rpc-session')!.codexAppServer!.onTurnEnd(() => {
+						throw failure;
+					});
+				if (stage === 'exit') {
+					probes.exit.mockRejectedValueOnce(new Error('exit failed'));
+					vi.mocked(logger.error).mockImplementationOnce(() => {
+						throw failure;
+					});
+				}
+				await close();
+				expect(captureException).toHaveBeenCalledWith(failure);
+				const count = vi.mocked(captureException).mock.calls.length;
+				await blocked();
+				reporting.reject(new Error('report failed'));
+				await drain();
+				expect(captureException).toHaveBeenCalledTimes(count);
+				(await reserve()).release();
+			}
+		);
+		it.each([
+			'request',
+			'steering',
+			'stdin',
+			'stderr',
+			'ended',
+			'line',
+			'message',
+			'interrupt',
+			'kill',
+		] as const)(
+			'owns Codex late %s diagnostics across pending reservation and successor',
+			async (stage) => {
+				codex.spawn(input());
+				await drain();
+				const managed = processes.get('rpc-session')!;
+				Object.assign(native, { exitCode: 0 });
+				await close();
+				processes.clear();
+				(await reserve()).release();
+				const canonical = Promise.withResolvers<string>();
+				vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+				const reservation = gate.reserveWorktreeCleanup(target);
+				const failure = new Error('late failure');
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockReturnValue(reporting.promise);
+				const fail = () => {
+					throw failure;
+				};
+				if (stage === 'request') {
+					probes.request.mockRejectedValueOnce(failure);
+					await expect(managed.codexAppServer!.sendRequest('late')).rejects.toBe(failure);
+				} else if (stage === 'steering') {
+					vi.spyOn(
+						await import('../../../main/codex-app-server/steering'),
+						'steerCodexAppServerTurn'
+					).mockRejectedValueOnce(failure);
+					await expect(managed.harnessControl!.steer!({ id: 'late', text: 'more' })).rejects.toBe(
+						failure
+					);
+				} else if (stage === 'stdin') {
+					vi.mocked(logger.debug).mockImplementationOnce(fail);
+					expect(() => native.stdin.emit('error', new Error('stdin'))).toThrow(failure);
+				} else if (stage === 'stderr') {
+					probes.stderr.mockImplementationOnce(fail);
+					expect(() => native.stderr.emit('data', 'late')).toThrow(failure);
+				} else if (stage === 'line') {
+					vi.mocked(logger.debug).mockImplementationOnce(fail);
+					expect(() => line('warning', {})).toThrow(failure);
+				} else if (stage === 'message') {
+					managed.codexAppServer!.onUserMessage(fail);
+					expect(() =>
+						line('item/completed', {
+							threadId: 'thread',
+							turnId: 'turn',
+							item: {
+								id: 'echo',
+								type: 'userMessage',
+								content: [{ type: 'inputText', text: 'more' }],
+							},
+						})
+					).toThrow(failure);
+				} else if (stage === 'interrupt') {
+					vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce(fail);
+					expect(() => managed.sdkController!.interrupt()).toThrow(failure);
+				} else if (stage === 'kill') {
+					vi.mocked(stopProcess).mockImplementationOnce(fail);
+					expect(() => managed.sdkController!.kill()).toThrow(failure);
+				} else expect(() => managed.codexAppServer!.onTurnEnd(fail)).toThrow(failure);
+				await drain();
+				canonical.resolve(target);
+				expect(await reservation).toMatchObject({ status: 'blocked' });
+				expect(captureException).toHaveBeenCalledWith(failure);
+				const count = ['ended', 'message', 'interrupt'].includes(stage) ? 2 : 1;
+				expect(captureException).toHaveBeenCalledTimes(count);
+				await blocked();
+				native = makeNative();
+				codex.spawn(input());
+				await drain();
+				await close();
+				processes.clear();
+				await blocked();
+				reporting.reject(new Error('report failed'));
+				await drain();
+				expect(captureException).toHaveBeenCalledTimes(count);
+				(await reserve()).release();
+			}
+		);
+		it('refuses Codex setup before recovery or diagnostics under a reservation', async () => {
+			const hold = await reserve();
+			try {
+				const request = input();
+				const setup = vi.fn(() => 'codex');
+				Object.defineProperty(request, 'toolType', { get: setup });
+				expect(codex.spawn(request).success).toBe(false);
+				for (const probe of [setup, planSpawnShell, spawn, fallback, captureException])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+		});
+	});
 	describe('Codex SSH signal adapter ownership', () => {
 		let signals: EventEmitter[];
 		let releases: Array<() => void>;
