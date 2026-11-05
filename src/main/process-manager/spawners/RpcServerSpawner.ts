@@ -28,7 +28,10 @@ import { answerRpcExtensionRequest } from '../../harness-control/rpc-interaction
 import { steeringTextMatches, type SteeringResultFrame } from '../../../shared/chatSteering';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { NativeRpcProtocol } from '../../../shared/maestro-lib/providers/native-control';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import {
+	withWorktreeCallbackActivity,
+	withWorktreeTurnActivity,
+} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'NativeRpc';
 
@@ -459,7 +462,8 @@ class RpcTurn {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId: this.config.sessionId,
 						label: 'interrupt',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -481,7 +485,8 @@ class RpcTurn {
 						blocking: options?.sync,
 						sessionId: this.config.sessionId,
 						label: 'kill',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -507,7 +512,8 @@ class RpcTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'fallback',
-				}
+				},
+				(operation) => withWorktreeCallbackActivity(operation, captureException)
 			);
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
@@ -523,7 +529,8 @@ class RpcTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			}
+			},
+			(operation) => withWorktreeCallbackActivity(operation, captureException)
 		);
 		this.observeCompletion(
 			Promise.resolve()

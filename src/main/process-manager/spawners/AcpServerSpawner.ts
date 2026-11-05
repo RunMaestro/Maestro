@@ -36,7 +36,10 @@ import {
 } from '../../../shared/maestro-lib/harness/acp/interactions';
 import { harnessInteractionBroker } from '../../harness-control/integration';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import {
+	withWorktreeCallbackActivity,
+	withWorktreeTurnActivity,
+} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'AcpServer';
 
@@ -424,7 +427,8 @@ class AcpTurn {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId: this.config.sessionId,
 						label: 'interrupt',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -446,7 +450,8 @@ class AcpTurn {
 						blocking: options?.sync,
 						sessionId: this.config.sessionId,
 						label: 'kill',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -483,7 +488,8 @@ class AcpTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'fallback',
-				}
+				},
+				(operation) => withWorktreeCallbackActivity(operation, captureException)
 			);
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
@@ -499,7 +505,8 @@ class AcpTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			}
+			},
+			(operation) => withWorktreeCallbackActivity(operation, captureException)
 		);
 		this.observeCompletion(
 			Promise.resolve()
