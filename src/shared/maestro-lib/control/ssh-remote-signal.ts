@@ -119,11 +119,14 @@ export function sshConnectionArgs(args: readonly string[]): string[] | null {
  * Hosts may observe the child immediately after spawn, before any stream,
  * timer or reporting setup. An observer failure follows normal setup recovery;
  * a false verdict therefore does not prove that no child was created.
+ * Hosts may also admit each retained callback independently of child ownership.
+ * Admission wraps recovery too, so a refusal cannot perform callback effects.
  */
 export function signalRemoteAgent(
 	target: { sshCommand: string; sshArgs: readonly string[]; pidFile: string; sessionId: string },
 	mode: RemoteSignalMode,
-	onSpawn?: (child: ChildProcess) => void
+	onSpawn?: (child: ChildProcess) => void,
+	withCallbackActivity: (callback: () => void) => void = (callback) => callback()
 ): boolean {
 	const connection = sshConnectionArgs(target.sshArgs);
 	if (!connection) return false;
@@ -134,34 +137,44 @@ export function signalRemoteAgent(
 			detached: true,
 		});
 		onSpawn?.(child);
-		const timer = setTimeout(() => {
-			try {
-				child.kill('SIGKILL');
-			} catch {
-				// Already gone.
-			}
-		}, SIGNAL_SSH_TIMEOUT_MS);
+		const timer = setTimeout(
+			() =>
+				withCallbackActivity(() => {
+					try {
+						child.kill('SIGKILL');
+					} catch {
+						// Already gone.
+					}
+				}),
+			SIGNAL_SSH_TIMEOUT_MS
+		);
 		timer.unref?.();
-		child.on('close', () => clearTimeout(timer));
-		child.on('error', (error) => {
-			clearTimeout(timer);
-			logger.warn('Remote agent signal ssh failed to start', LOG_CONTEXT, {
-				sessionId: target.sessionId,
-				mode,
-				error: String(error),
-			});
-		});
-		child.on('exit', (code) => {
-			clearTimeout(timer);
-			logger.info('Remote agent signal sent', LOG_CONTEXT, {
-				sessionId: target.sessionId,
-				mode,
-				exitCode: code,
-			});
-		});
-		child.stdin?.on('error', () => {
-			// EPIPE when ssh fails to connect; the exit/error handlers report it.
-		});
+		child.on('close', () => withCallbackActivity(() => clearTimeout(timer)));
+		child.on('error', (error) =>
+			withCallbackActivity(() => {
+				clearTimeout(timer);
+				logger.warn('Remote agent signal ssh failed to start', LOG_CONTEXT, {
+					sessionId: target.sessionId,
+					mode,
+					error: String(error),
+				});
+			})
+		);
+		child.on('exit', (code) =>
+			withCallbackActivity(() => {
+				clearTimeout(timer);
+				logger.info('Remote agent signal sent', LOG_CONTEXT, {
+					sessionId: target.sessionId,
+					mode,
+					exitCode: code,
+				});
+			})
+		);
+		child.stdin?.on('error', () =>
+			withCallbackActivity(() => {
+				// EPIPE when ssh fails to connect; the exit/error handlers report it.
+			})
+		);
 		child.stdin?.end(buildRemoteSignalScript(target.pidFile, mode));
 		child.unref();
 		return true;

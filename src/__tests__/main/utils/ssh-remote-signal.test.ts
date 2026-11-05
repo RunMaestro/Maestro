@@ -23,6 +23,8 @@ import {
 } from '../../../main/utils/ssh-remote-signal';
 import { reserveWorktreeCleanup } from '../../../main/git/worktreeActivity';
 import { captureException } from '../../../main/utils/sentry';
+import { logger as libraryLogger } from '../../../shared/maestro-lib/host';
+import { signalRemoteAgent as coreSignalRemoteAgent } from '../../../shared/maestro-lib/control/ssh-remote-signal';
 
 // `spawn` is mocked above; the real-bash tests below need the real one.
 const { spawn: realSpawn, spawnSync } =
@@ -59,20 +61,24 @@ describe('signalRemoteAgent', () => {
 
 	beforeEach(() => {
 		mockSpawn.mockReset();
-		vi.mocked(captureException).mockClear();
+		vi.mocked(captureException).mockReset().mockResolvedValue(undefined);
+		vi.spyOn(libraryLogger, 'info').mockImplementation(() => {});
+		vi.spyOn(libraryLogger, 'warn').mockImplementation(() => {});
 		children = [];
 		reservations = [];
 	});
 
 	afterEach(async () => {
+		vi.mocked(libraryLogger.info).mockReset();
+		vi.mocked(libraryLogger.warn).mockReset();
+		for (const release of reservations) release();
 		for (const child of children) {
 			child.emit('exit', 0);
 			child.emit('close', 0);
 		}
-		for (const release of reservations) release();
 		await Promise.resolve();
-		vi.useRealTimers();
 		vi.restoreAllMocks();
+		vi.useRealTimers();
 	});
 
 	function fakeChild() {
@@ -92,6 +98,13 @@ describe('signalRemoteAgent', () => {
 		if (hold.status !== 'reserved-partially') throw new Error('Expected partial reservation');
 		expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
 		return hold;
+	}
+
+	async function blocked() {
+		const hold = await reserveWorktreeCleanup(process.cwd());
+		// Also release unexpected reservations when a regression assertion fails.
+		if (hold.status === 'reserved-partially') reservations.push(hold.release);
+		expect(hold).toMatchObject({ status: 'blocked', blockers: [{ code: 'mutation-busy' }] });
 	}
 
 	it('reuses the agent connection and sends the signal script on stdin', () => {
@@ -276,6 +289,210 @@ describe('signalRemoteAgent', () => {
 		mockSpawn.mockReturnValue(child);
 		expect(signalRemoteAgent(target, 'interrupt')).toBe(false);
 		(await reserve()).release();
+	});
+
+	describe('retained signal callbacks', () => {
+		it.each(['timeout', 'close', 'error', 'exit', 'stdin-error'] as const)(
+			'refuses late %s before native access, bookkeeping or diagnostics',
+			async (event) => {
+				vi.useFakeTimers();
+				const schedule = vi.spyOn(globalThis, 'setTimeout');
+				const clear = vi.spyOn(globalThis, 'clearTimeout');
+				const access = vi.fn(() => target.sessionId);
+				const decode = vi.fn(() => 'connection failed');
+				const child = fakeChild();
+				mockSpawn.mockReturnValue(child);
+				expect(
+					signalRemoteAgent(
+						{
+							...target,
+							get sessionId() {
+								return access();
+							},
+						},
+						'terminate'
+					)
+				).toBe(true);
+				const timeout = schedule.mock.calls[0][0] as () => void;
+				child.emit('close', 0);
+				const hold = await reserve();
+				access.mockClear();
+				clear.mockClear();
+				const invoke = () => {
+					if (event === 'timeout') timeout();
+					else if (event === 'stdin-error') child.stdin.emit('error', new Error('EPIPE'));
+					else child.emit(event, event === 'error' ? { toString: decode } : 255);
+				};
+				expect(invoke).toThrow(/reserved/);
+				for (const effect of [
+					access,
+					decode,
+					clear,
+					child.kill,
+					libraryLogger.info,
+					libraryLogger.warn,
+					captureException,
+				])
+					expect(effect).not.toHaveBeenCalled();
+				hold.release();
+				invoke();
+				if (event === 'timeout') expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+				if (event === 'exit') expect(libraryLogger.info).toHaveBeenCalledOnce();
+				if (event === 'error') expect(libraryLogger.warn).toHaveBeenCalledOnce();
+				await reserve();
+			}
+		);
+
+		it.each(['error', 'exit'] as const)(
+			'owns late %s diagnostic fulfillment, rejection and throwing reporters',
+			async (event) => {
+				const child = fakeChild();
+				mockSpawn.mockReturnValue(child);
+				expect(signalRemoteAgent(target, 'interrupt')).toBe(true);
+				child.emit('close', 0);
+				(await reserve()).release();
+				const failure = new Error('callback failed');
+				const reportFailure = new Error('reporter failed');
+				const log = event === 'exit' ? libraryLogger.info : libraryLogger.warn;
+				vi.mocked(log).mockImplementation(() => {
+					throw failure;
+				});
+				for (const outcome of ['resolve', 'reject', 'throw'] as const) {
+					const reporting = Promise.withResolvers<void>();
+					vi.mocked(captureException)
+						.mockReset()
+						.mockImplementation(() => {
+							if (outcome === 'throw') throw reportFailure;
+							return reporting.promise;
+						});
+					expect(() => child.emit(event, 255)).toThrow(failure);
+					expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+					if (outcome !== 'throw') {
+						await blocked();
+						if (outcome === 'resolve') reporting.resolve();
+						else reporting.reject(reportFailure);
+					}
+					(await reserve()).release();
+					expect(captureException).toHaveBeenCalledOnce();
+				}
+			}
+		);
+
+		it.each(['native', 'report'] as const)(
+			'retains independent ownership when %s settles first',
+			async (first) => {
+				const child = fakeChild();
+				mockSpawn.mockReturnValue(child);
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockReturnValue(reporting.promise);
+				expect(signalRemoteAgent(target, 'terminate')).toBe(true);
+				const failure = new Error('exit logger failed');
+				vi.mocked(libraryLogger.info).mockImplementationOnce(() => {
+					throw failure;
+				});
+				expect(() => child.emit('exit', 255)).toThrow(failure);
+				if (first === 'native') child.emit('close', 0);
+				else reporting.resolve();
+				await blocked();
+				if (first === 'native') reporting.resolve();
+				else child.emit('close', 0);
+				await reserve();
+			}
+		);
+
+		it('admits a callback during pending canonicalization and holds its diagnostics', async () => {
+			const child = fakeChild();
+			mockSpawn.mockReturnValue(child);
+			expect(signalRemoteAgent(target, 'interrupt')).toBe(true);
+			child.emit('close', 0);
+			(await reserve()).release();
+			const canonical = Promise.withResolvers<string>();
+			const reporting = Promise.withResolvers<void>();
+			vi.spyOn(fs.promises, 'realpath').mockReturnValueOnce(canonical.promise);
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			const failure = new Error('callback failed');
+			vi.mocked(libraryLogger.warn).mockImplementationOnce(() => {
+				throw failure;
+			});
+			const pending = reserveWorktreeCleanup(process.cwd());
+			expect(() => child.emit('error', new Error('connection failed'))).toThrow(failure);
+			canonical.resolve(process.cwd());
+			const hold = await pending;
+			if (hold.status === 'reserved-partially') reservations.push(hold.release);
+			expect(hold).toMatchObject({ status: 'blocked' });
+			reporting.resolve();
+			await reserve();
+		});
+
+		it('keeps concurrent callbacks and a successor child independent of duplicate close', async () => {
+			const previous = fakeChild();
+			const successor = fakeChild();
+			mockSpawn.mockReturnValueOnce(previous).mockReturnValueOnce(successor);
+			expect(signalRemoteAgent(target, 'interrupt')).toBe(true);
+			previous.emit('close', 0);
+			(await reserve()).release();
+			const first = Promise.withResolvers<void>();
+			const second = Promise.withResolvers<void>();
+			vi.mocked(captureException)
+				.mockReturnValueOnce(first.promise)
+				.mockReturnValueOnce(second.promise);
+			const failure = new Error('callback failed');
+			vi.mocked(libraryLogger.info).mockImplementation(() => {
+				throw failure;
+			});
+			expect(() => previous.emit('exit', 255)).toThrow(failure);
+			expect(signalRemoteAgent({ ...target, sessionId: 'successor' }, 'terminate')).toBe(true);
+			expect(() => previous.emit('exit', 255)).toThrow(failure);
+			previous.emit('close', 0);
+			first.resolve();
+			await blocked();
+			successor.emit('close', 0);
+			await blocked();
+			second.reject(new Error('report failed'));
+			await reserve();
+			expect(captureException).toHaveBeenCalledTimes(2);
+		});
+
+		it('retains original setup failure diagnostics through asynchronous reporting', async () => {
+			const failure = new Error('target failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			expect(() =>
+				signalRemoteAgent(
+					{
+						...target,
+						get sshArgs(): string[] {
+							throw failure;
+						},
+					},
+					'interrupt'
+				)
+			).toThrow(failure);
+			expect(mockSpawn).not.toHaveBeenCalled();
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await reserve();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		});
+
+		it('preserves standalone library callbacks without desktop admission', async () => {
+			await reserve();
+			const child = fakeChild();
+			mockSpawn.mockReturnValue(child);
+			expect(coreSignalRemoteAgent(target, 'terminate')).toBe(true);
+			child.emit('exit', 255);
+			expect(libraryLogger.info).toHaveBeenCalledWith(
+				'Remote agent signal sent',
+				'[ssh-remote-signal]',
+				{
+					sessionId: target.sessionId,
+					mode: 'terminate',
+					exitCode: 255,
+				}
+			);
+			child.emit('close', 0);
+			expect(captureException).not.toHaveBeenCalled();
+		});
 	});
 
 	it('retains unknown ownership when a child handle or close observer is unavailable', async () => {

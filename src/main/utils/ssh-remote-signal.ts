@@ -15,14 +15,19 @@ export function signalRemoteAgent(
 ): boolean {
 	return withWorktreeTurnActivity(
 		(_start, observe) =>
-			signalRemoteAgentCore(target, mode, (child) => {
-				// Hold before attaching: a missing handle/observer is unknown, even
-				// when the core catches setup failure and returns false. Exit/error,
-				// unref and a timeout kill request cannot prove child/stdio close.
-				const closed = Promise.withResolvers<void>();
-				observe(closed.promise);
-				child.on('close', () => closed.resolve());
-			}),
-		(error) => void captureException(error)
+			signalRemoteAgentCore(
+				target,
+				mode,
+				(child) => {
+					// Hold before attaching: a missing handle/observer is unknown, even
+					// when the core catches setup failure and returns false. Exit/error,
+					// unref and a timeout kill request cannot prove child/stdio close.
+					const closed = Promise.withResolvers<void>();
+					observe(closed.promise);
+					child.on('close', () => closed.resolve());
+				},
+				(callback) => withWorktreeTurnActivity(callback, (error) => captureException(error))
+			),
+		(error) => captureException(error)
 	);
 }
