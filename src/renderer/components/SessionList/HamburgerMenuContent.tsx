@@ -436,7 +436,7 @@ export function HamburgerMenuContent({
 						openUiSurface('board');
 						setMenuOpen(false);
 					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 text-left"
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 					style={{ color: theme.colors.textMain }}
 				>
 					<KanbanSquare className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />

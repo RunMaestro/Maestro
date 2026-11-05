@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BoardModal } from '../../../../renderer/components/BoardModal';
+import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
@@ -19,6 +20,7 @@ import '../../../../renderer/index.css';
 
 function BoardFixture() {
 	const [open, setOpen] = useState(false);
+	const [menuOpen, setMenuOpen] = useState(false);
 	const [themeId, setThemeId] = useState<ThemeId>('dracula');
 	const theme = THEMES[themeId];
 	const creatorOpen = useModalStore(selectModalOpen('newInstance'));
@@ -50,6 +52,8 @@ function BoardFixture() {
 				}}
 			>
 				<button onClick={() => setOpen(true)}>Open Board</button>
+				<button onClick={() => setMenuOpen(true)}>Open menu</button>
+				{menuOpen && <HamburgerMenuContent theme={theme} setMenuOpen={setMenuOpen} />}
 				<label>
 					Fixture theme
 					<select
@@ -95,8 +99,8 @@ async function start() {
 		encoreFeatures: {
 			...useSettingsStore.getState().encoreFeatures,
 			board: true,
-			maestroCue: false,
-			pianola: false,
+			maestroCue: true,
+			pianola: true,
 		},
 	});
 	createRoot(document.getElementById('root')!).render(<BoardFixture />);

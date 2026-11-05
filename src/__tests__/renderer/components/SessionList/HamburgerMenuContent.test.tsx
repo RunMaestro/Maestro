@@ -73,3 +73,22 @@ describe('HamburgerMenuContent - Profiles Cue independence', () => {
 		expect(screen.queryByRole('button', { name: /^Board/ })).not.toBeInTheDocument();
 	});
 });
+
+describe('HamburgerMenuContent - Board', () => {
+	const initialEncore = useSettingsStore.getState().encoreFeatures;
+	afterEach(() => useSettingsStore.setState({ encoreFeatures: initialEncore }));
+
+	it('renders the Board description and icon alongside the neighboring menu entries', () => {
+		useSettingsStore.setState({
+			encoreFeatures: { ...initialEncore, board: true, maestroCue: true, pianola: true },
+		});
+		renderMenu();
+		const board = screen.getByRole('button', {
+			name: /Board.*Plan tasks, assign agents, and track progress/,
+		});
+		const pianola = screen.getByRole('button', { name: /Pianola.*Autonomous manager/ });
+		expect(board.querySelector('[data-testid="kanbansquare-icon"]')).toBeInTheDocument();
+		expect(board.nextElementSibling).toBe(pianola);
+		expect(board.className).toBe(pianola.className);
+	});
+});
