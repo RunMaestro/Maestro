@@ -546,7 +546,7 @@ it('keeps suppressed sources absent from discovery and refuses explicit repair w
 			location: { kind: 'ssh', remoteId: 'one' },
 			path: root,
 		});
-		db.prepare('INSERT INTO board_source_suppressions VALUES (?)').run(sourceKey);
+		db.prepare('INSERT INTO board_source_suppressions (source_key) VALUES (?)').run(sourceKey);
 		const before = storage.query().revision;
 		await discoverRemoteBoardSources(
 			storage,
@@ -579,7 +579,7 @@ it('does not commit a source suppressed while its import is awaiting transport',
 		});
 		const before = storage.query().revision;
 		vi.mocked(remote.shell).mockImplementationOnce(async () => {
-			db.prepare('INSERT INTO board_source_suppressions VALUES (?)').run(sourceKey);
+			db.prepare('INSERT INTO board_source_suppressions (source_key) VALUES (?)').run(sourceKey);
 			return { stdout: root, stderr: '', exitCode: 0 };
 		});
 		await expect(
@@ -613,7 +613,9 @@ it.each(['repository', 'suppression'] as const)(
 			const before = storage.query().revision;
 			vi.mocked(remote.shell).mockImplementationOnce(async () => {
 				if (change === 'suppression')
-					db.prepare('INSERT INTO board_source_suppressions VALUES (?)').run(sourceKey);
+					db.prepare('INSERT INTO board_source_suppressions (source_key) VALUES (?)').run(
+						sourceKey
+					);
 				else {
 					retained = {
 						payload_json: JSON.stringify({

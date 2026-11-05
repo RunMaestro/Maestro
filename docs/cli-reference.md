@@ -1726,53 +1726,53 @@ resume Board workers through the host
 
 preview an exact legacy source through the authenticated local host
 
-| Option                          | Description                    | Default |
-| ------------------------------- | ------------------------------ | ------- |
-| `--source-key <sha256>`         | Exact legacy source key        | -       |
-| `--backup-path <absolute-path>` | Host-local backup path         | -       |
-| `--sha256 <hash>`               | Verified backup SHA-256        | -       |
-| `--revision <n>`                | Expected workspace revision    | -       |
-| `--receipt <json>`              | Exact suppression receipt JSON | -       |
-| `--json`                        | Machine-readable errors        | -       |
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
 
 ## `maestro-cli board source-export`
 
 export an exact legacy source through the authenticated local host
 
-| Option                          | Description                    | Default |
-| ------------------------------- | ------------------------------ | ------- |
-| `--source-key <sha256>`         | Exact legacy source key        | -       |
-| `--backup-path <absolute-path>` | Host-local backup path         | -       |
-| `--sha256 <hash>`               | Verified backup SHA-256        | -       |
-| `--revision <n>`                | Expected workspace revision    | -       |
-| `--receipt <json>`              | Exact suppression receipt JSON | -       |
-| `--json`                        | Machine-readable errors        | -       |
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
 
 ## `maestro-cli board source-suppress`
 
 suppress an exact legacy source through the authenticated local host
 
-| Option                          | Description                    | Default |
-| ------------------------------- | ------------------------------ | ------- |
-| `--source-key <sha256>`         | Exact legacy source key        | -       |
-| `--backup-path <absolute-path>` | Host-local backup path         | -       |
-| `--sha256 <hash>`               | Verified backup SHA-256        | -       |
-| `--revision <n>`                | Expected workspace revision    | -       |
-| `--receipt <json>`              | Exact suppression receipt JSON | -       |
-| `--json`                        | Machine-readable errors        | -       |
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
 
 ## `maestro-cli board source-restore`
 
 restore an exact legacy source through the authenticated local host
 
-| Option                          | Description                    | Default |
-| ------------------------------- | ------------------------------ | ------- |
-| `--source-key <sha256>`         | Exact legacy source key        | -       |
-| `--backup-path <absolute-path>` | Host-local backup path         | -       |
-| `--sha256 <hash>`               | Verified backup SHA-256        | -       |
-| `--revision <n>`                | Expected workspace revision    | -       |
-| `--receipt <json>`              | Exact suppression receipt JSON | -       |
-| `--json`                        | Machine-readable errors        | -       |
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
 
 ## `maestro-cli board tick`
 

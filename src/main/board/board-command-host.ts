@@ -52,8 +52,8 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 				}
 				const snapshot = previewBoardSourceCleanup(db, command.sourceKey);
 				if (command.action === 'source-preview') return { ok: true, value: { ...snapshot } };
-				if (snapshot.revision !== command.expectedRevision)
-					throw new BoardStorageError('stale-revision', 'Board workspace changed since preview');
+				// Workspace revision is advisory for source cleanup. The verified
+				// backup and persisted suppression receipt fence this source exactly.
 				if (command.action === 'source-export') {
 					const exported = exportBoardSourceCleanup(db, command.sourceKey, command.backupPath);
 					return {

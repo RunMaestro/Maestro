@@ -23,7 +23,7 @@ export function assertAdmittedBoardConnection(db: Database.Database): void {
 	}
 }
 
-export const BOARD_SCHEMA_VERSION = 7;
+export const BOARD_SCHEMA_VERSION = 8;
 
 const SCHEMA = `
 CREATE TABLE workspace (
@@ -146,6 +146,8 @@ export function openBoardDb(
 				);
 			if (current < 7)
 				db.exec('CREATE TABLE board_source_suppressions (source_key TEXT PRIMARY KEY)');
+			if (current < 8)
+				db.exec('ALTER TABLE board_source_suppressions ADD COLUMN receipt_json TEXT');
 			db.pragma(`user_version = ${BOARD_SCHEMA_VERSION}`);
 		}).immediate();
 		if (contract) admittedConnections.set(db, canonicalJson(contract));

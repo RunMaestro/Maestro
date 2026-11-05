@@ -105,10 +105,11 @@ describe('isolated source cleanup host transport', () => {
 				action: 'source-export',
 				sourceKey,
 				backupPath,
-				expectedRevision: revision + 1,
+				expectedRevision: -1,
 			})
-		).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
+		).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
 		expect(fs.existsSync(backupPath)).toBe(false);
+		db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
 		const exported = await request({
 			action: 'source-export',
 			sourceKey,
@@ -116,6 +117,9 @@ describe('isolated source cleanup host transport', () => {
 			expectedRevision: revision,
 		});
 		expect(exported.ok).toBe(true);
+		// This unrelated worker edit advances the workspace, not the selected source.
+		db.prepare('INSERT INTO workers VALUES (?, 1, 0, ?)').run('other-worker', '{}');
+		db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
 		expect(
 			await request({
 				action: 'source-suppress',
@@ -134,9 +138,14 @@ describe('isolated source cleanup host transport', () => {
 		});
 		expect(suppressed.ok).toBe(true);
 		expect((await request({ action: 'source-preview', sourceKey })).value.suppressed).toBe(true);
+		db.prepare('UPDATE workers SET paused = 1 WHERE agent_id = ?').run('other-worker');
+		db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
 		expect(
 			await request({ action: 'source-restore', backupPath, receipt: suppressed.value })
 		).toMatchObject({ ok: true });
 		expect((await request({ action: 'source-preview', sourceKey })).value.suppressed).toBe(false);
+		expect(db.prepare('SELECT paused FROM workers WHERE agent_id = ?').get('other-worker')).toEqual(
+			{ paused: 1 }
+		);
 	});
 });

@@ -60,8 +60,13 @@ an exact `--agent` ID where needed. Read the current snapshot before a mutation;
 the host refuses stale worker state. `role-update` and `role-delete` require the
 exact source and namespace, and referenced roles remain protected. For legacy
 sources, `source-preview`, `source-export`, `source-suppress` and `source-restore`
-use explicit source identities, revisions, verified backups and receipts. Names
-alone never authorize cleanup.
+use explicit source identities, verified backups and receipts. Workspace revision
+is informational: edits to other sources or workers do not block cleanup. The
+host compares the selected source's migration, location, collections, cards,
+history, holds and archives against the hash-bound backup. Restore is bound to
+the saved suppression receipt and rejects later edits to that source or a reused
+receipt. Pre-upgrade suppressions without a saved receipt retain their original
+conservative workspace revision check. Names alone never authorize cleanup.
 
 ## Shared collection deletion command
 

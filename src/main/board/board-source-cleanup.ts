@@ -14,6 +14,7 @@ import { hasUnresolvedMigrationBlockers } from './board-migration';
 
 interface SourceSnapshot {
 	sourceKey: string;
+	/** Informational workspace position, excluded from source-state equality. */
 	revision: number;
 	migration: Record<string, unknown>;
 	location: unknown;
@@ -26,6 +27,7 @@ interface SourceSnapshot {
 	cards: Array<{ collection_key: string; id: string; payload_json: string; revision: number }>;
 	runs: unknown[];
 	reservations: unknown[];
+	holds: Array<{ worker_agent_id: string; claims: unknown[] }>;
 	archives: unknown[];
 	cardArchives: unknown[];
 	profiles: unknown[];
@@ -62,6 +64,20 @@ export function previewBoardSourceCleanup(
 		)
 		.all(sourceKey) as SourceSnapshot['cards'];
 	const all = (sql: string) => db.prepare(sql).all(sourceKey);
+	// One worker can carry uncertain claims from several sources. Only this
+	// source's claims belong in its backup, not the worker's unrelated claims.
+	const holds = (
+		db
+			.prepare(
+				'SELECT worker_agent_id, claims_json FROM migration_worker_holds ORDER BY worker_agent_id'
+			)
+			.all() as Array<{ worker_agent_id: string; claims_json: string }>
+	).flatMap((row) => {
+		const claims: unknown = JSON.parse(row.claims_json);
+		if (!Array.isArray(claims)) throw new Error('Invalid migration worker holds');
+		const scoped = claims.filter((claim) => claim?.sourceKey === sourceKey);
+		return scoped.length ? [{ worker_agent_id: row.worker_agent_id, claims: scoped }] : [];
+	});
 	return {
 		sourceKey,
 		revision: (
@@ -78,6 +94,7 @@ export function previewBoardSourceCleanup(
 		reservations: all(
 			`SELECT * FROM reservations WHERE collection_key IN (${bySource}) ORDER BY run_id`
 		),
+		holds,
 		archives: all(
 			`SELECT * FROM collection_archives WHERE collection_key IN (${bySource}) ORDER BY collection_key`
 		),
@@ -141,10 +158,16 @@ export function suppressBoardSource(
 	return db
 		.transaction(() => {
 			const current = previewBoardSourceCleanup(db, sourceKey);
-			if (canonicalJson(current) !== backup) throw new Error('Board source changed since backup');
+			const original = JSON.parse(backup) as SourceSnapshot;
+			if (
+				canonicalJson({ ...current, revision: undefined }) !==
+				canonicalJson({ ...original, holds: original.holds ?? [], revision: undefined })
+			)
+				throw new Error('Board source changed since backup');
 			if (current.suppressed) throw new Error('Board source is already suppressed');
 			if (
 				current.reservations.length ||
+				current.holds.length ||
 				current.runs.some((run) => (run as { outcome_json: unknown }).outcome_json === null) ||
 				current.cards.some((card) => JSON.parse(card.payload_json).status === 'running')
 			) {
@@ -167,21 +190,26 @@ export function suppressBoardSource(
 			const added = current.collections
 				.map((row) => row.collection_key)
 				.filter((key) => !archived.has(key));
-			db.prepare('INSERT INTO board_source_suppressions (source_key) VALUES (?)').run(sourceKey);
-			const archive = db.prepare('INSERT INTO collection_archives (collection_key) VALUES (?)');
-			for (const key of added) archive.run(key);
-			db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
-			return {
+			const receipt = {
 				sourceKey,
 				backupSha256,
 				archivedCollections: added,
 				revision: current.revision + 1,
 			};
+			// Bind restore to this particular suppression, independently of later
+			// workspace writes. Older receipts cannot undo a subsequent suppression.
+			db.prepare(
+				'INSERT INTO board_source_suppressions (source_key, receipt_json) VALUES (?, ?)'
+			).run(sourceKey, canonicalJson(receipt));
+			const archive = db.prepare('INSERT INTO collection_archives (collection_key) VALUES (?)');
+			for (const key of added) archive.run(key);
+			db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
+			return receipt;
 		})
 		.immediate();
 }
 
-/** Undo only this receipt's archives and tombstone, and only before any later edit. */
+/** Undo only this receipt's archives and tombstone, before any later source edit. */
 export function restoreBoardSource(
 	db: Database.Database,
 	receipt: BoardSourceCleanupReceipt,
@@ -196,6 +224,9 @@ export function restoreBoardSource(
 	db.transaction(() => {
 		const original = JSON.parse(backup) as SourceSnapshot;
 		const current = previewBoardSourceCleanup(db, receipt.sourceKey);
+		const suppression = db
+			.prepare('SELECT receipt_json FROM board_source_suppressions WHERE source_key = ?')
+			.get(receipt.sourceKey) as { receipt_json: string | null } | undefined;
 		const expected = original.collections
 			.map((row) => row.collection_key)
 			.filter(
@@ -207,8 +238,12 @@ export function restoreBoardSource(
 		if (
 			original.sourceKey !== receipt.sourceKey ||
 			original.suppressed ||
-			receipt.revision !== original.revision + 1 ||
-			current.revision !== receipt.revision ||
+			!suppression ||
+			// Pre-upgrade suppressions have no persisted receipt. Preserve their
+			// original conservative fence rather than infer a new restore authority.
+			(suppression.receipt_json === null
+				? receipt.revision !== original.revision + 1 || current.revision !== receipt.revision
+				: suppression.receipt_json !== canonicalJson(receipt)) ||
 			!current.suppressed ||
 			canonicalJson(expected) !== canonicalJson(receipt.archivedCollections) ||
 			canonicalJson(current.archives) !==
@@ -222,11 +257,15 @@ export function restoreBoardSource(
 			throw new Error('Board restore conflict');
 		const restored = {
 			...current,
-			revision: original.revision,
+			revision: undefined,
 			suppressed: false,
 			archives: original.archives,
 		};
-		if (canonicalJson(restored) !== backup) throw new Error('Board source changed since cleanup');
+		if (
+			canonicalJson(restored) !==
+			canonicalJson({ ...original, holds: original.holds ?? [], revision: undefined })
+		)
+			throw new Error('Board source changed since cleanup');
 		const remove = db.prepare('DELETE FROM collection_archives WHERE collection_key = ?');
 		for (const key of expected) {
 			if (remove.run(key).changes !== 1) throw new Error('Board restore archive conflict');

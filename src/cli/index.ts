@@ -1802,7 +1802,7 @@ for (const operation of ['preview', 'export', 'suppress', 'restore']) {
 		.option('--source-key <sha256>', 'Exact legacy source key')
 		.option('--backup-path <absolute-path>', 'Host-local backup path')
 		.option('--sha256 <hash>', 'Verified backup SHA-256')
-		.option('--revision <n>', 'Expected workspace revision')
+		.option('--revision <n>', 'Informational workspace revision (legacy argument)')
 		.option('--receipt <json>', 'Exact suppression receipt JSON')
 		.option('--json', 'Machine-readable errors')
 		.action((options) => boardSourceCleanup(operation, options));
