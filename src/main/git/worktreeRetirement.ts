@@ -1,0 +1,133 @@
+/** Main-owned admission fence for managed local worktree retirement.
+ * Callers must hold an admission from before their first await until work settles.
+ */
+import * as fs from 'fs';
+import * as path from 'path';
+import { foldPathCase, isPathWithin } from '../utils/real-path-containment';
+
+export interface ManagedCheckout {
+	/** Verified checkout root; Git ownership must be verified by the caller. */
+	path: string;
+	head: string;
+	generation: number;
+}
+
+export type RetirementState = 'available' | 'preparing' | 'removing' | 'removed';
+export type RetirementToken = object;
+export type Admission = { ok: true; release: () => void } | { ok: false; reason: string };
+export type Preparation =
+	| { ok: true; token: RetirementToken; expected: Readonly<ManagedCheckout> }
+	| { ok: false; reason: string };
+
+type Entry = { identity: ManagedCheckout; state: RetirementState; token?: RetirementToken };
+type Hold = { paths: string[] | null };
+
+/** Canonicalization deliberately fails closed on missing, inaccessible or relative paths. */
+function canonical(p: string): string | null {
+	if (!path.isAbsolute(p)) return null;
+	try {
+		return foldPathCase(fs.realpathSync.native(p));
+	} catch {
+		return null;
+	}
+}
+
+function overlaps(a: string, b: string): boolean {
+	return isPathWithin(a, b) || isPathWithin(b, a);
+}
+
+export class WorktreeRetirement {
+	private readonly entries = new Map<string, Entry>();
+	private readonly holds = new Set<Hold>();
+
+	/** Populate only from trusted, verified managed registrations, never renderer input. */
+	register(checkout: ManagedCheckout): boolean {
+		const root = canonical(checkout.path);
+		if (
+			!root ||
+			!checkout.head ||
+			!Number.isSafeInteger(checkout.generation) ||
+			checkout.generation < 0
+		)
+			return false;
+		const existing = this.entries.get(root);
+		if (existing && existing.state !== 'available') return false;
+		this.entries.set(root, { identity: { ...checkout, path: root }, state: 'available' });
+		return true;
+	}
+
+	/** Unknown paths acquire a global hold; while reserved they fail closed. */
+	admit(paths: readonly string[] | null): Admission {
+		const resolved = paths?.length ? paths.map(canonical) : null;
+		const roots = resolved && resolved.every((p): p is string => p !== null) ? resolved : null;
+		for (const [root, entry] of this.entries) {
+			if (entry.state !== 'available' && (!roots || roots.some((p) => overlaps(p, root))))
+				return { ok: false, reason: `worktree is ${entry.state}` };
+		}
+		const hold: Hold = { paths: roots };
+		this.holds.add(hold);
+		return {
+			ok: true,
+			release: () => {
+				this.holds.delete(hold);
+			},
+		};
+	}
+
+	prepare(checkout: ManagedCheckout): Preparation {
+		const root = canonical(checkout.path);
+		const entry = root && this.entries.get(root);
+		if (!root || !entry) return { ok: false, reason: 'unknown managed checkout' };
+		if (entry.state !== 'available') return { ok: false, reason: `worktree is ${entry.state}` };
+		if (entry.identity.head !== checkout.head || entry.identity.generation !== checkout.generation)
+			return { ok: false, reason: 'checkout identity changed' };
+		if (
+			[...this.entries].some(
+				([otherRoot, other]) =>
+					otherRoot !== root && other.state !== 'available' && overlaps(root, otherRoot)
+			)
+		)
+			return { ok: false, reason: 'overlapping worktree is reserved' };
+		if ([...this.holds].some((hold) => !hold.paths || hold.paths.some((p) => overlaps(p, root))))
+			return { ok: false, reason: 'worktree has admitted work' };
+		const token = Object.freeze({});
+		entry.token = token;
+		entry.state = 'preparing';
+		return { ok: true, token, expected: Object.freeze({ ...entry.identity }) };
+	}
+
+	/** Commit begins removal; completion must be reported separately after the runner settles. */
+	commit(token: RetirementToken): boolean {
+		const entry = this.owned(token);
+		if (!entry || entry.state !== 'preparing') return false;
+		entry.state = 'removing';
+		return true;
+	}
+
+	/** A failed or uncertain removal remains fenced for explicit reconciliation. */
+	complete(token: RetirementToken): boolean {
+		const entry = this.owned(token);
+		if (!entry || entry.state !== 'removing') return false;
+		entry.state = 'removed';
+		return true;
+	}
+
+	abort(token: RetirementToken): boolean {
+		const entry = this.owned(token);
+		if (!entry || entry.state !== 'preparing') return false;
+		entry.state = 'available';
+		delete entry.token;
+		return true;
+	}
+
+	state(checkoutPath: string): RetirementState | undefined {
+		const root = canonical(checkoutPath) ?? foldPathCase(path.resolve(checkoutPath));
+		return this.entries.get(root)?.state;
+	}
+
+	private owned(token: RetirementToken): Entry | undefined {
+		return [...this.entries.values()].find((entry) => entry.token === token);
+	}
+}
+
+export const worktreeRetirement = new WorktreeRetirement();
