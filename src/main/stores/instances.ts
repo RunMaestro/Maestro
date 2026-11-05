@@ -90,6 +90,15 @@ let _productionDataPath: string | null = null;
 // Initialization
 // ============================================================================
 
+/** Select the configured storage location without opening a store. */
+export function selectStoreSyncPath(
+	userDataPath: string,
+	customSyncPath: () => string | undefined,
+	isolatedSyncPath?: string
+): string {
+	return isolatedSyncPath ?? (customSyncPath() || userDataPath);
+}
+
 export interface StoreInitOptions {
 	/** The production userData path (before any dev mode modifications) */
 	productionDataPath: string;
@@ -150,7 +159,11 @@ export function initializeStores(options: StoreInitOptions): {
 	});
 
 	// 2. Determine sync path
-	_syncPath = isolated?.sync ?? (getCustomSyncPath(_bootstrapStore) || userDataPath);
+	_syncPath = selectStoreSyncPath(
+		userDataPath,
+		() => getCustomSyncPath(_bootstrapStore!),
+		isolated?.sync
+	);
 	if (isolated) _bootstrapStore.set('customSyncPath', isolated.sync);
 
 	// Log paths for debugging
