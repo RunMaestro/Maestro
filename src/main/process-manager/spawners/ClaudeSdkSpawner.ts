@@ -61,9 +61,13 @@ export class ClaudeSdkSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(_start, observe, spawnChild) => this.spawnAdmitted(config, spawnChild, observe),
-				(error) => {
-					void captureException(error);
-					logger.error('[ClaudeTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				async (error) => {
+					const reporting = Promise.resolve().then(() => captureException(error));
+					try {
+						logger.error('[ClaudeTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+					} finally {
+						await reporting;
+					}
 				}
 			);
 		} catch (error) {
@@ -89,7 +93,11 @@ export class ClaudeSdkSpawner {
 					error: `Claude native mode could not start: ${String(error)}`,
 				};
 			}
-			void captureException(error);
+			observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -252,7 +260,7 @@ class ClaudeTurn {
 							() => {
 								if (!this.isSuperseded()) this.ctx.stderrHandler.handleData(config.sessionId, data);
 							},
-							(error) => void captureException(error)
+							(error) => captureException(error)
 						);
 					});
 					return child;
@@ -413,7 +421,11 @@ class ClaudeTurn {
 			}
 			return;
 		}
-		void captureException(error);
+		this.observeCompletion(
+			Promise.resolve()
+				.then(() => captureException(error))
+				.catch(() => {})
+		);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -440,13 +452,16 @@ class ClaudeTurn {
 		this.query?.close();
 		this.closed.resolve();
 		this.observeCompletion(
-			this.ctx.exitHandler.handleExit(this.config.sessionId, code, this.managedProcess)
-		).catch((error) => {
-			logger.error('[ClaudeTurn] handleExit failed', LOG_CONTEXT, {
-				sessionId: this.config.sessionId,
-				error: String(error),
-			});
-		});
+			this.ctx.exitHandler
+				.handleExit(this.config.sessionId, code, this.managedProcess)
+				.catch((error) => {
+					logger.error('[ClaudeTurn] handleExit failed', LOG_CONTEXT, {
+						sessionId: this.config.sessionId,
+						error: String(error),
+					});
+					throw error;
+				})
+		);
 	}
 
 	private withActivity<T>(operation: () => Promise<T>): Promise<T> {
@@ -455,7 +470,7 @@ class ClaudeTurn {
 			// SDK callers, independently of the original turn's settled observer.
 			return withWorktreeTurnActivity(
 				(_start, observe) => observe(operation()),
-				(error) => void captureException(error)
+				(error) => captureException(error)
 			);
 		} catch (error) {
 			// Preserve async refusal without running the operation or reporting it

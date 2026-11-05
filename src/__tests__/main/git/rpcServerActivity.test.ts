@@ -239,6 +239,110 @@ describe('shared native turn activity boundary', () => {
 			hold.release();
 		}
 	});
+	it.each(['setup', 'completion'] as const)(
+		'owns async diagnostic settlement after %s failure',
+		async (stage) => {
+			const failure = new Error('original failure');
+			const reporting = Promise.withResolvers<void>();
+			const report = vi.fn(() => reporting.promise);
+			const operation = Promise.withResolvers<void>();
+			if (stage === 'setup') {
+				expect(() =>
+					boundary.withWorktreeTurnActivity(() => {
+						throw failure;
+					}, report)
+				).toThrow(failure);
+			} else {
+				const result = boundary.withWorktreeTurnActivity(
+					(_start, observe) => observe(operation.promise),
+					report
+				);
+				expect(result).toBe(operation.promise);
+				const rejected = expect(result).rejects.toBe(failure);
+				operation.reject(failure);
+				await rejected;
+			}
+			await drain();
+			expect(report).toHaveBeenCalledExactlyOnceWith(failure);
+			for (const root of [target, path.join(target, 'child'), path.resolve('other')])
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(report).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async diagnostic and native close independently (report first: %s)',
+		async (reportFirst) => {
+			const reporting = Promise.withResolvers<void>();
+			const report = vi.fn(() => reporting.promise);
+			expect(() =>
+				boundary.withWorktreeTurnActivity((_start, _observe, spawnChild) => {
+					spawnChild('fixture', [], {});
+					throw new Error('postspawn failure');
+				}, report)
+			).toThrow('postspawn failure');
+			if (reportFirst) reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (reportFirst) await close();
+			else reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async concurrent diagnostics and successor (reverse: %s)',
+		async (reverse) => {
+			const reports = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+			const successor = Promise.withResolvers<void>();
+			for (const reporting of reports)
+				expect(() =>
+					boundary.withWorktreeTurnActivity(
+						() => {
+							throw new Error('failed');
+						},
+						() => reporting.promise
+					)
+				).toThrow('failed');
+			boundary.withWorktreeTurnActivity((_start, observe) => observe(successor.promise), vi.fn());
+			reports[reverse ? 1 : 0].resolve();
+			await drain();
+			await blocked();
+			successor.resolve();
+			await drain();
+			await blocked();
+			reports[reverse ? 0 : 1].resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('owns async reporting while reentrant observed work is admitted', async () => {
+		const reporting = Promise.withResolvers<void>();
+		const successor = Promise.withResolvers<void>();
+		expect(() =>
+			boundary.withWorktreeTurnActivity(
+				() => {
+					throw new Error('failed');
+				},
+				() => {
+					boundary.withWorktreeTurnActivity(
+						(_start, observe) => observe(successor.promise),
+						vi.fn()
+					);
+					return reporting.promise;
+				}
+			)
+		).toThrow('failed');
+		successor.resolve();
+		await drain();
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
 	it('retains observed setup without a native child until settlement', async () => {
 		const setup = Promise.withResolvers<string>();
 		const result = boundary.withWorktreeTurnActivity(
@@ -3785,6 +3889,98 @@ describe('Claude SDK native activity', () => {
 			return sdk;
 		});
 	});
+	it.each(['setup', 'stream', 'completion', 'control', 'stderr'] as const)(
+		'owns async Claude %s diagnostics until settlement',
+		async (stage) => {
+			const failure = new Error('diagnostic trigger');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (stage === 'setup') {
+				vi.mocked(createOutputParser).mockImplementationOnce(() => {
+					throw failure;
+				});
+				expect(claude.spawn({ ...input, permissionMode: 'full' })).toMatchObject({
+					success: true,
+					pid: 999,
+				});
+				expect(fallback).toHaveBeenCalledOnce();
+			} else {
+				if (stage === 'completion') probes.exit.mockRejectedValueOnce(failure);
+				claude.spawn(input);
+				const managed = processes.get(input.sessionId)!;
+				if (stage === 'stream') next.reject(failure);
+				else next.resolve({ done: true, value: undefined });
+				await close();
+				processes.clear();
+				if (stage === 'control') {
+					vi.mocked(sdk.close).mockImplementationOnce(() => {
+						throw failure;
+					});
+					await expect(managed.sdkController!.kill()).rejects.toBe(failure);
+				} else if (stage === 'stderr') {
+					probes.stderr.mockImplementationOnce(() => {
+						throw failure;
+					});
+					expect(() => native.stderr.emit('data', 'late failure')).toThrow(failure);
+				}
+			}
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['setup', 'stream', 'completion', 'control', 'stderr'] as const)(
+		'owns async Claude %s reporter rejection without recursion',
+		async (stage) => {
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const fail = () => {
+				throw new Error('original');
+			};
+			if (stage === 'setup') {
+				vi.mocked(createOutputParser).mockImplementationOnce(fail);
+				claude.spawn({ ...input, permissionMode: 'full' });
+			} else {
+				if (stage === 'completion') probes.exit.mockRejectedValueOnce(new Error('original'));
+				claude.spawn(input);
+				const control = processes.get(input.sessionId)!.harnessControl!;
+				if (stage === 'stream') next.reject(new Error('original'));
+				else next.resolve({ done: true, value: undefined });
+				await close();
+				if (stage === 'control') {
+					vi.mocked(sdk.close).mockImplementationOnce(fail);
+					await expect(control.close()).rejects.toThrow('original');
+				} else if (stage === 'stderr') {
+					probes.stderr.mockImplementationOnce(fail);
+					expect(() => native.stderr.emit('data', 'failure')).toThrow('original');
+				}
+			}
+			await drain();
+			await blocked();
+			reporting.reject(new Error('diagnostics rejected'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it('owns async Claude reporting despite synchronous logger failure', async () => {
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		probes.exit.mockRejectedValueOnce(new Error('completion'));
+		vi.mocked(logger.error).mockImplementation(() => {
+			throw new Error('logger');
+		});
+		claude.spawn(input);
+		next.resolve({ done: true, value: undefined });
+		await close();
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
 	it.each([target, path.join(target, 'nested'), path.resolve('unrelated')])(
 		'refuses every setup and fallback under reservation %s',
 		async (root) => {
@@ -3798,6 +3994,8 @@ describe('Claude SDK native activity', () => {
 				for (const probe of [
 					createOutputParser,
 					buildChildProcessEnv,
+					captureException,
+					logger.error,
 					probes.query,
 					spawn,
 					fallback,

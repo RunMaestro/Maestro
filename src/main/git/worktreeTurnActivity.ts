@@ -20,7 +20,9 @@ export type WorktreeChildSpawner = (
  * only TurnNotStartedError proves that a failed launch created no child.
  *
  * This covers one local child, not descendants or future callbacks. Callers must
- * observe their setup/control/reporting work while the lifetime is still held.
+ * observe their setup/control work while the lifetime is still held. Returned
+ * diagnostic promises are retained even if reporting rejects; diagnostic
+ * failures are consumed without recursively reporting or changing outcomes.
  * Missing native/client/OS/external coverage remains a cleanup blocker.
  */
 export function withWorktreeTurnActivity<T>(
@@ -29,7 +31,7 @@ export function withWorktreeTurnActivity<T>(
 		observe: <Result>(completion: Promise<Result>) => Promise<Result>,
 		spawnChild: WorktreeChildSpawner
 	) => T,
-	reportError: (error: unknown) => void
+	reportError: (error: unknown) => void | Promise<void>
 ): T {
 	// Refuse before invoking any caller setup or fallback/recovery.
 	const release = beginGlobalWorktreeActivity();
@@ -42,11 +44,23 @@ export function withWorktreeTurnActivity<T>(
 		if (setupSettled && (!nativeMayExist || closed) && !pending) release();
 	};
 	const reportFailure = (error: unknown): void => {
+		pending++;
 		try {
-			reportError(error);
+			const reporting = reportError(error);
+			if (reporting) {
+				void Promise.resolve(reporting)
+					.catch(() => {})
+					.finally(() => {
+						pending--;
+						releaseIfSettled();
+					});
+				return;
+			}
 		} catch {
 			// Diagnostics cannot replace the original error or break bookkeeping.
 		}
+		pending--;
+		releaseIfSettled();
 	};
 	const observe = <Result>(completion: Promise<Result>): Promise<Result> => {
 		pending++;
