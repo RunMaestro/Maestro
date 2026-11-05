@@ -252,7 +252,7 @@ import { execGitReadOnly } from './utils/remote-git';
 import { isAgentDormant } from '../shared/agentVisibility';
 
 import { autoDecomposeBoard } from './board/board-decompose';
-import { buildBoardCardToastPayload } from './board/board-toast';
+import { createBoardNotificationHandlers } from './board/board-notifications';
 import { prepareBoardReviewHandoff } from './board/board-review';
 import { createBoardAgentAdmission } from './board/board-claims';
 import { configureAgentAdmission } from './utils/headless-agent-activity';
@@ -1619,6 +1619,11 @@ app
 				repository,
 			};
 		};
+		const { notifyBoardCard, onBoardCardStatusChanged, onTransitions } =
+			createBoardNotificationHandlers(
+				(event) => pluginEventBus?.emit(event),
+				(payload) => safeSend('remote:notifyToast', payload)
+			);
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
@@ -1713,6 +1718,7 @@ app
 			},
 			// An empty root invalidates the central view, whose listener refetches all sources.
 			onChanged: () => safeSend('board:changed', { projectRoot: '' }),
+			onTransitions,
 			onCompleted: (spec) => {
 				const task = startBoardRunPr(spec, {
 					notify: (payload) => safeSend('remote:notifyToast', payload),
@@ -1954,46 +1960,7 @@ app
 				// Terminal card transitions surface as toasts through the SAME
 				// `remote:notifyToast` relay Cue's notify action uses. A blocked card
 				// needs a human, so its toast is sticky; a done card auto-dismisses.
-				notifyCard: (projectRoot, event) => {
-					const blocked = event.kind === 'blocked';
-					// Board Phase 5: the same terminal transition is republished on the
-					// plugin event bus so OTHER plugins can build on the Board. Metadata
-					// only - the toast below carries the run summary, the event never
-					// does (summaries can quote agent output).
-					const common = {
-						boardId: event.boardId,
-						cardId: event.cardId,
-						cardTitle: event.cardTitle,
-						projectPath: projectRoot,
-						...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
-						...(event.workerAgentId ? { workerAgentId: event.workerAgentId } : {}),
-					};
-					const at = new Date().toISOString();
-					if (blocked) {
-						pluginEventBus?.emit({
-							topic: 'board.cardBlocked',
-							at,
-							payload: { ...common, ...(event.outcome ? { outcome: event.outcome } : {}) },
-						});
-					} else if (event.kind === 'done') {
-						// Deliberately no plugin event for `review`: a card awaiting human
-						// approval is neither completed nor blocked, and there is no
-						// `board.cardNeedsReview` topic yet, so emitting either existing topic
-						// would lie to plugins. That transition stays toast-only for now.
-						pluginEventBus?.emit({
-							topic: 'board.cardCompleted',
-							at,
-							payload: {
-								...common,
-								...(event.worktreeBranch ? { worktreeBranch: event.worktreeBranch } : {}),
-							},
-						});
-					}
-					// The done/review/blocked toast (including its pooled click-to-jump onto the
-					// worker agent) is built by the pure `buildBoardCardToastPayload` helper
-					// so the exact payload can be unit-tested without importing this module.
-					safeSend('remote:notifyToast', buildBoardCardToastPayload(event));
-				},
+				notifyCard: notifyBoardCard,
 				// Board F3: a `done` card that opted into `prOnDone` gets its worktree
 				// branch pushed and a pull request opened. Fire-and-forget (the dispatch
 				// pass must never wait on git/gh); the result surfaces as its own toast.
@@ -2005,21 +1972,7 @@ app
 				// Board Phase 5: every card status transition goes out on the plugin
 				// event bus (metadata only - ids, statuses, attempt, worker). Null-safe;
 				// no-op when plugins are disabled.
-				onCardStatusChanged: (projectRoot, event) =>
-					pluginEventBus?.emit({
-						topic: 'board.cardStatusChanged',
-						at: new Date().toISOString(),
-						payload: {
-							boardId: event.boardId,
-							cardId: event.cardId,
-							cardTitle: event.cardTitle,
-							fromStatus: event.fromStatus,
-							toStatus: event.toStatus,
-							projectPath: projectRoot,
-							...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
-							...(event.workerAgentId ? { workerAgentId: event.workerAgentId } : {}),
-						},
-					}),
+				onCardStatusChanged: onBoardCardStatusChanged,
 				// Board Phase 5: a finished auto-decompose pass, counts only.
 				onBoardDecomposed: (projectRoot, boardId, triageCardCount) =>
 					pluginEventBus?.emit({

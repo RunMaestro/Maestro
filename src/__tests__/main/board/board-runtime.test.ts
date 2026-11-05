@@ -59,6 +59,9 @@ import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
 import { runProcess, stopProcess } from '../../../main/cue/cue-process-lifecycle';
 import type { BoardTransitionReceipt } from '../../../main/board/board-transitions';
+import { createBoardNotificationHandlers } from '../../../main/board/board-notifications';
+import type { PluginEvent } from '../../../shared/plugins/events';
+import type { BoardCardToastPayload } from '../../../main/board/board-toast';
 
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: () => undefined,
@@ -91,6 +94,9 @@ let lockValid: boolean;
 let databasePath: string;
 let ownsDatabase = false;
 let transitions: BoardTransitionReceipt[];
+let events: PluginEvent[];
+let toasts: BoardCardToastPayload[];
+let notifications: ReturnType<typeof createBoardNotificationHandlers>;
 let completed: ReturnType<typeof vi.fn<(spec: BoardRunSpecification) => void>>;
 const good: CardSpawnResult = {
 	// A trusted run-service fixture supplies complete host evidence. Real Git is
@@ -123,11 +129,20 @@ function newRuntime(
 		() => liveness,
 		undefined,
 		(spec) => completed(spec),
-		(receipts) => transitions.push(...receipts)
+		(receipts) => {
+			transitions.push(...receipts);
+			notifications.onTransitions(receipts);
+		}
 	);
 }
 beforeEach(() => {
 	transitions = [];
+	events = [];
+	toasts = [];
+	notifications = createBoardNotificationHandlers(
+		(event) => events.push(event),
+		(toast) => toasts.push(toast)
+	);
 	completed = vi.fn();
 	ownsDatabase = false;
 	dir = '';
@@ -334,12 +349,26 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		});
 		expect(canonicalJson(transitions[0])).toBe(running);
 		expect(completed).toHaveBeenCalledTimes(1);
+		expect(events.map((event) => event.topic)).toEqual([
+			'board.cardStatusChanged',
+			'board.cardStatusChanged',
+		]);
+		expect(JSON.stringify(events)).not.toContain('Fixture checks passed');
+		expect(toasts).toMatchObject([
+			{
+				message: 'Fixture checks passed',
+				sessionId: 'worker',
+				clickAction: { kind: 'jump-session', sessionId: 'worker' },
+			},
+		]);
 		expect(runtime.complete(first.runToken, good)).toMatchObject({ ok: false });
 		expect(runtime.complete({ ...first.runToken, generation: 99 }, good)).toMatchObject({
 			ok: false,
 		});
 		await Promise.resolve();
 		expect(transitions).toHaveLength(2);
+		expect(events).toHaveLength(2);
+		expect(toasts).toHaveLength(1);
 		expect(completed).toHaveBeenCalledTimes(1);
 	});
 	it('suppresses nested rollback receipts and accepts a committed retry despite unrelated later writes', async () => {
@@ -347,6 +376,8 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		const pending = runtime.start(token);
 		await Promise.resolve();
 		transitions = [];
+		events = [];
+		toasts = [];
 		expect(() =>
 			db
 				.transaction(() => {
@@ -358,6 +389,8 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		).toThrow('outer rollback');
 		await Promise.resolve();
 		expect(transitions).toEqual([]);
+		expect(events).toEqual([]);
+		expect(toasts).toEqual([]);
 		expect(completed).not.toHaveBeenCalled();
 		expect(card().status).toBe('running');
 		db.transaction(() => {
@@ -1593,6 +1626,8 @@ describe('work, linked review and explicit final human decision', () => {
 			])
 		);
 		transitions = [];
+		events = [];
+		toasts = [];
 		const board = storage.read(roots[0], 'board');
 		const accept = () =>
 			runtime.acceptWork(
@@ -1616,6 +1651,9 @@ describe('work, linked review and explicit final human decision', () => {
 		db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
 		await Promise.resolve();
 		expect(transitions).toHaveLength(2);
+		expect(events.filter((event) => event.topic === 'board.cardStatusChanged')).toHaveLength(2);
+		expect(events.filter((event) => event.topic === 'board.cardCompleted')).toHaveLength(1);
+		expect(toasts).toHaveLength(1);
 		expect(transitions.map((receipt) => receipt.change.toStatus)).toEqual(['done', 'done']);
 		const workReceipt = transitions.find((receipt) => receipt.key.cardId === 'same')!;
 		expect(workReceipt).toMatchObject({
@@ -1639,7 +1677,12 @@ describe('work, linked review and explicit final human decision', () => {
 		).run();
 		transitions = [];
 		const outcome = runtime.read(work.runToken)!.outcome;
-		const listener = (receipts: readonly BoardTransitionReceipt[]) => transitions.push(...receipts);
+		const listener = (receipts: readonly BoardTransitionReceipt[]) => {
+			transitions.push(...receipts);
+			notifications.onTransitions(receipts);
+		};
+		events = [];
+		toasts = [];
 		expect(() =>
 			db
 				.transaction(() => {
@@ -1651,6 +1694,8 @@ describe('work, linked review and explicit final human decision', () => {
 		await Promise.resolve();
 		expect(transitions).toEqual([]);
 		expect(card().status).toBe('review');
+		expect(events).toEqual([]);
+		expect(toasts).toEqual([]);
 		db.transaction(() => queueBoardReviews(storage, listener)).immediate();
 		queueBoardReviews(storage, listener);
 		await Promise.resolve();
@@ -1660,6 +1705,11 @@ describe('work, linked review and explicit final human decision', () => {
 			cause: { phase: 'review-queue', runId: work.runToken.runId },
 			notification: { kind: 'blocked' },
 		});
+		expect(events.map((event) => event.topic)).toEqual([
+			'board.cardStatusChanged',
+			'board.cardBlocked',
+		]);
+		expect(toasts).toHaveLength(1);
 		expect(runtime.read(work.runToken)!.outcome).toEqual(outcome);
 		expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
 	});
