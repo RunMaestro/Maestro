@@ -52,18 +52,6 @@ export async function mergeWorktreePullRequest(
 			status: 'blocked',
 			blockers: [{ code: 'method', message: 'Merge method is not enabled.' }],
 		};
-	// GraphQL's direct merge is also used for administrator overrides. Its input
-	// cannot atomically refuse bypass when requirements change after preflight.
-	if (action.kind === 'merge')
-		return {
-			status: 'blocked',
-			blockers: [
-				{
-					code: 'protection',
-					message: 'Direct merge is unavailable until rule bypass can be excluded atomically.',
-				},
-			],
-		};
 
 	const target = preflight.target;
 	let gh: string;
@@ -127,26 +115,40 @@ export async function mergeWorktreePullRequest(
 
 	let rejected = false;
 	try {
-		const args = [
-			'api',
-			'--hostname',
-			'github.com',
-			'graphql',
-			'-f',
-			`query=${ENQUEUE}`,
-			'-f',
-			`id=${id}`,
-			'-f',
-			`head=${target.headSha}`,
-		];
+		const args =
+			action.kind === 'enqueue'
+				? [
+						'api',
+						'--hostname',
+						'github.com',
+						'graphql',
+						'-f',
+						`query=${ENQUEUE}`,
+						'-f',
+						`id=${id}`,
+						'-f',
+						`head=${target.headSha}`,
+					]
+				: [
+						'pr',
+						'merge',
+						String(target.identity.number),
+						'--repo',
+						`github.com/${target.identity.repository.owner}/${target.identity.repository.name}`,
+						`--${action.method}`,
+						'--match-head-commit',
+						target.headSha,
+					];
 		const result = await execFileNoThrow(gh, args, request.worktreePath, {
 			timeout: 30000,
 			env: getExpandedEnv(),
 		});
-		// A GraphQL error is a definite rejection only if the response contains no partial data.
-		if (result.stdout) {
+		if (action.kind === 'enqueue' && result.stdout) {
 			const response = JSON.parse(result.stdout);
 			rejected = Array.isArray(response.errors) && response.errors.length > 0 && !response.data;
+		} else if (action.kind === 'merge') {
+			// Numeric nonzero exits are CLI failures; timeout and lost responses remain ambiguous.
+			rejected = typeof result.exitCode === 'number' && result.exitCode !== 0;
 		}
 	} catch {
 		// A timeout, lost response, or malformed reply can still have reached GitHub.

@@ -71,12 +71,33 @@ beforeEach(() => {
 });
 
 describe('worktree PR guarded merge', () => {
-	it('refuses direct merge while atomic no-bypass enforcement is unavailable', async () => {
+	it('merges the explicit repository with the expected head and normal policy', async () => {
+		vi.mocked(preflightWorktreePullRequestMerge)
+			.mockResolvedValueOnce(ready)
+			.mockResolvedValueOnce({ status: 'merged', pullRequest: pr });
 		expect(await mergeWorktreePullRequest(request)).toMatchObject({
-			status: 'blocked',
-			blockers: [{ code: 'protection' }],
+			status: 'merged',
+			observed: 'after-attempt',
 		});
-		expect(execFileNoThrow).not.toHaveBeenCalled();
+		const args = vi.mocked(execFileNoThrow).mock.calls[1][1];
+		expect(args).toEqual([
+			'pr',
+			'merge',
+			'3',
+			'--repo',
+			'github.com/upstream/project',
+			'--squash',
+			'--match-head-commit',
+			sha,
+		]);
+		expect(args.join(' ')).not.toMatch(/admin|auto|delete-branch/);
+	});
+	it('reconciles a direct merge timeout and leaves an unconfirmed outcome unknown', async () => {
+		vi.mocked(execFileNoThrow)
+			.mockReset()
+			.mockResolvedValueOnce(reply(node()))
+			.mockResolvedValueOnce({ stdout: '', stderr: 'timeout', exitCode: 'ETIMEDOUT' });
+		expect(await mergeWorktreePullRequest(request)).toMatchObject({ status: 'unknown' });
 	});
 	it('enqueues with the expected head and does not report queueing as merged', async () => {
 		const queued = { status: 'queued' as const, pullRequest: { ...pr, state: 'OPEN' as const } };
