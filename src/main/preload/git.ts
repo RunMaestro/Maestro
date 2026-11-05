@@ -11,6 +11,11 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	RetirementPreparationResult,
+	RetirementRendererCommand,
+	RetirementRendererReply,
+} from '../../shared/worktreeRetirement';
+import type {
 	WorktreePullRequestDiscoveryRequest,
 	WorktreePullRequestDiscoveryResult,
 	WorktreePullRequestSnapshot,
@@ -465,9 +470,38 @@ export function createGitApi() {
 				sshRemoteId
 			),
 
-		/**
-		 * Create a GitHub PR
-		 */
+		/** Prepare a desktop renderer reservation; this does not remove the checkout. */
+		prepareWorktreeRetirement: (sessionId: string): Promise<RetirementPreparationResult> =>
+			ipcRenderer.invoke('git:prepareWorktreeRetirement', sessionId),
+		abortWorktreeRetirement: (token: string): Promise<boolean> =>
+			ipcRenderer.invoke('git:abortWorktreeRetirement', token),
+		onRetirementRendererRequest: (
+			handler: (command: RetirementRendererCommand) => RetirementRendererReply
+		) => {
+			const listener = (
+				_event: Electron.IpcRendererEvent,
+				command: RetirementRendererCommand,
+				channel: string
+			) => {
+				// Reply channels are minted by Main and restricted to this protocol.
+				if (!channel.startsWith('git:retirementRendererRequest:response:')) return;
+				let reply: RetirementRendererReply;
+				try {
+					reply = handler(command);
+				} catch {
+					reply = { ok: false, reason: 'renderer preparation failed' };
+				}
+				ipcRenderer.send(channel, reply);
+			};
+			ipcRenderer.on('git:retirementRendererRequest', listener);
+			return () => ipcRenderer.removeListener('git:retirementRendererRequest', listener);
+		},
+		onRetirementRendererRelease: (handler: (sessionId: string, token: string) => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, sessionId: string, token: string) =>
+				handler(sessionId, token);
+			ipcRenderer.on('git:retirementRendererRelease', listener);
+			return () => ipcRenderer.removeListener('git:retirementRendererRelease', listener);
+		},
 		discoverWorktreePullRequest: (
 			request: WorktreePullRequestDiscoveryRequest
 		): Promise<WorktreePullRequestDiscoveryResult> =>

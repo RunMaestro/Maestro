@@ -4,6 +4,7 @@ import { registerBranchHandlers } from './branch';
 import { registerStreamingHandlers } from './streaming';
 import { registerWorktreeHandlers } from './worktree';
 import { registerWorktreeWatchHandlers } from './worktreeWatch';
+import { registerRetirementHandlers } from './retirement';
 import { registerGithubHandlers } from './github';
 import { LOG_CONTEXT, GitHandlerDependencies } from './shared';
 
@@ -30,6 +31,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	registerWorktreeHandlers(deps);
 	registerWorktreeWatchHandlers(deps);
 	registerGithubHandlers();
+	registerRetirementHandlers();
 
 	logger.debug(`${LOG_CONTEXT} Git IPC handlers registered`);
 }

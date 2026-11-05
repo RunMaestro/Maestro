@@ -1,0 +1,15 @@
+/** Internal desktop-only request/reply protocol; paths always originate in Main. */
+export interface RendererRetirementRequest {
+	sessionId: string;
+	parentSessionId: string;
+	path: string;
+	parentPath: string;
+	token: string;
+}
+export type RetirementRendererCommand =
+	| { kind: 'prepare'; request: RendererRetirementRequest }
+	| { kind: 'check'; sessionId: string; token: string; revision: number };
+export type RetirementRendererReply =
+	| { ok: true; token: string; revision: number }
+	| { ok: false; reason: string };
+export type RetirementPreparationResult = RetirementRendererReply;

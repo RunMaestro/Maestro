@@ -30,6 +30,7 @@ The `window.maestro` API exposes the following namespaces:
 
 - `git` - Status, diff, isRepo, numstat, branches, tags, info
 - `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeRunSetup, worktreeCheckout
+- `git` - Desktop retirement preparation: prepareWorktreeRetirement(sessionId), abortWorktreeRetirement(token), onRetirementRendererRequest/onRetirementRendererRelease. Main binds opaque wire IDs to trusted registration and sole-primary lifetime; renderer acknowledgements carry the freeze revision. Web access is denied; removal remains unavailable.
 - `git` - PR creation: createPR, checkGhCli, getDefaultBranch
 - `git` - Remote sync: runCommand/cancelCommand/onCommandOutput (streaming pull/push/fetch), checkoutBranch
 

@@ -369,6 +369,11 @@ export class WorktreeRetirement {
 		return this.entries.get(root)?.state;
 	}
 
+	/** Token lifetime is independent of a later reservation on the same path. */
+	tokenState(token: RetirementToken): RetirementState | undefined {
+		return this.owned(token)?.state;
+	}
+
 	private owned(token: RetirementToken): Entry | undefined {
 		return [...this.entries.values()].find((entry) => entry.token === token);
 	}

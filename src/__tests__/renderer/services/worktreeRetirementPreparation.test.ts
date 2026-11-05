@@ -1,5 +1,8 @@
+import { useWorktreeRetirementHost } from '../../../renderer/hooks/worktree/useWorktreeRetirementHost';
+import { useLayerStack } from '../../../renderer/hooks/ui/useLayerStack';
+import { MODAL_PRIORITIES } from '../../../renderer/constants/modalPriorities';
 import { act, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockSession } from '../../helpers/mockSession';
 import type { AITab, BatchRunState, FilePreviewTab, QueuedItem } from '../../../renderer/types';
 import { useSessionStore, updateAiTab } from '../../../renderer/stores/sessionStore';
@@ -232,5 +235,148 @@ describe('authoritative retirement store admission', () => {
 		unmount();
 		act(() => delayedOpen({ draft: 'read completed after unmount' }));
 		prepare();
+	});
+});
+
+describe('layer stack retirement ownership', () => {
+	const layer = {
+		type: 'modal' as const,
+		priority: 100,
+		blocksLowerLayers: true,
+		capturesFocus: true,
+		focusTrap: 'strict' as const,
+		onEscape: vi.fn(),
+	};
+	it('registers local overlay ownership synchronously before React commits and releases on unmount', () => {
+		const { result, unmount } = renderHook(() => useLayerStack());
+		act(() => {
+			result.current.registerLayer(layer);
+			expect(prepareRendererRetirement(request)).toMatchObject({
+				ok: false,
+				reason: 'open editing dialog',
+			});
+		});
+		unmount();
+		expect(prepareRendererRetirement(request).ok).toBe(true);
+	});
+	it('refuses a new layer while frozen before touching stack state', () => {
+		const { result, unmount } = renderHook(() => useLayerStack());
+		prepare();
+		expect(() => result.current.registerLayer(layer)).toThrow('frozen');
+		expect(result.current.getLayers()).toEqual([]);
+		unmount();
+	});
+	it('allows the lifecycle surface and drops an existing blocker synchronously on unregister', () => {
+		const { result, unmount } = renderHook(() => useLayerStack());
+		act(() => {
+			const id = result.current.registerLayer(layer);
+			result.current.unregisterLayer(id);
+			result.current.registerLayer({ ...layer, priority: MODAL_PRIORITIES.WORKTREE_PR_DETAILS });
+			expect(prepareRendererRetirement(request).ok).toBe(true);
+		});
+		unmount();
+	});
+});
+
+describe('app-owned retirement IPC listener', () => {
+	it('prepares live stores, validates revisions and releases only on Main instruction', async () => {
+		const original = window.maestro.git;
+		let handler!: (
+			command: import('../../../shared/worktreeRetirement').RetirementRendererCommand
+		) => import('../../../shared/worktreeRetirement').RetirementRendererReply;
+		let release!: (sessionId: string, token: string) => void;
+		const stopRequest = vi.fn();
+		const stopRelease = vi.fn();
+		window.maestro.git = {
+			...original,
+			onRetirementRendererRequest: (callback) => {
+				handler = callback;
+				return stopRequest;
+			},
+			onRetirementRendererRelease: (callback) => {
+				release = callback;
+				return stopRelease;
+			},
+			abortWorktreeRetirement: vi.fn(async () => true),
+		};
+		try {
+			const { unmount } = renderHook(() => useWorktreeRetirementHost());
+			const reply = handler({ kind: 'prepare', request });
+			expect(reply).toMatchObject({ ok: true });
+			if (!reply.ok) throw new Error(reply.reason);
+			expect(
+				handler({ kind: 'check', sessionId: 'child', token: 'opaque', revision: reply.revision })
+			).toEqual(reply);
+			expect(
+				handler({
+					kind: 'check',
+					sessionId: 'child',
+					token: 'opaque',
+					revision: reply.revision + 1,
+				}).ok
+			).toBe(false);
+			release('child', 'wrong');
+			expect(() => useSessionStore.getState().updateSession('child', { name: 'bad' })).toThrow();
+			release('child', 'opaque');
+			useSessionStore.getState().updateSession('child', { name: 'allowed' });
+			await act(async () => unmount());
+			expect(stopRequest).toHaveBeenCalledOnce();
+			expect(stopRelease).toHaveBeenCalledOnce();
+		} finally {
+			window.maestro.git = original;
+		}
+	});
+	it.each([true, false])('unmount thaws only after Main accepts abort (%s)', async (accepted) => {
+		const original = window.maestro.git;
+		let handler!: (
+			command: import('../../../shared/worktreeRetirement').RetirementRendererCommand
+		) => import('../../../shared/worktreeRetirement').RetirementRendererReply;
+		let answer!: (value: boolean) => void;
+		let release!: (sessionId: string, token: string) => void;
+		const stopRelease = vi.fn();
+		const abort = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					answer = resolve;
+				})
+		);
+		window.maestro.git = {
+			...original,
+			onRetirementRendererRequest: (callback) => {
+				handler = callback;
+				return vi.fn();
+			},
+			onRetirementRendererRelease: (callback) => {
+				release = callback;
+				return stopRelease;
+			},
+			abortWorktreeRetirement: abort,
+		};
+		try {
+			const { unmount } = renderHook(() => useWorktreeRetirementHost());
+			expect(handler({ kind: 'prepare', request }).ok).toBe(true);
+			unmount();
+			expect(abort).toHaveBeenCalledWith('opaque');
+			expect(() =>
+				useSessionStore.getState().updateSession('child', { name: 'pending' })
+			).toThrow();
+			await act(async () => answer(accepted));
+			if (accepted) useSessionStore.getState().updateSession('child', { name: 'allowed' });
+			else
+				expect(() =>
+					useSessionStore.getState().updateSession('child', { name: 'removing' })
+				).toThrow();
+			if (accepted) expect(stopRelease).toHaveBeenCalledOnce();
+			else {
+				expect(stopRelease).not.toHaveBeenCalled();
+				// A completed removal can still deliver its matching release
+				// after React has unmounted the preparation owner.
+				release('child', 'opaque');
+				expect(stopRelease).toHaveBeenCalledOnce();
+				useSessionStore.getState().updateSession('child', { name: 'reconciled' });
+			}
+		} finally {
+			window.maestro.git = original;
+		}
 	});
 });

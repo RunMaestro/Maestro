@@ -1,0 +1,121 @@
+import { randomUUID } from 'crypto';
+import type {
+	RetirementPreparationResult,
+	RetirementRendererCommand,
+	RetirementRendererReply,
+} from '../../shared/worktreeRetirement';
+import type { ManagedCheckout, RetirementToken, WorktreeRetirement } from './worktreeRetirement';
+
+/** Adapter owns the actual IPC sender and its primary-window lifetime. */
+export interface RetirementRenderer {
+	identity: object;
+	request(command: RetirementRendererCommand): Promise<RetirementRendererReply>;
+	release(sessionId: string, token: string): void;
+	onInvalidated(callback: () => void): () => void;
+}
+type Prepared = {
+	sessionId: string;
+	renderer: RetirementRenderer;
+	token: RetirementToken;
+	expected: Readonly<ManagedCheckout>;
+	revision?: number;
+	timer?: ReturnType<typeof setTimeout>;
+	detach?: () => void;
+};
+
+/** Opaque wire ids never substitute for Main-owned reservation objects.
+ * A lease can abort preparation only; removing remains fenced until settlement.
+ */
+export class WorktreeRetirementHost {
+	private readonly prepared = new Map<string, Prepared>();
+	constructor(
+		private readonly fence: WorktreeRetirement,
+		private readonly leaseMs = 30000
+	) {}
+
+	async prepare(
+		sessionId: string,
+		renderer: RetirementRenderer
+	): Promise<RetirementPreparationResult> {
+		if (typeof sessionId !== 'string' || !sessionId)
+			return { ok: false, reason: 'session id required' };
+		const result = await this.fence.prepareRegisteredForRenderer(sessionId, renderer.identity);
+		if (!result.ok) return result;
+		const ownership = result.expected.ownership;
+		if (!ownership) {
+			this.fence.abort(result.token);
+			return { ok: false, reason: 'trusted ownership required' };
+		}
+		const id = randomUUID();
+		const entry: Prepared = { sessionId, renderer, token: result.token, expected: result.expected };
+		this.prepared.set(id, entry);
+		try {
+			entry.timer = setTimeout(() => this.abort(id, renderer.identity), this.leaseMs);
+			entry.detach = renderer.onInvalidated(() => this.abort(id, renderer.identity));
+
+			const reply = await renderer.request({
+				kind: 'prepare',
+				request: {
+					sessionId,
+					parentSessionId: ownership.parentSessionId,
+					path: result.expected.path,
+					parentPath: ownership.parentPath,
+					token: id,
+				},
+			});
+			if (!reply.ok) {
+				this.abort(id, renderer.identity);
+				return reply;
+			}
+			if (reply.token !== id || !Number.isSafeInteger(reply.revision) || reply.revision < 1)
+				throw new Error('renderer preparation identity mismatch');
+			entry.revision = reply.revision;
+			const verified = await this.validate(id, renderer.identity);
+			if (!verified.ok) throw new Error(verified.reason);
+			return { ok: true, token: id, revision: reply.revision };
+		} catch (error) {
+			this.abort(id, renderer.identity);
+			return { ok: false, reason: error instanceof Error ? error.message : 'renderer unavailable' };
+		}
+	}
+
+	/** Used by the future removal transaction, never exposed as an IPC token getter.
+	 * Validate after awaits; owner loss or expiration must win over a late reply.
+	 */
+	async validate(id: string, renderer: object) {
+		const entry = this.prepared.get(id);
+		if (!entry || entry.renderer.identity !== renderer || entry.revision === undefined)
+			return { ok: false as const, reason: 'unknown renderer preparation' };
+		const reply = await entry.renderer.request({
+			kind: 'check',
+			sessionId: entry.sessionId,
+			token: id,
+			revision: entry.revision,
+		});
+		if (!reply.ok || reply.token !== id || reply.revision !== entry.revision)
+			return { ok: false as const, reason: 'renderer revision changed' };
+		const verified = await this.fence.revalidateRegistered(entry.token);
+		if (!verified.ok) return verified;
+		if (this.prepared.get(id) !== entry)
+			return { ok: false as const, reason: 'preparation expired or owner lost' };
+		return { ok: true as const, token: entry.token, expected: entry.expected };
+	}
+
+	abort(id: string, renderer: object): boolean {
+		const entry = this.prepared.get(id);
+		if (!entry || entry.renderer.identity !== renderer) return false;
+		// Owner invalidation may already have aborted Main's fence. Never thaw
+		// an active removal, even when its renderer disappears or lease expires.
+		if (!this.fence.abort(entry.token) && this.fence.tokenState(entry.token) !== undefined)
+			return false;
+		this.prepared.delete(id);
+		clearTimeout(entry.timer);
+		entry.detach?.();
+		try {
+			entry.renderer.release(entry.sessionId, id);
+		} catch {
+			/* renderer already gone */
+		}
+		return true;
+	}
+}

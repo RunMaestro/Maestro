@@ -1,3 +1,4 @@
+import { useWorktreeRetirementHost } from './hooks/worktree/useWorktreeRetirementHost';
 import React, {
 	useState,
 	useEffect,
@@ -262,6 +263,7 @@ import { useFileExplorerStore } from './stores/fileExplorerStore';
 
 /** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
+	useWorktreeRetirementHost();
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
 

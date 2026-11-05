@@ -6,12 +6,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
+const mockSend = vi.fn();
 const mockOn = vi.fn();
 const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		send: (...args: unknown[]) => mockSend(...args),
 		on: (...args: unknown[]) => mockOn(...args),
 		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
@@ -594,6 +596,45 @@ describe('Git Preload API', () => {
 				'remote-1',
 				'/remote/cwd'
 			);
+		});
+	});
+});
+
+describe('retirement desktop preload protocol', () => {
+	beforeEach(() => vi.clearAllMocks());
+	it('sends only a session id and opaque id for prepare/abort', async () => {
+		const api = createGitApi();
+		await api.prepareWorktreeRetirement('child');
+		await api.abortWorktreeRetirement('opaque');
+		expect(mockInvoke.mock.calls).toEqual([
+			['git:prepareWorktreeRetirement', 'child'],
+			['git:abortWorktreeRetirement', 'opaque'],
+		]);
+	});
+	it('restricts replies to the Main-minted protocol channel and unsubscribes listeners', () => {
+		const api = createGitApi();
+		const handler = vi.fn(() => ({ ok: false as const, reason: 'editor open' }));
+		const stop = api.onRetirementRendererRequest(handler);
+		const listener = mockOn.mock.calls[0][1];
+		listener({}, {}, 'settings:set');
+		expect(handler).not.toHaveBeenCalled();
+		expect(mockSend).not.toHaveBeenCalled();
+		listener({}, {}, 'git:retirementRendererRequest:response:unique');
+		expect(mockSend).toHaveBeenCalledWith('git:retirementRendererRequest:response:unique', {
+			ok: false,
+			reason: 'editor open',
+		});
+		stop();
+		expect(mockRemoveListener).toHaveBeenCalledWith('git:retirementRendererRequest', listener);
+	});
+	it('reports preparation failure when the authoritative renderer handler throws', () => {
+		createGitApi().onRetirementRendererRequest(() => {
+			throw new Error('frozen');
+		});
+		mockOn.mock.calls[0][1]({}, {}, 'git:retirementRendererRequest:response:unique');
+		expect(mockSend).toHaveBeenCalledWith('git:retirementRendererRequest:response:unique', {
+			ok: false,
+			reason: 'renderer preparation failed',
 		});
 	});
 });

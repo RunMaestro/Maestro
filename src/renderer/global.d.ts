@@ -1784,6 +1784,18 @@ interface MaestroAPI {
 		refreshWorktreePullRequest: (
 			request: WorktreePullRequestDiscoveryRequest
 		) => Promise<WorktreePullRequestSnapshot>;
+		prepareWorktreeRetirement: (
+			sessionId: string
+		) => Promise<import('../shared/worktreeRetirement').RetirementPreparationResult>;
+		abortWorktreeRetirement: (token: string) => Promise<boolean>;
+		onRetirementRendererRequest: (
+			handler: (
+				command: import('../shared/worktreeRetirement').RetirementRendererCommand
+			) => import('../shared/worktreeRetirement').RetirementRendererReply
+		) => () => void;
+		onRetirementRendererRelease: (
+			handler: (sessionId: string, token: string) => void
+		) => () => void;
 		preflightWorktreePullRequestMerge: (
 			request: WorktreePullRequestMergePreflightRequest
 		) => Promise<WorktreePullRequestMergePreflight>;

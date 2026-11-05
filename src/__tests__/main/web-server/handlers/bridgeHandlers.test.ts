@@ -1012,3 +1012,13 @@ describe('Pianola memory over the bridge', () => {
 		}
 	});
 });
+
+it.each([
+	'git:prepareWorktreeRetirement',
+	'git:abortWorktreeRetirement',
+	'git:retirementRendererRequest',
+	'git:retirementRendererRelease',
+])('keeps retirement control and acknowledgement desktop-only: %s', (channel) => {
+	expect(isRemoteMethodAllowed(channel)).toBe(false);
+	expect(isRemoteEventAllowed(channel)).toBe(false);
+});

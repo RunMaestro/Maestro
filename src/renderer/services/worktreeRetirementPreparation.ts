@@ -8,15 +8,7 @@ import { retirementSessionBlocker } from './worktreeRetirementInspection';
 import { WorktreeRetirementFreeze } from './worktreeRetirementFreeze';
 import { hasRetirementDialogs, registerRetirementStoreGuard } from './worktreeRetirementStoreGuard';
 
-/** Main supplies these verified identities; no arbitrary renderer path authorizes removal. */
-export interface RendererRetirementRequest {
-	sessionId: string;
-	parentSessionId: string;
-	path: string;
-	parentPath: string;
-	token: string;
-}
-
+import type { RendererRetirementRequest } from '../../shared/worktreeRetirement';
 const freeze = new WorktreeRetirementFreeze();
 const preparations = new Map<string, { token: string; release: () => void }>();
 function fail(reason: string): never {

@@ -1,3 +1,5 @@
+import { setRetirementDialogOpen } from '../../services/worktreeRetirementStoreGuard';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 /**
  * Layer Stack Management Hook
  *
@@ -134,6 +136,15 @@ export function useLayerStack(): LayerStackAPI {
 
 	// Ref map to store handler functions without triggering re-renders
 	// Key: layer id, Value: current Escape handler
+	const retirementLayers = useRef<Map<string, object>>(new Map());
+	useEffect(
+		() => () => {
+			for (const owner of retirementLayers.current.values()) setRetirementDialogOpen(owner, false);
+			retirementLayers.current.clear();
+		},
+		[]
+	);
+
 	const handlerRefs = useRef<Map<string, () => void>>(new Map());
 
 	// What had keyboard focus when each layer opened.
@@ -155,6 +166,13 @@ export function useLayerStack(): LayerStackAPI {
 	const registerLayer = useCallback((layer: LayerInput): string => {
 		const id = generateId();
 		const newLayer: Layer = { ...layer, id } as Layer;
+		// All UI-local editor/overlay layers are conservative blockers. The
+		// lifecycle details surface owns the preparation UI itself.
+		if (layer.priority !== MODAL_PRIORITIES.WORKTREE_PR_DETAILS) {
+			const owner = {};
+			setRetirementDialogOpen(owner, true);
+			retirementLayers.current.set(id, owner);
+		}
 
 		// Store the initial handler in the ref map
 		handlerRefs.current.set(id, newLayer.onEscape);
@@ -192,6 +210,9 @@ export function useLayerStack(): LayerStackAPI {
 	 * Unregister a layer from the stack
 	 */
 	const unregisterLayer = useCallback((id: string): void => {
+		const retirementOwner = retirementLayers.current.get(id);
+		if (retirementOwner) setRetirementDialogOpen(retirementOwner, false);
+		retirementLayers.current.delete(id);
 		// Remove from handler refs
 		handlerRefs.current.delete(id);
 
@@ -360,6 +381,9 @@ export function useLayerStack(): LayerStackAPI {
 					closeAll: () => {
 						const count = layers.length;
 						setLayers([]);
+						for (const owner of retirementLayers.current.values())
+							setRetirementDialogOpen(owner, false);
+						retirementLayers.current.clear();
 						handlerRefs.current.clear();
 						logger.info(`Cleared ${count} layers from stack`);
 					},

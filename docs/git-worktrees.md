@@ -229,9 +229,12 @@ fences child and parent session updates, queued work, Auto Run starts, composer
 drafts and editor entry points before inspecting live state. Saved idle chat is
 preserved. The first supported cleanup path will require file tabs and editing
 dialogs to be closed; renderer paths alone cannot exclude symlink aliases into
-the checkout. Preparation does not authorize removal: Main's transaction,
-acknowledgement binding, persistence reconciliation and cleanup policy are not
-yet connected.
+the checkout. Desktop preparation now binds an opaque ID and renderer revision
+to Main's trusted reservation and sole primary window. Timeout or renderer loss
+aborts preparation; an in-flight removal stays fenced. The layer stack also
+blocks preparation while other overlays are open. Preparation does not authorize
+removal: the cleanup transaction, persistence reconciliation and cleanup policy
+are not yet connected.
 
 ### Removing Worktrees
 
