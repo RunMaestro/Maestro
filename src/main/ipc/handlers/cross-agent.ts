@@ -219,7 +219,8 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					release();
 					throw error;
 				}
-			}
+			},
+			beginGlobalWorktreeActivity
 		)
 	);
 
@@ -231,28 +232,24 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 				sourceSessionId: string;
 				sourceTabId?: string;
 			}): Promise<{ canceled: number }> => {
-				const release = beginGlobalWorktreeActivity();
-				try {
-					// Stop in the source agent must reach every agent its turn fanned out to,
-					// not just the tab process. Addressed by source agent (never by request
-					// id) because the renderer only learns a request id once `send` resolves,
-					// and a Stop pressed before that would otherwise miss a live consult.
-					// A Stop aimed at one tab narrows it to that tab's consults.
-					const sourceTabId =
-						typeof payload.sourceTabId === 'string' ? payload.sourceTabId : undefined;
-					const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId, sourceTabId);
-					if (canceled > 0) {
-						logger.info(`${LOG_CONTEXT} Stopped in-flight consults`, LOG_CONTEXT, {
-							sourceSessionId: payload.sourceSessionId,
-							sourceTabId,
-							canceled,
-						});
-					}
-					return { canceled };
-				} finally {
-					release();
+				// Stop in the source agent must reach every agent its turn fanned out to,
+				// not just the tab process. Addressed by source agent (never by request
+				// id) because the renderer only learns a request id once `send` resolves,
+				// and a Stop pressed before that would otherwise miss a live consult.
+				// A Stop aimed at one tab narrows it to that tab's consults.
+				const sourceTabId =
+					typeof payload.sourceTabId === 'string' ? payload.sourceTabId : undefined;
+				const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId, sourceTabId);
+				if (canceled > 0) {
+					logger.info(`${LOG_CONTEXT} Stopped in-flight consults`, LOG_CONTEXT, {
+						sourceSessionId: payload.sourceSessionId,
+						sourceTabId,
+						canceled,
+					});
 				}
-			}
+				return { canceled };
+			},
+			beginGlobalWorktreeActivity
 		)
 	);
 }

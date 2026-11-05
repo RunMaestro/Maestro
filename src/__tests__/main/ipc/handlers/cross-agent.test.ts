@@ -185,10 +185,125 @@ describe('cross-agent IPC activity', () => {
 				expect(generateUUID).not.toHaveBeenCalled();
 				expect(startCrossAgentRequest).not.toHaveBeenCalled();
 				expect(cancelCrossAgentRequestsForSource).not.toHaveBeenCalled();
+				expect(logger.error).not.toHaveBeenCalled();
+				expect(logger.info).not.toHaveBeenCalled();
 				if (hold.status === 'reserved-partially') hold.release();
 			}
 		}
 	);
+	it.each(['send', 'cancel'] as const)(
+		'keeps %s outer serialization and logger effects admitted',
+		async (channel) => {
+			const failure = new Error('request failed');
+			const serialized = vi.fn(() => {
+				expect(active).toBe(1);
+				return 'detail';
+			});
+			Object.defineProperty(failure, 'detail', { enumerable: true, get: serialized });
+			const fail = () => {
+				throw failure;
+			};
+			if (channel === 'send') vi.mocked(deps.getProcessManager).mockImplementation(fail);
+			else vi.mocked(cancelCrossAgentRequestsForSource).mockImplementation(fail);
+			vi.mocked(logger.error).mockImplementation(() => expect(active).toBe(1));
+			await expect(invoke(channel)).rejects.toBe(failure);
+			expect(serialized).toHaveBeenCalledTimes(1);
+			expect(logger.error).toHaveBeenCalledWith(
+				`${channel} error`,
+				'[CrossAgent]',
+				expect.objectContaining({ detail: 'detail', message: 'request failed' })
+			);
+			await idle();
+		}
+	);
+	it.each(['send', 'cancel'] as const)(
+		'releases %s outer admission when logger recovery throws',
+		async (channel) => {
+			const recovery = new Error('logging failed');
+			const fail = () => {
+				throw new Error('original');
+			};
+			if (channel === 'send') vi.mocked(deps.getProcessManager).mockImplementation(fail);
+			else vi.mocked(cancelCrossAgentRequestsForSource).mockImplementation(fail);
+			vi.mocked(logger.error).mockImplementation(() => {
+				expect(active).toBe(1);
+				throw recovery;
+			});
+			await expect(invoke(channel)).rejects.toBe(recovery);
+			await idle();
+		}
+	);
+	it.each(['send', 'cancel'] as const)(
+		'releases %s outer admission when serialization recovery throws',
+		async (channel) => {
+			const recovery = new Error('serialization failed');
+			const failure = new Error('original');
+			const serialized = vi.fn(() => {
+				expect(active).toBe(1);
+				throw recovery;
+			});
+			Object.defineProperty(failure, 'detail', { enumerable: true, get: serialized });
+			const fail = () => {
+				throw failure;
+			};
+			if (channel === 'send') vi.mocked(deps.getProcessManager).mockImplementation(fail);
+			else vi.mocked(cancelCrossAgentRequestsForSource).mockImplementation(fail);
+			await expect(invoke(channel)).rejects.toBe(recovery);
+			expect(serialized).toHaveBeenCalledTimes(1);
+			expect(logger.error).not.toHaveBeenCalled();
+			await idle();
+		}
+	);
+	it.each(['send', 'cancel'] as const)(
+		'preserves a reentrant successor started by %s outer diagnostics',
+		async (channel) => {
+			const failure = new Error('original');
+			const fail = () => {
+				throw failure;
+			};
+			if (channel === 'send') vi.mocked(deps.getProcessManager).mockImplementationOnce(fail);
+			else vi.mocked(cancelCrossAgentRequestsForSource).mockImplementationOnce(fail);
+			let successor: Promise<unknown> | undefined;
+			let check: Promise<void> | undefined;
+			vi.mocked(logger.error).mockImplementationOnce(() => {
+				expect(active).toBe(1);
+				successor = invoke('send');
+				check = busy();
+			});
+			await expect(invoke(channel)).rejects.toBe(failure);
+			await expect(successor).resolves.toEqual({ requestId: 'request' });
+			await check;
+			expect(active).toBe(1);
+			await busy();
+			dispatches[0].resolve();
+			await dispatches[0].done;
+			await idle();
+		}
+	);
+	it('keeps concurrent wrapper diagnostics independent of detached and native holds', async () => {
+		await invoke('send');
+		const releaseNative = activity.beginGlobalWorktreeActivity();
+		releases.push(releaseNative);
+		const failure = new Error('cancel failed');
+		vi.mocked(cancelCrossAgentRequestsForSource).mockImplementation(() => {
+			throw failure;
+		});
+		const snapshots: number[] = [];
+		vi.mocked(logger.error).mockImplementation(() => {
+			snapshots.push(active);
+		});
+		const first = invoke('cancel');
+		const second = invoke('cancel');
+		await expect(first).rejects.toBe(failure);
+		await expect(second).rejects.toBe(failure);
+		expect(snapshots).toEqual([4, 3]);
+		expect(active).toBe(2);
+		dispatches[0].resolve();
+		await dispatches[0].done;
+		await busy();
+		releaseNative();
+		await idle();
+	});
 	it('admits before preparation and holds beyond the immediate request-id reply', async () => {
 		const observed = vi.fn(() => expect(active).toBeGreaterThan(0));
 		vi.mocked(deps.getProcessManager).mockImplementation(() => {

@@ -216,20 +216,26 @@ export function withErrorLogging<TArgs extends unknown[], TResult>(
  *
  * @param options - Handler options including log context and operation name
  * @param handler - Async handler function that receives IPC arguments (without event)
+ * @param beginActivity - Optional synchronous admission, held through error logging.
+ * Admission failures bypass handler and diagnostics; detached work owns its lifetime.
  * @returns Wrapped handler function compatible with ipcMain.handle
  */
 export function withIpcErrorLogging<TArgs extends unknown[], TResult>(
 	options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
-	handler: (...args: TArgs) => Promise<TResult>
+	handler: (...args: TArgs) => Promise<TResult>,
+	beginActivity?: () => () => void
 ): (_event: unknown, ...args: TArgs) => Promise<TResult> {
 	const { context, operation } = options;
 
 	return async (_event: unknown, ...args: TArgs): Promise<TResult> => {
+		const release = beginActivity?.();
 		try {
 			return await handler(...args);
 		} catch (error) {
 			logger.error(`${operation} error`, context, serializeError(error));
 			throw error;
+		} finally {
+			release?.();
 		}
 	};
 }
