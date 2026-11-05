@@ -24,7 +24,7 @@ type Hold = { paths: string[] | null };
 
 /** Canonicalization deliberately fails closed on missing, inaccessible or relative paths. */
 function canonical(p: string): string | null {
-	if (!path.isAbsolute(p)) return null;
+	if (typeof p !== 'string' || !path.isAbsolute(p)) return null;
 	try {
 		return foldPathCase(fs.realpathSync.native(p));
 	} catch {
@@ -39,6 +39,17 @@ function overlaps(a: string, b: string): boolean {
 export class WorktreeRetirement {
 	private readonly entries = new Map<string, Entry>();
 	private readonly holds = new Set<Hold>();
+	private readonly unsupportedExecutions = new Set<string | null>();
+
+	/**
+	 * Native transports have no concrete child/PTY completion guarantee here.
+	 * A synthetic exit or removal from a session map cannot prove quiescence.
+	 * Keep that checkout outside the supported CLI-only path for this Main lifetime,
+	 * including after re-registration or fallback to CLI. Never clear on kill().
+	 */
+	excludeUnsupportedExecution(checkoutPath: string): void {
+		this.unsupportedExecutions.add(canonical(checkoutPath));
+	}
 
 	/** Populate only from trusted, verified managed registrations, never renderer input. */
 	register(checkout: ManagedCheckout): boolean {
@@ -81,6 +92,12 @@ export class WorktreeRetirement {
 		if (entry.state !== 'available') return { ok: false, reason: `worktree is ${entry.state}` };
 		if (entry.identity.head !== checkout.head || entry.identity.generation !== checkout.generation)
 			return { ok: false, reason: 'checkout identity changed' };
+		if (
+			[...this.unsupportedExecutions].some(
+				(unsupported) => !unsupported || overlaps(root, unsupported)
+			)
+		)
+			return { ok: false, reason: 'unsupported native execution: CLI-only retirement unavailable' };
 		if (
 			[...this.entries].some(
 				([otherRoot, other]) =>

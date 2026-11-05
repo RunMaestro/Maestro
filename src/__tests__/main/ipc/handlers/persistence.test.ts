@@ -10,6 +10,8 @@ import { ipcMain, app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { worktreeRetirement, type RetirementToken } from '../../../../main/git/worktreeRetirement';
 import {
 	configureImageStore,
 	__resetImageStoreCacheForTests,
@@ -193,6 +195,168 @@ describe('persistence IPC handlers', () => {
 
 	afterEach(() => {
 		handlers.clear();
+	});
+
+	describe('retirement admission for serialized session persistence', () => {
+		let dir: string;
+		let target: { path: string; head: string; generation: number };
+		let reservation: RetirementToken | undefined;
+		let stored: StoredSession[];
+		let other: string;
+		beforeEach(() => {
+			dir = mkdtempSync(path.join(process.cwd(), '.persistence-retirement-test-'));
+			target = { path: path.join(dir, 'checkout'), head: 'saved-head', generation: 1 };
+			other = path.join(dir, 'other');
+			mkdirSync(target.path);
+			mkdirSync(other);
+			worktreeRetirement.register(target);
+			stored = [{ id: 'target', cwd: target.path } as StoredSession];
+			mockSessionsStore.get.mockImplementation((key) => (key === 'sessions' ? stored : ''));
+			mockSessionsStore.set.mockImplementation((key, value) => {
+				if (key === 'sessions') stored = value;
+			});
+		});
+		afterEach(() => {
+			if (reservation) worktreeRetirement.abort(reservation);
+			reservation = undefined;
+			rmSync(dir, { recursive: true, force: true });
+		});
+		function reserve() {
+			const prepared = worktreeRetirement.prepare(target);
+			expect(prepared.ok).toBe(true);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			reservation = prepared.token;
+		}
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s rejects new registrations and moves in either direction under reservation',
+			async (channel) => {
+				reserve();
+				for (const input of [
+					[{ id: 'new', cwd: target.path }],
+					[{ id: 'target', cwd: other }],
+					[{ id: 'target', cwd: target.path }],
+				]) {
+					await expect(handlers.get(channel)!({}, input)).rejects.toThrow('preparing');
+				}
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				// Unrelated saves continue through the same serialized lane.
+				await expect(handlers.get(channel)!({}, [{ id: 'other', cwd: other }])).resolves.toBe(true);
+				expect(stored.find((session) => session.id === 'target')?.cwd).toBe(target.path);
+			}
+		);
+		it('rejects an explicit removal before backup or persistence', async () => {
+			reserve();
+			await expect(handlers.get('sessions:setMany')!({}, [], ['target'])).rejects.toThrow(
+				'preparing'
+			);
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+		});
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s holds admission from receipt through durable flush',
+			async (channel) => {
+				let finish!: () => void;
+				mockFlushSessionWrites.mockReturnValueOnce(
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					})
+				);
+				const write = handlers.get(channel)!({}, [{ ...stored[0], name: 'saved' }]);
+				// No queue microtask has run yet.
+				expect(worktreeRetirement.prepare(target).ok).toBe(false);
+				await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+				expect(worktreeRetirement.prepare(target).ok).toBe(false);
+				finish();
+				await expect(write).resolves.toBe(true);
+				reserve();
+			}
+		);
+		it('admits queued work before its predecessor settles', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const first = handlers.get('sessions:setMany')!({}, [{ id: 'other', cwd: other }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const queued = handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'queued' }]);
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			finish();
+			await Promise.all([first, queued]);
+			reserve();
+		});
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s releases admission on a failed durable write',
+			async (channel) => {
+				mockFlushSessionWrites.mockRejectedValueOnce(
+					Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+				);
+				await expect(handlers.get(channel)!({}, [{ ...stored[0], name: 'retry' }])).resolves.toBe(
+					false
+				);
+				reserve();
+			}
+		);
+		it('serializes a load migration behind pending saves', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const write = handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'new name' }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const read = handlers.get('sessions:getAll')!({});
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			finish();
+			await write;
+			await expect(read).resolves.toMatchObject([{ name: 'new name' }]);
+			reserve();
+		});
+		it('holds a load migration until its compacted document reaches disk', async () => {
+			stored[0] = {
+				...stored[0],
+				aiLogs: [
+					{
+						id: 'legacy-tool',
+						metadata: { toolState: { status: 'completed', output: 'x'.repeat(50_000) } },
+					},
+				],
+			};
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const read = handlers.get('sessions:getAll')!({});
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			finish();
+			await read;
+			reserve();
+		});
+		it('rechecks the authoritative registration after a queued write starts', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const first = handlers.get('sessions:setMany')!({}, [{ id: 'other', cwd: other }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const queued = handlers.get('sessions:setMany')!({}, [{ id: 'moved', cwd: other }]);
+			// Simulate another authoritative registrar changing this id while queued.
+			stored.push({ id: 'moved', cwd: target.path } as StoredSession);
+			reserve();
+			const rejected = expect(queued).rejects.toThrow('preparing');
+			finish();
+			await first;
+			await rejected;
+			expect(stored.find((session) => session.id === 'moved')?.cwd).toBe(target.path);
+		});
 	});
 
 	describe('sessions:getActiveSessionId', () => {
@@ -1290,8 +1454,9 @@ describe('persistence IPC handlers', () => {
 			'%s saves a rename after another client closes an unloaded tab',
 			async (channel) => {
 				const afterClose = { ...stored, aiTabs: [stored.aiTabs[0]], snoozedTabs: [] };
-				mockSessionsStore.get.mockReturnValueOnce([stored]).mockReturnValue([afterClose]);
+				mockSessionsStore.get.mockReturnValue([stored]);
 				const [thin] = await handlers.get('sessions:getBootstrap')!({} as any);
+				mockSessionsStore.get.mockReturnValue([afterClose]);
 				await handlers.get(channel)!({} as any, [
 					{
 						...thin,
@@ -1316,7 +1481,7 @@ describe('persistence IPC handlers', () => {
 		it.each(['sessions:setAll', 'sessions:setMany'])(
 			'%s ignores an obsolete deferred agent while saving another agent',
 			async (channel) => {
-				mockSessionsStore.get.mockReturnValueOnce([stored]);
+				mockSessionsStore.get.mockReturnValue([stored]);
 				const [obsolete] = await handlers.get('sessions:getBootstrap')!({} as any);
 				mockSessionsStore.get.mockReturnValue([{ ...stored, id: 'survivor' }]);
 				await handlers.get(channel)!({} as any, [

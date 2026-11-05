@@ -339,6 +339,7 @@ export class ProcessManager extends EventEmitter {
 		// resulting env-less MCP subprocess (its parent is the shared serve PID, not a
 		// tracked agent CLI), so the tools are cleanly unavailable, never mis-scoped.
 		if (this.shouldUseOpencodeServer(config)) {
+			if (!config.sshRemoteId) worktreeRetirement.excludeUnsupportedExecution(config.cwd);
 			const serveResult = this.opencodeServerSpawner.spawn(config);
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
@@ -388,6 +389,7 @@ export class ProcessManager extends EventEmitter {
 		// any CLI spawn and is routed after the injection.
 		let result: SpawnResult;
 		if (configWithCoworkingSession.harnessControlMode === 'native') {
+			if (!config.sshRemoteId) worktreeRetirement.excludeUnsupportedExecution(config.cwd);
 			if (configWithCoworkingSession.toolType === 'hermes') {
 				result = this.hermesApiSpawner.spawn(configWithCoworkingSession);
 			} else if (configWithCoworkingSession.toolType === 'claude-code') {
@@ -404,6 +406,7 @@ export class ProcessManager extends EventEmitter {
 				result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 			}
 		} else if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+			if (!config.sshRemoteId) worktreeRetirement.excludeUnsupportedExecution(config.cwd);
 			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
 		} else if (this.shouldUsePty(configWithCoworkingSession)) {
 			result = this.ptySpawner.spawn(configWithCoworkingSession);

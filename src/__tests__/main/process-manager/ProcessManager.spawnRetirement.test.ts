@@ -1,5 +1,7 @@
 import { EventEmitter, once } from 'events';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 const { spawnPty } = vi.hoisted(() => ({ spawnPty: vi.fn() }));
 vi.mock('node-pty', () => ({ spawn: spawnPty }));
@@ -35,7 +37,14 @@ class TerminalPty {
 	}
 }
 
-const checkout = { path: process.cwd(), head: 'spawn-retirement', generation: 1 };
+const cliRoot = mkdtempSync(join(process.cwd(), '.cli-retirement-test-'));
+const checkout = { path: cliRoot, head: 'spawn-retirement', generation: 1 };
+beforeAll(() => {
+	worktreeRetirement.register(checkout);
+});
+afterAll(() => {
+	rmSync(cliRoot, { recursive: true, force: true });
+});
 const config = (): ProcessConfig => ({
 	sessionId: 'retirement-terminal',
 	toolType: 'terminal',
@@ -66,6 +75,59 @@ function expectAvailable() {
 }
 
 describe('process retirement admission through concrete handle completion', () => {
+	it.each([
+		['claude-code', 'claudeSdkSpawner'],
+		['copilot-cli', 'copilotSdkSpawner'],
+		['antigravity', 'antigravitySdkSpawner'],
+		['hermes', 'hermesApiSpawner'],
+		['acp-agent', 'acpServerSpawner'],
+		['rpc-agent', 'rpcServerSpawner'],
+		['codex', 'codexAppServerSpawner'],
+		['opencode', 'opencodeServerSpawner'],
+	])(
+		'excludes %s execution even after a synthetic exit and registry deletion',
+		(toolType, spawner) => {
+			const root = mkdtempSync(join(process.cwd(), '.native-retirement-test-'));
+			const target = { ...checkout, path: root };
+			try {
+				worktreeRetirement.register(target);
+				const manager = new ProcessManager(() => true);
+				const spawn = vi
+					.spyOn(manager[spawner as 'claudeSdkSpawner'], 'spawn')
+					.mockImplementation(() => {
+						// Exclusion must be installed BEFORE a native producer starts.
+						expect(worktreeRetirement.prepare(target)).toMatchObject({
+							ok: false,
+							reason: expect.stringContaining('unsupported'),
+						});
+						return { success: true, pid: -1 };
+					});
+				manager.spawn({
+					...config(),
+					cwd: root,
+					toolType,
+					prompt: 'test',
+					...(toolType === 'opencode'
+						? {}
+						: toolType === 'codex'
+							? { codexTransport: 'app-server', querySource: 'user' }
+							: { harnessControlMode: 'native' }),
+					...(toolType === 'acp-agent' ? { nativeAcpArgs: ['--acp'] } : {}),
+					...(toolType === 'rpc-agent' ? { nativeRpcProtocol: 'pi-rpc' } : {}),
+				});
+				expect(spawn).toHaveBeenCalledOnce();
+				manager.emit('exit', config().sessionId, 0);
+				manager.kill(config().sessionId);
+				expect(worktreeRetirement.prepare(target)).toMatchObject({
+					ok: false,
+					reason: expect.stringContaining('unsupported'),
+				});
+				expectAvailable();
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		}
+	);
 	it('blocks a reserved checkout before spawn, terminal reuse, or CLI fallback', () => {
 		worktreeRetirement.register(checkout);
 		const reservation = worktreeRetirement.prepare(checkout);

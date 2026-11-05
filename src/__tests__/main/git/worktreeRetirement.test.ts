@@ -62,4 +62,31 @@ describe('worktree retirement admission', () => {
 		expect(fence.abort(prepared.token)).toBe(true);
 		expect(fence.state(checkout.path)).toBe('available');
 	});
+	it('excludes unsupported execution across aliases, re-registration and CLI fallback', () => {
+		const { dir, root, checkout, fence } = setup();
+		const alias = join(dir, 'alias');
+		symlinkSync(root, alias, 'dir');
+		fence.excludeUnsupportedExecution(alias);
+		expect(fence.register(checkout)).toBe(true);
+		const cli = fence.admit([root]);
+		expect(cli.ok).toBe(true);
+		if (cli.ok) cli.release();
+		expect(fence.prepare(checkout)).toEqual({
+			ok: false,
+			reason: 'unsupported native execution: CLI-only retirement unavailable',
+		});
+		const other = join(dir, 'other');
+		mkdirSync(other);
+		const unrelated = { ...checkout, path: other };
+		expect(fence.register(unrelated)).toBe(true);
+		expect(fence.prepare(unrelated).ok).toBe(true);
+	});
+	it('fails closed when an unsupported execution path cannot be resolved', () => {
+		const { dir, checkout, fence } = setup();
+		fence.excludeUnsupportedExecution(join(dir, 'missing'));
+		expect(fence.prepare(checkout)).toMatchObject({
+			ok: false,
+			reason: expect.stringContaining('unsupported'),
+		});
+	});
 });

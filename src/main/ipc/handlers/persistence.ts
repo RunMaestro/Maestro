@@ -55,6 +55,7 @@ import {
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
+import { worktreeRetirement } from '../../git/worktreeRetirement';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -246,10 +247,37 @@ export function registerPersistenceHandlers(
 		onSessionsPersisted,
 	} = deps;
 	const sessionWriteQueue = createKeyedWriteQueue();
+	// Both ends of a registration move matter. Resolve stored identities again
+	// when a queued write starts, since its predecessor may have moved that id.
+	const sessionWritePaths = (input: StoredSession[], removeIds: string[] = []): string[] => {
+		const ids = new Set([...input.map((session) => session.id), ...removeIds]);
+		return [
+			...input,
+			...sessionsStore.get('sessions', []).filter((session) => ids.has(session.id)),
+		].map((session) => session.cwd);
+	};
 	const queueWrite =
-		<TArgs extends unknown[], TResult>(handler: (...args: TArgs) => Promise<TResult>) =>
-		(...args: TArgs): Promise<TResult> =>
-			sessionWriteQueue.enqueue('sessions', () => handler(...args));
+		<TArgs extends unknown[], TResult>(
+			handler: (...args: TArgs) => Promise<TResult>,
+			paths: (...args: TArgs) => string[]
+		) =>
+		(...args: TArgs): Promise<TResult> => {
+			// Admission precedes even the queue's first microtask. Keep it through
+			// relocation, backups, durable flush, and registration callbacks.
+			const admission = worktreeRetirement.admit(paths(...args));
+			if (!admission.ok) return Promise.reject(new Error(admission.reason));
+			return sessionWriteQueue
+				.enqueue('sessions', async () => {
+					const current = worktreeRetirement.admit(paths(...args));
+					if (!current.ok) throw new Error(current.reason);
+					try {
+						return await handler(...args);
+					} finally {
+						current.release();
+					}
+				})
+				.finally(admission.release);
+		};
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
 	// stale peer flush that would resurrect a closed agent (see
@@ -512,60 +540,65 @@ export function registerPersistenceHandlers(
 	});
 
 	// Sessions persistence
-	const loadStoredSessions = async (): Promise<StoredSession[]> => {
-		const sessions = sessionsStore.get('sessions', []);
-		// Heal legacy sessions files: relocate any images still stored inline as
-		// base64 data URLs into the content-addressed image store, returning
-		// lightweight refs. Before this existed, pasted screenshots ballooned
-		// maestro-sessions.json to hundreds of MB (264MB in one field trace),
-		// freezing the main thread on every read/write. The scan is cheap and a
-		// no-op once healed (already-relocated sessions carry only refs). We
-		// rewrite the store once so the next launch reads the small file.
-		try {
-			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
-			let toolOutputCount = 0;
-			// Closed-tab stacks written before they were stored as pointers (or by a
-			// raw write) carry whole transcripts and the legacy key. Bring them to
-			// the stored form the renderer projects, so its next change merges.
-			let closedTabCount = 0;
-			const compacted = relocated.map((session) => {
-				const normalized = normalizeStoredClosedTabs(session);
-				if (normalized !== session) closedTabCount++;
-				const result = compactSessionToolOutputs(normalized);
-				toolOutputCount += result.compacted;
-				return result.session;
-			});
-			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
-				sessionsStore.set('sessions', compacted);
-				if (imageCount > 0) {
-					logger.info(
-						`Relocated ${imageCount} inline session image(s) out of maestro-sessions.json`,
-						'Sessions'
-					);
+	const loadStoredSessions = queueWrite(
+		async (): Promise<StoredSession[]> => {
+			const sessions = sessionsStore.get('sessions', []);
+			// Heal legacy sessions files: relocate any images still stored inline as
+			// base64 data URLs into the content-addressed image store, returning
+			// lightweight refs. Before this existed, pasted screenshots ballooned
+			// maestro-sessions.json to hundreds of MB (264MB in one field trace),
+			// freezing the main thread on every read/write. The scan is cheap and a
+			// no-op once healed (already-relocated sessions carry only refs). We
+			// rewrite the store once so the next launch reads the small file.
+			try {
+				const { sessions: relocated, relocated: imageCount } =
+					await relocateSessionImages(sessions);
+				let toolOutputCount = 0;
+				// Closed-tab stacks written before they were stored as pointers (or by a
+				// raw write) carry whole transcripts and the legacy key. Bring them to
+				// the stored form the renderer projects, so its next change merges.
+				let closedTabCount = 0;
+				const compacted = relocated.map((session) => {
+					const normalized = normalizeStoredClosedTabs(session);
+					if (normalized !== session) closedTabCount++;
+					const result = compactSessionToolOutputs(normalized);
+					toolOutputCount += result.compacted;
+					return result.session;
+				});
+				if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
+					sessionsStore.set('sessions', compacted);
+					await flushSessionWrites();
+					if (imageCount > 0) {
+						logger.info(
+							`Relocated ${imageCount} inline session image(s) out of maestro-sessions.json`,
+							'Sessions'
+						);
+					}
+					if (toolOutputCount > 0) {
+						logger.info(
+							`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+							'Sessions'
+						);
+					}
+					if (closedTabCount > 0) {
+						logger.info(
+							`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
+							'Sessions'
+						);
+					}
+					logger.debug(`Loaded ${compacted.length} sessions from store`, 'Sessions');
+					return compacted;
 				}
-				if (toolOutputCount > 0) {
-					logger.info(
-						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
-						'Sessions'
-					);
-				}
-				if (closedTabCount > 0) {
-					logger.info(
-						`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
-						'Sessions'
-					);
-				}
-				logger.debug(`Loaded ${compacted.length} sessions from store`, 'Sessions');
-				return compacted;
+			} catch (err) {
+				// Never let migration block loading sessions. Fall through and return
+				// the sessions as-is; the write boundary will retry on the next save.
+				logger.warn(`Session migration on load failed: ${(err as Error).message}`, 'Sessions', err);
 			}
-		} catch (err) {
-			// Never let migration block loading sessions. Fall through and return
-			// the sessions as-is; the write boundary will retry on the next save.
-			logger.warn(`Session migration on load failed: ${(err as Error).message}`, 'Sessions', err);
-		}
-		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
-		return sessions;
-	};
+			logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
+			return sessions;
+		},
+		() => sessionsStore.get('sessions', []).map((session) => session.cwd)
+	);
 	ipcMain.handle('sessions:getAll', loadStoredSessions);
 	const transcriptRequests = new Map<
 		string,
@@ -978,171 +1011,175 @@ export function registerPersistenceHandlers(
 				}
 
 				return true;
-			}
+			},
+			(_event, input = [], removeIds = []) => sessionWritePaths(input, removeIds)
 		)
 	);
 
 	ipcMain.handle(
 		'sessions:setAll',
-		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
-			const baselineMap = await observedBaselineMap(baselines);
-			const remote = (event as { type?: string })?.type === 'bridge';
-			// Relocate inline images (data URLs) out of the sessions before they hit
-			// disk. setAll is the bootstrap/first-flush path, so this also migrates a
-			// legacy in-memory sessions tree the first time it is persisted.
-			const { sessions: relocatedSessions } = await relocateSessionImages(input);
-			// Get previous sessions to detect changes
-			const previousSessions = sessionsStore.get('sessions', []);
-			const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
-			// Same resurrection guard as setMany: a client that loaded before another
-			// closed an agent still carries it, and this path would write it back.
-			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
-			if (
-				remote &&
-				sessions.some(
-					(session) => previousSessionMap.has(session.id) && !baselineMap.has(session.id)
-				)
-			) {
-				throw new Error(
-					'Session save rejected: missing observed baseline. Reload the host view before saving.'
-				);
-			}
-			const incomingIds = new Set(sessions.map((s) => s.id));
-			// setAll is a client's opening snapshot, so an omitted id means the client
-			// never saw that agent. Only setMany's explicit removeIds may delete one.
-			for (const previousSession of previousSessions) {
-				if (!incomingIds.has(previousSession.id)) {
-					sessions.push(previousSession);
+		queueWrite(
+			async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
+				const baselineMap = await observedBaselineMap(baselines);
+				const remote = (event as { type?: string })?.type === 'bridge';
+				// Relocate inline images (data URLs) out of the sessions before they hit
+				// disk. setAll is the bootstrap/first-flush path, so this also migrates a
+				// legacy in-memory sessions tree the first time it is persisted.
+				const { sessions: relocatedSessions } = await relocateSessionImages(input);
+				// Get previous sessions to detect changes
+				const previousSessions = sessionsStore.get('sessions', []);
+				const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
+				// Same resurrection guard as setMany: a client that loaded before another
+				// closed an agent still carries it, and this path would write it back.
+				const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+				if (
+					remote &&
+					sessions.some(
+						(session) => previousSessionMap.has(session.id) && !baselineMap.has(session.id)
+					)
+				) {
+					throw new Error(
+						'Session save rejected: missing observed baseline. Reload the host view before saving.'
+					);
 				}
-			}
-			const sessionsToPersist = sessions.map((session) =>
-				incomingIds.has(session.id)
-					? compactSessionToolOutputs(
-							normalizeStoredClosedTabs(
-								mergeSessionPersistenceChanges(
-									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-									previousSessionMap.get(session.id),
-									baselineMap.get(session.id),
-									remote,
-									false,
-									remote
+				const incomingIds = new Set(sessions.map((s) => s.id));
+				// setAll is a client's opening snapshot, so an omitted id means the client
+				// never saw that agent. Only setMany's explicit removeIds may delete one.
+				for (const previousSession of previousSessions) {
+					if (!incomingIds.has(previousSession.id)) {
+						sessions.push(previousSession);
+					}
+				}
+				const sessionsToPersist = sessions.map((session) =>
+					incomingIds.has(session.id)
+						? compactSessionToolOutputs(
+								normalizeStoredClosedTabs(
+									mergeSessionPersistenceChanges(
+										mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+										previousSessionMap.get(session.id),
+										baselineMap.get(session.id),
+										remote,
+										false,
+										remote
+									)
 								)
-							)
-						).session
-					: session
-			);
+							).session
+						: session
+				);
 
-			// Log session lifecycle events at DEBUG level
-			for (const session of sessionsToPersist) {
-				const prevSession = previousSessionMap.get(session.id);
-				if (!prevSession) {
-					// New session created
-					logger.debug('Session created', 'Sessions', {
-						sessionId: session.id,
-						name: session.name,
-						toolType: session.toolType,
-						cwd: session.cwd,
-					});
-				}
-			}
-			const webServer = getWebServer();
-			// Detect and broadcast changes to web clients
-			if (webServer && webServer.getWebClientCount() > 0) {
-				// Check for state changes in existing sessions
+				// Log session lifecycle events at DEBUG level
 				for (const session of sessionsToPersist) {
 					const prevSession = previousSessionMap.get(session.id);
-					if (prevSession) {
-						// Session exists - check if state or other tracked properties changed
-						if (
-							prevSession.state !== session.state ||
-							prevSession.inputMode !== session.inputMode ||
-							prevSession.name !== session.name ||
-							prevSession.cwd !== session.cwd ||
-							cliActivityChanged(prevSession.cliActivity, session.cliActivity)
-						) {
-							webServer.broadcastSessionStateChange(session.id, session.state, {
-								name: session.name,
-								toolType: session.toolType,
-								inputMode: session.inputMode,
-								cwd: session.cwd,
-								cliActivity: session.cliActivity,
-							});
-						}
-					} else {
-						// New session added
-						webServer.broadcastSessionAdded({
-							id: session.id,
+					if (!prevSession) {
+						// New session created
+						logger.debug('Session created', 'Sessions', {
+							sessionId: session.id,
 							name: session.name,
 							toolType: session.toolType,
-							state: session.state,
-							inputMode: session.inputMode,
 							cwd: session.cwd,
-							groupId: session.groupId || null,
-							groupName: session.groupName || null,
-							groupEmoji: session.groupEmoji || null,
-							parentSessionId: session.parentSessionId || null,
-							worktreeBranch: session.worktreeBranch || null,
-							autoRunFolderPath: session.autoRunFolderPath || null,
 						});
 					}
 				}
-			}
-
-			try {
-				sessionsStore.set('sessions', sessionsToPersist);
-				await flushSessionWrites();
-			} catch (err) {
-				// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
-				// the next debounced write will succeed when conditions improve.
-				// Log but don't throw so the renderer doesn't see an unhandled rejection.
-				const code = (err as NodeJS.ErrnoException).code;
-				logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
-				return false;
-			}
-
-			// Crash-report context (agent count + provider types); no-op unless changed.
-			noteSentryAgentInventory(sessionsToPersist);
-
-			// Opening snapshots may add/update observed agents but never infer a
-			// deletion from an omitted id. Explicit removes arrive through setMany.
-			const updatedSessions = sessionsToPersist.filter(
-				(session) =>
-					incomingIds.has(session.id) &&
-					previousSessionMap.has(session.id) &&
-					JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
-			);
-			// Tell the other clients about agents this bootstrap flush introduced.
-			await onSessionsPersisted?.(
-				sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
-				sessionsToPersist,
-				[]
-			);
-			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
-				added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
-				removedIds: [],
-				...(updatedSessions.length > 0 && {
-					updated: updatedSessions,
-					baselines: previousSessions.filter((session) =>
-						updatedSessions.some((update) => update.id === session.id)
-					),
-				}),
-			});
-
-			// Surface metadata-only lifecycle events to subscribed plugins
-			// (events:subscribe). Re-authorized per delivery against live grants.
-			if (emitPluginEvent) {
-				const at = new Date().toISOString();
-				for (const event of buildSessionLifecycleEvents(
-					previousSessionMap,
-					sessionsToPersist,
-					at
-				)) {
-					emitPluginEvent(event);
+				const webServer = getWebServer();
+				// Detect and broadcast changes to web clients
+				if (webServer && webServer.getWebClientCount() > 0) {
+					// Check for state changes in existing sessions
+					for (const session of sessionsToPersist) {
+						const prevSession = previousSessionMap.get(session.id);
+						if (prevSession) {
+							// Session exists - check if state or other tracked properties changed
+							if (
+								prevSession.state !== session.state ||
+								prevSession.inputMode !== session.inputMode ||
+								prevSession.name !== session.name ||
+								prevSession.cwd !== session.cwd ||
+								cliActivityChanged(prevSession.cliActivity, session.cliActivity)
+							) {
+								webServer.broadcastSessionStateChange(session.id, session.state, {
+									name: session.name,
+									toolType: session.toolType,
+									inputMode: session.inputMode,
+									cwd: session.cwd,
+									cliActivity: session.cliActivity,
+								});
+							}
+						} else {
+							// New session added
+							webServer.broadcastSessionAdded({
+								id: session.id,
+								name: session.name,
+								toolType: session.toolType,
+								state: session.state,
+								inputMode: session.inputMode,
+								cwd: session.cwd,
+								groupId: session.groupId || null,
+								groupName: session.groupName || null,
+								groupEmoji: session.groupEmoji || null,
+								parentSessionId: session.parentSessionId || null,
+								worktreeBranch: session.worktreeBranch || null,
+								autoRunFolderPath: session.autoRunFolderPath || null,
+							});
+						}
+					}
 				}
-			}
 
-			return true;
-		})
+				try {
+					sessionsStore.set('sessions', sessionsToPersist);
+					await flushSessionWrites();
+				} catch (err) {
+					// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
+					// the next debounced write will succeed when conditions improve.
+					// Log but don't throw so the renderer doesn't see an unhandled rejection.
+					const code = (err as NodeJS.ErrnoException).code;
+					logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
+					return false;
+				}
+
+				// Crash-report context (agent count + provider types); no-op unless changed.
+				noteSentryAgentInventory(sessionsToPersist);
+
+				// Opening snapshots may add/update observed agents but never infer a
+				// deletion from an omitted id. Explicit removes arrive through setMany.
+				const updatedSessions = sessionsToPersist.filter(
+					(session) =>
+						incomingIds.has(session.id) &&
+						previousSessionMap.has(session.id) &&
+						JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
+				);
+				// Tell the other clients about agents this bootstrap flush introduced.
+				await onSessionsPersisted?.(
+					sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
+					sessionsToPersist,
+					[]
+				);
+				broadcastSessionLifecycle(senderWebContentsIdOf(event), {
+					added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
+					removedIds: [],
+					...(updatedSessions.length > 0 && {
+						updated: updatedSessions,
+						baselines: previousSessions.filter((session) =>
+							updatedSessions.some((update) => update.id === session.id)
+						),
+					}),
+				});
+
+				// Surface metadata-only lifecycle events to subscribed plugins
+				// (events:subscribe). Re-authorized per delivery against live grants.
+				if (emitPluginEvent) {
+					const at = new Date().toISOString();
+					for (const event of buildSessionLifecycleEvents(
+						previousSessionMap,
+						sessionsToPersist,
+						at
+					)) {
+						emitPluginEvent(event);
+					}
+				}
+
+				return true;
+			},
+			(_event, input) => sessionWritePaths(input)
+		)
 	);
 
 	// Groups persistence
