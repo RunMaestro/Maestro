@@ -12,6 +12,9 @@ import {
 import type { CrossAgentRequest, CrossAgentResponseChunk } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
 import { buildMaestroSystemPromptForSession } from '../../main/utils/maestro-system-prompt';
+import * as activity from '../../main/git/worktreeActivity';
+import type { StartCrossAgentRequestOptions } from '../../main/cross-agent/cross-agent-router';
+import path from 'path';
 
 /**
  * The desktop's binding of the consult service: the dispatch rules themselves (prompt, budgets,
@@ -75,31 +78,32 @@ function harness(
 ) {
 	const processManager = new FakeProcessManager();
 	const chunks: CrossAgentResponseChunk[] = [];
-	const dispatch = () =>
-		startCrossAgentRequest(request(overrides.request), {
-			processManager: processManager as never,
-			agentDetector: {
-				getAgent: async () => ({
-					id: 'claude-code',
-					name: 'Claude Code',
-					command: 'claude',
-					path: 'claude',
-					args: [],
-					available: true,
-					fullAccessArgs: ['--dangerously-skip-permissions'],
-					readOnlyArgs: ['--permission-mode', 'plan'],
-					readOnlyCliEnforced: true,
-					...overrides.agent,
-				}),
-			} as never,
-			sshStore: sshStore as never,
-			getTargetSession: () => ({ ...targetSession(), ...overrides.target }),
-			onChunk: (c) => chunks.push(c),
-		});
+	const options: StartCrossAgentRequestOptions = {
+		processManager: processManager as never,
+		agentDetector: {
+			getAgent: async () => ({
+				id: 'claude-code',
+				name: 'Claude Code',
+				command: 'claude',
+				path: 'claude',
+				args: [],
+				available: true,
+				fullAccessArgs: ['--dangerously-skip-permissions'],
+				readOnlyArgs: ['--permission-mode', 'plan'],
+				readOnlyCliEnforced: true,
+				...overrides.agent,
+			}),
+		} as never,
+		sshStore: sshStore as never,
+		getTargetSession: () => ({ ...targetSession(), ...overrides.target }),
+		onChunk: (c) => chunks.push(c),
+	};
+	const dispatch = () => startCrossAgentRequest(request(overrides.request), options);
 	// The runner keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
 	const sid = `${CROSS_AGENT_SESSION_PREFIX}r1`;
 	return {
 		processManager,
+		options,
 		chunks,
 		dispatch,
 		emitData: (text: string) => processManager.emit('data', sid, text),
@@ -409,5 +413,279 @@ describe('cancelCrossAgentRequestsForSource', () => {
 		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
 		expect(chunks).toHaveLength(1);
 		expect(chunks[0].canceled).toBe(true);
+	});
+});
+
+/** The outer request starts before the runner owns listeners or a native child. */
+describe('desktop outer consult request activity', () => {
+	let active: number;
+	let reservations: Array<() => void>;
+	async function reserve(root = process.cwd()) {
+		const hold = await activity.reserveWorktreeCleanup(root);
+		if (hold.status === 'reserved-partially') reservations.push(hold.release);
+		return hold;
+	}
+	async function idle() {
+		const hold = await reserve();
+		expect(hold.status).toBe('reserved-partially');
+		if (hold.status === 'reserved-partially') {
+			expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
+			hold.release();
+		}
+	}
+	beforeEach(() => {
+		vi.useFakeTimers();
+		active = 0;
+		reservations = [];
+		const admit = activity.beginGlobalWorktreeActivity;
+		vi.spyOn(activity, 'beginGlobalWorktreeActivity').mockImplementation(() => {
+			const release = admit();
+			active++;
+			let released = false;
+			return () => {
+				if (!released) active--;
+				released = true;
+				release();
+			};
+		});
+		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: 123, success: true });
+	});
+	afterEach(() => {
+		for (const release of reservations) release();
+		cancelCrossAgentRequestsForSource('src');
+		cancelCrossAgentRequestsForSource('src2');
+		expect(active).toBe(0);
+		vi.clearAllTimers();
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+		vi.clearAllMocks();
+	});
+
+	it.each([process.cwd(), path.resolve('src'), path.resolve('..')])(
+		'refuses start under %s before request/options inspection or recovery',
+		async (root) => {
+			const hold = await reserve(root);
+			expect(hold.status).toBe('reserved-partially');
+			const read = vi.fn(() => {
+				throw new Error('Input must remain untouched');
+			});
+			expect(() =>
+				startCrossAgentRequest(
+					new Proxy(request(), { get: read }),
+					new Proxy(harness().options, { get: read })
+				)
+			).toThrow(/reserved/);
+			expect(read).not.toHaveBeenCalled();
+			expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+			expect(buildMaestroSystemPromptForSession).not.toHaveBeenCalled();
+			expect(getCrossAgentConsultParties('r1')).toBeNull();
+		}
+	);
+
+	it.each([undefined, 'tab'])(
+		'refuses source cancellation before service mutation (%s)',
+		async (tab) => {
+			await reserve();
+			expect(() => cancelCrossAgentRequestsForSource('src', tab)).toThrow(/reserved/);
+		}
+	);
+
+	it('preserves synchronous option errors and releases before caller recovery', async () => {
+		const error = new Error('option failed');
+		const { options } = harness();
+		Object.defineProperty(options, 'processManager', {
+			get() {
+				expect(active).toBe(1);
+				throw error;
+			},
+		});
+		expect(() => startCrossAgentRequest(request(), options)).toThrow(error);
+		expect(active).toBe(0);
+		await idle();
+	});
+
+	it.each(['target', 'agent', 'config', 'env'] as const)(
+		'owns %s setup errors and preserves the service outcome before a runner exists',
+		async (stage) => {
+			const error = new Error(`${stage} failed`);
+			const { dispatch, options, chunks } = harness();
+			const fail = () => {
+				expect(active).toBe(1);
+				throw error;
+			};
+			if (stage === 'target') options.getTargetSession = fail;
+			if (stage === 'agent') options.agentDetector.getAgent = fail;
+			if (stage === 'config') options.getAgentConfig = fail;
+			if (stage === 'env') options.getCustomEnvVars = fail;
+			if (stage === 'env') {
+				await dispatch();
+				expect(chunks).toMatchObject([{ done: true, error: error.message }]);
+			} else {
+				await expect(dispatch()).rejects.toBe(error);
+			}
+			expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+			await idle();
+		}
+	);
+
+	it.each(['missing', 'ssh', 'unavailable'] as const)(
+		'owns early %s reporting and preserves a throwing observer',
+		async (stage) => {
+			const { dispatch, options } = harness();
+			if (stage === 'missing') options.getTargetSession = () => null;
+			if (stage === 'ssh')
+				options.getTargetSession = () => ({
+					...targetSession(),
+					sshRemoteConfig: { enabled: true, remoteId: 'remote' },
+				});
+			if (stage === 'unavailable') options.agentDetector.getAgent = async () => null;
+			const error = new Error('report failed');
+			options.onChunk = () => {
+				expect(active).toBe(1);
+				throw error;
+			};
+			await expect(dispatch()).rejects.toBe(error);
+			expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+			await idle();
+		}
+	);
+
+	it('holds unresolved agent preparation across Stop until cancelled setup returns', async () => {
+		const { dispatch, options, chunks } = harness();
+		const agent = await options.agentDetector.getAgent('claude-code');
+		const pendingAgent = Promise.withResolvers<typeof agent>();
+		options.agentDetector.getAgent = () => pendingAgent.promise;
+		const pending = dispatch();
+		expect(active).toBe(1);
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		expect(cancelCrossAgentRequestsForSource('src', 'tab')).toBe(1);
+		expect(active).toBe(1);
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		pendingAgent.resolve(agent);
+		await pending;
+		expect(chunks).toMatchObject([{ done: true, canceled: true }]);
+		expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+		await idle();
+	});
+
+	it('holds rejected pending preparation after cancellation and preserves the rejection', async () => {
+		const { dispatch, options } = harness();
+		const pendingAgent = Promise.withResolvers<never>();
+		options.agentDetector.getAgent = () => pendingAgent.promise;
+		const pending = dispatch();
+		const error = new Error('agent resolution failed');
+		const assertion = expect(pending).rejects.toBe(error);
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		pendingAgent.reject(error);
+		await assertion;
+		await idle();
+	});
+
+	it('keeps prompt preparation held after Stop and through late spawn recovery', async () => {
+		const prompt = Promise.withResolvers<string>();
+		vi.mocked(buildMaestroSystemPromptForSession).mockReturnValueOnce(prompt.promise);
+		const { dispatch, processManager, chunks } = harness();
+		const pending = dispatch();
+		await vi.waitFor(() => expect(buildMaestroSystemPromptForSession).toHaveBeenCalled());
+		expect(active).toBe(1);
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		expect(processManager.eventNames()).toEqual([]);
+		expect(active).toBe(1);
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		vi.mocked(spawnGroupChatAgent).mockImplementationOnce(async () => {
+			expect(active).toBe(3); // outer request, runner request, retained listeners
+			return { pid: 123, success: true };
+		});
+		prompt.resolve('system prompt');
+		await pending;
+		expect(processManager.kill).toHaveBeenCalledTimes(2);
+		expect(chunks).toHaveLength(1);
+		await idle();
+	});
+
+	it('keeps prompt rejection recovery held after cancellation', async () => {
+		const prompt = Promise.withResolvers<string>();
+		vi.mocked(buildMaestroSystemPromptForSession).mockReturnValueOnce(prompt.promise);
+		const { dispatch } = harness();
+		const pending = dispatch();
+		await vi.waitFor(() => expect(buildMaestroSystemPromptForSession).toHaveBeenCalled());
+		cancelCrossAgentRequestsForSource('src');
+		expect(active).toBe(1);
+		prompt.reject(new Error('prompt failed after stop'));
+		await pending;
+		expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+		await idle();
+	});
+
+	it('keeps concurrent preparation independent when one request fails', async () => {
+		const first = harness();
+		const second = harness(null, { request: { requestId: 'r2', sourceSessionId: 'src2' } });
+		const agent = await second.options.agentDetector.getAgent('claude-code');
+		const a = Promise.withResolvers<typeof agent>();
+		const b = Promise.withResolvers<typeof agent>();
+		first.options.agentDetector.getAgent = () => a.promise;
+		second.options.agentDetector.getAgent = () => b.promise;
+		const pendingA = first.dispatch();
+		const assertion = expect(pendingA).rejects.toThrow('first failed');
+		const pendingB = second.dispatch();
+		expect(active).toBe(2);
+		a.reject(new Error('first failed'));
+		await assertion;
+		expect(active).toBe(1);
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		cancelCrossAgentRequestsForSource('src2');
+		b.resolve(agent);
+		await pendingB;
+		await idle();
+	});
+
+	it('retains cancellation activity through throwing reporting after listeners detach', async () => {
+		const { dispatch, options, processManager } = harness();
+		const error = new Error('cancel observer failed');
+		options.onChunk = () => {
+			expect(active).toBe(1);
+			expect(processManager.eventNames()).toEqual([]);
+			throw error;
+		};
+		await dispatch();
+		expect(() => cancelCrossAgentRequestsForSource('src')).toThrow(error);
+		await idle();
+	});
+
+	it('retains the outer cancellation scope during reentrant no-op cancellation', async () => {
+		const { dispatch, options } = harness();
+		options.onChunk = () => {
+			expect(active).toBe(1);
+			expect(cancelCrossAgentRequestsForSource('src')).toBe(0);
+			expect(active).toBe(1);
+		};
+		await dispatch();
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		await idle();
+	});
+
+	it('does not release pending spawn activity when Stop detaches its listeners', async () => {
+		const spawn = Promise.withResolvers<{ pid: number; success: boolean }>();
+		vi.mocked(spawnGroupChatAgent).mockReturnValueOnce(spawn.promise);
+		const { dispatch, processManager } = harness();
+		const pending = dispatch();
+		await vi.waitFor(() => expect(spawnGroupChatAgent).toHaveBeenCalled());
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		expect(processManager.eventNames()).toEqual([]);
+		expect(active).toBe(2); // outer and runner starts still pending
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		spawn.resolve({ pid: -1, success: false });
+		await pending;
+		await idle();
+	});
+
+	it('leaves retained listener ownership after successful request completion', async () => {
+		const { dispatch, emitExit } = harness();
+		await dispatch();
+		expect(active).toBe(1);
+		expect(await reserve()).toMatchObject({ status: 'blocked' });
+		emitExit(0);
+		await idle();
 	});
 });
