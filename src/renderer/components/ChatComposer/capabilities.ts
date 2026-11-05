@@ -96,7 +96,7 @@ export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = 
 });
 
 export interface GroupChatComposerCapabilitiesInput {
-	hasCapability?: (capability: keyof AgentCapabilities) => boolean;
+	/** Result of `canModeratorReadImages()`; omitted means the preserved default. */
 	canAttachImages?: boolean;
 }
 
@@ -107,15 +107,9 @@ export interface GroupChatComposerCapabilitiesInput {
 export function deriveGroupChatComposerCapabilities(
 	input?: GroupChatComposerCapabilitiesInput
 ): ComposerCapabilities {
-	const imageAttach =
-		input?.canAttachImages !== undefined
-			? input.canAttachImages
-			: input?.hasCapability
-				? input.hasCapability('supportsImageInput')
-				: true;
 	return {
 		...GROUP_CHAT_COMPOSER_CAPABILITIES,
-		imageAttach,
+		imageAttach: input?.canAttachImages ?? true,
 	};
 }
 

@@ -162,20 +162,16 @@ describe('deriveGroupChatComposerCapabilities', () => {
 		expect(deriveGroupChatComposerCapabilities({ canAttachImages: false }).imageAttach).toBe(false);
 	});
 
-	it('enables imageAttach when moderator supportsImageInput', () => {
-		const caps = deriveGroupChatComposerCapabilities({
-			hasCapability: capabilitiesOf('supportsImageInput'),
-		});
+	it('enables imageAttach when the moderator can read images', () => {
+		const caps = deriveGroupChatComposerCapabilities({ canAttachImages: true });
 		expect(caps.imageAttach).toBe(true);
 		expect(caps.upload).toBe(true);
 		expect(caps.voice).toBe(true);
 		expect(caps.saveToHistory).toBe(false);
 	});
 
-	it('disables imageAttach when moderator lacks supportsImageInput', () => {
-		const caps = deriveGroupChatComposerCapabilities({
-			hasCapability: capabilitiesOf(),
-		});
+	it('disables imageAttach when the moderator cannot read images', () => {
+		const caps = deriveGroupChatComposerCapabilities({ canAttachImages: false });
 		expect(caps.imageAttach).toBe(false);
 		expect(caps.upload).toBe(true);
 		expect(caps.voice).toBe(true);

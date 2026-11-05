@@ -1419,7 +1419,7 @@ describe('GroupChatInput', () => {
 			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
 		});
 
-		it('shows the Attach Image button and allows send when capability fetch fails', async () => {
+		it('shows the Attach Image button and allows send after the capability fetch fails', async () => {
 			vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValueOnce(
 				new Error('IPC failed')
 			);
@@ -1434,6 +1434,15 @@ describe('GroupChatInput', () => {
 					})}
 				/>
 			);
+
+			// Let the rejected fetch settle. Until it does the hook reports
+			// `loading`, and the gate allows images for that reason, so asserting
+			// here without waiting would pass even if the error branch hid Attach.
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(window.maestro.agents.getCapabilities).toHaveBeenCalledWith('failing-agent');
 
 			expect(screen.queryByTestId('staged-images-warning')).not.toBeInTheDocument();
 			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
@@ -1480,7 +1489,7 @@ describe('GroupChatInput', () => {
 			expect(textarea.value).toBe('regular text');
 		});
 
-		it('refuses image drop and flashes warning when moderator does not support image input', () => {
+		it('delegates image drops to the shared handler, which does the refusal', () => {
 			const handleDrop = vi.fn();
 			render(
 				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal', handleDrop })} />
@@ -1493,14 +1502,13 @@ describe('GroupChatInput', () => {
 				},
 			});
 
-			expect(notifyCenterFlash).toHaveBeenCalledWith({
-				message: "This room's moderator can't read images",
-				color: 'yellow',
-			});
-			expect(handleDrop).not.toHaveBeenCalled();
+			expect(handleDrop).toHaveBeenCalledTimes(1);
+			// The refusal flash belongs to the shared handler, so the wrapper must
+			// not flash first (that would double it).
+			expect(notifyCenterFlash).not.toHaveBeenCalled();
 		});
 
-		it('flashes warning only once when multiple images are dropped into an incapable moderator room', () => {
+		it('delegates mixed drops so the shared handler can keep the non-image files', () => {
 			const handleDrop = vi.fn();
 			render(
 				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal', handleDrop })} />
@@ -1510,18 +1518,14 @@ describe('GroupChatInput', () => {
 			fireEvent.drop(textarea, {
 				dataTransfer: {
 					files: [
-						new File(['img1'], 'photo1.png', { type: 'image/png' }),
-						new File(['img2'], 'photo2.png', { type: 'image/png' }),
+						new File(['img1'], 'photo.png', { type: 'image/png' }),
+						new File(['doc'], 'notes.pdf', { type: 'application/pdf' }),
 					],
 				},
 			});
 
-			expect(notifyCenterFlash).toHaveBeenCalledTimes(1);
-			expect(notifyCenterFlash).toHaveBeenCalledWith({
-				message: "This room's moderator can't read images",
-				color: 'yellow',
-			});
-			expect(handleDrop).not.toHaveBeenCalled();
+			expect(handleDrop).toHaveBeenCalledTimes(1);
+			expect(notifyCenterFlash).not.toHaveBeenCalled();
 		});
 
 		it('shows warning badge beside staged strip when images are staged but moderator cannot read images', () => {

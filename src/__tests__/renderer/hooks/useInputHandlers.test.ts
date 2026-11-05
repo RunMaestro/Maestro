@@ -1467,6 +1467,54 @@ describe('useInputHandlers', () => {
 			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
 		});
 
+		it('keeps the documents from a mixed drop when the moderator cannot read images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal', draftMessage: '' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const image = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(image, 'type', { value: 'image/png' });
+			const documentFile = {
+				type: 'application/pdf',
+				name: 'notes.pdf',
+				path: '/tmp/notes.pdf',
+			};
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: [image, documentFile] as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledTimes(1);
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('@/tmp/notes.pdf ');
+		});
+
 		it('allows image drop in group chat mode when moderator capabilities are unknown / uncached', () => {
 			clearCapabilitiesCache();
 

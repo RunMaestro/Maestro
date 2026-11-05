@@ -323,17 +323,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(e: React.DragEvent<HTMLTextAreaElement>) => {
 			e.stopPropagation();
 			flushDraft();
-			const hasImage = Array.from(e.dataTransfer.files).some((file) =>
-				file.type.startsWith('image/')
-			);
-			if (hasImage && !capabilities.imageAttach) {
-				e.preventDefault();
-				flashModeratorCannotReadImages();
-				return;
-			}
+			// Let the shared handler decide per file: it refuses the images and
+			// keeps the documents from a mixed drop, and flashes once.
 			handleDrop?.(e);
 		},
-		[capabilities.imageAttach, flushDraft, handleDrop]
+		[flushDraft, handleDrop]
 	);
 
 	const handleOpenPromptComposer = useCallback(() => {
