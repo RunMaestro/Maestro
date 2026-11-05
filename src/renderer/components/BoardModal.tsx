@@ -84,7 +84,7 @@ const STATUS_META: Record<CardStatus, { label: string; colorKey: keyof Theme['co
 
 // Host readiness codes are stable diagnostics; translate them for the card surface.
 const READINESS_LABELS: Record<BoardReadinessReason, string> = {
-	'review-artifact-unresolved': 'Review artifact is unavailable',
+	'review-artifact-unresolved': 'Review evidence is incomplete',
 	'scope-conflict': 'Assignment conflicts with the selected scope',
 	'missing-scope': 'Assign an agent or group',
 	'target-missing': 'Assigned agent is unavailable',

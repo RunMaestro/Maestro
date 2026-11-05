@@ -15,7 +15,11 @@ import {
 	type BoardRunToken,
 } from './board-claims';
 import type { BoardStorageFacade } from './board-storage';
-import { applyBoardReviewResult, queueBoardReviews } from './board-review';
+import {
+	applyBoardReviewResult,
+	queueBoardReviews,
+	recoverIncompleteBoardReview,
+} from './board-review';
 import { evaluateClaimWorker, persistedCaptureInput } from '../../shared/board/domain';
 import { listBoardWorkers } from './board-workspace-storage';
 
@@ -595,6 +599,7 @@ export class BoardRuntime {
 							DEFAULT_MAX_FAILURES
 						);
 					if (result.artifact && !cause) run.artifact = result.artifact;
+					if (result.artifactBase && !cause) run.artifactBase = result.artifactBase;
 					// The native result records completed work; only a bound review and
 					// a later explicit human decision can complete the workflow.
 					if (
@@ -608,7 +613,9 @@ export class BoardRuntime {
 							version: 1,
 							corrections: card.workflow?.corrections ?? 0,
 							workRunId: token.runId,
+							evidenceIncomplete: undefined,
 						};
+						if (card.kind !== 'review') recoverIncompleteBoardReview(card, run, token.runId);
 					}
 					const markers = parseCardMarkers(result.output);
 					if (

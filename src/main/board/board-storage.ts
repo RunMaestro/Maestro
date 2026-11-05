@@ -399,6 +399,8 @@ export class BoardStorageFacade {
 					reasons.push('repository-unresolved');
 				if (card.kind === 'review' && !card.reviewHandoff)
 					reasons.push('review-artifact-unresolved');
+				if (card.status === 'blocked' && card.workflow?.evidenceIncomplete)
+					reasons.push('review-artifact-unresolved');
 				if (card.kind !== 'review' && card.status === 'review' && card.workflow?.workRunId) {
 					if (!card.reviewerAgentId) reasons.push('reviewer-missing');
 					else {

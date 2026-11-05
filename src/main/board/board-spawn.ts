@@ -534,6 +534,7 @@ async function runCardPrompt(
 	const event = createCueEvent('cli.trigger', `board:${card.id}`, { board: true });
 
 	let baseCommit: string | undefined;
+	let artifactBase: CardSpawnResult['artifactBase'];
 	const result = await executeCuePrompt({
 		runId,
 		signal: run?.controller.signal,
@@ -549,7 +550,29 @@ async function runCardPrompt(
 						return (
 							!!artifact && canonicalJson(artifact) === canonicalJson(card.reviewHandoff.artifact)
 						);
-					baseCommit = artifact?.commit;
+					if (artifact) {
+						const incomplete = card.workflow?.evidenceIncomplete;
+						const previous = incomplete && card.runs?.find((run) => run.runId === incomplete.runId);
+						const originalBase =
+							previous?.artifactBase ??
+							(previous?.artifact?.diff
+								? {
+										...previous.artifact,
+										commit: previous.artifact.diff.baseCommit,
+										diff: undefined,
+									}
+								: undefined);
+						// A checked retry must review the original work as well as its evidence repair.
+						// Never transplant an old baseline into another checkout or branch.
+						if (
+							originalBase &&
+							(originalBase.worktreePath !== artifact.worktreePath ||
+								originalBase.branch !== artifact.branch)
+						)
+							return false;
+						artifactBase = originalBase ?? artifact;
+						baseCommit = artifactBase.commit;
+					}
 					return !!artifact;
 				}
 			: undefined,
@@ -625,6 +648,7 @@ async function runCardPrompt(
 
 	return {
 		artifact,
+		...(artifactBase ? { artifactBase } : {}),
 		output: result.stdout,
 		exitCode: result.exitCode,
 		...(lifecycle

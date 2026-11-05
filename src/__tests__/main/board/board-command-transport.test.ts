@@ -1251,6 +1251,59 @@ function control(operation: 'hold' | 'resume' | 'approve', runToken?: BoardRunti
 }
 
 describe('fenced host intake shared by desktop and real CLI', () => {
+	it('retries evidence-incomplete work through real CLI and host revision checks without rewriting history or granting completion', async () => {
+		// Provider execution is injected; Commander, authenticated bridge, host and SQLite are real.
+		const fixture = installBoardOwner();
+		const started = result<{ runToken: BoardRuntimeToken }[]>(await send(tick()))[0].runToken;
+		fixture.finish();
+		await vi.waitFor(() => expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0));
+		const work = facade.read(roots[0], 'b').cards[0];
+		expect(work).toMatchObject({
+			status: 'blocked',
+			workflow: { evidenceIncomplete: { runId: started.runId, missing: ['summary', 'artifact'] } },
+		});
+		const history = db.prepare('SELECT * FROM runs').all();
+		const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
+		const shown = await cli('show-card', 'c', ...common);
+		expect(shown.code).toBe(0);
+		expect(JSON.stringify(shown.value)).toContain('review-artifact-unresolved');
+		const before = db.prepare('SELECT * FROM cards').all();
+		expect((await cli('set-status', 'c', 'done', ...common)).code).toBe(1);
+		expect(
+			await raw({
+				...control('resume', { ...started, generation: started.generation + 1 }),
+				human: true,
+			})
+		).toMatchObject({ ok: false });
+		expect(
+			await send({
+				action: 'status',
+				target: { ...target(), expectedRevision: target().expectedRevision - 1 },
+				cardId: 'c',
+				cardRevision: work.storageRevision!,
+				status: 'todo',
+			})
+		).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
+		expect(db.prepare('SELECT * FROM cards').all()).toEqual(before);
+		expect((await cli('set-status', 'c', 'todo', ...common)).code).toBe(0);
+		const retried = facade.read(roots[0], 'b').cards[0];
+		expect(retried.status).toBe('todo');
+		expect(retried.runs).toEqual(work.runs);
+		expect(retried.capturePolicy).toEqual(work.capturePolicy);
+		expect(db.prepare('SELECT * FROM runs').all()).toEqual(history);
+		const retryTick = await cli('tick', '--source', target().sourceKey, '--json');
+		expect(retryTick).toMatchObject({
+			code: 0,
+			value: { boards: [{ results: [{ cardId: 'c', ok: true }] }] },
+		});
+		expect(fixture.service.spawn).toHaveBeenCalledTimes(2);
+		expect(db.prepare('SELECT attempt FROM runs ORDER BY attempt').all()).toEqual([
+			{ attempt: 1 },
+			{ attempt: 2 },
+		]);
+		fixture.finish();
+		await vi.waitFor(() => expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0));
+	});
 	it('races native IPC and real CLI against a globally captured card without an agent project', async () => {
 		const fixture = installBoardOwner(true, false);
 		const global = result<Board>(await send({ action: 'initialize' }));

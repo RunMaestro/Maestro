@@ -217,6 +217,28 @@ function writeWorkflowCard(storage: BoardStorageFacade, key: BoardCardKey, card:
 	storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
 }
 
+/** Preserve the successful attempt; incomplete evidence never enters the review queue.
+ * The existing revision-checked To Do request can retry this same card. */
+export function recoverIncompleteBoardReview(
+	work: BoardCard,
+	run: CardRun,
+	runId: string
+): boolean {
+	const missing: ('summary' | 'artifact')[] = [];
+	if (!run.summary?.trim()) missing.push('summary');
+	if (!run.artifact?.diff) missing.push('artifact');
+	if (!missing.length) return false;
+	work.status = 'blocked';
+	work.workflow = {
+		...work.workflow,
+		version: 1,
+		corrections: work.workflow?.corrections ?? 0,
+		workRunId: runId,
+		evidenceIncomplete: { runId, missing },
+	};
+	return true;
+}
+
 /** Called by the existing Cue heartbeat and native completion, never a second scheduler.
  * A missing/removed reviewer leaves work in Review. Busy reviewers get a normal queued task. */
 export function queueBoardReviews(storage: BoardStorageFacade): void {
@@ -243,7 +265,6 @@ export function queueBoardReviews(storage: BoardStorageFacade): void {
 						work.workflow.reviewCardId = undefined;
 						writeWorkflowCard(storage, { ...entry, cardId: work.id }, work);
 					}
-					if (!work.reviewerAgentId) continue;
 					const source = storage.db
 						.prepare(
 							'SELECT outcome_json FROM runs WHERE run_id=? AND collection_key=? AND card_id=?'
@@ -253,6 +274,18 @@ export function queueBoardReviews(storage: BoardStorageFacade): void {
 						| undefined;
 					const outcome = source?.outcome_json ? JSON.parse(source.outcome_json) : null;
 					const run = outcome?.cardOutcome?.run as CardRun | undefined;
+					// Also recover pre-existing successes stranded before a reviewer could be queued.
+					if (
+						!work.workflow.reviewCardId &&
+						run?.runId === work.workflow.workRunId &&
+						run?.endedAt &&
+						['done', 'review'].includes(run.outcome ?? '') &&
+						recoverIncompleteBoardReview(work, run, work.workflow.workRunId)
+					) {
+						writeWorkflowCard(storage, { ...entry, cardId: work.id }, work);
+						continue;
+					}
+					if (!work.reviewerAgentId) continue;
 					if (
 						!run?.artifact?.diff ||
 						!run.summary?.trim() ||

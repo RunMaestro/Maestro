@@ -10,7 +10,7 @@ import {
 	approveBoardWork,
 	queueBoardReviews,
 } from '../../../main/board/board-review';
-import { configureBoardStorage } from '../../../main/board/board-storage';
+import { configureBoardStorage, updateCardStatus } from '../../../main/board/board-storage';
 import * as path from 'node:path';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
@@ -84,7 +84,15 @@ let lockValid: boolean;
 let databasePath: string;
 let ownsDatabase = false;
 const good: CardSpawnResult = {
-	output: '<!-- maestro:card-complete -->',
+	// A trusted run-service fixture supplies complete host evidence. Real Git is
+	// exercised by the workflow cases below, including deliberately missing evidence.
+	output: '<!-- maestro:card-complete | Fixture checks passed -->',
+	artifact: {
+		worktreePath: path.resolve('isolated', 'host-artifact-fixture'),
+		branch: 'fixture',
+		commit: 'a'.repeat(40),
+		diff: { baseCommit: 'b'.repeat(40), sha256: 'c'.repeat(64), stat: 'fixture' },
+	},
 	exitCode: 0,
 	executionStarted: true,
 	terminationConfirmed: true,
@@ -296,7 +304,8 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			'-m',
 			'fixture'
 		);
-		const artifact = await readBoardRunArtifact(roots[0]);
+		const base = await readBoardRunArtifact(roots[0]);
+		const artifact = await readBoardRunArtifact(roots[0], base!.commit);
 		expect(artifact?.commit).toMatch(/^[a-f0-9]{40}$/);
 		const token = claim();
 		const pending = runtime.start(token);
@@ -860,7 +869,10 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		const token = claim();
 		expect(await runtime.start(token)).toEqual({ ok: true });
 		expect(runtime.read(token)!.life.process!.pid).toBeGreaterThan(0);
-		expect(card().status).toBe('review');
+		expect(card()).toMatchObject({
+			status: 'blocked',
+			workflow: { evidenceIncomplete: { runId: token.runId, missing: ['summary', 'artifact'] } },
+		});
 		expect(reservations()).toHaveLength(0);
 	});
 	it('keeps a prepared claim distinct from a process and starts exactly once, even across adapter instances', async () => {
@@ -1495,11 +1507,18 @@ describe('work, linked review and explicit final human decision', () => {
 		});
 	}
 	function nativeService(
-		reviewOutput = '<!-- maestro:card-complete | Diff checked; fixture checks passed -->'
+		reviewOutput = '<!-- maestro:card-complete | Diff checked; fixture checks passed -->',
+		workOutput = '<!-- maestro:card-complete | Work committed; fixture check passed -->',
+		dirtyWork = false
 	) {
 		vi.mocked(service.spawn).mockImplementation(async (spec, callbacks) => {
 			if (!callbacks.canPrepare()) return { output: '', exitCode: null, executionStarted: false };
 			const before = await readBoardRunArtifact(roots[0]);
+			const sourceCard = spec.card as unknown as import('../../../shared/board/types').BoardCard;
+			const prior = sourceCard.runs?.find(
+				(run) => run.runId === sourceCard.workflow?.evidenceIncomplete?.runId
+			);
+			const artifactBase = prior?.artifactBase ?? before!;
 			const isReview = spec.card.kind === 'review';
 			const handoff = spec.card.reviewHandoff as
 				| import('../../../shared/board/types').BoardReviewHandoff
@@ -1511,7 +1530,8 @@ describe('work, linked review and explicit final human decision', () => {
 				fs.writeFileSync('work.txt', ${JSON.stringify('corrected work: ')} + ${spec.attempt});
 				require('node:assert/strict').equal(fs.readFileSync('work.txt', 'utf8'), ${JSON.stringify('corrected work: ')} + ${spec.attempt});
 				cp.execFileSync('git', ['add', 'work.txt']); cp.execFileSync('git', ['commit', '--quiet', '-m', 'work']);
-				process.stdout.write('<!-- maestro:card-complete | Work committed; fixture check passed -->');`;
+				${dirtyWork ? "fs.writeFileSync('pending.txt', 'uncommitted evidence');" : ''}
+				process.stdout.write(${JSON.stringify(workOutput)});`;
 			const result = await runProcess(
 				spec.runToken.runId,
 				{
@@ -1530,6 +1550,7 @@ describe('work, linked review and explicit final human decision', () => {
 				}
 			);
 			return {
+				artifactBase,
 				output: result.stdout,
 				exitCode: result.exitCode,
 				executionStarted: result.executionStarted,
@@ -1537,7 +1558,7 @@ describe('work, linked review and explicit final human decision', () => {
 				artifact:
 					(await readBoardRunArtifact(
 						roots[0],
-						handoff?.artifact.diff?.baseCommit ?? before!.commit
+						handoff?.artifact.diff?.baseCommit ?? artifactBase.commit
 					)) ?? undefined,
 			};
 		});
@@ -1562,6 +1583,128 @@ describe('work, linked review and explicit final human decision', () => {
 		expect(await runtime.start(claim.runToken)).toEqual({ ok: true });
 		return claim.runToken;
 	}
+	it.each([
+		['missing markers', 'Work finished', false, ['summary']],
+		['missing summary', '<!-- maestro:card-complete -->', false, ['summary']],
+		[
+			'missing clean artifact',
+			'<!-- maestro:card-complete | Checks passed -->',
+			true,
+			['artifact'],
+		],
+	] as const)(
+		'recovers successful work with %s on the same card without bypassing review',
+		async (_name, output, dirty, missing) => {
+			setupWorkflow();
+			nativeService(undefined, output, dirty);
+			const claim = claimFor('same');
+			if (!claim.ok) throw new Error(claim.reason);
+			expect(await runtime.start(claim.runToken)).toEqual({ ok: true });
+			const incomplete = storage.read(roots[0], 'board');
+			expect(incomplete.cards[0]).toMatchObject({
+				id: 'same',
+				status: 'blocked',
+				workflow: { evidenceIncomplete: { runId: claim.runToken.runId, missing } },
+			});
+			const history = incomplete.cards[0].runs;
+			expect(incomplete.cards[0].workflow?.evidenceIncomplete?.missing).toEqual(missing);
+			const stored = db
+				.prepare('SELECT outcome_json FROM runs WHERE run_id=?')
+				.get(claim.runToken.runId);
+			expect(history).toMatchObject([{ runId: claim.runToken.runId, attempt: 1, outcome: 'done' }]);
+			expect(reservations()).toHaveLength(0);
+			expect(claimFor('same')).toMatchObject({ ok: false, reason: 'card-not-ready' });
+			queueBoardReviews(storage);
+			queueBoardReviews(storage);
+			expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+			for (const status of ['review', 'ready-for-human', 'done'] as const)
+				expect(() =>
+					updateCardStatus(roots[0], 'board', 'same', status, incomplete.storage!.expectedRevision!)
+				).toThrow();
+			expect(() =>
+				storage.capture({
+					projectRoot: roots[0],
+					boardId: 'board',
+					expectedRevision: incomplete.storage!.expectedRevision!,
+					card: { ...incomplete.cards[0], workflow: { version: 1, corrections: 0 } },
+				})
+			).toThrow('workflow');
+			// An explicit, revision-checked status request requeues the existing card.
+			expect(() =>
+				updateCardStatus(
+					roots[0],
+					'board',
+					'same',
+					'todo',
+					incomplete.storage!.expectedRevision! - 1
+				)
+			).toThrow();
+			updateCardStatus(roots[0], 'board', 'same', 'todo', incomplete.storage!.expectedRevision!);
+			const retried = storage.read(roots[0], 'board');
+			expect(retried.cards[0].runs).toEqual(history);
+			expect(
+				db.prepare('SELECT outcome_json FROM runs WHERE run_id=?').get(claim.runToken.runId)
+			).toEqual(stored);
+			expect(claimFor('same', 'foreign')).toMatchObject({ ok: false });
+			if (dirty) fs.unlinkSync(path.join(roots[0], 'pending.txt'));
+			nativeService();
+			const retry = claimFor('same');
+			if (!retry.ok) throw new Error(retry.reason);
+			expect(retry.attempt).toBe(2);
+			const before = persisted();
+			expect(
+				runtime.complete({ ...retry.runToken, generation: retry.runToken.generation + 1 }, good)
+			).toMatchObject({ ok: false });
+			expect(runtime.complete(claim.runToken, good)).toMatchObject({ ok: false });
+			expect(persisted()).toBe(before);
+			expect(await runtime.start(retry.runToken)).toEqual({ ok: true });
+			expect(card()).toMatchObject({
+				status: 'review',
+				workflow: { workRunId: retry.runToken.runId },
+			});
+			expect(storage.read(roots[0], 'board').cards[0].workflow?.evidenceIncomplete).toBeUndefined();
+			queueBoardReviews(storage);
+			queueBoardReviews(storage);
+			expect(storage.read(roots[0], 'board').cards).toHaveLength(2);
+			const queued = storage.read(roots[0], 'board').cards[1];
+			expect(queued.reviewHandoff?.artifact.diff?.baseCommit).toBe(
+				history![0].artifactBase!.commit
+			);
+			expect(storage.read(roots[0], 'board').cards[0].runs![0]).toEqual(history![0]);
+			await runReview();
+			expect(card().status).toBe('ready-for-human');
+			expect(db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 3 });
+		}
+	);
+	it.each([true, false])(
+		'recovers already stranded successful work with reviewer present=%s without changing run history',
+		async (reviewerPresent) => {
+			setupWorkflow();
+			nativeService(undefined, '<!-- maestro:card-complete -->');
+			const token = claimFor('same');
+			if (!token.ok) throw new Error(token.reason);
+			expect(await runtime.start(token.runToken)).toEqual({ ok: true });
+			// Reproduce the previous host's durable state, with no linked review task.
+			db.prepare(
+				"UPDATE cards SET payload_json=json_remove(json_set(payload_json, '$.status', 'review'), '$.workflow.evidenceIncomplete') WHERE collection_key=? AND id='same'"
+			).run(command().collectionKey);
+			if (!reviewerPresent)
+				db.prepare(
+					"UPDATE cards SET payload_json=json_remove(payload_json, '$.reviewerAgentId') WHERE collection_key=? AND id='same'"
+				).run(command().collectionKey);
+			const history = db.prepare('SELECT * FROM runs').all();
+			queueBoardReviews(storage);
+			expect(card()).toMatchObject({
+				status: 'blocked',
+				workflow: { evidenceIncomplete: { runId: token.runToken.runId, missing: ['summary'] } },
+			});
+			const after = persisted();
+			queueBoardReviews(storage);
+			expect(persisted()).toBe(after);
+			expect(db.prepare('SELECT * FROM runs').all()).toEqual(history);
+			expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+		}
+	);
 	it('rejects a review result when reviewer membership is revoked after start', async () => {
 		setupWorkflow();
 		nativeService();

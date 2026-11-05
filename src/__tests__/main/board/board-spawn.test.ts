@@ -10,7 +10,9 @@
  *     running in the project root.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as path from 'node:path';
+import * as boardReview from '../../../main/board/board-review';
 
 const executeCuePrompt = vi.fn();
 const ensureCardWorktree = vi.fn();
@@ -95,8 +97,91 @@ beforeEach(() => {
 		branch: WORKTREE_BRANCH,
 	});
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe('spawnBoardCard worktree isolation', () => {
+	it.each(['same', 'other-branch', 'other-checkout'] as const)(
+		'retains the original evidence-repair baseline and rejects %s checkout mismatches',
+		async (location) => {
+			const cwd = path.resolve('isolated', 'retry-checkout');
+			const original = { worktreePath: cwd, branch: 'fixture', commit: 'a'.repeat(40) };
+			const current = {
+				...original,
+				commit: 'b'.repeat(40),
+				...(location === 'other-branch' ? { branch: 'changed' } : {}),
+				...(location === 'other-checkout'
+					? { worktreePath: path.resolve('isolated', 'other-checkout') }
+					: {}),
+			};
+			const artifact = {
+				...current,
+				commit: 'c'.repeat(40),
+				diff: { baseCommit: original.commit, sha256: 'd'.repeat(64), stat: 'all work' },
+			};
+			const read = vi
+				.spyOn(boardReview, 'readBoardRunArtifact')
+				.mockResolvedValueOnce(current)
+				.mockResolvedValueOnce(artifact);
+			const launch = vi.fn(() => true);
+			executeCuePrompt.mockImplementationOnce(async (options) => {
+				if (!(await options.prepareLaunch()))
+					return {
+						stdout: '',
+						exitCode: null,
+						executionStarted: false,
+						terminationConfirmed: true,
+					};
+				options.beforeLaunch();
+				options.onStarted(123);
+				return {
+					stdout: '<!-- maestro:card-complete | Checks passed -->',
+					exitCode: 0,
+					executionStarted: true,
+					terminationConfirmed: true,
+				};
+			});
+			const result = await spawnBoardCard(
+				cwd,
+				{
+					card: card({
+						workflow: {
+							version: 1,
+							corrections: 0,
+							workRunId: 'old',
+							evidenceIncomplete: { runId: 'old', missing: ['artifact'] },
+						},
+						runs: [
+							{
+								runId: 'old',
+								attempt: 1,
+								startedAt: '2026-11-05',
+								outcome: 'done',
+								artifactBase: original,
+							},
+						],
+					}),
+					overrides: {},
+					agentId: 'agent-1',
+					lifecycle: {
+						runId: 'retry',
+						canPrepare: () => true,
+						beforeLaunch: launch,
+						onStarted: vi.fn(),
+					},
+				},
+				context(),
+				'b1'
+			);
+			if (location === 'same') {
+				expect(launch).toHaveBeenCalledOnce();
+				expect(read).toHaveBeenLastCalledWith(cwd, original.commit);
+				expect(result).toMatchObject({ artifactBase: original, artifact });
+			} else {
+				expect(launch).not.toHaveBeenCalled();
+				expect(result.executionStarted).toBe(false);
+			}
+		}
+	);
 	it('threads the immutable run identity, validated cwd, overrides and native hooks through the existing Cue runner', async () => {
 		const specification: BoardRunSpecification = {
 			key: { sourceKey: 'source', collectionKey: 'collection', cardId: 'c1' },

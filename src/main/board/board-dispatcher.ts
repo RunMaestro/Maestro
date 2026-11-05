@@ -53,6 +53,7 @@ export const DEFAULT_STALE_RUNNING_MS = 30 * 60 * 1000;
 /** The result of running a card's assignee to completion. */
 export interface CardSpawnResult {
 	artifact?: import('../../shared/board/types').BoardRunArtifact;
+	artifactBase?: import('../../shared/board/types').BoardRunArtifact;
 	/** Native runner proof. Omitted means launch/termination is uncertain. */
 	executionStarted?: boolean;
 	terminationConfirmed?: boolean;

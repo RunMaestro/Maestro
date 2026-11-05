@@ -48,6 +48,8 @@ export interface BoardWorkflow {
 	corrections: number;
 	correctionLimitReached?: true;
 	workRunId?: string;
+	/** Successful work lacking review evidence waits for an explicit checked retry. */
+	evidenceIncomplete?: { runId: string; missing: ('summary' | 'artifact')[] };
 	reviewCardId?: string;
 	reviewResult?: {
 		workRunId: string;
@@ -168,6 +170,8 @@ export interface CardRun {
 	/** Exact durable runtime identity, present on native attempts. */
 	runId?: string;
 	artifact?: BoardRunArtifact;
+	/** Clean checkout observed before work, retained even if completion leaves it dirty. */
+	artifactBase?: BoardRunArtifact;
 	/** 1-based attempt counter for this card. */
 	attempt: number;
 	/** ISO timestamp when the agent was spawned. */
