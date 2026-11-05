@@ -167,7 +167,10 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 	const request = vi.fn(
 		async (command: import('../../../shared/worktreeRetirement').RetirementRendererCommand) => ({
 			ok: true as const,
-			token: command.kind === 'prepare' ? command.request.token : command.token,
+			token:
+				command.kind === 'prepare' || command.kind === 'recover'
+					? command.request.token
+					: command.token,
 			revision: 1,
 			...(command.kind === 'prepare' ? { snapshots: [child, parentSession] } : {}),
 		})
@@ -236,6 +239,233 @@ describe('checked worktree removal with real local Git fixtures', () => {
 			cancel: () => restarted.cancelRecoveredRemoval(id, renderer),
 		};
 	}
+
+	async function recoverRemoved(archived = false) {
+		const f = await setup();
+		if (archived) {
+			const reply = f.request.getMockImplementation()!;
+			f.request.mockImplementation(async (command) => {
+				if (command.kind === 'complete') throw new Error('lost renderer');
+				return reply(command);
+			});
+		} else f.watchers.mockRejectedValueOnce(new Error('lost watcher'));
+		expect((await f.remove()).status).toBe('pending');
+		const restarted = new WorktreeRetirement();
+		restarted.restoreRetirements(structuredClone(f.journal));
+		restarted.bindRegistrationSource(f.source);
+		const renderer = {};
+		const client = restarted.admitClient('primary');
+		if (!client.ok) throw new Error(client.reason);
+		client.loaded(renderer);
+		const request = vi.fn(
+			async (command: import('../../../shared/worktreeRetirement').RetirementRendererCommand) => ({
+				ok: true as const,
+				token:
+					command.kind === 'recover' || command.kind === 'prepare'
+						? command.request.token
+						: command.token,
+				revision: 7,
+			})
+		);
+		let invalidate = () => {};
+		const release = vi.fn();
+		const adapter = {
+			identity: renderer,
+			request,
+			release,
+			onInvalidated: (callback: () => void) => {
+				invalidate = callback;
+				return () => {};
+			},
+		};
+		const watchers = vi.fn(async () => {});
+		const host = new WorktreeRetirementHost(restarted, 60000, watchers);
+		const id = f.journal[0].archive.id;
+		return {
+			...f,
+			restarted,
+			renderer,
+			client,
+			request,
+			release,
+			watchers,
+			host,
+			id,
+			adapter,
+			recover: () => host.recover(id, adapter),
+			invalidate: () => {
+				client.invalidate();
+				invalidate();
+			},
+		};
+	}
+	it.each([false, true])(
+		'completes restored removed outcome (already archived %s) without repeating Git',
+		async (archived) => {
+			const f = await recoverRemoved(archived);
+			const original = structuredClone(f.journal[0]);
+			expect(await f.recover()).toEqual({ status: 'removed' });
+			expect(f.archive).toEqual([original.archive]);
+			expect(f.journal).toEqual([{ ...original, phase: 'settled' }]);
+			expect(f.restarted.pendingRecoveries()).toEqual([]);
+			expect(f.restarted.admit([f.parent]).ok).toBe(true);
+			expect(f.restarted.admit([f.root], { allowMissing: true }).ok).toBe(false);
+			expect(f.release).toHaveBeenCalledOnce();
+			expect(f.watchers).toHaveBeenCalledOnce();
+			expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+			expect((await f.recover()).status).toBe('blocked');
+		}
+	);
+	it('retries archive durability with the same renderer token and original snapshot', async () => {
+		const f = await recoverRemoved();
+		f.reconcile.mockRejectedValueOnce(new Error('archive disk full'));
+		expect(await f.recover()).toMatchObject({ status: 'pending', reason: 'archive disk full' });
+		expect(f.restarted.admit([f.parent]).ok).toBe(false);
+		expect(f.release).not.toHaveBeenCalled();
+		expect(await f.recover()).toEqual({ status: 'removed' });
+		expect(f.request.mock.calls.filter(([c]) => c.kind === 'recover')).toHaveLength(1);
+		expect(f.archive).toHaveLength(1);
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('retains a completed renderer and both fences until final journal durability succeeds', async () => {
+		const f = await recoverRemoved();
+		const write = f.writeIntent.getMockImplementation()!;
+		f.writeIntent.mockImplementationOnce(async () => {
+			throw new Error('journal disk full');
+		});
+		expect(await f.recover()).toMatchObject({ status: 'pending', reason: 'journal disk full' });
+		expect(f.archive).toHaveLength(1);
+		expect(f.journal[0].phase).toBe('removing');
+		expect(f.restarted.admit([f.parent]).ok).toBe(false);
+		f.writeIntent.mockImplementation(write);
+		expect(await f.recover()).toEqual({ status: 'removed' });
+		expect(f.request.mock.calls.filter(([c]) => c.kind === 'recover')).toHaveLength(1);
+		expect(f.archive).toHaveLength(1);
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it.each(['watchers', 'archive', 'renderer', 'journal'] as const)(
+		'keeps recovery fenced after primary reload during %s',
+		async (stage) => {
+			const f = await recoverRemoved();
+			if (stage === 'watchers')
+				f.watchers.mockImplementationOnce(async () => {
+					f.invalidate();
+				});
+			if (stage === 'archive') {
+				const reconcile = f.reconcile.getMockImplementation()!;
+				f.reconcile.mockImplementationOnce(async (record) => {
+					await reconcile(record);
+					f.invalidate();
+				});
+			}
+			if (stage === 'renderer') {
+				const reply = f.request.getMockImplementation()!;
+				let first = true;
+				f.request.mockImplementation(async (command) => {
+					if (command.kind === 'complete' && first) {
+						first = false;
+						f.invalidate();
+					}
+					return reply(command);
+				});
+			}
+			if (stage === 'journal') {
+				const write = f.writeIntent.getMockImplementation()!;
+				f.writeIntent.mockImplementationOnce(async (intent) => {
+					await write(intent);
+					f.invalidate();
+				});
+			}
+			expect((await f.recover()).status).toBe('pending');
+			expect(f.restarted.admit([f.parent]).ok).toBe(false);
+			expect(f.release).not.toHaveBeenCalled();
+			f.client.loaded(f.renderer); // same IPC sender, NEW primary document
+			expect(await f.recover()).toEqual({ status: 'removed' });
+			const starts = f.request.mock.calls
+				.filter(([c]) => c.kind === 'recover')
+				.map(([c]) => c.kind === 'recover' && c.request.token);
+			expect(starts).toHaveLength(2);
+			expect(starts[0]).not.toBe(starts[1]);
+			expect(f.archive).toHaveLength(1);
+			expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+		}
+	);
+	it('shares one recovery runner and excludes cancellation and untrusted owners while draining', async () => {
+		const f = await recoverRemoved();
+		let finish!: () => void;
+		let started!: () => void;
+		const ready = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		f.watchers.mockImplementationOnce(() => {
+			started();
+			return new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+		});
+		const first = f.recover();
+		await ready;
+		expect(f.recover()).toBe(first);
+		expect(await f.host.recover(f.id, { ...f.adapter, identity: {} })).toMatchObject({
+			status: 'blocked',
+		});
+		expect(await f.restarted.cancelRecoveredRemoval(f.id, f.renderer)).toMatchObject({ ok: false });
+		expect(f.restarted.admit([f.parent]).ok).toBe(false);
+		finish();
+		expect(await first).toEqual({ status: 'removed' });
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('retries a lost prepare reply with the same wire identity', async () => {
+		const f = await recoverRemoved();
+		f.request.mockRejectedValueOnce(new Error('reply lost'));
+		expect((await f.recover()).status).toBe('pending');
+		expect(await f.recover()).toEqual({ status: 'removed' });
+		const starts = f.request.mock.calls.filter(([c]) => c.kind === 'recover');
+		expect(starts).toHaveLength(2);
+		expect(starts[0]).toEqual(starts[1]);
+	});
+
+	it('refuses unloaded/foreign recovery owners before asking any renderer', async () => {
+		const f = await recoverRemoved();
+		expect(await f.host.recover(f.id, { ...f.adapter, identity: {} })).toMatchObject({
+			status: 'blocked',
+		});
+		f.client.invalidate();
+		expect((await f.recover()).status).toBe('blocked');
+		expect(f.request).not.toHaveBeenCalled();
+		f.client.loaded(f.renderer);
+		expect(await f.recover()).toEqual({ status: 'removed' });
+	});
+	it('detects a same-sender reload using the Main document revision even without an adapter callback', async () => {
+		const f = await recoverRemoved();
+		f.watchers.mockImplementationOnce(async () => {
+			f.client.invalidate();
+			f.client.loaded(f.renderer);
+		});
+		expect((await f.recover()).status).toBe('pending');
+		expect(f.release).not.toHaveBeenCalled();
+		expect(await f.recover()).toEqual({ status: 'removed' });
+		const starts = f.request.mock.calls.filter(([c]) => c.kind === 'recover');
+		expect(starts).toHaveLength(2);
+		expect(starts[0]).not.toEqual(starts[1]);
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('refuses completion for a fully present outcome before freezing the renderer', async () => {
+		const f = await recoverPresent();
+		const request = vi.fn();
+		const host = new WorktreeRetirementHost(f.restarted, 60000, async () => {});
+		expect(
+			await host.recover(f.id, {
+				identity: f.renderer,
+				request,
+				release: vi.fn(),
+				onInvalidated: () => () => {},
+			})
+		).toMatchObject({ status: 'pending', reason: expect.stringContaining('still present') });
+		expect(request).not.toHaveBeenCalled();
+		expect(await f.cancel()).toEqual({ ok: true });
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
 	it('durably cancels a fully present recovery and requires a fresh preparation', async () => {
 		const f = await recoverPresent();
 		const original = structuredClone(f.source.read());

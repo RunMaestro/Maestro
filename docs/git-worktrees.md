@@ -233,16 +233,22 @@ the checkout. Desktop preparation now binds an opaque ID and renderer revision
 to Main's trusted reservation and sole primary window. Timeout or renderer loss
 aborts preparation; an in-flight removal stays fenced. The layer stack also
 blocks preparation while other overlays are open. Preparation does not authorize
-removal. The checked removal transaction and recovery journal are internal:
-saved chat is retained before Git runs, startup restores pending reservations,
-and recovery checks disk and Git administration without repeating deletion.
+removal. The checked removal transaction remains internal. Saved chat is retained
+before Git runs, startup restores journal reservations, and desktop recovery
+checks disk and Git administration without repeating deletion.
 Uncertain outcomes remain reserved. The internal transaction now drains local
 worktree watcher probes/scans and cancels target discovery timers before Git;
 late discovery/removal events cannot recreate the retiring session. Parent
 watching continues for unrelated worktrees. Failed watcher closes block removal.
-Present-outcome recovery can be cancelled after fresh ownership checks; completion
-of removed outcomes with a newly loaded renderer and the explicit cleanup policy
-still need integration before cleanup is available.
+Present-outcome recovery can be cancelled after fresh ownership checks. The desktop
+recovery API can now complete a restored, already-removed checkout with a freshly
+loaded sole primary renderer. It freezes the stale or already-absent child and its
+surviving parent, reuses the original journal/archive identity, settles watchers
+and durable registration state, and then releases the parent. Failed writes or
+lost replies retain the fence for retry; reloads require a fresh token and
+revision. Recovery never repeats Git deletion. Cleanup commit exposure and the
+explicit cleanup policy/result/archive UI still need integration before cleanup
+is available.
 
 ### Removing Worktrees
 

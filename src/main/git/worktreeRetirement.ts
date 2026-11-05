@@ -46,6 +46,7 @@ type Entry = {
 	owner?: object;
 	intent?: RetirementIntent;
 	recovered?: boolean;
+	recoveryClaim?: object;
 	registration?: {
 		source: RetirementRegistrationSource;
 		child: StoredSession;
@@ -149,6 +150,54 @@ export class WorktreeRetirement {
 		return this.reconcileRemovedRegistration(entry.token);
 	}
 
+	/** Internal capability for one recovery runner and one loaded document. A claim
+	 * serializes completion against cancellation without ever releasing the fence.
+	 */
+	claimRecoveredRemoval(id: string, renderer: object) {
+		const entry = [...this.entries.values()].find(
+			(e) => e.recovered && e.intent?.archive.id === id
+		);
+		const client = [...this.clients.values()][0];
+		const source = entry?.registration?.source;
+		if (
+			!entry?.intent ||
+			!entry.token ||
+			entry.state !== 'removing' ||
+			entry.recoveryClaim ||
+			!source ||
+			source !== this.registrationSource ||
+			this.clients.size !== 1 ||
+			client?.kind !== 'primary' ||
+			client.renderer !== renderer
+		)
+			return {
+				ok: false as const,
+				reason: 'Loaded primary and unclaimed pending recovery required',
+			};
+		const claim = Object.freeze({});
+		const revision = client.revision;
+		entry.recoveryClaim = claim;
+		return {
+			ok: true as const,
+			token: entry.token,
+			expected: entry.identity,
+			documentRevision: revision,
+			inspect: () => inspectRetirementOutcome(entry.intent!),
+			isCurrent: () =>
+				this.owned(entry.token!) === entry &&
+				entry.state === 'removing' &&
+				entry.recoveryClaim === claim &&
+				this.registrationSource === source &&
+				this.clients.size === 1 &&
+				[...this.clients.values()][0] === client &&
+				client.renderer === renderer &&
+				client.revision === revision,
+			release: () => {
+				if (entry.recoveryClaim === claim) delete entry.recoveryClaim;
+			},
+		};
+	}
+
 	/** Cancel only a restored, fully present checkout. Never retry Git removal or
 	 * transfer its token to a new preparation. The original fence survives failed
 	 * durability, changed ownership, reloads and concurrent recovery requests.
@@ -164,6 +213,7 @@ export class WorktreeRetirement {
 			!entry?.intent ||
 			!token ||
 			entry.state !== 'removing' ||
+			entry.recoveryClaim ||
 			entry.registration?.reconciled ||
 			!source?.writeRetirementIntent ||
 			source !== this.registrationSource ||
@@ -177,6 +227,7 @@ export class WorktreeRetirement {
 			this.owned(token) === entry &&
 			entry.state === 'removing' &&
 			!entry.registration?.reconciled &&
+			!entry.recoveryClaim &&
 			this.registrationSource === source &&
 			this.clients.size === 1 &&
 			[...this.clients.values()][0] === client &&
@@ -691,7 +742,7 @@ export class WorktreeRetirement {
 	/** Only after disk, watchers, archive and renderer have settled. Persist the
 	 * completed tombstone before releasing the surviving parent's fence.
 	 */
-	async settleRemoval(token: RetirementToken): Promise<void> {
+	async settleRemoval(token: RetirementToken, isCurrent = () => true): Promise<void> {
 		const entry = this.owned(token);
 		const source = entry?.registration?.source;
 		if (
@@ -703,10 +754,10 @@ export class WorktreeRetirement {
 		)
 			throw new Error('Owned reconciled retirement required');
 		await source.enqueue(async () => {
-			if (this.owned(token) !== entry || source !== this.registrationSource)
+			if (!isCurrent() || this.owned(token) !== entry || source !== this.registrationSource)
 				throw new Error('Retirement settlement source changed');
 			await source.writeRetirementIntent!({ ...entry.intent!, phase: 'settled' });
-			if (this.owned(token) !== entry || source !== this.registrationSource)
+			if (!isCurrent() || this.owned(token) !== entry || source !== this.registrationSource)
 				throw new Error('Retirement settlement source changed during persistence');
 			entry.intent = { ...entry.intent!, phase: 'settled' };
 		});

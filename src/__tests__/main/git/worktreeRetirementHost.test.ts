@@ -63,7 +63,7 @@ function setup() {
 	const renderer: RetirementRenderer = {
 		identity,
 		request: vi.fn(async (command: RetirementRendererCommand): Promise<RetirementRendererReply> => {
-			if (command.kind === 'prepare') {
+			if (command.kind === 'prepare' || command.kind === 'recover') {
 				wire = command.request.token;
 				return { ok: true, token: wire, revision: 7 };
 			}

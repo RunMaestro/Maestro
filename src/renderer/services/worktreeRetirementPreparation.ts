@@ -23,6 +23,9 @@ const preparations = new Map<
 		parentSessionId: string;
 		path: string;
 		completed?: boolean;
+		parentPath: string;
+		recovery: boolean;
+		revision: number;
 	}
 >();
 let completion: SessionStore | undefined;
@@ -44,7 +47,7 @@ function editorBlocker(state: UIStore): boolean {
  * This revision is an input to Main's eventual token-owned transaction, never
  * standalone deletion authority. Main must revalidate ownership and its sender.
  */
-export function prepareRendererRetirement(request: RendererRetirementRequest) {
+export function prepareRendererRetirement(request: RendererRetirementRequest, recovery = false) {
 	if (
 		!request.sessionId ||
 		!request.parentSessionId ||
@@ -54,6 +57,17 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 		!request.token
 	)
 		return { ok: false as const, reason: 'missing retirement identity' };
+	const existing = preparations.get(request.sessionId);
+	if (
+		recovery &&
+		existing?.recovery &&
+		existing.token === request.token &&
+		existing.path === request.path &&
+		existing.parentPath === request.parentPath &&
+		existing.parentSessionId === request.parentSessionId &&
+		freeze.isCurrent(request.sessionId, request.token, existing.revision)
+	)
+		return { ok: true as const, token: request.token, revision: existing.revision };
 	if (preparations.size)
 		return { ok: false as const, reason: 'renderer preparation already active' };
 	const protectedIds = new Set([request.sessionId, request.parentSessionId]);
@@ -133,15 +147,16 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 			const child = state.sessions.filter((s) => s.id === request.sessionId);
 			const parent = state.sessions.filter((s) => s.id === request.parentSessionId);
 			if (
-				child.length !== 1 ||
+				(recovery ? child.length > 1 : child.length !== 1) ||
 				parent.length !== 1 ||
-				child[0].parentSessionId !== parent[0].id ||
+				(child[0] && child[0].parentSessionId !== parent[0].id) ||
 				parent[0].parentSessionId ||
-				[child[0], parent[0]].some(
+				[...child, parent[0]].some(
 					(session) => session.sshRemoteId || session.sessionSshRemoteConfig?.enabled
 				) ||
-				normalizeWorktreePath(child[0].cwd) !== normalizeWorktreePath(request.path) ||
-				normalizeWorktreePath(child[0].projectRoot) !== normalizeWorktreePath(request.path) ||
+				(child[0] &&
+					(normalizeWorktreePath(child[0].cwd) !== normalizeWorktreePath(request.path) ||
+						normalizeWorktreePath(child[0].projectRoot) !== normalizeWorktreePath(request.path))) ||
 				normalizeWorktreePath(parent[0].cwd) !== normalizeWorktreePath(request.parentPath)
 			)
 				return 'renderer registration differs from Main';
@@ -152,7 +167,7 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 			)
 				return 'open editing dialog';
 			if (state.sessions.some((s) => s.filePreviewTabs.length)) return 'open file tabs';
-			for (const session of [child[0], parent[0]]) {
+			for (const session of [...child, parent[0]]) {
 				if (session.autoRunMode === 'edit' && session.autoRunContent) return 'Auto Run editor';
 				const blocker = retirementSessionBlocker(
 					session,
@@ -170,6 +185,9 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 				release,
 				parentSessionId: request.parentSessionId,
 				path: request.path,
+				parentPath: request.parentPath,
+				recovery,
+				revision: result.revision,
 			});
 		else release();
 		if (result.ok) {

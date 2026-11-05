@@ -29,8 +29,8 @@ export function useWorktreeRetirementHost(): void {
 			finish();
 		});
 		const stopRequest = git.onRetirementRendererRequest((command) => {
-			if (command.kind === 'prepare') {
-				const result = prepareRendererRetirement(command.request);
+			if (command.kind === 'prepare' || command.kind === 'recover') {
+				const result = prepareRendererRetirement(command.request, command.kind === 'recover');
 				if (result.ok) tokens.set(command.request.sessionId, result.token);
 				return result;
 			}

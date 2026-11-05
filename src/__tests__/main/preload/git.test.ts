@@ -608,11 +608,13 @@ describe('retirement desktop preload protocol', () => {
 		await api.abortWorktreeRetirement('opaque');
 		await api.getWorktreeRetirementRecoveries();
 		await api.cancelWorktreeRetirementRecovery('archive');
+		await api.completeWorktreeRetirementRecovery('archive');
 		expect(mockInvoke.mock.calls).toEqual([
 			['git:prepareWorktreeRetirement', 'child'],
 			['git:abortWorktreeRetirement', 'opaque'],
 			['git:getWorktreeRetirementRecoveries'],
 			['git:cancelWorktreeRetirementRecovery', 'archive'],
+			['git:completeWorktreeRetirementRecovery', 'archive'],
 		]);
 	});
 	it('restricts replies to the Main-minted protocol channel and unsubscribes listeners', () => {

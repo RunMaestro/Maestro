@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 	request: vi.fn(),
 	recoveries: vi.fn(),
 	cancel: vi.fn(),
+	recover: vi.fn(),
 }));
 vi.mock('electron', () => ({
 	BrowserWindow: { fromWebContents: mocks.from },
@@ -27,6 +28,7 @@ vi.mock('../../../main/git/worktreeRetirementHost', () => ({
 	WorktreeRetirementHost: class {
 		prepare = mocks.prepare;
 		abort = mocks.abort;
+		recover = mocks.recover;
 	},
 }));
 vi.mock('../../../main/web-server/callbacks/remoteRequest', () => ({
@@ -56,6 +58,7 @@ describe('retirement Git IPC adapter', () => {
 		'abortWorktreeRetirement',
 		'getWorktreeRetirementRecoveries',
 		'cancelWorktreeRetirementRecovery',
+		'completeWorktreeRetirementRecovery',
 		'retirementRendererRequest',
 		'retirementRendererRelease',
 	])('marks %s desktop-only at registration', (name) => {
@@ -71,6 +74,26 @@ describe('retirement Git IPC adapter', () => {
 			await invoke('cancelWorktreeRetirementRecovery', event, 'archive', { identity: {} })
 		).toEqual({ ok: true });
 		expect(mocks.cancel).toHaveBeenCalledWith('archive', event.sender);
+	});
+
+	it('binds removed recovery completion to the desktop sender, refusing subframes and absent windows', async () => {
+		const event = sender();
+		mocks.from.mockReturnValue({});
+		mocks.recover.mockResolvedValue({ status: 'removed' });
+		expect(
+			await invoke('completeWorktreeRetirementRecovery', event, 'archive', { path: '/forged' })
+		).toEqual({ status: 'removed' });
+		const [id, adapter] = mocks.recover.mock.calls[0] as [string, RetirementRenderer];
+		expect(id).toBe('archive');
+		expect(adapter.identity).toBe(event.sender);
+		expect(
+			await invoke('completeWorktreeRetirementRecovery', { ...event, senderFrame: {} }, 'archive')
+		).toMatchObject({ status: 'blocked' });
+		mocks.from.mockReturnValue(null);
+		expect(await invoke('completeWorktreeRetirementRecovery', event, 'archive')).toMatchObject({
+			status: 'blocked',
+		});
+		expect(mocks.recover).toHaveBeenCalledOnce();
 	});
 	it('refuses recovery cancellation from subframes, absent windows and invalid ids', async () => {
 		const event = sender();

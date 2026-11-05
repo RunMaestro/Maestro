@@ -3,6 +3,7 @@ import type {
 	RetirementPreparationResult,
 	RetirementRendererCommand,
 	RetirementRendererReply,
+	RetirementRemovalResult,
 } from '../../shared/worktreeRetirement';
 import type { ManagedCheckout, RetirementToken, WorktreeRetirement } from './worktreeRetirement';
 import {
@@ -11,7 +12,7 @@ import {
 	verifyRetirementMerge,
 } from './worktreeRetirementRemoval';
 
-type RemovalResult = { status: 'removed' } | { status: 'blocked' | 'pending'; reason: string };
+type RemovalResult = RetirementRemovalResult;
 
 /** Adapter owns the actual IPC sender and its primary-window lifetime. */
 export interface RetirementRenderer {
@@ -37,6 +38,19 @@ type Prepared = {
  */
 export class WorktreeRetirementHost {
 	private readonly prepared = new Map<string, Prepared>();
+	private readonly recoveries = new Map<
+		string,
+		{
+			renderer: RetirementRenderer;
+			documentRevision: number;
+			wireId: string;
+			revision?: number;
+			invalidated: boolean;
+			requested?: boolean;
+			detach: () => void;
+			operation?: Promise<RemovalResult>;
+		}
+	>();
 	constructor(
 		private readonly fence: WorktreeRetirement,
 		private readonly leaseMs = 30000,
@@ -169,6 +183,143 @@ export class WorktreeRetirementHost {
 			delete entry.removal;
 		});
 		return entry.removal;
+	}
+
+	/** Completion of a RESTORED journal only. Observe absence, freeze a fresh
+	 * primary document, and finish the original archive; never invoke Git removal.
+	 * Failed attempts retain their matching renderer freeze for same-document retry.
+	 */
+	recover(id: string, renderer: RetirementRenderer): Promise<RemovalResult> {
+		const previous = this.recoveries.get(id);
+		if (previous?.operation)
+			return previous.renderer.identity === renderer.identity
+				? previous.operation
+				: Promise.resolve({ status: 'blocked', reason: 'Recovery already running' });
+		const claim = this.fence.claimRecoveredRemoval(id, renderer.identity);
+		if (!claim.ok) return Promise.resolve({ status: 'blocked', reason: claim.reason });
+		const owner = claim.expected.ownership!;
+		let entry = previous;
+		if (
+			!entry ||
+			entry.invalidated ||
+			entry.renderer.identity !== renderer.identity ||
+			entry.documentRevision !== claim.documentRevision
+		) {
+			previous?.detach();
+			entry = {
+				renderer,
+				documentRevision: claim.documentRevision,
+				wireId: randomUUID(),
+				invalidated: false,
+				detach: () => {},
+			};
+			const current = entry;
+			entry.detach = renderer.onInvalidated(() => {
+				current.invalidated = true;
+			});
+			this.recoveries.set(id, entry);
+		}
+		const current = entry;
+		const assertCurrent = () => {
+			if (!claim.isCurrent() || current.invalidated || this.recoveries.get(id) !== current)
+				throw new Error('Recovery primary document changed');
+		};
+		const check = async () => {
+			assertCurrent();
+			const reply = await current.renderer.request({
+				kind: 'check',
+				sessionId: owner.sessionId,
+				token: current.wireId,
+				revision: current.revision!,
+			});
+			assertCurrent();
+			if (!reply.ok || reply.token !== current.wireId || reply.revision !== current.revision)
+				throw new Error('Recovery renderer revision changed');
+		};
+		const operation = async (): Promise<RemovalResult> => {
+			try {
+				assertCurrent();
+				const outcome = await claim.inspect();
+				assertCurrent();
+				if (outcome.state !== 'removed')
+					throw new Error(
+						outcome.state === 'present'
+							? 'Checkout still present; cancel before new preparation'
+							: outcome.reason
+					);
+				if (current.revision === undefined) {
+					// Store the wire identity even if the reply is lost. The renderer
+					// accepts an idempotent repeat of this exact recovery preparation.
+					current.requested = true;
+					const reply = await current.renderer.request({
+						kind: 'recover',
+						request: {
+							sessionId: owner.sessionId,
+							parentSessionId: owner.parentSessionId,
+							path: claim.expected.path,
+							parentPath: owner.parentPath,
+							token: current.wireId,
+						},
+					});
+					assertCurrent();
+					if (!reply.ok) throw new Error(reply.reason);
+					if (
+						reply.token !== current.wireId ||
+						!Number.isSafeInteger(reply.revision) ||
+						reply.revision < 1
+					)
+						throw new Error('Recovery renderer identity mismatch');
+					current.revision = reply.revision;
+				}
+				await check();
+				if (!this.settleDiscovery) throw new Error('Watcher settlement unavailable');
+				await this.settleDiscovery(claim.expected);
+				await check();
+				const reconciled = await this.fence.reconcileRecoveredRemoval(id);
+				if (!reconciled.ok) throw new Error(reconciled.reason);
+				await check();
+				const reply = await current.renderer.request({
+					kind: 'complete',
+					sessionId: owner.sessionId,
+					token: current.wireId,
+					revision: current.revision!,
+				});
+				assertCurrent();
+				if (!reply.ok || reply.token !== current.wireId || reply.revision !== current.revision)
+					throw new Error('Recovery renderer completion pending');
+				await this.fence.settleRemoval(
+					claim.token,
+					() => claim.isCurrent() && !current.invalidated
+				);
+				assertCurrent();
+				if (!this.fence.complete(claim.token))
+					throw new Error('Recovery settlement lost ownership');
+				this.recoveries.delete(id);
+				current.detach();
+				try {
+					current.renderer.release(owner.sessionId, current.wireId);
+				} catch {
+					/* owner gone */
+				}
+				return { status: 'removed' };
+			} catch (error) {
+				return {
+					status: 'pending',
+					reason: error instanceof Error ? error.message : 'Recovery pending',
+				};
+			} finally {
+				claim.release();
+				// A present/uncertain disk result never contacted or froze a renderer.
+				if (!current.requested && this.recoveries.get(id) === current) {
+					this.recoveries.delete(id);
+					current.detach();
+				}
+			}
+		};
+		current.operation = operation().finally(() => {
+			delete current.operation;
+		});
+		return current.operation;
 	}
 
 	/** Called internally only after checked removal and durable reconciliation.

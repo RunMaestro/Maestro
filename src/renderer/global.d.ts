@@ -1794,6 +1794,9 @@ interface MaestroAPI {
 		cancelWorktreeRetirementRecovery: (
 			id: string
 		) => Promise<import('../shared/worktreeRetirement').RetirementRecoveryCancellation>;
+		completeWorktreeRetirementRecovery: (
+			id: string
+		) => Promise<import('../shared/worktreeRetirement').RetirementRemovalResult>;
 		onRetirementRendererRequest: (
 			handler: (
 				command: import('../shared/worktreeRetirement').RetirementRendererCommand

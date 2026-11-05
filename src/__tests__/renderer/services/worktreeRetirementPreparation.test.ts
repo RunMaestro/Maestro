@@ -276,6 +276,71 @@ describe('authoritative retirement store admission', () => {
 	});
 });
 
+describe('fresh renderer removed-outcome recovery', () => {
+	it.each([false, true])(
+		'freezes and reconciles a recovered child (already absent %s)',
+		(absent) => {
+			if (absent)
+				useSessionStore.setState({
+					sessions: useSessionStore.getState().sessions.filter((s) => s.id !== 'child'),
+				});
+			const result = prepareRendererRetirement(request, true);
+			expect(result.ok).toBe(true);
+			if (!result.ok) throw new Error(result.reason);
+			expect(prepareRendererRetirement(request, true)).toEqual({
+				ok: true,
+				token: request.token,
+				revision: result.revision,
+			});
+			expect(prepareRendererRetirement({ ...request, parentPath: '/replaced' }, true).ok).toBe(
+				false
+			);
+			expect(() => useSessionStore.getState().updateSession('parent', { name: 'late' })).toThrow(
+				'frozen'
+			);
+			expect(() =>
+				useSessionStore.getState().addSession(createMockSession({ id: 'child' }))
+			).toThrow('frozen');
+			expect(completeRendererRetirement('child', 'opaque', result.revision)).toBe(true);
+			expect(completeRendererRetirement('child', 'opaque', result.revision)).toBe(true);
+			expect(useSessionStore.getState().activeSessionId).toBe('parent');
+			expect(useSessionStore.getState().removedWorktreePaths.has('/child')).toBe(true);
+		}
+	);
+	it('requires a fresh recovery revision after the old document has released', () => {
+		const old = prepare();
+		cancelRendererRetirement('child', request.token);
+		const result = prepareRendererRetirement(request, true);
+		expect(result.ok).toBe(true);
+		if (!result.ok) throw new Error(result.reason);
+		expect(result.revision).toBeGreaterThan(old.revision);
+		expect(completeRendererRetirement('child', request.token, old.revision)).toBe(false);
+	});
+	it.each([
+		'draft',
+		'parent draft',
+		'file',
+		'missing parent',
+		'wrong child',
+		'not loaded',
+	] as const)('refuses %s recovery without losing state', (blocker) => {
+		if (blocker === 'draft') useComposerInputStore.getState().setAiValue('unsaved');
+		if (blocker === 'parent draft')
+			useSessionStore.getState().updateSession('parent', { terminalDraftInput: 'unsaved' });
+		if (blocker === 'file')
+			useSessionStore
+				.getState()
+				.updateSession('other', { filePreviewTabs: [{} as FilePreviewTab] });
+		if (blocker === 'missing parent') useSessionStore.setState({ sessions: [child()] });
+		if (blocker === 'wrong child')
+			useSessionStore.getState().updateSession('child', { cwd: '/other' });
+		if (blocker === 'not loaded') useSessionStore.setState({ initialLoadComplete: false });
+		const before = useSessionStore.getState();
+		expect(prepareRendererRetirement(request, true).ok).toBe(false);
+		expect(useSessionStore.getState()).toBe(before);
+	});
+});
+
 describe('layer stack retirement ownership', () => {
 	const layer = {
 		type: 'modal' as const,
@@ -317,53 +382,56 @@ describe('layer stack retirement ownership', () => {
 });
 
 describe('app-owned retirement IPC listener', () => {
-	it('prepares live stores, validates revisions and releases only on Main instruction', async () => {
-		const original = window.maestro.git;
-		let handler!: (
-			command: import('../../../shared/worktreeRetirement').RetirementRendererCommand
-		) => import('../../../shared/worktreeRetirement').RetirementRendererReply;
-		let release!: (sessionId: string, token: string) => void;
-		const stopRequest = vi.fn();
-		const stopRelease = vi.fn();
-		window.maestro.git = {
-			...original,
-			onRetirementRendererRequest: (callback) => {
-				handler = callback;
-				return stopRequest;
-			},
-			onRetirementRendererRelease: (callback) => {
-				release = callback;
-				return stopRelease;
-			},
-			abortWorktreeRetirement: vi.fn(async () => true),
-		};
-		try {
-			const { unmount } = renderHook(() => useWorktreeRetirementHost());
-			const reply = handler({ kind: 'prepare', request });
-			expect(reply).toMatchObject({ ok: true });
-			if (!reply.ok) throw new Error(reply.reason);
-			expect(
-				handler({ kind: 'check', sessionId: 'child', token: 'opaque', revision: reply.revision })
-			).toMatchObject({ ok: true, token: reply.token, revision: reply.revision });
-			expect(
-				handler({
-					kind: 'check',
-					sessionId: 'child',
-					token: 'opaque',
-					revision: reply.revision + 1,
-				}).ok
-			).toBe(false);
-			release('child', 'wrong');
-			expect(() => useSessionStore.getState().updateSession('child', { name: 'bad' })).toThrow();
-			release('child', 'opaque');
-			useSessionStore.getState().updateSession('child', { name: 'allowed' });
-			await act(async () => unmount());
-			expect(stopRequest).toHaveBeenCalledOnce();
-			expect(stopRelease).toHaveBeenCalledOnce();
-		} finally {
-			window.maestro.git = original;
+	it.each(['prepare', 'recover'] as const)(
+		'%s freezes live stores and releases only on Main instruction',
+		async (kind) => {
+			const original = window.maestro.git;
+			let handler!: (
+				command: import('../../../shared/worktreeRetirement').RetirementRendererCommand
+			) => import('../../../shared/worktreeRetirement').RetirementRendererReply;
+			let release!: (sessionId: string, token: string) => void;
+			const stopRequest = vi.fn();
+			const stopRelease = vi.fn();
+			window.maestro.git = {
+				...original,
+				onRetirementRendererRequest: (callback) => {
+					handler = callback;
+					return stopRequest;
+				},
+				onRetirementRendererRelease: (callback) => {
+					release = callback;
+					return stopRelease;
+				},
+				abortWorktreeRetirement: vi.fn(async () => true),
+			};
+			try {
+				const { unmount } = renderHook(() => useWorktreeRetirementHost());
+				const reply = handler({ kind, request });
+				expect(reply).toMatchObject({ ok: true });
+				if (!reply.ok) throw new Error(reply.reason);
+				expect(
+					handler({ kind: 'check', sessionId: 'child', token: 'opaque', revision: reply.revision })
+				).toMatchObject({ ok: true, token: reply.token, revision: reply.revision });
+				expect(
+					handler({
+						kind: 'check',
+						sessionId: 'child',
+						token: 'opaque',
+						revision: reply.revision + 1,
+					}).ok
+				).toBe(false);
+				release('child', 'wrong');
+				expect(() => useSessionStore.getState().updateSession('child', { name: 'bad' })).toThrow();
+				release('child', 'opaque');
+				useSessionStore.getState().updateSession('child', { name: 'allowed' });
+				await act(async () => unmount());
+				expect(stopRequest).toHaveBeenCalledOnce();
+				expect(stopRelease).toHaveBeenCalledOnce();
+			} finally {
+				window.maestro.git = original;
+			}
 		}
-	});
+	);
 	it.each([true, false])('unmount thaws only after Main accepts abort (%s)', async (accepted) => {
 		const original = window.maestro.git;
 		let handler!: (

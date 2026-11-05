@@ -8,6 +8,7 @@ export interface RendererRetirementRequest {
 }
 export type RetirementRendererCommand =
 	| { kind: 'prepare'; request: RendererRetirementRequest }
+	| { kind: 'recover'; request: RendererRetirementRequest }
 	| { kind: 'check'; sessionId: string; token: string; revision: number }
 	| { kind: 'complete'; sessionId: string; token: string; revision: number };
 export type RetirementRendererReply =
@@ -21,3 +22,7 @@ export interface PendingRetirementRecovery {
 	path: string;
 }
 export type RetirementRecoveryCancellation = { ok: true } | { ok: false; reason: string };
+
+export type RetirementRemovalResult =
+	| { status: 'removed' }
+	| { status: 'blocked' | 'pending'; reason: string };

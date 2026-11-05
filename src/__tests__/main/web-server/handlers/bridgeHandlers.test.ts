@@ -1018,6 +1018,7 @@ it.each([
 	'git:abortWorktreeRetirement',
 	'git:getWorktreeRetirementRecoveries',
 	'git:cancelWorktreeRetirementRecovery',
+	'git:completeWorktreeRetirementRecovery',
 	'git:retirementRendererRequest',
 	'git:retirementRendererRelease',
 ])('keeps retirement control and acknowledgement desktop-only: %s', (channel) => {
