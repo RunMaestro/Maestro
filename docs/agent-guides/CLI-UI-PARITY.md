@@ -273,6 +273,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: screenshots, support package box                               | `feedback submit --attach <png...> --support-package`                                            |
 | Feedback: Running as (account picker)                                    | `feedback accounts [--use <key> \| --clear]`                                                     |
 | Feedback: Log in to GitHub / Check Again                                 | `feedback login`, `feedback auth --fresh`                                                        |
+| Agent error: Install <provider> (CLI missing)                            | `install-command <provider> [--platform] [--json]` (prints the line)                             |
 | Feedback: live self-diagnosis                                            | `feedback diagnose`                                                                              |
 | Feedback: Submit now (early exit)                                        | `feedback submit` (the caller supplies whatever fields it has)                                   |
 | Create Debug Package (support package)                                   | `support-package -o <dir> [--no-logs ...]`                                                       |

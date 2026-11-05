@@ -17,6 +17,8 @@ export function getErrorTitleForType(type: AgentError['type']): string {
 			return 'Connection Error';
 		case 'agent_crashed':
 			return 'Agent Error';
+		case 'agent_not_installed':
+			return 'Provider CLI Not Installed';
 		case 'permission_denied':
 			return 'Permission Denied';
 		case 'session_not_found':

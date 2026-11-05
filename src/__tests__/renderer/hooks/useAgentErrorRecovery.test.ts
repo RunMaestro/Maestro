@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentErrorRecovery } from '../../../renderer/hooks';
 import type { AgentError } from '../../../shared/types';
@@ -43,6 +43,77 @@ describe('useAgentErrorRecovery', () => {
 
 		expect(onAuthenticate).toHaveBeenCalledTimes(1);
 		expect(onNewSession).toHaveBeenCalledTimes(1);
+	});
+
+	describe('agent_not_installed', () => {
+		const notInstalled: AgentError = {
+			...baseError,
+			type: 'agent_not_installed',
+			message: 'Codex CLI not installed.',
+			agentId: 'codex',
+		};
+		const originalPlatform = (window as unknown as { maestro: { platform?: string } }).maestro
+			.platform;
+
+		afterEach(() => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = originalPlatform;
+		});
+
+		it('offers the install for this platform first, then a retry', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+			const onInstall = vi.fn();
+			const onRetry = vi.fn();
+
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: notInstalled,
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall,
+					onRetry,
+				})
+			);
+
+			const [installAction, retryAction] = result.current.recoveryActions;
+			expect(installAction.id).toBe('install');
+			expect(installAction.label).toBe('Install Codex');
+			expect(installAction.description).toBe('Run "npm install -g @openai/codex" here');
+			expect(installAction.primary).toBe(true);
+			expect(retryAction.id).toBe('retry');
+			expect(retryAction.primary).toBe(false);
+
+			act(() => installAction.onClick());
+			expect(onInstall).toHaveBeenCalledTimes(1);
+		});
+
+		it('falls back to retry alone when there is no install for the platform', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'browser';
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: notInstalled,
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall: vi.fn(),
+					onRetry: vi.fn(),
+				})
+			);
+
+			expect(result.current.recoveryActions.map((a) => a.id)).toEqual(['retry']);
+			expect(result.current.recoveryActions[0].primary).toBe(true);
+		});
+
+		it('never offers a restart, which would fail the same way', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: notInstalled,
+					agentId: 'codex',
+					sessionId: 's1',
+					onRestartAgent: vi.fn(),
+				})
+			);
+			expect(result.current.recoveryActions).toEqual([]);
+		});
 	});
 
 	it('offers restart + new session for agent crashes', () => {
