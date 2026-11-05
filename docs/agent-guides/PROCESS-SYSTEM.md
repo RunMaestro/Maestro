@@ -186,23 +186,41 @@ reservation and uncertain remote occupancy must also remain fenced; see
 [[board]] for the Board lifecycle contract. Cue's transport cleanup has a
 different durable-reservation contract and is not a desktop recovery seam.
 
-**Open contract:** there is currently no supported desktop recovery callback
-that proves termination of the exact uncertain remote attempt. `signalRemoteAgent()`
-returns whether signal dispatch started, not a remote termination receipt. Its
-script can exit successfully for an absent or unreadable PID record and does not
-verify process-group death after SIGKILL. Parsed provider completion, local
-process-table removal and Copilot transcript reconciliation likewise do not
-prove remote termination. Do not add an unconditional release to these paths.
+**Private core, adapter still open:** `ProcessManagerOptions.sshActivityHost` is a
+main-process constructor dependency, never a spawn/CLI/IPC field. For an ordinary
+desktop stdin-script SSH launch with an existing PID record, the core freezes
+the actual connection command/arguments, remote ID, generation and random
+PID-record pathname (the legacy path nonce). The host retains an observer with
+the original release closure after the process-table row disappears.
+`ssh-activity.ts` snapshots the host-observed authenticated host key, PID/start
+identity and supervised boundary identity/generation once, before uncertain
+settlement. A late identity cannot fill in missing launch evidence.
 
-A future recovery seam needs host-verified remote lifecycle evidence bound to
-the original launch (remote identity, PID/start identity and attempt/generation),
-including any surviving work that can conflict, and the original activity
-token. Missing records, failed probes and connection loss must leave occupancy
-uncertain. Until that contract exists, ordinary desktop activity can remain busy
-for the main-process lifetime after an uncertain SSH exit. An app restart is
-not proof of remote termination. The fake-process regressions in
-`ProcessManager.spawn.process.test.ts` verify this safe residual state and clean
-completion ownership; they do not qualify real SSH execution or recovery.
+Only an opaque object issued by that host adapter's private termination authority
+can release the original desktop token after uncertain settlement. Its complete
+identity must match the original snapshot. Serialized objects, booleans, foreign
+authorities, wrong targets/nonces/PID starts/generations, duplicate receipts and
+late clean child events cannot release a successor or another registration. Clean
+native completion and failed starts keep their existing release behavior. A
+contradictory clean `close` after an uncertain `exit` cannot turn uncertainty into
+proof. Host callback failures retain uncertainty; teardown failure cannot prevent
+normal clean completion. Board-origin uncertain occupancy is never offered to
+this desktop recovery host and retains its independent durable contract.
+
+No production remote adapter is configured yet. `signalRemoteAgent()` returns
+whether signal dispatch started, not a remote termination receipt. Its script
+can exit successfully for an absent or unreadable PID record and does not verify
+process-group death after SIGKILL. A PID group/session cannot contain escaped
+detached descendants. The core accepts only a host-verified supervised boundary;
+legacy launches without that evidence remain unsupported/unknown. Parsed provider
+completion, local row removal, Copilot transcript reconciliation and app restart
+are not remote-death proof. Ordinary desktop activity can still remain busy for
+the main-process lifetime until an actual trusted adapter supplies that evidence.
+
+The actual `ProcessManager`/local fake-child cases in
+`ProcessManager.spawn.process.test.ts` exercise this private core and ownership
+refusals. Injected host identities/proofs are tests, not authenticated remote
+execution or functional remote recovery acceptance.
 
 ---
 
