@@ -556,6 +556,15 @@ describe('QuickActions command builders', () => {
 			])
 		);
 
+		useModalStore.getState().closeModal('worktreePRDetails');
+		git.find((a) => a.id === 'worktreePRDetails')!.action();
+		expect(useModalStore.getState().modals.get('worktreePRDetails')).toMatchObject({
+			open: true,
+			data: { sessionId: session.id },
+		});
+		expect(close).toHaveBeenCalledWith(false);
+		useModalStore.getState().closeModal('worktreePRDetails');
+
 		// The palette says whether the diff has anything in it, like the menu badges.
 		expect(git.find((a) => a.id === 'gitDiff')!.subtext).toBe('+206 −37 ~5 in 5 files');
 

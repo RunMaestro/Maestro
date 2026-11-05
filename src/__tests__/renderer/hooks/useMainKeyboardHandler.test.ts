@@ -3442,6 +3442,34 @@ describe('useMainKeyboardHandler', () => {
 			publishGitShortcutActions(null);
 		});
 
+		it('opens details for the active worktree from its registered shortcut', () => {
+			useModalStore.getState().closeModal('worktreePRDetails');
+			press('viewWorktreePRDetails', {
+				activeSession: {
+					id: 'target',
+					name: 'Worktree',
+					inputMode: 'ai',
+					isGitRepo: true,
+					parentSessionId: 'parent',
+					worktreeBranch: 'feat/x',
+				},
+				activeSessionId: 'target',
+			});
+			expect(useModalStore.getState().modals.get('worktreePRDetails')).toMatchObject({
+				open: true,
+				data: { sessionId: 'target' },
+			});
+			useModalStore.getState().closeModal('worktreePRDetails');
+		});
+
+		it('withholds details for plain agents and group chat', () => {
+			useModalStore.getState().closeModal('worktreePRDetails');
+			press('viewWorktreePRDetails');
+			expect(useModalStore.getState().isOpen('worktreePRDetails')).toBe(false);
+			press('viewWorktreePRDetails', { activeGroupChatId: 'room-1' });
+			expect(useModalStore.getState().isOpen('worktreePRDetails')).toBe(false);
+		});
+
 		it('fires pull, push, branch switch, and PR from their chords', () => {
 			const pull = publishStub();
 			press('gitPull');

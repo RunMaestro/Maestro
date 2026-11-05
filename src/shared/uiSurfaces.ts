@@ -68,6 +68,16 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 
 export const UI_SURFACES: UiSurface[] = [
 	{
+		id: 'worktree-pr-details',
+		label: 'Worktree PR and CI',
+		aliases: ['worktree-pr'],
+		modal: 'worktreePRDetails',
+		description: 'PR status, checks and manual merge controls for the active worktree agent.',
+		shortcutId: 'viewWorktreePRDetails',
+		commandPalette: 'Git: Worktree PR and CI',
+		click: 'Worktree PR and CI in the Left Bar hamburger menu, or Details on a worktree row',
+	},
+	{
 		id: 'notification-center',
 		shortcutId: 'openNotificationCenter',
 		label: 'Notification Center',

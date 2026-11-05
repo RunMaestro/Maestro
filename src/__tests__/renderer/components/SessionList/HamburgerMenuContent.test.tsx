@@ -10,6 +10,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useThroughputGaugeStore } from '../../../../renderer/stores/throughputGaugeStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
+import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 function renderMenu(setMenuOpen = vi.fn()) {
@@ -58,5 +61,35 @@ describe('HamburgerMenuContent - Throughput Gauge', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /Throughput Gauge/ }));
 		expect(useThroughputGaugeStore.getState().visible).toBe(false);
+	});
+});
+
+describe('HamburgerMenuContent - Worktree PR and CI', () => {
+	afterEach(() => {
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		useModalStore.getState().closeModal('worktreePRDetails');
+	});
+	it('opens the active managed worktree and closes the menu', () => {
+		const session = createMockSession({
+			id: 'worktree',
+			isGitRepo: true,
+			parentSessionId: 'parent',
+			worktreeBranch: 'feat/x',
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		const close = vi.fn();
+		renderMenu(close);
+		fireEvent.click(screen.getByRole('button', { name: /Worktree PR and CI/ }));
+		expect(useModalStore.getState().modals.get('worktreePRDetails')).toMatchObject({
+			open: true,
+			data: { sessionId: session.id },
+		});
+		expect(close).toHaveBeenCalledWith(false);
+	});
+	it('omits the entry for a parent repository', () => {
+		const session = createMockSession({ id: 'parent', isGitRepo: true });
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		renderMenu();
+		expect(screen.queryByRole('button', { name: /Worktree PR and CI/ })).not.toBeInTheDocument();
 	});
 });

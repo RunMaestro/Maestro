@@ -918,6 +918,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
+				viewWorktreePRDetails: shortcuts.viewWorktreePRDetails,
 				gitPull: shortcuts.gitPull,
 				gitPush: shortcuts.gitPush,
 				gitChangeBranch: shortcuts.gitChangeBranch,

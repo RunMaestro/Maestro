@@ -111,6 +111,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
 	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
+	viewWorktreePRDetails: {
+		id: 'viewWorktreePRDetails',
+		label: 'Git: Worktree PR and CI',
+		keys: ['Alt', 'Meta', 'Shift', 'p'],
+	},
 	viewGitLog: { id: 'viewGitLog', label: 'Git: View Log', keys: ['Meta', 'Shift', 'g'] },
 	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
 	// active agent's repo and two of them (pull, push) write to a remote, so

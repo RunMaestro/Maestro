@@ -199,7 +199,14 @@ PR, and if it fails, the error waits for you both in a toast and in the form.
 
 For a worktree sub-agent, the sidebar shows the pull request and CI status for
 its current branch. Select **Details** for the PR, checks, local divergence and
-manual refresh. Maestro polls while its window is visible, refreshes when it
+manual refresh. You can also open **Worktree PR and CI** for the active worktree
+from the Left Bar hamburger menu, search **Git: Worktree PR and CI** in the
+command palette, or press **Alt+Cmd+Shift+P** on macOS (**Alt+Ctrl+Shift+P** on
+Windows/Linux). Agents can use `maestro-cli open worktree-pr-details`. The details
+stay attached to their target when the sidebar row collapses or another agent
+becomes active. Close with Escape or the header's X.
+
+Maestro polls while its window is visible, refreshes when it
 becomes visible again, and refreshes after a checkout or successful push. Slow
 requests finish before another automatic refresh starts. Completed PRs can be
 rediscovered after a restart when their repository, branch and head match. A failed refresh can leave the last result marked stale;

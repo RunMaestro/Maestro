@@ -10,6 +10,7 @@
 
 import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
+import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
@@ -58,6 +59,14 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 				return { ok: false, error: message };
 			}
 			useNotificationStore.getState().setNotificationCenterOpen(true);
+			return { ok: true };
+		}
+		case 'worktree-pr-details': {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session?.isGitRepo || !session.parentSessionId || !session.worktreeBranch) {
+				return { ok: false, error: 'Select a managed worktree agent to view its PR and CI.' };
+			}
+			useModalStore.getState().openModal('worktreePRDetails', { sessionId: session.id });
 			return { ok: true };
 		}
 		case 'settings':
