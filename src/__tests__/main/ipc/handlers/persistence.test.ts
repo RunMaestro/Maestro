@@ -3352,7 +3352,7 @@ describe('persistence IPC handlers', () => {
 					tabId: 'manager-tab',
 					createdAt: 7,
 				});
-				const registry = new DispatchCallbackRegistry({ onFire: vi.fn() });
+				let registry = new DispatchCallbackRegistry({ onFire: vi.fn() });
 				const deps = { ...f.deps, snapshot: () => snapshot, callbackRegistry: () => registry };
 				const adapter = new PianolaNewTabDispatch(deps);
 				const result = await adapter.runQueue(

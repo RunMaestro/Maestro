@@ -500,15 +500,20 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getPendingPermissions', () => {
-		it('returns only authoritative pending process IDs and a version', async () => {
+		it('returns authoritative pending process and request IDs with a version', async () => {
 			const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });
 			try {
 				const pending = createPending('process-snapshot', spawn.token);
 				const snapshot = await handlers.get('process:getPendingPermissions')!({});
-				expect(snapshot).toEqual({ version: expect.any(Number), processIds: ['agent-ai-tab'] });
+				expect(snapshot).toEqual({
+					version: expect.any(Number),
+					processIds: ['agent-ai-tab'],
+					requestIds: ['process-snapshot'],
+				});
 				resolvePending('process-snapshot', { behavior: 'allow' });
 				await pending;
 				expect((await handlers.get('process:getPendingPermissions')!({})).processIds).toEqual([]);
+				expect((await handlers.get('process:getPendingPermissions')!({})).requestIds).toEqual([]);
 			} finally {
 				spawn.cleanup();
 			}

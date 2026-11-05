@@ -172,4 +172,15 @@ describe('bounded native question cores', () => {
 		expect(extractQuestionCores('Should I ' + 'x'.repeat(2048) + '?')).toBeNull();
 		expect(extractQuestionCores('Should I run tests? '.repeat(33))).toBeNull();
 	});
+	it('handles long delimiter-free streams and preserves sentence boundaries', () => {
+		const progress = 'x'.repeat(131_072);
+		expect(extractQuestionCores(progress)).toEqual([]);
+		expect(extractQuestionCores(`${progress}. Should I run tests? ${progress}`)).toEqual([
+			'should i run tests?',
+		]);
+		expect(extractQuestionCores('Should I run tests??')).toBeNull();
+		expect(
+			detectAwaitingInput(`${progress}\nDo you want me to run tests? ${progress}`)?.prompt
+		).toBe('Do you want me to run tests?');
+	});
 });
