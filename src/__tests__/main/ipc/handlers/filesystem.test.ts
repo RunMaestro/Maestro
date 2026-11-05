@@ -334,6 +334,40 @@ describe('filesystem handlers', () => {
 			).resolves.toEqual({ success: true });
 		});
 
+		it.each(['fs:writeFile', 'fs:mkdir', 'fs:copyPath', 'fs:rename'])(
+			'%s allows a missing unrelated destination during preparation',
+			async (channel) => {
+				expect(fence.prepare(checkout).ok).toBe(true);
+				const destination = path.join(root, 'other', 'new', 'file');
+				const args =
+					channel === 'fs:copyPath' || channel === 'fs:rename'
+						? [path.join(root, 'other'), destination]
+						: channel === 'fs:mkdir'
+							? [destination]
+							: [destination, 'content'];
+				await expect(registeredHandlers.get(channel)!({}, ...args)).resolves.toEqual({
+					success: true,
+				});
+			}
+		);
+
+		it.each(['fs:copyPath', 'fs:rename'])(
+			'%s still fences either missing endpoint under the reserved checkout',
+			async (channel) => {
+				expect(fence.prepare(checkout).ok).toBe(true);
+				const target = path.join(checkout.path, 'new', 'file');
+				const other = path.join(root, 'other', 'new');
+				await expect(registeredHandlers.get(channel)!({}, target, other)).rejects.toThrow(
+					'preparing'
+				);
+				await expect(registeredHandlers.get(channel)!({}, other, target)).rejects.toThrow(
+					'preparing'
+				);
+				expect(fs.cp).not.toHaveBeenCalled();
+				expect(fs.rename).not.toHaveBeenCalled();
+			}
+		);
+
 		it('blocks compression when either source or archive parent is reserved', async () => {
 			expect(fence.prepare(checkout).ok).toBe(true);
 			await expect(registeredHandlers.get('fs:compressFolder')!({}, checkout.path)).rejects.toThrow(

@@ -20,21 +20,40 @@ export function foldPathCase(p: string, platform: NodeJS.Platform = process.plat
 /**
  * Resolve symlinks through the nearest existing ancestor (sync), so a not-yet-created file under a symlinked
  * folder resolves to where it would land. `p` unchanged when nothing on it resolves.
+ * `strict` throws on anything except genuinely absent entries, including dangling links,
+ * access errors and exhaustion of the ancestor limit. Use it for mutation admission.
  */
-export function realpathThroughAncestor(p: string): string {
+export function realpathThroughAncestor(p: string, options: { strict?: boolean } = {}): string {
 	let current = p;
 	const rest: string[] = [];
 	for (let i = 0; i < 64; i++) {
 		try {
 			const real = fs.realpathSync.native(current);
 			return rest.length > 0 ? path.join(real, ...rest.reverse()) : real;
-		} catch {
+		} catch (error) {
+			if (options.strict) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				// realpath reports ENOENT for dangling symlinks too. They are not
+				// creation paths: their unresolved target must remain unknown.
+				try {
+					fs.lstatSync(current);
+				} catch (entryError) {
+					if ((entryError as NodeJS.ErrnoException).code !== 'ENOENT') throw entryError;
+					const parent = path.dirname(current);
+					if (parent === current) throw error;
+					rest.push(path.basename(current));
+					current = parent;
+					continue;
+				}
+				throw error;
+			}
 			const parent = path.dirname(current);
 			if (parent === current) return p;
 			rest.push(path.basename(current));
 			current = parent;
 		}
 	}
+	if (options.strict) throw new Error('Cannot resolve path within ancestor limit');
 	return p;
 }
 

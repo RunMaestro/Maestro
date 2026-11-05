@@ -264,19 +264,21 @@ export function registerPersistenceHandlers(
 		(...args: TArgs): Promise<TResult> => {
 			// Admission precedes even the queue's first microtask. Keep it through
 			// relocation, backups, durable flush, and registration callbacks.
-			const admission = worktreeRetirement.admit(paths(...args));
-			if (!admission.ok) return Promise.reject(new Error(admission.reason));
+			const initialPaths = paths(...args);
+			const admission = initialPaths.length ? worktreeRetirement.admit(initialPaths) : undefined;
+			if (admission && !admission.ok) return Promise.reject(new Error(admission.reason));
 			return sessionWriteQueue
 				.enqueue('sessions', async () => {
-					const current = worktreeRetirement.admit(paths(...args));
-					if (!current.ok) throw new Error(current.reason);
+					const currentPaths = paths(...args);
+					const current = currentPaths.length ? worktreeRetirement.admit(currentPaths) : undefined;
+					if (current && !current.ok) throw new Error(current.reason);
 					try {
 						return await handler(...args);
 					} finally {
-						current.release();
+						current?.release();
 					}
 				})
-				.finally(admission.release);
+				.finally(() => admission?.release());
 		};
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a

@@ -3,7 +3,11 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { foldPathCase, isPathWithin } from '../utils/real-path-containment';
+import {
+	foldPathCase,
+	isPathWithin,
+	realpathThroughAncestor,
+} from '../utils/real-path-containment';
 
 export interface ManagedCheckout {
 	/** Verified checkout root; Git ownership must be verified by the caller. */
@@ -22,11 +26,13 @@ export type Preparation =
 type Entry = { identity: ManagedCheckout; state: RetirementState; token?: RetirementToken };
 type Hold = { paths: string[] | null };
 
-/** Canonicalization deliberately fails closed on missing, inaccessible or relative paths. */
-function canonical(p: string): string | null {
+/** Only filesystem creation endpoints may resolve through genuinely missing entries. */
+function canonical(p: string, allowMissing = false): string | null {
 	if (typeof p !== 'string' || !path.isAbsolute(p)) return null;
 	try {
-		return foldPathCase(fs.realpathSync.native(p));
+		return foldPathCase(
+			allowMissing ? realpathThroughAncestor(p, { strict: true }) : fs.realpathSync.native(p)
+		);
 	} catch {
 		return null;
 	}
@@ -68,8 +74,8 @@ export class WorktreeRetirement {
 	}
 
 	/** Unknown paths acquire a global hold; while reserved they fail closed. */
-	admit(paths: readonly string[] | null): Admission {
-		const resolved = paths?.length ? paths.map(canonical) : null;
+	admit(paths: readonly string[] | null, options: { allowMissing?: boolean } = {}): Admission {
+		const resolved = paths?.length ? paths.map((p) => canonical(p, options.allowMissing)) : null;
 		const roots = resolved && resolved.every((p): p is string => p !== null) ? resolved : null;
 		for (const [root, entry] of this.entries) {
 			if (entry.state !== 'available' && (!roots || roots.some((p) => overlaps(p, root))))
@@ -99,11 +105,12 @@ export class WorktreeRetirement {
 				// potentially accessing its target. Preserve both ownership scopes.
 				return fs.lstatSync(p).isSymbolicLink() ? [p, path.dirname(p)] : [p];
 			} catch {
-				// Missing/unknown paths still fail closed in admit().
+				// Missing entries are resolved through a verified ancestor below;
+				// inaccessible paths and unresolved symlinks still fail closed.
 				return [p];
 			}
 		});
-		const admission = this.admit(endpoints);
+		const admission = this.admit(endpoints, { allowMissing: true });
 		if (!admission.ok) throw new Error(`Worktree retirement: ${admission.reason}`);
 		try {
 			return await operation();

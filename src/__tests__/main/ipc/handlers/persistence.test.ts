@@ -227,6 +227,46 @@ describe('persistence IPC handlers', () => {
 			if (!prepared.ok) throw new Error(prepared.reason);
 			reservation = prepared.token;
 		}
+		it.each(['sessions:getAll', 'sessions:getBootstrap', 'sessions:setMany', 'sessions:setAll'])(
+			'%s permits an empty path list while another checkout is reserved',
+			async (channel) => {
+				stored = [];
+				reserve();
+				await expect(handlers.get(channel)!({}, [])).resolves.toEqual(
+					channel.startsWith('sessions:get') ? [] : true
+				);
+			}
+		);
+		it('does not let an empty pending load prevent an unrelated reservation', async () => {
+			stored = [];
+			const read = handlers.get('sessions:getAll')!({});
+			try {
+				reserve();
+			} finally {
+				await read;
+			}
+		});
+		it('rechecks an initially empty removal path list when queued work starts', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const first = handlers.get('sessions:setMany')!({}, [{ id: 'other', cwd: other }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const queued = handlers.get('sessions:setMany')!({}, [], ['late-registration']);
+			const rejected = expect(queued).rejects.toThrow('preparing');
+			stored.push({ id: 'late-registration', cwd: target.path } as StoredSession);
+			try {
+				reserve();
+			} finally {
+				finish();
+				await first;
+				await rejected;
+			}
+			expect(stored.some((session) => session.id === 'late-registration')).toBe(true);
+		});
 		it.each(['sessions:setMany', 'sessions:setAll'])(
 			'%s rejects new registrations and moves in either direction under reservation',
 			async (channel) => {

@@ -89,6 +89,15 @@ describe('process retirement admission through concrete handle completion', () =
 		(toolType, spawner) => {
 			const root = mkdtempSync(join(process.cwd(), '.native-retirement-test-'));
 			const target = { ...checkout, path: root };
+			const admit = worktreeRetirement.admit.bind(worktreeRetirement);
+			const releases: ReturnType<typeof vi.fn>[] = [];
+			const admissionSpy = vi.spyOn(worktreeRetirement, 'admit').mockImplementation((...args) => {
+				const result = admit(...args);
+				if (!result.ok) return result;
+				const release = vi.fn(result.release);
+				releases.push(release);
+				return { ...result, release };
+			});
 			try {
 				worktreeRetirement.register(target);
 				const manager = new ProcessManager(() => true);
@@ -116,6 +125,10 @@ describe('process retirement admission through concrete handle completion', () =
 					...(toolType === 'rpc-agent' ? { nativeRpcProtocol: 'pi-rpc' } : {}),
 				});
 				expect(spawn).toHaveBeenCalledOnce();
+				// Native execution remains excluded; its temporary spawn hold must
+				// still be released. Preparing the unrelated CLI root cannot prove that.
+				expect(releases.length).toBeGreaterThan(0);
+				for (const release of releases) expect(release).toHaveBeenCalledOnce();
 				manager.emit('exit', config().sessionId, 0);
 				manager.kill(config().sessionId);
 				expect(worktreeRetirement.prepare(target)).toMatchObject({
@@ -123,7 +136,9 @@ describe('process retirement admission through concrete handle completion', () =
 					reason: expect.stringContaining('unsupported'),
 				});
 				expectAvailable();
+				for (const release of releases) expect(release).toHaveBeenCalledOnce();
 			} finally {
+				admissionSpy.mockRestore();
 				rmSync(root, { recursive: true, force: true });
 			}
 		}

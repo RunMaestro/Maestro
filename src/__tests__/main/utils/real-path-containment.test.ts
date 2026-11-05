@@ -129,4 +129,20 @@ describe.skipIf(process.platform === 'win32')('resolvePathInRealRoot', () => {
 			path.join(root, 'new.md')
 		);
 	});
+	it('strict ancestor resolution retains the missing suffix beneath a directory alias', () => {
+		expect(
+			realpathThroughAncestor(path.join(base, 'vault-link', 'new', 'file'), { strict: true })
+		).toBe(path.join(root, 'new', 'file'));
+	});
+	it('strict ancestor resolution refuses unresolved links and non-directory ancestors', () => {
+		for (const relative of ['dangling.md', 'dangling.md/child', 'loop-a', 'notes/a.md/child']) {
+			expect(() => realpathThroughAncestor(path.join(root, relative), { strict: true })).toThrow();
+		}
+	});
+	it('strict ancestor resolution refuses exhaustion instead of returning an unverified path', () => {
+		const deep = path.join(root, ...Array.from({ length: 65 }, () => 'missing'));
+		expect(() => realpathThroughAncestor(deep, { strict: true })).toThrow('ancestor limit');
+		// Existing best-effort callers retain their historical fallback.
+		expect(realpathThroughAncestor(deep)).toBe(deep);
+	});
 });
