@@ -235,7 +235,13 @@ export async function migratePianolaLegacyWatches(
 			};
 			return current;
 		}
-		if (existing?.legacyMigration && !active.length && !selectionChanged) {
+		if (
+			existing?.legacyMigration &&
+			!active.length &&
+			!selectionChanged &&
+			canonicalJson(existing.delegationPolicy ?? null) ===
+				canonicalJson(scope.delegationPolicy ?? null)
+		) {
 			result = {
 				status: 'already-migrated',
 				scopeId: scope.id,
@@ -491,12 +497,21 @@ export async function configurePianolaScope(
 			const rules = deps.readRules();
 			if (rules.malformed)
 				return 'Pianola rules unavailable; repair the host rules before configuration';
+			const ruleSetRevision = createHash('sha256').update(canonicalJson(rules.rules)).digest('hex');
+			if (!ownerAuthorized && existing?.delegationPolicy?.ruleSetRevision !== ruleSetRevision)
+				return 'Owner approval required for changed Pianola rules; save this scope in the native owner UI or request owner approval';
+			// Renewal changes admission authority, not answer rules or enrollment.
+			// Older tasks keep their original policy fingerprint and cannot adopt it.
+			const policyChanged =
+				existing?.delegationPolicy?.managerAgentId !== target.managerAgentId ||
+				existing?.delegationPolicy?.ruleSetRevision !== ruleSetRevision;
 			const policy = existing?.delegationPolicy
 				? {
 						...existing.delegationPolicy,
-						...(ownerAuthorized && existing.managerAgentId !== target.managerAgentId
+						...(ownerAuthorized && policyChanged
 							? {
 									managerAgentId: target.managerAgentId!,
+									ruleSetRevision,
 									revision: existing.delegationPolicy.revision + 1,
 								}
 							: {}),
@@ -507,7 +522,7 @@ export async function configurePianolaScope(
 						enabled: true,
 						managerAgentId: managers[0].id,
 						coverage: 'selected-agents' as const,
-						ruleSetRevision: createHash('sha256').update(canonicalJson(rules.rules)).digest('hex'),
+						ruleSetRevision,
 					};
 			// A CLI request is only a trigger for the stored consent. Its ID, label,
 			// enabled flag, timestamps, worker options and policy confer no rights.

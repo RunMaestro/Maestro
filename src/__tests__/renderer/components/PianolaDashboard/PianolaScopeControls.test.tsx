@@ -89,6 +89,19 @@ afterEach(() => {
 });
 
 describe('PianolaScopeControls production hook composition', () => {
+	it('submits an unchanged existing scope for owner policy renewal without creating a selection', async () => {
+		render(<Controls />);
+		await screen.findByText('Fixture selection');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		const save = screen.getByRole('button', { name: 'Save' });
+		fireEvent.click(save);
+		await waitFor(() => expect(window.maestro.pianola.supervisor.add).toHaveBeenCalledOnce());
+		expect(window.maestro.pianola.supervisor.add).toHaveBeenCalledWith(scope);
+		await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+		expect(persisted.targets).toHaveLength(1);
+		expect(persisted.targets[0].id).toBe(scope.id);
+	});
+
 	it('keeps the selection open and displays the migration refusal', async () => {
 		vi.mocked(window.maestro.pianola.supervisor.add).mockResolvedValueOnce({
 			...persisted,

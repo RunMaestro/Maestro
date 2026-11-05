@@ -709,7 +709,8 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			delete candidate.migratedToScopeId;
 			const previous = canonicalJson(readSupervisorTargets());
 			const enrollmentRevision = readScopeCheckpoint(candidate.id)?.enrollmentRevision ?? null;
-			const rules = canonicalJson(readRulesResult());
+			const reviewedRules = readRulesResult();
+			const rules = canonicalJson(reviewedRules);
 			const identity = canonicalJson(settingsStore.get('pianolaLearningIdentity') ?? null);
 			const reconciled = await wrappedSupervisorAdd(event, candidate);
 			if (reconciled.migration?.status !== 'NeedsConfiguration') return reconciled;
@@ -752,6 +753,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 				};
 				const detail = [
 					existing ? `Current configuration:\n${describe(existing)}` : 'New supervision scope',
+					`Standing delegation will use the current Pianola rules (${reviewedRules.rules.length}):\n${JSON.stringify(reviewedRules.rules, null, 2)}`,
 					`Proposed configuration:\n${describe(existing ? { ...candidate, enabled: existing.enabled } : candidate)}`,
 				].join('\n\n');
 				const confirm =

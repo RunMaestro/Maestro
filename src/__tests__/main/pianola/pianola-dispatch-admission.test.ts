@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { configurePianolaScope } from '../../../main/pianola/pianola-legacy-migration';
 import { spawn } from 'child_process';
 import { once } from 'events';
 import * as os from 'os';
@@ -127,6 +130,110 @@ function fixture() {
 }
 
 describe('host Pianola dispatch admission', () => {
+	it.each(['new-tab', 'existing-tab', 'queue'] as const)(
+		'requires fresh owner policy for %s and never adopts old tasks',
+		async (placement) => {
+			const f = fixture();
+			f.snapshot.owners.push({ ...f.snapshot.owners[0], id: 'manager', isPianola: true });
+			f.deps.ruleSetRevision = () =>
+				createHash('sha256').update(canonicalJson(f.store.readRules())).digest('hex');
+			const configure = (owner: boolean) =>
+				configurePianolaScope(f.scope, {
+					store: f.store,
+					snapshot: () => f.snapshot,
+					canFence: () => true,
+					featureEnabled: () => true,
+					ownerAuthorized: () => owner,
+					readRules: () => f.store.readRulesResult(),
+				});
+			expect((await configure(true)).status).toBe('registered');
+			const originalPolicy = f.store.readSupervisorTargets()[0].delegationPolicy!;
+			const oldRequest = { ...f.request, intent: { prompt: 'Implement the task', placement } };
+			await f.service.prepare(f.client, oldRequest);
+			await f.service.bind(
+				f.client,
+				dispatchId,
+				'target',
+				placement === 'queue' ? 'row' : undefined
+			);
+			const oldQueue =
+				placement === 'queue'
+					? await f.service.prepareQueue(f.client, dispatchId, {
+							id: 'row',
+							timestamp: 100,
+							type: 'message',
+							text: 'Implement the task',
+							tabId: 'target',
+							pendingAdmissionId: dispatchId,
+						})
+					: undefined;
+			if (placement !== 'queue') await f.service.enroll(f.client, dispatchId);
+			f.store.writeRules([
+				{
+					id: 'naming',
+					enabled: true,
+					scope: 'global',
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					priority: 1,
+					createdAt: 1,
+					updatedAt: 2,
+				},
+			]);
+			const freshId = '33333333-3333-4333-8333-333333333333';
+			const freshRequest = { ...oldRequest, dispatchId: freshId };
+			await expect(f.service.prepare(f.client, freshRequest)).rejects.toThrow(
+				'PianolaPolicyChanged'
+			);
+			// Outcome-only handles can finish readback across rule changes, never renew authority.
+			if (oldQueue) await oldQueue.recordEvidence(true);
+			expect((await configure(false)).status).toBe('NeedsConfiguration');
+			expect(f.store.readSupervisorTargets()[0].delegationPolicy).toEqual(originalPolicy);
+			expect((await configure(true)).status).toBe('registered');
+			expect(f.store.readSupervisorTargets()[0].delegationPolicy).toMatchObject({
+				revision: originalPolicy.revision + 1,
+				ruleSetRevision: f.deps.ruleSetRevision(),
+			});
+			f.deps.queueSnapshot = () => f.snapshot;
+			f.deps.releaseQueueItem = vi.fn(async (_request, commit) => commit(() => {}));
+			if (placement === 'queue')
+				await expect(f.service.releaseQueue(dispatchId)).rejects.toThrow('PianolaPolicyChanged');
+			else
+				await expect(f.service.release(f.client, dispatchId)).rejects.toThrow(
+					'PianolaPolicyChanged'
+				);
+			expect(f.release).not.toHaveBeenCalled();
+			expect(f.deps.releaseQueueItem).not.toHaveBeenCalled();
+			const oldRecord = f.store.readDispatchAdmission(dispatchId);
+			await f.service.prepare(f.client, freshRequest);
+			await f.service.bind(
+				f.client,
+				freshId,
+				'target',
+				placement === 'queue' ? 'fresh-row' : undefined
+			);
+			if (placement === 'queue') {
+				const prepared = await f.service.prepareQueue(f.client, freshId, {
+					id: 'fresh-row',
+					timestamp: 100,
+					type: 'message',
+					text: 'Implement the task',
+					tabId: 'target',
+					pendingAdmissionId: freshId,
+				});
+				await prepared.recordEvidence(true);
+				await f.service.releaseQueue(freshId);
+				expect(f.deps.releaseQueueItem).toHaveBeenCalledOnce();
+			} else {
+				await f.service.enroll(f.client, freshId);
+				expect(await f.service.release(f.client, freshId)).toMatchObject({ outcome: 'accepted' });
+				expect(f.release).toHaveBeenCalledOnce();
+			}
+			expect(f.store.readDispatchAdmission(dispatchId)).toEqual(oldRecord);
+		}
+	);
+
 	it('preserves the native empty-creation barrier in pre-start dispatch enrollment', async () => {
 		const f = fixture();
 		const native = new NativeCurrentTurns();

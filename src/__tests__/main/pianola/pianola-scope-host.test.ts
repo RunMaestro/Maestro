@@ -220,6 +220,180 @@ afterEach(async () => {
 });
 
 describe('owner scope configuration through production adapters', () => {
+	it.each([
+		{ adapter: 'native', migrated: false },
+		{ adapter: 'cli', migrated: false },
+		{ adapter: 'native', migrated: true },
+		{ adapter: 'cli', migrated: true },
+	])(
+		'renews changed rules through $adapter on the same scope (migrated=$migrated)',
+		async ({ adapter, migrated }) => {
+			if (migrated)
+				store.writeSupervisorTargets([
+					{
+						id: 'legacy',
+						kind: 'watch',
+						enabled: true,
+						createdAt: 1,
+						agentId: 'agent',
+						tabId: 'old',
+					},
+				]);
+			await nativeSave();
+			const original = store.readSupervisorTargets().find((entry) => entry.id === scopeId)!;
+			const checkpoint = store.readScopeCheckpoint(scopeId)!;
+			checkpoint.tabs[0].unresolvedIntent = { decisionId: 'unknown', messageId: 'historic' };
+			store.writeScopeCheckpoint(checkpoint);
+			const before = store.readScopeCheckpoint(scopeId);
+			const rules = store.writeRules([
+				{
+					id: 'naming',
+					enabled: true,
+					scope: 'global',
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					priority: 1,
+					createdAt: 1,
+					updatedAt: 2,
+				},
+			]);
+			if (adapter === 'native') expect((await nativeSave()).migration?.status).toBe('registered');
+			else {
+				await cli({ id: scopeId, requestOwnerApproval: true });
+				expect(lastOutput().success).toBe(true);
+				expect(confirm).toHaveBeenCalledOnce();
+			}
+			const saved = store.readSupervisorTargets().find((entry) => entry.id === scopeId)!;
+			expect(saved).toEqual({
+				...original,
+				delegationPolicy: {
+					...original.delegationPolicy!,
+					revision: original.delegationPolicy!.revision + 1,
+					ruleSetRevision: createHash('sha256').update(canonicalJson(rules)).digest('hex'),
+				},
+			});
+			expect(store.readScopeCheckpoint(scopeId)).toEqual(before);
+			expect(
+				store.readSupervisorTargets().filter((entry) => entry.kind === 'watch-scope')
+			).toHaveLength(1);
+			await nativeSave();
+			expect(store.readSupervisorTargets().find((entry) => entry.id === scopeId)).toEqual(saved);
+		}
+	);
+
+	it.each([
+		'rules',
+		'manager',
+		'disconnect',
+		'identity',
+		'window',
+		'cancel',
+		'off',
+		'paused-policy',
+	] as const)(
+		'refuses changed-rules renewal after %s while awaiting owner review',
+		async (change) => {
+			await nativeSave();
+			store.writeRules([
+				{
+					id: 'naming',
+					enabled: true,
+					scope: 'global',
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					priority: 1,
+					createdAt: 1,
+					updatedAt: 2,
+				},
+			]);
+			const before = store.readSupervisorTargets();
+			const checkpoint = store.readScopeCheckpoint(scopeId);
+			confirm.mockImplementation(async (_window, detail) => {
+				expect(detail).toContain('Use count.');
+				if (change === 'rules')
+					store.writeRules(store.readRules().map((rule) => ({ ...rule, answer: 'Use total.' })));
+				if (change === 'manager')
+					census.owners = census.owners.filter((owner) => owner.id !== 'manager');
+				if (change === 'disconnect') callerActive = false;
+				if (change === 'identity') desktopOwner = false;
+				if (change === 'window') vi.spyOn(native.window, 'isDestroyed').mockReturnValue(true);
+				if (change === 'off') feature = false;
+				if (change === 'paused-policy')
+					store.writeSupervisorTargets(
+						before.map((entry) => ({
+							...entry,
+							delegationPolicy: { ...entry.delegationPolicy!, enabled: false },
+						}))
+					);
+				return change !== 'cancel';
+			});
+			await cli({ id: scopeId, requestOwnerApproval: true });
+			expect(confirm).toHaveBeenCalledOnce();
+			expect(lastOutput().success).toBe(false);
+			expect(store.readSupervisorTargets()).toEqual(
+				change === 'paused-policy'
+					? before.map((entry) => ({
+							...entry,
+							delegationPolicy: { ...entry.delegationPolicy!, enabled: false },
+						}))
+					: before
+			);
+			expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
+		}
+	);
+
+	it('refuses forged automation renewal and preserves revoked policy on a genuine owner save', async () => {
+		await nativeSave({ ...target(), enabled: false });
+		const original = store.readSupervisorTargets()[0];
+		store.writeRules([
+			{
+				id: 'naming',
+				enabled: true,
+				scope: 'global',
+				match: { kinds: ['question'], maxRisk: 'low' },
+				action: 'auto_answer',
+				answer: 'Use count.',
+				priority: 1,
+				createdAt: 1,
+				updatedAt: 2,
+			},
+		]);
+		const forged = {
+			...target(),
+			delegationPolicy: {
+				...original.delegationPolicy!,
+				ruleSetRevision: createHash('sha256')
+					.update(canonicalJson(store.readRules()))
+					.digest('hex'),
+				revision: 999,
+			},
+		};
+		const response = (await handlers.get('pianola:supervisor-add')!(
+			{ type: 'bridge', cli: true, ownerAuthorized: true },
+			forged
+		)) as PianolaSupervisorSnapshot;
+		expect(response.migration?.status).toBe('NeedsConfiguration');
+		expect(store.readSupervisorTargets()).toEqual([original]);
+		await cli({ id: scopeId });
+		expect(lastOutput().success).toBe(false);
+		expect(confirm).not.toHaveBeenCalled();
+		store.writeSupervisorTargets([
+			{ ...original, delegationPolicy: { ...original.delegationPolicy!, enabled: false } },
+		]);
+		await nativeSave(forged);
+		expect(store.readSupervisorTargets()[0]).toMatchObject({
+			enabled: false,
+			delegationPolicy: {
+				enabled: false,
+				revision: 2,
+				ruleSetRevision: forged.delegationPolicy.ruleSetRevision,
+			},
+		});
+		expect(store.readRules()[0].answer).toBe('Use count.');
+	});
+
 	it('describes a legacy scope when asking the owner to approve its replacement', async () => {
 		store.writeSupervisorTargets([
 			{
