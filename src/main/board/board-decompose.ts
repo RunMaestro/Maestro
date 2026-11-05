@@ -294,11 +294,19 @@ function appendChildren(
 			createdAt: nowIso,
 			updatedAt: nowIso,
 		};
-		// Inherit the triage card's assignee (role and/or pinned agent) so children
-		// run under the same assignment. Both are optional (Phase 6), but the triage
-		// card always has at least one, so children stay valid.
+		// Carry assignment inputs, not host-owned approval or run state. Drafts may
+		// have incomplete assignments; normal readiness checks still apply.
 		if (triage.assigneeProfileId) newCard.assigneeProfileId = triage.assigneeProfileId;
 		if (triage.assigneeAgentId) newCard.assigneeAgentId = triage.assigneeAgentId;
+		if (triage.executionScope) newCard.executionScope = { ...triage.executionScope };
+		if (triage.role) newCard.role = { ...triage.role };
+		if (triage.repositoryId) newCard.repositoryId = triage.repositoryId;
+		if (triage.workingDirectory) newCard.workingDirectory = triage.workingDirectory;
+		// Imported legacy cards can carry the role namespace as a separate field.
+		const legacy = triage as BoardCard & { profileNamespace?: string };
+		if (legacy.profileNamespace !== undefined)
+			(newCard as BoardCard & { profileNamespace?: string }).profileNamespace =
+				legacy.profileNamespace;
 		board.cards.push(newCard);
 	}
 

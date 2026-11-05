@@ -15,6 +15,7 @@ import {
 	type AutoDecomposeDeps,
 } from '../../../main/board/board-decompose';
 import type { Board, BoardCard } from '../../../shared/board/types';
+import { evaluateCaptureReadiness } from '../../../shared/board/domain';
 
 function card(overrides: Partial<BoardCard> = {}): BoardCard {
 	// Default to a profile assignee unless the caller pins an agent instead
@@ -120,6 +121,60 @@ describe('autoDecomposeBoard - enabled', () => {
 		spawn: spawnImpl,
 		now: () => NOW,
 	});
+
+	it.each([
+		{ kind: 'agent' as const, agentId: 'agent-9' },
+		{ kind: 'group' as const, groupId: 'group-1' },
+	])(
+		'preserves current assignment inputs and readiness for $kind scope',
+		async (executionScope) => {
+			const triage = Object.assign(
+				card({ id: 't1', assigneeProfileId: 'p1', assigneeAgentId: 'agent-9' }),
+				{
+					executionScope,
+					role: { namespace: 'team', profileId: 'p1' },
+					profileNamespace: 'team',
+					repositoryId: 'repo',
+					workingDirectory: '/project',
+					heldByUser: true,
+					startModeOverride: 'direct' as const,
+					runs: [{ attempt: 1, startedAt: NOW, outcome: 'failed' as const }],
+				}
+			);
+			const b = board([triage], true);
+			await autoDecomposeBoard(
+				b,
+				deps(async () => JSON.stringify([{ title: 'First' }, { title: 'Second', dependsOn: [0] }]))
+			);
+			const [first, second] = b.cards.slice(1);
+			for (const child of [first, second]) {
+				expect(child).toMatchObject({
+					executionScope,
+					role: triage.role,
+					profileNamespace: 'team',
+					assigneeProfileId: 'p1',
+					assigneeAgentId: 'agent-9',
+					repositoryId: 'repo',
+					workingDirectory: '/project',
+				});
+				expect(child.runs).toBeUndefined();
+				expect(child.heldByUser).toBeUndefined();
+				expect(child.startModeOverride).toBeUndefined();
+				expect(
+					evaluateCaptureReadiness(child, {
+						agents: [{ id: 'agent-9', groupId: 'group-1' }],
+						groups: [{ id: 'group-1' }],
+						profiles: [{ namespace: 'team', profile: { id: 'p1', name: 'Role' } as never }],
+						repositoryIds: ['repo'],
+						defaultStartMode: 'approval',
+						canRelaxStartPolicy: false,
+					})
+				).toEqual([]);
+			}
+			expect(first.parents).toEqual(['t1']);
+			expect(second.parents).toEqual(['t1', first.id]);
+		}
+	);
 
 	it('fans a triage card into children, wires parents, and retires the triage card', async () => {
 		const triage = card({ id: 't1', status: 'triage', assigneeProfileId: 'pX' });
@@ -239,6 +294,34 @@ describe('autoDecomposeBoard - reload before merge (stale-snapshot clobber)', ()
 			read: () => structuredClone(persisted),
 		};
 	}
+
+	it('uses the freshly edited legacy role namespace and assignment for children', async () => {
+		const disk = store(board([card({ id: 't1', assigneeProfileId: 'p1' })], true));
+		const snapshot = disk.read();
+		await autoDecomposeBoard(snapshot, {
+			spawn: async () => {
+				const current = disk.read();
+				Object.assign(current.cards[0], {
+					profileNamespace: 'imported',
+					executionScope: { kind: 'group', groupId: 'g' },
+					repositoryId: 'r',
+					workingDirectory: '/fresh',
+				});
+				disk.save(current);
+				return '[{"title":"Child"}]';
+			},
+			reload: disk.reload,
+			save: disk.save,
+		});
+		const child = disk.read().cards[1];
+		expect(child).toMatchObject({
+			profileNamespace: 'imported',
+			assigneeProfileId: 'p1',
+			executionScope: { kind: 'group', groupId: 'g' },
+			repositoryId: 'r',
+			workingDirectory: '/fresh',
+		});
+	});
 
 	it('preserves a dispatcher status change made while the LLM pass was running', async () => {
 		const triage = card({ id: 't1', status: 'triage' });
