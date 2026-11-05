@@ -1225,10 +1225,10 @@ function installBoardOwner(direct = true, captureProjectCard = true) {
 	return {
 		owner,
 		service,
-		finish: () =>
+		finish: (exitCode = 0) =>
 			settle({
-				output: '<!-- maestro:card-complete -->',
-				exitCode: 0,
+				output: exitCode === 0 ? '<!-- maestro:card-complete -->' : 'failed',
+				exitCode,
 				executionStarted: true,
 				terminationConfirmed: true,
 			}),
@@ -1498,6 +1498,26 @@ describe('fenced host intake shared by desktop and real CLI', () => {
 		expect(await send(control('resume', token))).toMatchObject({ ok: true });
 		expect(facade.read(roots[0], 'b').cards[0].heldByUser).not.toBe(true);
 	});
+	it.each([0, 1])(
+		'holds and resumes after a finished attempt with exit code %i',
+		async (exitCode) => {
+			const fixture = installBoardOwner();
+			await send(tick());
+			fixture.finish(exitCode);
+			await vi.waitFor(() =>
+				expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0)
+			);
+			expect(db.prepare('SELECT outcome_json FROM runs').get()).toMatchObject({
+				outcome_json: expect.any(String),
+			});
+			const held = await cancelBoardRuntimeCard(roots[0], 'b', 'c', 'hold');
+			expect(held.cards[0].heldByUser).toBe(true);
+			const resumed = await cancelBoardRuntimeCard(roots[0], 'b', 'c', 'resume');
+			expect(resumed.cards[0].heldByUser).not.toBe(true);
+			expect(facade.workspace.readCollection(target())!.cards[0].payload.heldByUser).toBe(false);
+			expect(fixture.service.stop).not.toHaveBeenCalled();
+		}
+	);
 	it.each([
 		['hold', 'collection'],
 		['hold', 'card'],

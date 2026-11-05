@@ -295,7 +295,7 @@ export async function controlBoardRuntimeCard(
 	const row = runtime.storage.db
 		.prepare(
 			`SELECT specification_json FROM runs
-  WHERE collection_key=? AND card_id=? ORDER BY attempt DESC LIMIT 1`
+  WHERE collection_key=? AND card_id=? AND outcome_json IS NULL ORDER BY attempt DESC LIMIT 1`
 		)
 		.get(key.collectionKey, cardId) as { specification_json: string } | undefined;
 	const token = row ? JSON.parse(row.specification_json).runToken : undefined;
