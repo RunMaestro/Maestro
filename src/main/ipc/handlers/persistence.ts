@@ -247,6 +247,12 @@ export function registerPersistenceHandlers(
 		onSessionsPersisted,
 	} = deps;
 	const sessionWriteQueue = createKeyedWriteQueue();
+	let registrationGeneration = 0;
+	worktreeRetirement.bindRegistrationSource({
+		read: () => sessionsStore.get('sessions', []),
+		generation: () => registrationGeneration,
+		enqueue: (operation) => sessionWriteQueue.enqueue('sessions', operation),
+	});
 	// Both ends of a registration move matter. Resolve stored identities again
 	// when a queued write starts, since its predecessor may have moved that id.
 	const sessionWritePaths = (input: StoredSession[], removeIds: string[] = []): string[] => {
@@ -273,6 +279,9 @@ export function registerPersistenceHandlers(
 					const current = currentPaths.length ? worktreeRetirement.admit(currentPaths) : undefined;
 					if (current && !current.ok) throw new Error(current.reason);
 					try {
+						// Includes failed/partially persisted writes and same-id re-registration.
+						// Read-only ownership verification uses this same serialized lane.
+						registrationGeneration++;
 						return await handler(...args);
 					} finally {
 						current?.release();

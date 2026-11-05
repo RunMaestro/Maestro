@@ -3,17 +3,25 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { canonicalJson } from '../../shared/canonicalJson';
 import {
 	foldPathCase,
 	isPathWithin,
 	realpathThroughAncestor,
 } from '../utils/real-path-containment';
+import {
+	retirementRegistrationPair,
+	verifyRetirementOwnership,
+	type CheckoutOwnership,
+	type RetirementRegistrationSource,
+} from './worktreeRetirementOwnership';
 
 export interface ManagedCheckout {
 	/** Verified checkout root; Git ownership must be verified by the caller. */
 	path: string;
 	head: string;
 	generation: number;
+	ownership?: Readonly<CheckoutOwnership>;
 }
 
 export type RetirementState = 'available' | 'preparing' | 'removing' | 'removed';
@@ -56,11 +64,110 @@ function overlaps(a: string, b: string): boolean {
 	return isPathWithin(a, b) || isPathWithin(b, a);
 }
 
+/** Removal runs from the surviving parent and changes its Git administration. */
+function ownershipPaths(checkout: ManagedCheckout, state: RetirementState = 'preparing'): string[] {
+	return checkout.ownership && state !== 'removed'
+		? [checkout.path, checkout.ownership.parentPath]
+		: [checkout.path];
+}
+
 export class WorktreeRetirement {
 	private readonly entries = new Map<string, Entry>();
 	private readonly holds = new Set<Hold>();
 	private readonly unsupportedExecutions = new Set<string | null>();
 	private readonly clients = new Map<object, RetirementClient>();
+	private registrationSource?: RetirementRegistrationSource;
+
+	/** Persistence owns this source and its generation; no IPC input can replace it. */
+	bindRegistrationSource(source: RetirementRegistrationSource): void {
+		for (const entry of this.entries.values()) {
+			if (entry.state === 'preparing' && entry.token) this.abort(entry.token);
+		}
+		this.registrationSource = source;
+	}
+
+	/** Resolve only an id against Main's current store. Hold admission BEFORE the
+	 * lane's first microtask, then verify Git and reserve without an async gap.
+	 * This is not yet permission to remove: renderer freeze and PR merge proof
+	 * are still required by the eventual cleanup transaction.
+	 */
+	async prepareRegisteredForRenderer(sessionId: string, renderer: object): Promise<Preparation> {
+		const source = this.registrationSource;
+		if (!source) return { ok: false, reason: 'registration source unavailable' };
+		let initial: Admission | undefined;
+		try {
+			const { child, parent } = retirementRegistrationPair(source.read(), sessionId);
+			initial = this.admit([child.cwd, parent.cwd]);
+			if (!initial.ok) return initial;
+			return await source.enqueue(async () => {
+				const sessions = source.read();
+				const { child: currentChild, parent: currentParent } = retirementRegistrationPair(
+					sessions,
+					sessionId
+				);
+				const current = this.admit([currentChild.cwd, currentParent.cwd]);
+				if (!current.ok) return current;
+				try {
+					const generation = source.generation();
+					const checkout = await verifyRetirementOwnership(sessions, sessionId, generation);
+					if (this.registrationSource !== source || source.generation() !== generation)
+						return { ok: false, reason: 'registration changed during verification' };
+					if (!this.register(checkout))
+						return { ok: false, reason: 'checkout ownership is already reserved' };
+					// No await between releasing our own reads and acquiring the fence.
+					current.release();
+					if (initial?.ok) initial.release();
+					return this.prepareForRenderer(checkout, renderer);
+				} finally {
+					current.release();
+				}
+			});
+		} catch (error) {
+			return {
+				ok: false,
+				reason: error instanceof Error ? error.message : 'ownership unavailable',
+			};
+		} finally {
+			if (initial?.ok) initial.release();
+		}
+	}
+
+	/** Recheck under the still-held fence immediately before the eventual commit.
+	 * A failed check leaves preparation owned by its caller, who must abort it.
+	 */
+	async revalidateRegistered(
+		token: RetirementToken
+	): Promise<{ ok: true } | { ok: false; reason: string }> {
+		const entry = this.owned(token);
+		const source = this.registrationSource;
+		if (!entry || entry.state !== 'preparing' || !entry.identity.ownership || !source)
+			return { ok: false, reason: 'trusted prepared ownership required' };
+		try {
+			return await source.enqueue(async () => {
+				if (source.generation() !== entry.identity.generation)
+					return { ok: false, reason: 'registration generation changed' };
+				const verified = await verifyRetirementOwnership(
+					source.read(),
+					entry.identity.ownership!.sessionId,
+					entry.identity.generation
+				);
+				if (
+					this.registrationSource !== source ||
+					this.owned(token) !== entry ||
+					entry.state !== 'preparing' ||
+					source.generation() !== entry.identity.generation ||
+					canonicalJson(verified) !== canonicalJson(entry.identity)
+				)
+					return { ok: false, reason: 'prepared checkout ownership changed' };
+				return { ok: true };
+			});
+		} catch (error) {
+			return {
+				ok: false,
+				reason: error instanceof Error ? error.message : 'ownership unavailable',
+			};
+		}
+	}
 
 	/** Admit before constructing a window or exposing a socket to any callback.
 	 * A client's lifetime ends on closed, never on an error or close request.
@@ -139,8 +246,14 @@ export class WorktreeRetirement {
 	admit(paths: readonly string[] | null, options: { allowMissing?: boolean } = {}): Admission {
 		const resolved = paths?.length ? paths.map((p) => canonical(p, options.allowMissing)) : null;
 		const roots = resolved && resolved.every((p): p is string => p !== null) ? resolved : null;
-		for (const [root, entry] of this.entries) {
-			if (entry.state !== 'available' && (!roots || roots.some((p) => overlaps(p, root))))
+		for (const entry of this.entries.values()) {
+			if (
+				entry.state !== 'available' &&
+				(!roots ||
+					roots.some((p) =>
+						ownershipPaths(entry.identity, entry.state).some((root) => overlaps(p, root))
+					))
+			)
 				return { ok: false, reason: `worktree is ${entry.state}` };
 		}
 		const hold: Hold = { paths: roots };
@@ -202,11 +315,23 @@ export class WorktreeRetirement {
 		if (
 			[...this.entries].some(
 				([otherRoot, other]) =>
-					otherRoot !== root && other.state !== 'available' && overlaps(root, otherRoot)
+					otherRoot !== root &&
+					other.state !== 'available' &&
+					ownershipPaths(entry.identity).some((scope) =>
+						ownershipPaths(other.identity, other.state).some((otherScope) =>
+							overlaps(scope, otherScope)
+						)
+					)
 			)
 		)
 			return { ok: false, reason: 'overlapping worktree is reserved' };
-		if ([...this.holds].some((hold) => !hold.paths || hold.paths.some((p) => overlaps(p, root))))
+		if (
+			[...this.holds].some(
+				(hold) =>
+					!hold.paths ||
+					hold.paths.some((p) => ownershipPaths(entry.identity).some((scope) => overlaps(p, scope)))
+			)
+		)
 			return { ok: false, reason: 'worktree has admitted work' };
 		const token = Object.freeze({});
 		entry.token = token;

@@ -227,6 +227,45 @@ describe('persistence IPC handlers', () => {
 			if (!prepared.ok) throw new Error(prepared.reason);
 			reservation = prepared.token;
 		}
+		it('binds trusted ownership reads to the durable session write lane and advances its generation', async () => {
+			const binding = vi.spyOn(worktreeRetirement, 'bindRegistrationSource');
+			registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+			});
+			const source = binding.mock.calls[0][0];
+			binding.mockRestore();
+			const before = source.generation();
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const write = handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'Updated' }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const read = vi.fn(async () => ({
+				sessions: source.read(),
+				generation: source.generation(),
+			}));
+			const pending = source.enqueue(read);
+			await Promise.resolve();
+			expect(read).not.toHaveBeenCalled();
+			finish();
+			await write;
+			expect(await pending).toMatchObject({
+				generation: before + 1,
+				sessions: [{ id: 'target', name: 'Updated', cwd: target.path }],
+			});
+			mockFlushSessionWrites.mockRejectedValueOnce(new Error('EIO'));
+			await expect(
+				handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'Retry' }])
+			).rejects.toThrow('EIO');
+			expect(source.generation()).toBe(before + 2);
+		});
 		it.each(['sessions:getAll', 'sessions:getBootstrap', 'sessions:setMany', 'sessions:setAll'])(
 			'%s permits an empty path list while another checkout is reserved',
 			async (channel) => {

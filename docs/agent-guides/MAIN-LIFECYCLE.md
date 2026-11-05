@@ -287,8 +287,25 @@ sole loaded primary window. Main-frame document navigation, renderer loss and
 window closure invalidate its prepared token; same-document navigation and
 subframe navigation do not. Once removal starts, owner loss cannot release the
 reservation. Loading does not constitute an authoritative renderer freeze
-acknowledgement. Cleanup still requires the remaining trusted Git/registration,
-renderer freeze and reconciliation transaction before it can be enabled.
+acknowledgement. Cleanup still requires the renderer freeze and reconciliation
+transaction before it can be enabled.
+
+`prepareRegisteredForRenderer(sessionId, sender)` reads the authoritative Main
+session store in the same serialized lane as session writes and durable flushes.
+Admission precedes the lane's first microtask. The Main-owned generation advances
+for every attempted write, including failed partial writes. Ownership verification
+requires a unique local child/primary-parent registration, canonical non-overlapping
+roots, a shared Git common directory, linked child Git administration, the primary
+parent in Git's NUL-delimited worktree registry, the registered branch and exact
+local HEAD. Duplicate aliases, unknown local registrations, SSH, locked/prunable
+or detached checkouts refuse preparation. No renderer-provided path is trusted.
+
+The resulting reservation also fences the surviving parent's Git administration;
+pending writes to either checkout block preparation. `revalidateRegistered(token)`
+rechecks the generation and Git ownership while preparation remains held. Changed
+ownership or owner loss refuses validation; failures require explicit abort. Parent
+admission resumes after completed removal, while an in-flight removal remains
+fenced. These internal APIs do not expose cleanup or prove PR merge/renderer freeze.
 
 ### Security Hardening
 
