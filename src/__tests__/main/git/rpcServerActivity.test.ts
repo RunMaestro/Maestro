@@ -3757,6 +3757,153 @@ describe('standalone Codex app-server activity', () => {
 			(await reserve()).release();
 			return managed;
 		}
+		describe('outer Codex exit-grace callbacks', () => {
+			async function retainedGrace(cancel = false) {
+				const managed = await finishedControls();
+				const schedule = vi.spyOn(globalThis, 'setTimeout');
+				managed.sdkController!.interrupt();
+				const callback = schedule.mock.calls.at(-1)![0] as () => void;
+				if (cancel) managed.sdkController!.kill();
+				else await vi.advanceTimersByTimeAsync(1000);
+				await drain();
+				(await reserve()).release();
+				return callback;
+			}
+			it.each(['elapsed', 'cancelled', 'successor'] as const)(
+				'refuses an %s grace callback before state reads or settlement',
+				async (state) => {
+					const callback = await retainedGrace(state === 'cancelled');
+					const old = native;
+					if (state === 'successor') {
+						native = makeNative();
+						await finishedControls();
+					}
+					const lookup = vi.fn(() => 0);
+					Object.defineProperty(old, 'exitCode', { get: lookup, configurable: true });
+					const cancellation = vi.spyOn(globalThis, 'clearTimeout');
+					cancellation.mockClear();
+					vi.mocked(stopProcess).mockClear();
+					vi.mocked(captureException).mockClear();
+					for (const root of [target, path.join(target, 'descendant'), path.resolve('unrelated')]) {
+						const hold = await reserve(root);
+						try {
+							expect(() => callback()).toThrow('reserved');
+							for (const probe of [lookup, cancellation, stopProcess, captureException])
+								expect(probe).not.toHaveBeenCalled();
+						} finally {
+							hold.release();
+						}
+					}
+				}
+			);
+			it.each(['lookup', 'cancellation'] as const)(
+				'owns late grace %s diagnostics across pending canonicalization and successor work',
+				async (source) => {
+					const callback = await retainedGrace();
+					const failure = new Error('grace callback failed');
+					const reporting = Promise.withResolvers<void>();
+					vi.mocked(captureException).mockReturnValue(reporting.promise);
+					if (source === 'lookup')
+						Object.defineProperty(native, 'exitCode', {
+							get: () => {
+								throw failure;
+							},
+							configurable: true,
+						});
+					else
+						vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce(() => {
+							throw failure;
+						});
+					const canonical = Promise.withResolvers<string>();
+					vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+					const reservation = gate.reserveWorktreeCleanup(target);
+					expect(() => callback()).toThrow(failure);
+					canonical.resolve(target);
+					const result = await reservation;
+					if (result.status === 'reserved-partially') result.release();
+					expect(result.status).toBe('blocked');
+					expect(captureException).toHaveBeenCalledWith(failure);
+					processes.clear();
+					const successor = Promise.withResolvers<void>();
+					boundary.withWorktreeTurnActivity(
+						(_start, observe) => observe(successor.promise),
+						vi.fn()
+					);
+					reporting.reject(new Error('diagnostics rejected'));
+					await drain();
+					await blocked();
+					successor.resolve();
+					await drain();
+					(await reserve()).release();
+				}
+			);
+			it('refuses a retained SSH grace callback before remote signaling or local stop', async () => {
+				const managed = await finishedControls();
+				const schedule = vi.spyOn(globalThis, 'setTimeout');
+				managed.sdkController!.interrupt();
+				const callback = schedule.mock.calls.at(-1)![0] as () => void;
+				await vi.advanceTimersByTimeAsync(1000);
+				managed.sshRemotePidFile = '/remote/codex.pid';
+				Object.assign(native, { exitCode: null });
+				const signals = await import('../../../main/utils/ssh-remote-signal');
+				const signal = vi.spyOn(signals, 'signalRemoteAgent');
+				const hold = await reserve();
+				try {
+					expect(() => callback()).toThrow('reserved');
+					expect(signal).not.toHaveBeenCalled();
+					expect(stopProcess).not.toHaveBeenCalled();
+					expect(execFile).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+			});
+			it.each(['resolve', 'reject', 'throw'] as const)(
+				'retains elapsed grace diagnostics until reporter %s without replacing the error',
+				async (outcome) => {
+					const callback = await retainedGrace(true);
+					const failure = new Error('late state lookup failed');
+					Object.defineProperty(native, 'exitCode', {
+						get: () => {
+							throw failure;
+						},
+						configurable: true,
+					});
+					const reporting = Promise.withResolvers<void>();
+					vi.mocked(captureException).mockImplementation(() => {
+						if (outcome === 'throw') throw new Error('reporter failed');
+						return reporting.promise;
+					});
+					expect(() => callback()).toThrow(failure);
+					expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+					if (outcome !== 'throw') await blocked();
+					if (outcome === 'reject') reporting.reject(new Error('reporter rejected'));
+					else reporting.resolve();
+					await drain();
+					(await reserve()).release();
+				}
+			);
+			it('keeps the actual grace callback owned through reentrant cancellation and diagnostics', async () => {
+				const managed = await finishedControls();
+				const schedule = vi.spyOn(globalThis, 'setTimeout');
+				managed.sdkController!.interrupt();
+				const callback = schedule.mock.calls.at(-1)![0] as () => void;
+				Object.assign(native, { exitCode: null });
+				const failure = new Error('stop failed after reentry');
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockReturnValue(reporting.promise);
+				vi.mocked(stopProcess).mockImplementationOnce(() => {
+					managed.sdkController!.kill();
+					throw failure;
+				});
+				expect(() => callback()).toThrow(failure);
+				await drain();
+				await blocked();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+				reporting.resolve();
+				await drain();
+				(await reserve()).release();
+			});
+		});
 		it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 			'refuses retained SDK/harness controls before lookup or recovery under %s',
 			async (root) => {

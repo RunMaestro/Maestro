@@ -788,32 +788,37 @@ class CodexAppServerTurn {
 				observe(scheduled.promise);
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				const finish = (): void => {
-					// A failed cancellation leaves the independent hold unresolved.
-					clearTimeout(timer);
-					if (this.cancelExitGrace === finish) this.cancelExitGrace = undefined;
-					scheduled.resolve();
+					withWorktreeCallbackActivity(() => {
+						// A failed cancellation leaves the independent hold unresolved.
+						clearTimeout(timer);
+						if (this.cancelExitGrace === finish) this.cancelExitGrace = undefined;
+						scheduled.resolve();
+					}, captureException);
 				};
 				this.cancelExitGrace = finish;
 				try {
 					timer = setTimeout(() => {
-						// Reentrant kill/interrupt must not settle this running callback.
-						this.cancelExitGrace = undefined;
-						try {
-							if (!this.childRunning()) return;
-							this.signalRemote('terminate');
-							stopProcess(
-								{ child: this.turn.child },
-								{
-									from,
-									graceMs: INTERACTIVE_STOP_GRACE_MS,
-									sessionId: this.config.sessionId,
-									label: 'codex-app-server',
-								},
-								(operation) => withWorktreeCallbackActivity(operation, captureException)
-							);
-						} finally {
-							finish();
-						}
+						// Admit retained callbacks before state reads or cancellation.
+						withWorktreeCallbackActivity(() => {
+							// Reentrant kill/interrupt must not settle this running callback.
+							this.cancelExitGrace = undefined;
+							try {
+								if (!this.childRunning()) return;
+								this.signalRemote('terminate');
+								stopProcess(
+									{ child: this.turn.child },
+									{
+										from,
+										graceMs: INTERACTIVE_STOP_GRACE_MS,
+										sessionId: this.config.sessionId,
+										label: 'codex-app-server',
+									},
+									(operation) => withWorktreeCallbackActivity(operation, captureException)
+								);
+							} finally {
+								finish();
+							}
+						}, captureException);
 					}, CODEX_APP_SERVER_EXIT_GRACE_MS);
 				} catch (error) {
 					finish();
