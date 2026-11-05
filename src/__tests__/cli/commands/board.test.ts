@@ -68,6 +68,8 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 
 vi.mock('../../../main/cue/cue-executor', () => ({
 	executeCuePrompt: async (config: any) => {
+		if (config.prepareLaunch && !(await config.prepareLaunch()))
+			return { stdout: '', exitCode: null, executionStarted: false };
 		if (config.beforeLaunch && !config.beforeLaunch())
 			return { stdout: '', exitCode: null, executionStarted: false };
 		config.onStarted?.(202);
@@ -1383,6 +1385,7 @@ describe('maestro-cli board', () => {
 			run(['config', 'user.email', 'test@example.com']);
 			run(['config', 'user.name', 'Test']);
 			fs.writeFileSync(path.join(root, 'README.md'), '# repo\n');
+			fs.writeFileSync(path.join(root, '.gitignore'), '.maestro/\n');
 			run(['add', '.']);
 			run(['commit', '-m', 'init']);
 			return root;
@@ -1424,9 +1427,14 @@ describe('maestro-cli board', () => {
 			};
 			mockGetSessionById.mockReturnValue(session);
 			mockReadSessions.mockReturnValue([session]);
-			mockSpawnAgent.mockResolvedValue({
-				success: true,
-				response: '<!-- maestro:card-complete | did it -->',
+			mockSpawnAgent.mockImplementation(async (_tool: string, cwd: string) => {
+				fs.writeFileSync(path.join(cwd, 'work.txt'), 'Completed fixture work\n');
+				execFileSync('git', ['add', 'work.txt'], { cwd });
+				execFileSync('git', ['commit', '-m', 'Complete fixture work'], { cwd });
+				return {
+					success: true,
+					response: '<!-- maestro:card-complete | Fixture work committed -->',
+				};
 			});
 			installOwner(repoRoot);
 		});
@@ -1480,12 +1488,17 @@ describe('maestro-cli board', () => {
 			const stored = loadBoards(repoRoot)[0].cards[0];
 			expect(stored.status).toBe('review');
 			expect(stored.runs?.[0]).toMatchObject({ worktreePath, worktreeBranch: branch });
+			expect(stored.runs?.[0].artifact?.diff?.stat).toContain('work.txt');
+			expect(stored.runs?.[0].summary).toBe('Fixture work committed');
 		});
 
 		it('spawns in the project root when the card is not isolated', async () => {
 			seedBoard();
 
 			await boardTick({ agent: 'Alpha', json: true });
+			await vi.waitFor(() =>
+				expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0)
+			);
 
 			expect(mockSpawnAgent.mock.calls[0][1]).toBe(repoRoot);
 			expect(loadBoards(repoRoot)[0].cards[0].runs?.[0].worktreePath).toBeUndefined();
@@ -1553,6 +1566,7 @@ describe('maestro-cli board', () => {
 			const stored = loadBoards(repoRoot).find((b) => b.id === board.id)?.cards[0];
 			expect(stored?.status).toBe('review');
 			expect(stored?.runs?.[0].workerAgentId).toBe('agent-2');
+			expect(stored?.runs?.[0].artifact?.diff?.stat).toContain('work.txt');
 		});
 
 		it('blocks an isolated card on an SSH remote instead of running in the project root', async () => {
