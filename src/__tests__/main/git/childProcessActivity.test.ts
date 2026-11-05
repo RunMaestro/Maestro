@@ -53,6 +53,10 @@ vi.mock('../../../main/process-manager/utils/stdioCloseWatchdog', () => ({
 vi.mock('../../../shared/maestro-lib/control/agent-process-supervisor', () => ({
 	superviseAgentProcess: vi.fn(() => ({ observe: vi.fn(), dispose: vi.fn() })),
 }));
+vi.mock('../../../shared/maestro-lib/control/termination', async (original) => ({
+	...(await original<typeof import('../../../shared/maestro-lib/control/termination')>()),
+	stopProcess: vi.fn(),
+}));
 
 import { getAgentCapabilities } from '../../../main/agents';
 import {
@@ -62,6 +66,8 @@ import {
 import { saveImageToTempFile } from '../../../main/process-manager/utils/imageUtils';
 import { captureException } from '../../../main/utils/sentry';
 import { logger } from '../../../main/utils/logger';
+import { armStdioCloseWatchdog } from '../../../main/process-manager/utils/stdioCloseWatchdog';
+import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
 
 const reports = vi.hoisted(() => ({
@@ -848,6 +854,261 @@ describe('retained stderr and stream-error activity', () => {
 		second.reject(new Error('late reporter rejection'));
 		await drain();
 		expect(captureException).toHaveBeenCalledTimes(2);
+		(await reserve()).release();
+	});
+});
+
+describe('retained child supervision adapters', () => {
+	const sources = ['stop', 'forced', 'parsed', 'supersede', 'watchdog'] as const;
+	const fallible = ['stop', 'parsed', 'supersede', 'watchdog'] as const;
+
+	function retain(source: (typeof sources)[number]) {
+		const supervision = {
+			observe: vi.fn(),
+			dispose: vi.fn(),
+			modelActivity: vi.fn(),
+			processExited: Promise.resolve(),
+		};
+		vi.mocked(superviseAgentProcess).mockReturnValueOnce(supervision);
+		expect(
+			spawner.spawn(
+				config(
+					source === 'watchdog'
+						? {}
+						: {
+								toolType: 'codex',
+								prompt: 'fixture',
+							}
+				)
+			).success
+		).toBe(true);
+		const managed = processes.get('child-session')!;
+		const options = vi.mocked(superviseAgentProcess).mock.calls.at(-1)?.[1];
+		const parsed = emitter.listeners('parsed-event')[0];
+		const supersede = spawner['supervisions'].get('child-session');
+		const callback =
+			source === 'stop'
+				? () => options!.onStop('fixture timeout')
+				: source === 'forced'
+					? options!.onForcedStop
+					: source === 'parsed'
+						? () => parsed('child-session', { type: 'text', text: 'fixture' })
+						: source === 'supersede'
+							? supersede!
+							: vi.mocked(armStdioCloseWatchdog).mock.calls.at(-1)![1]!.onForceClose!;
+		const fail = (failure: Error) => {
+			if (source === 'stop')
+				Object.defineProperty(managed, 'errorEmitted', {
+					configurable: true,
+					set: () => {
+						throw failure;
+					},
+				});
+			else
+				vi.mocked(
+					source === 'parsed'
+						? supervision.observe
+						: source === 'supersede'
+							? supervision.dispose
+							: logger.warn
+				).mockImplementationOnce(() => {
+					throw failure;
+				});
+		};
+		return { callback, supervision, options, managed, fail };
+	}
+
+	it.each(
+		sources.flatMap((source) =>
+			[target, path.join(target, 'child'), path.resolve('other')].map((root) => ({ source, root }))
+		)
+	)('refuses retained $source before effects under $root after close', async ({ source, root }) => {
+		const { callback, supervision, managed } = retain(source);
+		await close();
+		processes.clear();
+		// Admission must precede even generation/identity filtering or state writes.
+		const generation = managed.spawnGeneration;
+		const inspect = vi.fn(() => generation);
+		const effect = vi.fn();
+		Object.defineProperty(managed, 'spawnGeneration', { get: inspect });
+		Object.defineProperty(managed, 'errorEmitted', { set: effect });
+		supervision.dispose.mockClear();
+		vi.mocked(logger.warn).mockClear();
+		const off = vi.spyOn(emitter, 'off');
+		const hold = await reserve(root);
+		expect(() => callback()).toThrow(/reserved/);
+		for (const probe of [
+			inspect,
+			effect,
+			supervision.observe,
+			supervision.dispose,
+			off,
+			logger.warn,
+			captureException,
+		])
+			expect(probe).not.toHaveBeenCalled();
+		hold.release();
+		expect(callback()).toBeUndefined();
+		await drain();
+		if (source === 'stop') expect(effect).toHaveBeenCalledOnce();
+		if (source === 'supersede') expect(supervision.dispose).toHaveBeenCalledOnce();
+		if (source === 'watchdog') expect(logger.warn).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+
+	it.each(
+		fallible.flatMap((source) =>
+			['resolve', 'reject', 'throw'].map((outcome) => ({ source, outcome }))
+		)
+	)(
+		'owns late $source diagnostics through $outcome and preserves the thrown error',
+		async ({ source, outcome }) => {
+			const { callback, fail } = retain(source);
+			await close();
+			const failure = new Error('adapter failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementation(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			fail(failure);
+			expect(() => callback()).toThrow(failure);
+			// Supersession and its nested disposal each observe the original error.
+			const count = source === 'supersede' ? 2 : 1;
+			expect(captureException).toHaveBeenCalledTimes(count);
+			expect(captureException).toHaveBeenCalledWith(failure);
+			processes.clear();
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('reporter rejected'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledTimes(count);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(fallible)('blocks pending canonicalization with $0 diagnostics', async (source) => {
+		const { callback, fail } = retain(source);
+		await close();
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		const failure = new Error('late adapter failure');
+		fail(failure);
+		expect(() => callback()).toThrow(failure);
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(fallible)('keeps native ownership after $0 diagnostics settle first', async (source) => {
+		const { callback, fail, managed } = retain(source);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		const failure = new Error('adapter failure');
+		fail(failure);
+		expect(() => callback()).toThrow(failure);
+		reporting.resolve();
+		await drain();
+		await blocked();
+		// Restore the fixture property before normal completion.
+		if (source === 'stop') delete managed.errorEmitted;
+		await close();
+		(await reserve()).release();
+	});
+
+	it('owns nested disposal failure after forced completion until diagnostics settle', async () => {
+		const { callback, supervision } = retain('forced');
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		const failure = new Error('dispose failed');
+		supervision.dispose.mockImplementationOnce(() => {
+			throw failure;
+		});
+		expect(callback()).toBeUndefined();
+		await close();
+		processes.clear();
+		await blocked();
+		expect(captureException).toHaveBeenCalledWith(failure);
+		reporting.reject(new Error('report rejected'));
+		await drain();
+		(await reserve()).release();
+	});
+
+	it('keeps concurrent predecessor diagnostics and a same-session successor independent', async () => {
+		const { callback: parsed } = retain('parsed');
+		const old = native;
+		native = makeNative(23456);
+		const watchdog = retain('watchdog').callback;
+		await close(old);
+		await close();
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		const failure = new Error('concurrent adapter failure');
+		// Use watchdog twice so both admitted callbacks can fail after map removal.
+		for (let i = 0; i < 2; i++) {
+			vi.mocked(logger.warn).mockImplementationOnce(() => {
+				throw failure;
+			});
+			expect(() => watchdog()).toThrow(failure);
+		}
+		processes.clear();
+		native = makeNative(45678);
+		expect(spawner.spawn(config()).success).toBe(true);
+		expect(parsed()).toBeUndefined();
+		first.resolve();
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		second.reject(new Error('second reporter rejected'));
+		await drain();
+		(await reserve()).release();
+	});
+
+	it('refuses a failed predecessor supersession before termination and preserves retry', async () => {
+		const { callback, options, supervision } = retain('supersede');
+		options!.onStop('fixture timeout');
+		await close();
+		supervision.dispose.mockClear();
+		const hold = await reserve();
+		expect(() => callback()).toThrow(/reserved/);
+		expect(stopProcess).not.toHaveBeenCalled();
+		expect(supervision.dispose).not.toHaveBeenCalled();
+		expect(captureException).not.toHaveBeenCalled();
+		hold.release();
+		expect(callback()).toBeUndefined();
+		expect(stopProcess).toHaveBeenCalledExactlyOnceWith(
+			{ child: native },
+			{ from: 'terminate', graceMs: expect.any(Number), immediate: true }
+		);
+		expect(supervision.dispose).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+
+	it('preserves parsed generation/identity routing and forced failure completion before close', async () => {
+		const { callback: parsed, supervision, options, managed } = retain('parsed');
+		expect(parsed()).toBeUndefined();
+		expect(supervision.observe).toHaveBeenCalledOnce();
+		processes.clear();
+		parsed();
+		expect(supervision.observe).toHaveBeenCalledOnce();
+		options!.onStop('fixture timeout');
+		expect(managed.errorEmitted).toBe(true);
+		options!.onForcedStop();
+		await drain();
+		expect(reports.exit).toHaveBeenCalledWith('child-session', 1, managed, null, undefined);
+		await blocked();
+		await close();
 		(await reserve()).release();
 	});
 });

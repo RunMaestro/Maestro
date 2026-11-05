@@ -686,52 +686,58 @@ export class ChildProcessSpawner {
 					? superviseAgentProcess(childProcess, {
 							startupMs: CODEX_STARTUP_TIMEOUT_MS,
 							idle: HEADLESS_IDLE_PROFILE,
-							onStop: (reason) => {
-								supervisionFailed = true;
-								if (isSuperseded()) return;
-								if (sshRemotePidFile)
-									signalRemoteAgent(
-										{
-											sshCommand: command,
-											sshArgs: finalArgs,
-											pidFile: sshRemotePidFile,
-											sessionId,
-										},
-										'terminate'
-									);
-								// Record failure now, but let termination drain its last bytes.
-								// Suppress generic exit classification without suppressing text.
-								supervisionFailure = reason;
-								managedProcess.errorEmitted = true;
-							},
-							onForcedStop: forceCompletion,
+							onStop: (reason) =>
+								withWorktreeTurnActivity(() => {
+									supervisionFailed = true;
+									if (isSuperseded()) return;
+									if (sshRemotePidFile)
+										signalRemoteAgent(
+											{
+												sshCommand: command,
+												sshArgs: finalArgs,
+												pidFile: sshRemotePidFile,
+												sessionId,
+											},
+											'terminate'
+										);
+									// Record failure now, but let termination drain its last bytes.
+									// Suppress generic exit classification without suppressing text.
+									supervisionFailure = reason;
+									managedProcess.errorEmitted = true;
+								}, captureException),
+							onForcedStop: () => withWorktreeTurnActivity(forceCompletion, captureException),
 						})
 					: undefined;
 			// The existing channel includes whole lines, error envelopes and final
 			// unterminated lines. Generation and identity keep a predecessor from
 			// consuming a replacement's events under the same session id.
-			const onParsedEvent = (sid: string, event: ParsedEvent): void => {
-				if (sid === sessionId && !isSuperseded() && this.processes.get(sid) === managedProcess)
-					supervision?.observe(event);
-			};
-			const disposeSupervision = (): void => {
-				this.emitter.off('parsed-event', onParsedEvent);
-				supervision?.dispose();
-				if (this.supervisions.get(sessionId) === supersedeSupervision)
-					this.supervisions.delete(sessionId);
-			};
-			const supersedeSupervision = (): void => {
-				// Disposal cancels the supervisor's shared stop ladder. Finish an
-				// already-failed predecessor first so SIGTERM resistance cannot leave
-				// an unowned writer behind when a replacement takes this session.
-				if (supervisionFailed)
-					stopProcess(
-						{ child: childProcess },
-						{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
-					);
-				disposeSupervision();
-				forceCompletion();
-			};
+			// Retained callbacks need fresh admission even after this turn's close.
+			// Their diagnostics must not borrow a settled startup observer.
+			const onParsedEvent = (sid: string, event: ParsedEvent): void =>
+				withWorktreeTurnActivity(() => {
+					if (sid === sessionId && !isSuperseded() && this.processes.get(sid) === managedProcess)
+						supervision?.observe(event);
+				}, captureException);
+			const disposeSupervision = (): void =>
+				withWorktreeTurnActivity(() => {
+					this.emitter.off('parsed-event', onParsedEvent);
+					supervision?.dispose();
+					if (this.supervisions.get(sessionId) === supersedeSupervision)
+						this.supervisions.delete(sessionId);
+				}, captureException);
+			const supersedeSupervision = (): void =>
+				withWorktreeTurnActivity(() => {
+					// Disposal cancels the supervisor's shared stop ladder. Finish an
+					// already-failed predecessor first so SIGTERM resistance cannot leave
+					// an unowned writer behind when a replacement takes this session.
+					if (supervisionFailed)
+						stopProcess(
+							{ child: childProcess },
+							{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
+						);
+					disposeSupervision();
+					forceCompletion();
+				}, captureException);
 			if (supervision) {
 				this.emitter.on('parsed-event', onParsedEvent);
 				this.supervisions.set(sessionId, supersedeSupervision);
@@ -867,22 +873,23 @@ export class ChildProcessSpawner {
 			// watchdog and remote termination callback above.
 			if (!supervision)
 				armStdioCloseWatchdog(childProcess, {
-					onForceClose: () => {
-						logger.warn(
-							'[ProcessManager] stdio still open after exit, forcing close',
-							'ProcessManager',
-							{ sessionId, pid: childProcess.pid }
-						);
-						// For SSH the open stdio usually means the remote agent is still
-						// running behind a ControlMaster. Settling the turn while it keeps
-						// working would put a second writer on the session next turn.
-						if (sshRemotePidFile) {
-							signalRemoteAgent(
-								{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
-								'terminate'
+					onForceClose: () =>
+						withWorktreeTurnActivity(() => {
+							logger.warn(
+								'[ProcessManager] stdio still open after exit, forcing close',
+								'ProcessManager',
+								{ sessionId, pid: childProcess.pid }
 							);
-						}
-					},
+							// For SSH the open stdio usually means the remote agent is still
+							// running behind a ControlMaster. Settling the turn while it keeps
+							// working would put a second writer on the session next turn.
+							if (sshRemotePidFile) {
+								signalRemoteAgent(
+									{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+									'terminate'
+								);
+							}
+						}, captureException),
 				});
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
