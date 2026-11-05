@@ -1543,7 +1543,7 @@ Atomically delete cards from one explicitly identified collection snapshot
 
 ## `maestro-cli board set-status <cardId> <status>`
 
-Request a card status (triage|todo|ready|running|review|ready-for-human|blocked|done); final completion requires an explicit human decision in the UI
+Request a card status (triage|todo|review|ready-for-human|blocked|done); final completion requires an explicit human decision in the UI
 
 | Option                     | Description                                                         | Default |
 | -------------------------- | ------------------------------------------------------------------- | ------- |

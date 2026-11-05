@@ -36,14 +36,15 @@ describe('BOARD_FIRST_PARTY_PLUGIN projection', () => {
 		expect(capabilities).not.toContain('process:spawn');
 	});
 
-	it('scopes the board write to the directory the atomic temp-file write touches', () => {
+	it('discloses the active project Profiles write without claiming Board YAML writes', () => {
 		const write = BOARD_FIRST_PARTY_PLUGIN.permissions.find((p) => p.capability === 'fs:write');
-		// `board.yaml.tmp` is written next to `board.yaml` and renamed over it, so a
-		// file-exact scope would be a lie.
+		// Profiles use a temporary file beside profiles.yaml before rename.
 		expect(write?.scope).toBe('.maestro/');
+		expect(write?.reason).toContain('profiles.yaml');
+		expect(write?.reason).not.toContain('board.yaml');
 	});
 
-	it('reads both the board and the profiles it references', () => {
+	it('discloses both legacy migration inputs', () => {
 		const readScopes = BOARD_FIRST_PARTY_PLUGIN.permissions
 			.filter((p) => p.capability === 'fs:read')
 			.map((p) => p.scope);

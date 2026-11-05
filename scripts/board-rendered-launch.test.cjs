@@ -13,7 +13,9 @@ const { startRenderedObserver } = require('./board-rendered-observer.cjs');
 const checkout = path.resolve(__dirname, '..');
 
 function fixture(t) {
-	const directory = fs.mkdtempSync(path.join(checkout, 'isolated/board-launch-test-'));
+	const isolated = path.join(checkout, 'isolated');
+	fs.mkdirSync(isolated, { recursive: true, mode: 0o700 });
+	const directory = fs.mkdtempSync(path.join(isolated, 'board-launch-test-'));
 	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 	const activeAddon = path.join(directory, 'active.node');
 	const addon = path.join(directory, 'electron.node');

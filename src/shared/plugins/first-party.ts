@@ -981,16 +981,9 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
-/** Broker capabilities the Board dispatcher actually touches. The Board is a
- * task-DAG dispatcher that rides the Cue engine tick (Board Phase 3): each tick
- * it re-reads the Encore flags, loads/persists `.maestro/board.yaml`, resolves a
- * card's assignee profile against its base agent, and spawns that assignee. The
- * Board is the closest analogue to Cue, so this mirrors the Cue def (a
- * dispatcher with a host-owned spawn path). Grepped from `src/main/board/*`
- * (board-storage, board-dispatcher, board-spawn, board-worktree) and
- * `src/main/profiles/profile-storage.ts` (assignee resolution). Kept true
- * through Phase 5: toasts (Phase 2), serialized atomic writes (Phase 1), and
- * per-card git worktrees (Phase 4) are all accounted for below. */
+/** Board dispatch and its central SQLite database are host-owned. The file
+ * permissions below describe legacy source discovery and the still-active
+ * project Profiles editor; they do not grant the plugin direct DB access. */
 export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	releaseDate: '2026-09-28',
 	id: 'com.maestro.board',
@@ -1029,21 +1022,18 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		{
 			capability: 'fs:read',
 			scope: '.maestro/board.yaml',
-			reason: 'Load the card DAG (statuses, dependencies) each tick.',
+			reason: 'Read legacy Board files for source discovery and migration.',
 		},
 		{
 			capability: 'fs:read',
 			scope: '.maestro/profiles.yaml',
-			reason: "Read the agent profiles a card's assignee references (Phase 1 storage).",
+			reason: 'Read legacy profiles for migration and the project Profiles editor.',
 		},
 		{
-			// Scoped to the directory, not the single file: every board write is
-			// atomic (write `board.yaml.tmp`, rename over `board.yaml`) and creates
-			// `.maestro/` when absent, so a file-exact scope would not cover it.
+			// Profile saves use a temporary file and rename within the directory.
 			capability: 'fs:write',
 			scope: '.maestro/',
-			reason:
-				'Persist card status transitions (promote/claim/done/blocked/canceled) and per-attempt run history through a serialized, atomic temp-file-plus-rename write of board.yaml.',
+			reason: 'Save project profiles.yaml edits using an atomic temporary-file rename.',
 		},
 		// NOTE: `agents:dispatch` and `process:spawn` are deliberately ABSENT,
 		// mirroring Cue (see MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS) and

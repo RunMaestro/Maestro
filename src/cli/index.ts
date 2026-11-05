@@ -312,7 +312,9 @@ import { CARD_STATUSES } from '../shared/board/types';
 
 // Derived from the single source of truth (`src/shared/board/types.ts`) so the
 // `board set-status` help text can never drift from what the command accepts.
-const CARD_STATUS_LIST = CARD_STATUSES.join('|');
+const CARD_STATUS_LIST = CARD_STATUSES.filter(
+	(status) => status !== 'ready' && status !== 'running'
+).join('|');
 
 import {
 	allowWhileEncoreOff,
