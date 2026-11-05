@@ -1,5 +1,6 @@
 import type { ModelsRefreshedPayload } from '../../../shared/agentModelsRefresh';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, waitFor } from '@testing-library/react';
+import { createElement, startTransition, Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	resolveModelEffort,
@@ -77,6 +78,33 @@ describe('useAgentModelEffortOptions', () => {
 });
 
 describe('scoped model refresh ordering', () => {
+	it('keeps the committed scope active while a new scope is suspended', async () => {
+		let broadcast!: (payload: ModelsRefreshedPayload) => void;
+		Object.assign(window.maestro.agents, {
+			onModelsRefreshed: vi.fn((listener) => {
+				broadcast = listener;
+				return vi.fn();
+			}),
+		});
+		vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['initial']);
+		const suspended = new Promise<never>(() => {});
+		function Picker({ host }: { host: string }) {
+			const options = useAgentModelEffortOptions('codex', host);
+			if (host === 'b') throw suspended;
+			return createElement('div', null, options.models.join(','));
+		}
+		const view = (host: string) =>
+			createElement(Suspense, { fallback: 'loading' }, createElement(Picker, { host }));
+		const { rerender, getByText } = render(view('a'));
+		await waitFor(() => expect(getByText('initial')).toBeTruthy());
+		act(() => {
+			startTransition(() => rerender(view('b')));
+		});
+		act(() => {
+			broadcast({ agentId: 'codex', sshRemoteId: 'a', models: ['committed'] });
+		});
+		expect(getByText('committed')).toBeTruthy();
+	});
 	it('uses the selected host for a forced refresh and ignores an older initial discovery', async () => {
 		let initial!: (models: string[]) => void;
 		vi.mocked(window.maestro.agents.getModels)

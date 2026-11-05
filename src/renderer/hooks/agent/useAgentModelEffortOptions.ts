@@ -16,7 +16,7 @@
  * wins. That keeps this correct as agents are added without touching callers.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import {
@@ -70,7 +70,6 @@ export function useAgentModelEffortOptions(
 		[agentId, sshRemoteId]
 	);
 	const scopeRef = useRef(scope);
-	scopeRef.current = scope;
 	const modelVersion = useRef(0);
 	const refreshRequest = useRef(0);
 	const [refresh, setRefresh] = useState<{ scope: typeof scope; request: number }>();
@@ -83,7 +82,12 @@ export function useAgentModelEffortOptions(
 		loaded: boolean;
 	}>({ models: [], efforts: [], defaultModel: '', defaultEffort: '', loaded: false });
 	const resultRef = useRef(result);
-	resultRef.current = result;
+	// A suspended or abandoned render must not change the scope seen by
+	// callbacks belonging to the currently committed picker.
+	useLayoutEffect(() => {
+		scopeRef.current = scope;
+		resultRef.current = result;
+	}, [scope, result]);
 
 	useEffect(() => {
 		if (!scope.agentId) return;
