@@ -119,7 +119,7 @@ export class BoardRuntime {
 			.immediate();
 	}
 
-	claim(command: BoardClaimCommand, emptyRegistryProbe = false) {
+	claim(command: BoardClaimCommand, emptyRegistryProbe: boolean | 'readiness' = false) {
 		if (!this.owns()) return { ok: false as const, reason: 'owner-conflict' as const };
 		return this.storage.claim(command, () => this.context(), emptyRegistryProbe);
 	}

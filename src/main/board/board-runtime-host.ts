@@ -72,7 +72,7 @@ export async function executeBoardRuntimeCommand(
 			// With no registered workers a card cannot be dispatched.
 			// Acquire and validate the owner without probing Git; re-read the card and
 			// registry after every async boundary before reporting this wait reason.
-			if (listBoardWorkers(getBoardStorage().db).length === 0) {
+			if (selected.has(card.id) && listBoardWorkers(getBoardStorage().db).length === 0) {
 				const waitingRuntime = await runtimeFor(key, false);
 				if (
 					canonicalJson(await prepareBoardWorkspaceQuery(requestedQuery)) !==
@@ -127,7 +127,7 @@ export async function executeBoardRuntimeCommand(
 					}
 				}
 			}
-			const runtime = await runtimeFor(key);
+			const runtime = await runtimeFor(key, selected.has(card.id));
 			if (
 				canonicalJson(await prepareBoardWorkspaceQuery(requestedQuery)) !== canonicalJson(query) ||
 				getBoardStorage().sourceIdentity(target.sourceKey) !== sourceIdentity
@@ -182,7 +182,7 @@ export async function executeBoardRuntimeCommand(
 				reason: workers.length && !eligible.length ? 'worker-outside-scope' : 'no-workers',
 			};
 			for (const workerAgentId of candidates) {
-				const claim = runtime.dispatch({
+				const claimCommand = {
 					...key,
 					workerAgentId,
 					requestId: canonicalJson([command.operationId, key, workerAgentId]),
@@ -192,7 +192,10 @@ export async function executeBoardRuntimeCommand(
 						card: fresh.revision,
 						registry: runtime.intakeRevision(),
 					},
-				});
+				};
+				const claim = selected.has(card.id)
+					? runtime.dispatch(claimCommand)
+					: runtime.claim(claimCommand, 'readiness');
 				result = claim.ok
 					? { cardId: card.id, ok: true, runToken: claim.runToken }
 					: { cardId: card.id, ok: false, reason: claim.reason };

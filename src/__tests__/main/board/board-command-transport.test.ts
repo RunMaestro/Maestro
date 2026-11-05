@@ -1251,6 +1251,44 @@ function control(operation: 'hold' | 'resume' | 'approve', runToken?: BoardRunti
 }
 
 describe('fenced host intake shared by desktop and real CLI', () => {
+	it('prepares only runnable cards in a tick with many finished and waiting cards', async () => {
+		const fixture = installBoardOwner();
+		const key = target().collectionKey;
+		const original = db
+			.prepare('SELECT payload_json FROM cards WHERE collection_key=? AND id=?')
+			.get(key, 'c') as { payload_json: string };
+		const payload = JSON.parse(original.payload_json);
+		const insert = db.prepare(
+			'INSERT INTO cards (collection_key, id, payload_json, revision) VALUES (?, ?, ?, 0)'
+		);
+		for (let i = 0; i < 40; i++) {
+			const id = `waiting-${i}`;
+			insert.run(key, id, JSON.stringify({ ...payload, id, status: i % 2 ? 'blocked' : 'done' }));
+		}
+		insert.run(
+			key,
+			'missing-scope',
+			JSON.stringify({ ...payload, id: 'missing-scope', status: 'done', executionScope: undefined })
+		);
+		const prepared: string[] = [];
+		const controlOnly: string[] = [];
+		configureBoardRuntimeHost((cardKey, prepare = true) => {
+			(prepare ? prepared : controlOnly).push(cardKey.cardId);
+			return fixture.owner;
+		});
+		const response = await send(tick('many-waiting'));
+		const rows = result<{ cardId: string; ok: boolean; reason?: string }[]>(response);
+		expect(prepared).toEqual(['c']);
+		expect(controlOnly).toHaveLength(41);
+		expect(rows.find((row) => row.cardId === 'c')?.ok).toBe(true);
+		expect(rows.find((row) => row.cardId === 'missing-scope')?.reason).toBe('missing-scope');
+		expect(fixture.service.spawn).toHaveBeenCalledTimes(1);
+		fixture.finish();
+		await vi.waitFor(() => expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0));
+		const next = result<{ cardId: string; reason?: string }[]>(await send(tick('waiting-again')));
+		expect(next.find((row) => row.cardId === 'waiting-0')?.reason).toBe('card-not-ready');
+		expect(db.prepare('SELECT * FROM reservations').all()).toHaveLength(0);
+	});
 	it('retries evidence-incomplete work through real CLI and host revision checks without rewriting history or granting completion', async () => {
 		// Provider execution is injected; Commander, authenticated bridge, host and SQLite are real.
 		const fixture = installBoardOwner();

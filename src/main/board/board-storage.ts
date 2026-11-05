@@ -168,7 +168,7 @@ export class BoardStorageFacade {
 	claim(
 		command: BoardClaimCommand,
 		currentHost: () => BoardClaimHostContext,
-		emptyRegistryProbe = false
+		emptyRegistryProbe: boolean | 'readiness' = false
 	) {
 		return claimBoardCard(
 			this.db,

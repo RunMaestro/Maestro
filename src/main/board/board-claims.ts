@@ -172,8 +172,8 @@ export function claimBoardCard(
 	currentHost: () => BoardClaimHostContext & { catalog: BoardCaptureCatalog },
 	/** Internal revalidation only. Never allocates, replays a receipt or grants a spawn. */
 	prepared?: BoardRunSpecification,
-	/** A read-only rejection probe: never allocate without repository preparation. */
-	emptyRegistryProbe = false
+	/** Read-only rejection probes never allocate. The boolean form also requires an empty registry. */
+	emptyRegistryProbe: boolean | 'readiness' = false
 ): BoardClaimResult {
 	if (db.inTransaction && !prepared)
 		throw new BoardWorkspaceStorageError('invalid-input', 'Claim requires its own transaction');
@@ -198,7 +198,7 @@ export function claimBoardCard(
 	try {
 		return db
 			.transaction((): BoardClaimResult => {
-				if (emptyRegistryProbe && db.prepare('SELECT 1 FROM workers LIMIT 1').get())
+				if (emptyRegistryProbe === true && db.prepare('SELECT 1 FROM workers LIMIT 1').get())
 					return waiting('registry-changed');
 				const host = currentHost();
 				if (host.dispatchEnabled !== true) return waiting('runtime-unavailable');
