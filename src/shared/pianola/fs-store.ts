@@ -15,6 +15,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { isDeepStrictEqual } from 'node:util';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { reconcileSuggestionEvidence } from './pianola-synthesis';
 import { settledDecisionPairs } from './transcript-mining';
 import { createHash } from 'crypto';
@@ -1275,49 +1276,60 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				if (names.every((name) => hashes.has(/-([a-f0-9]{64})\.artifact\.json$/.exec(name)![1])))
 					continue;
 			}
-			await withFileLockAsync(admissionName(id), 'dispatch admission', () => {
-				if (resolveDir() !== dir) return;
-				const journal = path.join(dir, admissionName(id));
-				try {
-					if (fs.statSync(journal).size > 16384) return;
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-				}
-				const current = readMutationContent(admissionName(id));
-				if (current !== (candidate?.body ?? null)) return;
-				let record = candidate?.record;
-				if (record && (record.payloadRetiredAt || retire.has(id))) {
-					record = { ...record, payloadRetiredAt: record.payloadRetiredAt ?? Date.now() };
-					delete record.queuePrepare;
-					delete record.queueRouting;
-					delete record.queueRelease;
-					delete record.queueAuthority;
-					// Re-establish durability even after a prior lost retirement ack.
-					persistDispatchAdmission(record);
-				}
-				const stored = current ? (JSON.parse(current) as StoredAdmission) : null;
-				const refs = new Set(
-					record?.payloadRetiredAt
-						? []
-						: [
-								...(stored?.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
-								...Object.values(stored?.payloads?.terminals ?? {}).map((ref) => ref.sha256),
-							]
-				);
-				for (const name of names) {
-					const hash = /-([a-f0-9]{64})\.artifact\.json$/.exec(name)?.[1];
-					if (!hash || refs.has(hash)) continue;
+			const metadataBatchSize = 16;
+			let expectedBody = candidate?.body ?? null;
+			let retirementConfirmed = false;
+			for (let offset = 0; offset < names.length; offset += metadataBatchSize) {
+				if (offset > 0) await yieldToEventLoop();
+				const collected = await withFileLockAsync(admissionName(id), 'dispatch admission', () => {
+					if (resolveDir() !== dir) return false;
+					const journal = path.join(dir, admissionName(id));
 					try {
-						const file = path.join(dir, name);
-						if (!stored && Date.now() - fs.lstatSync(file).mtimeMs < 86400000) continue;
-						// This metadata-only mutation stays in one turn. Never yield with
-						// a native admission lock held, nor unlink later from stale refs.
-						fs.unlinkSync(file);
+						if (fs.statSync(journal).size > 16384) return false;
 					} catch (error) {
 						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 					}
-				}
-			});
+					const current = readMutationContent(admissionName(id));
+					if (current !== expectedBody) return false;
+					let record = candidate?.record;
+					if (!retirementConfirmed && record && (record.payloadRetiredAt || retire.has(id))) {
+						record = { ...record, payloadRetiredAt: record.payloadRetiredAt ?? Date.now() };
+						delete record.queuePrepare;
+						delete record.queueRouting;
+						delete record.queueRelease;
+						delete record.queueAuthority;
+						// Re-establish durability even after a prior lost retirement ack.
+						persistDispatchAdmission(record);
+						expectedBody = readMutationContent(admissionName(id));
+						retirementConfirmed = true;
+					}
+					const stored = current ? (JSON.parse(current) as StoredAdmission) : null;
+					const refs = new Set(
+						retirementConfirmed || record?.payloadRetiredAt
+							? []
+							: [
+									...(stored?.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
+									...Object.values(stored?.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+								]
+					);
+					for (const name of names.slice(offset, offset + metadataBatchSize)) {
+						const hash = /-([a-f0-9]{64})\.artifact\.json$/.exec(name)?.[1];
+						if (!hash || refs.has(hash)) continue;
+						try {
+							const file = path.join(dir, name);
+							if (!stored && Date.now() - fs.lstatSync(file).mtimeMs < 86400000) continue;
+							// At most 16 names (32 lstat/unlink operations for orphans)
+							// per lock turn, plus fixed journal/durability work. This bounds
+							// operation count, not filesystem latency. Yield only after unlock.
+							fs.unlinkSync(file);
+						} catch (error) {
+							if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+						}
+					}
+					return true;
+				});
+				if (!collected) break;
+			}
 		}
 	}
 

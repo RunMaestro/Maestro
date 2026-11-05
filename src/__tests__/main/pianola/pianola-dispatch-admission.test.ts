@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { configurePianolaScope } from '../../../main/pianola/pianola-legacy-migration';
 import { spawn } from 'child_process';
@@ -464,6 +465,76 @@ describe('host Pianola dispatch admission', () => {
 		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
 	});
 
+	it.each(['unchanged', 'new-consumer', 'journal-change', 'directory-change', 'second-compactor'])(
+		'bounds metadata batches and revalidates %s between unlocked event-loop turns',
+		async (change) => {
+			const f = await payloadFixture();
+			f.record.queueRouting!.completed = true;
+			f.store.writeDispatchAdmission(f.record);
+			if (change === 'new-consumer') fs.rmSync(f.journal);
+			let dir = f.dir;
+			const store = createPianolaFsStore({
+				resolveDir: () => dir,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const obsolete = Array.from({ length: 80 }, (_, i) => {
+				const file = path.join(
+					f.dir,
+					`maestro-pianola-dispatch-${dispatchId}-${i.toString(16).padStart(64, '0')}.artifact.json`
+				);
+				fs.writeFileSync(file, 'obsolete');
+				fs.utimesSync(file, new Date(1), new Date(1));
+				return file;
+			});
+			const unlink = fs.unlinkSync;
+			const remove = fs.rmSync;
+			let inTurn = 0;
+			const turns: number[] = [];
+			let progressed = false;
+			let progress: Promise<void> | undefined;
+			let otherCompaction: Promise<void> | undefined;
+			vi.spyOn(fs, 'rmSync').mockImplementation((file, options) => {
+				if (String(file) === f.journal + '.lock') {
+					turns.push(inTurn);
+					inTurn = 0;
+				}
+				return remove(file, options);
+			});
+			vi.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
+				if (String(file).endsWith('.artifact.json')) {
+					inTurn++;
+					if (!progress) {
+						progress = yieldToEventLoop().then(() => {
+							progressed = true;
+							expect(fs.existsSync(f.journal + '.lock')).toBe(false);
+							expect(obsolete.filter((name) => !fs.existsSync(name)).length).toBeLessThanOrEqual(
+								16
+							);
+							if (change === 'new-consumer' || change === 'journal-change') {
+								delete f.record.queueRouting!.completed;
+								f.store.writeDispatchAdmission(f.record);
+							}
+							if (change === 'directory-change') dir = path.join(f.dir, 'moved');
+							if (change === 'second-compactor')
+								otherCompaction = f.store.compactDispatchArtifacts();
+						});
+					}
+				}
+				return unlink(file);
+			});
+			await store.compactDispatchArtifacts();
+			await progress;
+			await otherCompaction;
+			expect(progressed).toBe(true);
+			expect(Math.max(...turns)).toBeLessThanOrEqual(16);
+			const deleted = obsolete.filter((name) => !fs.existsSync(name)).length;
+			expect(deleted).toBe(['unchanged', 'second-compactor'].includes(change) ? 80 : 16);
+			if (change !== 'directory-change')
+				expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
+		}
+	);
+
 	it('keeps current references after a failed obsolete-file removal and retries safely', async () => {
 		const f = await payloadFixture();
 		f.record.queueRouting!.completed = true;
@@ -483,6 +554,17 @@ describe('host Pianola dispatch admission', () => {
 
 	it('serializes independent store compactors without dangling references or duplicate deletion errors', async () => {
 		const f = await completedFixture(34);
+		for (const record of f.records.slice(0, 2)) {
+			for (let i = 0; i < 80; i++) {
+				fs.writeFileSync(
+					path.join(
+						f.dir,
+						`maestro-pianola-dispatch-${record.dispatchId}-${i.toString(16).padStart(64, '0')}.artifact.json`
+					),
+					'obsolete'
+				);
+			}
+		}
 		const other = createPianolaFsStore({
 			resolveDir: () => f.dir,
 			indent: 2,
@@ -490,6 +572,9 @@ describe('host Pianola dispatch admission', () => {
 		});
 		await Promise.all([f.store.compactDispatchArtifacts(), other.compactDispatchArtifacts()]);
 		for (const r of f.records) expect(other.readDispatchAdmission(r.dispatchId)).toBeTruthy();
+		expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toHaveLength(
+			33 * 3
+		);
 	});
 
 	it.each([

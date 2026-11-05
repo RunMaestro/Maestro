@@ -115,6 +115,10 @@ vi.mock('electron', () => ({
 }));
 
 // Mock fs/promises
+vi.mock('node:fs', async (importOriginal) => ({
+	...(await importOriginal<typeof import('node:fs')>()),
+}));
+
 vi.mock('fs/promises', () => ({
 	readFile: vi.fn(),
 	writeFile: vi.fn(),
@@ -1960,7 +1964,13 @@ describe('persistence IPC handlers', () => {
 					'callback-reset',
 					'restart',
 					...(mode === 'parallel'
-						? ['local-last', 'local-output-tamper', 'reply-peer-revoke', 'cleanup-io']
+						? [
+								'local-last',
+								'local-output-tamper',
+								'reply-peer-revoke',
+								'cleanup-io',
+								'cleanup-batches',
+							]
 						: []),
 					...(mode === 'consult-first'
 						? [
@@ -2001,7 +2011,12 @@ describe('persistence IPC handlers', () => {
 			'composes the real renderer queue, native $mode branches and aggregate callback: $scenario',
 			async ({ mode, scenario }) => {
 				const f = await managedLocalFixture(mode === 'parallel' ? true : mode);
-				const longOutput = ['long-output', 'long-unicode', 'cleanup-io'].includes(scenario);
+				const longOutput = [
+					'long-output',
+					'long-unicode',
+					'cleanup-io',
+					'cleanup-batches',
+				].includes(scenario);
 				const nativeReply =
 					scenario === 'oversized-reply'
 						? '😀'.repeat(300000)
@@ -2016,11 +2031,16 @@ describe('persistence IPC handlers', () => {
 						: longOutput
 							? nativeReply
 							: 'Local native output';
+				let cleanupDeletes = 0;
 				const fires = vi.fn();
 				const registry = new DispatchCallbackRegistry({
 					onFire: (fire) => {
 						fires(fire);
-						if (scenario === 'cleanup-io')
+						if (scenario === 'cleanup-batches') {
+							expect(cleanupDeletes).toBeGreaterThan(0);
+							expect(cleanupDeletes).toBeLessThan(256);
+						}
+						if (['cleanup-io', 'cleanup-batches'].includes(scenario))
 							f.store.confirmDispatchCallback(fire.entry.admissionId!, fire.entry.callbackId);
 					},
 				});
@@ -2416,6 +2436,36 @@ describe('persistence IPC handlers', () => {
 						cleanup = f.store.compactDispatchArtifacts();
 						await paused.promise;
 					}
+					if (scenario === 'cleanup-batches') {
+						const orphanId = '77777777-7777-4777-8777-777777777777';
+						for (let i = 0; i < 256; i++) {
+							const file = path.join(
+								directory,
+								'pianola',
+								`maestro-pianola-dispatch-${orphanId}-${i.toString(16).padStart(64, '0')}.artifact.json`
+							);
+							nativeFs.writeFileSync(file, 'obsolete');
+							nativeFs.utimesSync(file, new Date(1), new Date(1));
+						}
+						const paused = Promise.withResolvers<void>();
+						const unlink = nativeFs.unlinkSync;
+						vi.spyOn(nativeFs, 'unlinkSync').mockImplementation((file) => {
+							unlink(file);
+							if (String(file).includes(orphanId)) {
+								cleanupDeletes++;
+								if (cleanupDeletes === 1) setImmediate(() => paused.resolve());
+							}
+						});
+						cleanup = f.store.compactDispatchArtifacts();
+						await paused.promise;
+						expect(cleanupDeletes).toBe(16);
+						expect(
+							nativeFs.existsSync(
+								path.join(directory, 'pianola', `maestro-pianola-dispatch-${orphanId}.json.lock`)
+							)
+						).toBe(false);
+					}
+
 					peerManager.emit('exit', 'cross-agent-foreign', 0);
 					if (
 						!((mode === 'only' || mode === 'handoff') && scenario === 'fast') &&
@@ -2635,14 +2685,15 @@ describe('persistence IPC handlers', () => {
 					).toHaveLength(1);
 					for (const step of consults) peerManager.emit('exit', `cross-agent-${step.requestId}`, 0);
 					expect(fires).toHaveBeenCalledTimes(1);
-					if (scenario === 'cleanup-io') {
+					if (['cleanup-io', 'cleanup-batches'].includes(scenario)) {
 						const saved = f.store.readDispatchAdmission(f.input.dispatchId)!;
 						for (const step of saved.queueRouting!.steps.filter((s) => s.kind === 'consult'))
 							expect(step.terminal?.text).toBe(nativeReply);
 						expect(saved.callbackDeliveredAt).toBeTypeOf('number');
 						expect(fires).toHaveBeenCalledTimes(1);
-						resumeCleanup!();
+						resumeCleanup?.();
 						await cleanup;
+						if (scenario === 'cleanup-batches') expect(cleanupDeletes).toBe(256);
 					}
 					registerSessionPersistenceFlush(null);
 				} finally {
