@@ -17,7 +17,11 @@ import {
 	subscribePendingPermissions,
 } from '../../../main/permission-relay/registry';
 import { buildRelayArgs } from '../../../main/permission-relay/spawn-args';
-import { parseQuestionRequest } from '../../../main/permission-relay/question-request';
+import { isNativeQuestionContent, isNativeQuestionRequest } from '../../../shared/currentTurn';
+import {
+	parseQuestionRequest,
+	parseAutomatableQuestionRequest,
+} from '../../../main/permission-relay/question-request';
 import { PermissionRelayServer } from '../../../main/permission-relay/PermissionRelayServer';
 import {
 	RELAY_PERMISSION_PROMPT_TOOL,
@@ -381,5 +385,106 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 			client.destroy();
 			cleanup();
 		}
+	});
+});
+
+describe('strict automation question schema', () => {
+	const nativeMetadata = {
+		requestId: 'request',
+		processId: 'agent-ai-tab',
+		createdAt: 1,
+		observedRisk: 'low',
+		cursor: {
+			generation: 'host',
+			sourceGeneration: 'renderer',
+			agentId: 'agent',
+			tabId: 'tab',
+			createdAt: 7,
+			provider: 'claude-code',
+			agentSessionId: null,
+			runId: 'run',
+			turnId: 'user',
+			revision: 1,
+		},
+	};
+	const valid = {
+		question: 'Use count or total?',
+		header: 'Naming',
+		multiSelect: false,
+		options: [{ label: 'count', description: 'Item count' }, { label: 'total' }],
+	};
+	it('accepts the intact supported request and shares content bounds with the wire guard', () => {
+		const parsed = parseAutomatableQuestionRequest('AskUserQuestion', { questions: [valid] });
+		expect(parsed).toEqual(valid);
+		expect(
+			isNativeQuestionRequest({
+				...nativeMetadata,
+				question: valid.question,
+				options: ['count', 'total'],
+			})
+		).toBe(true);
+		expect(
+			isNativeQuestionContent({
+				question: parsed!.question,
+				options: parsed!.options.map((o) =>
+					o.description ? `${o.label}: ${o.description}` : o.label
+				),
+			})
+		).toBe(true);
+	});
+	it.each([
+		{ multiSelect: 'true' },
+		{ multiSelect: 'false' },
+		{ multiSelect: undefined },
+		{ multiSelect: null },
+		{ multiSelect: 0 },
+		{ multiSelect: true },
+		{ options: undefined },
+		{ options: [] },
+		{ options: ['count'] },
+		{ options: [{ label: 'count' }, {}] },
+		{ options: [{ label: [] }] },
+		{ options: [{ label: ' ' }] },
+		{ options: [['count']] },
+		{ options: [{ label: 'count', description: null }] },
+		{ options: [{ label: 'count', description: ' ' }] },
+		{ options: [{ label: 'count', extra: true }] },
+		{ options: [{ label: 'count' }, { label: ' count ' }] },
+		{ options: [{ label: 'x'.repeat(1001) }] },
+		{ options: Array.from({ length: 33 }, (_, i) => ({ label: `${i}` })) },
+		{ question: [] },
+		{ question: ' ' },
+		{ question: 'x'.repeat(8001) },
+		{ header: [] },
+		{ header: ' ' },
+		{ header: 'x'.repeat(16001) },
+		{ extra: true },
+	])('keeps raw malformed or unsupported fields human-only: %#', (patch) => {
+		expect(
+			parseAutomatableQuestionRequest('AskUserQuestion', { questions: [{ ...valid, ...patch }] })
+		).toBeNull();
+	});
+	it.each(
+		[[], [valid, valid], 'question', [Object.assign([], valid)], [null]].map((questions) => ({
+			questions,
+		}))
+	)('rejects an ambiguous raw questions container: %#', ({ questions }) => {
+		expect(parseAutomatableQuestionRequest('AskUserQuestion', { questions })).toBeNull();
+	});
+	it.each(
+		[
+			[],
+			[' '],
+			['count', 'count'],
+			['count', ' count '],
+			['x'.repeat(1001)],
+			Array.from({ length: 33 }, (_, i) => `${i}`),
+			Array.from({ length: 32 }, (_, i) => `${i}${'x'.repeat(900)}`),
+		].map((options) => ({ options }))
+	)('rejects equivalent malformed native wire options: %#', ({ options }) => {
+		expect(isNativeQuestionContent({ question: 'Use count?', options })).toBe(false);
+		expect(isNativeQuestionRequest({ ...nativeMetadata, question: 'Use count?', options })).toBe(
+			false
+		);
 	});
 });

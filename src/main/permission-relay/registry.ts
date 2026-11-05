@@ -29,7 +29,7 @@ interface PendingRequest {
 	timer: NodeJS.Timeout;
 	token: string;
 	question?: NativeQuestionRequest;
-	isOpen?: () => boolean;
+	isOpen?: (readAuthority?: (read: () => string) => string) => boolean;
 }
 
 const bindings = new Map<string, RelaySpawnBinding>();
@@ -119,7 +119,7 @@ export function createPending(
 	token: string,
 	timeoutMs: number = RELAY_DECISION_TIMEOUT_MS,
 	question?: NativeQuestionRequest,
-	isOpen?: () => boolean
+	isOpen?: (readAuthority?: (read: () => string) => string) => boolean
 ): Promise<PermissionDecision> {
 	return new Promise<PermissionDecision>((resolve) => {
 		const timer = setTimeout(() => {
@@ -181,12 +181,43 @@ export function getPendingQuestion(
 	const requests = [...pending.values()].filter(
 		(p) => bindings.get(p.token)?.sessionId === processId
 	);
+	const q = readPendingQuestion(requests);
+	return q && q.processId === processId && sameCurrentTurnCursor(q.cursor, cursor) ? q : undefined;
+}
+
+function readPendingQuestion(
+	requests: PendingRequest[],
+	readAuthority?: (read: () => string) => string
+): NativeQuestionRequest | undefined {
 	if (requests.length !== 1) return undefined;
-	if (requests[0].isOpen && !requests[0].isOpen()) return undefined;
-	const q = requests[0].question;
-	return q && q.processId === processId && sameCurrentTurnCursor(q.cursor, cursor)
-		? structuredClone(q)
-		: undefined;
+	const request = requests[0];
+	if (!request.question || (request.isOpen && !request.isOpen(readAuthority))) return undefined;
+	return structuredClone(request.question);
+}
+
+/** Passive census only: index pending processes once and share host reads for this
+ * synchronous observation. Nothing from this snapshot is accepted as send authority.
+ */
+export function getPendingQuestionsSnapshot(): Map<string, NativeQuestionRequest> {
+	const byProcess = new Map<string, PendingRequest[]>();
+	for (const request of pending.values()) {
+		const processId = bindings.get(request.token)?.sessionId;
+		if (!processId) continue;
+		const requests = byProcess.get(processId);
+		if (requests) requests.push(request);
+		else byProcess.set(processId, [request]);
+	}
+	const authorities = new Map<() => string, string>();
+	const readAuthority = (read: () => string): string => {
+		if (!authorities.has(read)) authorities.set(read, read());
+		return authorities.get(read)!;
+	};
+	const questions = new Map<string, NativeQuestionRequest>();
+	for (const [processId, requests] of byProcess) {
+		const question = readPendingQuestion(requests, readAuthority);
+		if (question) questions.set(processId, question);
+	}
+	return questions;
 }
 
 /** Single-use question answer, deliberately incapable of allowing a tool. */

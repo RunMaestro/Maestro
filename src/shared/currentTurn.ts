@@ -1,3 +1,4 @@
+import { serializedJsonByteLength } from './jsonUtils';
 import { canonicalJson } from './canonicalJson';
 import type { PianolaMessage, PianolaRisk } from './pianola/types';
 import type { LogEntryRecord } from './maestro-lib/store/transcript';
@@ -157,6 +158,22 @@ export function currentTurnMessages(read: CurrentTurnRead): PianolaMessage[] {
 	}));
 }
 
+/** Shared bounded content schema for raw relay admission and native wire validation. */
+export function isNativeQuestionContent(value: { question: unknown; options: unknown }): boolean {
+	return (
+		typeof value.question === 'string' &&
+		value.question.trim().length > 0 &&
+		value.question.length <= 8000 &&
+		Array.isArray(value.options) &&
+		value.options.length > 0 &&
+		value.options.length <= 32 &&
+		value.options.every((o) => typeof o === 'string' && o.trim().length > 0 && o.length <= 1000) &&
+		new Set(value.options.map((o) => o.trim())).size === value.options.length &&
+		(serializedJsonByteLength({ question: value.question, options: value.options }) ?? Infinity) <=
+			16000
+	);
+}
+
 /** An open host relay question, never a permission grant or a transcript row. */
 export interface NativeQuestionRequest {
 	requestId: string;
@@ -186,12 +203,7 @@ export function isNativeQuestionRequest(value: unknown): value is NativeQuestion
 		Number.isSafeInteger(q.createdAt) &&
 		q.createdAt >= 0 &&
 		['low', 'medium', 'high'].includes(q.observedRisk) &&
-		typeof q.question === 'string' &&
-		q.question.trim().length > 0 &&
-		q.question.length <= 8000 &&
-		Array.isArray(q.options) &&
-		q.options.length <= 32 &&
-		q.options.every((o) => typeof o === 'string' && o.length > 0 && o.length <= 1000)
+		isNativeQuestionContent(q)
 	);
 }
 

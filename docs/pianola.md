@@ -452,6 +452,20 @@ that request alongside the complete native turn and its retained risk. The
 projection is never written as a captured transcript row. Standing answer rules
 still decide whether to reply; high-risk requests stay with the human.
 
+Automation requires an intact raw single-select schema with explicit
+`multiSelect: false`, one nonblank question, and 1-32 object options with unique
+nonblank labels. String options, filtered or ambiguous fields, missing flags,
+invalid descriptions and oversized content stay with the human. The tolerant
+question picker and human answer channel continue to accept their existing
+inputs. Raw admission and native wire validation share bounded question/option
+content checks.
+
+A synchronous desktop census indexes pending processes once and shares one
+host policy/owner fingerprint read across its open questions. This observation
+is private to that census and supplies no answer authority. Each request commit
+and final answer read policy/owners freshly; there is no cross-census cache,
+TTL, timer or caller-provided authority snapshot.
+
 | Provider / input path                                                                                                      | Active-process support                                                             | Consumer                                            |
 | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------- |
 | Claude Code standard API/print mode, one single-select AskUserQuestion through the permission relay                        | Supported with a complete authenticated native run/turn and matching standing rule | Exact pending request's deny/message answer channel |

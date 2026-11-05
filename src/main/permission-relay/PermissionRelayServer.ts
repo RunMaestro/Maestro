@@ -23,7 +23,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
 import { createPending, lookupBinding, resolvePending } from './registry';
-import { parseQuestionRequest } from './question-request';
+import { parseQuestionRequest, parseAutomatableQuestionRequest } from './question-request';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { nativeCurrentTurns } from '../pianola/current-turn';
@@ -236,14 +236,8 @@ export class PermissionRelayServer {
 		};
 
 		const native = nativeCurrentTurns.readProcessTurn(binding.sessionId, binding.tabId);
-		// Only a single parsed AskUserQuestion is supported. Multi-question and all
-		// ordinary permission requests retain their existing human consumer.
-		const question =
-			questionFields?.questions.length === 1 &&
-			Array.isArray(input.questions) &&
-			input.questions.length === 1
-				? questionFields.questions[0]
-				: undefined;
+		// Raw automation admission must not inherit the human picker's lossy coercions.
+		const question = parseAutomatableQuestionRequest(msg.toolName, input);
 		let authority: string | undefined;
 		try {
 			authority = native && question ? this.questionAuthority?.() : undefined;
@@ -255,10 +249,7 @@ export class PermissionRelayServer {
 			requestId,
 			msg.token,
 			undefined,
-			native &&
-				question &&
-				!question.multiSelect &&
-				Buffer.byteLength(canonicalJson(input)) <= 16000
+			native && question
 				? {
 						requestId,
 						processId: binding.sessionId,
@@ -271,9 +262,12 @@ export class PermissionRelayServer {
 						),
 					}
 				: undefined,
-			() => {
+			(readAuthority = (read) => read()) => {
 				try {
-					authorityCurrent = authorityCurrent && this.questionAuthority?.() === authority;
+					authorityCurrent =
+						authorityCurrent &&
+						!!this.questionAuthority &&
+						readAuthority(this.questionAuthority) === authority;
 				} catch {
 					authorityCurrent = false;
 				}

@@ -1,4 +1,5 @@
-import { getPendingQuestion } from '../../permission-relay/registry';
+import { sameCurrentTurnCursor } from '../../../shared/currentTurn';
+import { getPendingQuestionsSnapshot } from '../../permission-relay/registry';
 import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
@@ -126,6 +127,7 @@ export function registerSessionCallbacks(
 	// then reconciles it with live managed-process and CLI-activity evidence.
 	server.setListDesktopSessionsCallback(() => {
 		const capturedAt = Date.now();
+		const pendingQuestions = getPendingQuestionsSnapshot();
 		const sessions = readLiveSessions();
 		const byId = new Map(sessions.map((session) => [session.id, session]));
 		const processManager = getProcessManager();
@@ -253,8 +255,11 @@ export function registerSessionCallbacks(
 								undefined,
 								false
 							);
-							return turn.status === 'complete'
-								? getPendingQuestion(`${s.id}-ai-${tab.id}`, turn.cursor)
+							const question = pendingQuestions.get(`${s.id}-ai-${tab.id}`);
+							return turn.status === 'complete' &&
+								question &&
+								sameCurrentTurnCursor(question.cursor, turn.cursor)
+								? question
 								: undefined;
 						})(),
 						consult: !!tab.consultOrigin,

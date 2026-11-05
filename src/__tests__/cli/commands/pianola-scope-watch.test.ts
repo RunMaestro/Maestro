@@ -1619,6 +1619,13 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 		'tool-permission',
 		'multi-question',
 		'multi-select',
+		'raw-string-multiselect',
+		'raw-missing-multiselect',
+		'raw-filtered-option',
+		'raw-empty-options',
+		'raw-array-option',
+		'raw-invalid-label',
+		'raw-oversize',
 		'unsupported-provider',
 		'disconnect',
 		'feature-off',
@@ -1833,7 +1840,8 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 				// Snapshot notification follows actual pending-map commit, not UI parsing.
 				if (
 					provider === 'claude-code' &&
-					!['multi-question', 'multi-select', 'tool-permission'].includes(mode)
+					!['multi-question', 'multi-select', 'tool-permission'].includes(mode) &&
+					!mode.startsWith('raw-')
 				) {
 					expect(getPendingQuestion('agent-ai-tab', f.read().cursor)?.requestId).toBe(requestId);
 				}
@@ -1848,12 +1856,19 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 			answerResponse = new Promise<string>((resolve) => {
 				socket!.once('data', (data) => resolve(data.toString()));
 			});
-			const question = {
+			const question: Record<string, unknown> = {
 				header: mode === 'request-risk-header' ? 'I will DROP DATABASE production.' : 'Naming',
 				question: 'Should I name it count or total?',
 				options: [{ label: 'count' }, { label: 'total' }],
 				multiSelect: mode === 'multi-select',
 			};
+			if (mode === 'raw-string-multiselect') question.multiSelect = 'true';
+			if (mode === 'raw-missing-multiselect') delete question.multiSelect;
+			if (mode === 'raw-filtered-option') question.options = [{ label: 'count' }, {}];
+			if (mode === 'raw-empty-options') question.options = [];
+			if (mode === 'raw-array-option') question.options = [['count']];
+			if (mode === 'raw-invalid-label') question.options = [{ label: ' ' }];
+			if (mode === 'raw-oversize') question.header = 'x'.repeat(16001);
 			socket.write(
 				JSON.stringify({
 					type: 'permission-request',
@@ -1924,6 +1939,13 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 						lifecycle: { delivery: 'unknown' },
 					});
 			} else {
+				if (mode.startsWith('raw-')) {
+					expect(replies).toHaveLength(0);
+					expect(resolvePending(requestId, { behavior: 'deny', message: 'Human answer.' })).toBe(
+						true
+					);
+					expect(JSON.parse(await answerResponse).decision.message).toBe('Human answer.');
+				}
 				expect(store.readDecisions().some((r) => r.dispatched)).toBe(false);
 				if (['risk', 'risk-rewrite', 'request-risk-header'].includes(mode))
 					expect(store.readDecisions(), JSON.stringify(result)).toMatchObject([
