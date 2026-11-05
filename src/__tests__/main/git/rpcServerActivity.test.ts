@@ -459,6 +459,7 @@ describe('standalone native RPC activity', () => {
 				spawn,
 				fallback,
 				fs.realpath,
+				captureException,
 			])
 				expect(probe).not.toHaveBeenCalled();
 			expect(processes.size).toBe(0);
@@ -657,6 +658,250 @@ describe('standalone native RPC activity', () => {
 	});
 });
 
+describe('RPC diagnostic activity', () => {
+	it.each([false, true])(
+		'preserves direct fallback failure while diagnostics settle (logger fails: %s)',
+		async (loggerFails) => {
+			const failure = new Error('fallback failed');
+			const reporting = Promise.withResolvers<void>();
+			fallback.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger failed');
+				});
+			expect(spawner.spawn(config({ nativeRpcProtocol: undefined }))).toEqual({
+				success: false,
+				pid: -1,
+				error: String(failure),
+			});
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			expect(spawn).not.toHaveBeenCalled();
+			await blocked();
+			reporting.reject(new Error('diagnostic failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'owns setup fallback diagnostics on %s without delaying fallback',
+		async (outcome) => {
+			const failure = new Error('setup failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(planSpawnShell).mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('diagnostic failed');
+				return reporting.promise;
+			});
+			expect(spawner.spawn(config({ permissionMode: 'full' }))).toEqual({
+				success: true,
+				pid: 999,
+			});
+			expect(fallback).toHaveBeenCalledOnce();
+			expect(spawn).not.toHaveBeenCalled();
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('diagnostic failed'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns completion diagnostics after native close despite logger failure: %s',
+		async (loggerFails) => {
+			spawner.spawn(config());
+			await drain();
+			const failure = new Error('connection close failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			probes.close.mockImplementationOnce(() => {
+				throw failure;
+			});
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger failed');
+				});
+			await close();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('diagnostic failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns run-error diagnostics and native close independently (report first: %s)',
+		async (reportFirst) => {
+			const emitter = new EventEmitter();
+			const agentError = vi.fn();
+			emitter.on('agent-error', agentError);
+			const { RpcServerSpawner } =
+				await import('../../../main/process-manager/spawners/RpcServerSpawner');
+			spawner = new RpcServerSpawner(processes, emitter, {} as DataBufferManager, fallback);
+			const prompt = Promise.withResolvers<unknown>();
+			probes.request.mockResolvedValueOnce({}).mockReturnValueOnce(prompt.promise);
+			spawner.spawn(config());
+			await drain();
+			const failure = new Error('prompt failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			prompt.reject(failure);
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			expect(agentError).toHaveBeenCalledOnce();
+			expect(probes.exit).toHaveBeenCalledWith('rpc-session', 1, expect.anything());
+			expect(fallback).not.toHaveBeenCalled();
+			if (reportFirst) reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (reportFirst) await close();
+			else reporting.reject(new Error('diagnostic failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each(['extension', 'steer', 'interrupt', 'kill', 'notification'] as const)(
+		'owns late %s diagnostics after startup releases, without recursive reporting',
+		async (kind) => {
+			spawner.spawn(config());
+			await drain();
+			const callbacks = connection();
+			const managed = processes.get('rpc-session')!;
+			await close();
+			processes.clear();
+			const failure = new Error('late failure');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			if (kind === 'notification')
+				callbacks.onNotification!({
+					get type() {
+						throw failure;
+					},
+				});
+			else {
+				let result: Promise<unknown>;
+				if (kind === 'extension') {
+					probes.interaction.mockRejectedValueOnce(failure);
+					result = callbacks.onServerRequest!({ method: 'confirm' });
+				} else if (kind === 'steer')
+					result = managed.harnessControl!.steer({
+						get id(): string {
+							throw failure;
+						},
+						text: 'late',
+					});
+				else {
+					vi.mocked(stopProcess).mockImplementationOnce(() => {
+						throw failure;
+					});
+					result = Promise.resolve(managed.sdkController![kind]());
+				}
+				await expect(result).rejects.toBe(failure);
+			}
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('diagnostic failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			expect(fallback).not.toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+	it('owns failed late exit logging diagnostics after native close', async () => {
+		spawner.spawn(config());
+		await drain();
+		const callbacks = connection();
+		probes.close.mockImplementationOnce(() => {
+			throw new Error('close failed');
+		});
+		await close();
+		vi.mocked(captureException).mockClear();
+		const reporting = Promise.withResolvers<void>();
+		const failure = new Error('exit logger failed');
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		vi.mocked(logger.error).mockImplementationOnce(() => {
+			throw failure;
+		});
+		probes.exit.mockRejectedValueOnce(new Error('exit failed'));
+		callbacks.onNotification!({ type: 'session_settled' });
+		await drain();
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it.each([false, true])(
+		'owns concurrent late notification diagnostics and successor (reverse: %s)',
+		async (reverse) => {
+			spawner.spawn(config());
+			await drain();
+			const callbacks = connection();
+			await close();
+			const reports = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+			for (const reporting of reports) {
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				callbacks.onNotification!({
+					get type() {
+						throw new Error('notification failed');
+					},
+				});
+				await drain();
+			}
+			native = makeNative();
+			spawner.spawn(config());
+			await drain();
+			reports[reverse ? 1 : 0].resolve();
+			await drain();
+			await blocked();
+			await close();
+			await blocked();
+			reports[reverse ? 0 : 1].reject(new Error('diagnostic failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(2);
+			(await reserve()).release();
+		}
+	);
+	it('blocks a pending reservation when a late notification starts diagnostics', async () => {
+		spawner.spawn(config());
+		await drain();
+		const callbacks = connection();
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		callbacks.onNotification!({
+			get type() {
+				throw new Error('notification failed');
+			},
+		});
+		await drain();
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+});
+
 describe('retained Pi/OMP RPC callback activity', () => {
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses retained callbacks before lookup or recovery under %s',
@@ -692,9 +937,7 @@ describe('retained Pi/OMP RPC callback activity', () => {
 					},
 				});
 				await drain();
-				expect(captureException).toHaveBeenCalledWith(
-					expect.objectContaining({ message: expect.stringContaining('reserved') })
-				);
+				expect(captureException).not.toHaveBeenCalled();
 				for (const probe of [
 					lookup,
 					probes.request,

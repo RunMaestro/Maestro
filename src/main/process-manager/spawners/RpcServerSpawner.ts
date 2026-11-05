@@ -64,9 +64,13 @@ export class RpcServerSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(start, observe) => this.spawnAdmitted(config, start, observe),
-				(error) => {
-					void captureException(error);
-					logger.error('[RpcTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				async (error) => {
+					const reporting = Promise.resolve().then(() => captureException(error));
+					try {
+						logger.error('[RpcTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+					} finally {
+						await reporting;
+					}
 				}
 			);
 		} catch (error) {
@@ -90,7 +94,11 @@ export class RpcServerSpawner {
 					error: `Native RPC Standard mode could not start: ${String(error)}`,
 				};
 			}
-			void captureException(error);
+			observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -217,8 +225,9 @@ class RpcTurn {
 			protocol: 'pi',
 			negotiateV2: config.nativeRpcProtocol === 'omp-rpc',
 			onNotification: (record) => {
-				// The original observer remains a diagnostic sink for this void callback.
-				this.observeCompletion(this.onNotification(record));
+				// The fresh callback scope owns reporting. A released startup observer
+				// cannot own late diagnostics or report a refused admission.
+				void this.onNotification(record).catch(() => {});
 			},
 			onServerRequest: (record) => this.onServerRequest(record),
 		});
@@ -289,14 +298,14 @@ class RpcTurn {
 						provider: this.config.toolType,
 					})
 				),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
 	private async steer(request: { id: string; text: string }): Promise<SteeringResultFrame> {
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.steerAdmitted(request)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -332,7 +341,7 @@ class RpcTurn {
 		// Retained callbacks must admit independently after startup/close settles.
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.onNotificationAdmitted(record)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -453,7 +462,7 @@ class RpcTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -475,7 +484,7 @@ class RpcTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -516,7 +525,11 @@ class RpcTurn {
 				label: 'error',
 			}
 		);
-		void captureException(error);
+		this.observeCompletion(
+			Promise.resolve()
+				.then(() => captureException(error))
+				.catch(() => {})
+		);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -563,7 +576,7 @@ class RpcTurn {
 						})
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
