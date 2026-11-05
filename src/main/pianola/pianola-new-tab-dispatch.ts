@@ -1,3 +1,4 @@
+import { generateUUID } from '../../shared/uuid';
 import { readAgentRuns } from '../../cli/services/agent-run-store';
 import { nativeTabSession } from './pianola-queue-session';
 import { isTerminalAgentRunStatus, type AgentRun } from '../../shared/agent-run';
@@ -179,11 +180,12 @@ export function cancelPianolaQueueItem(
 		!record?.queuePrepare ||
 		record.targetAgentId !== agentId ||
 		record.targetTabId !== tabId ||
-		record.runId ||
-		record.phase === 'settled'
+		((record.runId || record.phase === 'settled') && !record.queueRouting?.rendererConsumer)
 	)
 		return;
-	forgetQueueConsultRelease(itemId);
+	const liveRouting = forgetQueueConsultRelease(itemId);
+	// Completion fields on disk are outcomes, never live send/cancel authority.
+	if ((record.runId || record.phase === 'settled') && !liveRouting) return;
 	record.queueCancelled = true;
 	if (!record.queueRelease) {
 		record.phase = 'settled';
@@ -246,7 +248,7 @@ export class PianolaNewTabDispatch {
 		}
 	) {
 		this.nativeNewTab = deps.newTab;
-		this.snapshot = deps.snapshot;
+		this.snapshot = () => deps.snapshot();
 		this.admission = new PianolaDispatchAdmissionService({
 			...deps,
 			readSnapshot: async () => deps.snapshot(),
@@ -581,7 +583,14 @@ export class PianolaNewTabDispatch {
 
 	/** This host capability is called only from the owning desktop spawn IPC.
 	 * There is no wire journal adoption or renderer release acknowledgment. */
-	prepareQueueSpawn(agentId: string, tabId: string, itemId: string, assertOwner: () => void) {
+	prepareQueueSpawn(
+		agentId: string,
+		tabId: string,
+		itemId: string,
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(failed: boolean, continuationStepId?: string): void },
+		stepId?: string
+	) {
 		return this.queue.enqueue(itemId, async () => {
 			assertOwner();
 			const record = this.deps.store.readDispatchAdmission(itemId);
@@ -592,22 +601,34 @@ export class PianolaNewTabDispatch {
 				record.queueItemId !== itemId
 			)
 				throw new Error('DispatchTargetMismatch');
-			if (record.outcome === 'accepted' && record.runId)
+			if (!stepId && record.outcome === 'accepted' && record.runId)
 				return { reconciled: true as const, runId: record.runId };
 			if (record.queueCancelled) throw new Error('DispatchQueueCancelled');
 			if (record.outcome === 'rejected') throw new Error('DispatchQueueNotStarted');
-			const delayedLocal = record.queueRouting?.routing === 'consult-first';
+			if (routingConsumer && !['parallel', 'only'].includes(record.queueRouting?.routing ?? ''))
+				throw new Error('DispatchQueueRoutingUnsupported');
+			const delayedLocal =
+				record.queueRouting?.routing === 'consult-first' ||
+				(!routingConsumer &&
+					record.queueRouting?.routing === 'parallel' &&
+					this.admission.hasQueueRoutingConsumer(itemId));
 			if (
 				delayedLocal
-					? record.phase !== 'released' || !record.queueRelease
+					? !['released', ...(stepId ? ['settled'] : [])].includes(record.phase) ||
+						!record.queueRelease
 					: record.phase !== 'bound' || record.queueRelease
 			)
 				throw new Error('DispatchQueueReleaseUncertain');
 			if (!record.queueAuthority || Date.now() >= record.queueAuthority.expiresAt)
 				throw new Error('DispatchQueueAuthorityUnavailable');
-			const local = record.queueRouting?.steps.find((s) => s.kind === 'local');
+			const local = record.queueRouting?.steps.find(
+				(s) =>
+					s.kind === 'local' && (stepId ? s.requestId === stepId && s.stage === 'reply' : !s.stage)
+			);
+			if (stepId && !local) throw new Error('DispatchRoutingStepChanged');
 			if (
 				record.queueRouting &&
+				!routingConsumer &&
 				(!local ||
 					!['parallel', 'handoff', 'consult-first'].includes(record.queueRouting.routing) ||
 					local.status !== 'prepared')
@@ -690,12 +711,51 @@ export class PianolaNewTabDispatch {
 				this.deps.store.writeDispatchAdmission(record);
 			}
 			callbackGuard();
+			if (routingConsumer && record.queueRouting) {
+				record.queueRouting.rendererConsumer = true;
+				this.deps.store.writeDispatchAdmission(record);
+			}
+			if (routingConsumer && record.queueRouting?.routing === 'parallel') {
+				if (record.queueRouting.steps.some((s) => s.stage))
+					throw new Error('DispatchQueueReleaseUncertain');
+				record.queueRouting.steps.push({
+					kind: 'local',
+					stage: 'reply',
+					targetAgentId: agentId,
+					requestId: generateUUID(),
+					status: 'prepared',
+				});
+				this.deps.store.writeDispatchAdmission(record);
+			}
 			// Do not hold a busy predecessor. Only D01 can establish FIFO/idle eligibility.
 			const released = delayedLocal
-				? this.admission.queueLocalRelease(itemId)
-				: await this.admission.releaseQueue(itemId);
+				? this.admission.queueLocalRelease(itemId, stepId)
+				: await this.admission.releaseQueue(
+						itemId,
+						routingConsumer
+							? (failed, continuationStepId) => {
+									assertOwner();
+									callbackGuard();
+									if (callbackId && !continuationStepId)
+										registry!.completeQueueAdmission(callbackId, itemId, failed);
+									routingConsumer.onSettled(failed, continuationStepId);
+								}
+							: undefined
+					);
 			assertOwner();
 			callbackGuard();
+			if (stepId) {
+				record.phase = 'released';
+				record.outcome = 'unknown';
+				this.deps.store.writeDispatchAdmission(record);
+			}
+			if (routingConsumer)
+				return {
+					reconciled: false as const,
+					generation: released.generation,
+					routing: record.queueRouting!.routing as 'parallel' | 'only',
+					targetSessionIds: record.queueRouting!.targets.map((t) => t.agentId),
+				};
 			if (pianolaNewTabSpawns.isHeld(agentId, tabId)) throw new Error('DispatchTargetHeld');
 			pianolaNewTabSpawns.hold(agentId, tabId);
 			const guard = () => {
@@ -772,7 +832,7 @@ export class PianolaNewTabDispatch {
 								...(run.status === 'cancelled' ? { canceled: true } : {}),
 							};
 					});
-					if (!nativeLocalBound) {
+					if (!nativeLocalBound || isTerminalAgentRunStatus(run.status)) {
 						this.admission.noteQueueLocalCapture(itemId, released.generation, run.id);
 						nativeLocalBound = true;
 					}

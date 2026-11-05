@@ -40,10 +40,13 @@ export interface PianolaQueueCallbackProof {
 }
 /** Pinned by the host at prepare, never supplied as send authority by a renderer. */
 export interface PianolaQueueRouting {
+	rendererConsumer?: true;
+	completed?: true;
 	routing: MentionRouting;
 	targets: { agentId: string; fingerprint: string }[];
 	steps: {
 		kind: 'consult' | 'local' | 'handoff';
+		stage?: 'reply';
 		targetAgentId: string;
 		requestId: string;
 		status: 'prepared' | 'intent' | 'unknown' | 'started' | 'settled';
@@ -134,6 +137,8 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 			!r.queuePrepare ||
 			!r.queuePrepare.item.crossAgentMention ||
 			!['only', 'parallel', 'consult-first', 'handoff'].includes(routing.routing) ||
+			(routing.rendererConsumer !== undefined && routing.rendererConsumer !== true) ||
+			(routing.completed !== undefined && routing.completed !== true) ||
 			!Array.isArray(routing.targets) ||
 			!routing.targets.length ||
 			routing.targets.some((t) => !t || !id(t.agentId) || !/^[a-f0-9]{64}$/.test(t.fingerprint)) ||
@@ -146,6 +151,8 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 					!s ||
 					!isPianolaScopeId(s.requestId) ||
 					!['consult', 'local', 'handoff'].includes(s.kind) ||
+					(s.stage !== undefined &&
+						(s.stage !== 'reply' || s.kind !== 'local' || routing.routing !== 'parallel')) ||
 					!['prepared', 'intent', 'unknown', 'started', 'settled'].includes(s.status) ||
 					(s.kind === 'local'
 						? s.targetAgentId !== r.targetAgentId

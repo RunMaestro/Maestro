@@ -120,7 +120,10 @@ export function queueLocalPrompt(
 	if ('agentContext' in item && item.agentContext)
 		throw new Error('DispatchQueueRoutingUnsupported');
 	const plan = prepareQueueRouting(item, sourceAgentId, snapshot, false);
-	if (plan?.routing === 'consult-first') {
+	if (
+		plan?.routing === 'consult-first' ||
+		(plan?.routing === 'parallel' && consultReleases.get(item.id)?.replyReady?.())
+	) {
 		const release = consultReleases.get(item.id);
 		if (!release || release.sourceAgentId !== sourceAgentId || release.sourceTabId !== item.tabId)
 			throw new Error('DispatchRoutingReleaseUnavailable');
@@ -146,6 +149,7 @@ const consultReleases = new Map<
 		generation: string;
 		guard(): void;
 		localPrompt(): string;
+		replyReady?(): boolean;
 		revoke(): void;
 		start(
 			targetAgentId: string,
@@ -193,10 +197,11 @@ export function startReleasedQueueConsult(
 	return release.start(targetAgentId, opts);
 }
 
-export function forgetQueueConsultRelease(dispatchId: string): void {
+export function forgetQueueConsultRelease(dispatchId: string): boolean {
 	const release = consultReleases.get(dispatchId);
 	consultReleases.delete(dispatchId);
 	release?.revoke();
+	return !!release;
 }
 
 /** Called by existing supervisor health/reconcile/stop boundaries; no new timer.

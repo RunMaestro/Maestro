@@ -173,6 +173,14 @@ export class DispatchCallbackRegistry {
 		delete entry.pendingAdmissionId;
 	}
 
+	/** Host native routing aggregate; stays pending through every child/local exit. */
+	completeQueueAdmission(callbackId: string, dispatchId: string, failed: boolean): void {
+		const entry = this.entries.get(callbackId);
+		if (!entry || entry.state !== 'pending' || entry.pendingAdmissionId !== dispatchId)
+			throw new Error('DispatchCallbackAdmissionMismatch');
+		this.fire(entry, failed ? 'failed' : 'completed');
+	}
+
 	noteSpawn(processSessionId: string): void {
 		const now = this.now();
 		this.recentSpawns.set(processSessionId, now);

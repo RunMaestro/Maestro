@@ -777,7 +777,10 @@ describe('persistence IPC handlers', () => {
 		});
 
 		/** Reuse B01's real writer/reader instead of inventing a Boolean receipt. */
-		function queueAdapter(busy = false, mentions: boolean | 'handoff' | 'consult-first' = false) {
+		function queueAdapter(
+			busy = false,
+			mentions: boolean | 'handoff' | 'consult-first' | 'only' = false
+		) {
 			if (mentions)
 				Object.assign(request.item, {
 					text: 'Check @PeerA and @PeerB',
@@ -952,7 +955,7 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 		}
-		async function readyQueue(mentions: boolean | 'handoff' | 'consult-first' = false) {
+		async function readyQueue(mentions: boolean | 'handoff' | 'consult-first' | 'only' = false) {
 			const f = queueAdapter(true, mentions);
 			await f.adapter.runQueue(f.client, f.input, f.arm);
 			const snapshot = f.deps.snapshot();
@@ -963,7 +966,7 @@ describe('persistence IPC handlers', () => {
 		}
 
 		async function managedLocalFixture(
-			mode: boolean | 'handoff' | 'consult-first' = true,
+			mode: boolean | 'handoff' | 'consult-first' | 'only' = true,
 			mutation?: () => void
 		) {
 			request.item = { ...request.item, turnSettings: { model: 'host-model', effort: 'high' } };
@@ -971,7 +974,9 @@ describe('persistence IPC handlers', () => {
 			f.revoke();
 			const promptSpy = vi
 				.spyOn(promptManager, 'getPrompt')
-				.mockImplementation((id) => `${id}: {{CONSULTED_AGENTS}}{{HANDOFF_AGENTS}}`);
+				.mockImplementation(
+					(id) => `${id}: {{CONSULTED_AGENTS}}{{HANDOFF_AGENTS}}{{CONSULT_REPLIES}}`
+				);
 			const systemSpy = vi
 				.spyOn(systemPromptService, 'buildMaestroSystemPromptForSession')
 				.mockResolvedValue('Host system prompt');
@@ -982,7 +987,11 @@ describe('persistence IPC handlers', () => {
 			const spawn = vi.fn((config) => {
 				const local = f.store
 					.readDispatchAdmission(f.input.dispatchId)!
-					.queueRouting!.steps.find((s) => s.kind === 'local')!;
+					.queueRouting!.steps.find(
+						(s) =>
+							s.kind === 'local' &&
+							(config.pianolaQueueStepId ? s.requestId === config.pianolaQueueStepId : !s.stage)
+					)!;
 				expect(local.status).toBe('unknown'); // durable intent before the native side effect
 				if (unknownSpawn) throw new Error('Native spawn acknowledgement lost');
 				if (!captureMissing) {
@@ -1382,7 +1391,7 @@ describe('persistence IPC handlers', () => {
 		);
 
 		async function managedConsultFixture(
-			mode: boolean | 'handoff' | 'consult-first' = true,
+			mode: boolean | 'handoff' | 'consult-first' | 'only' = true,
 			existing?: Awaited<ReturnType<typeof managedLocalFixture>>
 		) {
 			const f = existing ?? (await readyQueue(mode));
@@ -1426,6 +1435,311 @@ describe('persistence IPC handlers', () => {
 						);
 			return { ...f, generation, manager, opts, start, chunks };
 		}
+
+		it.each(
+			(['parallel', 'only'] as const).flatMap((mode) =>
+				[
+					'normal',
+					'fast',
+					'local-last',
+					'partial-unknown',
+					'terminal-journal',
+					'delete-row',
+					'peer-revoke',
+					'pause',
+					'owner-reset',
+					'foreign-socket',
+					'double-drain',
+					'failed',
+					'callback-reset',
+					'restart',
+					...(mode === 'parallel' ? ['local-output-tamper', 'reply-peer-revoke'] : []),
+				].map((scenario) => ({ mode, scenario }))
+			)
+		)(
+			'composes the real renderer queue, native $mode branches and aggregate callback: $scenario',
+			async ({ mode, scenario }) => {
+				const f = await managedLocalFixture(mode === 'only' ? 'only' : true);
+				const fires = vi.fn();
+				const registry = new DispatchCallbackRegistry({ onFire: fires });
+				const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+				const callback = registry.register({
+					targetAgentId: 'agent',
+					targetTabId: 'tab',
+					callerAgentId: 'agent',
+					prompt: record.queuePrepare!.item.text,
+					pendingAdmissionId: f.input.dispatchId,
+					timeoutMs: 60000,
+				});
+				record.queuePrepare!.callbackId = callback.callbackId;
+				record.queuePrepare!.callbackProof = {
+					registration: {
+						targetAgentId: 'agent',
+						targetTabId: 'tab',
+						callerAgentId: 'agent',
+						prompt: record.queuePrepare!.item.text,
+						pendingAdmissionId: f.input.dispatchId,
+						timeoutMs: 60000,
+					},
+					expiresAt: callback.expiresAt,
+					owner: f.snapshot.owners[0],
+				};
+				f.store.writeDispatchAdmission(record);
+				Object.assign(f.deps, { callbackRegistry: () => registry });
+				let destroyed = false;
+				const owner = { id: 7, isDestroyed: () => destroyed };
+				const peerManager = Object.assign(new EventEmitter(), {
+					spawn: vi.fn((config: { sessionId: string }) => {
+						if (scenario === 'partial-unknown') throw new Error('Spawn acknowledgement lost');
+						if (scenario === 'fast') {
+							peerManager.emit('data', config.sessionId, 'Fast reply');
+							peerManager.emit('exit', config.sessionId, 0);
+						}
+						return { success: true, pid: 4242 };
+					}),
+					kill: vi.fn(),
+				});
+				const settled = vi.fn();
+				let continuation: Promise<void> | undefined;
+				registerCrossAgentHandlers({
+					getWebServer: () =>
+						({
+							prepareQueueSpawnFromMain: (
+								...args: Parameters<typeof f.adapter.prepareQueueSpawn>
+							) => f.adapter.prepareQueueSpawn(...args),
+						}) as never,
+					getWindowForSession: () => ({ webContents: owner }) as never,
+					getProcessManager: () => peerManager as never,
+					getAgentDetector: () =>
+						({
+							getAgent: async () => {
+								if (scenario === 'peer-revoke') current[0].peerAgents = [];
+								if (scenario === 'pause') f.snapshot.tabs[0].paused = true;
+								if (scenario === 'owner-reset') destroyed = true;
+								return { ...getAgentDefinition('codex'), available: true };
+							},
+						}) as never,
+					sessionsStore: mockSessionsStore as never,
+					agentConfigsStore: { get: (_k: string, fallback: unknown) => fallback } as never,
+					settingsStore: { get: (_k: string, fallback: unknown) => fallback } as never,
+					sshStore: null,
+					safeSend: (channel, result) => {
+						if (channel === 'cross-agent:queue-settled') settled(result);
+					},
+				});
+				const call = (channel: string, payload: unknown) =>
+					handlers.get(channel)!(
+						{ sender: owner, ...(scenario === 'foreign-socket' ? { clientId: 'foreign' } : {}) },
+						payload
+					);
+				vi.stubGlobal('window', {
+					maestro: {
+						crossAgent: {
+							prepareQueue: (payload: unknown) => call('cross-agent:prepare-queue', payload),
+							send: (payload: unknown) => call('cross-agent:send', payload),
+						},
+						process: { spawn: (payload: unknown) => call('process:spawn', payload) },
+						agents: { get: async () => ({ ...getAgentDefinition('codex'), available: true }) },
+						settings: { set: vi.fn() },
+						prompts: { get: async () => ({ success: true, content: '' }) },
+						sessions: {
+							setMany: async (updates: StoredSession[]) => {
+								await save(updates);
+							},
+						},
+					},
+				});
+				try {
+					const { useAgentStore } = await import('../../../../renderer/stores/agentStore');
+					const { useSessionStore } = await import('../../../../renderer/stores/sessionStore');
+					const { settleManagedQueue } =
+						await import('../../../../renderer/services/crossAgentConsultHold');
+					const { createMockSession } = await import('../../../helpers/mockSession');
+					const { createMockAITab } = await import('../../../helpers/mockTab');
+					const { registerSessionPersistenceFlush } =
+						await import('../../../../renderer/services/sessionPersistenceFlush');
+					registerSessionPersistenceFlush(async () => {});
+					settled.mockImplementation((result) => {
+						if (scenario === 'reply-peer-revoke' && result.continuationStepId)
+							current[0].peerAgents = [];
+						continuation = settleManagedQueue(result);
+						void continuation.catch(() => {});
+					});
+					const sessions = current.map((a) =>
+						createMockSession({
+							...a,
+							activeTabId: a.id === 'agent' ? 'tab' : '',
+							aiTabs:
+								a.aiTabs?.map((t: Record<string, unknown>) => createMockAITab(t as never)) ?? [],
+						} as never)
+					);
+					useSessionStore.setState({ sessions, groups: [] });
+					const item = useSessionStore.getState().sessions[0].executionQueue[0];
+					const drain = () =>
+						useAgentStore.getState().processQueuedItem('agent', item, {
+							conductorProfile: '',
+							customAICommands: [],
+							speckitCommands: [],
+							openspecCommands: [],
+						});
+					const pending = drain();
+					if (['peer-revoke', 'pause', 'owner-reset', 'foreign-socket'].includes(scenario)) {
+						await expect(pending).rejects.toThrow();
+						expect(peerManager.spawn).not.toHaveBeenCalled();
+						expect(f.spawn).not.toHaveBeenCalled();
+						expect(fires).not.toHaveBeenCalled();
+						registerSessionPersistenceFlush(null);
+						return;
+					}
+					if (scenario === 'double-drain') await expect(drain()).rejects.toThrow();
+					await pending;
+					expect(peerManager.spawn).toHaveBeenCalledTimes(2);
+					expect(f.spawn).toHaveBeenCalledTimes(mode === 'only' ? 0 : 1);
+					if (!(mode === 'only' && scenario === 'fast')) expect(fires).not.toHaveBeenCalled();
+					const journal = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					expect(journal.queueRouting!.steps.filter((s) => s.kind === 'local')).toHaveLength(
+						mode === 'only' ? 0 : 2
+					);
+					if (mode === 'parallel') {
+						const reply = journal.queueRouting!.steps.find((s) => s.stage === 'reply')!;
+						await expect(
+							call('process:spawn', {
+								sessionId: 'agent-ai-tab',
+								pianolaDispatchId: f.input.dispatchId,
+								pianolaQueueItemId: f.input.dispatchId,
+								pianolaQueueStepId: reply.requestId,
+							})
+						).rejects.toThrow();
+						expect(f.spawn).toHaveBeenCalledTimes(1);
+					}
+					if (mode === 'parallel' && scenario !== 'local-last') {
+						await f.capture.captureExit({
+							sessionId: 'agent-ai-tab',
+							exitCode: 0,
+							settlement: { outcome: 'completed', answerTail: 'Local native output' } as never,
+						});
+						f.events.emit('exit', 'agent-ai-tab', 0);
+						registry.noteSpawn('agent-ai-tab');
+						registry.noteExit('agent-ai-tab', 0);
+						expect(fires).not.toHaveBeenCalled();
+					}
+					if (scenario === 'local-output-tamper') {
+						const tampered = f.store.readDispatchAdmission(f.input.dispatchId)!;
+						tampered.queueRouting!.steps.find(
+							(s) => s.kind === 'local' && !s.stage
+						)!.terminal!.text = 'Unrelated output';
+						f.store.writeDispatchAdmission(tampered);
+					}
+					if (scenario === 'callback-reset')
+						f.snapshot.owners = f.snapshot.owners.map((o) => ({ ...o, cwd: '/replacement' }));
+					if (scenario === 'restart') f.adapter.admission.dispose();
+					if (scenario === 'delete-row') {
+						deps.cancelQueueItem = (agentId, tabId, itemId) =>
+							f.adapter.cancelQueueItem(agentId, tabId, itemId);
+						await save(current.map((a) => (a.id === 'agent' ? { ...a, executionQueue: [] } : a)));
+						expect(f.store.readDispatchAdmission(f.input.dispatchId)?.queueCancelled).toBe(true);
+					}
+					if (scenario === 'terminal-journal') {
+						const write = f.store.writeDispatchAdmission.bind(f.store);
+						vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((value) => {
+							if (value.queueRouting?.steps.some((s) => s.kind === 'consult' && s.terminal))
+								throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+							return write(value);
+						});
+					}
+					peerManager.emit('exit', 'cross-agent-foreign', 0);
+					if (!(mode === 'only' && scenario === 'fast')) expect(fires).not.toHaveBeenCalled();
+					const consults = journal.queueRouting!.steps.filter((s) => s.kind === 'consult');
+					for (const [index, step] of consults.entries()) {
+						peerManager.emit('data', `cross-agent-${step.requestId}`, 'Native reply');
+						peerManager.emit(
+							'exit',
+							`cross-agent-${step.requestId}`,
+							scenario === 'failed' ? 1 : 0
+						);
+						if (index === 0 && scenario !== 'fast') expect(fires).not.toHaveBeenCalled();
+					}
+					if (mode === 'parallel' && scenario === 'local-last') {
+						expect(fires).not.toHaveBeenCalled();
+						await f.capture.captureExit({
+							sessionId: 'agent-ai-tab',
+							exitCode: 0,
+							settlement: { outcome: 'completed', answerTail: 'Last local output' } as never,
+						});
+						f.events.emit('exit', 'agent-ai-tab', 0);
+					}
+					if (
+						[
+							'partial-unknown',
+							'terminal-journal',
+							'delete-row',
+							'callback-reset',
+							'restart',
+							'local-output-tamper',
+							'reply-peer-revoke',
+						].includes(scenario)
+					) {
+						expect(fires).not.toHaveBeenCalled();
+						if (scenario === 'reply-peer-revoke') {
+							await expect(continuation).rejects.toThrow();
+							expect(f.spawn).toHaveBeenCalledTimes(1);
+						} else expect(settled).not.toHaveBeenCalled();
+						expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+						await expect(drain()).resolves.toBe(false);
+						registerSessionPersistenceFlush(null);
+						return;
+					}
+					if (mode === 'parallel' && scenario !== 'failed') {
+						expect(fires).not.toHaveBeenCalled();
+						await continuation;
+						expect(f.spawn).toHaveBeenCalledTimes(2);
+						const replyConfig = f.spawn.mock.calls[1][0];
+						expect(replyConfig.prompt).toContain('Check @PeerA and @PeerB');
+						expect(replyConfig.prompt).toContain(
+							scenario === 'fast' ? 'Fast reply' : 'Native reply'
+						);
+						expect(replyConfig.prompt).toContain(
+							scenario === 'local-last' ? 'Last local output' : 'Local native output'
+						);
+						await f.capture.captureExit({
+							sessionId: 'agent-ai-tab',
+							exitCode: 0,
+							settlement: { outcome: 'completed', answerTail: 'Final combined answer' } as never,
+						});
+					}
+					expect(fires).toHaveBeenCalledTimes(1);
+					expect(fires.mock.calls[0][0]).toMatchObject({
+						status: scenario === 'failed' ? 'failed' : 'completed',
+						entry: { pendingAdmissionId: f.input.dispatchId },
+					});
+					expect(settled).toHaveBeenCalledTimes(
+						mode === 'parallel' && scenario !== 'failed' ? 2 : 1
+					);
+					expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+					await expect(
+						call('cross-agent:prepare-queue', {
+							sourceSessionId: 'agent',
+							sourceTabId: 'tab',
+							dispatchId: f.input.dispatchId,
+						})
+					).rejects.toThrow();
+					expect(peerManager.spawn).toHaveBeenCalledTimes(2);
+					expect(
+						useSessionStore
+							.getState()
+							.sessions[0].aiTabs[0].logs.filter(
+								(log) => log.source === 'user' && log.queuedItemId === item.id
+							)
+					).toHaveLength(1);
+					for (const step of consults) peerManager.emit('exit', `cross-agent-${step.requestId}`, 0);
+					expect(fires).toHaveBeenCalledTimes(1);
+					registerSessionPersistenceFlush(null);
+				} finally {
+					f.cleanup();
+					vi.unstubAllGlobals();
+				}
+			}
+		);
 
 		it('hands off only real own native terminal output to two pinned recipients exactly once', async () => {
 			const local = await managedLocalFixture('handoff');

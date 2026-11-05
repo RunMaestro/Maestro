@@ -21,6 +21,7 @@ export interface ProcessConfig {
 	pianolaDispatchId?: string;
 	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
 	pianolaQueueItemId?: string;
+	pianolaQueueStepId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

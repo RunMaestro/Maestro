@@ -124,7 +124,10 @@ function firstRunnableQueueIndex(queue: QueuedItem[], includeAdmission = false):
 	for (let index = 0; index < queue.length; index += 1) {
 		const item = queue[index];
 		if (item.waitingForConnection) return -1;
-		if (item.awaitingConsult || (item.pendingAdmissionId && (!includeAdmission || item.paused))) {
+		if (
+			item.awaitingConsult ||
+			(item.pendingAdmissionId && (!includeAdmission || item.paused || item.admissionRelease))
+		) {
 			consultBlockedTabs.add(item.tabId);
 			continue;
 		}
@@ -1053,18 +1056,23 @@ export function describeSteerBlocked(reason: string | undefined): string {
  * The target is resolved orphan-aware, so an item queued on a since-closed tab
  * still lands on that tab's background transcript rather than the active one.
  */
-export function applyQueuedItemDispatch(session: Session, item: QueuedItem): Session {
+export function applyQueuedItemDispatch(
+	session: Session,
+	item: QueuedItem,
+	appendUserLog = true
+): Session {
 	if (!session.executionQueue?.some((i) => i.id === item.id)) return session;
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) return session;
 
+	const markRunning = appendUserLog ? markTabRunningQueuedItem : markTabRunningTurn;
 	const aiTabs = session.aiTabs.map((tab) =>
-		tab.id === target.tabId ? markTabRunningQueuedItem(tab, item, session) : tab
+		tab.id === target.tabId ? markRunning(tab, item, session) : tab
 	);
 	const orphans =
 		target.location === 'orphan' && session.orphanedThinkingTabs
 			? session.orphanedThinkingTabs.map((tab) =>
-					tab.id === target.tabId ? markTabRunningQueuedItem(tab, item, session) : tab
+					tab.id === target.tabId ? markRunning(tab, item, session) : tab
 				)
 			: session.orphanedThinkingTabs;
 

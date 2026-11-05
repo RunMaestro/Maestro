@@ -31,7 +31,7 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
-import { settleConsultHold } from '../../services/crossAgentConsultHold';
+import { settleConsultHold, settleManagedQueue } from '../../services/crossAgentConsultHold';
 import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
@@ -111,6 +111,7 @@ export interface SendCrossAgentRequestOptions {
 	 * transcript BEFORE that turn, so the answer is not sent twice.
 	 */
 	handoffAnswer?: string;
+	managedQueue?: { dispatchId: string; generation: string };
 	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
@@ -482,7 +483,7 @@ async function enrichConsultDetail(opts: {
  * React, and both callers must share the one `pendingRequests` tracker so the
  * streamed chunks land on a single LogEntry.
  */
-export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void {
+export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promise<void> {
 	const strategy = inferContextStrategy(opts.userPrompt);
 	// Subject for the target's History entry + attribution pill. Derived once,
 	// synchronously, from the user's question (mentions stripped).
@@ -498,16 +499,18 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 	// question is persisted immediately and we know which provider session to
 	// resume. A repeat mention from the same source tab reuses the tab (and its
 	// captured `agentSessionId`); a fresh source tab makes a new one.
-	const consult = ensureConsultTab({
-		targetSessionId: opts.targetSessionId,
-		sourceSessionId: opts.sourceSessionId,
-		sourceTabId: opts.sourceTabId,
-		sourceAgentName: opts.sourceAgentName,
-		question: opts.userPrompt,
-	});
+	const consult = opts.managedQueue
+		? null
+		: ensureConsultTab({
+				targetSessionId: opts.targetSessionId,
+				sourceSessionId: opts.sourceSessionId,
+				sourceTabId: opts.sourceTabId,
+				sourceAgentName: opts.sourceAgentName,
+				question: opts.userPrompt,
+			});
 
 	// Fire-and-forget: never await before the caller clears the input.
-	void window.maestro.crossAgent
+	return window.maestro.crossAgent
 		.send({
 			sourceSessionId: opts.sourceSessionId,
 			sourceAgentName: opts.sourceAgentName,
@@ -516,7 +519,8 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			targetTabId: consult?.targetTabId,
 			resumeAgentSessionId: consult?.resumeAgentSessionId,
 			userPrompt: opts.userPrompt,
-			transcript,
+			transcript: opts.managedQueue ? [] : transcript,
+			...(opts.managedQueue && { managedQueue: opts.managedQueue }),
 			strategy,
 			sourceCwd: opts.sourceCwd,
 			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
@@ -579,6 +583,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			// A rejected send never produces a chunk, so nothing else will ever
 			// settle a caller blocked on the answer - or the source turn's consult
 			// hold, which would otherwise wait on this target forever.
+			if (opts.managedQueue) throw err; // native uncertainty owns the held queue row
 			const error = err instanceof Error ? err.message : String(err);
 			settleConsultHold({
 				sourceSessionId: opts.sourceSessionId,
@@ -711,6 +716,15 @@ export function useCrossAgentDispatch(
 			// Drop it from the live "N agents responding…" indicator.
 			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
 		}
+	}, []);
+
+	useEffect(() => {
+		const settled = window.maestro.crossAgent.onQueueSettled?.((result) => {
+			void settleManagedQueue(result).catch((error) =>
+				logger.error('[CrossAgent] Managed reply held', undefined, error)
+			);
+		});
+		return () => settled?.();
 	}, []);
 
 	useEffect(() => {

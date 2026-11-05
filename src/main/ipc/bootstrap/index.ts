@@ -188,6 +188,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Cross-agent @mention dispatch - streams a target agent's response back
 	// into the source agent's transcript (Phase 03).
 	registerCrossAgentHandlers({
+		getWebServer: deps.getWebServer,
 		getWindowForSession: deps.getWindowForSession,
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,

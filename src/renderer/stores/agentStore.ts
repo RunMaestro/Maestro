@@ -57,6 +57,8 @@ import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import {
 	dispatchCrossAgentMentionsForMessage,
+	dispatchCrossAgentMentions,
+	planCrossAgentMentions,
 	withMentionTurnNotes,
 	type CrossAgentMentionDispatch,
 } from '../services/crossAgentMentions';
@@ -186,6 +188,8 @@ export interface AgentStoreActions {
  * These are mutable values from hooks/refs that can't be imported directly.
  */
 export interface ProcessQueuedItemDeps {
+	/** Host-selected parallel reply step. Does not grant authority without live native proofs. */
+	managedStepId?: string;
 	conductorProfile: string;
 	customAICommands: CustomAICommand[];
 	speckitCommands: SpecKitCommand[];
@@ -394,12 +398,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 	processQueuedItem: async (sessionId, item, deps) => {
 		const managedQueue = !!item.pendingAdmissionId;
+		if (managedQueue && item.admissionRelease && !deps.managedStepId) return false; // native in-flight/Unknown barrier, never resend
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return false;
 		}
 
+		if (
+			managedQueue &&
+			!deps.managedStepId &&
+			session.executionQueue.some((row) => row.id === item.id && row.admissionRelease)
+		)
+			return false;
 		if (migrationHoldsTurns(session.providerMigration)) return false;
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
@@ -512,8 +523,52 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
 		try {
-			if (managedQueue && (item.type !== 'message' || item.crossAgentMention || item.agentContext))
+			if (managedQueue && (item.type !== 'message' || item.agentContext))
 				throw new Error('DispatchQueueRoutingUnsupported');
+			if (managedQueue && item.crossAgentMention && !deps.managedStepId) {
+				if (deps.isCancelled?.()) return false;
+				await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+				const prepared = await window.maestro.crossAgent.prepareQueue({
+					sourceSessionId: sessionId,
+					sourceTabId: targetTab.id,
+					dispatchId: item.pendingAdmissionId!,
+				});
+				updateSessionWith(sessionId, (s) => ({
+					...s,
+					executionQueue: s.executionQueue.map((row) =>
+						row.id === item.id
+							? { ...row, admissionRelease: { generation: prepared.generation } }
+							: row
+					),
+				}));
+				const plan = planCrossAgentMentions(item.text!, sessionId, item.mentionRouting);
+				if (
+					!plan ||
+					plan.routing !== prepared.routing ||
+					plan.targetSessionIds.length !== prepared.targetSessionIds.length ||
+					plan.targetSessionIds.some((id) => !prepared.targetSessionIds.includes(id))
+				)
+					throw new Error('DispatchRoutingRecipientChanged');
+				updateSessionWith(sessionId, (s) => {
+					const current = s.executionQueue.find((row) => row.id === item.id);
+					if (!current) return s;
+					return {
+						...applyQueuedItemRelease(applyQueuedItemDispatch(s, current), targetTab.id),
+						executionQueue: s.executionQueue,
+					};
+				});
+				const starts: Promise<void>[] = [];
+				mentionDispatch = dispatchCrossAgentMentions(
+					plan,
+					item.text!,
+					session,
+					targetTab.id,
+					item.images,
+					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
+				);
+				await Promise.all(starts);
+				if (prepared.routing === 'only') return true; // no local AgentRun, retry snapshot or spawn
+			}
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);
 			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
@@ -605,7 +660,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						.reverse()
 						.find((log) => log.source === 'user' && log.queuedItemId === item.id)?.id,
 					...(managedQueue
-						? { pianolaDispatchId: item.pendingAdmissionId, pianolaQueueItemId: item.id }
+						? {
+								pianolaDispatchId: item.pendingAdmissionId,
+								pianolaQueueItemId: item.id,
+								...(deps.managedStepId ? { pianolaQueueStepId: deps.managedStepId } : {}),
+							}
 						: {}),
 					sessionId: targetSessionId,
 					querySource: item.querySource,
@@ -635,6 +694,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					updateSessionWith(sessionId, (s) => {
 						const current = s.executionQueue?.find((row) => row.id === item.id);
 						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						if (item.crossAgentMention)
+							return {
+								...applyQueuedItemDispatch(s, current, false),
+								executionQueue: s.executionQueue,
+							};
 						return spawnResult.pianolaQueueReconciled
 							? { ...s, executionQueue: s.executionQueue.filter((row) => row.id !== item.id) }
 							: applyQueuedItemDispatch(s, current);

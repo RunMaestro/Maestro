@@ -1,4 +1,4 @@
-import { buildConsultFirstContext } from '../../shared/crossAgentContext';
+import { buildConsultFirstContext, buildConsultReplyContext } from '../../shared/crossAgentContext';
 import { getPrompt } from '../prompt-manager';
 import { captureException } from '../utils/sentry';
 import {
@@ -12,6 +12,7 @@ import {
 import type { StartCrossAgentRequestOptions } from '../cross-agent/cross-agent-router';
 /** Host-only pre-start boundary. Adapters prepare a held target, then bind/enroll/release.
  * One service per host; no watcher, timer, plugin activation or answer permission. */
+import { isTerminalAgentRunStatus } from '../../shared/agent-run';
 import { readAgentRuns } from '../../cli/services/agent-run-store';
 import {
 	initialQueueSession,
@@ -99,6 +100,8 @@ export class PianolaDispatchAdmissionService {
 			localPrompt(): string;
 			terminals: Map<string, string>;
 			localRunId?: string;
+			onSettled?: (failed: boolean, continuationStepId?: string) => void;
+			replyNotified?: boolean;
 		}
 	>();
 	private disposed = false;
@@ -472,7 +475,10 @@ export class PianolaDispatchAdmissionService {
 	 * task was authorized at prepare; caller completion is irrelevant, policy
 	 * revocation, target replacement and expiry are not. Uncertain release is
 	 * terminal for retries, including after restart or a lost acknowledgment. */
-	releaseQueue(dispatchId: string) {
+	releaseQueue(
+		dispatchId: string,
+		onSettled?: (failed: boolean, continuationStepId?: string) => void
+	) {
 		return this.queue.enqueue('admissions', async () => {
 			const record = this.deps.store.readDispatchAdmission(dispatchId);
 			if (
@@ -518,7 +524,9 @@ export class PianolaDispatchAdmissionService {
 				);
 				let ownsLocalRun = false;
 				if (ownLocal && current.runId) {
-					const local = current.queueRouting?.steps.find((s) => s.kind === 'local');
+					const local = current.queueRouting?.steps.find(
+						(s) => s.kind === 'local' && s.runId === current.runId
+					);
 					const runs = (this.deps.readNativeRuns ?? readAgentRuns)();
 					const history = runs.filter(
 						(r) => r.sessionId === `${record.targetAgentId}-ai-${record.targetTabId}`
@@ -530,7 +538,7 @@ export class PianolaDispatchAdmissionService {
 						local?.runId === run.id &&
 						local.processId === run.sessionId &&
 						['started', 'settled'].includes(local.status) &&
-						['running', 'completed'].includes(run.status) &&
+						['running', 'completed', 'failed', 'cancelled'].includes(run.status) &&
 						identity &&
 						!identity.conflicted &&
 						identity.createdAt === authority.createdAt &&
@@ -652,9 +660,11 @@ export class PianolaDispatchAdmissionService {
 					callbackProof: value.queuePrepare?.callbackProof,
 					routing: value.queueRouting && {
 						routing: value.queueRouting.routing,
+						rendererConsumer: value.queueRouting.rendererConsumer,
 						targets: value.queueRouting.targets,
-						steps: value.queueRouting.steps.map(({ kind, targetAgentId, requestId }) => ({
+						steps: value.queueRouting.steps.map(({ kind, stage, targetAgentId, requestId }) => ({
 							kind,
+							stage,
 							targetAgentId,
 							requestId,
 						})),
@@ -704,7 +714,10 @@ export class PianolaDispatchAdmissionService {
 				const localPrompt = () => {
 					routingGuard();
 					const current = this.deps.store.readDispatchAdmission(dispatchId)!;
-					if (current.queueRouting?.routing !== 'consult-first')
+					if (
+						!current.queueRouting ||
+						!['parallel', 'consult-first'].includes(current.queueRouting.routing)
+					)
 						throw new Error('DispatchQueueLocalUnavailable');
 					const consults = current.queueRouting.steps.filter((s) => s.kind === 'consult');
 					if (
@@ -719,6 +732,29 @@ export class PianolaDispatchAdmissionService {
 						)
 					)
 						throw new Error('DispatchRoutingRepliesUnavailable');
+					if (current.queueRouting?.routing === 'parallel') {
+						const initial = current.queueRouting.steps.find((s) => s.kind === 'local' && !s.stage);
+						if (
+							!initial?.terminal ||
+							initial.terminal.error ||
+							initial.terminal.canceled ||
+							terminals.get(initial.requestId) !== canonicalJson(initial)
+						)
+							throw new Error('DispatchRoutingRepliesUnavailable');
+						return (
+							current.queuePrepare!.item.text +
+							'\n\n---\n\n' +
+							buildConsultReplyContext(getPrompt('cross-agent-consult-reply'), [
+								{ targetAgentName: 'Your earlier local turn', text: initial.terminal.text },
+								...consults.map((s) => ({
+									targetAgentName: this.deps.routingSnapshot!().agents.find(
+										(a) => a.id === s.targetAgentId
+									)!.name,
+									text: s.terminal!.text,
+								})),
+							])
+						);
+					}
 					return buildConsultFirstContext(
 						getPrompt('cross-agent-consult-first'),
 						consults.map((s) => ({
@@ -735,6 +771,7 @@ export class PianolaDispatchAdmissionService {
 					guard: routingGuard,
 					localPrompt,
 					terminals,
+					onSettled,
 				});
 				if (record.queueRouting.steps.some((s) => s.kind === 'consult'))
 					bindQueueConsultRelease(dispatchId, {
@@ -743,6 +780,7 @@ export class PianolaDispatchAdmissionService {
 						generation: release.generation,
 						guard: routingGuard,
 						localPrompt,
+						replyReady: () => !!this.routingReleases.get(dispatchId)?.replyNotified,
 						revoke: () => this.routingReleases.delete(dispatchId),
 						start: (target, opts) =>
 							this.startQueueConsult(dispatchId, release.generation, target, opts),
@@ -757,27 +795,121 @@ export class PianolaDispatchAdmissionService {
 	noteQueueLocalCapture(dispatchId: string, generation: string, runId: string): void {
 		const release = this.routingReleases.get(dispatchId);
 		const record = this.deps.store.readDispatchAdmission(dispatchId);
-		const local = record?.queueRouting?.steps.find((s) => s.kind === 'local');
+		const local = record?.queueRouting?.steps.find((s) => s.kind === 'local' && s.runId === runId);
 		if (
 			!release ||
 			release.generation !== generation ||
 			record?.runId !== runId ||
 			local?.runId !== runId ||
-			(release.localRunId && release.localRunId !== runId)
+			(release.localRunId &&
+				release.localRunId !== runId &&
+				!(
+					local?.stage === 'reply' &&
+					record?.queueRouting?.steps.some(
+						(s) =>
+							s.runId === release.localRunId &&
+							s.terminal &&
+							release.terminals.get(s.requestId) === canonicalJson(s)
+					)
+				))
 		)
 			throw new Error('DispatchRoutingOwnCaptureUnavailable');
 		release.localRunId = runId;
+		const run = (this.deps.readNativeRuns ?? readAgentRuns)().find((r) => r.id === runId);
+		if (run && isTerminalAgentRunStatus(run.status)) {
+			const expected = {
+				text: typeof run.metadata?.answerTail === 'string' ? run.metadata.answerTail : '',
+				...(run.status !== 'completed' ? { error: `Native local run ${run.status}` } : {}),
+				...(run.status === 'cancelled' ? { canceled: true } : {}),
+			};
+			if (local.status !== 'settled' || canonicalJson(local.terminal) !== canonicalJson(expected))
+				throw new Error('DispatchRoutingLocalOutputChanged');
+			release.terminals.set(local.requestId, canonicalJson(local));
+		}
+		this.settleQueueRouting(dispatchId);
+	}
+
+	/** Native observers only: neither renderer completion chunks nor journal IDs call this. */
+	private settleQueueRouting(dispatchId: string): void {
+		const release = this.routingReleases.get(dispatchId);
+		const record = this.deps.store.readDispatchAdmission(dispatchId);
+		if (!release?.onSettled || !record?.queueRouting) return;
+		const reply = record.queueRouting.steps.find((s) => s.stage === 'reply');
+		const initial = record.queueRouting.steps.filter((s) => !s.stage);
+		if (
+			initial.some(
+				(s) =>
+					s.status !== 'settled' ||
+					!s.terminal ||
+					s.startError ||
+					release.terminals.get(s.requestId) !== canonicalJson(s)
+			)
+		)
+			return;
+		const failed = initial.some((s) => s.terminal?.error || s.terminal?.canceled);
+		if (reply && !failed) {
+			if (reply.status === 'prepared' && !release.replyNotified) {
+				release.localPrompt();
+				release.replyNotified = true;
+				release.onSettled(false, reply.requestId);
+				return;
+			}
+			if (
+				reply.status !== 'settled' ||
+				!reply.terminal ||
+				reply.startError ||
+				release.terminals.get(reply.requestId) !== canonicalJson(reply)
+			)
+				return;
+		}
+		const local = record.queueRouting.steps.find(
+			(s) => s.kind === 'local' && s.runId === record.runId
+		);
+		if (local && local.runId !== release.localRunId) return;
+		release.guard();
+		record.phase = 'settled';
+		record.outcome = 'accepted';
+		record.queueRouting.completed = true;
+		this.deps.store.writeDispatchAdmission(record);
+		// Drop the capability before notification, including reentrant callbacks.
+		this.routingReleases.delete(dispatchId);
+		forgetQueueConsultRelease(dispatchId);
+		release.onSettled(failed || !!reply?.terminal?.error || !!reply?.terminal?.canceled);
+	}
+
+	hasQueueRoutingConsumer(dispatchId: string): boolean {
+		return !!this.routingReleases.get(dispatchId)?.onSettled;
 	}
 
 	/** Only a live host release can authorize delayed LOCAL; disk IDs cannot restore it. */
-	queueLocalRelease(dispatchId: string) {
+	queueLocalRelease(dispatchId: string, stepId?: string) {
 		const release = this.routingReleases.get(dispatchId);
 		if (!release) throw new Error('DispatchRoutingReleaseUnavailable');
-		release.localPrompt();
+		const routing = this.deps.store.readDispatchAdmission(dispatchId)?.queueRouting;
+		if (
+			routing?.routing === 'parallel' &&
+			(!!stepId !== !!release.replyNotified ||
+				(stepId &&
+					!routing.steps.some(
+						(s) => s.requestId === stepId && s.stage === 'reply' && s.status === 'prepared'
+					)))
+		)
+			throw new Error('DispatchRoutingRepliesUnavailable');
+		if (
+			this.deps.store.readDispatchAdmission(dispatchId)?.queueRouting?.routing === 'parallel' &&
+			!release.replyNotified
+		)
+			release.guard();
+		else release.localPrompt();
 		return {
 			generation: release.generation,
 			guard: () => {
-				release.localPrompt();
+				if (
+					this.deps.store.readDispatchAdmission(dispatchId)?.queueRouting?.routing === 'parallel' &&
+					!release.replyNotified
+				)
+					release.guard();
+				else release.localPrompt();
 			},
 		};
 	}
@@ -863,6 +995,7 @@ export class PianolaDispatchAdmissionService {
 				mutate(saved);
 				this.deps.store.writeDispatchAdmission(current);
 				if (
+					!release.onSettled &&
 					current.queueRouting!.routing !== 'consult-first' &&
 					current.queueRouting!.steps.every((s) => s.terminal)
 				) {
@@ -1000,6 +1133,7 @@ export class PianolaDispatchAdmissionService {
 										})
 								)
 									release.terminals.set(requestId, canonicalJson(saved));
+								this.settleQueueRouting(dispatchId);
 							}
 						} catch (error) {
 							journalFailure(error);

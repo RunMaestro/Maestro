@@ -61,6 +61,7 @@ export interface CrossAgentHandlerDependencies {
 	getCustomEnvVars?: (toolType: string) => Record<string, string> | undefined;
 	/** Safe renderer push used to stream `cross-agent:chunk` events. */
 	safeSend: SafeSendFn;
+	getWebServer?: () => import('../../web-server/WebServer').WebServer | null;
 	getWindowForSession?: (sessionId: string) => import('electron').BrowserWindow | null | undefined;
 }
 
@@ -129,6 +130,54 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 		>;
 		return allConfigs[toolType] || {};
 	};
+
+	ipcMain.handle(
+		'cross-agent:prepare-queue',
+		(event, input: { sourceSessionId: string; sourceTabId: string; dispatchId: string }) =>
+			withIpcErrorLogging(handlerOpts('prepare-queue'), async () => {
+				const assertOwner = () => {
+					const win = deps.getWindowForSession?.(input.sourceSessionId);
+					if (
+						'clientId' in event ||
+						!win ||
+						event.sender !== win.webContents ||
+						event.sender.isDestroyed()
+					)
+						throw new Error('DispatchWindowOwnerMismatch');
+				};
+				assertOwner();
+				const server = deps.getWebServer?.();
+				if (!server) throw new Error('DispatchQueueDrainUnavailable');
+				const prepared = await server.prepareQueueSpawnFromMain(
+					input.sourceSessionId,
+					input.sourceTabId,
+					input.dispatchId,
+					assertOwner,
+					{
+						onSettled: (failed, continuationStepId) =>
+							safeSend('cross-agent:queue-settled', {
+								sourceSessionId: input.sourceSessionId,
+								sourceTabId: input.sourceTabId,
+								dispatchId: input.dispatchId,
+								failed,
+								...(continuationStepId ? { continuationStepId } : {}),
+							}),
+					}
+				);
+				if (
+					!('routing' in prepared) ||
+					!prepared.routing ||
+					!prepared.generation ||
+					!prepared.targetSessionIds
+				)
+					throw new Error('DispatchRoutingReleaseUnavailable');
+				return {
+					generation: prepared.generation,
+					routing: prepared.routing,
+					targetSessionIds: prepared.targetSessionIds,
+				};
+			})(event)
+	);
 
 	ipcMain.handle('cross-agent:send', (event, wirePayload: CrossAgentSendRequest) =>
 		withIpcErrorLogging(

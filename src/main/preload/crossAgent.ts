@@ -17,6 +17,27 @@ import type { CrossAgentSendRequest, CrossAgentResponseChunk } from '../../share
  */
 export function createCrossAgentApi() {
 	return {
+		/** Owning desktop queue drain only; the host pins the actual plan. */
+		prepareQueue: (input: {
+			sourceSessionId: string;
+			sourceTabId: string;
+			dispatchId: string;
+		}): Promise<{ generation: string; routing: 'parallel' | 'only'; targetSessionIds: string[] }> =>
+			ipcRenderer.invoke('cross-agent:prepare-queue', input),
+		onQueueSettled: (
+			handler: (result: {
+				sourceSessionId: string;
+				sourceTabId: string;
+				dispatchId: string;
+				failed: boolean;
+				continuationStepId?: string;
+			}) => void
+		): (() => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, result: Parameters<typeof handler>[0]) =>
+				handler(result);
+			ipcRenderer.on('cross-agent:queue-settled', wrapped);
+			return () => ipcRenderer.removeListener('cross-agent:queue-settled', wrapped);
+		},
 		/**
 		 * Dispatch a cross-agent request. Non-blocking: the target agent's response
 		 * streams back via {@link onChunk}, correlated by the returned `requestId`.

@@ -263,6 +263,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sessionId: config.sessionId,
 					pianolaDispatchId: config.pianolaDispatchId,
 					pianolaQueueItemId: config.pianolaQueueItemId,
+					pianolaQueueStepId: config.pianolaQueueStepId,
 					transcriptBoundaryId: config.transcriptBoundaryId,
 					tabId: tab.id,
 					toolType: agent.toolType,
@@ -361,7 +362,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					agent.id,
 					tab.id,
 					config.pianolaQueueItemId,
-					assertOwner
+					assertOwner,
+					undefined,
+					config.pianolaQueueStepId
 				);
 				if (prepared.reconciled)
 					return {

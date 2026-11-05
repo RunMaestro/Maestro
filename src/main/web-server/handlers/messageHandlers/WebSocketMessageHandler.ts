@@ -282,9 +282,18 @@ export class WebSocketMessageHandler {
 		agentId: string,
 		tabId: string,
 		itemId: string,
-		assertOwner: () => void
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(failed: boolean, continuationStepId?: string): void },
+		stepId?: string
 	) {
-		return newTabAdmission(this.ctx).prepareQueueSpawn(agentId, tabId, itemId, assertOwner);
+		return newTabAdmission(this.ctx).prepareQueueSpawn(
+			agentId,
+			tabId,
+			itemId,
+			assertOwner,
+			routingConsumer,
+			stepId
+		);
 	}
 
 	private get ctx(): MessageHandlerContext {

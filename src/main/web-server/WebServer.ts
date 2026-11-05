@@ -726,9 +726,18 @@ export class WebServer {
 		agentId: string,
 		tabId: string,
 		itemId: string,
-		assertOwner: () => void
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(failed: boolean, continuationStepId?: string): void },
+		stepId?: string
 	) {
-		return this.messageHandler.prepareQueueSpawnFromMain(agentId, tabId, itemId, assertOwner);
+		return this.messageHandler.prepareQueueSpawnFromMain(
+			agentId,
+			tabId,
+			itemId,
+			assertOwner,
+			routingConsumer,
+			stepId
+		);
 	}
 
 	private releaseQueueItemCallback?: ReleaseQueueItem;

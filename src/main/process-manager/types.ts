@@ -38,6 +38,7 @@ export interface ProcessConfig {
 	transcriptBoundaryId?: string;
 	pianolaDispatchId?: string;
 	pianolaQueueItemId?: string;
+	pianolaQueueStepId?: string;
 	sessionId: string;
 	toolType: string;
 	cwd: string;

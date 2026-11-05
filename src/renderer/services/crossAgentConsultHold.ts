@@ -346,3 +346,47 @@ export function settleConsultHold(settlement: ConsultSettlement): void {
 		return executionQueue === s.executionQueue ? s : { ...s, executionQueue };
 	});
 }
+
+/** The host's native aggregate releases the original managed queue barrier.
+ * Consult chunks never convert it to an unmanaged agentContext continuation. */
+export async function settleManagedQueue(result: {
+	sourceSessionId: string;
+	sourceTabId: string;
+	dispatchId: string;
+	continuationStepId?: string;
+}): Promise<void> {
+	if (result.continuationStepId) {
+		const item = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === result.sourceSessionId)
+			?.executionQueue.find(
+				(row) =>
+					row.id === result.dispatchId &&
+					row.pendingAdmissionId === result.dispatchId &&
+					row.tabId === result.sourceTabId
+			);
+		if (!item) return;
+		const { useAgentStore } = await import('../stores/agentStore');
+		await useAgentStore.getState().processQueuedItem(result.sourceSessionId, item, {
+			conductorProfile: '',
+			customAICommands: [],
+			speckitCommands: [],
+			openspecCommands: [],
+			managedStepId: result.continuationStepId,
+		});
+		return;
+	}
+	updateSessionWith(result.sourceSessionId, (session) => {
+		const item = session.executionQueue.find(
+			(row) =>
+				row.id === result.dispatchId &&
+				row.pendingAdmissionId === result.dispatchId &&
+				row.tabId === result.sourceTabId
+		);
+		if (!item) return session;
+		return {
+			...session,
+			executionQueue: session.executionQueue.filter((row) => row.id !== item.id),
+		};
+	});
+}
