@@ -1,3 +1,4 @@
+import * as os from 'os';
 import {
 	configureImageStore,
 	__resetImageStoreCacheForTests,
@@ -43,7 +44,7 @@ afterEach(() => {
 });
 function fixture() {
 	previousDataDir = process.env.MAESTRO_USER_DATA;
-	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
 	const dir = fs.mkdtempSync(path.join(root, 'handler-'));
 	directories.push(dir);

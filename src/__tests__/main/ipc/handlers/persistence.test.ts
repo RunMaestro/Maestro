@@ -425,7 +425,7 @@ describe('persistence IPC handlers', () => {
 				}
 			}
 			if (process.env.PIANOLA_RECORD_MEASUREMENTS === '1') {
-				const root = path.resolve('.maestro/pianola-agent-supervision-20261104');
+				const root = process.env.PIANOLA_MEASUREMENTS_DIR ?? os.tmpdir();
 				writeFileSync(
 					path.join(root, 'K04-HOST-MEASUREMENTS.json'),
 					JSON.stringify(
@@ -581,7 +581,7 @@ describe('persistence IPC handlers', () => {
 			// Join the actual owner-validated IPC producer to BridgeConnection's
 			// frame callback and the production worker/cycle/store consumer.
 			vi.useFakeTimers();
-			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			const root = os.tmpdir();
 			mkdirSync(root, { recursive: true });
 			const directory = mkdtempSync(path.join(root, 'J02-owner-loop-'));
 			vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
@@ -5566,7 +5566,7 @@ describe('persistence IPC handlers', () => {
 		it.each(['persistence', 'plugin'] as const)(
 			'composes %s lifecycle, owner enrollment, native census and the first real question',
 			async (adapter) => {
-				const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+				const root = os.tmpdir();
 				mkdirSync(root, { recursive: true });
 				const directory = mkdtempSync(path.join(root, 'm01-adapter-'));
 				vi.stubEnv('MAESTRO_USER_DATA', directory);

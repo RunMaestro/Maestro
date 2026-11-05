@@ -1,3 +1,4 @@
+import * as os from 'os';
 /** Real registry/checkpoint/decision storage composed with host proof ingress and
  * the actual supervisor. No live configuration, process or recipient is used. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -103,7 +104,7 @@ function ownership(tabId: string, agentId = 'owner') {
 }
 
 beforeEach(() => {
-	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
 	directory = fs.mkdtempSync(path.join(root, 'legacy-migration-'));
 	// The checkout's ancestors are group writable on this CI host. Simulate

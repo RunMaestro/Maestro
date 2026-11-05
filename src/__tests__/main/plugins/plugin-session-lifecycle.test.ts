@@ -1,3 +1,4 @@
+import * as os from 'os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Conf from 'conf';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -15,7 +16,7 @@ afterEach(() => {
 });
 
 function fixture() {
-	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+	const root = os.tmpdir();
 	mkdirSync(root, { recursive: true });
 	const directory = mkdtempSync(path.join(root, 'm02-plugin-'));
 	directories.push(directory);

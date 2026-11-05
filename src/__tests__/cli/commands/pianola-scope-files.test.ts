@@ -1,3 +1,4 @@
+import * as os from 'os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -11,7 +12,7 @@ import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 
 vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
 
-const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+const root = os.tmpdir();
 const directories: string[] = [];
 const watchers: PianolaScopeFiles[] = [];
 const scopeId = '11111111-1111-4111-8111-111111111111';

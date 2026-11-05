@@ -1,3 +1,4 @@
+import * as os from 'os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,7 +18,7 @@ afterEach(() => {
 	for (const dir of directories.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 function fixture() {
-	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
 	const dir = fs.mkdtempSync(path.join(root, 'native-new-tab-'));
 	directories.push(dir);

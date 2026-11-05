@@ -1,3 +1,4 @@
+import * as os from 'os';
 /** Real CLI connection, bridge dispatch, IPC owner adapter and locked fixture registry. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
@@ -107,7 +108,7 @@ const cli = (overrides = {}) =>
 const lastOutput = () => JSON.parse(String(logs.mock.calls.at(-1)![0]));
 
 beforeEach(async () => {
-	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
 	directory = fs.mkdtempSync(path.join(root, 'scope-host-'));
 	vi.stubEnv('MAESTRO_USER_DATA', directory);

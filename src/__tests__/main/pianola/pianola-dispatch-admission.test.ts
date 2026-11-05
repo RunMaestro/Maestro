@@ -1,3 +1,4 @@
+import * as os from 'os';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
@@ -26,7 +27,7 @@ afterEach(() => {
 });
 
 function fixture() {
-	const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
 	const dir = fs.mkdtempSync(path.join(root, 'admission-'));
 	directories.push(dir);

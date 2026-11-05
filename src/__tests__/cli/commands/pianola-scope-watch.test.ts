@@ -1,3 +1,4 @@
+import * as os from 'os';
 import { performance as realPerformance } from 'node:perf_hooks';
 import { syncBuiltinESMExports } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
@@ -216,7 +217,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		'unknown',
 	] as const)('preserves the observation and final boundary for %s', async (mode) => {
 		const f = fixture();
-		const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+		const root = os.tmpdir();
 		fs.mkdirSync(root, { recursive: true });
 		const directory = fs.mkdtempSync(path.join(root, 'I02-'));
 		const read = vi
@@ -594,7 +595,10 @@ function measureWorkerSegment() {
 		writeSpy.mockRestore();
 		syncBuiltinESMExports();
 		fs.writeFileSync(
-			path.resolve('.maestro/pianola-agent-supervision-20261104', `K04-${name}-MEASUREMENTS.json`),
+			path.join(
+				process.env.PIANOLA_MEASUREMENTS_DIR ?? os.tmpdir(),
+				`K04-${name}-MEASUREMENTS.json`
+			),
 			JSON.stringify(
 				{
 					name,
@@ -622,7 +626,7 @@ describe('production scope loop event drain', () => {
 			vi.setSystemTime(100000);
 			// Isolate deadline scheduling from OS file-event delivery; the store and worker are real.
 			vi.spyOn(fs, 'watch').mockReturnValue({ on: vi.fn(), close: vi.fn() } as never);
-			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			const root = os.tmpdir();
 			fs.mkdirSync(root, { recursive: true });
 			const directory = fs.mkdtempSync(path.join(root, 'K01-deadline-'));
 			vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
@@ -783,7 +787,7 @@ describe('production scope loop event drain', () => {
 		vi.spyOn(cliStorage, 'readSettingValue').mockImplementation(() => ({
 			pianola: settings.enabled,
 		}));
-		const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+		const root = os.tmpdir();
 		fs.mkdirSync(root, { recursive: true });
 		const directory = fs.mkdtempSync(path.join(root, 'J02-loop-'));
 		vi.spyOn(cliStorage, 'getConfigDirectory').mockReturnValue(directory);
@@ -1227,7 +1231,7 @@ describe('equal wall clock recovery and chunk budgets', () => {
 	it.each(['idle', 'unselected', 'selected-busy'] as const)(
 		'%s: compares 5s polling with event recovery',
 		async (scenario) => {
-			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			const root = os.tmpdir();
 			fs.mkdirSync(root, { recursive: true });
 			const measurements = [];
 			for (const mode of ['poll', 'events'] as const) {
