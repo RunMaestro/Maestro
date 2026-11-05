@@ -35,7 +35,8 @@ export interface AgentInstallInfo {
 
 /**
  * Install metadata per agent. `null` means Maestro has no install path to offer
- * (the Terminal agent is a plain shell; Qwen3 Coder is not shipped yet).
+ * (the Terminal agent is a plain shell; the providers at the bottom have no
+ * verified install line yet).
  *
  * Keyed by AgentId so adding a new agent forces a decision here.
  */
@@ -92,6 +93,14 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 		},
 		docsUrl: 'https://github.com/github/copilot-cli#installation',
 	},
+	// No verified one-line install yet. The error still says "not installed";
+	// it just offers no command, because a guessed install line runs in the
+	// user's shell. Add an entry once the provider's install path is confirmed.
+	antigravity: null,
+	hermes: null,
+	pi: null,
+	omp: null,
+	grok: null,
 };
 
 /**
