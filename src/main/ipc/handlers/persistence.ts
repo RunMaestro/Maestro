@@ -56,6 +56,7 @@ import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
 import { worktreeRetirement } from '../../git/worktreeRetirement';
+import { canonicalJson } from '../../../shared/canonicalJson';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -248,10 +249,57 @@ export function registerPersistenceHandlers(
 	} = deps;
 	const sessionWriteQueue = createKeyedWriteQueue();
 	let registrationGeneration = 0;
+	const retiredSessionIds = new Set(
+		sessionsStore.get('retiredWorktrees', []).map((record) => record.session.id)
+	);
 	worktreeRetirement.bindRegistrationSource({
 		read: () => sessionsStore.get('sessions', []),
 		generation: () => registrationGeneration,
 		enqueue: (operation) => sessionWriteQueue.enqueue('sessions', operation),
+		reconcileRetired: async (record, parent) => {
+			// Called internally in this SAME lane with a Main-owned removing token.
+			// Never accept a renderer's replacement document or a separate IPC bypass.
+			const previous = sessionsStore.get('sessions', []);
+			const parents = previous.filter((session) => session.id === parent.id);
+			if (parents.length !== 1 || canonicalJson(parents[0]) !== canonicalJson(parent))
+				throw new Error('Retirement parent registration changed');
+			const children = previous.filter((session) => session.id === record.session.id);
+			const archive = sessionsStore.get('retiredWorktrees', []);
+			const retained = archive.filter((item) => item.id === record.id);
+			if (retained.length) {
+				// A failed flush may already have updated the deferred store cache.
+				if (
+					retained.length !== 1 ||
+					canonicalJson(retained[0]) !== canonicalJson(record) ||
+					children.length
+				)
+					throw new Error('Retirement retry no longer owns the archived registration');
+			} else if (
+				children.length !== 1 ||
+				canonicalJson(children[0]) !== canonicalJson(record.session) ||
+				archive.some((item) => item.session.id === record.session.id)
+			) {
+				throw new Error('Retirement child registration changed');
+			}
+			const current = previous.filter((session) => session.id !== record.session.id);
+			const active = sessionsStore.get('activeSessionId');
+			// One document revision contains the archive AND registration removal.
+			// History, provider transcripts, image refs and journey files are kept.
+			registrationGeneration++;
+			sessionsStore.set({
+				sessions: current,
+				retiredWorktrees: retained.length ? archive : [...archive, record],
+				...(active === record.session.id ? { activeSessionId: parent.id } : {}),
+			});
+			retiredSessionIds.add(record.session.id);
+			if (pendingActiveSessionId === record.session.id) pendingActiveSessionId = parent.id;
+			if (pendingActivatedSessionId === record.session.id) pendingActivatedSessionId = null;
+			await flushSessionWrites();
+			await onSessionsPersisted?.([], current, [record.session.id]);
+			rememberRemovedSessions([record.session.id]);
+			// The primary renderer is still frozen. Its token-authorized completion
+			// reconciles its stores before ordinary lifecycle broadcasts can resume.
+		},
 	});
 	// Both ends of a registration move matter. Resolve stored identities again
 	// when a queued write starts, since its predecessor may have moved that id.
@@ -323,6 +371,7 @@ export function registerPersistenceHandlers(
 		storedIds: Set<string>
 	): StoredSession[] => {
 		return sessions.filter((session) => {
+			if (retiredSessionIds.has(session.id)) return false;
 			if (storedIds.has(session.id)) return true;
 			if (!removedSessionTombstones.has(session.id) && !session.deferredContent) return true;
 			logger.debug('Ignored resurrection of a closed session', 'Sessions', {
@@ -375,6 +424,7 @@ export function registerPersistenceHandlers(
 		if (pendingActiveSessionId === null) return;
 		const id = pendingActiveSessionId;
 		pendingActiveSessionId = null;
+		if (retiredSessionIds.has(id)) return;
 		try {
 			sessionsStore.set('activeSessionId', id);
 		} catch (err) {
@@ -405,7 +455,7 @@ export function registerPersistenceHandlers(
 		sessionActivatedTimer = null;
 		const id = pendingActivatedSessionId;
 		pendingActivatedSessionId = null;
-		if (!id || !emitPluginEvent) return;
+		if (!id || !emitPluginEvent || retiredSessionIds.has(id)) return;
 		// Re-focusing the session the plugins were last told about is a no-op.
 		if (id === lastEmittedActivatedSessionId) return;
 		lastEmittedActivatedSessionId = id;
@@ -779,6 +829,7 @@ export function registerPersistenceHandlers(
 	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string) => {
 		// Browser navigation is client-local, never the host's persisted focus.
 		if ((event as { type?: string })?.type === 'bridge') return;
+		if (retiredSessionIds.has(id)) return;
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);

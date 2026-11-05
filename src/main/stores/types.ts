@@ -179,6 +179,19 @@ export interface MaestroSettings {
 export interface SessionsData {
 	sessions: StoredSession[];
 	activeSessionId?: string;
+	/** Retained outside retired checkouts, including saved chat and PR metadata. */
+	retiredWorktrees?: StoredRetiredWorktree[];
+}
+
+export interface StoredRetiredWorktree {
+	id: string;
+	retiredAt: number;
+	path: string;
+	head: string;
+	parentSessionId: string;
+	parentPath: string;
+	branch: string;
+	session: StoredSession;
 }
 
 // ============================================================================

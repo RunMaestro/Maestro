@@ -1,7 +1,7 @@
 /** Trusted local registration and Git ownership for the bounded retirement path. */
 import * as fs from 'fs';
 import * as path from 'path';
-import type { StoredSession } from '../stores/types';
+import type { StoredSession, StoredRetiredWorktree } from '../stores/types';
 import { foldPathCase, isPathWithin } from '../utils/real-path-containment';
 import { execGitReadOnly } from '../utils/remote-git';
 import type { ManagedCheckout } from './worktreeRetirement';
@@ -11,6 +11,8 @@ export interface RetirementRegistrationSource {
 	read(): readonly StoredSession[];
 	generation(): number;
 	enqueue<T>(operation: () => Promise<T>): Promise<T>;
+	/** Internal token-owned caller already holds the sessions lane and removal fence. */
+	reconcileRetired?(record: StoredRetiredWorktree, parent: StoredSession): Promise<void>;
 }
 
 export interface CheckoutOwnership {

@@ -4,6 +4,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { generateUUID } from '../../shared/uuid';
+import type { StoredSession, StoredRetiredWorktree } from '../stores/types';
 import {
 	foldPathCase,
 	isPathWithin,
@@ -36,6 +38,13 @@ type Entry = {
 	state: RetirementState;
 	token?: RetirementToken;
 	owner?: object;
+	registration?: {
+		source: RetirementRegistrationSource;
+		child: StoredSession;
+		parent: StoredSession;
+		record?: StoredRetiredWorktree;
+		reconciled?: boolean;
+	};
 };
 type Hold = { paths: string[] | null };
 type RetirementClient = { kind: 'primary' | 'secondary' | 'web'; renderer?: object };
@@ -114,10 +123,19 @@ export class WorktreeRetirement {
 						return { ok: false, reason: 'registration changed during verification' };
 					if (!this.register(checkout))
 						return { ok: false, reason: 'checkout ownership is already reserved' };
+					const registration = {
+						source,
+						child: JSON.parse(canonicalJson(currentChild)) as StoredSession,
+						parent: JSON.parse(canonicalJson(currentParent)) as StoredSession,
+					};
 					// No await between releasing our own reads and acquiring the fence.
 					current.release();
 					if (initial?.ok) initial.release();
-					return this.prepareForRenderer(checkout, renderer);
+					const prepared = this.prepareForRenderer(checkout, renderer);
+					if (prepared.ok) {
+						this.owned(prepared.token)!.registration = registration;
+					}
+					return prepared;
 				} finally {
 					current.release();
 				}
@@ -345,6 +363,60 @@ export class WorktreeRetirement {
 		if (!entry || entry.state !== 'preparing') return false;
 		entry.state = 'removing';
 		return true;
+	}
+
+	/** Called only after checked Git removal settles. Never releases the fence:
+	 * durable persistence and renderer/watcher reconciliation must finish first.
+	 * An uncertain write/callback can be retried with the SAME token and archive id.
+	 */
+	async reconcileRemovedRegistration(
+		token: RetirementToken
+	): Promise<{ ok: true } | { ok: false; reason: string }> {
+		const entry = this.owned(token);
+		const registration = entry?.registration;
+		if (
+			!entry ||
+			entry.state !== 'removing' ||
+			!registration ||
+			registration.source !== this.registrationSource ||
+			!registration.source.reconcileRetired
+		)
+			return { ok: false, reason: 'trusted removing registration required' };
+		const source = registration.source;
+		const ownership = entry.identity.ownership!;
+		registration.record ??= {
+			id: generateUUID(),
+			retiredAt: Date.now(),
+			path: entry.identity.path,
+			head: entry.identity.head,
+			parentSessionId: ownership.parentSessionId,
+			parentPath: ownership.parentPath,
+			branch: ownership.branch,
+			session: registration.child,
+		};
+		try {
+			return await source.enqueue(async () => {
+				if (
+					this.owned(token) !== entry ||
+					entry.state !== 'removing' ||
+					this.registrationSource !== source
+				)
+					return { ok: false, reason: 'removal registration source changed' };
+				if (!registration.reconciled) {
+					await source.reconcileRetired!(registration.record!, registration.parent);
+					if (
+						this.registrationSource !== source ||
+						this.owned(token) !== entry ||
+						entry.state !== 'removing'
+					)
+						return { ok: false, reason: 'removal registration source changed during persistence' };
+					registration.reconciled = true;
+				}
+				return { ok: true };
+			});
+		} catch (error) {
+			return { ok: false, reason: error instanceof Error ? error.message : 'persistence pending' };
+		}
 	}
 
 	/** A failed or uncertain removal remains fenced for explicit reconciliation. */

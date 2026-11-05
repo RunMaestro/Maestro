@@ -11,7 +11,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
-import { worktreeRetirement, type RetirementToken } from '../../../../main/git/worktreeRetirement';
+import {
+	worktreeRetirement,
+	WorktreeRetirement,
+	type RetirementToken,
+} from '../../../../main/git/worktreeRetirement';
+import * as remoteGit from '../../../../main/utils/remote-git';
 import {
 	configureImageStore,
 	__resetImageStoreCacheForTests,
@@ -211,7 +216,9 @@ describe('persistence IPC handlers', () => {
 			mkdirSync(other);
 			worktreeRetirement.register(target);
 			stored = [{ id: 'target', cwd: target.path } as StoredSession];
-			mockSessionsStore.get.mockImplementation((key) => (key === 'sessions' ? stored : ''));
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? stored : fallback
+			);
 			mockSessionsStore.set.mockImplementation((key, value) => {
 				if (key === 'sessions') stored = value;
 			});
@@ -227,6 +234,240 @@ describe('persistence IPC handlers', () => {
 			if (!prepared.ok) throw new Error(prepared.reason);
 			reservation = prepared.token;
 		}
+		describe('token-owned removed registration reconciliation', () => {
+			let git: ReturnType<typeof vi.spyOn>;
+			afterEach(() => git?.mockRestore());
+			async function prepareRemoval(onSessionsPersisted = vi.fn().mockResolvedValue(undefined)) {
+				const common = path.join(other, '.git');
+				const linked = path.join(common, 'worktrees', 'child');
+				mkdirSync(linked, { recursive: true });
+				stored = [
+					{
+						id: 'target',
+						name: 'Saved child',
+						toolType: 'codex',
+						cwd: target.path,
+						projectRoot: target.path,
+						parentSessionId: 'parent',
+						worktreeBranch: 'feature',
+						aiTabs: [{ id: 'chat', logs: [{ id: 'message', text: 'Keep this history' }] }],
+						worktreePullRequest: { number: 123, state: 'merged' },
+					},
+					{ id: 'parent', name: 'Parent', toolType: 'codex', cwd: other, projectRoot: other },
+				];
+				const document: SessionsData = { sessions: stored, activeSessionId: 'target' };
+				mockSessionsStore.get.mockImplementation(
+					(key, fallback) => document[key as keyof SessionsData] ?? fallback
+				);
+				mockSessionsStore.set.mockImplementation((key, value) => {
+					if (typeof key === 'object') Object.assign(document, key);
+					else Object.assign(document, { [key]: value });
+					stored = document.sessions;
+				});
+				const binding = vi.spyOn(worktreeRetirement, 'bindRegistrationSource');
+				registerPersistenceHandlers({
+					settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+					sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+					groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+					getWebServer: getWebServerFn,
+					flushSessionWrites: mockFlushSessionWrites,
+					onSessionsPersisted,
+				});
+				const source = binding.mock.calls[0][0];
+				binding.mockRestore();
+				const fence = new WorktreeRetirement();
+				fence.bindRegistrationSource(source);
+				const renderer = {};
+				const client = fence.admitClient('primary');
+				if (!client.ok) throw new Error(client.reason);
+				client.loaded(renderer);
+				const sha = 'a'.repeat(40);
+				git = vi.spyOn(remoteGit, 'execGitReadOnly').mockImplementation(async (args, cwd) => {
+					const stdout =
+						args[0] === 'worktree'
+							? `worktree ${other}\0HEAD ${sha}\0branch refs/heads/rc\0\0worktree ${target.path}\0HEAD ${sha}\0branch refs/heads/feature\0\0`
+							: args[1] === '--show-toplevel'
+								? cwd!
+								: args[1] === '--absolute-git-dir'
+									? cwd === other
+										? common
+										: linked
+									: args[1] === '--git-common-dir'
+										? common
+										: sha;
+					return { stdout, stderr: '', exitCode: 0 };
+				});
+				const prepared = await fence.prepareRegisteredForRenderer('target', renderer);
+				if (!prepared.ok) throw new Error(prepared.reason);
+				return { fence, token: prepared.token, document, source, client, onSessionsPersisted };
+			}
+			it('archives saved chat and PR identity atomically, preserves unrelated changes and selects the parent', async () => {
+				const f = await prepareRemoval();
+				const child = structuredClone(f.document.sessions[0]);
+				const unrelated = {
+					id: 'unrelated',
+					name: 'Newer write',
+					cwd: dir,
+					projectRoot: dir,
+					toolType: 'codex',
+				};
+				await f.source.enqueue(async () => {
+					f.document.sessions.push(unrelated);
+				});
+				expect(f.fence.commit(f.token)).toBe(true);
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				expect(f.document.sessions).toEqual([expect.objectContaining({ id: 'parent' }), unrelated]);
+				expect(f.document.retiredWorktrees).toEqual([
+					expect.objectContaining({ session: child, head: 'a'.repeat(40), branch: 'feature' }),
+				]);
+				expect(f.document.activeSessionId).toBe('parent');
+				expect(mockSessionsStore.set).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sessions: f.document.sessions,
+						retiredWorktrees: f.document.retiredWorktrees,
+						activeSessionId: 'parent',
+					})
+				);
+				expect(deleteJourneyMock).not.toHaveBeenCalled();
+				expect(f.onSessionsPersisted).toHaveBeenCalledWith([], f.document.sessions, ['target']);
+				expect(f.fence.tokenState(f.token)).toBe('removing');
+			});
+			it('waits behind earlier writes and remains fenced until durable settlement', async () => {
+				const f = await prepareRemoval();
+				let finish!: () => void;
+				const prior = f.source.enqueue(
+					() =>
+						new Promise<void>((resolve) => {
+							finish = resolve;
+						})
+				);
+				await Promise.resolve();
+				f.fence.commit(f.token);
+				let flush!: () => void;
+				mockFlushSessionWrites.mockReturnValueOnce(
+					new Promise<void>((resolve) => {
+						flush = resolve;
+					})
+				);
+				const pending = f.fence.reconcileRemovedRegistration(f.token);
+				await Promise.resolve();
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+				finish();
+				await prior;
+				await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+				expect(f.onSessionsPersisted).not.toHaveBeenCalled();
+				f.client.release();
+				expect(f.fence.abort(f.token)).toBe(false);
+				expect(f.fence.admit([other]).ok).toBe(false);
+				flush();
+				expect(await pending).toEqual({ ok: true });
+			});
+			it.each(['durable write', 'registration callback'])(
+				'retries a failed %s without duplicating the archive or losing later unrelated edits',
+				async (failure) => {
+					const callback = vi.fn().mockResolvedValue(undefined);
+					const f = await prepareRemoval(callback);
+					f.fence.commit(f.token);
+					(failure === 'durable write' ? mockFlushSessionWrites : callback).mockRejectedValueOnce(
+						new Error('retry me')
+					);
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({
+						ok: false,
+						reason: 'retry me',
+					});
+					expect(f.fence.abort(f.token)).toBe(false);
+					const retained = structuredClone(f.document.retiredWorktrees);
+					f.document.sessions.push({
+						id: 'other',
+						name: 'Later',
+						cwd: dir,
+						projectRoot: dir,
+						toolType: 'codex',
+					});
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+					expect(f.document.retiredWorktrees).toEqual(retained);
+					expect(f.document.sessions.map((s) => s.id)).toEqual(['parent', 'other']);
+					const writes = mockFlushSessionWrites.mock.calls.length;
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+					expect(mockFlushSessionWrites).toHaveBeenCalledTimes(writes);
+				}
+			);
+			it.each(['child', 'parent'])(
+				'refuses a replacement %s registration even at the same path',
+				async (which) => {
+					const f = await prepareRemoval();
+					f.document.sessions[which === 'child' ? 0 : 1].name = 'Replacement';
+					f.fence.commit(f.token);
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({
+						ok: false,
+						reason: expect.stringContaining('registration changed'),
+					});
+					expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				}
+			);
+			it('rejects a replaced registration source and arbitrary/preparing tokens', async () => {
+				const f = await prepareRemoval();
+				expect(await f.fence.reconcileRemovedRegistration({})).toMatchObject({ ok: false });
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				f.fence.commit(f.token);
+				f.fence.bindRegistrationSource({ ...f.source });
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+			it('refuses late ownership replacement while a durable reconciliation is pending', async () => {
+				const f = await prepareRemoval();
+				f.fence.commit(f.token);
+				mockFlushSessionWrites.mockImplementationOnce(async () => {
+					f.fence.bindRegistrationSource({ ...f.source });
+				});
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				expect(f.fence.tokenState(f.token)).toBe('removing');
+			});
+			it('rejects a replacement child on retry after the archive was staged', async () => {
+				const f = await prepareRemoval();
+				const child = structuredClone(f.document.sessions[0]);
+				f.fence.commit(f.token);
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('EIO'));
+				await f.fence.reconcileRemovedRegistration(f.token);
+				f.document.sessions.push({ ...child, name: 'Replacement' });
+				mockSessionsStore.set.mockClear();
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+			it('redirects pending focus and refuses later focus writes to the retired child', async () => {
+				const f = await prepareRemoval();
+				vi.useFakeTimers();
+				try {
+					await handlers.get('sessions:setActiveSessionId')!({}, 'target');
+					f.fence.commit(f.token);
+					await f.fence.reconcileRemovedRegistration(f.token);
+					expect(await handlers.get('sessions:getActiveSessionId')!({})).toBe('parent');
+					await vi.advanceTimersByTimeAsync(500);
+					await handlers.get('sessions:setActiveSessionId')!({}, 'target');
+					await vi.advanceTimersByTimeAsync(500);
+					expect(f.document.activeSessionId).toBe('parent');
+				} finally {
+					vi.useRealTimers();
+				}
+			});
+			it('does not resurrect archived sessions after persistence rebind/restart', async () => {
+				const f = await prepareRemoval();
+				const child = structuredClone(f.document.sessions[0]);
+				f.fence.commit(f.token);
+				await f.fence.reconcileRemovedRegistration(f.token);
+				// Rebinding starts a fresh in-memory tombstone set, as on app startup.
+				registerPersistenceHandlers({
+					settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+					sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+					groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+					getWebServer: getWebServerFn,
+					flushSessionWrites: mockFlushSessionWrites,
+				});
+				await handlers.get('sessions:setMany')!({}, [child]);
+				expect(f.document.sessions.some((session) => session.id === child.id)).toBe(false);
+				expect(f.document.retiredWorktrees).toHaveLength(1);
+			});
+		});
 		it('binds trusted ownership reads to the durable session write lane and advances its generation', async () => {
 			const binding = vi.spyOn(worktreeRetirement, 'bindRegistrationSource');
 			registerPersistenceHandlers({
