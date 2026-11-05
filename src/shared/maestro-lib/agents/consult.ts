@@ -202,7 +202,7 @@ export function createConsultService(
 	// A host can admit deferred dispatch before any state, timer or response work.
 	// The default keeps portable callers independent of desktop cleanup policy.
 	runActivity: <T>(operation: () => T) => T = (operation) => operation(),
-	// Own preparation and retain supervision beyond the individual callback scopes.
+	// Own preparation, supervision and diagnostics beyond individual callback scopes.
 	// Hosts without cleanup reservations need no lifetime tracking.
 	beginSupervisionActivity: () => () => void = () => () => {}
 ) {
@@ -487,11 +487,14 @@ export function createConsultService(
 							);
 						}
 					} catch (err) {
-						captureException(err, {
+						// Reporting can outlive this synchronous terminal callback. Its
+						// failure must not replace the original consult error or escape.
+						const releaseDiagnostic = beginSupervisionActivity();
+						void captureException(err, {
 							operation: 'crossAgent:parseResponse',
 							requestId: request.requestId,
 							targetSessionId: request.targetSessionId,
-						});
+						}).then(releaseDiagnostic, releaseDiagnostic);
 						onChunk(
 							baseChunk({
 								chunk: '',
@@ -661,11 +664,14 @@ export function createConsultService(
 			// Spawn failed - tear down the supervision and surface a single error chunk.
 			if (!settled) {
 				release();
-				captureException(err, {
+				// Start still settles without waiting for diagnostics. Keep their
+				// activity independent of the request, native child and successor.
+				const releaseDiagnostic = beginSupervisionActivity();
+				void captureException(err, {
 					operation: 'crossAgent:spawn',
 					requestId: request.requestId,
 					targetSessionId: request.targetSessionId,
-				});
+				}).then(releaseDiagnostic, releaseDiagnostic);
 				emitError(err instanceof Error ? err.message : String(err));
 			}
 		}

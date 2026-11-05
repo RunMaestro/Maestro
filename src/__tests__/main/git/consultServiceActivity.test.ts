@@ -232,10 +232,10 @@ describe('deferred desktop consult service admission', () => {
 		async (kind) => {
 			await start();
 			const failure = new Error(kind);
-			report.mockImplementation(() => expect(active).toBe(1));
+			report.mockImplementation(() => expect(active).toBe(2));
 			if (kind === 'delivery')
 				onChunk.mockImplementation(() => {
-					expect(active).toBe(1);
+					expect(active).toBe(onChunk.mock.calls.length === 1 ? 1 : 2);
 					throw failure;
 				});
 			const result = {
@@ -329,6 +329,212 @@ describe('deferred desktop consult service admission', () => {
 		expect(portable.activeCount()).toBe(0);
 		hold.release();
 		await reserve();
+	});
+
+	describe('asynchronous diagnostics', () => {
+		it.each([
+			['parse', 'resolve'],
+			['parse', 'reject'],
+			['parse', 'throw'],
+			['spawn', 'resolve'],
+			['spawn', 'reject'],
+			['spawn', 'throw'],
+			['delivery', 'resolve'],
+			['delivery', 'reject'],
+			['delivery', 'throw'],
+		] as const)('owns %s diagnostics through reporter %s', async (kind, outcome) => {
+			const diagnostic = Promise.withResolvers<void>();
+			const failure = new Error(`${kind} failed`);
+			let reportingActivity = 0;
+			let canceled = -1;
+			report.mockImplementation(() => {
+				reportingActivity = active;
+				canceled = router.cancelCrossAgentRequestsForSource('source');
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return diagnostic.promise;
+			});
+			if (kind === 'spawn') vi.mocked(runner.start).mockRejectedValueOnce(failure);
+			await start();
+			if (kind === 'delivery') {
+				onChunk.mockImplementationOnce(() => {
+					throw failure;
+				});
+				observer.onEnd(end());
+			}
+			if (kind === 'parse')
+				observer.onEnd({
+					exitCode: 0,
+					readText: () => {
+						throw failure;
+					},
+				});
+			const chunkCount = kind === 'delivery' ? 2 : 1;
+			expect(onChunk).toHaveBeenCalledTimes(chunkCount); // terminal delivery remains synchronous
+			expect(reportingActivity).toBeGreaterThanOrEqual(2);
+			expect(canceled).toBe(0);
+			expect(onChunk).toHaveBeenCalledWith(
+				expect.objectContaining({ done: true, error: failure.message })
+			);
+			expect(report).toHaveBeenCalledWith(
+				failure,
+				expect.objectContaining({
+					operation: kind === 'spawn' ? 'crossAgent:spawn' : 'crossAgent:parseResponse',
+				})
+			);
+			expect(router.getCrossAgentConsultParties('request')).toBeNull();
+			if (outcome !== 'throw') {
+				expect(active).toBe(1);
+				for (const candidate of [root, path.join(root, 'child'), path.resolve('other-repo')])
+					expect(await gate.reserveWorktreeCleanup(candidate)).toMatchObject({
+						status: 'blocked',
+						blockers: [{ code: 'mutation-busy' }],
+					});
+				if (outcome === 'resolve') diagnostic.resolve();
+				else diagnostic.reject(new Error('reporter rejected'));
+			}
+			await vi.waitFor(() => expect(active).toBe(0));
+			expect(onChunk).toHaveBeenCalledTimes(chunkCount);
+			await reserve();
+		});
+
+		it.each(['resolve', 'reject'] as const)(
+			'keeps diagnostics independent when terminal delivery throws and reporter later %s',
+			async (outcome) => {
+				await start();
+				const diagnostic = Promise.withResolvers<void>();
+				report.mockImplementationOnce(() => diagnostic.promise);
+				const failure = new Error('parse failed');
+				const delivery = new Error('delivery failed');
+				onChunk.mockImplementationOnce(() => {
+					throw delivery;
+				});
+				expect(() =>
+					observer.onEnd({
+						exitCode: 0,
+						readText: () => {
+							throw failure;
+						},
+					})
+				).toThrow(delivery);
+				expect(active).toBe(1);
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+				if (outcome === 'resolve') diagnostic.resolve();
+				else diagnostic.reject(new Error('reporter rejected'));
+				await vi.waitFor(() => expect(active).toBe(0));
+				await reserve();
+			}
+		);
+
+		it.each([false, true])(
+			'keeps concurrent reports independent with same request id: %s',
+			async (sameId) => {
+				const first = await start();
+				const diagnostics = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+				let successor!: Promise<ConsultObserver>;
+				report.mockImplementationOnce(() => {
+					successor = start(sameId ? 'request' : 'successor');
+					return diagnostics[0].promise;
+				});
+				first.onEnd({
+					exitCode: 0,
+					readText: () => {
+						throw new Error('first failed');
+					},
+				});
+				await successor;
+				expect(active).toBe(2);
+				expect(router.getCrossAgentConsultParties(sameId ? 'request' : 'successor')).not.toBeNull();
+				report.mockImplementationOnce(() => diagnostics[1].promise);
+				observer.onEnd({
+					exitCode: 0,
+					readText: () => {
+						throw new Error('second failed');
+					},
+				});
+				expect(active).toBe(2);
+				diagnostics[sameId ? 1 : 0].resolve();
+				await vi.waitFor(() => expect(active).toBe(1));
+				first.onEnd(end()); // an old callback cannot release another diagnostic
+				expect(active).toBe(1);
+				expect(router.cancelCrossAgentRequestsForSource('source')).toBe(0);
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+				diagnostics[sameId ? 0 : 1].resolve();
+				await vi.waitFor(() => expect(active).toBe(0));
+				await reserve();
+			}
+		);
+
+		it('retains spawn diagnostics when error delivery rejects the start request', async () => {
+			const diagnostic = Promise.withResolvers<void>();
+			const spawnError = new Error('spawn failed');
+			const deliveryError = new Error('delivery failed');
+			vi.mocked(runner.start).mockRejectedValueOnce(spawnError);
+			report.mockImplementationOnce(() => diagnostic.promise);
+			onChunk.mockImplementationOnce(() => {
+				throw deliveryError;
+			});
+			await expect(start()).rejects.toBe(deliveryError);
+			expect(report).toHaveBeenCalledWith(
+				spawnError,
+				expect.objectContaining({ operation: 'crossAgent:spawn' })
+			);
+			expect(active).toBe(1);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			diagnostic.reject(new Error('reporter rejected'));
+			await vi.waitFor(() => expect(active).toBe(0));
+			await reserve();
+		});
+
+		it('does not release native or pending-start activity when diagnostics settle', async () => {
+			const releaseNative = gate.beginGlobalWorktreeActivity();
+			releases.push(releaseNative);
+			const spawn = Promise.withResolvers<{ success: boolean }>();
+			vi.mocked(runner.start).mockImplementationOnce(async (_spawn, next) => {
+				observer = next;
+				return spawn.promise;
+			});
+			const pending = start();
+			await vi.waitFor(() => expect(runner.start).toHaveBeenCalledOnce());
+			const diagnostic = Promise.withResolvers<void>();
+			report.mockImplementationOnce(() => diagnostic.promise);
+			observer.onEnd({
+				exitCode: 0,
+				readText: () => {
+					throw new Error('parse failed');
+				},
+			});
+			expect(active).toBe(3);
+			diagnostic.resolve();
+			await vi.waitFor(() => expect(active).toBe(2));
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			spawn.resolve({ success: true });
+			await pending;
+			expect(active).toBe(1);
+			releaseNative();
+			await reserve();
+		});
+
+		it('keeps portable diagnostics independent of desktop reservations', async () => {
+			const portable = library.createConsultService();
+			await portable.start(request(), {
+				...options(),
+				runner,
+				resolveAgent: async () => ({ command: 'claude', args: [], available: true }) as never,
+			});
+			await reserve();
+			report.mockImplementationOnce(async () => {
+				throw new Error('reporter rejected');
+			});
+			observer.onEnd({
+				exitCode: 0,
+				readText: () => {
+					throw new Error('parse failed');
+				},
+			});
+			expect(onChunk).toHaveBeenCalledOnce();
+			expect(portable.activeCount()).toBe(0);
+			await Promise.resolve();
+		});
 	});
 
 	describe('preparation recovery', () => {
@@ -846,7 +1052,7 @@ describe('deferred desktop consult service admission', () => {
 				throw failure;
 			});
 			expect(() => first.onEnd(end())).toThrow(failure);
-			expect(active).toBe(1);
+			await vi.waitFor(() => expect(active).toBe(1));
 			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
 			onChunk.mockReset();
 			observer.onEnd(end());
