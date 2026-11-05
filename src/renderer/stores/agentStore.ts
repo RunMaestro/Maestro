@@ -1,4 +1,7 @@
-import { flushSessionPersistenceNow } from '../services/sessionPersistenceFlush';
+import {
+	flushSessionPersistenceNow,
+	flushSessionTranscriptNow,
+} from '../services/sessionPersistenceFlush';
 import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
@@ -36,7 +39,7 @@ import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
-import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -235,6 +238,8 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
  * more than once (e.g. during hot reload).
  */
 let snapshotUnsubscribe: (() => void) | null = null;
+// Different drain callers may enter before the owner IPC acknowledges submission.
+const pendingPlainQueueDispatches = new Set<string>();
 
 export const useAgentStore = create<AgentStore>()((set, get) => ({
 	// --- State ---
@@ -522,6 +527,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		if (!managedQueue)
 			noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
+		const plainQueueKey =
+			managedQueue && !item.crossAgentMention ? item.pendingAdmissionId : undefined;
+		if (plainQueueKey && pendingPlainQueueDispatches.has(plainQueueKey)) return false;
+		if (plainQueueKey) pendingPlainQueueDispatches.add(plainQueueKey);
 		try {
 			if (managedQueue && (item.type !== 'message' || item.agentContext))
 				throw new Error('DispatchQueueRoutingUnsupported');
@@ -650,15 +659,39 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
-				if (managedQueue) await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+				if (managedQueue && !item.crossAgentMention) {
+					// Submit the canonical queue card without starting the turn or releasing
+					// its admission hold. Repeated drains reuse this exact boundary; only
+					// the host journal may reconcile an uncertain previous start.
+					updateSessionWith(sessionId, (s) => {
+						const current = s.executionQueue.find((row) => row.id === item.id);
+						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id !== targetTab.id ||
+								tab.logs.some((log) => log.queuedItemId === item.id && log.source === 'user')
+									? tab
+									: { ...tab, logs: markTabRunningQueuedItem(tab, current, s).logs }
+							),
+						};
+					});
+				}
+				const transcriptBoundaryId = getSession(sessionId)
+					?.aiTabs.find((tab) => tab.id === targetTab.id)
+					?.logs.slice()
+					.reverse()
+					.find((log) => log.source === 'user' && log.queuedItemId === item.id)?.id;
+				if (managedQueue) {
+					await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+					if (!item.crossAgentMention) {
+						if (!transcriptBoundaryId) throw new Error('DispatchTranscriptBoundaryUnavailable');
+						await flushSessionTranscriptNow(sessionId, targetTab.id, transcriptBoundaryId);
+					}
+					if (deps.isCancelled?.()) return false;
+				}
 				const spawnResult = await window.maestro.process.spawn({
-					transcriptBoundaryId: useSessionStore
-						.getState()
-						.sessions.find((agent) => agent.id === sessionId)
-						?.aiTabs.find((tab) => tab.id === targetTab.id)
-						?.logs.slice()
-						.reverse()
-						.find((log) => log.source === 'user' && log.queuedItemId === item.id)?.id,
+					transcriptBoundaryId,
 					...(managedQueue
 						? {
 								pianolaDispatchId: item.pendingAdmissionId,
@@ -701,7 +734,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							};
 						return spawnResult.pianolaQueueReconciled
 							? { ...s, executionQueue: s.executionQueue.filter((row) => row.id !== item.id) }
-							: applyQueuedItemDispatch(s, current);
+							: applyQueuedItemDispatch(s, current, false);
 					});
 				}
 			} else if (item.type === 'command' && item.command) {
@@ -912,6 +945,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// rather than strand an outage entry in-flight, and callers that want to
 			// know a send failed (Force Send's toast, the batch loop) read it here.
 			throw error;
+		} finally {
+			if (plainQueueKey) pendingPlainQueueDispatches.delete(plainQueueKey);
 		}
 	},
 

@@ -2,6 +2,7 @@ import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { generateUUID } from '../../shared/uuid';
 import { readAgentRuns } from '../../cli/services/agent-run-store';
 import { nativeTabSession } from './pianola-queue-session';
+import { nativeCurrentTurns } from './current-turn';
 import { isTerminalAgentRunStatus, type AgentRun } from '../../shared/agent-run';
 import { forgetQueueConsultRelease } from './pianola-queue-routing';
 import { getDispatchCallbackRegistry, type DispatchCallbackRegistry } from '../dispatch-callbacks';
@@ -250,13 +251,52 @@ export class PianolaNewTabDispatch {
 		}
 	) {
 		this.nativeNewTab = deps.newTab;
-		this.snapshot = () => deps.snapshot();
+		this.snapshot = () => {
+			const snapshot = deps.snapshot();
+			if (snapshot.tabs.every((tab) => tab.cursorAvailable)) return snapshot;
+			const agentsById = new Map(
+				(deps.routingSnapshot?.().agents ?? []).map((agent) => [agent.id, agent])
+			);
+			// Only admission sees this authenticated prefix; public census stays incomplete.
+			return {
+				...snapshot,
+				tabs: snapshot.tabs.map((tab) => {
+					if (tab.cursorAvailable) return tab;
+					const agent = agentsById.get(tab.agentId);
+					const rows = agent?.executionQueue as
+						| import('../../shared/pianola/pianola-dispatch').PianolaQueueItem[]
+						| undefined;
+					const item = rows?.find(
+						(row) =>
+							row.tabId === tab.tabId && !row.crossAgentMention && row.pendingAdmissionId === row.id
+					);
+					const proof =
+						item && nativeCurrentTurns.readQueuedAdmission(tab.agentId, tab.tabId, item);
+					if (
+						!proof ||
+						proof.base.cursor.createdAt !== tab.createdAt ||
+						proof.base.cursor.provider !== agent?.toolType ||
+						proof.base.cursor.agentSessionId !== (tab.agentSessionId ?? null)
+					)
+						return tab;
+					const base = proof.base;
+					return {
+						...tab,
+						cursorAvailable: true,
+						enrollment: base.enrollment,
+						cursor: base.lastEntry
+							? { ...base.lastEntry, count: base.entryCount!, native: base.cursor }
+							: null,
+					};
+				}),
+			};
+		};
 		this.admission = new PianolaDispatchAdmissionService({
 			...deps,
 			readSnapshot: async () => deps.snapshot(),
-			queueSnapshot: () => deps.snapshot(),
+			queueSnapshot: () => this.snapshot(),
 			assertTargetReady: (receipt, fingerprint, ownsLocalRun) => {
-				const snapshot = deps.snapshot();
+				const snapshot = this.snapshot();
 				const tab = snapshot.tabs.find(
 					(t) => t.agentId === receipt.targetAgentId && t.tabId === receipt.targetTabId
 				);
@@ -788,6 +828,9 @@ export class PianolaNewTabDispatch {
 				};
 			if (pianolaNewTabSpawns.isHeld(agentId, tabId)) throw new Error('DispatchTargetHeld');
 			pianolaNewTabSpawns.hold(agentId, tabId);
+			const submitted = !record.queuePrepare.item.crossAgentMention
+				? nativeCurrentTurns.readQueuedAdmission(agentId, tabId, record.queuePrepare.item)
+				: undefined;
 			const guard = () => {
 				const current = this.deps.store.readDispatchAdmission(itemId);
 				if (
@@ -895,7 +938,23 @@ export class PianolaNewTabDispatch {
 			pianolaNewTabSpawns.arm(
 				agentId,
 				tabId,
-				guard,
+				(boundaryId) => {
+					guard();
+					if (!record.queuePrepare!.item.crossAgentMention) {
+						const proof = nativeCurrentTurns.readQueuedAdmission(
+							agentId,
+							tabId,
+							record.queuePrepare!.item
+						);
+						if (
+							submitted &&
+							(!proof ||
+								proof.boundaryId !== boundaryId ||
+								canonicalJson(proof) !== canonicalJson(submitted))
+						)
+							throw new Error('DispatchTranscriptBoundaryMismatch');
+					}
+				},
 				(runId) => {
 					if (runId && !local)
 						void this.admission

@@ -33,6 +33,8 @@ type State = {
 	observedRisk: PianolaRisk;
 	reason?: string;
 	freshBoundaryId?: string;
+	/** Metadata only, retained before an authenticated queued submission. */
+	queuedSubmission?: { boundaryId: string; rowRevision: number; base: CurrentTurnRead };
 	pendingAnnouncement?: string;
 };
 
@@ -178,6 +180,20 @@ export class NativeCurrentTurns {
 			(state.source !== meta.sourceGeneration ||
 				state.cursor.createdAt !== meta.createdAt ||
 				state.cursor.provider !== meta.provider);
+		if (state && !replaced && !patch.snapshot) {
+			const submitted = patch.upserts.find((raw) => {
+				const row = raw as Partial<CurrentTurnMessage>;
+				return (
+					row.source === 'user' && typeof row.queuedItemId === 'string' && !state!.rows.has(row.id!)
+				);
+			});
+			if (submitted) {
+				const base = this.read({ ...state.cursor, open: true }, undefined, false);
+				state.queuedSubmission = ['complete', 'empty-enrollment'].includes(base.status)
+					? { boundaryId: submitted.id, rowRevision: this.revision + 1, base }
+					: undefined;
+			}
+		}
 		if (!state || replaced) {
 			state = {
 				cursor: {
@@ -433,6 +449,7 @@ export class NativeCurrentTurns {
 		this.hostCreations.delete(this.key(native.agentId, native.tabId));
 		const state = this.states.get(this.key(native.agentId, native.tabId));
 		if (!state) return;
+		delete state.queuedSubmission;
 		const boundary = boundaryId && state.rows.get(boundaryId);
 		const valid =
 			boundary &&
@@ -466,6 +483,57 @@ export class NativeCurrentTurns {
 			this.retainedBytes += bytes - state.bytes;
 			state.bytes = bytes;
 		}
+	}
+
+	/** Admission alone may use the unchanged native prefix before the exact held
+	 * queue row. Ordinary reads remain incomplete until begin consumes the row. */
+	readQueuedAdmission(
+		agentId: string,
+		tabId: string,
+		item: { id: string; text?: string; images?: string[] }
+	): { boundaryId: string; base: CurrentTurnRead } | undefined {
+		const state = this.states.get(this.key(agentId, tabId));
+		const proof = state?.queuedSubmission;
+		if (
+			!state ||
+			!proof ||
+			state.freshBoundaryId !== proof.boundaryId ||
+			state.rowRevisions.get(proof.boundaryId) !== proof.rowRevision
+		)
+			return;
+		const row = state.rows.get(proof.boundaryId);
+		if (
+			row?.source !== 'user' ||
+			row.queuedItemId !== item.id ||
+			row.text !== item.text ||
+			canonicalJson(row.images ?? []) !== canonicalJson(item.images ?? []) ||
+			state.order.at(-1) !== proof.boundaryId
+		)
+			return;
+		if (proof.base.status === 'complete') {
+			try {
+				if (
+					!this.assertDelivery(
+						proof.base.cursor,
+						proof.base.entryCount!,
+						proof.boundaryId,
+						item.text!
+					)
+				)
+					return;
+			} catch {
+				return;
+			} // Changed prefixes never confer admission authority.
+		} else if (
+			state.reason !== 'missing-native-boundary' ||
+			state.order.length !== 1 ||
+			state.pendingAnnouncement ||
+			canonicalJson(state.enrollment) !== canonicalJson(proof.base.enrollment) ||
+			canonicalJson({ ...state.cursor, revision: proof.base.cursor.revision }) !==
+				canonicalJson(proof.base.cursor)
+		)
+			return;
+		return structuredClone(proof);
 	}
 
 	/** Final spawn fence: only the owner renderer's specifically submitted reply row

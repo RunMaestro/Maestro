@@ -18,6 +18,7 @@ import { getRepairedUnifiedTabOrder, settleAgentStateFromTabs } from '../../util
 import { getBaseSessionId } from '../../utils/sessionIdParser';
 import type { PendingPermissionSnapshot } from '../../../shared/pendingPermissions';
 import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
+import { registerSessionTranscriptFlush } from '../../services/sessionPersistenceFlush';
 
 const runtimeFields = [
 	'state',
@@ -161,6 +162,33 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 
 		const sourceGeneration = generateUUID();
 		const sequences = new Map<string, number>();
+		const publications = new Map<string, { logs: LogEntry[]; ack: Promise<boolean> }>();
+		registerSessionTranscriptFlush(async (sessionId, tabId, boundaryId) => {
+			if (disposed || !ownsTranscript.current?.(sessionId))
+				throw new Error('DispatchTranscriptOwnerUnavailable');
+			const tab = useSessionStore
+				.getState()
+				.sessions.find((session) => session.id === sessionId)
+				?.aiTabs.find((tab) => tab.id === tabId);
+			const published = publications.get(`${sessionId}-ai-${tabId}`);
+			if (
+				!tab ||
+				published?.logs !== tab.logs ||
+				!tab.logs.some((row) => row.id === boundaryId && row.source === 'user')
+			)
+				throw new Error('DispatchTranscriptBoundaryUnavailable');
+			if (
+				!(await published.ack) ||
+				disposed ||
+				!ownsTranscript.current?.(sessionId) ||
+				!useSessionStore
+					.getState()
+					.sessions.find((session) => session.id === sessionId)
+					?.aiTabs.find((current) => current.id === tabId && current.createdAt === tab.createdAt)
+					?.logs.some((row) => row.id === boundaryId && row.source === 'user')
+			)
+				throw new Error('DispatchTranscriptCommitFailed');
+		});
 		let pendingVersion = -1;
 		let pendingAgents = new Set<string>();
 		const projectPendingPermissions = () => {
@@ -288,11 +316,11 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 				}),
 			};
 			if (patch.observation) sequences.set(tabId!, patch.observation.sequence);
-			void api
-				.publishTranscript(patch, requestId)
-				.catch((error) =>
-					logger.error('Failed to publish owning host transcript', 'Sessions', error)
-				);
+			const ack = api.publishTranscript(patch, requestId);
+			if (tabId && !requestId) publications.set(`${session.id}-ai-${tabId}`, { logs, ack });
+			void ack.catch((error) =>
+				logger.error('Failed to publish owning host transcript', 'Sessions', error)
+			);
 		};
 		const unsubscribeRequest = api.onTranscriptRequest?.(
 			({ sessionId, tabId, requestId, metadataOnly }) => {
@@ -326,6 +354,7 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 			for (const session of state.sessions) {
 				if (!ownsTranscript.current?.(session.id)) continue;
 				const previous = previousById.get(session.id);
+				previousById.delete(session.id);
 				if (session === previous) continue;
 				publish(session, session, previous, 'aiLogs');
 				publish(session, session, previous, 'shellLogs');
@@ -333,6 +362,7 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 				const openTabIds = new Set(session.aiTabs.map((tab) => tab.id));
 				for (const old of previous?.aiTabs ?? []) {
 					if (openTabIds.has(old.id)) continue;
+					publications.delete(`${session.id}-ai-${old.id}`);
 					const sequence = (sequences.get(old.id) ?? 0) + 1;
 					sequences.set(old.id, sequence);
 					void api
@@ -369,9 +399,12 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 						);
 				}
 			}
+			for (const removed of previousById.values())
+				for (const tab of removed.aiTabs) publications.delete(`${removed.id}-ai-${tab.id}`);
 		});
 		return () => {
 			disposed = true;
+			registerSessionTranscriptFlush(null);
 			unsubscribeSync();
 			unsubscribeRequest?.();
 			unsubscribePending?.();

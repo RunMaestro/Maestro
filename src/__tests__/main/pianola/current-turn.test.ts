@@ -76,6 +76,53 @@ function fixture(index = new NativeCurrentTurns()) {
 describe('native current-turn revision and completeness', () => {
 	it.each([
 		'valid',
+		'prefix',
+		'row',
+		'row-restored',
+		'foreign-item',
+		'images',
+		'consumed',
+		'restart',
+	] as const)(
+		'binds queue admission to the unchanged native prefix and submitted row: %s',
+		(mode) => {
+			const f = fixture();
+			f.begin('user');
+			f.commit([row('done', 'Completed.')]);
+			const base = f.read().cursor;
+			const submitted = {
+				...row('queued-user', 'Queued prompt', 'user'),
+				queuedItemId: 'queue-id',
+				images: ['image'],
+			};
+			f.commit([submitted]);
+			expect(f.read().status).toBe('incomplete');
+			const item = { id: 'queue-id', text: 'Queued prompt', images: ['image'] };
+			if (mode === 'prefix') f.commit([row('done', 'Changed prefix')]);
+			if (mode === 'row') f.commit([{ ...submitted, text: 'Changed prompt' }]);
+			if (mode === 'row-restored') {
+				f.commit([{ ...submitted, text: 'Changed' }]);
+				f.commit([submitted]);
+			}
+			if (mode === 'foreign-item') item.id = 'foreign';
+			if (mode === 'images') item.images = ['foreign'];
+			if (mode === 'consumed') f.begin('queued-user');
+			if (mode === 'restart') {
+				f.index.setEnabled(false);
+				f.index.setEnabled(true);
+			}
+			const proof = f.index.readQueuedAdmission('agent', 'tab', item);
+			if (mode === 'valid')
+				expect(proof).toMatchObject({
+					boundaryId: submitted.id,
+					base: { cursor: base, status: 'complete' },
+				});
+			else expect(proof).toBeUndefined();
+		}
+	);
+
+	it.each([
+		'valid',
 		'forgotten',
 		'spawning',
 		'flush-race',

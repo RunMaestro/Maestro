@@ -15,6 +15,7 @@ import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
+import { useSessionTranscriptSync } from '../../../renderer/hooks/session/useSessionTranscriptSync';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 
 // ============================================================================
@@ -1262,6 +1263,11 @@ describe('agentStore', () => {
 		});
 
 		it('enters the owning-host path with exact markers and retains the row without capture', async () => {
+			(window.maestro as any).sessions = {
+				onTranscriptSync: () => () => {},
+				publishTranscript: vi.fn().mockResolvedValue(true),
+			};
+			const { unmount } = renderHook(() => useSessionTranscriptSync(async () => {}));
 			const item = createQueuedItem({ pendingAdmissionId: 'dispatch-1' });
 			useSessionStore
 				.getState()
@@ -1278,6 +1284,7 @@ describe('agentStore', () => {
 				})
 			);
 			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([item]);
+			unmount();
 		});
 
 		it.each(['user', 'auto', undefined] as const)(

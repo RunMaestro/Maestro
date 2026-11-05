@@ -797,12 +797,14 @@ export function registerPersistenceHandlers(
 				return false;
 			}
 			const owner = deps.getWindowForSession?.(patch.sessionId);
+			let ownerCommitted = false;
 			if (
 				owner &&
 				isWebContentsAvailable(owner) &&
 				owner.webContents.id === senderWebContentsIdOf(event)
 			) {
 				const committed = nativeCurrentTurns.commit(patch);
+				ownerCommitted = committed !== undefined;
 				if (committed) broadcastBridgeEvent('sessions:transcriptCommitted', [committed]);
 			}
 			for (const win of BrowserWindow.getAllWindows()) {
@@ -811,7 +813,7 @@ export function registerPersistenceHandlers(
 				}
 			}
 			broadcastBridgeEvent('sessions:transcriptSync', [patch]);
-			return true;
+			return ownerCommitted;
 		}
 	);
 	ipcMain.handle('sessions:getBootstrap', async (event) => {
