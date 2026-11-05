@@ -162,4 +162,84 @@ describe('worktree retirement admission', () => {
 		).rejects.toThrow('preparing');
 		expect(operation).not.toHaveBeenCalled();
 	});
+	it('requires the sole loaded primary and the actual renderer object', () => {
+		const { checkout, fence } = setup();
+		const renderer = {};
+		expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+		const primary = fence.admitClient('primary');
+		if (!primary.ok) throw new Error(primary.reason);
+		expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+		primary.loaded(renderer);
+		expect(fence.prepare(checkout).ok).toBe(false);
+		expect(fence.prepareForRenderer(checkout, {}).ok).toBe(false);
+		expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(true);
+	});
+	it.each(['web', 'secondary', 'primary'] as const)(
+		'blocks preparation through the entire additional %s client lifetime',
+		(kind) => {
+			const { checkout, fence } = setup();
+			const renderer = {};
+			const primary = fence.admitClient('primary');
+			const other = fence.admitClient(kind);
+			if (!primary.ok || !other.ok) throw new Error('admission failed');
+			primary.loaded(renderer);
+			expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+			other.invalidate();
+			expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+			other.release();
+			other.release();
+			expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(true);
+		}
+	);
+	it.each(['web', 'secondary', 'primary'] as const)(
+		'refuses new %s clients synchronously while reserved or removing',
+		(kind) => {
+			const { checkout, fence } = setup();
+			const prepared = fence.prepare(checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			expect(fence.admitClient(kind).ok).toBe(false);
+			expect(fence.commit(prepared.token)).toBe(true);
+			expect(fence.admitClient(kind).ok).toBe(false);
+			expect(fence.complete(prepared.token)).toBe(true);
+			expect(fence.admitClient(kind).ok).toBe(true);
+		}
+	);
+	it('invalidates stale preparation on reload and refuses old tokens after reloading', () => {
+		const { checkout, fence } = setup();
+		const renderer = {};
+		const primary = fence.admitClient('primary');
+		if (!primary.ok) throw new Error(primary.reason);
+		primary.loaded(renderer);
+		const prepared = fence.prepareForRenderer(checkout, renderer);
+		if (!prepared.ok) throw new Error(prepared.reason);
+		primary.invalidate();
+		expect(fence.commit(prepared.token)).toBe(false);
+		expect(fence.state(checkout.path)).toBe('available');
+		expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+		primary.loaded(renderer);
+		const next = fence.prepareForRenderer(checkout, renderer);
+		if (!next.ok) throw new Error(next.reason);
+		expect(next.token).not.toBe(prepared.token);
+		expect(fence.commit(prepared.token)).toBe(false);
+		expect(fence.commit(next.token)).toBe(true);
+		primary.invalidate();
+		primary.release();
+		expect(fence.abort(next.token)).toBe(false);
+		expect(fence.state(checkout.path)).toBe('removing');
+		expect(fence.admitClient('web').ok).toBe(false);
+		expect(fence.complete(next.token)).toBe(true);
+	});
+	it('does not resurrect a closed renderer from a delayed load callback', () => {
+		const { checkout, fence } = setup();
+		const renderer = {};
+		const primary = fence.admitClient('primary');
+		if (!primary.ok) throw new Error(primary.reason);
+		primary.loaded(renderer);
+		const prepared = fence.prepareForRenderer(checkout, renderer);
+		if (!prepared.ok) throw new Error(prepared.reason);
+		primary.release();
+		primary.loaded(renderer);
+		expect(fence.commit(prepared.token)).toBe(false);
+		expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+	});
 });

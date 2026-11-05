@@ -273,6 +273,23 @@ The `createWindowManager()` factory returns a `WindowManager` with a `createWind
    - **Development**: Dev server URL (`http://localhost:{port}`), installs React DevTools
    - **Production**: Loads renderer HTML file from disk
 
+### Worktree retirement client ownership
+
+The shared window factory admits each primary/secondary window through
+`worktreeRetirement.admitClient()` before constructing its `BrowserWindow`.
+WebSocket upgrades use the same fence after authentication and before initial
+sync or client callbacks. Additional windows and web clients block preparation
+until their actual close event; an error or close request does not release them.
+New clients are refused while any retirement is preparing or removing.
+
+`prepareForRenderer()` requires the actual Main-owned IPC sender to match the
+sole loaded primary window. Main-frame document navigation, renderer loss and
+window closure invalidate its prepared token; same-document navigation and
+subframe navigation do not. Once removal starts, owner loss cannot release the
+reservation. Loading does not constitute an authoritative renderer freeze
+acknowledgement. Cleanup still requires the remaining trusted Git/registration,
+renderer freeze and reconciliation transaction before it can be enabled.
+
 ### Security Hardening
 
 - **Window open handler**: All popup/new-window requests are denied

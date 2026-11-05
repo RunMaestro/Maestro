@@ -31,6 +31,7 @@ import { resolveVisibleWindowPosition, resolveWindowSizeConstraints } from './wi
 import { resolveLinuxWindowIconPath } from './app-icon';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
+import { worktreeRetirement } from '../git/worktreeRetirement';
 
 /** Bounds/state used to size and position a window at creation time. */
 interface WindowCreationBounds {
@@ -177,29 +178,47 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		const position = resolveVisibleWindowPosition({ x: bounds?.x, y: bounds?.y, width, height });
 		const linuxWindowIcon = resolveLinuxWindowIconPath();
 
-		const browserWindow = new BrowserWindow({
-			x: position.x,
-			y: position.y,
-			width,
-			height,
-			minWidth,
-			minHeight,
-			backgroundColor: '#0b0b0d',
-			// Linux binaries carry no icon; without this the window and taskbar
-			// entry draw the generic Electron icon (always for an AppImage).
-			...(linuxWindowIcon ? { icon: linuxWindowIcon } : {}),
-			...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
-			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
-			webPreferences: {
-				preload: preloadPath,
-				additionalArguments: preloadAdditionalArguments,
-				contextIsolation: true,
-				nodeIntegration: false,
-				sandbox: true,
-				spellcheck: true,
-				// Embedded browser tabs use Electron's guest webview surface in the renderer.
-				webviewTag: true,
-			},
+		const retirementClient = worktreeRetirement.admitClient(isMain ? 'primary' : 'secondary');
+		if (!retirementClient.ok) throw new Error(retirementClient.reason);
+		let browserWindow: BrowserWindow;
+		try {
+			browserWindow = new BrowserWindow({
+				x: position.x,
+				y: position.y,
+				width,
+				height,
+				minWidth,
+				minHeight,
+				backgroundColor: '#0b0b0d',
+				// Linux binaries carry no icon; without this the window and taskbar
+				// entry draw the generic Electron icon (always for an AppImage).
+				...(linuxWindowIcon ? { icon: linuxWindowIcon } : {}),
+				...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
+				...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
+				webPreferences: {
+					preload: preloadPath,
+					additionalArguments: preloadAdditionalArguments,
+					contextIsolation: true,
+					nodeIntegration: false,
+					sandbox: true,
+					spellcheck: true,
+					// Embedded browser tabs use Electron's guest webview surface in the renderer.
+					webviewTag: true,
+				},
+			});
+		} catch (error) {
+			retirementClient.release();
+			throw error;
+		}
+		// Register before loadURL or other initialization can expose a new owner.
+		browserWindow.on('closed', retirementClient.release);
+		browserWindow.webContents.on('destroyed', retirementClient.invalidate);
+		browserWindow.webContents.on('render-process-gone', retirementClient.invalidate);
+		browserWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+			if (isMainFrame && !isInPlace) retirementClient.invalidate();
+		});
+		browserWindow.webContents.on('did-finish-load', () => {
+			retirementClient.loaded(browserWindow.webContents);
 		});
 
 		// Restore maximized/fullscreen state after window is created

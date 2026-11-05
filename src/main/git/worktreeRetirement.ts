@@ -23,8 +23,22 @@ export type Preparation =
 	| { ok: true; token: RetirementToken; expected: Readonly<ManagedCheckout> }
 	| { ok: false; reason: string };
 
-type Entry = { identity: ManagedCheckout; state: RetirementState; token?: RetirementToken };
+type Entry = {
+	identity: ManagedCheckout;
+	state: RetirementState;
+	token?: RetirementToken;
+	owner?: object;
+};
 type Hold = { paths: string[] | null };
+type RetirementClient = { kind: 'primary' | 'secondary' | 'web'; renderer?: object };
+type ClientAdmission =
+	| { ok: false; reason: string }
+	| {
+			ok: true;
+			release: () => void;
+			invalidate: () => void;
+			loaded: (renderer: object) => void;
+	  };
 
 /** Only filesystem creation endpoints may resolve through genuinely missing entries. */
 function canonical(p: string, allowMissing = false): string | null {
@@ -46,6 +60,54 @@ export class WorktreeRetirement {
 	private readonly entries = new Map<string, Entry>();
 	private readonly holds = new Set<Hold>();
 	private readonly unsupportedExecutions = new Set<string | null>();
+	private readonly clients = new Map<object, RetirementClient>();
+
+	/** Admit before constructing a window or exposing a socket to any callback.
+	 * A client's lifetime ends on closed, never on an error or close request.
+	 */
+	admitClient(kind: RetirementClient['kind']): ClientAdmission {
+		if ([...this.entries.values()].some((e) => e.state === 'preparing' || e.state === 'removing'))
+			return { ok: false, reason: 'worktree retirement is in progress' };
+		const owner = Object.freeze({});
+		const client: RetirementClient = { kind };
+		this.clients.set(owner, client);
+		const invalidate = () => {
+			delete client.renderer;
+			for (const entry of this.entries.values()) {
+				if (entry.owner === owner && entry.state === 'preparing' && entry.token)
+					this.abort(entry.token);
+			}
+		};
+		return {
+			ok: true,
+			invalidate,
+			loaded: (renderer) => {
+				if (!this.clients.has(owner) || kind !== 'primary') return;
+				if (client.renderer !== renderer) invalidate();
+				client.renderer = renderer;
+			},
+			release: () => {
+				invalidate();
+				this.clients.delete(owner);
+			},
+		};
+	}
+
+	/** Main passes the actual IPC sender, never a renderer-supplied window id.
+	 * Loading alone is not a freeze acknowledgement; the caller must still obtain
+	 * the token/revision-bound authoritative renderer preparation before commit.
+	 */
+	prepareForRenderer(checkout: ManagedCheckout, renderer: object): Preparation {
+		const [[owner, client] = []] = this.clients;
+		if (this.clients.size !== 1 || client?.kind !== 'primary' || client.renderer !== renderer)
+			return {
+				ok: false,
+				reason: 'one loaded primary renderer required; additional clients unsupported',
+			};
+		const prepared = this.reserve(checkout);
+		if (prepared.ok) this.owned(prepared.token)!.owner = owner;
+		return prepared;
+	}
 
 	/**
 	 * Native transports have no concrete child/PTY completion guarantee here.
@@ -120,6 +182,11 @@ export class WorktreeRetirement {
 	}
 
 	prepare(checkout: ManagedCheckout): Preparation {
+		if (this.clients.size > 0) return { ok: false, reason: 'primary renderer ownership required' };
+		return this.reserve(checkout);
+	}
+
+	private reserve(checkout: ManagedCheckout): Preparation {
 		const root = canonical(checkout.path);
 		const entry = root && this.entries.get(root);
 		if (!root || !entry) return { ok: false, reason: 'unknown managed checkout' };
@@ -168,6 +235,7 @@ export class WorktreeRetirement {
 		if (!entry || entry.state !== 'preparing') return false;
 		entry.state = 'available';
 		delete entry.token;
+		delete entry.owner;
 		return true;
 	}
 
