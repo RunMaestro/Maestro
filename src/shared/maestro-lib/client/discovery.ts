@@ -48,6 +48,15 @@ export interface CliServerInfo {
 	 * bridge with no window. Read for the host label (`headless pid 812`).
 	 */
 	hostKind?: 'headless';
+	/**
+	 * The Cue lock owner token of the process that wrote this file
+	 * (`cueEngineLockOwnerToken()`). `maestro-cli host` writes it so the CLI
+	 * can tell whether the Cue lock is that host's own engine: a pid cannot,
+	 * since two containers sharing a data directory both run as pid 1. Absent
+	 * from the desktop app and from older hosts, which the CLI reads as "not
+	 * the host's engine".
+	 */
+	cueLockToken?: string;
 }
 
 /** Maestro's data directory, as every other reader resolves it (`resolveUserDataDir()`). */

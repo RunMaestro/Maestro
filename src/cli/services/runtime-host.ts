@@ -25,6 +25,7 @@ import {
 	type RuntimeServer,
 } from '../../shared/maestro-lib';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { cueEngineLockOwnerToken } from '../../main/cue/cue-engine-lock';
 import { startHostCue, type HostCue } from './host-cue';
 
 /** The runtime refused the directory: another host, a desktop, a held lock, a corrupt store. */
@@ -126,7 +127,10 @@ export async function startRuntimeHost(
 	let cue: HostCue = {
 		state: () => ({ state: 'disabled' }),
 		activeRuns: () => 0,
+		drain: async () => undefined,
+		forceStop: () => undefined,
 		stop: async () => undefined,
+		answer: async () => undefined,
 	};
 	let stopping: Promise<void> | undefined;
 	let finish!: () => void;
@@ -138,7 +142,9 @@ export async function startRuntimeHost(
 			// Unpublish first: nothing new should find a host that is going away.
 			deleteCliServerInfoFrom(paths.userDataDir, deps.pid);
 			// Cue first, and waited for: its runs are stopped and their processes gone before the
-			// runtime closes, so none outlives the host. A failure here must not strand the rest.
+			// runtime closes, so none outlives the host. After a signal this is the drain the signal
+			// started; otherwise (`host stop`, a lost directory) a drain with no wait, which still
+			// persists the queue. A failure here must not strand the rest.
 			try {
 				await cue.stop();
 			} catch (error) {
@@ -180,6 +186,8 @@ export async function startRuntimeHost(
 			cliSecret,
 			port: options.port,
 			onStopRequested: () => void stop(),
+			// `cue list`, `cue activity`, `cue enable|disable`: the host runs the engine they ask about.
+			answer: (message) => cue.answer(message),
 			describe: () => ({
 				cue: cue.state(),
 				cueRuns: cue.activeRuns(),
@@ -193,6 +201,9 @@ export async function startRuntimeHost(
 			startedAt: deps.now(),
 			cliSecret,
 			hostKind: 'headless',
+			// The engine this host runs writes this token into the Cue lock, so the CLI can tell that
+			// lock from another engine's on the same directory (`cue trigger` routes by it).
+			cueLockToken: cueEngineLockOwnerToken(),
 			...(options.version ? { version: options.version } : {}),
 		});
 		log(`Host serving ${paths.userDataDir} on 127.0.0.1:${server.port} (pid ${deps.pid}).`);
