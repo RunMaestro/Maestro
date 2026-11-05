@@ -125,14 +125,21 @@ export function createDesktopConsultRunner(
 						});
 					}
 				}
+				if (!result.success && spawnAttempted) {
+					return { success: false, unknown: true };
+				}
 				if (!result.success) {
-					if (!spawnAttempted) nativeAdmission?.notStarted?.();
+					nativeAdmission?.notStarted?.();
 					run.detach();
 					runs.delete(sessionId);
 				}
 				return result;
 			} catch (err) {
-				if (!spawnAttempted) nativeAdmission?.notStarted?.();
+				if (spawnAttempted) {
+					void captureException(err, { operation: 'crossAgent:spawnAck', processId: sessionId });
+					return { success: false, unknown: true };
+				}
+				nativeAdmission?.notStarted?.();
 				run.detach();
 				runs.delete(sessionId);
 				throw err;

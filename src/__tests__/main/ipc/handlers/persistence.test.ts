@@ -1887,8 +1887,6 @@ describe('persistence IPC handlers', () => {
 					}
 					if (
 						[
-							'partial-unknown',
-							'partial-unknown-false',
 							'terminal-journal',
 							'delete-row',
 							'callback-reset',
@@ -2099,13 +2097,18 @@ describe('persistence IPC handlers', () => {
 			}
 		);
 
-		it.each([false, true])(
-			'waits for both native consult replies then starts one host-derived continuation through owner IPC (fast=%s)',
-			async (fast) => {
+		it.each(['normal', 'fast', 'lost-throw', 'lost-false'] as const)(
+			'waits for both native consult replies then starts one host-derived continuation through owner IPC (%s)',
+			async (ack) => {
 				const local = await managedLocalFixture('consult-first');
 				try {
 					const f = await managedConsultFixture('consult-first', local);
-					if (fast)
+					if (ack.startsWith('lost'))
+						f.manager.spawn.mockImplementationOnce(() => {
+							if (ack === 'lost-throw') throw new Error('Lost spawn acknowledgement');
+							return { success: false, pid: -1 };
+						});
+					if (ack === 'fast')
 						f.manager.spawn.mockImplementationOnce((config) => {
 							const id = (config as { sessionId: string }).sessionId;
 							f.manager.emit('data', id, 'Actual A');
@@ -2147,6 +2150,66 @@ describe('persistence IPC handlers', () => {
 							.queueRouting!.steps.find((s) => s.kind === 'local')!.terminal?.text
 					).toBe('Synthesis');
 				} finally {
+					local.cleanup();
+				}
+			}
+		);
+
+		it.each(['failure', 'cancel', 'idle', 'hard', 'journal'] as const)(
+			'keeps a lost-ack consult supervised and the two-target continuation fenced through %s',
+			async (ending) => {
+				const local = await managedLocalFixture('consult-first');
+				try {
+					vi.useFakeTimers();
+					const f = await managedConsultFixture('consult-first', local);
+					f.manager.spawn.mockImplementationOnce(() => {
+						throw new Error('Lost acknowledgement after native spawn');
+					});
+					const a = await f.start();
+					const b = await f.start('peer-b');
+					const id = `cross-agent-${a.requestId}`;
+					expect(f.chunks).toEqual([]);
+					expect(f.manager.listenerCount('exit')).toBe(2);
+					f.manager.emit('data', 'cross-agent-foreign', 'Foreign output');
+					f.manager.emit('exit', 'cross-agent-foreign', 0);
+					f.manager.emit('session-id', id, 'actual-late-session');
+					f.manager.emit('data', id, 'Actual late output');
+					f.manager.emit('data', `cross-agent-${b.requestId}`, 'Peer B');
+					f.manager.emit('exit', `cross-agent-${b.requestId}`, 0);
+					await expect(local.start()).rejects.toThrow('RepliesUnavailable');
+					if (ending === 'journal') {
+						const write = f.store.writeDispatchAdmission.bind(f.store);
+						vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+							if (record.queueRouting?.steps.some((s) => s.requestId === a.requestId && s.terminal))
+								throw new Error('ENOSPC');
+							write(record);
+						});
+					}
+					if (ending === 'cancel')
+						expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(1);
+					else if (ending === 'idle') await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+					else if (ending === 'hard') {
+						for (let n = 0; n < 6; n++) {
+							f.manager.emit('data', id, 'Still working');
+							await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+						}
+					} else f.manager.emit('exit', id, ending === 'failure' ? 1 : 0);
+					expect(f.manager.eventNames()).toEqual([]);
+					expect(f.chunks).toHaveLength(2);
+					const step = f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0];
+					if (ending === 'failure') expect(step.terminal?.error).toBeTruthy();
+					else {
+						expect(step.status).toBe('unknown');
+						expect(step.terminal).toBeUndefined();
+					}
+					if (['cancel', 'idle', 'hard'].includes(ending))
+						expect(f.manager.kill).toHaveBeenCalledExactlyOnceWith(id);
+					await expect(local.start()).rejects.toThrow();
+					await expect(f.start()).rejects.toThrow();
+					expect(local.spawn).not.toHaveBeenCalled();
+					expect(f.manager.spawn).toHaveBeenCalledTimes(2);
+				} finally {
+					vi.useRealTimers();
 					local.cleanup();
 				}
 			}
@@ -2759,12 +2822,18 @@ describe('persistence IPC handlers', () => {
 			await f.start();
 			expect(
 				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0]
-			).toMatchObject({ status: 'unknown', startError: 'Unknown native acknowledgement' });
+			).toMatchObject({ status: 'unknown' });
 			expect(
 				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal
 			).toBeUndefined();
 			await expect(f.start()).rejects.toThrow();
 			expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+			expect(f.chunks).toEqual([]);
+			expect(f.manager.listenerCount('exit')).toBe(1);
+			expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(1);
+			expect(f.manager.kill).toHaveBeenCalledExactlyOnceWith(
+				`cross-agent-${f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].requestId}`
+			);
 		});
 
 		it.each([

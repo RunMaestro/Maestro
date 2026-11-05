@@ -126,15 +126,15 @@ export interface ConsultEnd {
 
 /**
  * Starts and stops the one process a consult is made of. The runner attaches its listeners
- * BEFORE it spawns (no event is missed) and owns their release: a start that fails or throws
- * detaches by itself, so the service never has to guess what a failed start left behind.
+ * BEFORE it spawns (no event is missed) and owns their release. Definite nonstart detaches;
+ * an uncertain acknowledgement retains observation and Stop ownership until exit or stop.
  */
 export interface ConsultRunner {
-	/** Start the process. `success: false` is a refusal: nothing runs and no end will be reported. */
+	/** `unknown` retains supervision of a possible child; ordinary false proves nonstart. */
 	start(
 		spawn: GroupChatSpawn,
 		observer: ConsultObserver
-	): Promise<{ success: boolean; pid?: number; error?: string }>;
+	): Promise<{ success: boolean; unknown?: boolean; pid?: number; error?: string }>;
 	/**
 	 * Kill the process, detach, and answer whatever it had said so far (best effort, `''` when
 	 * unreadable). Idempotent, and safe for an id whose process does not exist yet.
@@ -589,11 +589,10 @@ export function createConsultService() {
 				},
 				observer
 			);
-			// The spawners CATCH their own failures and return `{ pid: -1, success: false }` rather
-			// than throwing. Such a process emits no end, so without this check the only thing that
-			// ever fires is the timeout - the user waits the full budget for a process that never
-			// existed.
-			if (!spawnResult.success) {
+			// Only a definite nonstart releases ownership here. A lost acknowledgement after the
+			// native boundary may have left a live child: keep Stop, silence/hard budgets and the
+			// observer until authentic terminal evidence arrives. Never infer success or resend.
+			if (!spawnResult.success && !spawnResult.unknown) {
 				if (!settled) {
 					settled = true;
 					release();
@@ -612,11 +611,15 @@ export function createConsultService() {
 				}
 				return;
 			}
-			logger.info(`${LOG_CONTEXT} Dispatched to ${target.name}`, LOG_CONTEXT, {
-				requestId: request.requestId,
-				targetToolType: target.toolType,
-				transcriptEntries: request.transcript.length,
-			});
+			logger.info(
+				`${LOG_CONTEXT} ${spawnResult.unknown ? 'Supervising uncertain start of' : 'Dispatched to'} ${target.name}`,
+				LOG_CONTEXT,
+				{
+					requestId: request.requestId,
+					targetToolType: target.toolType,
+					transcriptEntries: request.transcript.length,
+				}
+			);
 		} catch (err) {
 			// Spawn failed - tear down the supervision and surface a single error chunk.
 			if (!settled) {

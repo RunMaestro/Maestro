@@ -43,11 +43,27 @@ describe('desktop consult listener lifecycle', () => {
 				throw new Error('Spawn acknowledgement lost');
 			});
 			const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
-			if (scenario === 'unknown-false') await runner.start(spawn, observer);
-			else await expect(runner.start(spawn, observer)).rejects.toThrow();
+			if (scenario.startsWith('unknown')) {
+				const result = await runner.start(spawn, observer);
+				expect(result).toMatchObject({ success: false, unknown: true });
+				expect(result.pid).toBeUndefined();
+			} else await expect(runner.start(spawn, observer)).rejects.toThrow();
 			expect(notStarted).toHaveBeenCalledTimes(scenario.startsWith('unknown') ? 0 : 1);
 			expect(ended).not.toHaveBeenCalled();
 			expect(observer.onEnd).not.toHaveBeenCalled();
+			if (scenario.startsWith('unknown')) {
+				expect(emitter.listenerCount('exit')).toBe(1);
+				emitter.emit('exit', 'foreign-process', 0);
+				expect(ended).not.toHaveBeenCalled();
+				emitter.emit('data', spawn.processId, 'Late native answer');
+				emitter.emit('session-id', spawn.processId, 'native-session');
+				expect(observer.onActivity).toHaveBeenCalled();
+				expect(observer.onSessionId).toHaveBeenCalledExactlyOnceWith('native-session');
+				emitter.emit('exit', spawn.processId, 0);
+				expect(ended).toHaveBeenCalledExactlyOnceWith(spawn.processId);
+				expect(observer.onEnd).toHaveBeenCalledOnce();
+				expect(observer.onEnd.mock.calls[0][0].readText()).toBe('Late native answer');
+			}
 			expect(emitter.eventNames()).toEqual([]);
 		}
 	);
