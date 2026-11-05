@@ -81,7 +81,7 @@ export const BoardStatusIndicator = memo(function BoardStatusIndicator({
 	useEffect(() => {
 		if (!enabled || !projectRoot) return;
 		return window.maestro.board.onBoardChanged?.((payload) => {
-			if (payload?.projectRoot !== projectRoot) return;
+			if (payload?.projectRoot && payload.projectRoot !== projectRoot) return;
 			void refresh();
 		});
 	}, [enabled, projectRoot, refresh]);
