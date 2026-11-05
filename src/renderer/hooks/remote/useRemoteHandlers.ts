@@ -157,9 +157,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  to the active tab - callers chaining `--session <tabId>` would
 				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
-				/** When true, bypass the renderer's busy-state guard. Mirrors the
-				 *  server-side `force` bit so `dispatch --force` can land on a
-				 *  busy session without being dropped at this boundary. */
+				/** When true, the prompt may land in a tab that is itself mid-turn
+				 *  (`dispatch --force` behind `allowConcurrentSend`, a Cadenza
+				 *  decision answered mid-turn). An idle tab needs no force. */
 				force?: boolean;
 				/** Optional base64 data URLs pasted from a web/mobile client.
 				 *  Forwarded to the agent spawn so AI tabs can render and send
@@ -338,19 +338,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard - without that escape hatch, the renderer would
-			// silently drop forced dispatches and the server-side allow-list
-			// would be moot.
-			if (session.state === 'busy' && !force) {
-				logger.info('[Remote] Session is busy, cannot process command');
-				reportDelivery(false, 'session-busy');
-				return;
-			}
-
-			// Resolve the target tab BEFORE the slash-command branch so unknown-
-			// command error logs land on the targeted tab instead of whichever
-			// tab happens to be active. This also lets us short-circuit early
+			// Resolve the target tab BEFORE the busy guard and the slash-command
+			// branch: the guard is decided per tab, and unknown-command error logs
+			// must land on the targeted tab instead of whichever tab happens to be
+			// active. This also lets us short-circuit early
 			// when `--session <tabId>` names a tab that no longer exists, rather
 			// than silently re-routing to the active tab (which would mislead
 			// callers chaining `command_result.tabId` back as `--session`).
@@ -367,12 +358,24 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			const targetTab = requestedTab ?? getActiveTab(session);
 			const writeTabId = targetTab?.id;
 
+			// Busy guard, decided per TAB. A busy agent only means some tab of it is
+			// working; an idle tab beside it runs its own turn in parallel, the same
+			// as a desktop tab. Only a tab that is itself mid-turn is refused,
+			// because a second turn there interleaves two answers in one
+			// conversation. `force` (`dispatch --force` behind allowConcurrentSend,
+			// a Cadenza decision) lifts even that.
+			if (targetTab?.state === 'busy' && !force) {
+				logger.info('[Remote] Target tab is mid-turn, cannot process command');
+				reportDelivery(false, 'tab-busy');
+				return;
+			}
+
 			// Cross-agent @mentions, resolved the way the composer does it
 			// (useInputProcessing): a remote prompt is the same message a user would
 			// have typed, so a mention in it must consult the target agent too.
-			// The agent is idle here (the busy guard above), so the consult fires
-			// now; a busy agent's prompt goes through `dispatch --queue`, which
-			// stamps the intent on the queued item instead.
+			// The target tab is idle here (the busy guard above), so the consult
+			// fires now; a prompt that should wait goes through `dispatch --queue`,
+			// which stamps the intent on the queued item instead.
 			const mentionPlan = planCrossAgentMentions(command, sessionId);
 			if (mentionPlan?.suppressLocal) {
 				// Leading mention: addressed only at the consulted agent(s). This
