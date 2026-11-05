@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { configureIsolatedBoardSourceHost } from '../../../main/board/board-source-host';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
@@ -61,8 +62,21 @@ let prepare: ReturnType<
 		) => Promise<BoardPreparedContext>
 	>
 >;
+const fixture = createBoardIsolationFixture();
+beforeAll(() => {
+	fixture.install();
+	configureIsolatedBoardSourceHost(fixture.contract);
+});
+afterAll(async () => fixture.cleanup());
+
 const good: CardSpawnResult = {
-	output: '<!-- maestro:card-complete -->',
+	artifact: {
+		worktreePath: fixture.sources.one,
+		branch: 'fixture',
+		commit: 'a'.repeat(40),
+		diff: { baseCommit: 'b'.repeat(40), sha256: 'c'.repeat(64), stat: 'fixture' },
+	},
+	output: '<!-- maestro:card-complete | Fixture checks passed -->',
 	exitCode: 0,
 	executionStarted: true,
 	terminationConfirmed: true,
@@ -85,14 +99,14 @@ function newRuntime(
 	);
 }
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-cue-'));
-	db = openBoardDb(path.join(dir, 'fixture.sqlite'));
+	dir = fs.mkdtempSync(path.join(fixture.contract.root, 'cue-'));
+	db = openBoardDb(fixture.contract.db);
 	storage = new BoardStorageFacade(db, (root) => [root]);
 	roots = [path.join(dir, 'a'), path.join(dir, 'b')];
 	agents = [{ id: 'worker', groupId: 'group' }];
 	configureBoardCaptureHost(() => ({ agents, groups: [{ id: 'group' }] }));
 	for (let i = 0; i < roots.length; i++) {
-		fs.mkdirSync(roots[i]);
+		fs.mkdirSync(roots[i], { recursive: true });
 		const key = storage.workspace.createCollection({
 			sourceKey: roots[i],
 			collectionKey: `collection${i}`,
@@ -198,10 +212,11 @@ beforeEach(() => {
 });
 afterEach(() => {
 	configureBoardRuntimeHost(() => null);
-	configureBoardStorage(null);
 	configureBoardCaptureHost(() => ({ agents: [], groups: [] }));
 	db.close();
 	fs.rmSync(dir, { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(fixture.contract.db + suffix, { force: true });
 	vi.restoreAllMocks();
 });
 
@@ -278,14 +293,18 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		edit({ heldByUser: true }, 1);
 		await tick();
 		const spec = vi.mocked(service.spawn).mock.calls[0][0];
-		settle({ ...good, worktreePath: roots[0], worktreeBranch: 'board/completed' });
+		const result = { ...good, worktreePath: roots[0], worktreeBranch: 'board/completed' };
+		settle(result);
 		await cue.settle();
 		await Promise.all(completionTasks);
 		expect(storage.query({ sourceKey: roots[0] }).collections[0].board.cards[0].status).toBe(
 			'review'
 		);
 		expect(createPr).not.toHaveBeenCalled();
-		expect(runtime.complete(spec.runToken, good)).toMatchObject({ ok: true, duplicate: true });
+		expect(runtime.complete(spec.runToken, result)).toEqual({
+			ok: false,
+			reason: 'result-already-recorded',
+		});
 		await startBoardRunPr(spec, { createPr });
 		expect(createPr).not.toHaveBeenCalled();
 	});
@@ -584,7 +603,7 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		edit({ assigneeAgentId: 'worker' });
 		edit({ heldByUser: true }, 1);
 		db.prepare('DELETE FROM workers').run();
-		const other = openBoardDb(path.join(dir, 'fixture.sqlite'));
+		const other = openBoardDb(fixture.contract.db);
 		try {
 			configureBoardRuntimeHost(async (key, shouldPrepare) => {
 				const result = await cue.runtimeFor(key, shouldPrepare);
@@ -676,7 +695,7 @@ describe('global Cue intake on the shared persistent runtime', () => {
 					}).immediate();
 					db.close();
 				`,
-					path.join(dir, 'fixture.sqlite'),
+					fixture.contract.db,
 				]);
 			}
 			return revision;
