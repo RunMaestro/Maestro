@@ -63,14 +63,10 @@ function main() {
 	// silently add settings keys and invalidate the immutable catalog contract.
 	const settingsFile = path.join(contract.sync, 'maestro-settings.json');
 	const { SETTINGS_DEFAULTS } = require('../dist/main/stores/defaults.js');
-	fs.writeFileSync(
-		settingsFile,
-		JSON.stringify(
-			{ ...SETTINGS_DEFAULTS, ...JSON.parse(fs.readFileSync(settingsFile)) },
-			null,
-			2
-		) + '\n'
-	);
+	const settings = { ...SETTINGS_DEFAULTS, ...JSON.parse(fs.readFileSync(settingsFile)) };
+	if (process.argv[4] === '--authority')
+		settings.encoreFeatures = { ...settings.encoreFeatures, maestroCue: true };
+	fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
 	const admission = require('../dist/main/board/board-isolation.js');
 	admission.requireBoardIsolation({ expected: contract });
 	const { sessions, sources } = admission.readBoardIsolationRegistries(contract);

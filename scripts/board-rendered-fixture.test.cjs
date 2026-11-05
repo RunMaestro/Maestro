@@ -338,6 +338,10 @@ test(
 		);
 		t.after(() => fs.rmSync(contract.root, { recursive: true, force: true }));
 		assert.deepEqual(manifest.authority, binding.authorityRequest(contract));
+		assert.equal(
+			read(path.join(contract.sync, 'maestro-settings.json')).encoreFeatures.maestroCue,
+			true
+		);
 		const before = binding.sha(contract.db);
 		for (const authority of [
 			true,

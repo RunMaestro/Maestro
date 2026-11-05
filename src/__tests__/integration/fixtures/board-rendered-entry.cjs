@@ -146,7 +146,12 @@ async function main() {
 	assert.deepEqual(instances.sessionsStore.get('sessions'), registrations.sessions);
 	assert.deepEqual(instances.groupsStore.get('groups'), groups);
 	const settings = instances.settingsStore.get('encoreFeatures');
-	assert.ok(Object.entries(settings).every(([key, value]) => value === (key === 'board')));
+	assert.ok(
+		Object.entries(settings).every(
+			([key, value]) =>
+				value === (key === 'board' || (key === 'maestroCue' && !!manifest.authority))
+		)
+	);
 	assert.deepEqual(instances.settingsStore.get('sshRemotes'), []);
 	const sources = require(path.join(checkout, 'dist/main/board/board-source-host.js'));
 	const appendAgent = sources.configureIsolatedBoardSourceHost(contract, manifest.creation);
