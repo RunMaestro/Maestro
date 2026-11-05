@@ -35,7 +35,7 @@ import {
 	safeUpdateCueEventStatus,
 	type CueEventCompletionInfo,
 } from './cue-db';
-import type { CueQueuePersistence } from './cue-queue-persistence';
+import type { CueQueuePersistence, PersistableQueueEntry } from './cue-queue-persistence';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
 import { buildCuePersistedOutput, sliceHeadByChars } from './cue-text-utils';
 import { captureException } from '../utils/sentry';
@@ -386,6 +386,59 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 
 	function getSessionName(sessionId: string): string {
 		return deps.getSessions().find((s) => s.id === sessionId)?.name ?? sessionId;
+	}
+
+	/**
+	 * Drop this manager's in-memory queue. Ordinary persisted rows are removed
+	 * per row rather than a table wipe: cue.db is shared by every engine on the
+	 * data dir, and an engine that has lost its lock (or never held it) must not
+	 * delete the queue of the engine that holds it.
+	 *
+	 * Acknowledged durable plugin events remain on disk and are detached to the
+	 * engine so they re-enter the deferred-owner restore set on the next start.
+	 */
+	function forgetQueue(): void {
+		for (const [sessionId, queue] of eventQueue) {
+			const durable: QueuedEvent[] = [];
+			for (const entry of queue) {
+				if (!entry.persistId) continue;
+				if (isDurableCueEvent(entry.event)) {
+					durable.push(entry);
+				} else {
+					deps.queuePersistence?.remove(entry.persistId);
+				}
+			}
+			if (durable.length) deps.onDurableRowsDetached?.(sessionId, durable);
+		}
+		eventQueue.clear();
+	}
+
+	/**
+	 * The row a queued entry is persisted as. Both writers use it, the enqueue
+	 * in `execute()` and the drain's `persistQueueForRestart()`, so they cannot
+	 * drift: the drain used to rewrite the row without `autoRun`, `notify` and
+	 * `turnSettings`, and the entry came back as an Auto Run with no documents,
+	 * a notify with no config, and a run on the agent's default model.
+	 * `pipelineName` is not persisted (no column; see CLAUDE-CUE.md).
+	 */
+	function toPersistableEntry(entry: QueuedEvent, drainedAt?: number): PersistableQueueEntry {
+		return {
+			event: entry.event,
+			subscriptionName: entry.subscriptionName,
+			prompt: entry.prompt,
+			outputPrompt: entry.outputPrompt,
+			cliOutput: entry.cliOutput,
+			action: entry.action,
+			command: entry.command,
+			chainDepth: entry.chainDepth,
+			queuedAt: entry.queuedAt,
+			chainRootId: entry.chainRootId,
+			parentEventId: entry.parentEventId,
+			autoRun: entry.autoRun,
+			notify: entry.notify,
+			turnSettings: entry.turnSettings,
+			...(drainedAt !== undefined ? { drainedAt } : {}),
+		};
 	}
 
 	/**
@@ -1231,22 +1284,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// entries that actually made it into the live queue. Safe
 				// wrappers mean a persist failure cannot break the live queue.
 				if (deps.queuePersistence && persistId) {
-					const persisted = deps.queuePersistence.persist(sessionId, persistId, {
-						event,
-						subscriptionName,
-						prompt,
-						outputPrompt,
-						cliOutput,
-						action,
-						command,
-						chainDepth,
-						queuedAt,
-						chainRootId,
-						parentEventId,
-						autoRun,
-						notify,
-						turnSettings,
-					});
+					const persisted = deps.queuePersistence.persist(
+						sessionId,
+						persistId,
+						toPersistableEntry(queuedEntry)
+					);
 					if (isDurableCueEvent(event) && persisted !== true) {
 						queue.splice(queue.indexOf(queuedEntry), 1);
 						deps.queuePersistence.remove(persistId);
@@ -1383,13 +1425,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// function returns there are zero active runs AND zero queued
 			// events - the contract callers (engine shutdown / Cue toggle
 			// off) actually need.
-			const detachedQueues = [...eventQueue];
-			eventQueue.clear();
-			deps.queuePersistence?.clearAll();
-			for (const [sessionId, queue] of detachedQueues) {
-				const durable = queue.filter((entry) => entry.persistId && isDurableCueEvent(entry.event));
-				if (durable.length) deps.onDurableRowsDetached?.(sessionId, durable);
-			}
+			forgetQueue();
 			for (const runId of [...activeRuns.keys()]) {
 				this.stopRun(runId);
 			}
@@ -1419,20 +1455,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			for (const [sessionId, queue] of eventQueue) {
 				for (const entry of queue) {
 					if (!entry.persistId) entry.persistId = crypto.randomUUID();
-					persistence.persist(sessionId, entry.persistId, {
-						event: entry.event,
-						subscriptionName: entry.subscriptionName,
-						prompt: entry.prompt,
-						outputPrompt: entry.outputPrompt,
-						cliOutput: entry.cliOutput,
-						action: entry.action,
-						command: entry.command,
-						chainDepth: entry.chainDepth,
-						queuedAt: entry.queuedAt,
-						chainRootId: entry.chainRootId,
-						parentEventId: entry.parentEventId,
-						drainedAt,
-					});
+					persistence.persist(sessionId, entry.persistId, toPersistableEntry(entry, drainedAt));
 					count++;
 				}
 			}
@@ -1553,9 +1576,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			activeRuns.clear();
 			activeRunCount.clear();
 			activeRootKeys.clear();
-			eventQueue.clear();
 			// Reset clears ordinary persisted work; acknowledged plugin rows survive for restore.
-			deps.queuePersistence?.clearAll();
+			forgetQueue();
 			notifyIfIdle();
 		},
 	};
