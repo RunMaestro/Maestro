@@ -10,6 +10,7 @@ import {
 	yieldKeyToIme,
 } from '../../../renderer/hooks/input/composerKeyDown';
 import type { AgentMentionSuggestion } from '../../../shared/maestro-lib/mentions/roster';
+import { buildMentionAccept } from '../../../renderer/hooks/input/useMentionPicker';
 import { isImeComposing } from '../../../renderer/utils/ime';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../../../renderer/hooks/ui/useOutputSearchLayer';
@@ -549,6 +550,27 @@ describe('findPartialMentionAtCursor', () => {
 		});
 	});
 
+	it('includes the rest of a dotted agent name with the caret mid-token', () => {
+		expect(findPartialMentionAtCursor('ask @RunMaestr.ai', 14)).toEqual({
+			startIndex: 4,
+			filter: 'RunMaestr.ai',
+		});
+	});
+
+	it('includes dots in a dotted agent name with the caret at the end', () => {
+		expect(findPartialMentionAtCursor('ask @RunMaestro.ai', 18)).toEqual({
+			startIndex: 4,
+			filter: 'RunMaestro.ai',
+		});
+	});
+
+	it('keeps the sentence full stop out of the filter', () => {
+		expect(findPartialMentionAtCursor('ask @RunMaestro.ai.', 19)).toEqual({
+			startIndex: 4,
+			filter: 'RunMaestro.ai',
+		});
+	});
+
 	it('preserves opening quote and includes quoted tail across spaces', () => {
 		// Caret at end without closing quote
 		expect(findPartialMentionAtCursor('ask @"Alice B', 13)).toEqual({
@@ -721,6 +743,39 @@ describe('handleComposerAgentTabKey', () => {
 		expect(stopPropagation).not.toHaveBeenCalled();
 		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
 		expect(openPicker).not.toHaveBeenCalled();
+	});
+
+	it('completes a dotted name mid-token and leaves the sentence full stop', () => {
+		const value = 'ask @RunMaestr.ai.';
+		const inputRef = textareaRef();
+		inputRef.current!.value = value;
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 14;
+
+		const agent: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'RunMaestro.ai',
+			value: '@RunMaestro.ai ',
+			targetSessionId: 'sess-dot',
+			score: 10,
+		};
+		const { event } = keyEvent({ key: 'Tab' });
+		let accepted = '';
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => value,
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('RunMaestr.ai');
+				return [agent];
+			},
+			accept: (selected, startIndex, filter) => {
+				accepted = buildMentionAccept(value, startIndex, filter, selected).value;
+			},
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(accepted).toBe('ask @RunMaestro.ai .');
 	});
 
 	it('stops propagation when isolated from window keys', () => {

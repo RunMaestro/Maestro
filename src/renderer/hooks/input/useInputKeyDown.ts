@@ -45,6 +45,7 @@ import {
 	type AgentMentionSuggestion,
 } from '../input/useAgentMentionCompletion';
 import { useEventListener } from '../utils/useEventListener';
+import { getLiveSessionsSnapshot } from '../session/useLiveSessions';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 
@@ -647,7 +648,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 							const state = useSessionStore.getState();
 							const currentActiveSession = selectActiveSession(state);
 							const items = buildAgentMentionSuggestions(
-								state.sessions,
+								getLiveSessionsSnapshot(),
 								state.groups,
 								currentActiveSession?.id
 							);
