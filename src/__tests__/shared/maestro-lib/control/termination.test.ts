@@ -112,6 +112,7 @@ const asPty = (fake: FakePty) => fake as unknown as pty.IPty;
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.clearAllMocks();
+	mocks.execFile.mockImplementation(() => new EventEmitter());
 	mocks.isWindows.mockReturnValue(false);
 	mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [] });
 	// A refresh that finds nothing new hands the same record back.

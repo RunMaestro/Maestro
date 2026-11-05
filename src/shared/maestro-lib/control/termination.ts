@@ -132,9 +132,9 @@ const ladders = new WeakMap<object, Ladder>();
  *   process. Anything else gets the signal through its own handle and no more.
  *
  * Optional host activity guards requests and retained callbacks. Hosts must
- * observe returned promises to retain tree refresh work through settlement.
- * Taskkill/native tree ownership still needs separate coverage; this injection
- * alone does not establish a drained tree or safe cleanup.
+ * observe returned promises to retain tree refresh, taskkill native close and
+ * diagnostics through settlement. This does not establish a drained descendant
+ * tree or safe cleanup, or cover work launched before a host guard was adopted.
  */
 export function stopProcess(
 	target: StopTarget,
@@ -294,27 +294,48 @@ function createLadder(
 			}
 			return;
 		}
-		execFile('taskkill', args, (error) => {
-			if (!error) return;
-			// A process that exited before taskkill ran makes it fail benignly.
-			// Only a pipe child can prove it is still running (its exit state is
-			// locale-independent, unlike taskkill's message); a PTY cannot, so its
-			// failure is logged and not reported.
-			if (!target.child || !isRunning()) {
-				logger.debug('[Termination] taskkill failed, process may be gone', LOG_CONTEXT, {
-					...context,
-					pid,
-					error: String(error),
-				});
-				return;
+		void runActivity(() => {
+			const completion = Promise.withResolvers<void>();
+			// Observe before launch/listener setup. An unavailable close observer
+			// must keep the host blocked rather than release an unknown native child.
+			void runActivity(() => completion.promise);
+			let killer: ChildProcess;
+			try {
+				killer = execFile('taskkill', args, (error) =>
+					runActivity(() => {
+						if (!error) return;
+						// A process that exited before taskkill ran makes it fail benignly.
+						// Only a pipe child can prove it is still running; a PTY cannot.
+						if (!target.child || !isRunning()) {
+							logger.debug('[Termination] taskkill failed, process may be gone', LOG_CONTEXT, {
+								...context,
+								pid,
+								error: String(error),
+							});
+							return;
+						}
+						logger.warn('[Termination] taskkill failed for a running process', LOG_CONTEXT, {
+							...context,
+							pid,
+							error: String(error),
+						});
+						// A rejecting/throwing reporter cannot prevent the synchronous
+						// fallback. Hosts observe this promise independently of close.
+						const reporting = Promise.resolve()
+							.then(() => captureException(error, { operation: 'termination:taskkill', pid }))
+							.catch(() => {});
+						void runActivity(() => reporting);
+						killThroughHandle();
+					})
+				);
+			} catch (error) {
+				// A synchronous execFile throw created no child. Preserve the throw.
+				completion.resolve();
+				throw error;
 			}
-			logger.warn('[Termination] taskkill failed for a running process', LOG_CONTEXT, {
-				...context,
-				pid,
-				error: String(error),
-			});
-			void captureException(error, { operation: 'termination:taskkill', pid });
-			killThroughHandle();
+			// Neither the result callback, target exit nor ladder disposal proves
+			// this subprocess and its stdio have closed. Late callbacks admit anew.
+			killer.once('close', () => runActivity(() => completion.resolve()));
 		});
 	};
 
