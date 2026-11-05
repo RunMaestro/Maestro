@@ -9,7 +9,7 @@ import { execGitReadOnly } from '../utils/remote-git';
 
 export interface RetirementIntent {
 	version: 1;
-	phase: 'removing' | 'settled';
+	phase: 'removing' | 'settled' | 'cancelled';
 	checkout: ManagedCheckout;
 	archive: StoredRetiredWorktree;
 	parent: StoredSession;
@@ -28,7 +28,7 @@ export function readRetirementIntents(value: unknown): RetirementIntent[] {
 		const parent = intent?.parent;
 		if (
 			intent?.version !== 1 ||
-			!['removing', 'settled'].includes(intent.phase) ||
+			!['removing', 'settled', 'cancelled'].includes(intent.phase) ||
 			!owner ||
 			!archive?.session ||
 			!parent ||
@@ -48,7 +48,7 @@ export function readRetirementIntents(value: unknown): RetirementIntent[] {
 			typeof archive.id !== 'string' ||
 			!archive.id ||
 			ids.has(archive.id) ||
-			paths.has(foldPathCase(checkout.path)) ||
+			(intent.phase !== 'cancelled' && paths.has(foldPathCase(checkout.path))) ||
 			typeof owner.sessionId !== 'string' ||
 			!owner.sessionId ||
 			typeof owner.parentSessionId !== 'string' ||
@@ -80,7 +80,7 @@ export function readRetirementIntents(value: unknown): RetirementIntent[] {
 		)
 			throw new Error('Invalid retirement recovery identity');
 		ids.add(archive.id);
-		paths.add(foldPathCase(checkout.path));
+		if (intent.phase !== 'cancelled') paths.add(foldPathCase(checkout.path));
 	}
 	return intents;
 }

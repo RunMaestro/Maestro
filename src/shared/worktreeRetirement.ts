@@ -14,3 +14,10 @@ export type RetirementRendererReply =
 	| { ok: true; token: string; revision: number; snapshots?: unknown[] }
 	| { ok: false; reason: string };
 export type RetirementPreparationResult = RetirementRendererReply;
+
+export interface PendingRetirementRecovery {
+	id: string;
+	sessionId: string;
+	path: string;
+}
+export type RetirementRecoveryCancellation = { ok: true } | { ok: false; reason: string };

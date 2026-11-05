@@ -383,6 +383,46 @@ describe('persistence IPC handlers', () => {
 				await expect(f.source.writeRetirementIntent!(original)).rejects.toThrow('identity changed');
 				expect(f.fence.complete(f.token)).toBe(true);
 			});
+			it('durably cancels only an existing unarchived intent and admits a fresh journal identity', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				await f.fence.beginRemoval(f.token);
+				const original = structuredClone(f.document.worktreeRetirements![0]);
+				const saved = structuredClone(f.document.sessions);
+				const cancelled = { ...original, phase: 'cancelled' as const };
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('disk full'));
+				await expect(f.source.writeRetirementIntent!(cancelled)).rejects.toThrow('disk full');
+				expect(f.document.worktreeRetirements![0].phase).toBe('cancelled');
+				await f.source.writeRetirementIntent!(cancelled);
+				await expect(f.source.writeRetirementIntent!(original)).rejects.toThrow('identity changed');
+				await expect(
+					f.source.writeRetirementIntent!({ ...cancelled, phase: 'settled' })
+				).rejects.toThrow('identity changed');
+				const fresh = { ...original, archive: { ...original.archive, id: 'fresh-retirement' } };
+				await expect(
+					f.source.writeRetirementIntent!({ ...fresh, phase: 'cancelled' })
+				).rejects.toThrow('unarchived pending');
+				await f.source.writeRetirementIntent!(fresh);
+				expect(f.document.worktreeRetirements).toHaveLength(2);
+				expect(f.document.sessions).toEqual(saved);
+				expect(f.document.retiredWorktrees).toBeUndefined();
+			});
+			it('refuses cancellation when the registration is missing or already archived', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				await f.fence.beginRemoval(f.token);
+				const intent = structuredClone(f.document.worktreeRetirements![0]);
+				f.document.retiredWorktrees = [intent.archive];
+				await expect(
+					f.source.writeRetirementIntent!({ ...intent, phase: 'cancelled' })
+				).rejects.toThrow('unarchived pending');
+				f.document.retiredWorktrees = [];
+				f.document.sessions = [intent.parent];
+				await expect(
+					f.source.writeRetirementIntent!({ ...intent, phase: 'cancelled' })
+				).rejects.toThrow('child changed');
+				expect(f.document.worktreeRetirements![0].phase).toBe('removing');
+			});
 			it('durably saves the final frozen chat and PR snapshot before archiving it', async () => {
 				const f = await prepareRemoval();
 				const snapshots = structuredClone(f.document.sessions);

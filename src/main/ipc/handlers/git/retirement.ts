@@ -16,10 +16,39 @@ export function registerRetirementHandlers(): void {
 	for (const channel of [
 		'git:prepareWorktreeRetirement',
 		'git:abortWorktreeRetirement',
+		'git:getWorktreeRetirementRecoveries',
+		'git:cancelWorktreeRetirementRecovery',
 		'git:retirementRendererRequest',
 		'git:retirementRendererRelease',
 	])
 		markDesktopOnlyChannel(channel);
+	ipcMain.handle(
+		'git:getWorktreeRetirementRecoveries',
+		withErrorLogging(handlerOpts('getWorktreeRetirementRecoveries'), async (event) => {
+			if (
+				!BrowserWindow.fromWebContents(event.sender) ||
+				event.senderFrame !== event.sender.mainFrame
+			)
+				throw new Error('desktop main frame required');
+			return worktreeRetirement.pendingRecoveries();
+		})
+	);
+	ipcMain.handle(
+		'git:cancelWorktreeRetirementRecovery',
+		withErrorLogging(
+			handlerOpts('cancelWorktreeRetirementRecovery'),
+			async (event: Electron.IpcMainInvokeEvent, id: string) => {
+				if (
+					!BrowserWindow.fromWebContents(event.sender) ||
+					event.senderFrame !== event.sender.mainFrame ||
+					typeof id !== 'string' ||
+					!id
+				)
+					return { ok: false, reason: 'desktop main frame and recovery id required' };
+				return worktreeRetirement.cancelRecoveredRemoval(id, event.sender);
+			}
+		)
+	);
 	ipcMain.handle(
 		'git:prepareWorktreeRetirement',
 		withErrorLogging(

@@ -16,7 +16,9 @@ export interface RetirementRegistrationSource {
 	persistPrepared?(sessions: StoredSession[], isCurrent: () => boolean): Promise<void>;
 	/** Internal token-owned caller already holds the sessions lane and removal fence. */
 	reconcileRetired?(record: StoredRetiredWorktree, parent: StoredSession): Promise<void>;
-	/** Internal only, called in the same serialized lane and awaited through disk flush. */
+	/** Internal only, called in the same serialized lane and awaited through disk flush.
+	 * Cancellation retains both registrations and requires the original pending intent.
+	 */
 	writeRetirementIntent?(intent: RetirementIntent): Promise<void>;
 }
 

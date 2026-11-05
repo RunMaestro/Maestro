@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
 	prepare: vi.fn(),
 	abort: vi.fn(),
 	request: vi.fn(),
+	recoveries: vi.fn(),
+	cancel: vi.fn(),
 }));
 vi.mock('electron', () => ({
 	BrowserWindow: { fromWebContents: mocks.from },
@@ -15,7 +17,12 @@ vi.mock('electron', () => ({
 			mocks.handlers.set(name, handler),
 	},
 }));
-vi.mock('../../../main/git/worktreeRetirement', () => ({ worktreeRetirement: {} }));
+vi.mock('../../../main/git/worktreeRetirement', () => ({
+	worktreeRetirement: {
+		pendingRecoveries: mocks.recoveries,
+		cancelRecoveredRemoval: mocks.cancel,
+	},
+}));
 vi.mock('../../../main/git/worktreeRetirementHost', () => ({
 	WorktreeRetirementHost: class {
 		prepare = mocks.prepare;
@@ -47,10 +54,50 @@ describe('retirement Git IPC adapter', () => {
 	it.each([
 		'prepareWorktreeRetirement',
 		'abortWorktreeRetirement',
+		'getWorktreeRetirementRecoveries',
+		'cancelWorktreeRetirementRecovery',
 		'retirementRendererRequest',
 		'retirementRendererRelease',
 	])('marks %s desktop-only at registration', (name) => {
 		expect(isDesktopOnlyChannel(`git:${name}`)).toBe(true);
+	});
+	it('reads recovery ids and binds cancellation to the actual desktop sender', async () => {
+		const event = sender();
+		mocks.from.mockReturnValue({});
+		mocks.recoveries.mockReturnValue([{ id: 'archive', sessionId: 'child', path: '/owned' }]);
+		mocks.cancel.mockResolvedValue({ ok: true });
+		expect(await invoke('getWorktreeRetirementRecoveries', event)).toHaveLength(1);
+		expect(
+			await invoke('cancelWorktreeRetirementRecovery', event, 'archive', { identity: {} })
+		).toEqual({ ok: true });
+		expect(mocks.cancel).toHaveBeenCalledWith('archive', event.sender);
+	});
+	it('refuses recovery cancellation from subframes, absent windows and invalid ids', async () => {
+		const event = sender();
+		mocks.from.mockReturnValue({});
+		expect(
+			await invoke('cancelWorktreeRetirementRecovery', { ...event, senderFrame: {} }, 'archive')
+		).toMatchObject({ ok: false });
+		expect(await invoke('cancelWorktreeRetirementRecovery', event, '')).toMatchObject({
+			ok: false,
+		});
+		mocks.from.mockReturnValue(null);
+		expect(await invoke('cancelWorktreeRetirementRecovery', event, 'archive')).toMatchObject({
+			ok: false,
+		});
+		expect(mocks.cancel).not.toHaveBeenCalled();
+	});
+	it('refuses recovery listing outside a desktop main frame', async () => {
+		const event = sender();
+		mocks.from.mockReturnValue({});
+		await expect(
+			invoke('getWorktreeRetirementRecoveries', { ...event, senderFrame: {} })
+		).rejects.toThrow('desktop main frame');
+		mocks.from.mockReturnValue(null);
+		await expect(invoke('getWorktreeRetirementRecoveries', event)).rejects.toThrow(
+			'desktop main frame'
+		);
+		expect(mocks.recoveries).not.toHaveBeenCalled();
 	});
 	it('refuses subframes and missing BrowserWindows before any preparation', async () => {
 		const event = sender();

@@ -321,6 +321,18 @@ the parent is released. Real local Git fixtures exercise these paths with mocked
 GitHub responses. This transaction is not exposed through IPC yet: durable crash
 recovery, concrete watcher settlement and policy/UI admission remain prerequisites.
 
+Restored, fully present checkouts can be cancelled through the desktop Git API's
+`getWorktreeRetirementRecoveries()` / `cancelWorktreeRetirementRecovery(id)`.
+Main verifies the sole loaded primary and its document revision, both saved
+registrations, surviving Git registry and canonical child ownership in the
+existing sessions write lane. Only a durable `cancelled` journal acknowledgement
+releases that recovery token. Failed writes, reloads, replaced checkouts and
+removed/partial outcomes remain fenced. Cancellation preserves registrations,
+files and history; any later removal needs a new preparation and journal id.
+Startup retains cancelled journal history without restoring its fence. This API
+does not repeat Git removal or provide a cleanup UI; removed-outcome watcher and
+renderer recovery settlement still needs integration.
+
 ### Security Hardening
 
 - **Window open handler**: All popup/new-window requests are denied

@@ -299,15 +299,16 @@ export function registerPersistenceHandlers(
 			if (
 				previous &&
 				(canonicalJson({ ...previous, phase: intent.phase }) !== canonicalJson(intent) ||
-					(previous.phase === 'settled' && intent.phase !== 'settled'))
+					(previous.phase !== 'removing' && intent.phase !== previous.phase))
 			)
 				throw new Error('Retirement journal identity changed');
 			if (
 				!previous &&
 				journal.some(
 					(record) =>
-						record.archive.session.id === intent.archive.session.id ||
-						record.checkout.path === intent.checkout.path
+						record.phase !== 'cancelled' &&
+						(record.archive.session.id === intent.archive.session.id ||
+							record.checkout.path === intent.checkout.path)
 				)
 			)
 				throw new Error('Retirement journal already owns checkout');
@@ -316,12 +317,20 @@ export function registerPersistenceHandlers(
 			if (parents.length !== 1 || canonicalJson(parents[0]) !== canonicalJson(intent.parent))
 				throw new Error('Retirement journal parent changed');
 			const children = sessions.filter((s) => s.id === intent.archive.session.id);
-			if (intent.phase === 'removing') {
+			if (intent.phase !== 'settled') {
 				if (
 					children.length !== 1 ||
 					canonicalJson(children[0]) !== canonicalJson(intent.archive.session)
 				)
 					throw new Error('Retirement journal child changed');
+				if (
+					intent.phase === 'cancelled' &&
+					(!previous ||
+						sessionsStore
+							.get('retiredWorktrees', [])
+							.some((r) => r.session.id === intent.archive.session.id))
+				)
+					throw new Error('Retirement cancellation requires an unarchived pending checkout');
 			} else {
 				const archives = sessionsStore
 					.get('retiredWorktrees', [])

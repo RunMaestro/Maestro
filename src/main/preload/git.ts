@@ -475,6 +475,13 @@ export function createGitApi() {
 			ipcRenderer.invoke('git:prepareWorktreeRetirement', sessionId),
 		abortWorktreeRetirement: (token: string): Promise<boolean> =>
 			ipcRenderer.invoke('git:abortWorktreeRetirement', token),
+		getWorktreeRetirementRecoveries: (): Promise<
+			import('../../shared/worktreeRetirement').PendingRetirementRecovery[]
+		> => ipcRenderer.invoke('git:getWorktreeRetirementRecoveries'),
+		cancelWorktreeRetirementRecovery: (
+			id: string
+		): Promise<import('../../shared/worktreeRetirement').RetirementRecoveryCancellation> =>
+			ipcRenderer.invoke('git:cancelWorktreeRetirementRecovery', id),
 		onRetirementRendererRequest: (
 			handler: (command: RetirementRendererCommand) => RetirementRendererReply
 		) => {

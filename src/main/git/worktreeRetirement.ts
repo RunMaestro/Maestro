@@ -54,7 +54,11 @@ type Entry = {
 	};
 };
 type Hold = { paths: string[] | null };
-type RetirementClient = { kind: 'primary' | 'secondary' | 'web'; renderer?: object };
+type RetirementClient = {
+	kind: 'primary' | 'secondary' | 'web';
+	renderer?: object;
+	revision: number;
+};
 type ClientAdmission =
 	| { ok: false; reason: string }
 	| {
@@ -101,6 +105,7 @@ export class WorktreeRetirement {
 		if (this.clients.size || this.holds.size || this.entries.size)
 			throw new Error('Retirement recovery must precede admissions');
 		for (const intent of readRetirementIntents(value)) {
+			if (intent.phase === 'cancelled') continue;
 			this.entries.set(foldPathCase(intent.checkout.path), {
 				identity: intent.checkout,
 				state: intent.phase === 'settled' ? 'removed' : 'removing',
@@ -141,6 +146,82 @@ export class WorktreeRetirement {
 						: outcome.reason,
 			};
 		return this.reconcileRemovedRegistration(entry.token);
+	}
+
+	/** Cancel only a restored, fully present checkout. Never retry Git removal or
+	 * transfer its token to a new preparation. The original fence survives failed
+	 * durability, changed ownership, reloads and concurrent recovery requests.
+	 */
+	async cancelRecoveredRemoval(id: string, renderer: object) {
+		const entry = [...this.entries.values()].find(
+			(e) => e.recovered && e.intent?.archive.id === id
+		);
+		const token = entry?.token;
+		const source = entry?.registration?.source;
+		const client = [...this.clients.values()][0];
+		if (
+			!entry?.intent ||
+			!token ||
+			entry.state !== 'removing' ||
+			entry.registration?.reconciled ||
+			!source?.writeRetirementIntent ||
+			source !== this.registrationSource ||
+			this.clients.size !== 1 ||
+			client?.kind !== 'primary' ||
+			client.renderer !== renderer
+		)
+			return { ok: false as const, reason: 'Loaded primary and pending recovery required' };
+		const revision = client.revision;
+		const isCurrent = () =>
+			this.owned(token) === entry &&
+			entry.state === 'removing' &&
+			!entry.registration?.reconciled &&
+			this.registrationSource === source &&
+			this.clients.size === 1 &&
+			[...this.clients.values()][0] === client &&
+			client.renderer === renderer &&
+			client.revision === revision;
+		try {
+			return await source.enqueue(async () => {
+				if (!isCurrent()) throw new Error('Recovery cancellation owner changed');
+				const generation = source.generation();
+				const { child, parent } = retirementRegistrationPair(
+					source.read(),
+					entry.intent!.archive.session.id
+				);
+				if (
+					canonicalJson(child) !== canonicalJson(entry.intent!.archive.session) ||
+					canonicalJson(parent) !== canonicalJson(entry.intent!.parent)
+				)
+					throw new Error('Recovery cancellation registration changed');
+				const outcome = await inspectRetirementOutcome(entry.intent!);
+				if (outcome.state !== 'present')
+					throw new Error('Only a fully present checkout can cancel recovery');
+				// Registry presence alone cannot rule out a replaced child/gitfile.
+				const current = await verifyRetirementOwnership(
+					source.read(),
+					entry.intent!.archive.session.id,
+					generation
+				);
+				if (
+					!isCurrent() ||
+					source.generation() !== generation ||
+					canonicalJson(current) !== canonicalJson({ ...entry.identity, generation })
+				)
+					throw new Error('Recovery cancellation ownership changed');
+				await source.writeRetirementIntent!({ ...entry.intent!, phase: 'cancelled' });
+				if (!isCurrent() || source.generation() !== generation)
+					throw new Error('Recovery cancellation changed during persistence');
+				// No await between durable acknowledgement and releasing this token.
+				this.entries.delete(foldPathCase(entry.identity.path));
+				return { ok: true as const };
+			});
+		} catch (error) {
+			return {
+				ok: false as const,
+				reason: error instanceof Error ? error.message : 'Recovery cancellation pending',
+			};
+		}
 	}
 
 	/** Persistence owns this source and its generation; no IPC input can replace it. */
@@ -332,9 +413,10 @@ export class WorktreeRetirement {
 		)
 			return { ok: false, reason: 'worktree retirement is in progress' };
 		const owner = Object.freeze({});
-		const client: RetirementClient = { kind };
+		const client: RetirementClient = { kind, revision: 0 };
 		this.clients.set(owner, client);
 		const invalidate = () => {
+			client.revision++;
 			delete client.renderer;
 			for (const entry of this.entries.values()) {
 				if (entry.owner === owner && entry.state === 'preparing' && entry.token)

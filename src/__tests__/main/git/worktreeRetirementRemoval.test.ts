@@ -213,6 +213,158 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 }
 
 describe('checked worktree removal with real local Git fixtures', () => {
+	async function recoverPresent() {
+		const f = await setup();
+		adapter.beforeRemove.mockRejectedValueOnce(new Error('interrupted before Git'));
+		expect((await f.remove()).status).toBe('pending');
+		const restarted = new WorktreeRetirement();
+		restarted.restoreRetirements(structuredClone(f.journal));
+		restarted.bindRegistrationSource(f.source);
+		const renderer = {};
+		const client = restarted.admitClient('primary');
+		if (!client.ok) throw new Error(client.reason);
+		client.loaded(renderer);
+		const id = f.journal[0].archive.id;
+		return {
+			...f,
+			restarted,
+			renderer,
+			client,
+			id,
+			cancel: () => restarted.cancelRecoveredRemoval(id, renderer),
+		};
+	}
+	it('durably cancels a fully present recovery and requires a fresh preparation', async () => {
+		const f = await recoverPresent();
+		const original = structuredClone(f.source.read());
+		expect(await f.cancel()).toEqual({ ok: true });
+		expect(f.journal[0].phase).toBe('cancelled');
+		expect(f.source.read()).toEqual(original);
+		expect(f.archive).toEqual([]);
+		expect(existsSync(f.root)).toBe(true);
+		expect(f.restarted.pendingRecoveries()).toEqual([]);
+		for (const p of [f.root, f.parent]) {
+			const admission = f.restarted.admit([p]);
+			expect(admission.ok).toBe(true);
+			if (admission.ok) admission.release();
+		}
+		const prepared = await f.restarted.prepareRegisteredForRenderer('child', f.renderer);
+		expect(prepared.ok).toBe(true);
+		if (!prepared.ok) throw new Error(prepared.reason);
+		await f.restarted.beginRemoval(prepared.token);
+		expect(f.journal).toHaveLength(2);
+		expect(f.journal[1].archive.id).not.toBe(f.id);
+		const next = new WorktreeRetirement();
+		next.restoreRetirements(f.journal);
+		expect(next.pendingRecoveries()).toHaveLength(1);
+		expect(next.pendingRecoveries()[0].id).toBe(f.journal[1].archive.id);
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('restores cancelled history without fencing the preserved checkout or parent', async () => {
+		const f = await recoverPresent();
+		expect(await f.cancel()).toEqual({ ok: true });
+		const next = new WorktreeRetirement();
+		next.restoreRetirements(f.journal);
+		expect(next.pendingRecoveries()).toEqual([]);
+		expect(next.admit([f.root]).ok).toBe(true);
+		expect(next.admit([f.parent]).ok).toBe(true);
+	});
+	it('cannot cancel a live Git runner using its durable journal id', async () => {
+		const f = await setup();
+		adapter.beforeRemove.mockImplementationOnce(async () => {
+			expect(
+				await f.fence.cancelRecoveredRemoval(f.journal[0].archive.id, f.identity)
+			).toMatchObject({ ok: false });
+			expect(f.fence.admit([f.root]).ok).toBe(false);
+			expect(f.fence.admit([f.parent]).ok).toBe(false);
+		});
+		expect(await f.remove()).toEqual({ status: 'removed' });
+		expect(f.journal[0].phase).toBe('settled');
+	});
+	it('requires the sole loaded primary and a current recovery id to cancel', async () => {
+		const f = await recoverPresent();
+		expect(await f.restarted.cancelRecoveredRemoval(f.id, {})).toMatchObject({ ok: false });
+		expect(await f.restarted.cancelRecoveredRemoval('unknown', f.renderer)).toMatchObject({
+			ok: false,
+		});
+		f.client.invalidate();
+		expect(await f.cancel()).toMatchObject({ ok: false });
+		expect(f.journal[0].phase).toBe('removing');
+		expect(f.restarted.admit([f.parent]).ok).toBe(false);
+	});
+	it('holds both fences through an uncertain cancellation flush and retries the same id', async () => {
+		const f = await recoverPresent();
+		const write = f.writeIntent.getMockImplementation()!;
+		f.writeIntent.mockImplementationOnce(async (intent) => {
+			await write(intent);
+			expect(f.restarted.admit([f.root]).ok).toBe(false);
+			expect(f.restarted.admit([f.parent]).ok).toBe(false);
+			throw new Error('uncertain cancellation flush');
+		});
+		expect(await f.cancel()).toMatchObject({ ok: false, reason: 'uncertain cancellation flush' });
+		expect(f.journal[0].phase).toBe('cancelled');
+		expect(f.restarted.state(f.root)).toBe('removing');
+		expect(await f.cancel()).toEqual({ ok: true });
+		expect(f.journal).toHaveLength(1);
+		expect(f.journal[0].archive.id).toBe(f.id);
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('rejects a late cancellation acknowledgement across reload of the same IPC sender', async () => {
+		const f = await recoverPresent();
+		const write = f.writeIntent.getMockImplementation()!;
+		f.writeIntent.mockImplementationOnce(async (intent) => {
+			await write(intent);
+			f.client.invalidate();
+			f.client.loaded(f.renderer);
+		});
+		expect(await f.cancel()).toMatchObject({
+			ok: false,
+			reason: expect.stringContaining('changed during persistence'),
+		});
+		expect(f.restarted.admit([f.parent]).ok).toBe(false);
+		expect(await f.cancel()).toEqual({ ok: true });
+	});
+	it.each(['registration', 'checkout', 'head'])(
+		'refuses cancellation after %s replacement instead of trusting registry presence',
+		async (kind) => {
+			const f = await recoverPresent();
+			if (kind === 'registration') f.source.read()[0].name = 'Changed';
+			if (kind === 'checkout') {
+				renameSync(f.root, join(f.dir, 'preserved-child'));
+				mkdirSync(f.root);
+			}
+			if (kind === 'head') {
+				writeFileSync(join(f.root, 'extra.txt'), 'unreviewed');
+				await f.git(f.root, 'add', '.');
+				await f.git(f.root, 'commit', '-m', 'unreviewed');
+			}
+			expect(await f.cancel()).toMatchObject({ ok: false });
+			expect(f.restarted.admit([f.parent]).ok).toBe(false);
+			expect(f.journal[0].phase).toBe('removing');
+			expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+		}
+	);
+	it('serializes concurrent cancellation and refuses removed outcomes', async () => {
+		const f = await recoverPresent();
+		const results = await Promise.all([f.cancel(), f.cancel()]);
+		expect(results.filter((r) => r.ok)).toHaveLength(1);
+		expect(f.journal).toHaveLength(1);
+		const removed = await setup();
+		removed.watchers.mockRejectedValueOnce(new Error('lost completion'));
+		expect((await removed.remove()).status).toBe('pending');
+		const restarted = new WorktreeRetirement();
+		restarted.restoreRetirements(removed.journal);
+		restarted.bindRegistrationSource(removed.source);
+		const client = restarted.admitClient('primary');
+		if (!client.ok) throw new Error(client.reason);
+		const renderer = {};
+		client.loaded(renderer);
+		expect(
+			await restarted.cancelRecoveredRemoval(removed.journal[0].archive.id, renderer)
+		).toMatchObject({ ok: false });
+		expect(restarted.admit([removed.parent]).ok).toBe(false);
+		expect(removed.journal[0].phase).toBe('removing');
+	});
 	it('makes the original archive durable before Git and keeps owner loss fenced during that write', async () => {
 		const f = await setup();
 		const write = f.writeIntent.getMockImplementation()!;
