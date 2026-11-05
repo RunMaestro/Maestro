@@ -1,3 +1,4 @@
+import { startReleasedQueueConsult } from '../../pianola/pianola-queue-routing';
 /**
  * Cross-Agent Dispatch IPC Handlers (Phase 03).
  *
@@ -60,6 +61,7 @@ export interface CrossAgentHandlerDependencies {
 	getCustomEnvVars?: (toolType: string) => Record<string, string> | undefined;
 	/** Safe renderer push used to stream `cross-agent:chunk` events. */
 	safeSend: SafeSendFn;
+	getWindowForSession?: (sessionId: string) => import('electron').BrowserWindow | null | undefined;
 }
 
 /**
@@ -128,14 +130,68 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 		return allConfigs[toolType] || {};
 	};
 
-	ipcMain.handle(
-		'cross-agent:send',
+	ipcMain.handle('cross-agent:send', (event, wirePayload: CrossAgentSendRequest) =>
 		withIpcErrorLogging(
 			handlerOpts('send'),
 			async (payload: CrossAgentSendRequest): Promise<{ requestId: string }> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
+				const source = sessionsStore
+					.get('sessions', [])
+					.find((s) => s.id === payload.sourceSessionId);
+				if (
+					!payload.managedQueue &&
+					source?.executionQueue?.some(
+						(item: { tabId?: string; pendingAdmissionId?: string; admissionRelease?: unknown }) =>
+							item.tabId === payload.sourceTabId && item.pendingAdmissionId && item.admissionRelease
+					)
+				) {
+					throw new Error('DispatchRoutingQueueConsumerRequired');
+				}
+				if (payload.managedQueue) {
+					const assertOwner = () => {
+						const win = deps.getWindowForSession?.(payload.sourceSessionId);
+						if (
+							'clientId' in event ||
+							!win ||
+							event.sender !== win.webContents ||
+							event.sender.isDestroyed()
+						) {
+							throw new Error('DispatchWindowOwnerMismatch');
+						}
+					};
+					assertOwner();
+					// Never use a renderer prompt, transcript, resume id or handoff answer to
+					// expand a durable queue intent. The host builds this branch itself.
+					if (
+						payload.handoffAnswer !== undefined ||
+						payload.resumeAgentSessionId ||
+						payload.transcript.length
+					) {
+						throw new Error('DispatchRoutingContextUnavailable');
+					}
+					return startReleasedQueueConsult(
+						payload.managedQueue,
+						payload.sourceSessionId,
+						payload.sourceTabId,
+						payload.targetSessionId,
+						{
+							assertNativeOwner: assertOwner,
+							processManager,
+							agentDetector,
+							sshStore,
+							getTargetSession: (id) => {
+								assertOwner();
+								return getTargetSession(id);
+							},
+							getAgentConfig,
+							getCustomEnvVars,
+							writable: resolveCrossAgentWritable({}, settingsStore),
+							onChunk: (chunk) => safeSend('cross-agent:chunk', chunk),
+						}
+					);
+				}
 				const requestId = generateUUID();
 				const request: CrossAgentRequest = {
 					requestId,
@@ -202,7 +258,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 
 				return { requestId };
 			}
-		)
+		)(event, wirePayload)
 	);
 
 	ipcMain.handle(

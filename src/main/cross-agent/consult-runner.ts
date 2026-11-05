@@ -30,9 +30,16 @@ interface RunningConsult {
 	detach: () => void;
 }
 
+export interface NativeConsultAdmission {
+	beforeSpawn(): void;
+	started(processId: string, pid?: number): void;
+	ended?(processId: string): void;
+}
+
 export function createDesktopConsultRunner(
 	processManager: ProcessManager,
-	sshStore: SshRemoteSettingsStore | null
+	sshStore: SshRemoteSettingsStore | null,
+	nativeAdmission?: NativeConsultAdmission
 ): ConsultRunner {
 	const runs = new Map<string, RunningConsult>();
 
@@ -62,6 +69,7 @@ export function createDesktopConsultRunner(
 				if (sid !== sessionId) return;
 				run.detach();
 				runs.delete(sessionId);
+				nativeAdmission?.ended?.(sessionId);
 				observer.onEnd({
 					exitCode: code,
 					error: run.error,
@@ -85,9 +93,11 @@ export function createDesktopConsultRunner(
 			runs.set(sessionId, run);
 
 			try {
-				const result = await spawnGroupChatAgent(
-					toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore })
-				);
+				const result = await spawnGroupChatAgent({
+					...toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore }),
+					beforeSpawn: nativeAdmission?.beforeSpawn,
+				});
+				if (result.success) nativeAdmission?.started(sessionId, result.pid);
 				if (!result.success) {
 					run.detach();
 					runs.delete(sessionId);

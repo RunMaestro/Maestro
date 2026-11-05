@@ -1,3 +1,11 @@
+import {
+	prepareQueueRouting,
+	assertQueueRouting,
+	bindQueueConsultRelease,
+	forgetQueueConsultRelease,
+	type QueueRoutingSnapshot,
+} from './pianola-queue-routing';
+import type { StartCrossAgentRequestOptions } from '../cross-agent/cross-agent-router';
 /** Host-only pre-start boundary. Adapters prepare a held target, then bind/enroll/release.
  * One service per host; no watcher, timer, plugin activation or answer permission. */
 import { readAgentRuns } from '../../cli/services/agent-run-store';
@@ -50,6 +58,7 @@ export interface PianolaDispatchAdmissionDeps {
 	/** Host-only atomic session mutation; never a renderer-supplied receipt. */
 	releaseQueueItem?: import('../stores/queue-item-receipt').ReleaseQueueItem;
 	queueSnapshot?(): PianolaScopeSnapshot;
+	routingSnapshot?(): QueueRoutingSnapshot;
 	now?(): number;
 	callers?: Pick<HostCallerRuns, 'resolve'>;
 	featureEnabled(): boolean;
@@ -70,6 +79,7 @@ const hash = (value: unknown) => createHash('sha256').update(canonicalJson(value
 
 export class PianolaDispatchAdmissionService {
 	private readonly queue = createKeyedWriteQueue();
+	private readonly routingReleases = new Map<string, { generation: string; guard(): void }>();
 	constructor(private readonly deps: PianolaDispatchAdmissionDeps) {}
 
 	private caller(client: Client): HostCallerRun {
@@ -392,6 +402,14 @@ export class PianolaDispatchAdmissionService {
 				tab.agentSessionId ? [] : (this.deps.readNativeRuns ?? readAgentRuns)(),
 				tab
 			);
+			if (item.crossAgentMention && !this.deps.routingSnapshot)
+				throw new Error('DispatchRoutingUnavailable');
+			if (this.deps.routingSnapshot)
+				record.queueRouting = prepareQueueRouting(
+					item,
+					record.targetAgentId,
+					this.deps.routingSnapshot()
+				);
 			record.queueAuthority = {
 				...(initialSession ? { initialSession } : {}),
 				acceptedAt,
@@ -453,6 +471,14 @@ export class PianolaDispatchAdmissionService {
 			);
 			this.checkPolicy(record, auth);
 			const guard = () => {
+				const current = this.deps.store.readDispatchAdmission(dispatchId);
+				if (
+					!current ||
+					current.intentFingerprint !== record.intentFingerprint ||
+					(record.queueRelease &&
+						current.queueRelease?.generation !== record.queueRelease.generation)
+				)
+					throw new Error('DispatchRoutingAdmissionChanged');
 				if (this.deps.store.readDispatchAdmission(dispatchId)?.queueCancelled)
 					throw new Error('DispatchQueueCancelled');
 				auth.guard();
@@ -503,6 +529,15 @@ export class PianolaDispatchAdmissionService {
 					)
 						throw new Error('PianolaEnrollmentUnavailable');
 				}
+				if (record.queueRouting) {
+					if (!this.deps.routingSnapshot) throw new Error('DispatchRoutingUnavailable');
+					assertQueueRouting(
+						record.queueRouting,
+						record.queuePrepare!.item,
+						record.targetAgentId,
+						this.deps.routingSnapshot()
+					);
+				}
 				this.deps.assertTargetReady(this.receipt(record), authority.bindingFingerprint);
 			};
 			guard();
@@ -545,7 +580,137 @@ export class PianolaDispatchAdmissionService {
 					return { generation: record.queueRelease.generation, guard };
 				}
 			);
+			if (record.queueRouting) this.routingReleases.set(dispatchId, release);
+			if (record.queueRouting)
+				bindQueueConsultRelease(dispatchId, {
+					sourceAgentId: record.targetAgentId,
+					sourceTabId: record.targetTabId!,
+					generation: release.generation,
+					start: (target, opts) =>
+						this.startQueueConsult(dispatchId, release.generation, target, opts),
+				});
 			return { receipt: this.receipt(record), ...release };
+		});
+	}
+
+	/** Only the native queue release may reach this consumer. A journal/readback
+	 * ID is not a capability: the live release closure is deliberately not restored
+	 * after restart. Local continuation and handoff completion belong to the owning queue lifecycle. */
+	startQueueConsult(
+		dispatchId: string,
+		generation: string,
+		targetAgentId: string,
+		opts: Omit<StartCrossAgentRequestOptions, 'nativeAdmission'>
+	): Promise<{ requestId: string }> {
+		return this.queue.enqueue('admissions', async () => {
+			const release = this.routingReleases.get(dispatchId);
+			if (!release || release.generation !== generation)
+				throw new Error('DispatchRoutingReleaseUnavailable');
+			release.guard();
+			const record = this.deps.store.readDispatchAdmission(dispatchId);
+			const step = record?.queueRouting?.steps.find(
+				(s) => s.kind === 'consult' && s.targetAgentId === targetAgentId
+			);
+			if (!record || !step || step.status !== 'prepared')
+				throw new Error('DispatchRoutingAlreadyClaimedOrUnavailable');
+			const requestId = step.requestId;
+			const source = this.deps
+				.routingSnapshot?.()
+				.agents.find((a) => a.id === record.targetAgentId);
+			const update = (mutate: (s: NonNullable<typeof step>) => void) => {
+				const current = this.deps.store.readDispatchAdmission(dispatchId);
+				const saved = current?.queueRouting?.steps.find(
+					(s) =>
+						s.requestId === requestId && s.kind === 'consult' && s.targetAgentId === targetAgentId
+				);
+				if (!current || !saved || current.queueRelease?.generation !== generation)
+					throw new Error('DispatchRoutingStepChanged');
+				mutate(saved);
+				this.deps.store.writeDispatchAdmission(current);
+				if (
+					current.queueRouting!.steps.filter((s) => s.kind === 'consult').every((s) => s.terminal)
+				) {
+					this.routingReleases.delete(dispatchId);
+					forgetQueueConsultRelease(dispatchId);
+				}
+			};
+			// Claim before asynchronous provider/system-prompt preparation. A crash or
+			// unknown acknowledgement never makes this branch eligible again.
+			update((s) => {
+				s.status = 'intent';
+			});
+			let nativeClaimed = false;
+			let nativeEndObserved = false;
+			const { startCrossAgentRequest } = await import('../cross-agent/cross-agent-router');
+			await startCrossAgentRequest(
+				{
+					requestId,
+					sourceAgentName: source?.name,
+					sourceCwd: source?.cwd,
+					sourceSessionId: record.targetAgentId,
+					sourceTabId: record.targetTabId!,
+					targetSessionId: targetAgentId,
+					userPrompt: record.queuePrepare!.item.text,
+					transcript: [],
+					strategy: { kind: 'full' },
+					createdAt: (this.deps.now ?? Date.now)(),
+				},
+				{
+					...opts,
+					nativeAdmission: {
+						beforeSpawn: () => {
+							if (nativeClaimed) throw new Error('DispatchRoutingAlreadyStarting');
+							opts.assertNativeOwner?.();
+							release.guard();
+							update((s) => {
+								if (s.status !== 'intent') throw new Error('DispatchRoutingStepChanged');
+								s.status = 'unknown';
+							});
+							// A synchronous journal write may invoke host persistence hooks.
+							opts.assertNativeOwner?.();
+							release.guard();
+							nativeClaimed = true;
+						},
+						ended: () => {
+							nativeEndObserved = true;
+						},
+						started: (processId, pid) =>
+							update((s) => {
+								if (!nativeClaimed) throw new Error('DispatchRoutingNativeClaimMissing');
+								s.processId = processId;
+								if (pid !== undefined) s.pid = pid;
+								if (s.status !== 'settled') s.status = 'started';
+							}),
+					},
+					onChunk: (chunk) => {
+						if (
+							chunk.requestId !== requestId ||
+							chunk.sourceSessionId !== record.targetAgentId ||
+							chunk.sourceTabId !== record.targetTabId ||
+							chunk.targetSessionId !== targetAgentId
+						)
+							return;
+						if (chunk.done)
+							update((s) => {
+								if (s.terminal) return;
+								if (nativeClaimed && !nativeEndObserved && !s.processId) {
+									s.status = 'unknown';
+									s.startError = chunk.error ?? 'Native start acknowledgement unavailable';
+									return;
+								}
+								s.status = 'settled';
+								s.terminal = {
+									text: chunk.chunk,
+									...(chunk.error ? { error: chunk.error } : {}),
+									...(chunk.canceled ? { canceled: true } : {}),
+								};
+								if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
+							});
+						opts.onChunk(chunk);
+					},
+				}
+			);
+			return { requestId };
 		});
 	}
 

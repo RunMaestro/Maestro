@@ -38,6 +38,22 @@ export interface PianolaQueueCallbackProof {
 	owner: import('./pianola-scope').PianolaScopeOwner;
 	callerTab?: { createdAt: number; agentSessionId?: string | null };
 }
+/** Pinned by the host at prepare, never supplied as send authority by a renderer. */
+export interface PianolaQueueRouting {
+	routing: MentionRouting;
+	targets: { agentId: string; fingerprint: string }[];
+	steps: {
+		kind: 'consult' | 'local' | 'handoff';
+		targetAgentId: string;
+		requestId: string;
+		status: 'prepared' | 'intent' | 'unknown' | 'started' | 'settled';
+		processId?: string;
+		startError?: string;
+		pid?: number;
+		agentSessionId?: string;
+		terminal?: { text: string; error?: string; canceled?: boolean };
+	}[];
+}
 export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 	scopeId: string;
 	caller: CallerRunIdentity;
@@ -56,6 +72,7 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 		/** Native capture frontier at authenticated prepare; absent on legacy journals. */
 		initialSession?: { runId?: string };
 	};
+	queueRouting?: PianolaQueueRouting;
 	queueCancelled?: true;
 	queueRelease?: { generation: string; baseline: PianolaScopeCursor | null };
 	queuePrepare?: {
@@ -110,6 +127,41 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 			(r.phase === 'bound' && (r.queuePrepare.phase === 'durable') !== (r.outcome === 'queued')))
 	)
 		return null;
+	if (r.queueRouting) {
+		const routing = r.queueRouting;
+		if (
+			!r.queuePrepare ||
+			!r.queuePrepare.item.crossAgentMention ||
+			!['only', 'parallel', 'consult-first', 'handoff'].includes(routing.routing) ||
+			!Array.isArray(routing.targets) ||
+			!routing.targets.length ||
+			routing.targets.some((t) => !t || !id(t.agentId) || !/^[a-f0-9]{64}$/.test(t.fingerprint)) ||
+			new Set(routing.targets.map((t) => t.agentId)).size !== routing.targets.length ||
+			!Array.isArray(routing.steps) ||
+			!routing.steps.length ||
+			new Set(routing.steps.map((s) => s.requestId)).size !== routing.steps.length ||
+			routing.steps.some(
+				(s) =>
+					!s ||
+					!isPianolaScopeId(s.requestId) ||
+					!['consult', 'local', 'handoff'].includes(s.kind) ||
+					!['prepared', 'intent', 'unknown', 'started', 'settled'].includes(s.status) ||
+					(s.kind === 'local'
+						? s.targetAgentId !== r.targetAgentId
+						: !routing.targets.some((t) => t.agentId === s.targetAgentId)) ||
+					(s.processId !== undefined && !id(s.processId)) ||
+					(s.startError !== undefined && typeof s.startError !== 'string') ||
+					(s.agentSessionId !== undefined && !id(s.agentSessionId)) ||
+					(s.pid !== undefined && (!Number.isSafeInteger(s.pid) || s.pid <= 0)) ||
+					(s.terminal !== undefined &&
+						(!s.terminal ||
+							typeof s.terminal.text !== 'string' ||
+							(s.terminal.error !== undefined && typeof s.terminal.error !== 'string') ||
+							(s.terminal.canceled !== undefined && typeof s.terminal.canceled !== 'boolean')))
+			)
+		)
+			return null;
+	}
 	if (r.queuePrepare?.callbackProof) {
 		const proof = r.queuePrepare.callbackProof;
 		const registration = proof.registration;

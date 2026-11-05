@@ -1,3 +1,7 @@
+import { registerCrossAgentHandlers } from '../../../../main/ipc/handlers/cross-agent';
+import { startReleasedQueueConsult } from '../../../../main/pianola/pianola-queue-routing';
+import * as systemPromptService from '../../../../main/utils/maestro-system-prompt';
+import type { StartCrossAgentRequestOptions } from '../../../../main/cross-agent/cross-agent-router';
 import Conf from 'conf';
 import { createPluginSessionLifecycle } from '../../../../main/plugins/plugin-session-lifecycle';
 import { pianolaPersistenceConsumer } from '../../../../main/ipc/bootstrap/pianola-persistence';
@@ -755,11 +759,18 @@ describe('persistence IPC handlers', () => {
 			});
 		});
 		afterEach(async () => {
+			pianolaNewTabSpawns.cancelHold('agent', 'tab');
 			await realFs.rm(directory, { recursive: true, force: true });
 		});
 
 		/** Reuse B01's real writer/reader instead of inventing a Boolean receipt. */
-		function queueAdapter(busy = false) {
+		function queueAdapter(busy = false, mentions = false) {
+			if (mentions)
+				Object.assign(request.item, {
+					text: 'Check @PeerA and @PeerB',
+					crossAgentMention: true,
+					mentionRouting: 'parallel',
+				});
 			const store = createPianolaFsStore({
 				resolveDir: () => path.join(directory, 'pianola'),
 				indent: 2,
@@ -805,12 +816,35 @@ describe('persistence IPC handlers', () => {
 				dispatchId,
 				targetAgentId: 'agent',
 				targetTabId: 'tab',
-				prompt: 'Exact intent',
+				prompt: String(request.item.text),
 				background: true,
 				hidden: false,
 				held: false,
 			};
-			current = [{ ...session(request.item), executionQueue: [] }];
+			current = [
+				{
+					...session(request.item),
+					executionQueue: [],
+					...(mentions
+						? {
+								createdAt: 1,
+								peerAgents: [
+									{ sessionId: 'peer-a', read: true, write: false },
+									{ sessionId: 'peer-b', read: true, write: false },
+								],
+							}
+						: {}),
+				},
+				...(mentions
+					? ['a', 'b'].map((id) => ({
+							id: `peer-${id}`,
+							name: `Peer${id.toUpperCase()}`,
+							createdAt: 1,
+							toolType: 'codex',
+							cwd: directory,
+						}))
+					: []),
+			];
 			const rendererQueue: QueuedItem[] = [];
 			let loseAck = false;
 			let skipSave = false;
@@ -824,6 +858,10 @@ describe('persistence IPC handlers', () => {
 			const confirmItem = vi.fn((r: QueueItemReceiptRequest) => server.confirmQueueItemFromMain(r));
 			let active = true;
 			const deps = {
+				routingSnapshot: () => ({
+					agents: current as import('../../../../shared/maestro-lib/store/records').AgentRecord[],
+					groups: [],
+				}),
 				readNativeRuns,
 				store,
 				callers: {
@@ -900,8 +938,8 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 		}
-		async function readyQueue() {
-			const f = queueAdapter(true);
+		async function readyQueue(mentions = false) {
+			const f = queueAdapter(true, mentions);
 			await f.adapter.runQueue(f.client, f.input, f.arm);
 			const snapshot = f.deps.snapshot();
 			snapshot.tabs[0].busy = false;
@@ -909,6 +947,222 @@ describe('persistence IPC handlers', () => {
 			f.deps.snapshot = () => snapshot;
 			return { ...f, snapshot };
 		}
+
+		async function managedConsultFixture() {
+			const f = await readyQueue(true);
+			f.revoke(); // The original caller turn is no longer alive.
+			const { generation } = await f.adapter.prepareQueueSpawn(
+				'agent',
+				'tab',
+				f.input.dispatchId,
+				() => {}
+			);
+			const manager = Object.assign(new EventEmitter(), {
+				spawn: vi.fn((_config: unknown) => ({ success: true, pid: 4242 })),
+				kill: vi.fn(),
+			});
+			vi.spyOn(systemPromptService, 'buildMaestroSystemPromptForSession').mockResolvedValue(
+				undefined
+			);
+			const chunks: unknown[] = [];
+			const opts: Omit<StartCrossAgentRequestOptions, 'nativeAdmission'> = {
+				processManager: manager as unknown as StartCrossAgentRequestOptions['processManager'],
+				agentDetector: {
+					getAgent: async () => ({ ...getAgentDefinition('codex'), available: true }),
+				} as unknown as StartCrossAgentRequestOptions['agentDetector'],
+				sshStore: null,
+				getTargetSession: (id) => {
+					const a = current.find((a) => a.id === id)!;
+					return { id, name: String(a.name), toolType: 'codex', cwd: directory };
+				},
+				onChunk: (c) => chunks.push(c),
+			};
+			const start = (target = 'peer-a', gen = generation, id = f.input.dispatchId) =>
+				startReleasedQueueConsult(
+					{ dispatchId: id, generation: gen },
+					'agent',
+					'tab',
+					target,
+					opts
+				);
+			return { ...f, generation, manager, opts, start, chunks };
+		}
+
+		it('runs native managed consult branches after caller end and journals only their own terminal evidence', async () => {
+			const f = await managedConsultFixture();
+			const a = await f.start();
+			const b = await f.start('peer-b');
+			expect(a.requestId).not.toBe(b.requestId);
+			expect(f.chunks).toEqual([]);
+			expect(f.manager.spawn).toHaveBeenCalledTimes(2);
+			f.manager.emit('data', 'cross-agent-foreign', 'foreign');
+			f.manager.emit('exit', 'cross-agent-foreign', 0);
+			f.manager.emit('session-id', `cross-agent-${a.requestId}`, 'native-a');
+			f.manager.emit('data', `cross-agent-${a.requestId}`, 'Actual reply A');
+			f.manager.emit('exit', `cross-agent-${a.requestId}`, 0);
+			const journal = f.store.readDispatchAdmission(f.input.dispatchId)!;
+			expect(journal.queueRouting?.steps[0]).toMatchObject({
+				requestId: a.requestId,
+				status: 'settled',
+				processId: `cross-agent-${a.requestId}`,
+				pid: 4242,
+				agentSessionId: 'native-a',
+				terminal: { text: 'Actual reply A' },
+			});
+			expect(journal.queueRouting?.steps[1]).toMatchObject({
+				requestId: b.requestId,
+				status: 'started',
+			});
+			expect(journal.queueRouting?.steps[1].terminal).toBeUndefined();
+			f.manager.emit('exit', `cross-agent-${b.requestId}`, 0);
+			await expect(f.start()).rejects.toThrow();
+			expect(f.manager.spawn).toHaveBeenCalledTimes(2);
+		});
+
+		it('reaches managed consults through owning native IPC and refuses outcome IDs, foreign callers and unbound context', async () => {
+			const f = await managedConsultFixture();
+			const webContents = { id: 42, isDestroyed: () => false };
+			registerCrossAgentHandlers({
+				getProcessManager: () => f.opts.processManager,
+				getAgentDetector: () => f.opts.agentDetector,
+				sessionsStore: mockSessionsStore as never,
+				agentConfigsStore: { get: () => ({}) } as never,
+				settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+				sshStore: null,
+				safeSend: vi.fn(),
+				getWindowForSession: () => ({ webContents }) as never,
+			});
+			const payload = {
+				sourceSessionId: 'agent',
+				sourceTabId: 'tab',
+				targetSessionId: 'peer-a',
+				userPrompt: 'Untrusted renderer replacement',
+				transcript: [],
+				strategy: { kind: 'full' },
+				managedQueue: { dispatchId: f.input.dispatchId, generation: f.generation },
+			};
+			const send = handlers.get('cross-agent:send')!;
+			await expect(send({ sender: { id: 43 } }, payload)).rejects.toThrow('OwnerMismatch');
+			await expect(send({ sender: webContents, clientId: 'web' }, payload)).rejects.toThrow(
+				'OwnerMismatch'
+			);
+			await expect(
+				send(
+					{ sender: webContents },
+					{ ...payload, transcript: [{ source: 'ai', text: 'forged context' }] }
+				)
+			).rejects.toThrow('ContextUnavailable');
+			await expect(
+				send({ sender: webContents }, { ...payload, managedQueue: undefined })
+			).rejects.toThrow('QueueConsumerRequired');
+			await expect(
+				send(
+					{ sender: webContents },
+					{ ...payload, managedQueue: { ...payload.managedQueue, generation: 'outcome-handle' } }
+				)
+			).rejects.toThrow();
+			expect(f.manager.spawn).not.toHaveBeenCalled();
+			const result = await send({ sender: webContents }, payload);
+			expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+			const config = f.manager.spawn.mock.calls[0][0] as unknown as { prompt: string };
+			expect(config.prompt).toContain('Check @PeerA and @PeerB');
+			expect(config.prompt).not.toContain('Untrusted renderer replacement');
+			f.manager.emit('data', `cross-agent-${result.requestId}`, 'Native IPC answer');
+			f.manager.emit('exit', `cross-agent-${result.requestId}`, 0);
+		});
+
+		it('does not reconstruct a release from a journal after restart or repeat an unknown native acknowledgement', async () => {
+			const f = await managedConsultFixture();
+			const { PianolaDispatchAdmissionService } =
+				await import('../../../../main/pianola/pianola-dispatch-admission');
+			const restarted = new PianolaDispatchAdmissionService({
+				...f.deps,
+				readSnapshot: async () => f.snapshot,
+				assertTargetReady: () => {},
+				release: async () => 'unknown',
+			});
+			await expect(
+				restarted.startQueueConsult(f.input.dispatchId, f.generation, 'peer-a', f.opts)
+			).rejects.toThrow('ReleaseUnavailable');
+			f.manager.spawn.mockImplementationOnce(() => {
+				throw new Error('Unknown native acknowledgement');
+			});
+			await f.start();
+			expect(
+				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0]
+			).toMatchObject({ status: 'unknown', startError: 'Unknown native acknowledgement' });
+			expect(
+				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal
+			).toBeUndefined();
+			await expect(f.start()).rejects.toThrow();
+			expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it.each([
+			'generation',
+			'item',
+			'peer',
+			'target',
+			'pause',
+			'fifo',
+			'deleted-row',
+			'policy',
+			'owner',
+			'unknown',
+		] as const)('refuses managed consult %s without starting a provider', async (mutation) => {
+			const f = await managedConsultFixture();
+			if (mutation === 'generation') {
+				await expect(f.start('peer-a', generateUUID())).rejects.toThrow();
+				return;
+			}
+			if (mutation === 'item') {
+				await expect(f.start('peer-a', f.generation, generateUUID())).rejects.toThrow();
+				return;
+			}
+			if (mutation === 'peer') current[0].peerAgents = [];
+			if (mutation === 'target') current.find((a) => a.id === 'peer-a')!.createdAt = 2;
+			if (mutation === 'pause') f.snapshot.tabs[0].paused = true;
+			if (mutation === 'fifo')
+				current[0].executionQueue!.unshift({ id: 'predecessor', type: 'message', text: 'human' });
+			if (mutation === 'deleted-row') current[0].executionQueue = [];
+			if (mutation === 'policy') f.store.writeSupervisorTargets([]);
+			if (mutation === 'owner')
+				f.opts.assertNativeOwner = () => {
+					throw new Error('OwnerChanged');
+				};
+			if (mutation === 'unknown') {
+				const journal = f.store.readDispatchAdmission(f.input.dispatchId)!;
+				journal.queueRouting!.steps[0].status = 'unknown';
+				f.store.writeDispatchAdmission(journal);
+			}
+			try {
+				await f.start();
+			} catch {
+				/* Host boundary can refuse before service registration. */
+			}
+			expect(f.manager.spawn).not.toHaveBeenCalled();
+		});
+
+		it.each(['pause', 'peer', 'rename', 'delete'] as const)(
+			'rechecks %s after async provider preparation',
+			async (mutation) => {
+				const f = await managedConsultFixture();
+				f.opts.agentDetector = {
+					getAgent: async () => {
+						if (mutation === 'pause') f.snapshot.tabs[0].paused = true;
+						if (mutation === 'peer') current[0].peerAgents = [];
+						if (mutation === 'rename') current.find((a) => a.id === 'peer-a')!.name = 'Replacement';
+						if (mutation === 'delete') current = current.filter((a) => a.id !== 'peer-a');
+						return { ...getAgentDefinition('codex'), available: true };
+					},
+				} as unknown as StartCrossAgentRequestOptions['agentDetector'];
+				await f.start();
+				expect(f.manager.spawn).not.toHaveBeenCalled();
+				expect(
+					f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal?.error
+				).toMatch(/Dispatch|Pianola/);
+			}
+		);
 
 		it.each(['success', 'refused', 'unknown', 'no-capture'] as const)(
 			'drains busy->idle after caller end through D01 and native orchestration (%s)',

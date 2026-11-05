@@ -1317,6 +1317,10 @@ export interface PendingSteer {
 }
 
 export interface Session {
+	/** Named exclusions override the group and worktree grants. */
+	peerAgents?: import('../../shared/types').PeerAgent[];
+	groupPeerAccess?: import('../../shared/types').PeerAccess;
+	worktreePeerAccess?: import('../../shared/types').PeerAccess;
 	providerMigration?: ProviderMigrationState;
 	providerTranslationQueuedOrigins?: Record<string, ToolType>;
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];

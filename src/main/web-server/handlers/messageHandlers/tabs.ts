@@ -9,7 +9,12 @@ import { planMentions } from '../../../../shared/maestro-lib/mentions/roster';
  */
 
 import * as pianolaStore from '../../../pianola/pianola-store-main';
-import { getSettingsStore, getSessionsStore, getGroupsStore } from '../../../stores/getters';
+import {
+	getSettingsStore,
+	getSessionsStore,
+	getGroupsStore,
+	getLiveSessions,
+} from '../../../stores/getters';
 import { storeInlineImage } from '../../../storage/session-image-store';
 import { captureQueuedTurnSettings } from '../../../../shared/queuedTurnSettings';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
@@ -70,6 +75,10 @@ export function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispat
 			confirmQueueItem: (request) =>
 				ctx.callbacks.confirmQueueItem?.(request) ??
 				Promise.resolve({ durable: false, reason: 'store-unavailable' }),
+			routingSnapshot: () => ({
+				agents: getLiveSessions() as AgentRecord[],
+				groups: getGroupsStore().get('groups', []),
+			}),
 			queueItem: async (request) => {
 				const sessions = getSessionsStore().get('sessions', []) as AgentRecord[];
 				const session = sessions.find((s) => s.id === request.targetAgentId);

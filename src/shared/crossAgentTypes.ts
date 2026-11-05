@@ -154,7 +154,10 @@ export interface CrossAgentRequest {
  * process stamps `requestId` + `createdAt` to form the full
  * {@link CrossAgentRequest}.
  */
-export type CrossAgentSendRequest = Omit<CrossAgentRequest, 'requestId' | 'createdAt'>;
+export type CrossAgentSendRequest = Omit<CrossAgentRequest, 'requestId' | 'createdAt'> & {
+	/** Locator only. Native queue release and owning renderer are verified by the host. */
+	managedQueue?: { dispatchId: string; generation: string };
+};
 
 /**
  * One streamed piece of a target agent's response, routed back to the source
