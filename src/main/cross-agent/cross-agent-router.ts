@@ -108,6 +108,7 @@ export function startCrossAgentRequest(
 		getAgentConfig: opts.getAgentConfig,
 		writable: opts.writable,
 		getSystemPrompt: (target) => buildMaestroSystemPromptForSession(target.id),
+		onNotStarted: opts.nativeAdmission?.notStarted,
 		onChunk: opts.onChunk,
 	});
 }

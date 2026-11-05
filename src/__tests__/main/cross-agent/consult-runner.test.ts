@@ -22,6 +22,36 @@ describe('desktop consult listener lifecycle', () => {
 		vi.mocked(spawnGroupChatAgent).mockReset().mockResolvedValue({ success: true, pid: 123 })
 	);
 
+	it.each(['preparation', 'guard', 'unknown-throw', 'unknown-false'] as const)(
+		'reports nonstart only before the actual native side effect: %s',
+		async (scenario) => {
+			const emitter = new EventEmitter();
+			const notStarted = vi.fn();
+			const ended = vi.fn();
+			const runner = createDesktopConsultRunner(emitter as ProcessManager, null, {
+				notStarted,
+				ended,
+				beforeSpawn() {
+					if (scenario === 'guard') throw new Error('Native owner revoked');
+				},
+				started: vi.fn(),
+			});
+			vi.mocked(spawnGroupChatAgent).mockImplementationOnce(async (config) => {
+				if (scenario === 'preparation') throw new Error('SSH preparation failed');
+				config.beforeSpawn?.();
+				if (scenario === 'unknown-false') return { success: false, pid: -1 };
+				throw new Error('Spawn acknowledgement lost');
+			});
+			const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
+			if (scenario === 'unknown-false') await runner.start(spawn, observer);
+			else await expect(runner.start(spawn, observer)).rejects.toThrow();
+			expect(notStarted).toHaveBeenCalledTimes(scenario.startsWith('unknown') ? 0 : 1);
+			expect(ended).not.toHaveBeenCalled();
+			expect(observer.onEnd).not.toHaveBeenCalled();
+			expect(emitter.eventNames()).toEqual([]);
+		}
+	);
+
 	it('forwards only the first matching error and detaches on exit', async () => {
 		const emitter = new EventEmitter();
 		const runner = createDesktopConsultRunner(emitter as ProcessManager, null);

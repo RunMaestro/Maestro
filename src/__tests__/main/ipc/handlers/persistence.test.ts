@@ -1440,8 +1440,13 @@ describe('persistence IPC handlers', () => {
 			(['parallel', 'only', 'consult-first', 'handoff'] as const).flatMap((mode) =>
 				[
 					'normal',
+					'setup-both-fail',
+					'setup-one-fail',
+					'setup-cancel',
+					'provider-setup-fail',
 					'fast',
 					'partial-unknown',
+					'partial-unknown-false',
 					'terminal-journal',
 					'delete-row',
 					'peer-revoke',
@@ -1524,6 +1529,8 @@ describe('persistence IPC handlers', () => {
 				const peerManager = Object.assign(new EventEmitter(), {
 					spawn: vi.fn((config: { sessionId: string }) => {
 						if (scenario === 'partial-unknown') throw new Error('Spawn acknowledgement lost');
+						if (scenario === 'partial-unknown-false' && peerManager.spawn.mock.calls.length === 2)
+							return { success: false, pid: -1 };
 						if (scenario === 'fast') {
 							peerManager.emit('data', config.sessionId, 'Fast reply');
 							peerManager.emit('exit', config.sessionId, 0);
@@ -1549,6 +1556,7 @@ describe('persistence IPC handlers', () => {
 					getAgentDetector: () =>
 						({
 							getAgent: async () => {
+								if (scenario === 'provider-setup-fail') throw new Error('Provider setup failed');
 								if (scenario === 'peer-revoke') current[0].peerAgents = [];
 								if (scenario === 'pause') f.snapshot.tabs[0].paused = true;
 								if (scenario === 'owner-reset') destroyed = true;
@@ -1640,6 +1648,22 @@ describe('persistence IPC handlers', () => {
 					}
 					if (scenario === 'callback-restore') registry.cancel(callback.callbackId);
 					if (scenario === 'local-unknown' && mode === 'handoff') f.unknown();
+					if (scenario.startsWith('setup-')) {
+						vi.mocked(systemPromptService.buildMaestroSystemPromptForSession).mockImplementation(
+							async (target) => {
+								if (
+									typeof target === 'string' &&
+									target !== 'agent' &&
+									(scenario === 'setup-both-fail' ||
+										(scenario === 'setup-one-fail' && target === 'peer-a'))
+								)
+									throw new Error('System prompt preparation failed');
+								if (scenario === 'setup-cancel' && target === 'peer-a')
+									cancelCrossAgentRequestsForSource('agent', 'tab');
+								return 'Host system prompt';
+							}
+						);
+					}
 					const pending = drain();
 					if (['peer-revoke', 'pause', 'owner-reset', 'foreign-socket'].includes(scenario)) {
 						await expect(pending).rejects.toThrow();
@@ -1658,6 +1682,56 @@ describe('persistence IPC handlers', () => {
 					}
 					if (scenario === 'double-drain') await expect(drain()).rejects.toThrow();
 					await pending;
+					if (scenario.startsWith('setup-') || scenario === 'provider-setup-fail') {
+						// Parallel still owns the local child; handoff cannot start before its real exit.
+						if (mode === 'parallel' || mode === 'handoff') {
+							expect(fires).not.toHaveBeenCalled();
+							await f.capture.captureExit({
+								sessionId: 'agent-ai-tab',
+								exitCode: 0,
+								settlement: { outcome: 'completed', answerTail: 'Local native output' } as never,
+							});
+							f.events.emit('exit', 'agent-ai-tab', 0);
+							await continuation;
+						}
+						const routing = f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!;
+						const branches = routing.steps.filter(
+							(s) => s.kind === (mode === 'handoff' ? 'handoff' : 'consult')
+						);
+						expect(branches).toHaveLength(2);
+						const failures = branches.filter((s) => s.terminal?.error || s.terminal?.canceled);
+						expect(failures).toHaveLength(
+							['setup-one-fail', 'setup-cancel'].includes(scenario) ? 1 : 2
+						);
+						for (const step of failures) {
+							expect(step.processId).toBeUndefined();
+							expect(step.agentSessionId).toBeUndefined();
+						}
+						if (['setup-one-fail', 'setup-cancel'].includes(scenario)) {
+							expect(fires).not.toHaveBeenCalled();
+							expect(peerManager.listenerCount('exit')).toBe(1);
+							const live = branches.find((s) => !s.terminal)!;
+							peerManager.emit('exit', 'cross-agent-foreign', 0);
+							expect(fires).not.toHaveBeenCalled();
+							peerManager.emit('data', `cross-agent-${live.requestId}`, 'Real surviving child');
+							peerManager.emit('exit', `cross-agent-${live.requestId}`, 0);
+							peerManager.emit('exit', `cross-agent-${live.requestId}`, 0);
+						}
+						await continuation;
+						expect(fires).toHaveBeenCalledExactlyOnceWith(
+							expect.objectContaining({ status: 'failed' })
+						);
+						expect(peerManager.spawn).toHaveBeenCalledTimes(
+							['setup-one-fail', 'setup-cancel'].includes(scenario) ? 1 : 0
+						);
+						expect(peerManager.eventNames()).toEqual([]);
+						expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+						await expect(drain()).rejects.toThrow();
+						expect(peerManager.spawn).toHaveBeenCalledTimes(
+							['setup-one-fail', 'setup-cancel'].includes(scenario) ? 1 : 0
+						);
+						return;
+					}
 					if (mode === 'handoff') expect(peerManager.spawn).not.toHaveBeenCalled();
 					else expect(peerManager.spawn).toHaveBeenCalledTimes(2);
 					expect(f.spawn).toHaveBeenCalledTimes(
@@ -1813,6 +1887,7 @@ describe('persistence IPC handlers', () => {
 					if (
 						[
 							'partial-unknown',
+							'partial-unknown-false',
 							'terminal-journal',
 							'delete-row',
 							'callback-reset',

@@ -32,6 +32,8 @@ interface RunningConsult {
 }
 
 export interface NativeConsultAdmission {
+	/** Positive host proof that the native spawn boundary was never crossed. */
+	notStarted?(): void;
 	beforeSpawn(): void;
 	started(processId: string, pid?: number): void;
 	ended?(processId: string): void;
@@ -101,10 +103,14 @@ export function createDesktopConsultRunner(
 			processManager.on('session-id', onSessionId);
 			runs.set(sessionId, run);
 
+			let spawnAttempted = false;
 			try {
 				const result = await spawnGroupChatAgent({
 					...toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore }),
-					beforeSpawn: nativeAdmission?.beforeSpawn,
+					beforeSpawn: () => {
+						nativeAdmission?.beforeSpawn();
+						spawnAttempted = true;
+					},
 				});
 				if (result.success) {
 					// Admission persistence is not a spawn failure. Keep listeners and the
@@ -120,11 +126,13 @@ export function createDesktopConsultRunner(
 					}
 				}
 				if (!result.success) {
+					if (!spawnAttempted) nativeAdmission?.notStarted?.();
 					run.detach();
 					runs.delete(sessionId);
 				}
 				return result;
 			} catch (err) {
+				if (!spawnAttempted) nativeAdmission?.notStarted?.();
 				run.detach();
 				runs.delete(sessionId);
 				throw err;

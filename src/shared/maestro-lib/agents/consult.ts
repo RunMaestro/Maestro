@@ -143,6 +143,8 @@ export interface ConsultRunner {
 }
 
 export interface ConsultStartOptions {
+	/** Host-only proof: preparation failed or was canceled before invoking the runner. */
+	onNotStarted?: () => void;
 	runner: ConsultRunner;
 	/** Resolves a provider to the agent definition a spawn needs, or null when it is not installed. */
 	resolveAgent(providerId: string): Promise<AgentConfig | null>;
@@ -255,6 +257,54 @@ export function createConsultService() {
 	 * an error chunk instead of silently running locally.
 	 */
 	async function start(request: CrossAgentRequest, opts: ConsultStartOptions): Promise<void> {
+		let runnerEntered = false;
+		let terminalDelivered = false;
+		// Resolve caller ownership outside provider preparation error handling.
+		const target = opts.getTargetSession(request.targetSessionId);
+		const onChunk = (chunk: CrossAgentResponseChunk) => {
+			if (!runnerEntered && chunk.done && (chunk.error || chunk.canceled)) opts.onNotStarted?.();
+			if (chunk.done) terminalDelivered = true;
+			opts.onChunk(chunk);
+		};
+		try {
+			await startPrepared(request, {
+				...opts,
+				onChunk,
+				getTargetSession: () => target,
+				runner: {
+					start: (spawn, observer) => {
+						runnerEntered = true;
+						return opts.runner.start(spawn, observer);
+					},
+					stop: (id) => opts.runner.stop(id),
+				},
+			});
+		} catch (error) {
+			if (runnerEntered || terminalDelivered) throw error;
+			// Provider/config preparation also precedes the service's supervised spawn block.
+			// No runner invocation means there cannot be a native child to wait for.
+			activeConsults.delete(request.requestId);
+			captureException(error, { operation: 'crossAgent:prepare', requestId: request.requestId });
+			if (!runnerEntered) opts.onNotStarted?.();
+			opts.onChunk({
+				requestId: request.requestId,
+				sourceSessionId: request.sourceSessionId,
+				sourceTabId: request.sourceTabId,
+				targetSessionId: request.targetSessionId,
+				targetTabId: request.targetTabId,
+				targetAgentName: target?.name ?? request.targetSessionId,
+				targetToolType: target?.toolType ?? 'claude-code',
+				chunk: '',
+				done: true,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	async function startPrepared(
+		request: CrossAgentRequest,
+		opts: ConsultStartOptions
+	): Promise<void> {
 		const { runner, sshStore, getTargetSession, onChunk } = opts;
 		const writable = opts.writable ?? false;
 
@@ -504,6 +554,8 @@ export function createConsultService() {
 		}
 
 		try {
+			const appendSystemPrompt = await opts.getSystemPrompt?.(target);
+			if (settled) return;
 			const spawnResult = await runner.start(
 				{
 					processId: sessionId,
@@ -532,7 +584,7 @@ export function createConsultService() {
 					// The consulted agent is a real Maestro agent: it answers with the same
 					// system prompt its own tabs carry. A resumed consult skips re-embedding
 					// for agents without the native flag (already in that transcript).
-					appendSystemPrompt: await opts.getSystemPrompt?.(target),
+					appendSystemPrompt,
 					isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
 				},
 				observer

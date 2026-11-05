@@ -1076,6 +1076,7 @@ export class PianolaDispatchAdmissionService {
 			});
 			let nativeClaimed = false;
 			let nativeEndObserved = false;
+			let confirmedNonstart = false;
 			let journalUncertain = false;
 			const journalFailure = (error: unknown) => {
 				journalUncertain = true;
@@ -1121,6 +1122,9 @@ export class PianolaDispatchAdmissionService {
 					...opts,
 					writable: kind === 'handoff',
 					nativeAdmission: {
+						notStarted: () => {
+							confirmedNonstart = true;
+						},
 						beforeSpawn: () => {
 							if (nativeClaimed) throw new Error('DispatchRoutingAlreadyStarting');
 							if (handoffAnswer() !== answer) throw new Error('DispatchRoutingLocalOutputChanged');
@@ -1170,7 +1174,7 @@ export class PianolaDispatchAdmissionService {
 							if (chunk.done && !journalUncertain)
 								update((s) => {
 									if (s.terminal) return;
-									if (nativeClaimed && !nativeEndObserved && !s.processId) {
+									if (!confirmedNonstart && !nativeEndObserved) {
 										s.status = 'unknown';
 										s.startError = chunk.error ?? 'Native start acknowledgement unavailable';
 										return;
@@ -1183,7 +1187,12 @@ export class PianolaDispatchAdmissionService {
 									};
 									if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
 								});
-							if (chunk.done && nativeClaimed && nativeEndObserved && !journalUncertain) {
+							if (
+								chunk.done &&
+								((nativeClaimed && nativeEndObserved) ||
+									(confirmedNonstart && !!(chunk.error || chunk.canceled))) &&
+								!journalUncertain
+							) {
 								const saved = this.deps.store
 									.readDispatchAdmission(dispatchId)
 									?.queueRouting?.steps.find((s) => s.requestId === requestId);
