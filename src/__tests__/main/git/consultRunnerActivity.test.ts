@@ -88,6 +88,8 @@ describe('desktop consult start and stop activity', () => {
 	});
 	afterEach(async () => {
 		for (const release of releases) release();
+		vi.restoreAllMocks();
+		for (const id of [spawn.processId, 'second']) runner.stop(id);
 		for (const child of children) child.emit('close');
 		await drain();
 		expect(active).toBe(0);
@@ -139,12 +141,12 @@ describe('desktop consult start and stop activity', () => {
 			throw new Error('listener setup failed');
 		});
 		await expect(runner.start(spawn, observer)).rejects.toThrow('listener setup failed');
-		expect(observations).toEqual([1]);
+		expect(observations).toEqual([2]);
 		expect(spawnGroupChatAgent).not.toHaveBeenCalled();
 		await idle();
 	});
 
-	it('holds asynchronous rejection cleanup and releases if detach also throws', async () => {
+	it('retains asynchronous rejection cleanup until failed detach is retried', async () => {
 		let reject!: (error: Error) => void;
 		vi.mocked(spawnGroupChatAgent).mockImplementationOnce(
 			() => new Promise((_, fail) => (reject = fail))
@@ -158,7 +160,9 @@ describe('desktop consult start and stop activity', () => {
 		await blocked();
 		reject(new Error('pending preparation failed'));
 		await expect(request).rejects.toThrow('detach failed');
-		expect(observations).toEqual([1]);
+		expect(observations).toEqual([2]);
+		await blocked();
+		runner.stop(spawn.processId);
 		await idle();
 	});
 
@@ -241,19 +245,19 @@ describe('desktop consult start and stop activity', () => {
 		await idle();
 	});
 
-	it('refuses stop before detach, kill and parsing recovery and preserves the run', async () => {
+	it('blocks cleanup while listeners remain and refuses stop after they detach', async () => {
 		await runner.start(spawn, observer);
 		manager.emit('data', spawn.processId, 'partial answer');
+		await blocked();
+		expect(runner.stop(spawn.processId)).toBe('partial answer');
 		const off = vi.spyOn(manager, 'off');
-		const hold = await reserve();
+		manager.kill.mockClear();
+		vi.mocked(extractTextFromStreamJson).mockClear();
+		await reserve();
 		expect(() => runner.stop(spawn.processId)).toThrow(/reserved/);
 		for (const effect of [off, manager.kill, extractTextFromStreamJson])
 			expect(effect).not.toHaveBeenCalled();
-		expect(manager.listenerCount('exit')).toBe(1);
-		if (hold.status === 'reserved-partially') hold.release();
-		expect(runner.stop(spawn.processId)).toBe('partial answer');
 		expect(manager.eventNames()).toEqual([]);
-		await idle();
 	});
 
 	it.each(['success', 'kill error', 'parse error', 'detach error', 'missing run'])(
@@ -284,6 +288,11 @@ describe('desktop consult start and stop activity', () => {
 				);
 			expect(observations.length).toBeGreaterThan(0);
 			expect(observations.every((n) => n > 0)).toBe(true);
+			if (outcome === 'detach error') {
+				await blocked();
+				vi.mocked(manager.off).mockRestore();
+				runner.stop(spawn.processId);
+			}
 			await idle();
 		}
 	);
@@ -311,6 +320,229 @@ describe('desktop consult start and stop activity', () => {
 		}
 	);
 
+	describe('retained listener registration and recovery', () => {
+		it.each(['stop', 'exit'])('retains listeners after native close until %s', async (end) => {
+			vi.mocked(spawnGroupChatAgent).mockImplementationOnce(async () => {
+				turns.withWorktreeTurnActivity(
+					(_, __, launch) => launch('agent', [], {}),
+					() => {}
+				);
+				return { success: true, pid: 123 };
+			});
+			await runner.start(spawn, observer);
+			children[0].emit('error', new Error('not termination'));
+			children[0].emit('exit', 0);
+			children[0].emit('close');
+			await blocked();
+			if (end === 'stop') runner.stop(spawn.processId);
+			else manager.emit('exit', spawn.processId, 0);
+			expect(manager.eventNames()).toEqual([]);
+			await idle();
+		});
+
+		it.each(['data', 'exit', 'session-id'])(
+			'recovers throwing %s insertion after retention',
+			async (event) => {
+				const on = manager.on.bind(manager);
+				vi.spyOn(manager, 'on').mockImplementation((name, listener) => {
+					on(name, listener);
+					if (name === event) throw new Error('inserted then failed');
+					return manager;
+				});
+				await expect(runner.start(spawn, observer)).rejects.toThrow('inserted then failed');
+				expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+				expect(manager.eventNames()).toEqual([]);
+				await idle();
+			}
+		);
+
+		it.each(['data', 'exit', 'session-id'])(
+			'keeps throwing %s insertion reachable after detach fails',
+			async (event) => {
+				const on = manager.on.bind(manager);
+				vi.spyOn(manager, 'on').mockImplementation((name, listener) => {
+					on(name, listener);
+					if (name === event) throw new Error('inserted then failed');
+					return manager;
+				});
+				vi.spyOn(manager, 'off').mockImplementation(() => {
+					throw new Error('detach failed');
+				});
+				await expect(runner.start(spawn, observer)).rejects.toThrow('detach failed');
+				await blocked();
+				await expect(runner.start(spawn, observer)).rejects.toThrow(/already registered/);
+				expect(manager.listenerCount(event)).toBeGreaterThan(0);
+				expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+				vi.mocked(manager.off).mockRestore();
+				runner.stop(spawn.processId);
+				expect(manager.eventNames()).toEqual([]);
+				await idle();
+			}
+		);
+
+		it.each(['before removal', 'after removal'])(
+			'retains uncertain cleanup %s until retry',
+			async (when) => {
+				await runner.start(spawn, observer);
+				const off = manager.off.bind(manager);
+				vi.spyOn(manager, 'off').mockImplementationOnce((event, listener) => {
+					if (when === 'after removal') off(event, listener);
+					throw new Error('uncertain removal');
+				});
+				expect(() => runner.stop(spawn.processId)).toThrow('uncertain removal');
+				await blocked();
+				expect(manager.kill).not.toHaveBeenCalled();
+				runner.stop(spawn.processId);
+				expect(manager.eventNames()).toEqual([]);
+				await idle();
+			}
+		);
+
+		it('retains partial detach progress and retries only unfinished removals', async () => {
+			await runner.start(spawn, observer);
+			const off = manager.off.bind(manager);
+			const remove = vi.spyOn(manager, 'off').mockImplementation((event, listener) => {
+				if (event === 'exit') throw new Error('exit removal failed');
+				return off(event, listener);
+			});
+			expect(() => runner.stop(spawn.processId)).toThrow('exit removal failed');
+			expect(manager.listenerCount('data')).toBe(0);
+			expect(manager.listenerCount('exit')).toBe(1);
+			await blocked();
+			remove.mockImplementation(off).mockClear();
+			runner.stop(spawn.processId);
+			expect(remove.mock.calls.map(([event]) => event)).toEqual([
+				'exit',
+				'agent-error',
+				'session-id',
+			]);
+			await idle();
+		});
+
+		it.each(['pending', 'started'])(
+			'rejects duplicate %s starts without overwriting cleanup',
+			async (phase) => {
+				let finish!: (value: { success: boolean; pid: number }) => void;
+				vi.mocked(spawnGroupChatAgent).mockImplementationOnce(
+					() => new Promise((resolve) => (finish = resolve))
+				);
+				const request = runner.start(spawn, observer);
+				if (phase === 'started') {
+					finish({ success: true, pid: 123 });
+					await request;
+				}
+				const on = vi.spyOn(manager, 'on');
+				await expect(runner.start(spawn, observer)).rejects.toThrow(/already registered/);
+				expect(on).not.toHaveBeenCalled();
+				expect(spawnGroupChatAgent).toHaveBeenCalledOnce();
+				await blocked();
+				runner.stop(spawn.processId);
+				if (phase === 'pending') {
+					finish({ success: true, pid: 123 });
+					await request;
+				}
+				expect(manager.eventNames()).toEqual([]);
+				await idle();
+			}
+		);
+
+		it.each(['insertion', 'removal'])(
+			'rejects reentrant stop during %s without losing retry state',
+			async (phase) => {
+				const errors: unknown[] = [];
+				const event = phase === 'insertion' ? 'newListener' : 'removeListener';
+				const reenter = () => {
+					try {
+						runner.stop(spawn.processId);
+					} catch (error) {
+						errors.push(error);
+					}
+				};
+				manager.on(event, reenter);
+				await runner.start(spawn, observer);
+				if (phase === 'insertion') manager.off(event, reenter);
+				await blocked();
+				runner.stop(spawn.processId);
+				manager.off(event, reenter);
+				expect(errors.length).toBeGreaterThan(0);
+				expect(
+					errors.every(
+						(error) => error instanceof Error && /listeners are changing/.test(error.message)
+					)
+				).toBe(true);
+				expect(manager.kill).toHaveBeenCalledOnce();
+				expect(manager.eventNames()).toEqual([]);
+				await idle();
+			}
+		);
+
+		it.each(['refusal', 'rejection'])(
+			'does not erase a replacement run after late %s',
+			async (outcome) => {
+				let finish!: (value: { success: boolean; pid: number }) => void;
+				let reject!: (reason: Error) => void;
+				vi.mocked(spawnGroupChatAgent).mockImplementationOnce(
+					() =>
+						new Promise((resolve, fail) => {
+							finish = resolve;
+							reject = fail;
+						})
+				);
+				const old = runner.start(spawn, observer);
+				runner.stop(spawn.processId);
+				await runner.start(spawn, observer);
+				if (outcome === 'refusal') {
+					finish({ success: false, pid: -1 });
+					await old;
+				} else {
+					reject(new Error('late failure'));
+					await expect(old).rejects.toThrow('late failure');
+				}
+				await blocked();
+				manager.emit('data', spawn.processId, 'replacement answer');
+				expect(runner.stop(spawn.processId)).toBe('replacement answer');
+				expect(manager.eventNames()).toEqual([]);
+				await idle();
+			}
+		);
+
+		it('keeps failed reentrant removal reachable until the hook is removed', async () => {
+			await runner.start(spawn, observer);
+			const reenter = () => runner.stop(spawn.processId);
+			manager.on('removeListener', reenter);
+			expect(() => runner.stop(spawn.processId)).toThrow(/listeners are changing/);
+			await blocked();
+			expect(manager.kill).not.toHaveBeenCalled();
+			manager.removeListener('removeListener', reenter);
+			runner.stop(spawn.processId);
+			expect(manager.eventNames()).toEqual([]);
+			await idle();
+		});
+
+		it('does not erase a replacement when an old captured exit callback runs', async () => {
+			await runner.start(spawn, observer);
+			const exits = manager.listeners('exit');
+			runner.stop(spawn.processId);
+			await runner.start(spawn, observer);
+			for (const exit of exits) exit(spawn.processId, 0);
+			await blocked();
+			manager.emit('data', spawn.processId, 'replacement answer');
+			expect(runner.stop(spawn.processId)).toBe('replacement answer');
+			expect(manager.eventNames()).toEqual([]);
+			await idle();
+		});
+
+		it('keeps another registration held after the first is removed', async () => {
+			await runner.start(spawn, observer);
+			await runner.start({ ...spawn, processId: 'second' }, observer);
+			runner.stop(spawn.processId);
+			await blocked();
+			manager.emit('data', 'second', 'second answer');
+			expect(runner.stop('second')).toBe('second answer');
+			await idle();
+		});
+	});
+
 	describe('callbacks after start settles', () => {
 		const events = ['data', 'thinking-chunk', 'session-id', 'agent-error', 'exit'] as const;
 		const payloads = {
@@ -323,31 +555,32 @@ describe('desktop consult start and stop activity', () => {
 
 		it.each(events)('refuses matching %s before mutation, observers or detach', async (event) => {
 			await runner.start(spawn, observer);
+			const callbacks = manager.listeners(event);
+			runner.stop(spawn.processId);
+			vi.mocked(extractTextFromStreamJson).mockClear();
 			const off = vi.spyOn(manager, 'off');
 			const hold = await reserve();
-			expect(() => manager.emit(event, spawn.processId, payloads[event])).toThrow(/reserved/);
+			for (const callback of callbacks)
+				expect(() => callback(spawn.processId, payloads[event])).toThrow(/reserved/);
 			for (const effect of [off, ...Object.values(observer), extractTextFromStreamJson])
 				expect(effect).not.toHaveBeenCalled();
 			expect(captureException).not.toHaveBeenCalled();
-			expect(manager.listenerCount('exit')).toBe(1);
+			expect(manager.listenerCount('exit')).toBe(0);
 			if (hold.status === 'reserved-partially') hold.release();
-			manager.emit('exit', spawn.processId, 0);
-			const end = vi.mocked(observer.onEnd).mock.calls[0][0];
-			expect(end.error).toBeUndefined();
-			expect(end.readText()).toBe('');
+			expect(observer.onEnd).not.toHaveBeenCalled();
 			await idle();
 		});
 
-		it('ignores unrelated events under reservation without inspecting their payloads', async () => {
+		it('ignores captured unrelated events under reservation without inspecting payloads', async () => {
 			await runner.start(spawn, observer);
+			const callbacks = events.flatMap((event) => manager.listeners(event));
+			runner.stop(spawn.processId);
 			await reserve();
 			const inspect = vi.fn(() => {
 				throw new Error('unrelated payload inspected');
 			});
-			for (const event of events)
-				expect(() =>
-					manager.emit(event, 'unrelated', new Proxy({}, { get: inspect }))
-				).not.toThrow();
+			for (const callback of callbacks)
+				expect(() => callback('unrelated', new Proxy({}, { get: inspect }))).not.toThrow();
 			expect(inspect).not.toHaveBeenCalled();
 			for (const effect of [...Object.values(observer), captureException])
 				expect(effect).not.toHaveBeenCalled();
@@ -359,7 +592,9 @@ describe('desktop consult start and stop activity', () => {
 			vi.mocked(observer.onActivity).mockImplementation(() => observations.push(active));
 			await runner.start(spawn, observer);
 			manager.emit(event, spawn.processId, 'delta');
-			expect(observations).toEqual([1]);
+			expect(observations).toEqual([2]);
+			await blocked();
+			runner.stop(spawn.processId);
 			await idle();
 		});
 
@@ -396,7 +631,7 @@ describe('desktop consult start and stop activity', () => {
 			});
 			manager.emit('exit', spawn.processId, 2);
 			expect(observations.length).toBeGreaterThan(5);
-			expect(observations.every((n) => n === 1)).toBe(true);
+			expect(observations.every((n) => n > 0)).toBe(true);
 			expect(manager.eventNames()).toEqual([]);
 			await idle();
 		});
@@ -438,6 +673,10 @@ describe('desktop consult start and stop activity', () => {
 				}
 				expect(invoke).toThrow(error);
 				expect(captureException).toHaveBeenCalledWith(error);
+				if (manager.listenerCount('exit')) {
+					await blocked();
+					runner.stop(spawn.processId);
+				}
 				await idle();
 			}
 		);
@@ -527,7 +766,7 @@ describe('desktop consult start and stop activity', () => {
 				throw error;
 			});
 			expect(() => manager.emit('thinking-chunk', spawn.processId)).toThrow(error);
-			expect(observations).toEqual([1, 2, 1]);
+			expect(observations).toEqual([2, 2, 1]);
 			expect(manager.eventNames()).toEqual([]);
 			await idle();
 		});
@@ -552,7 +791,7 @@ describe('desktop consult start and stop activity', () => {
 				observations.push(active);
 			});
 			manager.emit('exit', spawn.processId, 0);
-			expect(observations).toEqual([3, 2]);
+			expect(observations).toEqual([4, 3]);
 			await blocked();
 			manager.emit('session-id', other.processId, 'second-provider');
 			expect(second.onSessionId).toHaveBeenCalledExactlyOnceWith('second-provider');

@@ -42,6 +42,8 @@ export function createDesktopConsultRunner(
 	const admitted: ConsultRunner = {
 		async start(spawn, observer) {
 			const sessionId = spawn.processId;
+			if (runs.has(sessionId))
+				throw new Error('Consult is already registered. Stop it before retrying.');
 			const run: RunningConsult = { buffer: '', toolType: spawn.providerId, detach: () => {} };
 
 			// Buffer the target's output; hand the text over once it exits. The ProcessManager flushes
@@ -88,7 +90,7 @@ export function createDesktopConsultRunner(
 				withWorktreeTurnActivity(
 					() => {
 						run.detach();
-						runs.delete(sessionId);
+						if (runs.get(sessionId) === run) runs.delete(sessionId);
 						observer.onEnd({
 							exitCode: code,
 							error: run.error,
@@ -103,33 +105,71 @@ export function createDesktopConsultRunner(
 				);
 			};
 
+			const listeners = [
+				{
+					attach: () => processManager.on('data', onData),
+					detach: () => processManager.off('data', onData),
+				},
+				...AGENT_LIVENESS_EVENTS.map((evt) => ({
+					attach: () => processManager.on(evt, onLiveness),
+					detach: () => processManager.off(evt, onLiveness),
+				})),
+				{
+					attach: () => processManager.on('exit', onExit),
+					detach: () => processManager.off('exit', onExit),
+				},
+				{
+					attach: () => processManager.on('agent-error', onError),
+					detach: () => processManager.off('agent-error', onError),
+				},
+				{
+					attach: () => processManager.on('session-id', onSessionId),
+					detach: () => processManager.off('session-id', onSessionId),
+				},
+			];
+			const releaseListeners = beginGlobalWorktreeActivity();
+			const pendingDetach: Array<() => void> = [];
+			let registering = true;
+			let detaching = false;
 			run.detach = () => {
-				processManager.off('data', onData);
-				for (const evt of AGENT_LIVENESS_EVENTS) processManager.off(evt, onLiveness);
-				processManager.off('exit', onExit);
-				processManager.off('agent-error', onError);
-				processManager.off('session-id', onSessionId);
+				// EventEmitter hooks can reenter while insertion/removal is in flight.
+				// Keep the run reachable and retry after that operation settles.
+				if (registering || detaching)
+					throw new Error('Consult listeners are changing. Retry stop.');
+				detaching = true;
+				try {
+					while (pendingDetach.length) {
+						pendingDetach[0]();
+						pendingDetach.shift();
+					}
+					releaseListeners();
+				} finally {
+					detaching = false;
+				}
 			};
-
-			processManager.on('data', onData);
-			for (const evt of AGENT_LIVENESS_EVENTS) processManager.on(evt, onLiveness);
-			processManager.on('exit', onExit);
-			processManager.on('agent-error', onError);
-			processManager.on('session-id', onSessionId);
 			runs.set(sessionId, run);
 
 			try {
+				try {
+					for (const listener of listeners) {
+						// Insertion may retain the callback before throwing.
+						pendingDetach.push(listener.detach);
+						listener.attach();
+					}
+				} finally {
+					registering = false;
+				}
 				const result = await spawnGroupChatAgent(
 					toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore })
 				);
 				if (!result.success) {
 					run.detach();
-					runs.delete(sessionId);
+					if (runs.get(sessionId) === run) runs.delete(sessionId);
 				}
 				return result;
 			} catch (err) {
 				run.detach();
-				runs.delete(sessionId);
+				if (runs.get(sessionId) === run) runs.delete(sessionId);
 				throw err;
 			}
 		},
