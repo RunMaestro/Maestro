@@ -206,12 +206,21 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		'rule-revoked',
 		'historical-busy',
 		'stream-answer',
+		'stream-new-row',
+		'stream-late-enrollment-question',
 		'stream-late-rewrite',
 		'stream-late-human',
 		'stream-unchanged',
 		'stream-historical-prefix',
 		'stream-historical-inline-prefix',
 		'stream-historical-whitespace',
+		'stream-historical-punctuation-space',
+		'stream-historical-after-punctuation',
+		'stream-historical-unicode-space',
+		'stream-historical-unicode-format',
+		'stream-historical-punctuation',
+		'stream-historical-paraphrase',
+		'stream-historical-prose',
 		'stream-historical-metadata',
 		'stream-historical-suffix',
 		'stream-historical-format',
@@ -417,6 +426,12 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				f.commit([f.row('prefix', 'I will DROP DATABASE production.')]);
 				f.commit([f.row('prefix', 'Inspecting files.')]);
 			}
+			if (mode === 'stream-late-enrollment-question') {
+				injected = true;
+				const checkpoint = store.readScopeCheckpoint(scopeId)!;
+				checkpoint.tabs[0].baseline!.questionSignatures = ['a'.repeat(64)];
+				store.writeScopeCheckpoint(checkpoint);
+			}
 			if (mode === 'disable') settings.enabled = false;
 			if (mode === 'rule-revoked') store.writeRules([]);
 			if (mode === 'late-human' || mode === 'stream-late-human')
@@ -473,9 +488,17 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 					'stream-historical-prefix',
 					'stream-historical-inline-prefix',
 					'stream-historical-whitespace',
+					'stream-historical-punctuation-space',
+					'stream-historical-after-punctuation',
+					'stream-historical-unicode-space',
+					'stream-historical-unicode-format',
+					'stream-historical-punctuation',
+					'stream-historical-paraphrase',
+					'stream-historical-prose',
 					'stream-historical-metadata',
 					'stream-historical-suffix',
 					'stream-historical-format',
+					'stream-new-row',
 					'stream-new-question',
 					'stream-new-question-restart',
 					'stream-historical-restart',
@@ -593,6 +616,14 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			const questionUpdates: Record<string, string> = {
 				'stream-historical-inline-prefix': 'Progress complete: Should I name it count or total?',
 				'stream-historical-whitespace': '  Should I name it  count\n or total?  ',
+				'stream-historical-punctuation-space': 'Should I name it count or total ?',
+				'stream-historical-after-punctuation': 'Should I name it count or total?\xa0',
+				'stream-historical-unicode-space': 'Should\xa0I name it count\u2003or total?',
+				'stream-historical-unicode-format': 'Should I name it count or to\u200btal?',
+				'stream-historical-punctuation': 'Should I name it count, or total?!',
+				'stream-historical-paraphrase':
+					'Would you prefer the variable to be called count or total?',
+				'stream-historical-prose': 'Progress complete. Would you prefer count over total?',
 				'stream-historical-prefix': 'Progress complete. Should I name it count or total?',
 				'stream-historical-restart': 'Progress complete. Should I name it count or total?',
 				'stream-historical-suffix': 'Should I name it count or total? Progress complete.',
@@ -604,7 +635,9 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			f.commit([
 				{
 					...f.row(
-						mode === 'stream-risk-removed-new-turn' ? 'new-question' : 'question',
+						mode === 'stream-risk-removed-new-turn' || mode === 'stream-new-row'
+							? 'new-question'
+							: 'question',
 						questionUpdates[mode] ?? 'Should I name it count or total?'
 					),
 					...(mode === 'stream-timestamp' ? { timestamp: 999999 } : {}),
@@ -622,8 +655,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			expect(sends).toHaveBeenCalledTimes(
 				mode === 'answer' ||
 					mode === 'stream-answer' ||
-					mode === 'stream-new-question' ||
-					mode === 'stream-new-question-restart' ||
+					mode === 'stream-new-row' ||
 					mode === 'stream-risk-removed-new-turn' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
@@ -631,6 +663,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 					? 1
 					: 0
 			);
+			if (mode === 'stream-late-enrollment-question') expect(injected).toBe(true);
 			if (mode === 'stream-late-rewrite' || mode === 'stream-late-human')
 				expect(assert.mock.results.at(-1)?.type).toBe('throw');
 			if (orderRegression) {
@@ -647,8 +680,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			expect(sends).toHaveBeenCalledTimes(
 				mode === 'answer' ||
 					mode === 'stream-answer' ||
-					mode === 'stream-new-question' ||
-					mode === 'stream-new-question-restart' ||
+					mode === 'stream-new-row' ||
 					mode === 'stream-risk-removed-new-turn' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||

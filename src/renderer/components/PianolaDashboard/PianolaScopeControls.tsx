@@ -157,7 +157,9 @@ export function PianolaScopeControls({
 								? `Selected: ${scope.selection.agentIds.length} agents, ${scope.selection.groupIds.length} groups${scope.selection.futureLocalAgents ? ', future local agents' : ''}; ${scope.selection.excludedAgentIds.length} exclusions`
 								: 'Legacy selection requires reconfiguration'}{' '}
 							· Manager: {sessionNames.get(scope.managerAgentId ?? '') ?? scope.managerAgentId}.
-							Worker health does not establish individual chat coverage.
+							Worker health does not establish individual chat coverage. Questions already present
+							at enrollment need human handling when the same row is rewritten; fresh native
+							questions remain monitored.
 							{health?.lastError ? ` ${health.lastError}` : ''}
 						</div>
 						{scope.selection?.mode === 'agents-and-groups' && (

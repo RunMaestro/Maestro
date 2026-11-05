@@ -373,7 +373,10 @@ function sameCursor(a: PianolaScopeCursor | null, b: PianolaScopeCursor | null):
 	);
 }
 
-/** Constant-size native proof, bound to the exact enrolled turn and ordered prefix. */
+/** Constant-size native proof, bound to the exact enrolled turn and ordered prefix.
+ * Only a proven question-free enrollment row may develop its first question.
+ * Different hashes cannot distinguish a new ask from a historical paraphrase.
+ */
 function freshNativeStream(saved: PianolaScopeCheckpointTab, cursor: PianolaScopeCursor): boolean {
 	const base = saved.baseline;
 	return !!(
@@ -386,9 +389,9 @@ function freshNativeStream(saved: PianolaScopeCheckpointTab, cursor: PianolaScop
 		typeof cursor.contentSignature === 'string' &&
 		base.contentSignature !== cursor.contentSignature &&
 		Array.isArray(base.questionSignatures) &&
+		base.questionSignatures.length === 0 &&
 		Array.isArray(cursor.questionSignatures) &&
 		cursor.questionSignatures.length === 1 &&
-		!base.questionSignatures.includes(cursor.questionSignatures[0]) &&
 		sameCurrentTurnCursor({ ...base.native, revision: cursor.native.revision }, cursor.native) &&
 		Number.isSafeInteger(cursor.contentRevision) &&
 		cursor.contentRevision! > base.native.revision &&
