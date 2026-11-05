@@ -14,6 +14,37 @@ import { isWindows } from '../../platformDetection';
 import { dirsWithAnyAccess, dirsWithWriteAccess, repeatDirFlag } from '../../additionalDirectories';
 export type { AgentCapabilities } from '../../types';
 
+/**
+ * Grok's vendor-compatibility cells, all switched off for a Maestro-owned
+ * launch. Out of the box grok 1.0.70 scans Claude's and Cursor's
+ * skills, rules, named instruction files (CLAUDE.md), MCP servers and hooks
+ * even under an isolated GROK_HOME, because those live in ~/.claude and
+ * ~/.cursor, not in the grok home. The names are grok's own documented
+ * overrides (docs/user-guide/26-config-reference.md, `compat.<vendor>.<surface>`,
+ * env > config.toml > default), verified offline: with them `grok inspect
+ * --json` reports every cell `enabled: false, source: "env"` and lists the
+ * Claude skills and hooks as `compatibilityStatus: "disabled"`. The
+ * `sessions` cells stay on: grok documents them as staged and inert.
+ *
+ * What these do NOT reach: Claude's permission files
+ * (~/.claude/settings.json and settings.local.json, plus the project's).
+ * 1.0.70 has no compat cell, environment variable or config key for them;
+ * `grok inspect --json` still lists them under `permissions.sources` with
+ * every cell off. src/main/agents/grok-inspect-probe.ts names that blocker.
+ */
+export const GROK_COMPAT_ISOLATION_ENV_VARS: Readonly<Record<string, string>> = Object.freeze({
+	GROK_CLAUDE_AGENTS_ENABLED: 'false',
+	GROK_CLAUDE_HOOKS_ENABLED: 'false',
+	GROK_CLAUDE_MCPS_ENABLED: 'false',
+	GROK_CLAUDE_RULES_ENABLED: 'false',
+	GROK_CLAUDE_SKILLS_ENABLED: 'false',
+	GROK_CURSOR_AGENTS_ENABLED: 'false',
+	GROK_CURSOR_HOOKS_ENABLED: 'false',
+	GROK_CURSOR_MCPS_ENABLED: 'false',
+	GROK_CURSOR_RULES_ENABLED: 'false',
+	GROK_CURSOR_SKILLS_ENABLED: 'false',
+});
+
 // ============ Configuration Types ============
 
 /**
@@ -128,6 +159,17 @@ export interface AgentConfig extends BaseAgentConfig {
 	// Replaces the final prompt and its separator where required, keeping embedded
 	// system prompts below Windows command-line limits.
 	promptFileArgs?: (promptFilePath: string) => string[];
+	/**
+	 * Opt into an owned prompt file on every host/surface, ahead of stdin or
+	 * SSH script delivery. Requires promptFileArgs and a host-owned destination.
+	 * This describes native input, not a public capability or materialization.
+	 */
+	promptFile?: {
+		/** ACP JSON preserves text verbatim and can carry admitted embedded images. */
+		format: 'text' | 'acp-json';
+		/** All native prompt-source aliases, which must be absent from base args. */
+		exclusivePromptFlags: readonly string[];
+	};
 	stdinPromptArgs?: string[]; // Args required to read a raw query from stdin instead of argv
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
@@ -875,15 +917,15 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		binaryName: 'grok',
 		command: 'grok',
 		args: [], // Base args for interactive mode (default grok TUI)
-		requiresPty: false, // Batch mode (-p/--single) works over plain pipes
+		requiresPty: false, // Headless prompt-file turns work over plain pipes
 		// Known limitation: like Codex, Maestro drives grok in batch mode only
-		// (-p/--single per turn, --resume to chain turns). There is no interactive
+		// (--prompt-file per turn, --resume to chain turns). There is no interactive
 		// PTY integration - the grok TUI is not wired into Maestro's terminal
 		// (capabilities: requiresPromptToStart: true).
 		//
-		// Grok CLI argument builders (verified against `grok --help` v0.2.93)
-		// Batch mode: grok --cwd <dir> -p "prompt" --output-format streaming-json --always-approve
-		batchModePrefix: [], // No subcommand needed; -p/--single triggers headless mode
+		// Legacy flags were checked against v0.2.93; prompt-file syntax follows the
+		// pinned grok source (`--prompt-file <path>` per turn), pending binary qualification.
+		batchModePrefix: [], // No subcommand needed; --prompt-file selects headless input
 		// YOLO required by Maestro, mirroring Claude Code's --dangerously-skip-permissions.
 		// --always-approve (boolean auto-approve), NOT ['--permission-mode',
 		// 'bypassPermissions'], for two reasons (same pattern as Copilot's --allow-all):
@@ -899,7 +941,17 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		batchModeArgs: ['--always-approve'],
 		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
+		// --json-schema implies --output-format json, so it is a utility-turn
+		// candidate only; --rules and --system-prompt-override are not emitted
+		// either (GROK_CAPABILITY_EVIDENCE.flagDecisions).
 		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
+		// The shared planner selects this ahead of argv/stdin on every host.
+		// Lowercase .json ACP text blocks preserve whitespace; plain files trim it.
+		promptFile: {
+			format: 'acp-json',
+			exclusivePromptFlags: ['-p', '--single', '--prompt-json', '--prompt-file'],
+		},
+		promptFileArgs: (filePath: string) => ['--prompt-file', filePath],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID
 		// Plan mode alone is not enough for non-interactive read-only runs:
 		// headless grok answers every permission prompt with "cancelled" (there
@@ -911,7 +963,18 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// grep/list_dir. Deny rules take precedence over plan mode's read-only
 		// auto-allow, so read-only shell commands are lost too - the cost of a
 		// turn that always survives (verified live on grok 1.0.5).
+		// None of this is a filesystem sandbox. 1.0.70's built-in `--sandbox
+		// read-only` is one, but is deliberately absent: a session keeps the
+		// profile it started with and grok refuses a resume that names another,
+		// so it would break switching a tab between read-only and the other
+		// modes (GROK_CAPABILITY_EVIDENCE.flagDecisions).
 		readOnlyArgs: ['--permission-mode', 'plan', '--deny', 'Bash(*)'],
+		// Inherited vendor configuration off: a default, so a user's
+		// own per-agent var can opt a cell back in, and a read-only override, so
+		// a read-only turn never runs with Claude's or Cursor's hooks, MCP
+		// servers or skills whatever the user set.
+		defaultEnvVars: { ...GROK_COMPAT_ISOLATION_ENV_VARS },
+		readOnlyEnvOverrides: { ...GROK_COMPAT_ISOLATION_ENV_VARS },
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan + --deny
 		// No noToolsArgs (tab naming falls back to the same graceful path as
 		// Codex/Copilot: batch mode + readOnlyArgs). Verified live on v0.2.93:
@@ -923,9 +986,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Do not add noToolsArgs unless grok ships a verified all-off flag.
 		yoloModeArgs: ['--always-approve'],
 		workingDirArgs: (dir: string) => ['--cwd', dir], // Set working directory
-		// No attachment flag. `--prompt-json` takes inline base64 image blocks but
-		// only as one argv string (a screenshot overruns ARG_MAX) and conflicts
-		// with -p, so the image path rides in the prompt and `read_file` opens it.
+		// Intentionally no additionalDirArgs: --cwd selects the workspace and
+		// --allow/--deny control tool approval, neither grants additional roots.
+		// GROK_DIRECTORY_GRANT_SUPPORT records the unqualified CLI mechanism and
+		// unsupported ACP resume roots separately from the false public capability.
+		// The launch planner refuses explicit grants; never substitute prompt paths.
+		// Legacy path-mention builder. Explicit file plans require admitted ACP
+		// image blocks and refuse without them; they never fall back to tool reads.
 		imagePromptBuilder: plainPathImagePrompt,
 		// modelArgs and configOptions.model.argBuilder both emit -m; trim both
 		// so desktop spawn and settings UI stay aligned.
@@ -937,15 +1004,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		configOptions: [
 			{
 				key: 'model',
-				type: 'select',
+				type: 'text',
 				label: 'Model',
 				description:
-					'Model to use (see `grok models`). Leave empty for the default model (grok-4.5).',
-				dynamic: true, // Discovered from ~/.grok/models_cache.json (or `grok models`) at runtime
-				// Static fallback used when ~/.grok/models_cache.json hasn't been
-				// written yet and the CLI is unreachable, so the dropdown still renders.
-				options: ['', 'grok-4.5', 'grok-composer-2.5-fast'],
-				default: '', // Empty = use grok's default model (grok-4.5)
+					'Model from the selected account catalog. Leave empty to inherit the CLI default; unavailable discovery keeps an explicit selection.',
+				// The existing text/autocomplete control preserves configured IDs even
+				// when a selected-account catalog is unavailable.
+				default: '',
 				argBuilder: (value: string) => {
 					if (value && value.trim()) {
 						return ['-m', value.trim()];
@@ -955,17 +1020,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 			{
 				key: 'reasoningEffort',
-				type: 'select',
+				type: 'text',
 				label: 'Reasoning Effort',
 				description:
-					"How much the model should reason before responding. Leave empty for the model default (high). Note: 'none' is model-dependent - the default model (grok-4.5) rejects it; grok-composer-2.5-fast accepts it.",
-				// Accepted values discovered empirically from grok v0.2.93: a bogus value
-				// errors with "Use none, minimal, low, medium, high, xhigh, max, or a
-				// model menu option id". Live runs confirmed all seven work on
-				// grok-composer-2.5-fast; grok-4.5 rejects 'none' server-side
-				// (HTTP 400 "This model does not support reasoning_effort value none")
-				// but accepts the other six.
-				options: ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+					'Leave empty to inherit the selected model default. Effort levels depend on its advertised menu; none requires verified support for the selected model.',
+				// Final composition validates model and effort together, after custom
+				// arguments are joined. A scalar builder cannot authorize none or
+				// detect a conflicting native alias on its own.
 				default: '',
 				argBuilder: (value: string) =>
 					value && value.trim() ? ['--reasoning-effort', value.trim()] : [],
@@ -974,9 +1035,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				key: 'contextWindow',
 				type: 'number',
 				label: 'Context Window Size',
-				description:
-					'Maximum context window size in tokens. 500000 for grok-4.5, 200000 for grok-composer-2.5-fast.',
-				default: 500000, // Matches DEFAULT_CONTEXT_WINDOWS grok entry (grok-4.5)
+				description: 'Context window override for the selected model. Leave at 0 when unknown.',
+				default: 0,
 			},
 		],
 	},

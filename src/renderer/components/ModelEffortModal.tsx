@@ -45,9 +45,9 @@
  *
  * Options and the tab > session > agent-default ladder come from the same hook
  * and resolver the composer pills use, so the two surfaces can't disagree about
- * what this agent offers or what the tab is currently running. Effort is
- * agent-scoped rather than model-scoped, which matches the underlying CLIs: a
- * model that ignores reasoning effort simply drops the flag.
+ * what this agent offers or what the tab is currently running. Grok discovery
+ * follows the selected account and model; unqualified options remain editable
+ * as manual values.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +55,9 @@ import { createPortal } from 'react-dom';
 import { Gauge, RefreshCw, Sparkles } from 'lucide-react';
 import { isCoarsePointer } from '../utils/touch';
 import type { Theme } from '../types';
+import type { AgentDiscoveryRequest } from '../../shared/types';
+import { FormInput } from './ui/FormInput';
+import { isEditingTextTarget } from '../utils/editableTarget';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
@@ -169,8 +172,74 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	const tab = activeSession?.aiTabs.find((t) => t.id === tabId);
 	const agentId = activeSession?.toolType;
 
-	const { models, efforts, defaultModel, defaultEffort, loaded, refreshModels, refreshingModels } =
-		useAgentModelEffortOptions(agentId);
+	const sessionId = activeSession?.id;
+	const [picked, setPicked] = useState<{
+		sessionId?: string;
+		agentId?: string;
+		tabId: string;
+		model: string | null;
+		effort: string | null;
+	}>({ sessionId, agentId, tabId, model: null, effort: null });
+	const sameTarget =
+		picked.sessionId === sessionId && picked.agentId === agentId && picked.tabId === tabId;
+	const pickedModel = sameTarget ? picked.model : null;
+	const pickedEffort = sameTarget ? picked.effort : null;
+	const setPickedModel = useCallback(
+		(model: string) => setPicked({ sessionId, agentId, tabId, model, effort: pickedEffort }),
+		[sessionId, agentId, tabId, pickedEffort]
+	);
+	const setPickedEffort = useCallback(
+		(effort: string) => setPicked({ sessionId, agentId, tabId, model: pickedModel, effort }),
+		[sessionId, agentId, tabId, pickedModel]
+	);
+	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
+		if (!activeSession?.cwd?.trim() || !tab) return undefined;
+		const selection = resolveModelEffort(
+			{
+				customModel: pickedModel ?? tab.customModel,
+				customEffort: pickedEffort ?? tab.customEffort,
+			},
+			activeSession,
+			{ defaultModel: '', defaultEffort: '' }
+		);
+		return {
+			kind: 'draft',
+			cwd: activeSession.cwd,
+			customPath: activeSession.customPath,
+			customEnvVars: activeSession.customEnvVars,
+			model: selection.model || undefined,
+			effort: selection.effort || undefined,
+			sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+			sshRemoteId: activeSession.sshRemoteId,
+		};
+	}, [
+		activeSession?.id,
+		activeSession?.toolType,
+		activeSession?.cwd,
+		activeSession?.customPath,
+		activeSession?.customEnvVars,
+		activeSession?.customModel,
+		activeSession?.customEffort,
+		activeSession?.sessionSshRemoteConfig,
+		activeSession?.sshRemoteId,
+		tab?.id,
+		tab?.customModel,
+		tab?.customEffort,
+		pickedModel,
+		pickedEffort,
+	]);
+	const {
+		models,
+		efforts,
+		defaultModel,
+		defaultEffort,
+		loaded,
+		modelStatus,
+		effortStatus,
+		refreshModels,
+		refreshingModels,
+	} = useAgentModelEffortOptions(agentId, discoveryContext);
+	const manualGrokOptions = agentId === 'grok';
 	const { model: currentModel, effort: currentEffort } = resolveModelEffort(tab, activeSession, {
 		defaultModel,
 		defaultEffort,
@@ -189,9 +258,6 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	// leave a window right after open where the highlight sits on '(default)'
 	// because the option lists hadn't landed yet - and an Enter inside that
 	// window would clear the override the user came here to nudge.
-	const [pickedModel, setPickedModel] = useState<string | null>(null);
-	const [pickedEffort, setPickedEffort] = useState<string | null>(null);
-
 	const selectedModel = pickedModel ?? currentModel;
 	const selectedEffort = pickedEffort ?? currentEffort;
 
@@ -232,7 +298,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 			const match = findTypeaheadMatch(modelOptions, typedRef.current, from);
 			if (match >= 0) setPickedModel(modelOptions[match]);
 		},
-		[modelOptions, modelIndex]
+		[modelOptions, modelIndex, setPickedModel]
 	);
 
 	const stepModel = useCallback(
@@ -242,7 +308,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				modelOptions[(modelIndex + delta + modelOptions.length) % modelOptions.length]
 			);
 		},
-		[modelOptions, modelIndex]
+		[modelOptions, modelIndex, setPickedModel]
 	);
 
 	const stepEffort = useCallback(
@@ -252,7 +318,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				effortOptions[(effortIndex + delta + effortOptions.length) % effortOptions.length]
 			);
 		},
-		[effortOptions, effortIndex]
+		[effortOptions, effortIndex, setPickedEffort]
 	);
 
 	/**
@@ -267,18 +333,25 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	 */
 	const handleConfirm = useCallback(
 		(overrides?: { model?: string; effort?: string }) => {
+			if (!tab) return;
 			const { setTabModel, setTabEffort } = useTabStore.getState();
 			setTabModel(tabId, (overrides?.model ?? selectedModel) || undefined);
-			if (effortOptions.length > 0) {
+			if (manualGrokOptions || effortOptions.length > 0) {
 				setTabEffort(tabId, (overrides?.effort ?? selectedEffort) || undefined);
 			}
 			onClose();
 		},
-		[tabId, selectedModel, selectedEffort, effortOptions.length, onClose]
+		[tab, tabId, selectedModel, selectedEffort, manualGrokOptions, effortOptions.length, onClose]
 	);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			if (
+				isEditingTextTarget(e.target) ||
+				e.target instanceof HTMLSelectElement ||
+				(manualGrokOptions && e.key !== 'Enter')
+			)
+				return;
 			// Arrows wrap at both ends: on a short effort scale, running off the end
 			// and coming back around is faster than reversing direction.
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -306,6 +379,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 			}
 		},
 		[
+			manualGrokOptions,
 			modelOptions.length,
 			effortOptions.length,
 			stepModel,
@@ -530,7 +604,73 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 					)}
 				</div>
 
-				{hasNothingToTune ? (
+				{manualGrokOptions ? (
+					<div className="relative w-full flex flex-col gap-4">
+						{(['model', 'effort'] as const).map((key) => {
+							const status = key === 'model' ? modelStatus : effortStatus;
+							const options = key === 'model' ? models : efforts;
+							const label = key === 'model' ? 'Model' : 'Effort';
+							const setValue = key === 'model' ? setPickedModel : setPickedEffort;
+							return (
+								<FormInput
+									key={key}
+									theme={theme}
+									label={label}
+									value={key === 'model' ? selectedModel : selectedEffort}
+									onChange={setValue}
+									onSubmit={handleConfirm}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault();
+									}}
+									placeholder={DEFAULT_LABEL}
+									helperText={
+										status === 'discovered'
+											? undefined
+											: status === 'configured-fallback'
+												? `Only the configured ${key} is known. Keep or enter ${key === 'model' ? 'a model' : 'an effort'} manually.`
+												: `${label} discovery unavailable. Keep or enter ${key === 'model' ? 'a model' : 'an effort'} manually.`
+									}
+									addon={
+										status === 'discovered' && options.length > 0 ? (
+											<select
+												aria-label={`Suggested ${key} values`}
+												value=""
+												onChange={(e) => setValue(e.target.value)}
+												style={{
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textMain,
+												}}
+											>
+												<option value="" disabled>
+													Suggestions
+												</option>
+												{options.filter(Boolean).map((value) => (
+													<option key={value} value={value}>
+														{value}
+													</option>
+												))}
+											</select>
+										) : undefined
+									}
+								/>
+							);
+						})}
+						<button
+							type="button"
+							onClick={() => handleConfirm()}
+							className="self-end px-3 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: readableTextOn(theme.colors.accent, [
+									theme.colors.textMain,
+									theme.colors.bgMain,
+								]),
+							}}
+						>
+							Apply
+						</button>
+					</div>
+				) : hasNothingToTune ? (
 					<div className="relative text-xs py-10" style={{ color: theme.colors.textDim }}>
 						This agent exposes no model or effort options.
 					</div>

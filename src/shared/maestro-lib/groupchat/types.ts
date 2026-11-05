@@ -158,10 +158,16 @@ export interface GroupChatSessionInfo {
 	isBusy?: boolean;
 }
 
-/** Moderator usage for the moderator card. */
+/**
+ * Moderator usage for the moderator card. Context/token observations use nonnegative
+ * measurements, -1 for accumulated usage that preserves the previous measurement,
+ * and -2 for an unknown window that clears it. Total cost advances in every case.
+ */
 export interface ModeratorUsage {
+	/** Context percentage, or the unavailable observation sentinel described above. */
 	contextUsage: number;
 	totalCost: number;
+	/** Context tokens, or the same sentinel as contextUsage. */
 	tokenCount: number;
 }
 

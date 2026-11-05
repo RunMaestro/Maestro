@@ -1,6 +1,7 @@
 import React, {
 	useState,
 	useEffect,
+	useLayoutEffect,
 	useCallback,
 	useMemo,
 	useRef,
@@ -39,6 +40,7 @@ import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { visibleHistoryEntryTypes } from '../../../shared/history';
+import type { ResumeSessionOptions } from '../../hooks/agent/useAgentSessionManagement';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -48,13 +50,23 @@ const SCROLL_LOAD_THRESHOLD = 500;
 
 interface UnifiedHistoryEntry extends HistoryEntry {
 	agentName?: string;
-	sourceSessionId: string;
+	sourceSessionId?: string;
 }
 
-interface UnifiedHistoryTabProps {
+export interface UnifiedHistoryTabProps {
 	theme: Theme;
-	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
+	/** Resume the selected record under its recorded owner; only true confirms success. */
+	onResumeSession?: (
+		sourceSessionId: string,
+		agentSessionId: string,
+		sessionName?: string,
+		projectPath?: string,
+		opts?: ResumeSessionOptions,
+		/** Recheck before navigation/closing after an asynchronous resume. */
+		isCurrent?: () => boolean
+	) => boolean | void | Promise<boolean | void>;
+	/** Director Notes parks inactive tabs without unmounting them. */
+	isActive?: boolean;
 	fileTree?: FileNode[];
 	cwd?: string;
 	projectRoot?: string;
@@ -69,6 +81,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		{
 			theme,
 			onResumeSession,
+			isActive = true,
 			fileTree,
 			cwd,
 			projectRoot,
@@ -101,7 +114,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		);
 		/** At least one entry type is switched off, so the list is narrowed. */
 		const hasNarrowingTypeFilter = activeFilterArray.length < visibleTypes.length;
-		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
+		const [detailModalEntry, setDetailModalEntry] = useState<UnifiedHistoryEntry | null>(null);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
 		// Phone: the activity graph gets its own row. Beside the search button and
@@ -435,6 +448,39 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			initialRect: { width: 300, height: 600 },
 		});
 
+		// Capture the selected record itself. Native IDs may collide across owners,
+		// accounts and hosts, and current agent settings cannot label old history.
+		const resumeRequestRef = useRef(0);
+		const handleResumeEntry = useCallback(
+			async (entry: UnifiedHistoryEntry): Promise<boolean> => {
+				const request = ++resumeRequestRef.current;
+				const isCurrent = () => resumeRequestRef.current === request;
+				if (!onResumeSession || !isActive || !entry.agentSessionId) return false;
+				if (!entry.sourceSessionId) {
+					notifyCenterFlash({
+						message: 'The recorded owner of this history entry is unavailable',
+						color: 'yellow',
+					});
+					return false;
+				}
+				const resumed = await onResumeSession(
+					entry.sourceSessionId,
+					entry.agentSessionId,
+					entry.sessionName,
+					entry.projectPath,
+					{
+						targetSessionId: entry.sourceSessionId,
+						nativeSessionBinding: entry.nativeSessionBinding
+							? structuredClone(entry.nativeSessionBinding)
+							: undefined,
+					},
+					isCurrent
+				);
+				return resumed === true && isCurrent();
+			},
+			[onResumeSession, isActive]
+		);
+
 		// List navigation
 		const {
 			selectedIndex,
@@ -460,11 +506,17 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							return;
 						}
 						trackShortcutUsage('historyJumpToSession');
-						onResumeSession(entry.sourceSessionId, entry.agentSessionId, entry.sessionName);
+						void handleResumeEntry(entry);
 					}
 				: undefined,
 			initialIndex: -1,
 		});
+		useLayoutEffect(() => {
+			return () => {
+				// A late result must not close a newer selection or a parked history tab.
+				resumeRequestRef.current++;
+			};
+		}, [detailModalEntry, selectedIndex, filteredEntries, isActive]);
 
 		// Scroll selected into view
 		useEffect(() => {
@@ -612,30 +664,6 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				listNavKeyDown(e);
 			},
 			[listNavKeyDown, searchExpanded, openSearch]
-		);
-
-		// Navigate to a session tab - looks up sourceSessionId from the unified entry
-		const handleOpenSessionAsTab = useCallback(
-			(agentSessionId: string) => {
-				if (!onResumeSession) return;
-				const entry = entries.find((e) => e.agentSessionId === agentSessionId) as
-					| UnifiedHistoryEntry
-					| undefined;
-				if (entry) {
-					onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
-				}
-			},
-			[onResumeSession, entries]
-		);
-
-		// Navigate to a session from the detail modal
-		const handleDetailResumeSession = useCallback(
-			(agentSessionId: string) => {
-				if (!onResumeSession || !detailModalEntry) return;
-				const entry = detailModalEntry as UnifiedHistoryEntry;
-				onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
-			},
-			[onResumeSession, detailModalEntry]
 		);
 
 		const openDetailModal = useCallback(
@@ -835,7 +863,9 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 											isSelected={virtualItem.index === selectedIndex}
 											theme={theme}
 											onOpenDetailModal={openDetailModal}
-											onOpenSessionAsTab={onResumeSession ? handleOpenSessionAsTab : undefined}
+											onOpenSessionAsTab={
+												onResumeSession ? () => handleResumeEntry(entry) : undefined
+											}
 											showAgentName
 										/>
 									</div>
@@ -861,7 +891,9 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						theme={theme}
 						entry={detailModalEntry}
 						onClose={closeDetailModal}
-						onResumeSession={onResumeSession ? handleDetailResumeSession : undefined}
+						onResumeSession={
+							onResumeSession ? () => handleResumeEntry(detailModalEntry) : undefined
+						}
 						onUpdate={handleUpdateEntry}
 						filteredEntries={filteredEntries}
 						currentIndex={selectedIndex}

@@ -1,6 +1,6 @@
 ---
 title: Provider Notes
-description: Feature differences between Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI, Hermes, Pi, Qwen3 Coder, and Oh My Pi providers.
+description: Feature differences between Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI, Grok CLI, Hermes, Pi, Qwen3 Coder, and Oh My Pi providers.
 icon: puzzle
 ---
 
@@ -247,6 +247,69 @@ Thinking off, in dark and light themes:
 **Notes**:
 
 - Copilot-CLI is multi-model via [models.dev](https://models.dev). Maestro maps image uploads to temporary-file `@image` mentions in the prompt, which also works on resumed sessions.
+
+## Grok CLI
+
+<Warning>
+Grok is a **beta** provider and is not yet qualified. The integration is built and covered by Maestro's own tests, but no Grok version or platform has passed a live qualification run. "Supported" below means Maestro drives the feature and its tests pass; it does not mean the feature was verified against a real Grok account. Where Maestro cannot run something safely, it refuses the turn with a named reason instead of falling back to a weaker mode.
+</Warning>
+
+| Feature            | Support                                                               |
+| ------------------ | --------------------------------------------------------------------- |
+| Image attachments  | ❌ Refused (fresh and resumed turns)                                  |
+| Session resume     | ✅ `--resume <session id>` (headless), session load (ACP)             |
+| Read-only mode     | ⚠️ `--permission-mode plan --deny 'Bash(*)'` (containment unverified) |
+| Standard mode      | ⚠️ Through `grok agent stdio` (ACP), local agents only                |
+| Slash commands     | ❌ Not supported                                                      |
+| Cost tracking      | ⚠️ When Grok reports it; an unknown cost stays unknown, never zero    |
+| Model selection    | ✅ `-m <model>`                                                       |
+| Reasoning effort   | ✅ `--reasoning-effort <level>`                                       |
+| Context operations | ✅ Transfer; merge is not verified                                    |
+| Thinking display   | ✅ Reasoning stream                                                   |
+
+### Which Grok Maestro runs
+
+Maestro supports the **official xAI Grok CLI** only: the npm package [`@xai-official/grok`](https://www.npmjs.com/package/@xai-official/grok) (source `xai-org/grok-build`), which installs a binary named `grok`. Community packages with similar names (for example the various `grok-cli` projects) are a different program with different flags and are not supported; there is no separate `grok-cli` agent type.
+
+- **Install:** `npm install -g @xai-official/grok`. Maestro finds `grok` on your `PATH` and in the npm global prefix. If you installed it some other way, set its location under **Settings → Providers → Grok CLI → Custom Path** (or `maestro-cli create-agent --type grok --custom-path <path>`).
+- **Version:** the current candidate is 1.0.70. No version is qualified yet, so Maestro does not promise any particular release works. Run `grok --version` to see which one you have.
+- **Platforms:** macOS (Apple Silicon and Intel), Linux (x64 and arm64), and Windows (x64 and arm64) are candidates. None has completed live qualification.
+
+### Sign-in and accounts
+
+- **Sign in once** before using Grok in Maestro: run `grok login` in a terminal (`grok login --device-auth` on an SSH remote, where a browser callback cannot reach the remote). Maestro's re-authenticate action runs the same command. Grok's API-key path (`XAI_API_KEY`) and an explicit credential (`GROK_AUTH_PATH` or `GROK_AUTH`) also work when set in the agent's environment.
+- **Multiple accounts:** Grok keeps its state, sessions and default login under `GROK_HOME` (default `~/.grok`). Give each Maestro agent its own `GROK_HOME` in its environment variables to keep sessions and logins apart, the same way `CLAUDE_CONFIG_DIR` and `CODEX_HOME` work ([multiple accounts](/multi-provider)).
+- **`GROK_HOME` is not a billing identity.** `GROK_AUTH_PATH` and `GROK_AUTH` choose credentials independently of `GROK_HOME`, so Maestro does not treat two agents with the same `GROK_HOME` as the same paying account, and the Usage Dashboard does not merge them.
+- **Cost and quota:** how xAI meters and limits Grok usage for your plan is not known to Maestro. Maestro shows the cost Grok itself reports on a turn; when Grok reports none, the cost is shown as unknown, not as free. Maestro has no Grok plan-quota tracking.
+
+### Models and effort
+
+Leave **Model** and **Reasoning Effort** empty to use Grok's own defaults. Maestro fills the model and effort lists from what your local Grok install advertises; when it cannot ask (an SSH remote, or discovery failed), it keeps whatever you typed. Effort levels depend on the selected model, and `none` is passed only when that model is known to support it. The context window shows `0` (unknown) until you set it for your model under the agent's settings.
+
+### Permission modes and approvals
+
+- **Full Access** runs headless (`--always-approve`). Grok approves every tool call itself.
+- **Read-Only** runs headless in plan mode with every shell command denied (`--permission-mode plan --deny 'Bash(*)'`). The model can still read and search files. How completely Grok contains writes in this mode has not been qualified.
+- **Standard** runs through `grok agent stdio` (the Agent Client Protocol). Each tool approval Grok asks for appears as an in-app prompt on that tab; only an explicit **Allow** approves it, and Deny, a timeout, Stop, or the process exiting all deny. Standard mode is local only: a Standard-mode Grok agent on an SSH remote is refused, so run remote Grok agents in Full Access or Read-Only.
+- Grok cannot answer ask-back questions in Maestro yet, on either route. A headless turn has no channel for a question, and a question raised over the ACP route is shown as an unavailable notice rather than a prompt you can answer.
+
+### Prompts, images and resume
+
+- Maestro hands every prompt to Grok as a file (`--prompt-file`), so long prompts and Windows command-line limits are not a problem. Grok does not read prompts from stdin.
+- **Images are refused** on new and resumed Grok turns. Maestro does not fall back to describing the image path in the prompt.
+- **Resume:** each tab continues its own Grok session. Grok's history for the agent's working folder appears in Maestro's session browser, read from `$GROK_HOME/sessions/`, locally and over SSH. Grok transcripts carry no per-message timestamps.
+- Extra working directories are not supported: Grok works in the agent's one working folder.
+
+### Workflows
+
+Grok works in tabs, Auto Run, Maestro Cue, group chats (as a participant, not a moderator), and `maestro-cli` sends. For the CLI, see `create-agent --type grok` and `send` in the [CLI Reference](/cli-reference), which is generated from the live command list. Unattended runs (Auto Run, Cue) use Full Access or Read-Only, because Standard mode needs someone to answer approvals.
+
+### Troubleshooting
+
+- **"authentication is required"**: run `grok login` (or `grok login --device-auth` over SSH) as the same OS user, with the same `GROK_HOME` the agent uses.
+- **A turn is refused with a named reason** (for example `consent-port`, `acp-remote-route`, `acp-images`): Maestro could not run that combination safely, such as a Standard-mode turn with no one to approve it, a Standard-mode turn on an SSH remote, or an image. Switch the permission mode or remove the attachment.
+- **Wrong program detected**: if `grok --version` does not report the xAI CLI, a community `grok-cli` is earlier on your `PATH`. Point **Custom Path** at the official binary.
+- **No tool-free mode**: Grok has no switch that turns every tool off, so tab naming runs read-only instead.
 
 ## Hermes
 

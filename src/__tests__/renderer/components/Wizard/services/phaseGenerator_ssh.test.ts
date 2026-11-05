@@ -5,7 +5,7 @@
  * during document generation in the phase generator.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Captured callbacks from process events
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
@@ -26,6 +26,7 @@ const mockMaestro = {
 			capturedDataCallback = cb;
 			return vi.fn(); // cleanup function
 		}),
+		onAgentError: vi.fn(() => vi.fn()),
 		onExit: vi.fn((cb) => {
 			capturedExitCallback = cb;
 			return vi.fn(); // cleanup function
@@ -56,7 +57,7 @@ import { phaseGenerator } from '../../../../../renderer/components/Wizard/servic
  * Configure spawn mock to capture the session ID and fire exit callback
  * with the correct session ID so the internal guards pass.
  */
-function setupSpawnMock(exitDelay = 10) {
+function setupSpawnMock(exitDelay = 10, success?: boolean) {
 	mockMaestro.process.spawn.mockImplementation(async (config: { sessionId: string }) => {
 		const sid = config.sessionId;
 
@@ -67,7 +68,7 @@ function setupSpawnMock(exitDelay = 10) {
 			}
 		}, exitDelay);
 
-		return { sessionId: sid };
+		return { sessionId: sid, success };
 	});
 }
 
@@ -240,10 +241,10 @@ CONTENT:
 			// Setup fs.readFile to return content
 			mockMaestro.fs.readFile.mockResolvedValue('# Test content from file');
 
-			// Setup spawn mock with proper session ID handling (longer delay to allow watcher setup)
-			setupSpawnMock(100);
+			// Keep exit under test control so the file event belongs to a live generation.
+			mockMaestro.process.spawn.mockImplementation(async ({ sessionId }) => ({ sessionId }));
 
-			await phaseGenerator.generateDocuments({
+			const generation = phaseGenerator.generateDocuments({
 				agentType: 'claude-code',
 				directoryPath: '/remote/path',
 				projectName: 'Test Project',
@@ -253,6 +254,8 @@ CONTENT:
 					remoteId: 'test-remote-id',
 				},
 			});
+
+			await vi.waitFor(() => expect(capturedFileChangedCallback).not.toBeNull());
 
 			// Capture the actual folder path from watchFolder call
 			const watchFolderCall = mockMaestro.autorun.watchFolder.mock.calls[0];
@@ -267,8 +270,10 @@ CONTENT:
 				});
 			}
 
-			// Wait for async readFile call
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			// Keep the watcher event inside its owned generation.
+			await vi.waitFor(() => expect(mockMaestro.fs.readFile).toHaveBeenCalled());
+			capturedExitCallback!(mockMaestro.process.spawn.mock.calls[0][0].sessionId, 0);
+			await generation;
 
 			// Verify readFile was called with sshRemoteId
 			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
@@ -369,5 +374,147 @@ CONTENT:
 				'test-remote-id' // sshRemoteId
 			);
 		});
+	});
+
+	describe('Grok selected host generation', () => {
+		beforeEach(() => {
+			mockMaestro.agents.get.mockReset();
+			mockMaestro.process.spawn.mockReset();
+			mockMaestro.autorun.listDocs.mockReset();
+			mockMaestro.autorun.readDoc.mockReset();
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'grok',
+				available: false,
+				command: 'grok',
+				args: [],
+			});
+			mockMaestro.autorun.listDocs.mockResolvedValue({ success: true, files: ['Phase-01-Remote'] });
+			mockMaestro.autorun.readDoc.mockResolvedValue({
+				success: true,
+				content: '# Phase 1: Remote\n## Tasks\n- [ ] Build the selected project',
+			});
+			setupSpawnMock(0, true);
+		});
+
+		afterEach(() => {
+			phaseGenerator.abort();
+			vi.restoreAllMocks();
+		});
+
+		it.each([
+			[
+				'account A',
+				true,
+				{ GROK_HOME: '/accounts/a', GROK_AUTH_PATH: '/accounts/a/auth.json' },
+				undefined,
+				undefined,
+			],
+			[
+				'account B',
+				true,
+				{ GROK_HOME: '/accounts/b', GROK_AUTH_PATH: '/accounts/b/auth.json' },
+				'grok-4.5',
+				'high',
+			],
+			['empty env', true, {} as Record<string, string>, 'grok-4.5', undefined],
+			['inherited env', true, undefined, undefined, 'high'],
+			['local custom binary', false, { GROK_HOME: '/accounts/a' }, undefined, undefined],
+		] as const)(
+			'keeps %s and selected configuration on the generation consumer',
+			async (_label, remote, env, model, effort) => {
+				const remoteId = remote ? 'grok-remote' : undefined;
+				const sshRemoteConfig = remote
+					? {
+							enabled: true,
+							remoteId: 'grok-remote',
+							workingDirOverride: '/remote/project',
+						}
+					: undefined;
+				const onComplete = vi.fn();
+				const result = await phaseGenerator.generateDocuments(
+					{
+						agentType: 'grok',
+						directoryPath: '/remote/project',
+						projectName: 'Remote',
+						conversationHistory: [],
+						subfolder: 'Initiation',
+						sshRemoteConfig,
+						sessionCustomPath: '/remote/bin/grok',
+						sessionCustomArgs: '--no-user-rules',
+						sessionCustomEnvVars: env,
+						sessionCustomEffort: effort,
+						model,
+					},
+					{ onComplete }
+				);
+
+				expect(mockMaestro.agents.get).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(mockMaestro.process.spawn).toHaveBeenCalledExactlyOnceWith(
+					expect.objectContaining({
+						toolType: 'grok',
+						command: 'grok',
+						cwd: '/remote/project',
+						args: ['--max-turns', '32', '--no-subagents'],
+						permissionMode: 'full',
+						sessionCustomPath: '/remote/bin/grok',
+						sessionCustomArgs: '--no-user-rules',
+						sessionCustomEnvVars: env,
+						sessionCustomEffort: effort,
+						sessionCustomModel: model,
+						sessionSshRemoteConfig: sshRemoteConfig,
+					})
+				);
+				const folder = '/remote/project/.maestro/playbooks/Initiation';
+				expect(mockMaestro.autorun.watchFolder).toHaveBeenCalledWith(folder, remoteId);
+				expect(mockMaestro.autorun.listDocs).toHaveBeenCalledWith(folder, remoteId);
+				expect(mockMaestro.autorun.readDoc).toHaveBeenCalledWith(
+					folder,
+					'Phase-01-Remote',
+					remoteId
+				);
+				expect(result).toMatchObject({
+					success: true,
+					documentsFromDisk: true,
+					documents: [
+						{
+							filename: 'Phase-01-Remote.md',
+							taskCount: 1,
+							savedPath: `${folder}/Phase-01-Remote.md`,
+						},
+					],
+				});
+				expect(onComplete).toHaveBeenCalledExactlyOnceWith(result);
+				expect(mockMaestro.autorun.writeDoc).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([null, ''])(
+			'refuses an unresolved SSH target %s before spawning locally',
+			async (remoteId) => {
+				const onComplete = vi.fn();
+				const onError = vi.fn();
+				const result = await phaseGenerator.generateDocuments(
+					{
+						agentType: 'grok',
+						directoryPath: '/remote/project',
+						projectName: 'Remote',
+						conversationHistory: [],
+						sessionCustomPath: '/remote/bin/grok',
+						sshRemoteConfig: { enabled: true, remoteId },
+					},
+					{ onComplete, onError }
+				);
+				expect(result).toMatchObject({
+					success: false,
+					error: 'Select an SSH remote before generating documents.',
+				});
+				expect(mockMaestro.agents.get).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(mockMaestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockMaestro.autorun.watchFolder).not.toHaveBeenCalled();
+				expect(mockMaestro.autorun.listDocs).not.toHaveBeenCalled();
+				expect(onComplete).not.toHaveBeenCalled();
+				expect(onError).toHaveBeenCalledExactlyOnceWith(result.error);
+			}
+		);
 	});
 });

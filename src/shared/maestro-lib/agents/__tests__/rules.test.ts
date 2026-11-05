@@ -35,6 +35,7 @@ import {
 	type RuleContext,
 } from '../rules';
 import type { AgentRecord, GroupRecord } from '../../store/records';
+import type { NativeSessionBinding, ProviderTabSession } from '../providerSwap';
 
 function makeContext(): RuleContext {
 	let id = 0;
@@ -748,12 +749,14 @@ describe('beginTurnRecord', () => {
 			logs: [{ id: 'old', timestamp: 1, source: 'ai', text: 'earlier' }],
 		});
 		const after = beginTurnRecord(before, {
+			turnId: 'attempt-1',
 			userEntry,
 			provider: 'claude-code',
 			consumedMergedContext: false,
 		});
 		expect((after.logs as { id: string }[]).map((entry) => entry.id)).toEqual(['old', 'u1']);
 		expect(after.turnProvider).toBe('claude-code');
+		expect(after.runtimeTurnId).toBe('attempt-1');
 		expect(before.logs).toHaveLength(1);
 	});
 
@@ -773,12 +776,13 @@ describe('beginTurnRecord', () => {
 		expect(kept.pendingMergedContext).toBe('from another tab');
 	});
 
-	it('starts a transcript on a tab that has none', () => {
+	it('starts a transcript without retaining an old attempt when turnId is omitted', () => {
 		const after = beginTurnRecord(
-			{ id: 't1' },
+			{ id: 't1', runtimeTurnId: 'old-attempt' },
 			{ userEntry, provider: 'claude-code', consumedMergedContext: false }
 		);
 		expect(after.logs).toEqual([userEntry]);
+		expect(after.runtimeTurnId).toBeUndefined();
 	});
 });
 
@@ -827,6 +831,105 @@ describe('recordTabSession', () => {
 		expect(parked.usageStats.inputTokens).toBe(15);
 		expect(parkedTwice).not.toHaveProperty('usageStats');
 	});
+
+	it.each(['grok', 'codex'] as const)(
+		'atomically records detached Grok identity and usage with %s current',
+		(currentProvider) => {
+			const previous = { agentSessionId: 'OLD', usageStats: usage(10) };
+			const live = { agentSessionId: 'OTHER', usageStats: usage(90) };
+			const source = tab('t1', {
+				runtimeTurnId: 'attempt-1',
+				...(currentProvider === 'grok' ? previous : live),
+				providerSessions: currentProvider === 'grok' ? { codex: live } : { grok: previous },
+			});
+			const saved = structuredClone(source);
+			const binding = {
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 'NEW',
+				accountRef: 'account-a',
+				host: { kind: 'ssh', identity: 'endpoint-a' },
+				cwd: agent().cwd!,
+			} satisfies NativeSessionBinding;
+			const after = recordTabSession(source, agent({ toolType: currentProvider }), 'grok', {
+				agentSessionId: 'NEW',
+				nativeSessionBinding: binding,
+				addUsage: usage(5),
+				expected: { turnId: 'attempt-1', agentSessionId: 'OLD' },
+			});
+			const slots = after.providerSessions as Record<string, ProviderTabSession>;
+			const recorded = currentProvider === 'grok' ? after : slots.grok;
+			expect(recorded).toMatchObject({
+				agentSessionId: 'NEW',
+				nativeSessionBinding: binding,
+				usageStats: { inputTokens: 15, totalCostUsd: 1 },
+			});
+			binding.host.identity = 'mutated-after-write';
+			expect(recorded.nativeSessionBinding).toMatchObject({ host: { identity: 'endpoint-a' } });
+			expect(currentProvider === 'grok' ? slots.codex : after).toMatchObject(live);
+			expect(source).toEqual(saved);
+		}
+	);
+
+	describe.each(['grok', 'codex'] as const)(
+		'Grok recording fences with %s current',
+		(currentProvider) => {
+			it.each(['turn', 'id', 'binding'] as const)(
+				'refuses a changed %s before every write or check',
+				(changed) => {
+					const binding = { version: 1, state: 'unknown', reason: 'unobserved' } as const;
+					const owned = {
+						agentSessionId: 'OLD',
+						nativeSessionBinding: binding,
+						usageStats: usage(10),
+					};
+					const source = tab('t1', {
+						runtimeTurnId: 'attempt-1',
+						...(currentProvider === 'grok' ? owned : { agentSessionId: 'OTHER' }),
+						providerSessions: currentProvider === 'grok' ? {} : { grok: owned },
+					});
+					const saved = structuredClone(source);
+					const expected = {
+						turnId: changed === 'turn' ? 'stale-attempt' : 'attempt-1',
+						agentSessionId: changed === 'id' ? 'stale-id' : 'OLD',
+						nativeSessionBinding: changed === 'binding' ? undefined : binding,
+					};
+					for (const fields of [
+						{},
+						{ agentSessionId: 'NEW', nativeSessionBinding: binding, addUsage: usage(5) },
+					]) {
+						expect(() =>
+							recordTabSession(source, agent({ toolType: currentProvider }), 'grok', {
+								...fields,
+								expected,
+							})
+						).toThrow('The native session owner changed before the turn could be recorded.');
+						expect(source).toEqual(saved);
+					}
+				}
+			);
+
+			it('checks equal binding values regardless of key order without changing the slot', () => {
+				const binding = { version: 1, state: 'unknown', reason: 'unobserved' } as const;
+				const owned = { agentSessionId: 'OLD', nativeSessionBinding: binding };
+				const source = tab('t1', {
+					runtimeTurnId: 'attempt-1',
+					...(currentProvider === 'grok' ? owned : { agentSessionId: 'OTHER' }),
+					providerSessions: currentProvider === 'grok' ? {} : { grok: owned },
+				});
+				expect(
+					recordTabSession(source, agent({ toolType: currentProvider }), 'grok', {
+						expected: {
+							turnId: 'attempt-1',
+							agentSessionId: 'OLD',
+							nativeSessionBinding: { reason: 'unobserved', state: 'unknown', version: 1 },
+						},
+					})
+				).toBe(source);
+			});
+		}
+	);
 
 	it('returns the tab itself when there is nothing to record', () => {
 		const same = tab('t1');

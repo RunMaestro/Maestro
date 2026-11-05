@@ -9,8 +9,9 @@
  *  3. Per-session errors → an error log entry is appended to the targeted
  *     tab; `session.agentError` + `agentErrorTabId` + `agentErrorPaused`
  *     are stamped; the agentError modal opens. On `session_not_found`
- *     specifically, the stale `agentSessionId` is cleared so the next
- *     spawn starts fresh, and the modal is suppressed.
+ *     specifically, non-Grok sessions clear the stale `agentSessionId` for
+ *     recovery and suppress the modal. Grok preserves its native resume ID
+ *     and surfaces the failure without starting a fresh conversation.
  *
  * If an Auto Run batch is active, this listener pauses it via
  * `pauseBatchOnErrorRef` and records a USER-facing history entry with a
@@ -22,7 +23,7 @@
  */
 
 import { useEffect } from 'react';
-import { updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
+import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { useModalStore } from '../../../stores/modalStore';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -32,6 +33,7 @@ import {
 	isSynopsisSession,
 } from '../../../utils/sessionIdParser';
 import { getActiveTab } from '../../../utils/tabHelpers';
+import { resolveTurnProvider } from '../../../utils/providerTabSessions';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
@@ -199,7 +201,45 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				recoverable: error.recoverable,
 			});
 
-			const isSessionNotFound = agentError.type === 'session_not_found';
+			const errorSession = getSessions().find((s) => s.id === actualSessionId);
+			const errorTab = tabIdFromSession
+				? errorSession?.aiTabs.find((tab) => tab.id === tabIdFromSession)
+				: !isBatchError && errorSession
+					? getActiveTab(errorSession)
+					: undefined;
+			// The error names its provider even when the agent switched mid-turn.
+			// Older events fall back to the originating tab's captured provider.
+			const errorProvider =
+				agentError.agentId || (errorSession && resolveTurnProvider(errorTab, errorSession));
+			// A failed Grok resume must retain its native identity and history. Clearing
+			// the ID here would silently turn the next send into a fresh conversation.
+			const canRecoverMissingSession =
+				agentError.type === 'session_not_found' && errorProvider !== 'grok';
+
+			if (
+				agentError.type === 'session_not_found' &&
+				errorProvider === 'grok' &&
+				errorSession &&
+				errorSession.toolType !== errorProvider
+			) {
+				// The old provider's failure remains in its originating transcript, but
+				// must not pause the incoming provider, its retries or an active Auto Run.
+				if (errorTab) {
+					deps.batchedUpdater.flushNow();
+					const errorLogEntry: LogEntry = {
+						id: generateId(),
+						timestamp: agentError.timestamp,
+						source: 'error',
+						text: agentError.message,
+						agentError,
+					};
+					updateAiTab(actualSessionId, errorTab.id, (tab) => ({
+						...tab,
+						logs: [...tab.logs, errorLogEntry],
+					}));
+				}
+				return;
+			}
 
 			// Agent Resilience: for transient upstream / quota errors, auto-retry
 			// instead of surfacing the blocking error modal. Two paths, both gated
@@ -220,7 +260,8 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			const rawBatchState = deps.getBatchStateRef.current?.(actualSessionId);
 			const batchState = rawBatchState?.mirrored === true ? undefined : rawBatchState;
 			const batchOwnsError = !!(batchState?.isRunning && !batchState.errorPaused);
-			const canAutoRetry = ownsSideEffects && !isSessionNotFound && !!tabIdFromSession;
+			const canAutoRetry =
+				ownsSideEffects && agentError.type !== 'session_not_found' && !!tabIdFromSession;
 			const willAutoRetryInteractive =
 				canAutoRetry &&
 				!batchOwnsError &&
@@ -308,7 +349,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// limit was a direct send (not a queued item the drainer would replay),
 					// stashing it as `recoveryAction.lastUserPrompt` lets Phase 3 re-fire it.
 					const lastUserPrompt =
-						(isSessionNotFound || isLimit) && targetTab
+						(canRecoverMissingSession || isLimit) && targetTab
 							? [...targetTab.logs].reverse().find((l) => l.source === 'user')?.text
 							: undefined;
 
@@ -320,7 +361,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// need parity here. system-source entries (session_not_found
 					// recovery) stay untagged - they aren't real Claude turns.
 					const isInteractive = s.claudeInteractive?.mode === 'interactive';
-					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
+					const canOfferRecovery = canRecoverMissingSession && !!lastUserPrompt && !!targetTab;
 					// Limit pauses keep the normal error log (message + agentError), but
 					// also carry the captured prompt so the auto-resume coordinator can
 					// re-fire a direct send. The `canOfferRecovery` session_not_found flow
@@ -335,13 +376,13 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					const errorLogEntry: LogEntry = {
 						id: generateId(),
 						timestamp: agentError.timestamp,
-						source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
+						source: canRecoverMissingSession || willAutoRetry ? 'system' : 'error',
 						text: canOfferRecovery
 							? 'Session not found, however we can recover it raw or compressed.'
 							: agentError.message,
-						agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
+						agentError: canRecoverMissingSession || willAutoRetry ? undefined : agentError,
 						...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
-						...(isInteractive && !isSessionNotFound && !willAutoRetry
+						...(isInteractive && !canRecoverMissingSession && !willAutoRetry
 							? { renderStyle: 'text-stream' as const }
 							: {}),
 						...(canOfferRecovery || stashLimitPrompt
@@ -359,17 +400,18 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 											logs: isRetryContinuation
 												? removeHiddenProgressLog(tab.logs, tab.id)
 												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
-											agentError: isSessionNotFound || isContextCompaction ? undefined : agentError,
-											...(isSessionNotFound ? { agentSessionId: null } : {}),
+											agentError:
+												canRecoverMissingSession || isContextCompaction ? undefined : agentError,
+											...(canRecoverMissingSession ? { agentSessionId: null } : {}),
 										}
 									: tab
 							)
 						: s.aiTabs;
 
-					// session_not_found recovers below; auto-retry keeps the session
+					// Recoverable missing sessions and auto-retry keep the session
 					// out of the blocking `error` state (the countdown chip owns the
 					// UI, and the exit listener idles the tab).
-					if (isSessionNotFound || willAutoRetry) {
+					if (canRecoverMissingSession || willAutoRetry) {
 						return { ...s, aiTabs: updatedAiTabs };
 					}
 
@@ -524,7 +566,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 			const erroredSession = getSessions().find((s) => s.id === actualSessionId);
 
-			if (!isSessionNotFound && !willAutoRetry) {
+			if (!canRecoverMissingSession && !willAutoRetry) {
 				// An expired token is not a per-turn error: it fails every agent on
 				// that provider at once. The outage store groups them, so the tenth
 				// agent to fail joins the prompt already on screen instead of stacking

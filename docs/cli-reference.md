@@ -1489,27 +1489,27 @@ Print the full command reference (Markdown, or --format json)
 
 Create a new agent in the Maestro desktop app
 
-| Option                            | Description                                                                                                 | Default         |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------- |
-| `-d, --cwd <path>`                | Working directory for the agent                                                                             | -               |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder) | `"claude-code"` |
-| `-g, --group <id>`                | Group ID to assign the agent to                                                                             | -               |
-| `--nudge <message>`               | Nudge message appended to every user message                                                                | -               |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                           | -               |
-| `--custom-path <path>`            | Custom binary path for the agent                                                                            | -               |
-| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                          | -               |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                           | `[]`            |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                         | -               |
-| `--effort <level>`                | Effort/reasoning level override                                                                             | -               |
-| `--context-window <size>`         | Context window size in tokens                                                                               | -               |
-| `--provider-path <path>`          | Custom provider path                                                                                        | -               |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
-| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)           | -               |
-| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |
-| `--focus`                         | Select the new agent after creating it (default)                                                            | -               |
-| `--json`                          | Output as JSON (for scripting)                                                                              | -               |
+| Option                            | Description                                                                                                                        | Default         |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `-d, --cwd <path>`                | Working directory for the agent                                                                                                    | -               |
+| `-t, --type <type>`               | Agent type (claude-code, codex, gemini-cli, antigravity, qwen3-coder, opencode, factory-droid, hermes, pi, copilot-cli, omp, grok) | `"claude-code"` |
+| `-g, --group <id>`                | Group ID to assign the agent to                                                                                                    | -               |
+| `--nudge <message>`               | Nudge message appended to every user message                                                                                       | -               |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                                                  | -               |
+| `--custom-path <path>`            | Custom binary path for the agent                                                                                                   | -               |
+| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                                                 | -               |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                                  | `[]`            |
+| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                                                | -               |
+| `--effort <level>`                | Effort/reasoning level override                                                                                                    | -               |
+| `--context-window <size>`         | Context window size in tokens                                                                                                      | -               |
+| `--provider-path <path>`          | Custom provider path                                                                                                               | -               |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                 | -               |
+| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                                           | -               |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                   | -               |
+| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                  | -               |
+| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                               | -               |
+| `--focus`                         | Select the new agent after creating it (default)                                                                                   | -               |
+| `--json`                          | Output as JSON (for scripting)                                                                                                     | -               |
 
 ## `maestro-cli duplicate-agent <agent>`
 
@@ -2426,18 +2426,18 @@ Add a Pianola rule (how the manager agent turns a conversation into a durable ru
 
 ## `maestro-cli pianola learn`
 
-Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)
+Crawl installed CLI transcripts into a labeled decision corpus (Claude Code, Codex, Grok CLI)
 
-| Option               | Description                                                             | Default |
-| -------------------- | ----------------------------------------------------------------------- | ------- |
-| `--agent <list>`     | Comma list of agents to crawl: claude-code,codex (default both)         | -       |
-| `--limit <n>`        | Max sessions per agent, newest first (default 300)                      | -       |
-| `--since <date>`     | Only crawl transcripts modified on/after this date (e.g. 2026-06-01)    | -       |
-| `--project <substr>` | Only keep decisions from sessions whose path contains this substring    | -       |
-| `--exclude <substr>` | Drop decisions from sessions whose path contains this substring         | -       |
-| `--max-pairs <n>`    | Max decision pairs to print inline when --out is not used (default 200) | -       |
-| `--out <file>`       | Write the full corpus JSON to a file instead of stdout                  | -       |
-| `--json`             | Compact JSON output (for scripting)                                     | -       |
+| Option               | Description                                                                         | Default |
+| -------------------- | ----------------------------------------------------------------------------------- | ------- |
+| `--agent <list>`     | Comma list of agents to crawl: claude-code, codex, grok (default claude-code,codex) | -       |
+| `--limit <n>`        | Max sessions per agent, newest first (default 300)                                  | -       |
+| `--since <date>`     | Only crawl transcripts modified on/after this date (e.g. 2026-06-01)                | -       |
+| `--project <substr>` | Only keep decisions from sessions whose path contains this substring                | -       |
+| `--exclude <substr>` | Drop decisions from sessions whose path contains this substring                     | -       |
+| `--max-pairs <n>`    | Max decision pairs to print inline when --out is not used (default 200)             | -       |
+| `--out <file>`       | Write the full corpus JSON to a file instead of stdout                              | -       |
+| `--json`             | Compact JSON output (for scripting)                                                 | -       |
 
 ## `maestro-cli pianola profile`
 

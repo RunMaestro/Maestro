@@ -1,5 +1,12 @@
 import type React from 'react';
-import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	AITab,
+	Session,
+	ToolType,
+	Theme,
+} from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
@@ -65,7 +72,9 @@ export interface NewInstanceModalProps {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
-		harnessControlMode?: HarnessControlMode
+		harnessControlMode?: HarnessControlMode,
+		/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
+		permissionMode?: AITab['permissionMode']
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];

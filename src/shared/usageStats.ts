@@ -150,7 +150,7 @@ export function aggregateRangeUsage(
 		agg.pricedQueries += totals.pricedQueries;
 		agg.count++;
 
-		if (totals.costUsd > 0) {
+		if (totals.costUsd !== null && totals.costUsd > 0) {
 			agg.costUsd += totals.costUsd;
 			continue;
 		}

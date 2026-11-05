@@ -24,6 +24,7 @@ import {
 	type CaptureServiceDeps,
 } from '../../../main/agent-run/capture-service';
 import type { AgentRun, AgentRunEvent, AgentRunReviewFinding } from '../../../shared/agent-run';
+import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Terminal states inlined as a static lookup so the fake store's "active run"
 // resolution mirrors the real store without importing the impl's own helper.
@@ -434,4 +435,81 @@ describe('newRunId', () => {
 		expect(a).toContain('1000');
 		expect(a).not.toBe(b); // random suffix keeps ids distinct at the same ts
 	});
+});
+
+/**
+ * Grok capture metadata on the desktop seam. Completeness is
+ * generated from `AGENT_IDS`; a stored run keeps the provider it was written
+ * with, so historical and future values survive the exit untouched.
+ */
+describe('AgentRunCaptureService Grok capture metadata', () => {
+	it('captures a Grok spawn as grok and keeps it through the exit, filterable beside another provider', async () => {
+		const store = makeStore();
+		const service = new AgentRunCaptureService(store.deps);
+		store.clock.t = 1000;
+		const grok = service.captureSpawn({
+			sessionId: 'agent-g-ai-tab-1',
+			toolType: 'grok',
+			cwd: '/repo',
+			tabId: 'tab-1',
+			model: 'grok-4',
+			agentId: 'agent-g',
+			source: 'desktop',
+		});
+		service.captureSpawn({ sessionId: 'agent-g-ai-tab-2', toolType: 'codex', cwd: '/repo' });
+		expect(grok).toMatchObject({
+			provider: 'grok',
+			model: 'grok-4',
+			agentId: 'agent-g',
+			tabId: 'tab-1',
+			status: 'running',
+		});
+
+		store.clock.t = 1500;
+		const settled = await service.captureExit({ sessionId: 'agent-g-ai-tab-1', exitCode: 0 });
+		expect(settled).toMatchObject({ id: grok!.id, provider: 'grok', status: 'completed' });
+
+		const byProvider = (provider: string) =>
+			[...store.runs.values()].filter((run) => run.provider === provider).map((run) => run.id);
+		expect(byProvider('grok')).toEqual([grok!.id]);
+		expect(byProvider('codex')).toHaveLength(1);
+		expect(byProvider('unknown')).toEqual([]);
+	});
+
+	it.each(AGENT_IDS.filter((id) => id !== 'terminal'))(
+		'attributes a %s spawn as its registered ID',
+		(id) => {
+			const store = makeStore();
+			const service = new AgentRunCaptureService(store.deps);
+			const created = service.captureSpawn({
+				sessionId: `agent-1-ai-${id}`,
+				toolType: id,
+				cwd: '/r',
+			});
+			expect(created?.provider).toBe(id);
+		}
+	);
+
+	it('a superseded Grok run and its replacement both stay grok', () => {
+		const store = makeStore();
+		const service = new AgentRunCaptureService(store.deps);
+		store.clock.t = 1000;
+		const first = service.captureSpawn({ sessionId: 'agent-g-ai-t', toolType: 'grok', cwd: '/r' });
+		store.clock.t = 2000;
+		const second = service.captureSpawn({ sessionId: 'agent-g-ai-t', toolType: 'GROK', cwd: '/r' });
+		expect(store.runs.get(first!.id)).toMatchObject({ provider: 'grok', status: 'cancelled' });
+		expect(store.runs.get(second!.id)).toMatchObject({ provider: 'grok', status: 'running' });
+	});
+
+	it.each(['grok', 'cursor', 'qwen-coder', 'future-agent', 'unknown'])(
+		'a stored run tagged %s keeps its provider when it settles',
+		async (provider) => {
+			const store = makeStore();
+			const service = new AgentRunCaptureService(store.deps);
+			store.seed(baseRun({ id: `run-${provider}`, provider, sessionId: 'sess-stored' }));
+			const settled = await service.captureExit({ sessionId: 'sess-stored', exitCode: 1 });
+			expect(settled).toMatchObject({ provider, status: 'failed' });
+			expect(store.runs.get(`run-${provider}`)?.provider).toBe(provider);
+		}
+	);
 });

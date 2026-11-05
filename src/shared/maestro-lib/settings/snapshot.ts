@@ -143,13 +143,13 @@ function envEntries(vars: Record<string, unknown>): SettingsEntry[] {
 		.filter(([, value]) => typeof value === 'string')
 		.map(([key, value]) => ({
 			key,
-			value: isSecretEnvKey(key) ? maskEnvValue(value as string) : (value as string),
+			value: isSecretEnvKey(key) ? maskEnvValue(value as string, key) : (value as string),
 		}))
 		.sort((a, b) => a.key.localeCompare(b.key));
 }
 
 function describeConfigValue(key: string, value: unknown): string {
-	if (typeof value === 'string') return isSecretEnvKey(key) ? maskEnvValue(value) : value;
+	if (typeof value === 'string') return isSecretEnvKey(key) ? maskEnvValue(value, key) : value;
 	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 	if (Array.isArray(value)) return value.map((item) => String(item)).join(' ');
 	if (isRecord(value)) {

@@ -8,6 +8,11 @@ import type {
 	HarnessInteractionResponse,
 	HarnessInteractionSettledEvent,
 } from '../shared/harness-control/types';
+import type { NativeSessionLaunch } from '../main/process-manager/types';
+import type { ProcessSpawnAttempt } from '../main/preload/process/core';
+import type { GrokCommandDiscoveryResult } from '../main/agents/grok-skills';
+import type { GrokSpawnSelectionFingerprint } from '../shared/grokSpawnSelection';
+import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../shared/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -71,6 +76,17 @@ interface ProcessConfig {
 	images?: string[];
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string;
+	/** Ephemeral enqueue configuration check, never a native binding or admission.
+	 *  Omitted for unguarded turns; null means guarded but evidence unavailable.
+	 *  A guarded request must refuse missing/stale evidence before preparation. */
+	expectedGrokSpawnSelection?: GrokSpawnSelectionFingerprint | null;
+	/** One ACP-advertised native Grok command the person picked (the command intent),
+	 *  riding this same request: there is no second queue. It authorizes nothing;
+	 *  `prompt` must be its exact text, the turn must resume its native session on
+	 *  its tab, and the newly admitted process must advertise the same entry before
+	 *  submission. A request carrying it is refused, never run as an ordinary prompt,
+	 *  when any of that cannot hold. Grok only. */
+	grokNativeCommand?: import('../shared/maestro-lib/grok/acp-turn').GrokAcpNativeCommandIntent;
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
@@ -406,6 +422,8 @@ interface MaestroAPI {
 			result: import('../shared/autoRunRemote').AutoRunRemoteResult
 		) => void;
 		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
+		/** Desktop-only, synchronous before spawn IPC; absent on older/web bridges. */
+		onSpawnAttempt?: (callback: (attempt: ProcessSpawnAttempt) => void) => () => void;
 		spawnTerminalTab: (config: {
 			sessionId: string;
 			cwd: string;
@@ -552,7 +570,14 @@ interface MaestroAPI {
 		respondHarnessInteraction: (
 			response: HarnessInteractionResponse
 		) => Promise<HarnessInteractionResolveResult>;
-		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
+		/** Native ownership is captured at launch; missing receipts remain unobserved. */
+		onSessionId: (
+			callback: (
+				sessionId: string,
+				agentSessionId: string,
+				nativeSessionLaunch?: NativeSessionLaunch
+			) => void
+		) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
 		onSteeringVerdict: (
@@ -2095,27 +2120,33 @@ interface MaestroAPI {
 		) => Promise<boolean>;
 		getCustomEnvVars: (agentId: string) => Promise<Record<string, string> | null>;
 		getAllCustomEnvVars: () => Promise<Record<string, Record<string, string>>>;
-		getKnownAuthDirs: () => Promise<{ claudeConfigDirs: string[]; codexHomes: string[] }>;
+		getKnownAuthDirs: () => Promise<import('../shared/authPaths').KnownAuthDirs>;
 		getKnownEnvVarKeys: () => Promise<{
 			byProvider: Record<string, string[]>;
 			global: string[];
 		}>;
-		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		getModels: {
+			(request: AgentDiscoveryRequest): Promise<AgentDiscoveryResult>;
+			(agentId: string, forceRefresh?: boolean, sshRemoteId?: string): Promise<string[]>;
+		};
 		onModelsRefreshed: (
 			callback: (payload: import('../shared/agentModelsRefresh').ModelsRefreshedPayload) => void
 		) => () => void;
-		getConfigOptions: (
-			agentId: string,
-			optionKey: string,
-			forceRefresh?: boolean
-		) => Promise<string[]>;
-		discoverSlashCommands: (
-			agentId: string,
-			cwd: string,
-			customPath?: string,
-			sshRemoteId?: string,
-			customEnvVars?: Record<string, string>
-		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
+		getConfigOptions: {
+			(request: AgentDiscoveryRequest, optionKey: string): Promise<AgentDiscoveryResult>;
+			(agentId: string, optionKey: string, forceRefresh?: boolean): Promise<string[]>;
+		};
+		/** Grok catalogs retain native binding for dispatch revalidation; legacy Grok calls return null. */
+		discoverSlashCommands: {
+			(request: AgentDiscoveryRequest): Promise<GrokCommandDiscoveryResult | null>;
+			(
+				agentId: string,
+				cwd: string,
+				customPath?: string,
+				sshRemoteId?: string,
+				customEnvVars?: Record<string, string>
+			): Promise<{ name: string; prompt?: string; description?: string }[] | null>;
+		};
 
 		// Capability snapshots - persisted per-agent readiness + version info.
 		getSnapshot: (
@@ -2196,7 +2227,8 @@ interface MaestroAPI {
 		list: (
 			agentId: string,
 			projectPath: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<
 			Array<{
 				sessionId: string;
@@ -2246,26 +2278,19 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			options?: { offset?: number; limit?: number },
+			/** The owner selects its account/host; unavailable or conflicting scope rejects the read. */
+			options?: import('../main/agents/session-storage').SessionReadOptions & {
+				ownerAgentId?: string;
+			},
 			sshRemoteId?: string
-		) => Promise<{
-			messages: Array<{
-				type: string;
-				role?: string;
-				content: string;
-				timestamp: string;
-				uuid: string;
-				toolUse?: unknown;
-			}>;
-			total: number;
-			hasMore: boolean;
-		}>;
+		) => Promise<import('../main/agents/session-storage').SessionMessagesResult>;
 		search: (
 			agentId: string,
 			projectPath: string,
 			query: string,
 			searchMode: 'title' | 'user' | 'assistant' | 'all',
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<
 			Array<{
 				sessionId: string;
@@ -2278,7 +2303,8 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<string | null>;
 		// Delete a message pair from a session (not supported for SSH remote sessions)
 		deleteMessagePair: (
@@ -2368,7 +2394,10 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string
 		) => Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>;
 		setSessionName: (
 			agentId: string,
@@ -2747,8 +2776,9 @@ interface MaestroAPI {
 				string,
 				| 'user'
 				| 'auto'
+				| 'relay'
 				| {
-						origin: 'user' | 'auto';
+						origin: 'user' | 'auto' | 'relay';
 						sessionName?: string;
 						starred?: boolean;
 						contextUsage?: number;

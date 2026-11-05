@@ -628,6 +628,102 @@ describe('useSymphonyContribution', () => {
 		});
 	});
 
+	describe('Grok Symphony selection handoff', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => {
+			vi.clearAllTimers();
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+		});
+
+		it.each([
+			['grok', 'manual-grok-model', 'max', undefined],
+			['grok', undefined, undefined, {}],
+			['grok', 'manual-model-only', undefined, { GROK_HOME: '', XAI_API_KEY: ' ' }],
+			['grok', undefined, 'manual-effort-only', { GROK_HOME: '/synthetic/account' }],
+			['claude-code', 'manual-claude-model', 'high', undefined],
+		] as const)(
+			'preserves %s model %s / effort %s and raw environment for the initial run',
+			async (agentType, customModel, customEffort, customEnvVars) => {
+				mockMaestro.agents.get.mockResolvedValueOnce({
+					id: agentType,
+					name: agentType,
+					command: agentType,
+				});
+				const startBatchRun = vi.fn<UseSymphonyContributionDeps['startBatchRun']>(
+					(sessionId, config) => {
+						// Auto Run reads session defaults when the batch has no run overrides.
+						const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+						expect(session).toMatchObject({ toolType: agentType, customModel, customEffort });
+						expect(session?.customEnvVars).toEqual(customEnvVars);
+						expect(session?.customPath).toBe('/synthetic/bin with spaces/agent');
+						expect(session?.cwd).toBe('/tmp/cloned-repo');
+						expect(config.runModel).toBeUndefined();
+						expect(config.runEffort).toBeUndefined();
+					}
+				);
+				const { result } = renderHook(() => useSymphonyContribution(createDeps({ startBatchRun })));
+				await act(async () => {
+					await result.current.handleStartContribution(
+						createContributionData({
+							agentType,
+							customModel,
+							customEffort,
+							customEnvVars,
+							customPath: '/synthetic/bin with spaces/agent',
+						})
+					);
+				});
+				const session = useSessionStore.getState().sessions[0];
+				expect(session.customModel).toBe(customModel);
+				expect(session.customEffort).toBe(customEffort);
+				expect(startBatchRun).not.toHaveBeenCalled();
+				act(() => vi.advanceTimersByTime(500));
+				expect(startBatchRun).toHaveBeenCalledExactlyOnceWith(
+					session.id,
+					expect.objectContaining({ loopEnabled: false }),
+					'/tmp/cloned-repo/docs'
+				);
+			}
+		);
+
+		it('keeps synthetic Grok credentials out of every logger call during creation and Auto Run', async () => {
+			const logs = (['debug', 'info', 'warn', 'error'] as const).map((level) =>
+				vi.spyOn(logger, level).mockImplementation(() => {})
+			);
+			mockMaestro.agents.get.mockResolvedValueOnce({ id: 'grok', name: 'Grok', command: 'grok' });
+			const customEnvVars = {
+				XAI_API_KEY: 'synthetic-symphony-api-secret',
+				GROK_AUTH: '{"token":"synthetic-symphony-inline-secret"}',
+				GROK_MODELS_BASE_URL: 'https://synthetic:gateway-secret@example.invalid/private-key',
+			};
+			const { result } = renderHook(() => useSymphonyContribution(createDeps()));
+			await act(async () => {
+				await result.current.handleStartContribution(
+					createContributionData({
+						agentType: 'grok',
+						customEnvVars,
+						customModel: 'manual-model',
+						customEffort: 'max',
+					})
+				);
+			});
+			act(() => vi.advanceTimersByTime(500));
+			expect(useSessionStore.getState().sessions[0].customEnvVars).toEqual(customEnvVars);
+			expect(logs[1]).toHaveBeenCalledWith('[Symphony] Creating session for contribution');
+			const serializedLogs = JSON.stringify(logs.flatMap((spy) => spy.mock.calls));
+			for (const value of [
+				...Object.values(customEnvVars),
+				'synthetic-symphony-inline-secret',
+				'gateway-secret',
+				'private-key',
+			]) {
+				expect(serializedLogs).not.toContain(value);
+				expect(serializedLogs).not.toContain(JSON.stringify(value).slice(1, -1));
+			}
+		});
+	});
+
 	// ========================================================================
 	// Git repo detection
 	// ========================================================================

@@ -20,6 +20,7 @@ import { DEFAULT_BATCH_STATE } from '../../../../renderer/hooks/batch/batchReduc
 import { createMockSession } from '../../../helpers/mockSession';
 import { createMockAITab } from '../../../helpers/mockTab';
 import type { AgentError, Session, BatchRunState, LogEntry } from '../../../../renderer/types';
+import type { ClassifiableError } from '../../../../shared/retryClassification';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -743,4 +744,268 @@ describe('useAutoResumeCoordinator (timer)', () => {
 		// Standard non-Claude session resumed → error cleared.
 		expect(useSessionStore.getState().sessions[0].state).toBe('idle');
 	});
+});
+
+// Host facts are intentionally structural until phase07/10 declares/propagates them.
+describe('Grok automatic limit resume safety', () => {
+	const safeTerminal: ClassifiableError['terminal'] = {
+		status: 'failed',
+		kind: 'provider',
+		dispatchState: 'not-dispatched',
+	};
+	let error: AgentError & ClassifiableError;
+	let resumeAutoRun: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		error = { ...makeLimitError({ agentId: 'grok' }), terminal: safeTerminal };
+		resumeAutoRun = vi.fn();
+		setSessions([
+			makeLimitPausedSession({
+				toolType: 'grok',
+				agentError: error,
+				aiTabs: [
+					createMockAITab({
+						id: 'tab-1',
+						agentError: error,
+						logs: [
+							{
+								id: 'capture',
+								timestamp: error.timestamp,
+								source: 'error',
+								text: error.message,
+								agentError: error,
+								recoveryAction: { lastUserPrompt: 'apply the migration', tabId: 'tab-1' },
+							},
+						],
+					}),
+				],
+			}),
+		]);
+	});
+
+	describe.each(['chat', 'batch'] as const)('%s pause', (route) => {
+		it.each<Partial<AgentError & ClassifiableError>>([
+			{ terminal: undefined },
+			{ agentId: undefined, terminal: undefined },
+			{ terminal: { ...safeTerminal, dispatchState: 'unknown' } },
+			{ terminal: { ...safeTerminal, dispatchState: 'dispatched' } },
+			{ type: 'network_error', message: 'Connection lost', terminal: undefined },
+			{ terminal: { status: 'cancelled', origin: 'user' } },
+			{ terminal: { status: 'refused', origin: 'effect' } },
+			{ type: 'token_exhaustion', message: 'Context window exhausted' },
+			{ terminal: { status: 'incomplete', kind: 'missing-terminal' } },
+			{ terminal: { status: 'failed', kind: 'protocol', dispatchState: 'not-dispatched' } },
+		])('keeps unsafe failure %j paused without consuming its prompt', async (overrides) => {
+			const unsafe = { ...error, ...overrides };
+			const session = useSessionStore.getState().sessions[0];
+			setSessions([
+				{
+					...session,
+					agentError: route === 'chat' ? unsafe : undefined,
+					agentErrorPaused: route === 'chat',
+					state: route === 'chat' ? 'error' : 'idle',
+				},
+			]);
+			if (route === 'batch')
+				useBatchStore.setState({
+					batchRunStates: {
+						[session.id]: {
+							...DEFAULT_BATCH_STATE,
+							isRunning: true,
+							errorPaused: true,
+							error: unsafe,
+						},
+					},
+				});
+
+			await runAutoResumeTick(new Set(), resumeAutoRun);
+			await vi.advanceTimersByTimeAsync(0);
+
+			const after = useSessionStore.getState().sessions[0];
+			expect(after.executionQueue).toEqual([]);
+			expect(after.aiTabs[0].logs[0].recoveryAction?.lastUserPrompt).toBe('apply the migration');
+			expect(
+				route === 'chat'
+					? after.agentError
+					: useBatchStore.getState().batchRunStates[session.id].error
+			).toEqual(unsafe);
+			expect(resumeAutoRun).not.toHaveBeenCalled();
+			expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts).toEqual([]);
+		});
+
+		it('resumes a proven not-dispatched transient failure once', async () => {
+			if (route === 'batch')
+				useBatchStore.setState({
+					batchRunStates: {
+						'sess-claude': { ...DEFAULT_BATCH_STATE, isRunning: true, errorPaused: true, error },
+					},
+				});
+			await runAutoResumeTick(new Set(), resumeAutoRun);
+			await vi.advanceTimersByTimeAsync(0);
+			const after = useSessionStore.getState().sessions[0];
+			if (route === 'batch') {
+				expect(resumeAutoRun).toHaveBeenCalledExactlyOnceWith('sess-claude');
+				expect(after.executionQueue).toEqual([]);
+			} else {
+				expect(after.executionQueue).toHaveLength(1);
+				expect(after.executionQueue[0]).toMatchObject({
+					text: 'apply the migration',
+					tabId: 'tab-1',
+				});
+				expect(after.aiTabs[0].logs[0].recoveryAction).toBeUndefined();
+				await runAutoResumeTick(new Set(), resumeAutoRun);
+				expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+				expect(resumeAutoRun).not.toHaveBeenCalled();
+			}
+		});
+	});
+
+	it.each(['chat', 'batch'] as const)(
+		'does not use a safe peer pause to clear an unsafe %s error',
+		async (unsafeSide) => {
+			const unsafe = { ...error, terminal: undefined };
+			const session = useSessionStore.getState().sessions[0];
+			setSessions([{ ...session, agentError: unsafeSide === 'chat' ? unsafe : error }]);
+			useBatchStore.setState({
+				batchRunStates: {
+					[session.id]: {
+						...DEFAULT_BATCH_STATE,
+						isRunning: true,
+						errorPaused: true,
+						error: unsafeSide === 'batch' ? unsafe : error,
+					},
+				},
+			});
+			await runAutoResumeTick(new Set(), resumeAutoRun);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(resumeAutoRun).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+			expect(useSessionStore.getState().sessions[0].agentErrorPaused).toBe(true);
+			expect(useBatchStore.getState().batchRunStates[session.id].errorPaused).toBe(true);
+		}
+	);
+
+	it.each(['missing facts', 'dispatched', 'future reset', 'unsafe batch'] as const)(
+		'rechecks %s introduced while availability is pending',
+		async (change) => {
+			const tick = runAutoResumeTick(new Set(), resumeAutoRun);
+			const session = useSessionStore.getState().sessions[0];
+			const replacement = {
+				...error,
+				terminal:
+					change === 'missing facts'
+						? undefined
+						: change === 'dispatched'
+							? { ...safeTerminal, dispatchState: 'dispatched' as const }
+							: safeTerminal,
+				limitResetAt: change === 'future reset' ? Date.now() + DAY : undefined,
+			};
+			setSessions([{ ...session, agentError: replacement }]);
+			if (change === 'unsafe batch')
+				useBatchStore.setState({
+					batchRunStates: {
+						[session.id]: {
+							...DEFAULT_BATCH_STATE,
+							isRunning: true,
+							errorPaused: true,
+							error: { ...error, type: 'network_error', terminal: undefined } as AgentError,
+						},
+					},
+				});
+			await tick;
+			await vi.advanceTimersByTimeAsync(0);
+			expect(useSessionStore.getState().sessions[0].agentError).toEqual(replacement);
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+			expect(resumeAutoRun).not.toHaveBeenCalled();
+			expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(['missing log', 'old log', 'old tab', 'unsafe log'] as const)(
+		'does not authorize a captured prompt with %s evidence from a newer safe pause',
+		async (change) => {
+			const session = useSessionStore.getState().sessions[0];
+			const tab = session.aiTabs[0];
+			const log = tab.logs[0];
+			setSessions([
+				{
+					...session,
+					aiTabs: [
+						{
+							...tab,
+							agentError:
+								change === 'old tab' ? { ...error, timestamp: error.timestamp - 1 } : error,
+							logs: [
+								{
+									...log,
+									agentError:
+										change === 'missing log'
+											? undefined
+											: ({
+													...error,
+													timestamp: change === 'old log' ? error.timestamp - 1 : error.timestamp,
+													terminal: change === 'unsafe log' ? undefined : safeTerminal,
+												} as AgentError),
+								},
+							],
+						},
+					],
+				},
+			]);
+			await runAutoResumeTick(new Set(), resumeAutoRun);
+			await vi.advanceTimersByTimeAsync(0);
+			const after = useSessionStore.getState().sessions[0];
+			expect(after.state).toBe('idle');
+			expect(after.executionQueue).toEqual([]);
+			expect(after.aiTabs[0].logs[0].recoveryAction).toEqual(log.recoveryAction);
+		}
+	);
+
+	it('leaves a restored pause without host facts untouched across kickoff and interval ticks', async () => {
+		const session = useSessionStore.getState().sessions[0];
+		setSessions([{ ...session, agentError: { ...error, terminal: undefined } as AgentError }]);
+		const { unmount } = renderHook(() =>
+			useAutoResumeCoordinator({ resumeAutoRunAfterError: resumeAutoRun })
+		);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 + 11_000);
+		});
+		const after = useSessionStore.getState().sessions[0];
+		expect(after.state).toBe('error');
+		expect(after.agentErrorPaused).toBe(true);
+		expect(after.executionQueue).toEqual([]);
+		expect(after.aiTabs[0].logs[0].recoveryAction).toBeDefined();
+		expect(resumeAutoRun).not.toHaveBeenCalled();
+		expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+		unmount();
+	});
+
+	it.each(['claude-code', 'codex', 'antigravity'] as const)(
+		'preserves %s automatic prompt recovery without Grok host facts',
+		async (toolType) => {
+			claudeSnapshotMap = { '/home/.claude': makeSnapshot(10, 10) };
+			const session = useSessionStore.getState().sessions[0];
+			const legacyError = makeLimitError({ agentId: toolType });
+			setSessions([
+				{
+					...session,
+					toolType,
+					agentError: legacyError,
+					aiTabs: [
+						{
+							...session.aiTabs[0],
+							agentError: legacyError,
+							logs: [{ ...session.aiTabs[0].logs[0], agentError: legacyError }],
+						},
+					],
+				},
+			]);
+			await runAutoResumeTick(new Set(), resumeAutoRun);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+			expect(useSessionStore.getState().sessions[0].state).toBe('idle');
+		}
+	);
 });

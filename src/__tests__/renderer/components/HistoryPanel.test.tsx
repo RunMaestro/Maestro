@@ -26,6 +26,9 @@ import type { Session, HistoryEntry, HistoryEntryType } from '../../../renderer/
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { resetStore } from '../../helpers/resetStores';
+import type { NativeSessionBinding } from '../../../shared/maestro-lib/agents/providerSwap';
 
 import { mockTheme } from '../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
@@ -137,6 +140,7 @@ describe('HistoryPanel', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		resetStore(useSessionStore);
 
 		// Install a fresh in-memory localStorage mock between tests. Filter
 		// toggles persist under HISTORY_PANEL_FILTERS_KEY; without a reset, a test
@@ -262,6 +266,7 @@ describe('HistoryPanel', () => {
 	});
 
 	afterEach(() => {
+		resetStore(useSessionStore);
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		consoleErrorSpy.mockRestore();
@@ -1474,9 +1479,10 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should jump to the entry session with Cmd+Enter instead of opening the modal', async () => {
-			const onOpenSessionAsTab = vi.fn();
+			const onOpenSessionAsTab = vi.fn().mockResolvedValue(true);
 			const entry = createMockEntry({
 				summary: 'Jump entry',
+				sessionId: 'recorded-owner',
 				agentSessionId: 'abc12345-def-789',
 				sessionName: 'Jump Session',
 			});
@@ -1503,7 +1509,8 @@ describe('HistoryPanel', () => {
 			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 				'abc12345-def-789',
 				'/test/project',
-				'Jump Session'
+				'Jump Session',
+				{ targetSessionId: 'recorded-owner', nativeSessionBinding: undefined }
 			);
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
@@ -1811,8 +1818,9 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should call onOpenSessionAsTab when session badge is clicked', async () => {
-			const onOpenSessionAsTab = vi.fn();
+			const onOpenSessionAsTab = vi.fn().mockResolvedValue(true);
 			const entry = createMockEntry({
+				sessionId: 'recorded-owner',
 				agentSessionId: 'abc12345-def-789',
 			});
 			mockHistoryGetAll.mockResolvedValue([entry]);
@@ -1834,7 +1842,8 @@ describe('HistoryPanel', () => {
 			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 				'abc12345-def-789',
 				'/test/project',
-				undefined
+				undefined,
+				{ targetSessionId: 'recorded-owner', nativeSessionBinding: undefined }
 			);
 		});
 
@@ -2178,6 +2187,180 @@ describe('HistoryPanel', () => {
 	});
 
 	// ===== CALLBACKS =====
+	describe('recorded native resume ownership', () => {
+		it.each(['click', 'metaKey', 'ctrlKey'] as const)(
+			'forwards the selected same-ID record through %s and the full-handler fallback',
+			async (gesture) => {
+				const entries = ['one', 'two'].map((owner) =>
+					createMockEntry({
+						id: owner,
+						summary: `History ${owner}`,
+						sessionName: `Conversation ${owner}`,
+						sessionId: owner,
+						agentSessionId: 'shared-native',
+						projectPath: `/project/${owner}`,
+						nativeSessionBinding: Object.freeze({
+							version: 1,
+							state: 'bound',
+							provider: 'grok',
+							nativeSessionId: 'shared-native',
+							accountRef: `account-${owner}`,
+							host: Object.freeze({ kind: 'ssh', identity: `host-${owner}` }),
+							cwd: `/project/${owner}`,
+						}),
+					})
+				);
+				mockHistoryGetAll.mockResolvedValue(entries);
+				// The current provider/account must never relabel recorded history.
+				const session = createMockSession({
+					toolType: 'codex',
+					customEnvVars: { GROK_HOME: '/new' },
+				});
+				const onOpenSessionAsTab = vi.fn().mockResolvedValue(false);
+				const onResumeSession = vi.fn().mockResolvedValue(false);
+				const { container, rerender } = render(
+					<HistoryPanel
+						session={session}
+						theme={mockTheme}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				);
+				await screen.findByText('History two');
+				const list = container.querySelector('[tabIndex="0"]')!;
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				if (gesture === 'click') fireEvent.click(screen.getByTitle('Conversation two'));
+				else fireEvent.keyDown(list, { key: 'Enter', [gesture]: true });
+				expect(onOpenSessionAsTab).toHaveBeenCalledExactlyOnceWith(
+					'shared-native',
+					'/project/two',
+					'Conversation two',
+					{ targetSessionId: 'two', nativeSessionBinding: entries[1].nativeSessionBinding }
+				);
+				expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+				rerender(
+					<HistoryPanel session={session} theme={mockTheme} onResumeSession={onResumeSession} />
+				);
+				fireEvent.keyDown(list, { key: 'Enter', ctrlKey: true });
+				expect(onResumeSession).toHaveBeenCalledExactlyOnceWith(
+					'shared-native',
+					undefined,
+					'Conversation two',
+					undefined,
+					undefined,
+					'/project/two',
+					{ targetSessionId: 'two', nativeSessionBinding: entries[1].nativeSessionBinding }
+				);
+			}
+		);
+
+		it.each([undefined, { version: 1, state: 'unknown', reason: 'legacy' }] satisfies (
+			| NativeSessionBinding
+			| undefined
+		)[])(
+			'keeps legacy scope unknown and retains selection after refusal (%j)',
+			async (nativeSessionBinding) => {
+				const session = createMockSession({ id: 'active', toolType: 'grok' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const entry = createMockEntry({
+					sessionId: 'owner',
+					agentSessionId: 'old-native',
+					nativeSessionBinding,
+				});
+				mockHistoryGetAll.mockResolvedValue([entry]);
+				const onOpenSessionAsTab = vi.fn().mockResolvedValue(false);
+				const { container } = render(
+					<HistoryPanel
+						session={session}
+						theme={mockTheme}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				);
+				await screen.findByText('Test summary');
+				const list = container.querySelector('[tabIndex="0"]')!;
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				await act(async () => {
+					fireEvent.keyDown(list, { key: 'Enter', metaKey: true });
+				});
+				expect(onOpenSessionAsTab).toHaveBeenCalledExactlyOnceWith(
+					'old-native',
+					'/test/project',
+					undefined,
+					{ targetSessionId: 'owner', nativeSessionBinding }
+				);
+				expect(useSessionStore.getState().activeSessionId).toBe('active');
+				// Enter still opens the same selected record after a refused resume.
+				fireEvent.keyDown(list, { key: 'Enter' });
+				expect(screen.getByTestId('modal-entry-id')).toHaveTextContent(entry.id);
+			}
+		);
+
+		it.each([undefined, '', '   '])('refuses a record with unknown owner %j', async (sessionId) => {
+			mockHistoryGetAll.mockResolvedValue([
+				createMockEntry({ sessionId, agentSessionId: 'legacy' }),
+			]);
+			const onOpenSessionAsTab = vi.fn().mockResolvedValue(true);
+			const { container } = render(
+				<HistoryPanel
+					session={createMockSession()}
+					theme={mockTheme}
+					onOpenSessionAsTab={onOpenSessionAsTab}
+				/>
+			);
+			await screen.findByText('Test summary');
+			fireEvent.click(screen.getByTitle('legacy'));
+			const list = container.querySelector('[tabIndex="0"]')!;
+			fireEvent.keyDown(list, { key: 'ArrowDown' });
+			fireEvent.keyDown(list, { key: 'Enter', ctrlKey: true });
+			expect(onOpenSessionAsTab).not.toHaveBeenCalled();
+			fireEvent.keyDown(list, { key: 'Enter' });
+			expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+		});
+
+		it.each(['success', 'refusal', 'navigation', 'owner-removed'] as const)(
+			'waits for confirmation and preserves fresh navigation on %s',
+			async (outcome) => {
+				const session = createMockSession({ id: 'active' });
+				const owner = createMockSession({ id: 'owner', toolType: 'grok' });
+				const other = createMockSession({ id: 'other' });
+				useSessionStore.setState({ sessions: [session, owner, other], activeSessionId: 'active' });
+				mockHistoryGetAll.mockResolvedValue([
+					createMockEntry({ sessionId: 'owner', agentSessionId: 'native' }),
+				]);
+				let finish!: (value: boolean) => void;
+				const onOpenSessionAsTab = vi.fn(
+					() =>
+						new Promise<boolean>((resolve) => {
+							finish = resolve;
+						})
+				);
+				const { container } = render(
+					<HistoryPanel
+						session={session}
+						theme={mockTheme}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				);
+				await screen.findByText('Test summary');
+				const list = container.querySelector('[tabIndex="0"]')!;
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				fireEvent.keyDown(list, { key: 'Enter', metaKey: true });
+				expect(onOpenSessionAsTab).toHaveBeenCalledTimes(1);
+				expect(useSessionStore.getState().activeSessionId).toBe('active');
+				if (outcome === 'navigation') useSessionStore.getState().setActiveSessionId('other');
+				if (outcome === 'owner-removed') useSessionStore.setState({ sessions: [session, other] });
+				await act(async () => {
+					finish(outcome !== 'refusal');
+				});
+				expect(useSessionStore.getState().activeSessionId).toBe(
+					outcome === 'success' ? 'owner' : outcome === 'navigation' ? 'other' : 'active'
+				);
+				fireEvent.keyDown(list, { key: 'Enter' });
+				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+			}
+		);
+	});
+
 	describe('callbacks', () => {
 		it('should call onJumpToAgentSession from detail modal', async () => {
 			const onJumpToAgentSession = vi.fn();

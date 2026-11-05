@@ -7,6 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { SessionReadOptions } from '../agents/session-storage';
 
 // Helper to log deprecation warnings
 const logDeprecationWarning = (method: string, replacement?: string) => {
@@ -231,8 +232,14 @@ export function createClaudeApi() {
  */
 export function createAgentSessionsApi() {
 	return {
-		list: (agentId: string, projectPath: string, sshRemoteId?: string) =>
-			ipcRenderer.invoke('agentSessions:list', agentId, projectPath, sshRemoteId),
+		list: (agentId: string, projectPath: string, sshRemoteId?: string, ownerAgentId?: string) =>
+			ipcRenderer.invoke(
+				'agentSessions:list',
+				agentId,
+				projectPath,
+				sshRemoteId,
+				...(ownerAgentId === undefined ? [] : [ownerAgentId])
+			),
 
 		listPaginated: (
 			agentId: string,
@@ -247,7 +254,8 @@ export function createAgentSessionsApi() {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			options?: { offset?: number; limit?: number },
+			/** Owner selects the account and SSH host; a conflicting explicit host is rejected. */
+			options?: SessionReadOptions & { ownerAgentId?: string },
 			sshRemoteId?: string
 		) =>
 			ipcRenderer.invoke(
@@ -264,7 +272,8 @@ export function createAgentSessionsApi() {
 			projectPath: string,
 			query: string,
 			searchMode: 'title' | 'user' | 'assistant' | 'all',
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) =>
 			ipcRenderer.invoke(
 				'agentSessions:search',
@@ -272,11 +281,25 @@ export function createAgentSessionsApi() {
 				projectPath,
 				query,
 				searchMode,
-				sshRemoteId
+				sshRemoteId,
+				...(ownerAgentId === undefined ? [] : [ownerAgentId])
 			),
 
-		getPath: (agentId: string, projectPath: string, sessionId: string, sshRemoteId?: string) =>
-			ipcRenderer.invoke('agentSessions:getPath', agentId, projectPath, sessionId, sshRemoteId),
+		getPath: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string,
+			sshRemoteId?: string,
+			ownerAgentId?: string
+		) =>
+			ipcRenderer.invoke(
+				'agentSessions:getPath',
+				agentId,
+				projectPath,
+				sessionId,
+				sshRemoteId,
+				...(ownerAgentId === undefined ? [] : [ownerAgentId])
+			),
 
 		deleteMessagePair: (
 			agentId: string,

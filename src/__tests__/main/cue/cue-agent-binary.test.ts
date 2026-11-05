@@ -1,7 +1,7 @@
 /**
  * @file cue-agent-binary.test.ts
  * @description Which binary a Cue prompt run executes: the agent's own custom
- * path, then the provider's, then the detector's.
+ * path, then the provider's, then local detection or the remote's bare binary.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -87,17 +87,83 @@ describe('resolveCueAgentBinary', () => {
 		expect(result).toBeUndefined();
 	});
 
-	it("never checks or uses the agent's own path over SSH: it names a remote file", async () => {
-		const checkPath = found('/remote/claude');
+	it.each(['/usr/local/bin/claude', undefined])(
+		'falls back to local detection (%s) after an invalid agent path without a provider override',
+		async (detectedPath) => {
+			const checkPath = missing();
+			const getDetectedPath = detected(detectedPath);
+			const onWarn = vi.fn();
+
+			const result = await resolveCueAgentBinary({
+				sessionCustomPath: '/gone/claude',
+				sshEnabled: false,
+				getDetectedPath,
+				checkPath,
+				onWarn,
+			});
+
+			expect(result).toBe(detectedPath);
+			expect(checkPath).toHaveBeenCalledExactlyOnceWith('/gone/claude');
+			expect(getDetectedPath).toHaveBeenCalledTimes(1);
+			expect(onWarn).toHaveBeenCalledTimes(1);
+			expect(onWarn.mock.calls[0][0]).toContain('/gone/claude');
+		}
+	);
+
+	it.each([
+		{
+			name: 'session override wins over provider override',
+			sessionCustomPath: '~/Session Tools/grok',
+			providerCustomPath: '/opt/Provider Tools/grok',
+			expected: '~/Session Tools/grok',
+		},
+		{
+			name: 'provider override without a session override',
+			sessionCustomPath: undefined,
+			providerCustomPath: '/opt/Provider Tools/grok',
+			expected: '/opt/Provider Tools/grok',
+		},
+		{
+			name: 'empty session override falls back to provider',
+			sessionCustomPath: '',
+			providerCustomPath: '~/Provider Tools/grok',
+			expected: '~/Provider Tools/grok',
+		},
+		{
+			name: 'leading and trailing spaces are preserved',
+			sessionCustomPath: ' /remote/Session Tools/grok ',
+			providerCustomPath: '/opt/Provider Tools/grok',
+			expected: ' /remote/Session Tools/grok ',
+		},
+		{
+			name: 'no overrides leaves remote binary selection to the planner',
+			sessionCustomPath: undefined,
+			providerCustomPath: undefined,
+			expected: undefined,
+		},
+		{
+			name: 'empty overrides leave remote binary selection to the planner',
+			sessionCustomPath: '',
+			providerCustomPath: '',
+			expected: undefined,
+		},
+	])('resolves SSH $name without consulting the local host', async (testCase) => {
+		const checkPath = found('/local/checked/grok');
+		const getDetectedPath = detected('/local/detected/grok');
+		const onWarn = vi.fn();
 
 		const result = await resolveCueAgentBinary({
-			sessionCustomPath: '/remote/claude',
+			sessionCustomPath: testCase.sessionCustomPath,
+			providerCustomPath: testCase.providerCustomPath,
 			sshEnabled: true,
-			getDetectedPath: detected('/usr/local/bin/claude'),
+			getDetectedPath,
 			checkPath,
+			onWarn,
 		});
 
-		expect(result).toBe('/usr/local/bin/claude');
+		expect(result).toBe(testCase.expected);
 		expect(checkPath).not.toHaveBeenCalled();
+		expect(getDetectedPath).not.toHaveBeenCalled();
+		expect(onWarn).not.toHaveBeenCalled();
 	});
 });

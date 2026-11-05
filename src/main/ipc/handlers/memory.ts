@@ -19,6 +19,7 @@ import {
 import { resolveMemoryLayout } from '../../memory-location';
 import type { MemoryTarget } from '../../../shared/agentMemory';
 import { logger } from '../../utils/logger';
+import { redactSecrets } from '../../../shared/redactSecrets';
 
 const LOG_CONTEXT = '[IPC:Memory]';
 
@@ -28,8 +29,9 @@ export function registerMemoryHandlers(): void {
 			const result = await listMemoryEntries(await resolveMemoryLayout(target));
 			return { success: true, ...result };
 		} catch (error) {
-			logger.error(`Failed to list memory entries: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
+			const message = redactSecrets(String(error)).text;
+			logger.error(`Failed to list memory entries: ${message}`, LOG_CONTEXT);
+			return { success: false, error: message };
 		}
 	});
 
@@ -38,8 +40,9 @@ export function registerMemoryHandlers(): void {
 			const content = await readMemoryEntry(await resolveMemoryLayout(target), filename);
 			return { success: true, content };
 		} catch (error) {
-			logger.error(`Failed to read memory ${filename}: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
+			const message = redactSecrets(String(error)).text;
+			logger.error(`Failed to read memory: ${message}`, LOG_CONTEXT);
+			return { success: false, error: message };
 		}
 	});
 
@@ -50,8 +53,9 @@ export function registerMemoryHandlers(): void {
 				await writeMemoryEntry(await resolveMemoryLayout(target), filename, content);
 				return { success: true };
 			} catch (error) {
-				logger.error(`Failed to write memory ${filename}: ${error}`, LOG_CONTEXT);
-				return { success: false, error: String(error) };
+				const message = redactSecrets(String(error)).text;
+				logger.error(`Failed to write memory: ${message}`, LOG_CONTEXT);
+				return { success: false, error: message };
 			}
 		}
 	);
@@ -63,8 +67,9 @@ export function registerMemoryHandlers(): void {
 				await createMemoryEntry(await resolveMemoryLayout(target), filename, content);
 				return { success: true };
 			} catch (error) {
-				logger.error(`Failed to create memory ${filename}: ${error}`, LOG_CONTEXT);
-				return { success: false, error: String(error) };
+				const message = redactSecrets(String(error)).text;
+				logger.error(`Failed to create memory: ${message}`, LOG_CONTEXT);
+				return { success: false, error: message };
 			}
 		}
 	);
@@ -74,8 +79,9 @@ export function registerMemoryHandlers(): void {
 			await deleteMemoryEntry(await resolveMemoryLayout(target), filename);
 			return { success: true };
 		} catch (error) {
-			logger.error(`Failed to delete memory ${filename}: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
+			const message = redactSecrets(String(error)).text;
+			logger.error(`Failed to delete memory: ${message}`, LOG_CONTEXT);
+			return { success: false, error: message };
 		}
 	});
 
@@ -84,8 +90,9 @@ export function registerMemoryHandlers(): void {
 			const matches = await searchMemoryEntries(await resolveMemoryLayout(target), query);
 			return { success: true, matches };
 		} catch (error) {
-			logger.error(`Failed to search memory: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
+			const message = redactSecrets(String(error)).text;
+			logger.error(`Failed to search memory: ${message}`, LOG_CONTEXT);
+			return { success: false, error: message };
 		}
 	});
 
@@ -94,8 +101,9 @@ export function registerMemoryHandlers(): void {
 			const report = await findOrphanMemories(await resolveMemoryLayout(target));
 			return { success: true, ...report };
 		} catch (error) {
-			logger.error(`Failed to find orphan memories: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
+			const message = redactSecrets(String(error)).text;
+			logger.error(`Failed to find orphan memories: ${message}`, LOG_CONTEXT);
+			return { success: false, error: message };
 		}
 	});
 
@@ -103,8 +111,9 @@ export function registerMemoryHandlers(): void {
 		try {
 			return { success: true, path: (await resolveMemoryLayout(target)).directoryPath };
 		} catch (error) {
-			logger.error(`Failed to resolve memory path: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
+			const message = redactSecrets(String(error)).text;
+			logger.error(`Failed to resolve memory path: ${message}`, LOG_CONTEXT);
+			return { success: false, error: message };
 		}
 	});
 

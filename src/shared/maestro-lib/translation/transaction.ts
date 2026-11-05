@@ -6,7 +6,11 @@ import * as path from 'node:path';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { canonicalJson } from '../../canonicalJson';
 import { translationHash, nativeRecordKey } from './identity';
-import { extractNativeConversation } from './native-records';
+import {
+	encodeGrokSessionSnapshot,
+	extractGrokConversation,
+	extractNativeConversation,
+} from './native-records';
 import { TranslationArchive, type TranslationJournal } from './archive';
 import { TranslationRegistry } from './registry';
 import type {
@@ -26,6 +30,11 @@ export interface TranslationTransactionHost {
 	commit(journal: TranslationJournal): Promise<void>;
 	isCommitted(operationId: string): Promise<boolean>;
 	codex?: TranslationRpc;
+	/**
+	 * The model a staged destination session names for one tab (a Grok summary
+	 * requires one). Never the source model; undefined when none is selected.
+	 */
+	destinationModel?(tabId: string): string | undefined;
 }
 
 const operations = createKeyedWriteQueue();
@@ -164,6 +173,7 @@ export async function applyTranslation(
 					operationId: plan.id,
 					destination: plan.destination,
 					codex: host.codex,
+					destinationModel: host.destinationModel?.(conversation.tabId),
 					recordIntent: async (mapping) => {
 						journal.mappings = [
 							...journal.mappings.filter((m) => m.tabId !== mapping.tabId),
@@ -276,6 +286,34 @@ export async function applyTranslation(
 	});
 }
 
+/**
+ * A Grok stage creates `<sessions>/<cwd>/<new UUID>/` exclusively, under the UUID
+ * the journal recorded before the mkdir, so the directory is this operation's.
+ * Rollback removes it only when empty: anything else in it is native work
+ * written after staging and is retained, like a changed file.
+ */
+async function removeStagedGrokSessionDirectory(
+	journal: TranslationJournal,
+	mapping: TranslationJournal['mappings'][number]
+): Promise<void> {
+	const first = mapping.artifacts[0];
+	if (!first || !mapping.destinationSessionId) return;
+	const directory = path.dirname(first.path);
+	if (
+		path.basename(directory) !== mapping.destinationSessionId ||
+		mapping.artifacts.some((artifact) => path.dirname(artifact.path) !== directory)
+	)
+		return;
+	await assertTranslationTarget(
+		directory,
+		journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot
+	);
+	await fs.rmdir(directory).catch((error) => {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
+	});
+}
+
 export async function verifyTranslationWrites(journal: TranslationJournal): Promise<void> {
 	if (journal.mappings.length !== journal.conversations.length)
 		throw new Error('Incomplete all-tabs mapping');
@@ -305,7 +343,22 @@ export async function verifyTranslationWrites(journal: TranslationJournal): Prom
 		if (!write.sha256 || translationHash(bytes) !== write.sha256)
 			throw new Error(`Destination readback changed: ${write.path}`);
 		const mapping = journal.mappings.find((m) => m.artifacts.includes(write));
-		if (mapping) {
+		if (mapping && journal.plan.destination.provider === 'grok') {
+			// A Grok session is two files read as one snapshot, keyed by Grok's own native IDs.
+			if (write !== mapping.artifacts[0]) continue;
+			const summary = mapping.artifacts[1];
+			if (!summary) throw new Error('Grok destination summary is missing from the journal');
+			const readback = extractGrokConversation(
+				journal.plan.destination,
+				mapping.tabId,
+				mapping.destinationSessionId!,
+				encodeGrokSessionSnapshot({ summary: await fs.readFile(summary.path), transcript: bytes })
+			);
+			for (const record of readback.records)
+				destinationObserved[
+					nativeRecordKey(journal.plan.destination, mapping.destinationSessionId!, record.nativeId)
+				] = record.semanticHash;
+		} else if (mapping) {
 			const readback = extractNativeConversation(
 				journal.plan.destination,
 				mapping.tabId,
@@ -443,6 +496,9 @@ export async function recoverTranslation(
 						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 					});
 			}
+			if (journal.plan.destination.provider === 'grok')
+				for (const mapping of journal.mappings)
+					await removeStagedGrokSessionDirectory(journal, mapping);
 
 			journal.state = 'rolled-back';
 		} else {

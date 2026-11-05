@@ -26,6 +26,38 @@ describe('suggestEnvVarKeys', () => {
 		expect(keys).not.toContain('CODEX_HOME');
 	});
 
+	it('offers only verified Grok variables before common suggestions', () => {
+		const suggestions = suggestEnvVarKeys({ toolType: 'grok' });
+		const providerKeys = suggestions
+			.filter((entry) => entry.origin === 'provider')
+			.map((entry) => entry.key);
+
+		expect(providerKeys).toEqual(['GROK_HOME', 'GROK_AUTH_PATH', 'GROK_AUTH', 'XAI_API_KEY']);
+		expect(suggestions[0].key).toBe('GROK_HOME');
+		expect(suggestions.find((entry) => entry.key === 'HTTPS_PROXY')?.origin).toBe('common');
+		expect(suggestions.map((entry) => entry.key)).not.toContain('CODEX_HOME');
+	});
+
+	it('filters Grok auth suggestions without duplicating catalog or global names', () => {
+		const suggestions = suggestEnvVarKeys({
+			toolType: 'grok',
+			query: ' auth ',
+			exclude: ['GROK_AUTH'],
+			known: {
+				byProvider: {
+					grok: ['GROK_AUTH_PATH', 'TEAM_AUTH'],
+					codex: ['CODEX_AUTH'],
+				},
+				global: ['GROK_AUTH_PATH', 'TEAM_AUTH'],
+			},
+		});
+
+		expect(suggestions.map((entry) => [entry.key, entry.origin])).toEqual([
+			['GROK_AUTH_PATH', 'provider'],
+			['TEAM_AUTH', 'remembered'],
+		]);
+	});
+
 	it('offers names the user set before, and marks them as remembered', () => {
 		const suggestions = suggestEnvVarKeys({ toolType: 'claude-code', known });
 		const remembered = suggestions.find((entry) => entry.key === 'MY_TEAM_TOKEN');
@@ -70,6 +102,7 @@ describe('suggestEnvVarKeys', () => {
 
 		expect(keys).toContain('CODEX_HOME');
 		expect(keys).toContain('COPILOT_HOME');
+		expect(keys).toContain('GROK_HOME');
 	});
 
 	it('falls back to the common set for a provider with no catalog', () => {
@@ -108,6 +141,15 @@ describe('withBlankEnvVarRow', () => {
 			A: '1',
 			[BLANK_ENV_VAR_KEY]: '',
 		});
+	});
+
+	it('preserves explicit Grok unsets when adding a row without remembering blank values', () => {
+		const original = { GROK_HOME: ' \t', GROK_AUTH_PATH: '' };
+		const updated = withBlankEnvVarRow(original);
+
+		expect(updated).toEqual({ GROK_HOME: ' \t', GROK_AUTH_PATH: '', [BLANK_ENV_VAR_KEY]: '' });
+		expect(original).toEqual({ GROK_HOME: ' \t', GROK_AUTH_PATH: '' });
+		expect(rememberableEnvVarKeys(updated)).toEqual([]);
 	});
 
 	it("leaves the caller's record untouched", () => {

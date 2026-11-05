@@ -84,3 +84,115 @@ describe('session history callback', () => {
 		expect(getHistory('tab-gone')).toBeNull();
 	});
 });
+
+// Grok's native id arrives on `end` and belongs to one tab; every read names the
+// tab's own id (or none yet), never the agent-level sibling id.
+describe('Grok agents through the session callbacks', () => {
+	function setupAll(sessions: unknown[]) {
+		const registered: Record<string, (...args: never[]) => unknown> = {};
+		const server = new Proxy(
+			{},
+			{
+				get: (_target, prop: string) => (callback: (...args: never[]) => unknown) => {
+					registered[prop] = callback;
+				},
+			}
+		);
+		const store = (value: unknown) => ({ get: vi.fn(() => value) });
+		registerSessionCallbacks(
+			server as never,
+			{
+				sessionsStore: store(sessions),
+				groupsStore: store([]),
+				getProcessManager: () => null,
+			} as never
+		);
+		return registered as Record<string, (...args: unknown[]) => any>;
+	}
+
+	// Tab B reported last, so the agent-level field names tab B's conversation.
+	const grokAgent = () => ({
+		id: 'grok-agent',
+		name: 'Grok',
+		toolType: 'grok',
+		state: 'idle',
+		inputMode: 'ai',
+		cwd: '/home/user/project',
+		agentSessionId: 'grok-native-b',
+		activeTabId: 'tab-a',
+		aiTabs: [
+			{
+				id: 'tab-a',
+				agentSessionId: 'grok-native-a',
+				state: 'idle',
+				customModel: 'grok-code-fast-1',
+				customEffort: 'high',
+				logs: [
+					{
+						id: 'u1',
+						source: 'user',
+						text: 'look',
+						timestamp: 1_000,
+						images: ['data:image/png;base64,Z3Jvaw=='],
+					},
+					{ id: 'a1', source: 'stdout', text: 'done', timestamp: 2_000 },
+				],
+			},
+			{ id: 'tab-b', agentSessionId: 'grok-native-b', state: 'idle', logs: [] },
+			// Fresh tab: its end-only id has not arrived.
+			{ id: 'tab-fresh', state: 'busy', logs: [] },
+		],
+	});
+
+	it("lists the Grok agent under its stable id with each tab's own native id, null before end", () => {
+		const [entry] = setupAll([grokAgent()]).setGetSessionsCallback();
+		expect(entry.toolType).toBe('grok');
+		expect(entry.aiTabs.map((t: any) => [t.id, t.agentSessionId])).toEqual([
+			['tab-a', 'grok-native-a'],
+			['tab-b', 'grok-native-b'],
+			['tab-fresh', null],
+		]);
+		expect(entry.lastResponse).toMatchObject({ text: 'done', source: 'stdout' });
+	});
+
+	it('flattens Grok tabs for the CLI with provider, native id, model and effort from the tab', () => {
+		const entries = setupAll([grokAgent()]).setListDesktopSessionsCallback().sessions;
+		expect(
+			entries.map((e: any) => [e.tabId, e.toolType, e.agentSessionId, e.model, e.effort, e.state])
+		).toEqual([
+			['tab-a', 'grok', 'grok-native-a', 'grok-code-fast-1', 'high', 'idle'],
+			['tab-b', 'grok', 'grok-native-b', null, null, 'idle'],
+			['tab-fresh', 'grok', null, null, null, 'busy'],
+		]);
+	});
+
+	it("answers a Grok tab history with that tab's id, never the agent-level sibling id", () => {
+		const getHistory = setupAll([grokAgent()]).setGetSessionHistoryCallback;
+		expect(getHistory('tab-a')).toMatchObject({
+			agentId: 'grok-agent',
+			agentSessionId: 'grok-native-a',
+			projectPath: '/home/user/project',
+		});
+		expect(getHistory('tab-fresh').agentSessionId).toBeNull();
+	});
+
+	it('details each Grok tab with its own native id and its images, and a missing tab with none', () => {
+		const detail = setupAll([grokAgent()]).setGetSessionDetailCallback;
+		const a = detail('grok-agent', 'tab-a');
+		expect(a).toMatchObject({
+			toolType: 'grok',
+			activeTabId: 'tab-a',
+			agentSessionId: 'grok-native-a',
+		});
+		expect(a.aiLogs[0].images).toEqual(['data:image/png;base64,Z3Jvaw==']);
+		expect(detail('grok-agent').agentSessionId).toBe('grok-native-a');
+		expect(detail('grok-agent', 'tab-b').agentSessionId).toBe('grok-native-b');
+		const fresh = detail('grok-agent', 'tab-fresh');
+		expect(fresh.agentSessionId).toBeUndefined();
+		expect(fresh.aiLogs).toEqual([]);
+		const missing = detail('grok-agent', 'tab-gone');
+		expect(missing.agentSessionId).toBeUndefined();
+		expect(missing.aiLogs).toEqual([]);
+		expect(detail('not-an-agent')).toBeNull();
+	});
+});

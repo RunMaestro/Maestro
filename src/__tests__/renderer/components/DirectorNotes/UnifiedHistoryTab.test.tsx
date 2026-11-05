@@ -44,6 +44,8 @@ const mockHandleKeyDown = vi.fn();
 const mockSetSelectedIndex = vi.fn();
 let mockOnSelect: ((index: number) => void) | undefined;
 let mockOnSelectAlternate: ((index: number) => void) | undefined;
+let mockRowResumes: Array<() => Promise<boolean>> = [];
+let mockDetailResume: (() => Promise<boolean>) | undefined;
 
 vi.mock('../../../../renderer/hooks/keyboard/useListNavigation', () => ({
 	useListNavigation: (opts: any) => {
@@ -80,8 +82,13 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 // Mock HistoryDetailModal
 vi.mock('../../../../renderer/components/HistoryDetailModal', () => ({
-	HistoryDetailModal: ({ entry, onClose, onNavigate, onUpdate }: any) => (
-		<div data-testid="history-detail-modal">
+	HistoryDetailModal: ({ entry, onClose, onNavigate, onUpdate, onResumeSession }: any) => (
+		<div
+			data-testid="history-detail-modal"
+			ref={() => {
+				mockDetailResume = onResumeSession;
+			}}
+		>
 			<span data-testid="detail-entry-summary">{entry?.summary}</span>
 			<span data-testid="detail-entry-validated">{entry?.validated ? 'true' : 'false'}</span>
 			<button data-testid="detail-close" onClick={onClose}>
@@ -125,9 +132,19 @@ vi.mock('../../../../renderer/components/History', () => ({
 			</button>
 		</div>
 	),
-	HistoryEntryItem: ({ entry, index, isSelected, onOpenDetailModal, showAgentName }: any) => (
+	HistoryEntryItem: ({
+		entry,
+		index,
+		isSelected,
+		onOpenDetailModal,
+		showAgentName,
+		onOpenSessionAsTab,
+	}: any) => (
 		<div
 			data-testid={`history-entry-${index}`}
+			ref={() => {
+				mockRowResumes[index] = onOpenSessionAsTab;
+			}}
 			data-selected={isSelected}
 			data-agent-name={showAgentName ? 'true' : 'false'}
 			onClick={() => onOpenDetailModal?.(entry, index)}
@@ -332,6 +349,8 @@ afterEach(() => {
 	vi.clearAllMocks();
 	mockOnSelect = undefined;
 	mockOnSelectAlternate = undefined;
+	mockRowResumes = [];
+	mockDetailResume = undefined;
 });
 
 describe('UnifiedHistoryTab', () => {
@@ -802,7 +821,7 @@ describe('UnifiedHistoryTab', () => {
 			};
 			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
 
-			const onResumeSession = vi.fn();
+			const onResumeSession = vi.fn().mockResolvedValue(true);
 			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
 
 			await waitFor(() => {
@@ -817,8 +836,15 @@ describe('UnifiedHistoryTab', () => {
 			// Both ids travel: the agent to switch to, and the session to open there -
 			// plus the recorded name, which is the only surviving copy once the tab
 			// that carried it is closed.
-			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc', 'Named Session');
-			// The jump replaces the detail modal rather than stacking on top of it.
+			expect(onResumeSession).toHaveBeenCalledWith(
+				'session-1',
+				'agent-sess-abc',
+				'Named Session',
+				'/test',
+				{ targetSessionId: 'session-1', nativeSessionBinding: undefined },
+				expect.any(Function)
+			);
+			// The keyboard route does not open a detail modal.
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
 
@@ -850,6 +876,146 @@ describe('UnifiedHistoryTab', () => {
 
 			expect(mockOnSelectAlternate).toBeUndefined();
 		});
+	});
+
+	describe('Recorded resume scope', () => {
+		it.each(['row', 'keyboard', 'detail'])(
+			'forwards the exact %s record despite native-ID collisions',
+			async (route) => {
+				const entries = createMockEntries().map((entry, index) => ({
+					...entry,
+					sourceSessionId: `owner-${index}`,
+					sessionId: 'wrong-owner',
+					agentSessionId: 'shared-native-id',
+					sessionName: `Recorded ${index}`,
+					projectPath: `/recorded-${index}`,
+					nativeSessionBinding: {
+						version: 1,
+						state: 'bound',
+						provider: 'grok',
+						nativeSessionId: 'shared-native-id',
+						accountRef: `account-${index}`,
+						host: { kind: 'ssh', identity: `host-${index}` },
+						cwd: `/recorded-${index}`,
+					},
+				}));
+				mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
+				const onResumeSession = vi.fn().mockResolvedValue(true);
+				render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+				await screen.findByTestId('history-entry-2');
+				for (const [index, entry] of entries.entries()) {
+					if (route === 'detail') fireEvent.click(screen.getByTestId(`history-entry-${index}`));
+					await act(async () => {
+						if (route === 'keyboard') mockOnSelectAlternate!(index);
+						else
+							expect(await (route === 'row' ? mockRowResumes[index]() : mockDetailResume!())).toBe(
+								true
+							);
+					});
+					expect(onResumeSession).toHaveBeenLastCalledWith(
+						entry.sourceSessionId,
+						entry.agentSessionId,
+						entry.sessionName,
+						entry.projectPath,
+						{
+							targetSessionId: entry.sourceSessionId,
+							nativeSessionBinding: entry.nativeSessionBinding,
+						},
+						expect.any(Function)
+					);
+					const binding = onResumeSession.mock.lastCall![4].nativeSessionBinding;
+					expect(binding).not.toBe(entry.nativeSessionBinding);
+					binding.host.identity = 'caller mutation';
+					expect(entry.nativeSessionBinding.host.identity).toBe(`host-${index}`);
+				}
+			}
+		);
+
+		it.each(['owner', 'binding', 'unknown'])('keeps missing %s scope honest', async (missing) => {
+			const entry = {
+				...createMockEntries()[0],
+				agentSessionId: 'native',
+				sourceSessionId: missing === 'owner' ? undefined : 'owner',
+				nativeSessionBinding:
+					missing === 'unknown' ? { version: 1, state: 'unknown', reason: 'legacy' } : undefined,
+			};
+			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse([entry]));
+			const onResumeSession = vi.fn().mockResolvedValue(false);
+			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+			await screen.findByTestId('history-entry-0');
+			await expect(mockRowResumes[0]()).resolves.toBe(false);
+			if (missing === 'owner') expect(onResumeSession).not.toHaveBeenCalled();
+			else
+				expect(onResumeSession.mock.lastCall![4]).toEqual({
+					targetSessionId: 'owner',
+					nativeSessionBinding: entry.nativeSessionBinding,
+				});
+		});
+
+		it.each([true, false, undefined, 'rejected'] as const)(
+			'propagates %s without fabricating success',
+			async (outcome) => {
+				const entry = { ...createMockEntries()[0], agentSessionId: 'native' };
+				mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse([entry]));
+				const onResumeSession = vi
+					.fn()
+					.mockImplementation(() =>
+						outcome === 'rejected' ? Promise.reject(new Error('resume failed')) : outcome
+					);
+				render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+				await screen.findByTestId('history-entry-0');
+				fireEvent.click(screen.getByTestId('history-entry-0'));
+				if (outcome === 'rejected')
+					await expect(mockDetailResume!()).rejects.toThrow('resume failed');
+				else await expect(mockDetailResume!()).resolves.toBe(outcome === true);
+			}
+		);
+
+		it.each(['selection', 'newer', 'parked', 'unmount'])(
+			'invalidates deferred resume after %s',
+			async (change) => {
+				const entries = createMockEntries().map((entry) => ({
+					...entry,
+					agentSessionId: 'native',
+				}));
+				mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
+				let resolve!: (value: boolean) => void;
+				const promise = new Promise<boolean>((done) => {
+					resolve = done;
+				});
+				const onResumeSession = vi.fn().mockReturnValue(promise);
+				const { rerender, unmount } = render(
+					<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />
+				);
+				await screen.findByTestId('history-entry-0');
+				const pending = mockRowResumes[0]();
+				const isCurrent = onResumeSession.mock.lastCall![5];
+				expect(isCurrent()).toBe(true);
+				if (change === 'selection') fireEvent.click(screen.getByTestId('history-entry-1'));
+				if (change === 'newer')
+					await act(async () => {
+						mockOnSelectAlternate!(1);
+					});
+				if (change === 'parked') {
+					rerender(
+						<UnifiedHistoryTab
+							theme={mockTheme}
+							onResumeSession={onResumeSession}
+							isActive={false}
+						/>
+					);
+					rerender(
+						<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} isActive />
+					);
+				}
+				if (change === 'unmount') unmount();
+				expect(isCurrent()).toBe(false);
+				await act(async () => {
+					resolve(true);
+					expect(await pending).toBe(false);
+				});
+			}
+		);
 	});
 
 	describe('Detail Modal', () => {

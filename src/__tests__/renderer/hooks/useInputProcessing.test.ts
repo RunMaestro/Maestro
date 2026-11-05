@@ -57,6 +57,7 @@ import type {
 	BatchRunState,
 	QueuedItem,
 } from '../../../renderer/types';
+import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -1055,6 +1056,556 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].executionQueue.length).toBe(1);
 			expect(updatedSessions[0].executionQueue[0].command).toBe('/speckit.constitution');
 			expect(updatedSessions[0].executionQueue[0].commandArgs).toBe('create a new feature');
+		});
+	});
+
+	describe('Grok slash dispatch boundary', () => {
+		let session: Session;
+		let receipt: GrokCommandDiscoveryResult;
+		const discover = vi.fn();
+		const onSkillsCommand = vi.fn().mockResolvedValue(undefined);
+		const onPlanCrossAgentMentions = vi.fn();
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
+			const tab = createMockTab({
+				agentSessionId: 'native-grok',
+				inputValue: '/review private-argument @Peer',
+				stagedImages: ['data:image/png;base64,fixture'],
+				customModel: 'grok-4.5',
+				customEffort: 'high',
+			});
+			session = createMockSession({
+				toolType: 'grok',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+				customEnvVars: { GROK_HOME: '/synthetic/account-a' },
+				agentCommands: [
+					{ command: '/review', description: 'Stale', prompt: 'foreign provider body' },
+				],
+			});
+			// Typed IPC advertisement only; it grants no native invocation or prompt body.
+			receipt = {
+				status: 'discovered',
+				commands: [{ name: 'review', description: 'Review', kind: 'skill' }],
+				binding: {
+					route: 'grok-acp',
+					sessionId: 'native-grok',
+					processGeneration: 'process-1',
+					configGeneration: 'config-1',
+					catalogRevision: 1,
+					agentVersion: '1.0.70',
+					observedAt: Date.now(),
+				},
+			};
+			discover.mockReset().mockImplementation(async () => receipt);
+			window.maestro.agents.discoverSlashCommands = discover;
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it.each([
+			// The draft stages an image; a native command takes none.
+			['skill', 'take no images'],
+			['native-command', 'take no images'],
+			['workflow', 'take no images'],
+			['empty', 'TUI-only actions and CLI subcommands cannot run through chat'],
+			['skills', 'TUI-only actions and CLI subcommands cannot run through chat'],
+			['missing', 'discovery is unavailable'],
+			['stale', 'stale or belongs to another conversation'],
+			['other-session', 'stale or belongs to another conversation'],
+			['no-binding', 'stale or belongs to another conversation'],
+			['invalid-array', 'invalid command catalog'],
+			['invalid-entry', 'invalid command catalog'],
+			['sparse', 'invalid command catalog'],
+			['missing-context', 'require discovery for this conversation'],
+			['remote-unqualified', 'unavailable for SSH agents'],
+			['managed-unqualified', 'unavailable on this managed host'],
+			['executable-unavailable', 'selected Grok executable is unavailable'],
+			['observation-unavailable', 'discovery is unavailable'],
+			['canceled', 'discovery was canceled'],
+			['invalid-catalog', 'invalid command catalog'],
+			['rejected', 'discovery failed'],
+		])('refuses %s without losing the draft or dispatching a fallback', async (kind, message) => {
+			if (kind === 'native-command' || kind === 'workflow') receipt.commands[0].kind = kind;
+			else if (kind === 'empty') receipt.commands = [];
+			else if (kind === 'missing') discover.mockResolvedValue(null);
+			else if (kind === 'stale') receipt.binding!.observedAt -= 30_000;
+			else if (kind === 'other-session') receipt.binding!.sessionId = 'other-native';
+			else if (kind === 'no-binding') delete receipt.binding;
+			else if (kind === 'invalid-array') receipt.commands = {} as typeof receipt.commands;
+			else if (kind === 'invalid-entry')
+				receipt.commands = [null] as unknown as typeof receipt.commands;
+			else if (kind === 'sparse') receipt.commands = new Array(1);
+			else if (kind === 'rejected')
+				discover.mockRejectedValue(new Error('private-argument account-a'));
+			else if (!['skill', 'skills'].includes(kind)) {
+				receipt = {
+					status: 'unavailable',
+					commands: [],
+					reason: kind as GrokCommandDiscoveryResult['reason'],
+				};
+			}
+			const draft =
+				kind === 'skills'
+					? '/skills'
+					: kind === 'empty'
+						? '/tui-only'
+						: session.aiTabs[0].inputValue;
+			session.aiTabs[0].inputValue = draft;
+			const deps = createDeps({
+				activeSession: session,
+				inputValue: draft,
+				stagedImages: session.aiTabs[0].stagedImages,
+				onSkillsCommand,
+				onPlanCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+			await act(async () => {
+				await result.current.processInput();
+			});
+			expect(discover).toHaveBeenCalledExactlyOnceWith({
+				providerId: 'grok',
+				context: { kind: 'agent', sessionId: session.id, model: 'grok-4.5', effort: 'high' },
+			});
+			const current = useSessionStore.getState().sessions[0];
+			expect(current.aiTabs[0].logs).toEqual([
+				expect.objectContaining({ source: 'error', text: expect.stringContaining(message) }),
+			]);
+			expect(current.aiTabs[0]).toMatchObject({
+				inputValue: session.aiTabs[0].inputValue,
+				stagedImages: session.aiTabs[0].stagedImages,
+				state: 'idle',
+			});
+			expect(current.executionQueue).toEqual([]);
+			expect(current.agentCommands).toEqual(session.agentCommands);
+			expect(current.aiTabs[0].logs[0].text).not.toMatch(
+				/private-argument|account-a|foreign provider body/
+			);
+			for (const effect of [
+				mockSetInputValue,
+				mockSetStagedImages,
+				mockSyncAiInputToSession,
+				mockProcessQueuedItemRef.current,
+				window.maestro.process.spawn,
+				window.maestro.process.write,
+				window.maestro.agents.get,
+				onSkillsCommand,
+				onPlanCrossAgentMentions,
+			]) {
+				expect(effect).not.toHaveBeenCalled();
+			}
+			expect(vi.getTimerCount()).toBe(0);
+		});
+
+		describe('host-admitted native commands', () => {
+			const digest = 'a'.repeat(64);
+			const submit = async (inputValue: string) => {
+				session.aiTabs[0].inputValue = inputValue;
+				session.aiTabs[0].stagedImages = [];
+				const deps = createDeps({ activeSession: session, inputValue, stagedImages: [] });
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				await act(async () => {
+					vi.advanceTimersByTime(60);
+				});
+			};
+
+			beforeEach(() => {
+				receipt.commands = [
+					{
+						name: 'review',
+						description: 'Review',
+						kind: 'skill',
+						argumentHint: 'path',
+						entryDigest: digest,
+					},
+				];
+				Object.assign(receipt.binding!, {
+					account: 'account-ref',
+					host: 'host-ref',
+					model: 'grok-4.5',
+					effort: 'high',
+				});
+			});
+
+			it('queues an advertised command through the existing command queue', async () => {
+				await submit('/review src/a.ts');
+				expect(discover).toHaveBeenCalledOnce();
+				expect(mockProcessQueuedItemRef.current).toHaveBeenCalledExactlyOnceWith(
+					session.id,
+					expect.objectContaining({
+						type: 'command',
+						command: '/review',
+						commandArgs: 'src/a.ts',
+						commandScope: { provider: 'grok' },
+						commandDescription: 'Grok native command',
+					})
+				);
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([]);
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockSetInputValue).toHaveBeenCalledWith('');
+			});
+
+			it.each([
+				['unbound', 'did not bind this command to an account and host'],
+				['no-digest', 'did not bind this command to an account and host'],
+				['other-model', 'stale or belongs to another conversation'],
+				['arguments', 'takes no arguments'],
+				['multi-line', 'must be one line'],
+			])('refuses %s keeping the draft', async (kind, message) => {
+				let input = '/review src/a.ts';
+				if (kind === 'unbound') delete (receipt.binding as { account?: string }).account;
+				else if (kind === 'no-digest')
+					delete (receipt.commands[0] as { entryDigest?: string }).entryDigest;
+				else if (kind === 'other-model') receipt.binding!.model = 'grok-other';
+				else if (kind === 'arguments') delete receipt.commands[0].argumentHint;
+				else input = '/review src/a.ts\nsecond line';
+				await submit(input);
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([
+					expect.objectContaining({ source: 'error', text: expect.stringContaining(message) }),
+				]);
+				expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+				expect(mockSetInputValue).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+			});
+		});
+
+		it.each(['sshRemoteId', 'sessionSshRemoteConfig', 'missing-native'])(
+			'refuses %s without consulting the local account',
+			async (scope) => {
+				if (scope === 'sshRemoteId') session.sshRemoteId = 'remote-a';
+				else if (scope === 'sessionSshRemoteConfig')
+					session.sessionSshRemoteConfig = { enabled: true, remoteId: 'remote-a' };
+				else session.aiTabs[0].agentSessionId = null;
+				const deps = createDeps({ activeSession: session, inputValue: '/review' });
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				expect(discover).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockSetInputValue).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].logs[0].text).toContain(
+					scope === 'missing-native' ? 'require discovery' : 'unavailable for SSH agents'
+				);
+			}
+		);
+
+		it.each(['/history', '/wizard build a plan'])(
+			'keeps the Maestro handler ahead of colliding %s provider/custom entries',
+			async (inputValue) => {
+				const command = inputValue.split(' ')[0];
+				session.agentCommands = [
+					{ command, description: 'Native collision', prompt: 'wrong provider prompt' },
+				];
+				const onWizardCommand = vi.fn();
+				const deps = createDeps({
+					activeSession: session,
+					inputValue,
+					onWizardCommand,
+					customAICommands: [
+						{
+							id: 'collision',
+							command,
+							description: 'Custom collision',
+							prompt: 'wrong custom prompt',
+						},
+					],
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				if (command === '/history') expect(mockOnHistoryCommand).toHaveBeenCalledExactlyOnceWith();
+				else expect(onWizardCommand).toHaveBeenCalledExactlyOnceWith('build a plan');
+				expect(discover).not.toHaveBeenCalled();
+				expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockSyncAiInputToSession).toHaveBeenCalledWith('', {
+					sessionId: session.id,
+					tabId: session.activeTabId,
+				});
+			}
+		);
+
+		it.each(
+			(
+				[
+					['idle', false, '\t'],
+					['idle', true, '\n'],
+					['busy', false, '\n'],
+					['busy', true, '  '],
+				] as const
+			).flatMap(([state, remote, separator]) =>
+				(['staged', 'explicit', 'empty'] as const).map((imageSource) => ({
+					state,
+					remote,
+					separator,
+					imageSource,
+				}))
+			)
+		)(
+			'keeps $imageSource images and raw arguments at the $state queue boundary (SSH: $remote)',
+			async ({ state, remote, separator, imageSource }) => {
+				const target = createMockTab({
+					id: 'command-target',
+					name: 'Selected command tab',
+					state,
+					permissionMode: 'readonly',
+					customModel: 'grok-composer-2.5-fast',
+					customEffort: 'low',
+				});
+				session = {
+					...session,
+					state,
+					cwd: remote ? '/remote/project-a' : '/local/project-a',
+					aiTabs: [...session.aiTabs, target],
+					...(remote && { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-a' } }),
+				};
+				const stagedImages = ['data:image/png;base64,staged-1', 'data:image/png;base64,staged-2'];
+				const images =
+					imageSource === 'staged'
+						? undefined
+						: imageSource === 'explicit'
+							? ['data:image/png;base64,explicit-1', 'data:image/jpeg;base64,explicit-2']
+							: [];
+				const expectedImages = images ?? stagedImages;
+				const args = "$& $$ $` $' {{agent_name}}\nnext  line";
+				const commandText = `/review${separator}${args}`;
+				const readPrompt = vi.fn(() => 'Review {{agent_name}}: $ARGUMENTS');
+				const getBranch = vi.spyOn(window.maestro.git, 'branch');
+				try {
+					const deps = createDeps({
+						activeSession: session,
+						inputValue: `  ${commandText}  `,
+						stagedImages,
+						customAICommands: [
+							{
+								id: 'custom-review',
+								command: '/review',
+								description: 'Maestro review',
+								get prompt() {
+									return readPrompt();
+								},
+							},
+						],
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput(undefined, { tabId: target.id, images });
+					});
+					if (imageSource === 'staged') {
+						expect(mockSetStagedImages).toHaveBeenCalledExactlyOnceWith([]);
+						// Acceptance is the synchronous state/queue handoff, before the idle timer runs.
+						expect(mockSetStagedImages.mock.invocationCallOrder[0]).toBeGreaterThan(
+							mockSetSessions.mock.invocationCallOrder[mockSetSessions.mock.calls.length - 1]
+						);
+					} else {
+						expect(mockSetStagedImages).not.toHaveBeenCalled();
+					}
+					expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+					await act(async () => {
+						await vi.advanceTimersByTimeAsync(50);
+					});
+					const current = useSessionStore.getState().sessions[0];
+					const item =
+						state === 'idle'
+							? (mockProcessQueuedItemRef.current.mock.calls[0][1] as QueuedItem)
+							: current.executionQueue[0];
+					expect(item).toMatchObject({
+						type: 'command',
+						command: '/review',
+						commandArgs: args,
+						commandDescription: 'Maestro review',
+						tabId: target.id,
+						tabName: target.name,
+						readOnlyMode: true,
+						turnSettings: { model: target.customModel, effort: target.customEffort },
+						commandScope: { provider: 'grok' },
+					});
+					if (expectedImages.length > 0) {
+						expect(item.images).toEqual(expectedImages);
+						expect(item.images).not.toBe(expectedImages);
+					} else {
+						expect(item).not.toHaveProperty('images');
+					}
+					expect(item).not.toHaveProperty('text');
+					expect(item).not.toHaveProperty('prompt');
+					if (state === 'idle') {
+						expect(mockProcessQueuedItemRef.current).toHaveBeenCalledExactlyOnceWith(
+							session.id,
+							item
+						);
+						expect(current.executionQueue).toEqual([]);
+						expect(current.aiTabs.find((tab) => tab.id === target.id)?.state).toBe('busy');
+					} else {
+						expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+						expect(current.executionQueue).toEqual([item]);
+					}
+					expect(current).toMatchObject({
+						toolType: 'grok',
+						cwd: session.cwd,
+						customEnvVars: session.customEnvVars,
+						activeTabId: session.activeTabId,
+						aiCommandHistory: [commandText],
+					});
+					expect(current.aiTabs[0]).toEqual(session.aiTabs[0]);
+					expect(mockSyncAiInputToSession).toHaveBeenCalledExactlyOnceWith('', {
+						sessionId: session.id,
+						tabId: target.id,
+					});
+					for (const effect of [
+						readPrompt,
+						getBranch,
+						discover,
+						window.maestro.process.spawn,
+						window.maestro.process.write,
+						window.maestro.agents.get,
+					]) {
+						expect(effect).not.toHaveBeenCalled();
+					}
+				} finally {
+					getBranch.mockRestore();
+				}
+			}
+		);
+
+		it.each(['staged', 'explicit', 'empty'] as const)(
+			'keeps the custom command draft and %s images when its explicit target disappeared',
+			async (imageSource) => {
+				const draft = '/review $ARGUMENTS';
+				session.aiTabs[0].inputValue = draft;
+				const images =
+					imageSource === 'staged'
+						? undefined
+						: imageSource === 'explicit'
+							? ['data:image/png;base64,explicit-image']
+							: [];
+				const deps = createDeps({
+					activeSession: session,
+					inputValue: draft,
+					stagedImages: session.aiTabs[0].stagedImages,
+					customAICommands: [
+						{ id: 'review', command: '/review', description: 'Review', prompt: 'Run' },
+					],
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput(undefined, { tabId: 'removed-tab', images });
+					await vi.advanceTimersByTimeAsync(50);
+				});
+				expect(useSessionStore.getState().sessions).toEqual([session]);
+				for (const effect of [
+					mockSetInputValue,
+					mockSetStagedImages,
+					mockSetSlashCommandOpen,
+					mockSyncAiInputToSession,
+					mockProcessQueuedItemRef.current,
+					discover,
+					window.maestro.process.spawn,
+				]) {
+					expect(effect).not.toHaveBeenCalled();
+				}
+			}
+		);
+
+		it.each(['resolve', 'reject'])(
+			'bounds a disconnected lookup and ignores its late %s',
+			async (outcome) => {
+				let resolve!: (value: GrokCommandDiscoveryResult) => void;
+				let reject!: (error: Error) => void;
+				discover.mockReturnValue(
+					new Promise<GrokCommandDiscoveryResult>((ok, fail) => {
+						resolve = ok;
+						reject = fail;
+					})
+				);
+				const deps = createDeps({ activeSession: session, inputValue: '/review' });
+				const { result } = renderHook(() => useInputProcessing(deps));
+				let settled = false;
+				let pending!: Promise<void>;
+				await act(async () => {
+					pending = result.current.processInput().then(() => {
+						settled = true;
+					});
+					await vi.advanceTimersByTimeAsync(2_999);
+				});
+				expect(settled).toBe(false);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(1);
+					await pending;
+				});
+				expect(settled).toBe(true);
+				const refused = useSessionStore.getState().sessions[0];
+				expect(refused.aiTabs[0].logs[0].text).toContain('discovery is unavailable');
+				await act(async () => {
+					if (outcome === 'resolve') resolve(receipt);
+					else reject(new Error('private late failure'));
+					await vi.advanceTimersByTimeAsync(1);
+				});
+				expect(useSessionStore.getState().sessions[0]).toEqual(refused);
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+				expect(mockSetInputValue).not.toHaveBeenCalled();
+				expect(vi.getTimerCount()).toBe(0);
+			}
+		);
+
+		it('keeps a delayed refusal on the submitted tab after the user changes account and agent', async () => {
+			let resolve!: (value: GrokCommandDiscoveryResult) => void;
+			discover.mockReturnValue(
+				new Promise<GrokCommandDiscoveryResult>((ok) => {
+					resolve = ok;
+				})
+			);
+			const deps = createDeps({ activeSession: session, inputValue: '/review' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+			let pending!: Promise<void>;
+			await act(async () => {
+				pending = result.current.processInput();
+			});
+			const other = createMockSession({ id: 'other-agent', toolType: 'codex' });
+			const newTab = createMockTab({
+				id: 'new-tab',
+				agentSessionId: 'new-native',
+				inputValue: 'new draft',
+			});
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						activeTabId: newTab.id,
+						customEnvVars: { GROK_HOME: '/synthetic/account-b' },
+						aiTabs: [...session.aiTabs, newTab],
+					},
+					other,
+				],
+				activeSessionId: other.id,
+			});
+			await act(async () => {
+				resolve(receipt);
+				await pending;
+			});
+			const state = useSessionStore.getState();
+			expect(state.activeSessionId).toBe(other.id);
+			expect(state.sessions[1]).toEqual(other);
+			expect(state.sessions[0]).toMatchObject({
+				activeTabId: newTab.id,
+				customEnvVars: { GROK_HOME: '/synthetic/account-b' },
+			});
+			expect(state.sessions[0].aiTabs[1]).toEqual(newTab);
+			expect(state.sessions[0].aiTabs[0].logs).toEqual([
+				expect.objectContaining({ source: 'error' }),
+			]);
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
 		});
 	});
 

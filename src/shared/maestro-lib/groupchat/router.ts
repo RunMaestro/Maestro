@@ -35,7 +35,8 @@ import {
 	requiresIdleParticipants,
 	stripMarkdownFormatting,
 } from '../../group-chat-types';
-import { FALLBACK_CONTEXT_WINDOW } from '../../agentConstants';
+import { FALLBACK_CONTEXT_WINDOW, getContextWindowForAgent } from '../../agentConstants';
+import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import type { SteeringResultFrame } from '../../chatSteering';
 import {
 	GROUP_CHAT_STEER_BLOCKED_DETAILS,
@@ -417,6 +418,8 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		wasParticipantRecentlyRemoved,
 	} = participantRegistry;
 	const recovery = createSessionRecovery({ store });
+	// Keep provider lookups and card updates ordered, including across replacement turns.
+	const usageUpdates = createKeyedWriteQueue();
 
 	/**
 	 * The moderator turn that is running for each chat, by its FULL process id and the
@@ -3314,50 +3317,69 @@ Review the agent responses above. Either:
 	 *
 	 * Context usage is skipped when the total exceeds the window: a multi-tool turn reports values
 	 * accumulated over its internal calls, and a percentage over 100 is not a measurement.
+	 * An unknown window clears the previous measurement instead of reusing another model's window.
+	 * Card updates are queued; the ledger is recorded immediately so turn completion cannot miss it.
 	 */
 	function usageReported(processId: string, usage: UsageStats): void {
 		if (!processId.startsWith(GROUP_CHAT_PREFIX)) return;
 		metrics.recordUsage(processId, usage);
 
 		const totalContextTokens = calculateContextTokens(usage);
-		const effectiveWindow = usage.contextWindow > 0 ? usage.contextWindow : FALLBACK_CONTEXT_WINDOW;
-		const fits = totalContextTokens <= effectiveWindow;
-
 		const participant = parseParticipantSessionId(processId);
-		if (participant) {
-			const update: { contextUsage?: number; tokenCount?: number; totalCost: number } = {
-				totalCost: usage.totalCostUsd,
-			};
-			if (fits) {
-				update.contextUsage = Math.round((totalContextTokens / effectiveWindow) * 100);
-				update.tokenCount = totalContextTokens;
-			}
-			updateParticipant(participant.groupChatId, participant.participantName, update)
-				.then((updated) =>
-					events.participantsChanged(participant.groupChatId, updated.participants)
-				)
-				.catch((error) => {
-					logger.error('[GroupChat] Failed to update participant usage', LOG_CONTEXT, {
-						error: String(error),
-						participant: participant.participantName,
-					});
-				});
-		}
-
 		const moderatorChatId = parseModeratorSessionId(processId);
-		if (moderatorChatId) {
-			// An accumulated total is reported as -1 so the card keeps its previous values; cost always moves.
-			events.moderatorUsage(
-				moderatorChatId,
-				fits
-					? {
-							contextUsage: Math.round((totalContextTokens / effectiveWindow) * 100),
-							totalCost: usage.totalCostUsd,
-							tokenCount: totalContextTokens,
-						}
-					: { contextUsage: -1, totalCost: usage.totalCostUsd, tokenCount: -1 }
-			);
-		}
+		const groupChatId = participant?.groupChatId ?? moderatorChatId;
+		if (!groupChatId) return;
+
+		void usageUpdates
+			.enqueue(groupChatId, async () => {
+				let effectiveWindow = usage.contextWindow;
+				if (!Number.isFinite(effectiveWindow) || effectiveWindow <= 0) {
+					const chat = await loadGroupChat(groupChatId);
+					const providerId = participant
+						? chat?.participants.find((p) => p.name === participant.participantName)?.agentId
+						: chat?.moderatorAgentId;
+					if (!providerId) return;
+					// Preserve other providers' existing group-chat fallback, without inventing a Grok window.
+					effectiveWindow =
+						providerId === 'grok' ? getContextWindowForAgent(providerId) : FALLBACK_CONTEXT_WINDOW;
+				}
+				const windowKnown = effectiveWindow > 0;
+				const fits = windowKnown && totalContextTokens <= effectiveWindow;
+
+				if (participant) {
+					const update: { contextUsage?: number; tokenCount?: number; totalCost: number } = {
+						totalCost: usage.totalCostUsd,
+					};
+					if (fits) {
+						update.contextUsage = Math.round((totalContextTokens / effectiveWindow) * 100);
+						update.tokenCount = totalContextTokens;
+					} else if (!windowKnown) {
+						// Explicit undefined removes stale fields; omission would preserve the old percentage.
+						update.contextUsage = undefined;
+						update.tokenCount = undefined;
+					}
+					const updated = await updateParticipant(groupChatId, participant.participantName, update);
+					events.participantsChanged(groupChatId, updated.participants);
+				} else if (moderatorChatId) {
+					// -1 preserves an accumulated turn's last measurement; -2 clears an unknown window.
+					const unavailable = windowKnown ? -1 : -2;
+					events.moderatorUsage(groupChatId, {
+						contextUsage: fits
+							? Math.round((totalContextTokens / effectiveWindow) * 100)
+							: unavailable,
+						totalCost: usage.totalCostUsd,
+						tokenCount: fits ? totalContextTokens : unavailable,
+					});
+				}
+			})
+			.catch((error) => {
+				if (!isDeletedGroupChatFailure(error)) void captureException(error);
+				logger.error('[GroupChat] Failed to update usage', LOG_CONTEXT, {
+					error: String(error),
+					groupChatId,
+					participant: participant?.participantName,
+				});
+			});
 	}
 
 	/** A participant's output as it streams, for a peek panel. A moderator's is not shown. */
@@ -3394,6 +3416,8 @@ Review the agent responses above. Either:
 		noteActivity: noteGroupChatActivity,
 		sessionAnnounced,
 		usageReported,
+		// Hosts must drain queued card writes before draining/releasing the backing store.
+		drainUsageUpdates: usageUpdates.idle,
 		liveOutput,
 		// Steering
 		runningTurns,

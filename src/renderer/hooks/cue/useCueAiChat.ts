@@ -8,6 +8,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { buildSpawnConfigForAgent } from '../../utils/sessionHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { getActiveTab } from '../../utils/tabHelpers';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only - no markdown, no code fences, no bullet lists, no formatting.
 
@@ -112,12 +114,20 @@ export function useCueAiChat({
 				session,
 			});
 
+			// The assist runs under the permission mode the person set on the agent's
+			// active tab, resolved by the one rule the toolbar pill and the composer use;
+			// never left implicit (a spawn with no mode plans `standard`). It has no tab of
+			// its own, so a mode that needs a per-request prompt (Grok `standard`) has
+			// nowhere to ask and is refused by the host rather than auto-approved.
+			const permissionMode = resolveTabPermissionMode(getActiveTab(session));
 			const spawnConfig = await buildSpawnConfigForAgent({
 				sessionId: spawnSessionIdRef.current,
 				toolType: session.toolType,
 				cwd: projectRoot,
 				prompt,
 				appendSystemPrompt,
+				permissionMode,
+				readOnlyMode: permissionMode === 'readonly',
 				agentSessionId: agentSessionIdRef.current ?? undefined,
 				sessionCustomPath: session.customPath,
 				sessionCustomArgs: session.customArgs,

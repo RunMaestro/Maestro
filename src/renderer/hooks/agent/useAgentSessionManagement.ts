@@ -1,4 +1,8 @@
 import { translatedHistorySessionId } from '../../../shared/maestro-lib/translation/session';
+import {
+	updateProviderSlot,
+	type NativeSessionBinding,
+} from '../../../shared/maestro-lib/agents/providerSwap';
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
@@ -9,7 +13,12 @@ import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { logger } from '../../utils/logger';
 import { isSynopsisRequest } from '../../utils/transcriptMessages';
-import { loadResumableSession } from '../../services/resumableSession';
+import {
+	loadResumableSession,
+	matchesNativeSessionBinding,
+	resumeSelectionKey,
+	SessionResumeRefusedError,
+} from '../../services/resumableSession';
 
 // Re-exported from its shared home so existing importers keep working; the
 // scroll-to-top history backfill needs the same filter.
@@ -62,8 +71,8 @@ export interface HistoryEntryInput {
  * Dependencies for the useAgentSessionManagement hook.
  */
 export interface UseAgentSessionManagementDeps {
-	/** Session state setter */
-	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
+	/** Synchronous session-store action; the updater must finish before this returns. */
+	setSessions: ReturnType<typeof useSessionStore.getState>['setSessions'];
 	/** Agent session ID setter */
 	setActiveAgentSessionId: (id: string | null) => void;
 	/** Agent sessions browser open state setter */
@@ -110,6 +119,14 @@ export interface UseAgentSessionManagementReturn {
  */
 export interface ResumeSessionOptions {
 	/**
+	 * Caller admission, checked before loading and at each mutation boundary.
+	 * The final updater check receives the exact proposed session so callers can
+	 * recognize this resume's own focus commit. Do not mutate it or the store.
+	 */
+	canResume?: (nextSession?: Session) => boolean;
+	/** Immutable ownership of the selected history record, when observed. */
+	nativeSessionBinding?: NativeSessionBinding;
+	/**
 	 * Resume into a specific Maestro agent (Session.id) resolved fresh from the
 	 * store, rather than the current active session. Required when jumping
 	 * across agents (e.g. the Left Bar "Starred Sessions" list), where the target
@@ -154,6 +171,7 @@ export function useAgentSessionManagement(
 
 	// Refs for functions that need to be accessed from other callbacks
 	const addHistoryEntryRef = useRef<((entry: HistoryEntryInput) => Promise<void>) | null>(null);
+	const resumeRequestId = useRef(0);
 
 	/**
 	 * Add a history entry for a session.
@@ -288,6 +306,8 @@ export function useAgentSessionManagement(
 			projectPath?: string,
 			opts?: ResumeSessionOptions
 		): Promise<boolean> => {
+			const requestId = ++resumeRequestId.current;
+			if (opts?.canResume?.() === false) return false;
 			// Resolve the agent to resume into. When a targetSessionId is provided
 			// (cross-agent jump, e.g. starred sessions), read it fresh from the store
 			// by id. Otherwise fall back to the current active session, also resolved
@@ -298,6 +318,17 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
+			const selectionKey = resumeSelectionKey(targetSession);
+			const selectionIsCurrent = (session: Session, nextSession?: Session) =>
+				resumeRequestId.current === requestId &&
+				resumeSelectionKey(session) === selectionKey &&
+				(!!opts?.targetSessionId ||
+					useSessionStore.getState().activeSessionId === targetSession.id) &&
+				opts?.canResume?.(nextSession) !== false;
+			const scoped = targetSession.toolType === 'grok' || opts?.nativeSessionBinding !== undefined;
+			const matchesTab = (tab: Session['aiTabs'][number], binding = opts?.nativeSessionBinding) =>
+				tab.agentSessionId === agentSessionId &&
+				(!scoped || matchesNativeSessionBinding(tab.nativeSessionBinding, binding));
 			try {
 				agentSessionId = translatedHistorySessionId(targetSession, agentSessionId);
 			} catch (error) {
@@ -324,15 +355,16 @@ export function useAgentSessionManagement(
 			}
 
 			// Check if a tab with this agentSessionId already exists
-			const existingTab = targetSession.aiTabs?.find(
-				(tab) => tab.agentSessionId === agentSessionId
-			);
+			const existingTab = targetSession.aiTabs?.find((tab) => matchesTab(tab));
 
 			try {
+				if (!selectionIsCurrent(targetSession)) return false;
 				// The transcript read, the synopsis stripping, and the name / starred /
 				// context lookup are shared with every other way a conversation is
 				// reopened (see loadResumableSession).
 				const resumable = await loadResumableSession({
+					...(targetSession.toolType === 'grok' ? { ownerAgentId: targetSession.id } : {}),
+					nativeSessionBinding: opts?.nativeSessionBinding,
 					toolType: targetSession.toolType,
 					projectRoot: resolvedProjectRoot,
 					sshRemoteId,
@@ -342,6 +374,13 @@ export function useAgentSessionManagement(
 					starred,
 					usageStats,
 				});
+
+				const current = selectSessionById(targetSession.id)(useSessionStore.getState());
+				if (!current || !selectionIsCurrent(current)) {
+					throw new SessionResumeRefusedError(
+						'The agent selection changed while loading history. Try again.'
+					);
+				}
 
 				if (!resumable) {
 					// No messages came back: the session is empty or has aged out / been
@@ -357,13 +396,22 @@ export function useAgentSessionManagement(
 					starred: isStarred,
 					usageStats: finalUsageStats,
 					origin,
+					nativeSessionBinding,
 				} = resumable;
 
 				// Update the session and switch to AI mode
 				// IMPORTANT: Use functional update to get fresh session state and avoid race conditions
+				let resumed = false;
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id !== targetSession.id) return s;
+						if (s.id !== targetSession.id || !selectionIsCurrent(s)) return s;
+						// Closing or rebinding a tab during the read invalidates that selection.
+						if (
+							existingTab &&
+							!s.aiTabs.some((tab) => tab.id === existingTab.id && matchesTab(tab))
+						) {
+							return s;
+						}
 
 						// Re-resolve the existing tab from FRESH state, not the `existingTab`
 						// captured before the async read above. handleResumeSession awaits
@@ -372,7 +420,7 @@ export function useAgentSessionManagement(
 						// the pre-await dedup with no tab present. Re-checking here means the
 						// second update sees the first's committed tab and focuses it instead
 						// of creating a duplicate. There must never be two tabs for one session.
-						const freshExistingTab = s.aiTabs?.find((tab) => tab.agentSessionId === agentSessionId);
+						const freshExistingTab = s.aiTabs?.find((tab) => matchesTab(tab, nativeSessionBinding));
 
 						// If a tab already exists for this session, repopulate (if needed) and
 						// focus it instead of creating a duplicate.
@@ -390,7 +438,13 @@ export function useAgentSessionManagement(
 									origin: origin ?? tab.origin,
 								};
 							});
-							return focusAiTabInSession({ ...s, aiTabs: updatedTabs }, freshExistingTab.id);
+							const nextSession = focusAiTabInSession(
+								{ ...s, aiTabs: updatedTabs },
+								freshExistingTab.id
+							);
+							if (!selectionIsCurrent(s, nextSession)) return s;
+							resumed = true;
+							return nextSession;
 						}
 
 						// Create tab from the CURRENT session state (not stale closure value)
@@ -406,12 +460,34 @@ export function useAgentSessionManagement(
 						});
 						if (!result) return s;
 
-						return { ...result.session, activeFileTabId: null, inputMode: 'ai' };
+						const nextSession = {
+							...result.session,
+							aiTabs: result.session.aiTabs.map((tab) =>
+								tab.id === result.tab.id && nativeSessionBinding
+									? updateProviderSlot(tab, s, s.toolType, { nativeSessionBinding })
+									: tab
+							),
+						};
+						if (!selectionIsCurrent(s, nextSession)) return s;
+						resumed = true;
+						return nextSession;
 					})
 				);
+				// Store subscribers can navigate or rebind synchronously during commit.
+				// Keep their newer selection; never roll back a committed tab.
+				const committed = selectSessionById(targetSession.id)(useSessionStore.getState());
+				if (!resumed || !committed || !selectionIsCurrent(committed)) {
+					throw new SessionResumeRefusedError(
+						'The selected conversation changed while loading history. Try again.'
+					);
+				}
 				setActiveAgentSessionId(agentSessionId);
 				return true;
 			} catch (error) {
+				if (error instanceof SessionResumeRefusedError) {
+					if (!opts?.suppressUnavailableFlash) showFlash?.(error.message);
+					return false;
+				}
 				logger.error('Failed to resume session:', undefined, error);
 				if (!opts?.suppressUnavailableFlash) {
 					const msg =

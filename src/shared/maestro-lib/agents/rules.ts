@@ -18,6 +18,7 @@
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { isValidAgentId } from '../../agentIds';
 import { isSameDirectory, rebasePathOntoRoot } from '../../agentWorkingDirectory';
+import { canonicalJson } from '../../canonicalJson';
 import { isCodexTransport } from '../../codexTransport';
 import { isHarnessControlMode } from '../providers/native-control';
 import { validateGroupAppearance } from '../../groupAppearance';
@@ -52,6 +53,7 @@ import type { LogEntryRecord } from '../store/transcript';
 import {
 	switchAgentProvider,
 	updateProviderSlot,
+	type NativeSessionBinding,
 	type ProviderSwitchAgent,
 	type ProviderSwitchTab,
 } from './providerSwap';
@@ -553,6 +555,8 @@ export function renameTabRecord(tab: AITabRecord, name: string): AITabRecord {
 
 /** What starting a turn on a tab writes: the message, whose provider owns the turn, and a consumed merge. */
 export interface TurnBegin {
+	/** Runtime attempt identity, independent of the provider session ID. */
+	turnId?: string;
 	/** The person's message, as it will read in the transcript. Written before the provider runs. */
 	userEntry: LogEntryRecord;
 	/** The provider the turn was sent under (settings are codified at send). */
@@ -572,6 +576,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 	return {
 		...base,
 		turnProvider: begin.provider,
+		runtimeTurnId: begin.turnId,
 		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
 	};
 }
@@ -579,6 +584,14 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 /** What a provider told the runtime about a tab's conversation. Absent fields are left as they are. */
 export interface TabSessionUpdate {
 	agentSessionId?: string;
+	/** Observed provenance, written atomically with the ID through updateProviderSlot. */
+	nativeSessionBinding?: NativeSessionBinding;
+	/** Compare inside the repository mutation queue, including the parked provider slot. */
+	expected?: {
+		turnId: string;
+		agentSessionId: string | null;
+		nativeSessionBinding?: NativeSessionBinding;
+	};
 	/** One finished turn's usage, folded into the provider's running total on the tab. */
 	addUsage?: UsageStats;
 }
@@ -594,14 +607,25 @@ export function recordTabSession(
 	owningProvider: string,
 	update: TabSessionUpdate
 ): AITabRecord {
+	const slot = (
+		owningProvider === agent.toolType
+			? tab
+			: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
+	) as ProviderSwitchTab | undefined;
+	if (
+		update.expected &&
+		(tab.runtimeTurnId !== update.expected.turnId ||
+			(slot?.agentSessionId ?? null) !== update.expected.agentSessionId ||
+			canonicalJson(slot?.nativeSessionBinding ?? null) !==
+				canonicalJson(update.expected.nativeSessionBinding ?? null))
+	) {
+		throw new Error('The native session owner changed before the turn could be recorded.');
+	}
 	const fields: Record<string, unknown> = {};
 	if (update.agentSessionId !== undefined) fields.agentSessionId = update.agentSessionId;
+	if (update.nativeSessionBinding !== undefined)
+		fields.nativeSessionBinding = structuredClone(update.nativeSessionBinding);
 	if (update.addUsage !== undefined) {
-		const slot = (
-			owningProvider === agent.toolType
-				? tab
-				: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
-		) as { usageStats?: UsageStats } | undefined;
 		fields.usageStats = addUsageStats(slot?.usageStats, update.addUsage);
 	}
 	if (Object.keys(fields).length === 0) return tab;

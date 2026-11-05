@@ -32,9 +32,17 @@
  */
 
 import { getClaudeTokenSourceFields, type ClaudeTokenSourceFields } from '../../claudeTokenMode';
+import type { GrokLaunchScopePorts } from '../../agentAccountDir';
+import { canonicalJson } from '../../canonicalJson';
 import type { ToolType } from '../../types';
-import type { AgentRepository } from '../agents/repository';
-import { DEFAULT_RULE_CONTEXT, type RuleContext } from '../agents/rules';
+import type { AgentRepository, TabWriteGuard } from '../agents/repository';
+import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
+import {
+	DEFAULT_RULE_CONTEXT,
+	recordTabSession,
+	type RuleContext,
+	type TabSessionUpdate,
+} from '../agents/rules';
 import type { EventBus } from '../client/event-bus';
 import type {
 	ClientError,
@@ -73,9 +81,11 @@ import {
 	buildUserTranscriptEntry,
 	createTurnRecorder,
 	type TurnRecorder,
+	type RecordedTurn,
 } from '../turns/record-turn';
 import { toTurnAgent, toTurnTab } from '../turns/records';
-import { runAgentTurn, type AgentTurnRun } from '../turns/run-agent-turn';
+import type { CompletedTurn } from '../run/run-to-completion';
+import { runAgentTurn, type AgentTurnRun, type RunAgentTurnRefusal } from '../turns/run-agent-turn';
 import { createTurnEventMapper, type UnstampedTurnEvent } from '../turns/turn-events';
 import type { StatsConnectionConstructor } from '../turns/stats';
 import type { DataDirVerdict } from './data-dir-lock';
@@ -86,6 +96,8 @@ const LOG_CONTEXT = '[RuntimeTurns]';
 
 /** What the host passes the runtime so it can run turns. Every field is optional. */
 export interface RuntimeTurnOptions {
+	/** Host directory/endpoint observations; composed by the production runtime. */
+	grokLaunchScope?: GrokLaunchScopePorts;
 	/**
 	 * The host's `better-sqlite3` loader (the CLI's `loadBetterSqlite3`). Absent: a turn records no
 	 * usage row, and says so once in the log.
@@ -148,6 +160,17 @@ interface TurnItem extends QueueItem {
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
+
+/** A start the provider layer refused before anything ran, with its reason. */
+class TurnStartRefusal extends Error {
+	constructor(
+		readonly reason: RunAgentTurnRefusal,
+		message: string
+	) {
+		super(message);
+		this.name = 'TurnStartRefusal';
+	}
+}
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
 
@@ -215,6 +238,66 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 		const agent = toTurnAgent(record);
 		if (!agent) throw new Error('The agent has no working directory to run in.');
+		const tab: TurnTab = toTurnTab(tabRecord);
+		const expected: NonNullable<TabSessionUpdate['expected']> = {
+			turnId: item.id,
+			agentSessionId: tab.agentSessionId ?? null,
+			nativeSessionBinding: structuredClone(tabRecord.nativeSessionBinding),
+		};
+		const incarnation =
+			agent.toolType === 'grok' ? repository.captureTabIncarnation(agentId, item.tabId) : undefined;
+		let ownedTurnId = tabRecord.runtimeTurnId;
+		const writeGuard: TabWriteGuard | undefined =
+			incarnation &&
+			(() => {
+				if (!incarnation()) return false;
+				const current = repository.getAgent(agentId);
+				const currentTab = repository.getTab(agentId, item.tabId);
+				if (!current || !currentTab || currentTab.runtimeTurnId !== ownedTurnId) return false;
+				try {
+					// Reuse the parked-slot CAS before beginTurn as well as after it.
+					recordTabSession({ ...currentTab, runtimeTurnId: item.id }, current, agent.toolType, {
+						expected,
+					});
+					return true;
+				} catch {
+					return false;
+				}
+			});
+		const isWorktree = typeof record.parentSessionId === 'string' && record.parentSessionId !== '';
+		// Do not let the generic record reader turn a malformed resume into a new session.
+		if (
+			agent.toolType === 'grok' &&
+			tabRecord.agentSessionId != null &&
+			(typeof tabRecord.agentSessionId !== 'string' || tabRecord.agentSessionId === '')
+		) {
+			throw new TurnStartRefusal(
+				'grok-native-session-refused',
+				'The retained Grok native session ID is invalid.'
+			);
+		}
+		const nativeSelectionKey = () => {
+			const current = repository.getAgent(agentId);
+			const currentTab = repository.getTab(agentId, item.tabId);
+			return canonicalJson({
+				agent: current && {
+					provider: current.toolType,
+					cwd: current.cwd,
+					projectRoot: current.projectRoot,
+					fullPath: current.fullPath,
+					ssh: current.sessionSshRemoteConfig,
+					env: current.customEnvVars,
+					args: current.customArgs,
+					path: current.customPath,
+				},
+				tab: currentTab && {
+					...toTurnTab(currentTab),
+					nativeSessionBinding: currentTab.nativeSessionBinding,
+					rawId: currentTab.agentSessionId,
+				},
+			});
+		};
+		const selectionKey = agent.toolType === 'grok' ? nativeSelectionKey() : undefined;
 
 		const loaded = await loadTurnContext(agent, {
 			paths,
@@ -227,7 +310,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		});
 		if (!loaded.ok) throw new Error(loaded.message);
 
-		const tab: TurnTab = toTurnTab(tabRecord);
+		if (agent.toolType === 'grok' && (!writeGuard!() || nativeSelectionKey() !== selectionKey))
+			throw new TurnStartRefusal(
+				'grok-native-session-refused',
+				'The Grok tab or launch selection changed while loading context.'
+			);
 		const command = resolveSlashCommand(item.text, loaded.commands, agent.agentCommands);
 		const message: TurnMessage = {
 			text: item.text,
@@ -244,9 +331,19 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (!assembled.ok) throw new Error(assembled.message);
 		const turn: AssembledTurn = assembled.turn;
 		const provider = turn.settings.provider;
+		const scope = Object.freeze({
+			projectPath: turn.launch.cwd,
+			isRemote: turn.launch.sshRemoteConfig?.enabled === true,
+			isWorktree,
+		});
 
 		const started = await deps.runAgentTurn(turn, {
 			sessionId: `${agentId}-ai-${item.tabId}`,
+			grokLaunchScope: host.grokLaunchScope,
+			retainedNativeSessionBinding: expected.nativeSessionBinding,
+			...(provider === 'grok'
+				? { recheckNativeSelection: () => writeGuard!() && nativeSelectionKey() === selectionKey }
+				: {}),
 			sshStore,
 			claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields),
 			maestroPBinPath: host.maestroPBinPath ?? null,
@@ -276,18 +373,34 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			// The message is now sent: write it down, and spend a merge it carried.
 			const startedAt = deps.now();
 			const userEntry = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
-			const begun = await repository.beginTurn(agentId, item.tabId, {
-				userEntry,
-				provider: provider as ToolType,
-				consumedMergedContext: turn.consumedMergedContext,
-			});
+			const begun = await repository.beginTurn(
+				agentId,
+				item.tabId,
+				{
+					turnId: item.id,
+					userEntry,
+					provider: provider as ToolType,
+					consumedMergedContext: turn.consumedMergedContext,
+				},
+				...(writeGuard ? [writeGuard] : [])
+			);
 			// Not recorded means not sent, as far as the person can tell: stop it and hold the item.
 			if (!begun.ok) throw new Error(begun.error.message);
+			ownedTurnId = item.id;
 
 			emitTurn(agentId, item.tabId, { kind: 'user', entry: userEntry });
 			emitTurn(agentId, item.tabId, { kind: 'started' });
 
-			done = streamTurn({ agentId, tabId: item.tabId, turn, run, startedAt });
+			done = streamTurn({
+				agentId,
+				tabId: item.tabId,
+				turn,
+				run,
+				startedAt,
+				scope,
+				expected,
+				writeGuard,
+			});
 		} catch (error) {
 			run.terminate();
 			await run.result.catch(() => undefined);
@@ -308,8 +421,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		turn: AssembledTurn;
 		run: AgentTurnRun;
 		startedAt: number;
+		scope: RecordedTurn['scope'];
+		expected: NonNullable<TabSessionUpdate['expected']>;
+		writeGuard?: TabWriteGuard;
 	}): Promise<void> {
-		const { agentId, tabId, turn, run, startedAt } = input;
+		const { agentId, tabId, turn, run, startedAt, expected, writeGuard } = input;
 		const provider = turn.settings.provider;
 		const mapper = createTurnEventMapper({
 			agentId: provider,
@@ -317,22 +433,93 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			resumedSessionId: turn.resumeSessionId,
 			now: deps.now,
 		});
+		const receipt = provider === 'grok' ? run.nativeLaunchReceipt : undefined;
+		const scope =
+			receipt?.scope.state === 'bound'
+				? {
+						...input.scope!,
+						projectPath: receipt.scope.cwd,
+						isRemote: receipt.scope.host.kind === 'ssh',
+					}
+				: input.scope;
+		let nativeSessionBinding: NativeSessionBinding | undefined;
 		let recordedSession: string | undefined = turn.resumeSessionId;
-		let sessionWrite: Promise<unknown> = Promise.resolve();
+		let observedSession: string | undefined;
+		let identityFailure: string | undefined;
+		let sessionWrite: Promise<void> = Promise.resolve();
 
-		/** Write the provider's session id the moment it is announced: a crash after this still resumes. */
+		/** Preserve an allocated ID even during cancellation; a different ID is never a resume. */
 		const noteSession = (id: string): void => {
-			if (id === recordedSession) return;
+			if (provider === 'grok') {
+				if (identityFailure) return;
+				if (
+					typeof id !== 'string' ||
+					!id.trim() ||
+					/[\x00-\x1f\x7f]/.test(id) ||
+					((turn.resumeSessionId ?? observedSession) !== undefined &&
+						id !== (turn.resumeSessionId ?? observedSession))
+				) {
+					identityFailure =
+						'Grok returned an invalid or different native session ID. The original conversation was retained.';
+					return;
+				}
+				if (observedSession === id) return;
+				if (receipt && receipt.requestedNativeSessionId !== turn.resumeSessionId) {
+					identityFailure = 'The Grok launch receipt belongs to a different native request.';
+					return;
+				}
+				const binding: NativeSessionBinding =
+					receipt?.scope.state === 'bound'
+						? { ...receipt.scope, nativeSessionId: id }
+						: { version: 1, state: 'unknown', reason: 'unobserved' };
+				if (
+					(binding.state === 'bound' && !matchesNativeSessionBinding(binding, binding)) ||
+					(turn.resumeSessionId &&
+						!matchesNativeSessionBinding(binding, expected.nativeSessionBinding))
+				) {
+					identityFailure =
+						'The Grok launch receipt does not prove ownership of this native session.';
+					return;
+				}
+				observedSession = id;
+				nativeSessionBinding = binding;
+			} else if (id === recordedSession) return;
 			recordedSession = id;
-			sessionWrite = sessionWrite.then(() =>
-				repository.recordTabSession(agentId, tabId, provider, { agentSessionId: id })
-			);
+			sessionWrite = sessionWrite
+				.then(async () => {
+					const binding = nativeSessionBinding;
+					const result = await repository.recordTabSession(
+						agentId,
+						tabId,
+						provider,
+						{
+							agentSessionId: id,
+							...(provider === 'grok' ? { nativeSessionBinding: binding, expected } : {}),
+						},
+						...(writeGuard ? [writeGuard] : [])
+					);
+					if (!result.ok) throw new Error(result.error.message);
+					expected.agentSessionId = id;
+					if (provider === 'grok') expected.nativeSessionBinding = binding;
+				})
+				.catch((error) => {
+					if (provider === 'grok') identityFailure ??= errorText(error);
+					logger.warn(`Recording the native session failed: ${errorText(error)}`, LOG_CONTEXT);
+				});
 		};
 
 		try {
 			for await (const parsed of run.events) {
+				// The mapper suppresses a resumed ID's first announcement; validate the raw event.
+				if (provider === 'grok' && parsed.sessionId !== undefined) {
+					noteSession(parsed.sessionId);
+					await sessionWrite;
+				}
 				for (const event of mapper.map(parsed)) {
-					if (event.kind === 'session') noteSession(event.providerSessionId);
+					if (event.kind === 'session') {
+						if (provider !== 'grok') noteSession(event.providerSessionId);
+						if (identityFailure) continue;
+					}
 					emitTurn(agentId, tabId, event);
 				}
 			}
@@ -340,13 +527,23 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			logger.warn(`Reading the turn's events failed: ${errorText(error)}`, LOG_CONTEXT);
 		}
 
-		const completed = await run.result;
+		let completed: CompletedTurn = await run.result;
 		const endedAt = deps.now();
-		if (completed.sessionId && completed.sessionId !== mapper.sessionId()) {
-			emitTurn(agentId, tabId, { kind: 'session', providerSessionId: completed.sessionId });
+		if (completed.sessionId !== undefined) noteSession(completed.sessionId);
+		await sessionWrite;
+		if (provider === 'grok' && !identityFailure) {
+			if (!writeGuard?.())
+				identityFailure = 'The original Grok tab or turn no longer owns these records.';
 		}
-		if (completed.sessionId) noteSession(completed.sessionId);
-		await sessionWrite.catch(() => undefined);
+		if (
+			provider === 'grok' &&
+			!identityFailure &&
+			completed.sessionId === undefined &&
+			observedSession
+		) {
+			// Only a genuinely observed early allocation survives an end without an ID.
+			completed = { ...completed, sessionId: observedSession };
+		}
 
 		try {
 			const recorded = await recorder.recordTurn({
@@ -357,6 +554,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				startedAt,
 				endedAt,
 				userEntryWritten: true,
+				scope,
+				nativeSessionBinding,
+				writeGuard: provider === 'grok' ? () => !identityFailure && writeGuard!() : undefined,
 			});
 			if (!recorded.transcript.ok && recorded.transcript.error.code !== 'not-found') {
 				logger.warn(
@@ -364,16 +564,46 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					LOG_CONTEXT
 				);
 			}
+			if (provider === 'grok' && !recorded.transcript.ok) {
+				identityFailure ??= recorded.transcript.error.message;
+			}
 			// The folded usage the tab record carries (`TurnEvent.usage` says clients must not sum).
-			if (completed.usage) {
-				await repository.recordTabSession(agentId, tabId, provider, {
-					addUsage: completed.usage,
-				});
+			if (completed.usage && !identityFailure) {
+				const usage = await repository.recordTabSession(
+					agentId,
+					tabId,
+					provider,
+					{
+						addUsage: completed.usage,
+						...(provider === 'grok' ? { expected } : {}),
+					},
+					...(writeGuard ? [writeGuard] : [])
+				);
+				if (!usage.ok) {
+					if (provider === 'grok') identityFailure ??= usage.error.message;
+					logger.warn(`The turn's usage was not written: ${usage.error.message}`, LOG_CONTEXT);
+				}
 			}
 		} catch (error) {
+			if (provider === 'grok') identityFailure ??= errorText(error);
 			logger.warn(`Recording the turn failed: ${errorText(error)}`, LOG_CONTEXT);
 		}
-
+		if (provider === 'grok' && !writeGuard?.())
+			identityFailure ??= 'The original Grok tab or turn no longer owns these records.';
+		if (provider === 'grok' && identityFailure) {
+			const error: NonNullable<CompletedTurn['error']> = {
+				type: 'session_not_found',
+				message: identityFailure,
+				recoverable: false,
+				agentId: provider,
+				timestamp: endedAt,
+			};
+			completed = { ...completed, outcome: 'crashed', sessionId: undefined, error };
+			emitTurn(agentId, tabId, { kind: 'error', error });
+		}
+		if (completed.sessionId && completed.sessionId !== mapper.sessionId()) {
+			emitTurn(agentId, tabId, { kind: 'session', providerSessionId: completed.sessionId });
+		}
 		emitTurn(agentId, tabId, {
 			kind: 'outcome',
 			outcome: completed.outcome,

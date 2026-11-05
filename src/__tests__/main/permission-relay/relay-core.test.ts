@@ -24,6 +24,9 @@ import {
 	RELAY_MCP_SERVER_NAME,
 } from '../../../main/permission-relay/types';
 import type { PermissionRequest } from '../../../main/permission-relay/types';
+import { resolvePermissionResponse } from '../../../main/permission-relay/integration';
+import { grokConsentAuthority } from '../../../main/process-manager/spawners/GrokAcpSpawner';
+import type { GrokEffect, GrokEffectAuthority } from '../../../shared/maestro-lib/grok/host-seams';
 
 describe('permission-relay registry', () => {
 	it('keeps the registry snapshot and status push native-only', () => {
@@ -375,6 +378,168 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 		} finally {
 			client.destroy();
 			cleanup();
+		}
+	});
+});
+
+// A standalone Grok tab's consent through the one relay path the desktop, the
+// web-desktop and Lite share. GrokAcpSpawner opens one consent session per tab and asks it
+// through grokConsentAuthority; every client answers by the server-minted request id over
+// `permission:respond` (resolvePermissionResponse). A Grok question never reaches this path
+// (the driver settles it as unavailable), so the only answer a client can give is a
+// person's decision on one exact tool request of its owning tab.
+describe('Grok consent answers through the relay', () => {
+	const binding = {
+		actor: { kind: 'human', id: 'desktop-user' },
+		leaseId: 'desktop-consent:grok-agent:1',
+	} as unknown as Parameters<GrokEffectAuthority['decide']>[1];
+	const effect = (title: string, file: string): GrokEffect => ({
+		kind: 'permissions',
+		permissions: { request: { toolCall: { toolCallId: title, title, rawInput: { path: file } } } },
+	});
+	const opened: Array<{ close(): void }> = [];
+	function relay() {
+		const server = new PermissionRelayServer();
+		const asked: PermissionRequest[] = [];
+		server.setOnRequest((req) => asked.push(req));
+		const tab = (tabId: string) => {
+			const session = server.openConsentSession({ sessionId: 'grok-agent', tabId });
+			if (!session) throw new Error('No consent surface');
+			opened.push(session);
+			const authority = grokConsentAuthority(session);
+			// The driver always passes its turn signal; a fresh one is a live turn.
+			const decide = (e: GrokEffect, signal = new AbortController().signal) =>
+				Promise.resolve(authority.decide(e, binding, signal));
+			return { session, decide };
+		};
+		return { asked, tab };
+	}
+	const isSettled = async (promise: Promise<unknown>) => {
+		let settled = false;
+		void promise.then(() => (settled = true));
+		await new Promise((resolve) => setImmediate(resolve));
+		return settled;
+	};
+	afterEach(() => {
+		for (const session of opened.splice(0)) session.close();
+	});
+
+	it('routes each answer to the owning tab request only; a duplicate or reconnecting answer is stale', async () => {
+		const { asked, tab } = relay();
+		const one = tab('tab-1');
+		const two = tab('tab-2');
+		const decided1 = one.decide(effect('Read', 'a.md'));
+		const decided2 = two.decide(effect('Write', 'b.md'));
+		await vi.waitFor(() => expect(asked).toHaveLength(2));
+		const [r1, r2] = asked;
+		expect(r1).toMatchObject({
+			sessionId: 'grok-agent',
+			tabId: 'tab-1',
+			toolName: 'Read',
+			input: { path: 'a.md' },
+		});
+		expect(r2).toMatchObject({ sessionId: 'grok-agent', tabId: 'tab-2', toolName: 'Write' });
+		// A tool request, never a question picker.
+		expect(r1).not.toHaveProperty('kind');
+		expect(r1.requestId).not.toBe(r2.requestId);
+		expect(r1.token).not.toBe(r2.token);
+
+		expect(resolvePermissionResponse(r2.requestId, { behavior: 'allow' })).toBe(true);
+		await expect(decided2).resolves.toEqual({ decision: 'allow' });
+		// A second client (or the same one after a reconnect) answering again changes nothing.
+		expect(resolvePermissionResponse(r2.requestId, { behavior: 'deny', message: 'late' })).toBe(
+			false
+		);
+		expect(await isSettled(decided1)).toBe(false);
+		expect(resolvePermissionResponse(r1.requestId, { behavior: 'deny', message: 'No' })).toBe(true);
+		await expect(decided1).resolves.toEqual({ decision: 'deny', reason: 'No' });
+
+		// An allow is one request's, not the tab's: the next request asks again.
+		const again = two.decide(effect('Write', 'b.md'));
+		await vi.waitFor(() => expect(asked).toHaveLength(3));
+		expect(asked[2].requestId).not.toBe(r2.requestId);
+		two.session.close();
+		await expect(again).resolves.toEqual({ decision: 'deny', reason: 'Agent process exited.' });
+	});
+
+	it('refuses unauthorized responders and never widens what the person was shown', async () => {
+		const { asked, tab } = relay();
+		const one = tab('tab-1');
+		const decided = one.decide(effect('Read', 'a.md'));
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		const [request] = asked;
+		expect(resolvePermissionResponse('guessed-request', { behavior: 'allow' })).toBe(false);
+		expect(resolvePermissionResponse(request.token, { behavior: 'allow' })).toBe(false);
+		expect(resolvePermissionResponse(`${request.requestId} `, { behavior: 'allow' })).toBe(false);
+		expect(await isSettled(decided)).toBe(false);
+		// An Allow that edits the input is not the request shown and denies.
+		expect(
+			resolvePermissionResponse(request.requestId, {
+				behavior: 'allow',
+				updatedInput: { path: '/outside/secret' },
+			})
+		).toBe(true);
+		await expect(decided).resolves.toEqual({
+			decision: 'deny',
+			reason: 'An edited tool input cannot be approved for Grok.',
+		});
+		// Any other effect is never put to the person.
+		await expect(
+			one.decide({
+				kind: 'tool-call',
+				tool: 'Bash',
+				input: { command: 'ls' },
+			} as unknown as GrokEffect)
+		).resolves.toMatchObject({ decision: 'deny' });
+		expect(asked).toHaveLength(1);
+	});
+
+	it('denies on a cancelled turn or process exit and keeps late answers stale', async () => {
+		const { asked, tab } = relay();
+		const one = tab('tab-1');
+		const controller = new AbortController();
+		const cancelled = one.decide(effect('Read', 'a.md'), controller.signal);
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		controller.abort();
+		await expect(cancelled).resolves.toEqual({
+			decision: 'deny',
+			reason: 'The request was cancelled before a decision.',
+		});
+		expect(resolvePermissionResponse(asked[0].requestId, { behavior: 'allow' })).toBe(false);
+		// Already cancelled: never surfaced to any client.
+		await expect(one.decide(effect('Read', 'b.md'), controller.signal)).resolves.toMatchObject({
+			decision: 'deny',
+		});
+		expect(asked).toHaveLength(1);
+
+		const pending = one.decide(effect('Read', 'c.md'));
+		await vi.waitFor(() => expect(asked).toHaveLength(2));
+		one.session.close();
+		await expect(pending).resolves.toEqual({ decision: 'deny', reason: 'Agent process exited.' });
+		expect(resolvePermissionResponse(asked[1].requestId, { behavior: 'allow' })).toBe(false);
+		await expect(one.decide(effect('Read', 'd.md'))).resolves.toEqual({
+			decision: 'deny',
+			reason: 'Agent process exited.',
+		});
+		expect(asked).toHaveLength(2);
+	});
+
+	it('gives browser and Lite clients the same reply channel and no question answer channel', () => {
+		expect(isRemoteEventAllowed('process:permission-request')).toBe(true);
+		expect(isRemoteMethodAllowed('permission:respond')).toBe(true);
+		// Plans and the question gap are display events every client mirrors.
+		expect(isRemoteEventAllowed('process:tool-execution')).toBe(true);
+		expect(isRemoteEventAllowed('agent:error')).toBe(true);
+		for (const channel of [
+			'permission:answerQuestion',
+			'permission:question',
+			'process:answerQuestion',
+			'process:question',
+			'grok:answerQuestion',
+			'agent:answerQuestion',
+			'agent:question',
+		]) {
+			expect(isRemoteMethodAllowed(channel), channel).toBe(false);
 		}
 	});
 });

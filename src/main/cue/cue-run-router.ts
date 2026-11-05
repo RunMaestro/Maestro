@@ -8,7 +8,7 @@
  *
  * What genuinely differs between the two runners is injected, never branched
  * on here: where sessions come from, how a toast is delivered (a desktop
- * window, or a log line on a headless host), how an agent binary is found,
+ * window, or a log line on a headless host), how a local agent binary is found,
  * and what an auth failure does.
  *
  * Two import rules keep this file usable from both runners:
@@ -38,6 +38,7 @@ import type { SessionInfo, ToolType } from '../../shared/types';
 import type { CueAutoRunConfig, CueEvent, CueSubscription } from './cue-types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
+import { resolveCueAgentBinary } from './cue-agent-binary';
 import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
 import { describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { projectCueEventPaths } from './cue-template-context-builder';
@@ -85,11 +86,12 @@ export interface CueRunActionDeps {
 	/** Look up the target agent's persisted record. Read per run, so an edit made while the engine runs is honored. */
 	findSession: (sessionId: string) => CueRunSessionRecord | undefined;
 	/**
-	 * Fallback binary lookup when the agent's config sets no `customPath`. The
-	 * desktop probes with its agent detector; without one, the bare command
-	 * name is left to `spawn()`'s own PATH search.
+	 * Local fallback binary lookup when the agent's config sets no `customPath`.
+	 * The desktop probes with its agent detector; without one, the bare command
+	 * name is left to `spawn()`'s own PATH search. SSH bypasses this callback.
 	 */
 	resolveAgentPath?: (toolType: string) => Promise<string | undefined> | string | undefined;
+	/** Local binary resolution; SSH selects explicit paths through the canonical resolver. */
 	resolveAgentBinary?: (options: {
 		session: CueRunSessionRecord;
 		agentConfigValues: Record<string, unknown>;
@@ -346,9 +348,19 @@ export async function executeCueRunAction(
 
 	const agentConfigValues = deps.getAgentConfigValues(storedSession.toolType);
 
-	// Resolve the agent's binary path.
+	// SSH paths belong to the remote host. Select only explicit overrides before
+	// either injected callback can return an executable detected on this host.
 	let resolvedAgentPath: string | undefined;
-	if (deps.resolveAgentBinary) {
+	if (storedSession.sessionSshRemoteConfig?.enabled) {
+		resolvedAgentPath = await resolveCueAgentBinary({
+			sessionCustomPath: storedSession.customPath,
+			providerCustomPath:
+				typeof agentConfigValues.customPath === 'string' ? agentConfigValues.customPath : undefined,
+			sshEnabled: true,
+			getDetectedPath: async () => undefined,
+		});
+		if (isLaunchCancelled(signal)) return stoppedResult();
+	} else if (deps.resolveAgentBinary) {
 		resolvedAgentPath = await deps.resolveAgentBinary({
 			session: storedSession,
 			agentConfigValues,

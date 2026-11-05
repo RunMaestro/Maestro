@@ -11,6 +11,10 @@ import { HelpCircle, Search } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Session, Theme, HistoryEntry, HistoryEntryType } from '../types';
 import type { FileNode } from '../types/fileTree';
+import type {
+	ResumeSessionOptions,
+	UseAgentSessionManagementReturn,
+} from '../hooks/agent/useAgentSessionManagement';
 import { HistoryDetailModal } from './HistoryDetailModal';
 import { HistoryHelpModal } from './HistoryHelpModal';
 import { useThrottledCallback, useListNavigation } from '../hooks';
@@ -40,6 +44,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { useSessionStore } from '../stores/sessionStore';
 import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 import { visibleHistoryEntryTypes } from '../../shared/history';
@@ -49,8 +54,13 @@ interface HistoryPanelProps {
 	session: Session;
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onResumeSession?: UseAgentSessionManagementReturn['handleResumeSession'];
+	onOpenSessionAsTab?: (
+		agentSessionId: string,
+		projectPath?: string,
+		sessionName?: string,
+		opts?: ResumeSessionOptions
+	) => Promise<boolean>;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: FileNode[];
@@ -601,20 +611,74 @@ export const HistoryPanel = React.memo(
 			[allFilteredEntries]
 		);
 
+		// Capture the selected record itself. A native ID can occur in several
+		// accounts or hosts, and shared History can belong to another agent.
+		const handleOpenHistoryEntry = useCallback(
+			async (entry: HistoryEntry): Promise<boolean> => {
+				if (!entry.agentSessionId) {
+					notifyCenterFlash({ message: 'No session recorded for this entry', color: 'yellow' });
+					return false;
+				}
+				if (!entry.sessionId?.trim()) {
+					notifyCenterFlash({
+						message: 'Cannot reopen history: its owning agent is unknown',
+						color: 'yellow',
+					});
+					return false;
+				}
+				const targetSessionId = entry.sessionId;
+				const activeSessionId = useSessionStore.getState().activeSessionId;
+				const opts: ResumeSessionOptions = {
+					targetSessionId,
+					nativeSessionBinding: entry.nativeSessionBinding,
+				};
+				let resumed = false;
+				if (onOpenSessionAsTab) {
+					resumed = await onOpenSessionAsTab(
+						entry.agentSessionId,
+						entry.projectPath,
+						entry.sessionName,
+						opts
+					);
+				} else if (onResumeSession) {
+					// The full callback puts path/scope after display metadata.
+					resumed = await onResumeSession(
+						entry.agentSessionId,
+						undefined,
+						entry.sessionName,
+						undefined,
+						undefined,
+						entry.projectPath,
+						opts
+					);
+				}
+				// Cross-agent History opens in its recorded owner. A refused open
+				// or navigation elsewhere during the read must keep the user's view.
+				const state = useSessionStore.getState();
+				if (
+					resumed &&
+					targetSessionId !== activeSessionId &&
+					state.activeSessionId === activeSessionId &&
+					state.sessions.some((owner) => owner.id === targetSessionId)
+				) {
+					state.setActiveSessionId(targetSessionId);
+				}
+				return resumed;
+			},
+			[onOpenSessionAsTab, onResumeSession]
+		);
+
 		// Cmd/Ctrl+Enter jumps to the agent session the entry came from and
 		// lands on its tab - the same action as clicking the entry's session
 		// pill, so the two surfaces can never drift.
 		const handleJumpByIndex = useCallback(
 			(index: number) => {
 				const entry = allFilteredEntries[index];
-				if (!entry?.agentSessionId) {
-					notifyCenterFlash({ message: 'No session recorded for this entry', color: 'yellow' });
-					return;
-				}
+				if (!entry) return;
 				trackShortcutUsage('historyJumpToSession');
-				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath, entry.sessionName);
+				void handleOpenHistoryEntry(entry);
 			},
-			[allFilteredEntries, onOpenSessionAsTab]
+			[allFilteredEntries, handleOpenHistoryEntry]
 		);
 
 		// Use list navigation hook for ArrowUp/ArrowDown/Enter handling
@@ -626,7 +690,7 @@ export const HistoryPanel = React.memo(
 		} = useListNavigation({
 			listLength: allFilteredEntries.length,
 			onSelect: handleSelectByIndex,
-			onSelectAlternate: onOpenSessionAsTab ? handleJumpByIndex : undefined,
+			onSelectAlternate: onOpenSessionAsTab || onResumeSession ? handleJumpByIndex : undefined,
 			initialIndex: -1,
 		});
 
@@ -1064,7 +1128,11 @@ export const HistoryPanel = React.memo(
 											isSelected={virtualItem.index === selectedIndex}
 											theme={theme}
 											onOpenDetailModal={openDetailModal}
-											onOpenSessionAsTab={onOpenSessionAsTab}
+											onOpenSessionAsTab={
+												onOpenSessionAsTab || onResumeSession
+													? () => handleOpenHistoryEntry(entry)
+													: undefined
+											}
 											onOpenAboutModal={onOpenAboutModal}
 											cueGroupExpansion={cueGroupExpansion}
 											isCueGroupExpanded={expandedCueGroupIds.has(entry.id)}
@@ -1120,13 +1188,19 @@ export const HistoryPanel = React.memo(
 					<HistoryDetailModal
 						theme={theme}
 						entry={detailModalEntry}
-						agentId={session.toolType}
+						agentId={
+							detailModalEntry.nativeSessionBinding?.state === 'bound'
+								? detailModalEntry.nativeSessionBinding.provider
+								: undefined
+						}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
-						// Prefer the open-as-tab path: it carries the entry's projectPath and
-						// sessionName, so a resume from the modal names the tab exactly like a
-						// resume from the row behind it.
-						onResumeSession={onOpenSessionAsTab ?? onResumeSession}
+						// Bind the actual selected entry, including its recorded owner.
+						onResumeSession={
+							onOpenSessionAsTab || onResumeSession
+								? () => handleOpenHistoryEntry(detailModalEntry)
+								: undefined
+						}
 						onDelete={handleDeleteEntry}
 						onUpdate={async (entryId, updates) => {
 							// Pass sessionId for efficient lookup in per-session storage

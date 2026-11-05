@@ -17,42 +17,54 @@
  * builder, time-series bucketing, and coverage-warning logic - none of which
  * touch SQL.
  *
- * Token attribution joins on the provider session id; these fixtures set each
- * event's `providerSessionId` equal to its `sessionId` for brevity (the
- * id-space split is exercised in `cue-token-accessor.test.ts`), and key
- * `mockSummaries` by that shared id.
+ * Native summaries use the canonical Maestro/provider pair key. Grok receipts
+ * remain event-scoped even across resumed turns and colliding account/host IDs.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
-import type { SessionTokenSummary } from '../../../main/cue/stats/cue-token-accessor';
+import {
+	getSessionTokenSummaries,
+	sessionTokenLookupKey,
+	type SessionTokenSummary,
+} from '../../../main/cue/stats/cue-token-accessor';
+import type { UsageAccounting, UsageCost } from '../../../shared/types';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
 let mockEvents: CueEventRecord[] = [];
 let mockSummaries = new Map<string, SessionTokenSummary>();
+let mockAgentTypes = new Map<string, string>();
 
 vi.mock('../../../main/cue/cue-db', () => ({
 	getRecentCueEvents: vi.fn((sinceMs: number) => mockEvents.filter((e) => e.createdAt >= sinceMs)),
 }));
 
-vi.mock('../../../main/cue/stats/cue-token-accessor', () => ({
+// Isolate native pools while retaining the real join-key implementation.
+vi.mock('../../../main/agents', () => ({ getSessionStorage: vi.fn() }));
+vi.mock('../../../main/stats', () => ({ getStatsDB: vi.fn() }));
+vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+
+vi.mock('../../../main/cue/stats/cue-token-accessor', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/cue/stats/cue-token-accessor')>()),
 	getSessionTokenSummaries: vi.fn(
 		async (lookups: Array<{ maestroSessionId: string; providerSessionId: string }>) => {
 			const result = new Map<string, SessionTokenSummary>();
-			for (const { providerSessionId } of lookups) {
-				const summary = mockSummaries.get(providerSessionId);
-				if (summary) result.set(providerSessionId, summary);
+			for (const { maestroSessionId, providerSessionId } of lookups) {
+				const key = sessionTokenLookupKey(maestroSessionId, providerSessionId);
+				const summary = mockSummaries.get(key);
+				if (summary) result.set(key, summary);
 			}
 			return result;
 		}
 	),
-	// Agent type is keyed by the Maestro agent id; in these fixtures that equals
-	// the (shared) summary key, so derive the label from the seeded summaries.
+	// Legacy fixtures use equal IDs; explicit lifecycle labels cover swaps/collisions.
 	getAgentTypesForSessions: vi.fn((maestroSessionIds: string[]) => {
 		const result = new Map<string, string>();
 		for (const id of maestroSessionIds) {
-			const agentType = mockSummaries.get(id)?.agentType;
+			const agentType =
+				mockAgentTypes.get(id) ?? mockSummaries.get(sessionTokenLookupKey(id, id))?.agentType;
 			if (agentType) result.set(id, agentType);
 		}
 		return result;
@@ -109,6 +121,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		vi.clearAllMocks();
 		mockEvents = [];
 		mockSummaries = new Map();
+		mockAgentTypes = new Map();
 	});
 
 	describe('totals', () => {
@@ -138,7 +151,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				}),
 			];
 			mockSummaries.set(
-				's1',
+				sessionTokenLookupKey('s1', 's1'),
 				makeSummary({
 					sessionId: 's1',
 					inputTokens: 100,
@@ -149,7 +162,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				})
 			);
 			mockSummaries.set(
-				's2',
+				sessionTokenLookupKey('s2', 's2'),
 				makeSummary({
 					sessionId: 's2',
 					inputTokens: 200,
@@ -160,7 +173,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				})
 			);
 			mockSummaries.set(
-				's3',
+				sessionTokenLookupKey('s3', 's3'),
 				makeSummary({
 					sessionId: 's3',
 					inputTokens: 300,
@@ -182,14 +195,14 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			expect(result.totals.totalOutputTokens).toBe(240);
 			expect(result.totals.totalCacheReadTokens).toBe(60);
 			expect(result.totals.totalCacheCreationTokens).toBe(30);
-			// 0.01 + 0.02 = 0.03 (s3 contributes nothing - costUsd null)
-			expect(result.totals.totalCostUsd).toBeCloseTo(0.03, 5);
+			// Known spend cannot make a mixed known/unknown total complete.
+			expect(result.totals.totalCostUsd).toBeNull();
 		});
 
 		it('reports totalCostUsd as null when no event in the window has cost data', async () => {
 			mockEvents = [makeEvent({ id: 'e1', sessionId: 's1', status: 'completed' })];
 			mockSummaries.set(
-				's1',
+				sessionTokenLookupKey('s1', 's1'),
 				makeSummary({ sessionId: 's1', costUsd: null, agentType: 'codex', coverage: 'partial' })
 			);
 
@@ -205,9 +218,18 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's2', pipelineId: 'pipe-a', status: 'completed' }),
 				makeEvent({ id: 'e3', sessionId: 's3', pipelineId: 'pipe-b', status: 'failed' }),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1', inputTokens: 100 }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2', inputTokens: 200 }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3', inputTokens: 50 }));
+			mockSummaries.set(
+				sessionTokenLookupKey('s1', 's1'),
+				makeSummary({ sessionId: 's1', inputTokens: 100 })
+			);
+			mockSummaries.set(
+				sessionTokenLookupKey('s2', 's2'),
+				makeSummary({ sessionId: 's2', inputTokens: 200 })
+			);
+			mockSummaries.set(
+				sessionTokenLookupKey('s3', 's3'),
+				makeSummary({ sessionId: 's3', inputTokens: 50 })
+			);
 
 			const result = await getCueStatsAggregation('day');
 
@@ -230,9 +252,9 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's2', pipelineId: null, status: 'completed' }),
 				makeEvent({ id: 'e3', sessionId: 's3', pipelineId: null, status: 'failed' }),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1' }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2' }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3' }));
+			mockSummaries.set(sessionTokenLookupKey('s1', 's1'), makeSummary({ sessionId: 's1' }));
+			mockSummaries.set(sessionTokenLookupKey('s2', 's2'), makeSummary({ sessionId: 's2' }));
+			mockSummaries.set(sessionTokenLookupKey('s3', 's3'), makeSummary({ sessionId: 's3' }));
 
 			const result = await getCueStatsAggregation('day');
 
@@ -276,9 +298,9 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 					createdAt: baseTime + 2_000,
 				}),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1' }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2' }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3' }));
+			mockSummaries.set(sessionTokenLookupKey('s1', 's1'), makeSummary({ sessionId: 's1' }));
+			mockSummaries.set(sessionTokenLookupKey('s2', 's2'), makeSummary({ sessionId: 's2' }));
+			mockSummaries.set(sessionTokenLookupKey('s3', 's3'), makeSummary({ sessionId: 's3' }));
 
 			const result = await getCueStatsAggregation('day');
 
@@ -328,8 +350,8 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 					createdAt: now - 30_000,
 				}),
 			];
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2' }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3' }));
+			mockSummaries.set(sessionTokenLookupKey('s2', 's2'), makeSummary({ sessionId: 's2' }));
+			mockSummaries.set(sessionTokenLookupKey('s3', 's3'), makeSummary({ sessionId: 's3' }));
 
 			const result = await getCueStatsAggregation('day');
 
@@ -358,11 +380,11 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's-unknown' }),
 			];
 			mockSummaries.set(
-				's-claude',
+				sessionTokenLookupKey('s-claude', 's-claude'),
 				makeSummary({ sessionId: 's-claude', agentType: 'claude-code', coverage: 'full' })
 			);
 			mockSummaries.set(
-				's-unknown',
+				sessionTokenLookupKey('s-unknown', 's-unknown'),
 				makeSummary({
 					sessionId: 's-unknown',
 					agentType: 'made-up-agent',
@@ -391,11 +413,11 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's-claude' }),
 			];
 			mockSummaries.set(
-				's-codex',
+				sessionTokenLookupKey('s-codex', 's-codex'),
 				makeSummary({ sessionId: 's-codex', agentType: 'codex', coverage: 'partial' })
 			);
 			mockSummaries.set(
-				's-claude',
+				sessionTokenLookupKey('s-claude', 's-claude'),
 				makeSummary({ sessionId: 's-claude', agentType: 'claude-code', coverage: 'full' })
 			);
 
@@ -411,7 +433,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		it('returns no warnings when every session reports full coverage', async () => {
 			mockEvents = [makeEvent({ id: 'e1', sessionId: 's-claude' })];
 			mockSummaries.set(
-				's-claude',
+				sessionTokenLookupKey('s-claude', 's-claude'),
 				makeSummary({ sessionId: 's-claude', agentType: 'claude-code', coverage: 'full' })
 			);
 
@@ -445,7 +467,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			// Mirrors what cue-token-accessor.ts actually returns for a remote
 			// session: zeroed totals, coverage 'partial'.
 			mockSummaries.set(
-				's-remote',
+				sessionTokenLookupKey('s-remote', 's-remote'),
 				makeSummary({
 					sessionId: 's-remote',
 					agentType: 'claude-code',
@@ -475,7 +497,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				}),
 			];
 			mockSummaries.set(
-				's-local',
+				sessionTokenLookupKey('s-local', 's-local'),
 				makeSummary({
 					sessionId: 's-local',
 					agentType: 'claude-code',
@@ -499,6 +521,214 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 
 			expect(result.totals.totalInputTokens).toBe(0);
 			expect(result.totals.totalOutputTokens).toBe(0);
+		});
+	});
+
+	describe('Grok event accounting', () => {
+		const accounting: UsageAccounting = {
+			source: 'runtime-stream',
+			providerId: 'grok',
+			scope: 'turn',
+			reporting: 'snapshot',
+			cacheReadCounting: 'beside-input',
+			cacheCreationCounting: 'beside-input',
+			completeness: 'complete',
+			cost: { status: 'exact', costUsdTicks: '0' },
+			childInclusion: 'completed',
+			childCompleteness: 'complete',
+		};
+
+		it.each<UsageCost>([
+			{ status: 'exact', costUsdTicks: '200000000' },
+			{ status: 'partial', costUsdTicks: '200000000' },
+			{ status: 'unknown' },
+		])('reconciles new/resumed turns and account collisions with $status spend', async (cost) => {
+			const now = Date.now();
+			mockAgentTypes.set('owner-a', 'claude-code'); // Creation-time provider before a swap.
+			mockEvents = [
+				{ id: 'new', sessionId: 'owner-a', input: 70, output: 30, read: 25, write: 10 },
+				{ id: 'resume', sessionId: 'owner-a', input: 35, output: 20, read: 15, write: 5 },
+				{ id: 'other', sessionId: 'owner-b', input: 7, output: 3, read: 2, write: 1 },
+			].map((turn) =>
+				makeEvent({
+					id: turn.id,
+					sessionId: turn.sessionId,
+					providerSessionId: 'shared-native',
+					createdAt: now,
+					completedAt: now + 1,
+					pipelineId: 'pipeline',
+					subscriptionName: turn.sessionId,
+					chainRootId: 'new',
+					parentEventId: turn.id === 'new' ? null : 'new',
+					streamUsageJson: JSON.stringify({
+						inputTokens: turn.input,
+						outputTokens: turn.output,
+						cacheReadInputTokens: turn.read,
+						cacheCreationInputTokens: turn.write,
+						totalCostUsd: 0,
+						accounting: {
+							...accounting,
+							cost: turn.id === 'resume' ? cost : accounting.cost,
+							scopeId: `${turn.sessionId}/account/host`,
+							processGeneration: turn.id,
+						},
+					}),
+				})
+			);
+			for (const owner of ['owner-a', 'owner-b']) {
+				mockSummaries.set(
+					sessionTokenLookupKey(owner, 'shared-native'),
+					makeSummary({
+						agentType: 'grok',
+						inputTokens: 999_999,
+						outputTokens: 888_888,
+						costUsd: 100,
+					})
+				);
+			}
+			const result = await getCueStatsAggregation('day');
+			expect(getSessionTokenSummaries).toHaveBeenCalledWith([], expect.anything());
+			const totals = {
+				totalInputTokens: 112,
+				totalOutputTokens: 53,
+				totalCacheReadTokens: 42,
+				totalCacheCreationTokens: 16,
+				totalCostUsd: cost.status === 'exact' ? 0.02 : null,
+			};
+			for (const rollup of [
+				result.totals,
+				result.byPipeline[0].totals,
+				result.byAgent[0].totals,
+				result.chains[0].totals,
+			])
+				expect(rollup).toMatchObject(totals);
+			expect(result.byAgent.map((g) => g.key)).toEqual(['grok']);
+			expect(result.bySubscription.find((g) => g.key === 'owner-a')?.totals.totalInputTokens).toBe(
+				105
+			);
+			expect(result.bySubscription.find((g) => g.key === 'owner-b')?.totals.totalInputTokens).toBe(
+				7
+			);
+			expect(result.timeSeries).toEqual([
+				expect.objectContaining({ inputTokens: 112, outputTokens: 53 }),
+			]);
+			expect(result.chains[0].nodes.map((n) => n.inputTokens)).toEqual([70, 35, 7]);
+			expect(result.chains[0].nodes.map((n) => n.costUsd)).toEqual([
+				0,
+				cost.status === 'exact' ? 0.02 : null,
+				0,
+			]);
+		});
+
+		it.each([
+			['missing', null, 'grok'],
+			['corrupt', '{', 'grok'],
+			['legacy-zero', '{"inputTokens":0,"totalCostUsd":0}', 'claude-code'],
+			['unidentified-zero', '{"totalCostUsd":0}', null],
+			['invalid-count', JSON.stringify({ inputTokens: -1, accounting }), 'claude-code'],
+			[
+				'native-lifetime',
+				JSON.stringify({
+					inputTokens: 999999,
+					accounting: { ...accounting, scope: 'native-session' },
+				}),
+				'claude-code',
+			],
+			[
+				'child-lifetime',
+				JSON.stringify({ inputTokens: 999999, accounting: { ...accounting, scope: 'child' } }),
+				'claude-code',
+			],
+			['missing-cost', JSON.stringify({ accounting: { providerId: 'grok' } }), 'codex'],
+		])(
+			'keeps %s receipt unknown without inferring native scope',
+			async (_name, streamUsageJson, lifecycle) => {
+				if (lifecycle) mockAgentTypes.set('owner', lifecycle);
+				mockEvents = [
+					makeEvent({
+						sessionId: 'owner',
+						providerSessionId:
+							lifecycle === 'claude-code' && !streamUsageJson?.includes('providerId')
+								? null
+								: 'shared-native',
+						status: 'stopped',
+						streamUsageJson,
+					}),
+				];
+				const result = await getCueStatsAggregation('day');
+				expect(getSessionTokenSummaries).toHaveBeenCalledWith([], expect.anything());
+				expect(result.totals).toMatchObject({
+					totalInputTokens: 0,
+					totalCostUsd: null,
+					failureCount: 1,
+				});
+				expect(result.chains[0].nodes[0]).toMatchObject({ inputTokens: 0, costUsd: null });
+				expect(result.byAgent[0].key).toBe(
+					streamUsageJson?.includes('providerId') ? 'grok' : (lifecycle ?? '__unknown__')
+				);
+			}
+		);
+
+		it.each(['failed', 'timeout', 'stopped', 'running'])(
+			'keeps observed Codex after a Grok swap for %s without a native ID',
+			async (status) => {
+				mockAgentTypes.set('owner', 'grok');
+				mockEvents = [
+					makeEvent({
+						sessionId: 'owner',
+						providerSessionId: null,
+						status,
+						streamUsageJson: JSON.stringify({
+							inputTokens: 8,
+							accounting: { ...accounting, providerId: 'codex' },
+						}),
+					}),
+				];
+				const result = await getCueStatsAggregation('day');
+				expect(getSessionTokenSummaries).toHaveBeenCalledWith([], expect.anything());
+				expect(result.byAgent[0].key).toBe('codex');
+				expect(result.totals).toMatchObject({
+					totalInputTokens: 8,
+					totalCostUsd: 0,
+					failureCount: status === 'running' ? 0 : 1,
+				});
+			}
+		);
+
+		it('keeps non-Grok native lookups separate for colliding provider IDs', async () => {
+			for (const [owner, input] of [
+				['owner-a', 11],
+				['owner-b', 22],
+			] as const) {
+				mockAgentTypes.set(owner, 'claude-code');
+				mockEvents.push(
+					makeEvent({ id: owner, sessionId: owner, providerSessionId: 'shared-native' })
+				);
+				mockSummaries.set(
+					sessionTokenLookupKey(owner, 'shared-native'),
+					makeSummary({ inputTokens: input })
+				);
+			}
+			mockEvents.push(
+				makeEvent({
+					id: 'swapped',
+					sessionId: 'owner-a',
+					providerSessionId: 'shared-native',
+					streamUsageJson: JSON.stringify({ inputTokens: 7, accounting }),
+				})
+			);
+			const result = await getCueStatsAggregation('day');
+			expect(getSessionTokenSummaries).toHaveBeenCalledWith(
+				[
+					{ maestroSessionId: 'owner-a', providerSessionId: 'shared-native' },
+					{ maestroSessionId: 'owner-b', providerSessionId: 'shared-native' },
+				],
+				expect.anything()
+			);
+			expect(result.totals.totalInputTokens).toBe(40);
+			expect(
+				Object.fromEntries(result.chains.map((c) => [c.rootId, c.totals.totalInputTokens]))
+			).toEqual({ 'owner-a': 11, 'owner-b': 22, swapped: 7 });
 		});
 	});
 

@@ -90,7 +90,7 @@ import {
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { hostStart, hostStatus, hostStop } from './commands/host';
-import { createAgent } from './commands/create-agent';
+import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
 import { createGroup } from './commands/create-group';
@@ -1867,11 +1867,7 @@ program
 	.command('create-agent <name>')
 	.description('Create a new agent in the Maestro desktop app')
 	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
-	.option(
-		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
-		'claude-code'
-	)
+	.option('-t, --type <type>', `Agent type (${CREATE_AGENT_TYPES.join(', ')})`, 'claude-code')
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
 	.option('--nudge <message>', 'Nudge message appended to every user message')
 	.option('--new-session-message <message>', 'Message prefixed to first message in new sessions')
@@ -2894,9 +2890,12 @@ pianola
 pianola
 	.command('learn')
 	.description(
-		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)'
+		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code, Codex, Grok CLI)'
 	)
-	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
+	.option(
+		'--agent <list>',
+		'Comma list of agents to crawl: claude-code, codex, grok (default claude-code,codex)'
+	)
 	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
 	.option('--since <date>', 'Only crawl transcripts modified on/after this date (e.g. 2026-06-01)')
 	.option(

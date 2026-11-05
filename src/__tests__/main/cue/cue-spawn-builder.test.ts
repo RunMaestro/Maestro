@@ -10,6 +10,9 @@ import type { CueExecutionConfig } from '../../../main/cue/cue-executor';
 import type { CueEvent, CueSubscription } from '../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../shared/types';
 import type { TemplateContext } from '../../../shared/templateVariables';
+import type * as AgentArgs from '../../../shared/maestro-lib/launch/agent-args';
+import { getAgentDefinition as realDefinition } from '../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities as realCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -41,8 +44,8 @@ vi.mock('../../../main/agents', () => ({
 	getAgentCapabilities: (...args: unknown[]) => mockGetAgentCapabilities(...args),
 }));
 
-const mockBuildAgentArgs = vi.fn((_agent: unknown, _opts: unknown) => ['--print', '--verbose']);
-const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: unknown) => ({
+const mockBuildAgentArgs = vi.fn<typeof AgentArgs.buildAgentArgs>(() => ['--print', '--verbose']);
+const mockApplyOverrides = vi.fn<typeof AgentArgs.applyAgentConfigOverrides>((_agent, args) => ({
 	args,
 	effectiveCustomEnvVars: undefined,
 	customArgsSource: 'none' as const,
@@ -50,9 +53,12 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 	modelSource: 'default' as const,
 }));
 
-vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
-	buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
-	applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
+vi.mock('../../../shared/maestro-lib/launch/agent-args', async (importOriginal) => ({
+	...(await importOriginal<typeof AgentArgs>()),
+	buildAgentArgs: (...args: Parameters<typeof AgentArgs.buildAgentArgs>) =>
+		mockBuildAgentArgs(...args),
+	applyAgentConfigOverrides: (...args: Parameters<typeof AgentArgs.applyAgentConfigOverrides>) =>
+		mockApplyOverrides(...args),
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
@@ -71,6 +77,34 @@ const mockActivePluginManager = vi.fn(() => null as unknown);
 vi.mock('../../../main/plugins/plugin-manager-singleton', () => ({
 	isPluginsFeatureEnabled: () => mockPluginsEnabled(),
 	getActivePluginManager: () => mockActivePluginManager(),
+}));
+
+// Keep real in-memory identities and pure argument builders, but never write a
+// proof to the host's temp directory or resolve its installed CLI.
+vi.mock('../../../main/plugins/plugin-tool-run-identity', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../main/plugins/plugin-tool-run-identity')>();
+	const { join } = await import('node:path');
+	return {
+		...actual,
+		pluginToolRunIdentity: new actual.PluginToolRunIdentity(),
+		createPluginRunProofFile: vi.fn(() => join('fixtures', 'maestro-plugin-run-fixture', 'proof')),
+		removePluginRunProofFile: vi.fn(),
+	};
+});
+vi.mock('../../../shared/plugins/mcp-agent-config', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/plugins/mcp-agent-config')>();
+	return {
+		...actual,
+		buildMcpInjection: vi.fn(actual.buildMcpInjection),
+		mergeMcpInjectionArgs: vi.fn(actual.mergeMcpInjectionArgs),
+	};
+});
+vi.mock('../../../main/cue/cue-cli-executor', () => ({
+	resolveMaestroCliScriptPath: vi.fn(() => 'fixture-maestro-cli.js'),
+}));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
@@ -108,10 +142,16 @@ vi.mock('../../../shared/platformDetection', async (importOriginal) => {
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
 import {
 	pluginToolRunIdentity,
+	createPluginRunProofFile,
 	removePluginRunProofFile,
 } from '../../../main/plugins/plugin-tool-run-identity';
+import { buildMcpInjection, mergeMcpInjectionArgs } from '../../../shared/plugins/mcp-agent-config';
+import { resolveMaestroCliScriptPath } from '../../../main/cue/cue-cli-executor';
+import { logger } from '../../../main/utils/logger';
 import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
 import * as platformDetection from '../../../shared/platformDetection';
+import { ensureRemoteMaestroPProbed } from '../../../main/agents/probeRemoteMaestroP';
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -178,6 +218,11 @@ function createConfig(overrides: Partial<CueExecutionConfig> = {}): CueExecution
 describe('cue-spawn-builder', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(createPluginRunProofFile).mockReset();
+		vi.mocked(removePluginRunProofFile).mockReset();
+		vi.mocked(buildMcpInjection).mockReset();
+		vi.mocked(mergeMcpInjectionArgs).mockReset();
+		vi.mocked(resolveMaestroCliScriptPath).mockReset();
 		mockPluginsEnabled.mockReturnValue(false);
 		mockActivePluginManager.mockReturnValue(null);
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
@@ -193,6 +238,280 @@ describe('cue-spawn-builder', () => {
 	});
 
 	describe('buildSpawnSpec', () => {
+		describe('opt-in prompt-file plans', () => {
+			isolateAgentEnv();
+			beforeEach(() => {
+				mockGetAgentDefinition.mockReturnValue({
+					...defaultAgentDef,
+					id: 'grok',
+					command: 'grok',
+					binaryName: 'grok',
+					promptFile: { format: 'acp-json', exclusivePromptFlags: ['-p', '--prompt-file'] },
+					promptFileArgs: (file: string) => ['--prompt-file', file],
+				});
+			});
+
+			afterEach(() => {
+				mockWrapSpawnWithSsh.mockReset();
+			});
+
+			it.each([false, true])('preserves composed and empty bytes with SSH=%s', async (remote) => {
+				const store = sshStoreWithRemotes();
+				const selected = store.getSshRemotes()[0];
+				store.getSshRemotes.mockReturnValue([selected]);
+				if (remote)
+					vi.mocked(ensureRemoteMaestroPProbed).mockImplementationOnce(async () => {
+						selected.host = 'replacement.invalid';
+						return true;
+					});
+				mockWrapSpawnWithSsh.mockImplementation(async (input, _config, snapshot) => ({
+					command: 'ssh',
+					args: ['dev@remote-1.example.com'],
+					cwd: '/fixture-client',
+					sshStdinScript: 'fixture script',
+					sshRemoteUsed: snapshot.getSshRemotes()[0],
+				}));
+				for (const prompt of ['', 'quoted "λ"\r\n' + 'large '.repeat(7000)]) {
+					const config = createConfig({
+						toolType: 'grok',
+						customPath: '/fixture/grok',
+						customModel: 'fixture-model',
+						customEnvVars: { GROK_HOME: '/fixture/account' },
+						...(prompt ? { appendSystemPrompt: 'SYSTEM' } : {}),
+						...(remote
+							? { sshRemoteConfig: { enabled: true, remoteId: 'remote-1' }, sshStore: store }
+							: {}),
+					});
+					const result = await buildSpawnSpec(config, prompt);
+					if (!result.ok) throw new Error(result.message);
+					const artifact = result.spec.promptArtifact!;
+					expect(artifact).toMatchObject({
+						owner: remote ? 'remote' : 'local',
+						encoding: 'utf8',
+						mode: 0o600,
+						flag: 'wx',
+						cleanup: 'turn',
+						content: JSON.stringify({
+							type: 'acp',
+							content: [
+								{ type: 'text', text: prompt ? embedSystemPromptInPrompt('SYSTEM', prompt) : '' },
+							],
+						}),
+					});
+					expect(result.spec.stdinPrompt).toBeUndefined();
+					if (remote) {
+						const [input, , snapshot] = mockWrapSpawnWithSsh.mock.lastCall!;
+						expect(input).toMatchObject({
+							command: '/fixture/grok',
+							agentBinaryName: '/fixture/grok',
+							cwd: config.projectRoot,
+							prompt: undefined,
+							promptArtifact: artifact,
+							customEnvVars: { GROK_HOME: '/fixture/account' },
+						});
+						expect(input.args.slice(-2)).toEqual(['--prompt-file', artifact.path]);
+						expect(artifact.sshRemoteId).toBe('remote-1');
+						// Mutation while the probe awaits cannot retarget this launch.
+						if (!prompt) expect(snapshot.getSshRemotes()[0].host).toBe('remote-1.example.com');
+					} else {
+						expect(result.spec.args.slice(-2)).toEqual(['--prompt-file', artifact.path]);
+						expect(result.spec).toMatchObject({
+							command: '/fixture/grok',
+							env: { GROK_HOME: '/fixture/account' },
+						});
+					}
+				}
+				expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(remote ? 2 : 0);
+			});
+
+			it.each(['competing source', 'wrapper failure'])(
+				'refuses %s without text fallback',
+				async (failure) => {
+					if (failure === 'competing source')
+						mockBuildAgentArgs.mockReturnValueOnce(['-p', 'PRIVATE']);
+					else mockWrapSpawnWithSsh.mockRejectedValueOnce(new Error('/private/file: PRIVATE'));
+					const result = await buildSpawnSpec(
+						createConfig({
+							toolType: 'grok',
+							sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+							sshStore: sshStoreWithRemotes(),
+						}),
+						'PRIVATE'
+					);
+					expect(result).toEqual({
+						ok: false,
+						message:
+							failure === 'competing source'
+								? 'Prompt-file delivery conflicts with another prompt source in the launch arguments.'
+								: 'Remote prompt preparation unavailable.',
+					});
+					expect(mockBuildAgentArgs).toHaveBeenCalledTimes(1);
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(
+						failure === 'competing source' ? 0 : 1
+					);
+				}
+			);
+		});
+
+		describe('plugin proof preparation ownership', () => {
+			const privatePrompt = 'PRIVATE Cue prompt with credentials';
+			const privateError = new Error(`PRIVATE filesystem details: ${privatePrompt}`);
+
+			beforeEach(() => {
+				mockPluginsEnabled.mockReturnValue(true);
+				mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
+				vi.spyOn(pluginToolRunIdentity, 'issue');
+				vi.spyOn(pluginToolRunIdentity, 'revoke');
+			});
+
+			afterEach(() => {
+				// Also release identities if an assertion fails before executor handoff.
+				for (const issued of vi.mocked(pluginToolRunIdentity.issue).mock.results) {
+					if (issued.type === 'return') pluginToolRunIdentity.revoke(issued.value);
+				}
+				vi.restoreAllMocks();
+			});
+
+			it.each(['proof file', 'CLI path', 'injection', 'argument merge', 'environment merge'])(
+				'revokes its identity and removes any owned proof when %s preparation fails',
+				async (stage) => {
+					const fail = () => {
+						throw privateError;
+					};
+					if (stage === 'proof file')
+						vi.mocked(createPluginRunProofFile).mockImplementationOnce(fail);
+					if (stage === 'CLI path')
+						vi.mocked(resolveMaestroCliScriptPath).mockImplementationOnce(fail);
+					if (stage === 'injection') vi.mocked(buildMcpInjection).mockImplementationOnce(fail);
+					if (stage === 'argument merge')
+						vi.mocked(mergeMcpInjectionArgs).mockImplementationOnce(fail);
+					if (stage === 'environment merge') {
+						vi.mocked(buildMcpInjection).mockReturnValueOnce({
+							globalArgs: [],
+							files: [],
+							get env() {
+								throw privateError;
+							},
+						});
+					}
+					const config = createConfig({ enableMaestroP: false });
+					const result = await buildSpawnSpec(config, privatePrompt);
+					const token = vi.mocked(pluginToolRunIdentity.issue).mock.results[0].value;
+					expect(pluginToolRunIdentity.issue).toHaveBeenCalledExactlyOnceWith('session-1', 90000);
+					expect(createPluginRunProofFile).toHaveBeenCalledExactlyOnceWith(token, 90000);
+					expect(pluginToolRunIdentity.revoke).toHaveBeenCalledExactlyOnceWith(token);
+					expect(pluginToolRunIdentity.resolve(token).callerAgentId).toBeNull();
+					if (stage === 'proof file') {
+						expect(removePluginRunProofFile).not.toHaveBeenCalled();
+					} else {
+						expect(removePluginRunProofFile).toHaveBeenCalledExactlyOnceWith(
+							vi.mocked(createPluginRunProofFile).mock.results[0].value
+						);
+					}
+					expect(result).toEqual({ ok: false, message: 'Plugin tool preparation unavailable.' });
+					expect(config.onLog).not.toHaveBeenCalled();
+					expect(logger.warn).not.toHaveBeenCalled();
+					expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+				}
+			);
+
+			it.each([false, true])(
+				'releases an unused file injection (cleanup failure: %s)',
+				async (cleanupFails) => {
+					vi.mocked(buildMcpInjection).mockReturnValueOnce({
+						globalArgs: ['--unused-injection'],
+						env: { UNUSED_PLUGIN_ENV: 'unused' },
+						files: [{ path: 'unused-config.json', content: privatePrompt }],
+					});
+					if (cleanupFails) {
+						vi.mocked(removePluginRunProofFile).mockImplementationOnce(() => {
+							throw privateError;
+						});
+					}
+					const result = await buildSpawnSpec(
+						createConfig({ enableMaestroP: false }),
+						'public prompt'
+					);
+					const token = vi.mocked(pluginToolRunIdentity.issue).mock.results[0].value;
+					expect(result.ok).toBe(true);
+					if (!result.ok) throw new Error('Expected a usable spec without plugin injection');
+					expect(result.spec.pluginRunToken).toBeUndefined();
+					expect(result.spec.pluginRunProofFile).toBeUndefined();
+					expect(result.spec.args).toEqual(['--print', '--verbose', '--', 'public prompt']);
+					expect(result.spec.env.UNUSED_PLUGIN_ENV).toBeUndefined();
+					expect(mergeMcpInjectionArgs).not.toHaveBeenCalled();
+					expect(pluginToolRunIdentity.revoke).toHaveBeenCalledExactlyOnceWith(token);
+					expect(pluginToolRunIdentity.resolve(token).callerAgentId).toBeNull();
+					expect(removePluginRunProofFile).toHaveBeenCalledExactlyOnceWith(
+						vi.mocked(createPluginRunProofFile).mock.results[0].value
+					);
+					if (cleanupFails) {
+						expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+							'Could not remove plugin run proof file',
+							'[PluginRunIdentity]'
+						);
+					} else expect(logger.warn).not.toHaveBeenCalled();
+					expect(
+						JSON.stringify([result.spec.args, vi.mocked(logger.warn).mock.calls])
+					).not.toContain(privatePrompt);
+				}
+			);
+
+			it('keeps the fixed refusal when removing a failed injection proof also throws', async () => {
+				vi.mocked(buildMcpInjection).mockImplementationOnce(() => {
+					throw privateError;
+				});
+				vi.mocked(removePluginRunProofFile).mockImplementationOnce(() => {
+					throw privateError;
+				});
+				const result = await buildSpawnSpec(createConfig({ enableMaestroP: false }), privatePrompt);
+				const token = vi.mocked(pluginToolRunIdentity.issue).mock.results[0].value;
+				expect(result).toEqual({ ok: false, message: 'Plugin tool preparation unavailable.' });
+				expect(pluginToolRunIdentity.revoke).toHaveBeenCalledExactlyOnceWith(token);
+				expect(pluginToolRunIdentity.resolve(token).callerAgentId).toBeNull();
+				expect(removePluginRunProofFile).toHaveBeenCalledExactlyOnceWith(
+					vi.mocked(createPluginRunProofFile).mock.results[0].value
+				);
+				expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+					'Could not remove plugin run proof file',
+					'[PluginRunIdentity]'
+				);
+			});
+
+			it('transfers a successful proof to its caller without revoking or removing it', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({ enableMaestroP: false }),
+					'public prompt'
+				);
+				expect(result.ok).toBe(true);
+				if (!result.ok) throw new Error('Expected proof ownership transfer');
+				expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
+					'session-1'
+				);
+				expect(result.spec.pluginRunProofFile).toBe(
+					vi.mocked(createPluginRunProofFile).mock.results[0].value
+				);
+				expect(pluginToolRunIdentity.revoke).not.toHaveBeenCalled();
+				expect(removePluginRunProofFile).not.toHaveBeenCalled();
+			});
+
+			it('never issues or removes a proof when plugin injection is disabled', async () => {
+				mockPluginsEnabled.mockReturnValue(false);
+				const result = await buildSpawnSpec(
+					createConfig({ enableMaestroP: false }),
+					'public prompt'
+				);
+				expect(result.ok).toBe(true);
+				if (!result.ok) throw new Error('Expected ordinary launch spec');
+				expect(result.spec.pluginRunToken).toBeUndefined();
+				expect(result.spec.pluginRunProofFile).toBeUndefined();
+				expect(pluginToolRunIdentity.issue).not.toHaveBeenCalled();
+				expect(pluginToolRunIdentity.revoke).not.toHaveBeenCalled();
+				expect(createPluginRunProofFile).not.toHaveBeenCalled();
+				expect(removePluginRunProofFile).not.toHaveBeenCalled();
+			});
+		});
+
 		it('injects a run-bound local MCP bridge for a Cue agent', async () => {
 			mockPluginsEnabled.mockReturnValue(true);
 			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
@@ -1218,6 +1537,316 @@ describe('cue-spawn-builder', () => {
 			expect(result.spec.command).toBe('claude');
 			expect(result.spec.stdinPrompt).toBeUndefined();
 			expect(result.spec.args.slice(-2)).toEqual(['--', prompt]);
+		});
+	});
+
+	// Desktop and standalone Cue both reach the executor with a
+	// CueExecutionConfig and build the spawn here, on the shared launch plan.
+	// These run the real Grok definition, argument builder and overrides.
+	describe('Grok Cue turns through real launch composition', () => {
+		isolateAgentEnv();
+		let actualArgs: typeof AgentArgs;
+		beforeEach(async () => {
+			actualArgs = await vi.importActual<typeof AgentArgs>(
+				'../../../shared/maestro-lib/launch/agent-args'
+			);
+			mockGetAgentDefinition.mockReturnValue(realDefinition('grok'));
+			const fallback = mockGetAgentCapabilities();
+			mockGetAgentCapabilities.mockImplementation(() => ({
+				...fallback,
+				...realCapabilities('grok'),
+			}));
+			mockBuildAgentArgs.mockImplementation(actualArgs.buildAgentArgs);
+			mockApplyOverrides.mockImplementation(actualArgs.applyAgentConfigOverrides);
+		});
+		afterEach(() => {
+			mockGetAgentCapabilities.mockReset();
+			mockBuildAgentArgs.mockReset();
+			mockApplyOverrides.mockReset();
+		});
+
+		const grokConfig = (overrides: Partial<CueExecutionConfig> = {}) =>
+			createConfig({
+				toolType: 'grok',
+				session: { ...createConfig().session, toolType: 'grok' },
+				customModel: 'grok-fixture-model',
+				customEnvVars: { GROK_HOME: '/fixture/grok-account-b' },
+				...overrides,
+			});
+		const acpPrompt = (text: string) =>
+			JSON.stringify({ type: 'acp', content: [{ type: 'text', text }] });
+
+		it.each([
+			['prompt', 'Review the change'],
+			['output-prompt', 'Summarize\n\n---\n\nContext from completed task:\nleft  right'],
+			['fan-in', 'Merge these:\nleft\n---\nright'],
+		])('builds a fresh %s turn on the selected model and account', async (_label, prompt) => {
+			const config = grokConfig();
+			const result = await buildSpawnSpec(config, prompt);
+			if (!result.ok) throw new Error(result.message);
+			const { spec } = result;
+
+			expect(spec.command).toBe('grok');
+			expect(spec.args).toEqual(
+				expect.arrayContaining(['--always-approve', '--output-format', 'streaming-json'])
+			);
+			expect(spec.args.join(' ')).toContain('-m grok-fixture-model');
+			expect(spec.args).not.toContain('--resume');
+			// The prompt travels whole in the ACP prompt file, never on argv.
+			expect(spec.promptArtifact).toMatchObject({ owner: 'local', content: acpPrompt(prompt) });
+			expect(spec.args.slice(-2)).toEqual(['--prompt-file', spec.promptArtifact!.path]);
+			expect(spec.args).not.toContain(prompt);
+			expect(spec.env).toMatchObject({
+				GROK_HOME: '/fixture/grok-account-b',
+				MAESTRO_QUERY_SOURCE: 'cue',
+			});
+		});
+
+		it('takes the subscription effort beside the model through the shared overrides', async () => {
+			const result = await buildSpawnSpec(grokConfig({ customEffort: 'high' }), 'Think hard');
+			if (!result.ok) throw new Error(result.message);
+			const overrides = mockApplyOverrides.mock.lastCall![2];
+			expect(overrides).toMatchObject({
+				sessionCustomModel: 'grok-fixture-model',
+				sessionCustomEffort: 'high',
+				sessionCustomEnvVars: { GROK_HOME: '/fixture/grok-account-b' },
+			});
+		});
+
+		it('builds the same Grok spawn whichever host constructed the config', async () => {
+			// The desktop passes a transcript sink; the standalone runner does not.
+			// Neither may change what the provider is asked to run.
+			const prompt = 'Same contract';
+			const desktop = await buildSpawnSpec(
+				grokConfig({ runId: 'run-same', onRunTranscript: vi.fn() } as never),
+				prompt
+			);
+			const standalone = await buildSpawnSpec(grokConfig({ runId: 'run-same' }), prompt);
+			if (!desktop.ok || !standalone.ok) throw new Error('spawn refused');
+			const shape = (spec: typeof desktop.spec) => ({
+				command: spec.command,
+				args: spec.args.slice(0, -1),
+				cwd: spec.cwd,
+				env: spec.env,
+				artifact: { ...spec.promptArtifact, path: undefined },
+			});
+
+			expect(shape(desktop.spec)).toEqual(shape(standalone.spec));
+		});
+	});
+
+	describe('Grok directory grants through real launch composition', () => {
+		isolateAgentEnv();
+		const privateRoot = '/PRIVATE outside λ';
+		const privatePrompt = 'PRIVATE Cue grant request';
+		const read = { path: privateRoot, read: true, write: false };
+		const write = { path: privateRoot, read: false, write: true };
+		beforeEach(async () => {
+			const actual = await vi.importActual<typeof AgentArgs>(
+				'../../../shared/maestro-lib/launch/agent-args'
+			);
+			mockGetAgentDefinition.mockReturnValue(realDefinition('grok'));
+			const fallbackCapabilities = mockGetAgentCapabilities();
+			mockGetAgentCapabilities.mockImplementationOnce(() => ({
+				...fallbackCapabilities,
+				...realCapabilities(mockGetAgentDefinition().id),
+			}));
+			mockBuildAgentArgs.mockImplementationOnce(actual.buildAgentArgs);
+			mockApplyOverrides.mockImplementationOnce(actual.applyAgentConfigOverrides);
+		});
+
+		it.each([
+			['explicit remote path', '/remote/Grok Tools/grok'],
+			['absent override', undefined],
+			['empty override', ''],
+		])('preserves SSH executable provenance with %s', async (_kind, customPath) => {
+			mockGetAgentDefinition.mockReturnValue({
+				...realDefinition('grok'),
+				command: '/local/detection/must-not-reach-ssh/grok',
+			});
+			const store = sshStoreWithRemotes();
+			const remote = store.getSshRemotes()[1];
+			const script = 'fixture-owned-remote-script';
+			mockWrapSpawnWithSsh.mockImplementationOnce(async (_input, _config, snapshot) => ({
+				command: 'ssh',
+				args: ['dev@r1.example.com'],
+				cwd: '/fixture-client',
+				sshStdinScript: script,
+				sshRemoteUsed: snapshot.getSshRemotes()[0],
+			}));
+			const prompt = 'PRIVATE quoted "\u03bb"\r\nCue request';
+			const config = createConfig({
+				toolType: 'grok',
+				projectRoot: '/chosen/remote project',
+				customPath,
+				customArgs: '--fixture-option "fixture value"',
+				customEnvVars: { GROK_HOME: '/chosen/remote account' },
+				appendSystemPrompt: 'SYSTEM',
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				sshStore: store,
+			});
+			const result = await buildSpawnSpec(config, prompt);
+			if (!result.ok) throw new Error(result.message);
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+			const [input, sshConfig, snapshot] = mockWrapSpawnWithSsh.mock.lastCall!;
+			const artifact = result.spec.promptArtifact!;
+			expect(artifact).toMatchObject({
+				owner: 'remote',
+				sshRemoteId: 'r1',
+				encoding: 'utf8',
+				mode: 0o600,
+				flag: 'wx',
+				cleanup: 'turn',
+				content: JSON.stringify({
+					type: 'acp',
+					content: [{ type: 'text', text: embedSystemPromptInPrompt('SYSTEM', prompt) }],
+				}),
+			});
+			expect(input).toMatchObject({
+				command: customPath || 'grok',
+				agentBinaryName: customPath || 'grok',
+				cwd: '/chosen/remote project',
+				customEnvVars: { GROK_HOME: '/chosen/remote account' },
+				prompt: undefined,
+				launchViaStdinScript: true,
+			});
+			expect(input.promptArtifact).toBe(artifact);
+			expect(input.args.slice(-4)).toEqual([
+				'--fixture-option',
+				'fixture value',
+				'--prompt-file',
+				artifact.path,
+			]);
+			expect(input.args).not.toContain(prompt);
+			expect(sshConfig).toEqual(config.sshRemoteConfig);
+			expect(snapshot.getSshRemotes()).toEqual([remote]);
+			expect(result.spec).toMatchObject({
+				command: 'ssh',
+				args: ['dev@r1.example.com'],
+				cwd: '/fixture-client',
+				sshStdinScript: script,
+				sshRemoteUsed: remote,
+				stdinPrompt: undefined,
+			});
+		});
+
+		it.each(
+			[false, true].flatMap((remote) =>
+				['read', 'write', 'mixed', 'custom split', 'custom equals'].map((kind) => ({
+					remote,
+					kind,
+				}))
+			)
+		)('refuses $kind before preparing a local/SSH spec (SSH=$remote)', async ({ remote, kind }) => {
+			const grants =
+				kind === 'read'
+					? [read]
+					: kind === 'write'
+						? [write]
+						: kind === 'mixed'
+							? [read, { ...write, path: `${privateRoot}/second` }]
+							: [];
+			const config = createConfig({
+				toolType: 'grok',
+				session: { ...createConfig().session, toolType: 'grok', additionalDirectories: grants },
+				customArgs:
+					kind === 'custom split'
+						? `--add-dir "${privateRoot}"`
+						: kind === 'custom equals'
+							? `--add-dir="${privateRoot}"`
+							: undefined,
+				...(remote
+					? { sshRemoteConfig: { enabled: true, remoteId: 'r1' }, sshStore: sshStoreWithRemotes() }
+					: {}),
+			});
+			const result = await buildSpawnSpec(config, privatePrompt);
+			expect(result).toEqual({
+				ok: false,
+				message: kind.startsWith('custom')
+					? 'Grok CLI has no qualified --add-dir argument for additional-directory grants.'
+					: 'Grok CLI additional-directory read and write grants have no qualified native mechanism. Remove the grants to run with the selected working directory.',
+			});
+			expect(result).not.toHaveProperty('spec');
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			expect(ensureRemoteMaestroPProbed).not.toHaveBeenCalled();
+			expect(createPluginRunProofFile).not.toHaveBeenCalled();
+			expect(config.onLog).not.toHaveBeenCalled();
+			for (const secret of [privateRoot, privatePrompt])
+				expect(
+					JSON.stringify([
+						result,
+						vi.mocked(logger.error).mock.calls,
+						vi.mocked(logger.warn).mock.calls,
+					])
+				).not.toContain(secret);
+		});
+
+		it.each(
+			[false, true].flatMap((remote) =>
+				['empty', 'blank', 'disabled duplicate'].map((kind) => ({ remote, kind }))
+			)
+		)(
+			'keeps the selected cwd/account/host for $kind grants (SSH=$remote)',
+			async ({ remote, kind }) => {
+				const additionalDirectories =
+					kind === 'empty'
+						? []
+						: kind === 'blank'
+							? [{ ...write, path: '  ' }]
+							: [write, { ...read, read: false }];
+				const store = sshStoreWithRemotes();
+				if (remote)
+					mockWrapSpawnWithSsh.mockImplementationOnce(async (input, _config, snapshot) => ({
+						command: 'ssh',
+						args: ['dev@r1.example.com'],
+						cwd: '/fixture-client',
+						sshRemoteUsed: snapshot.getSshRemotes()[0],
+					}));
+				const config = createConfig({
+					toolType: 'grok',
+					projectRoot: '/chosen/project',
+					customEnvVars: { GROK_HOME: '/chosen/account' },
+					session: { ...createConfig().session, toolType: 'grok', additionalDirectories },
+					...(remote
+						? { sshRemoteConfig: { enabled: true, remoteId: 'r1' }, sshStore: store }
+						: {}),
+				});
+				const result = await buildSpawnSpec(config, privatePrompt);
+				if (!result.ok) throw new Error(result.message);
+				const launch = remote ? mockWrapSpawnWithSsh.mock.lastCall![0] : result.spec;
+				expect(launch.cwd).toBe('/chosen/project');
+				expect(remote ? launch.customEnvVars : launch.env).toMatchObject({
+					GROK_HOME: '/chosen/account',
+				});
+				expect(launch.args).not.toContain('--add-dir');
+				expect(launch.args).not.toContain('--resume'); // Cue always starts a fresh turn.
+				expect(result.spec.promptArtifact).toMatchObject({
+					owner: remote ? 'remote' : 'local',
+					content: JSON.stringify({
+						type: 'acp',
+						content: [{ type: 'text', text: privatePrompt }],
+					}),
+				});
+				if (remote)
+					expect(result.spec.sshRemoteUsed).toMatchObject({ id: 'r1', host: 'r1.example.com' });
+			}
+		);
+
+		it('retains Claude native read/write directory argument construction', async () => {
+			mockGetAgentDefinition.mockReturnValue(realDefinition('claude-code'));
+			const config = createConfig({
+				enableMaestroP: false,
+				session: {
+					...createConfig().session,
+					additionalDirectories: [read, { ...write, path: '/write-root' }],
+				},
+			});
+			const result = await buildSpawnSpec(config, 'ordinary prompt');
+			if (!result.ok) throw new Error(result.message);
+			expect(result.spec.args).toEqual(
+				expect.arrayContaining(['--add-dir', privateRoot, '/write-root'])
+			);
+			expect(result.spec.promptArtifact).toBeUndefined();
 		});
 	});
 });

@@ -38,6 +38,9 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { BatchRunConfig } from '../../../renderer/types';
+import { assembleTurn } from '../../../shared/maestro-lib/turns/assemble';
+import { makeContext } from '../../shared/maestro-lib/turns/fixtures';
+import { gitService } from '../../../renderer/services/git';
 
 const mockGit = {
 	worktreeSetup: vi.fn().mockResolvedValue({ success: true }),
@@ -226,5 +229,85 @@ describe('spawnWorktreeAgentAndDispatch parent-scoped reuse', () => {
 		const result = await spawnWorktreeAgentAndDispatch(parentSession, makeConfig());
 
 		expect(result).toBe('own-child');
+	});
+});
+
+describe('Grok worktree turn configuration', () => {
+	it.each([undefined, 'ssh-grok'])('assembles a fresh child on host %s', async (remoteId) => {
+		const parent = {
+			...parentSession,
+			toolType: 'grok',
+			customPath: '/tools/custom grok',
+			customArgs: '--max-turns 3',
+			customEnvVars: { GROK_HOME: '/accounts/selected' },
+			customModel: 'grok-4.5',
+			customEffort: 'low',
+			activeTabId: 'selected-tab',
+			aiTabs: [
+				{
+					id: 'selected-tab',
+					agentSessionId: 'parent-native',
+					customModel: 'grok-composer-2.5-fast',
+					customEffort: 'high',
+					permissionMode: 'readonly',
+					readOnlyMode: true,
+				},
+			],
+			sessionSshRemoteConfig: remoteId
+				? { enabled: true, remoteId, workingDirOverride: parentSession.cwd }
+				: undefined,
+		};
+		const before = structuredClone(parent);
+		useSessionStore.setState({ sessions: [parent] });
+		const config = makeConfig();
+		config.worktreeTarget = { mode: 'existing-closed', worktreePath: '/shared/worktrees/grok' };
+		const id = await spawnWorktreeAgentAndDispatch(parent, config);
+		const child = useSessionStore.getState().sessions.find((session) => session.id === id)!;
+		expect(child.toolType).toBe('grok');
+		expect(child.cwd).toBe('/shared/worktrees/grok');
+		expect(child.aiTabs[0].agentSessionId).toBeNull();
+		expect(gitService.getBranches).toHaveBeenCalledWith(child.cwd, remoteId);
+
+		// Exercise the shared send consumer with the registered child, not a copied request.
+		const assembled = assembleTurn(
+			child,
+			child.aiTabs[0],
+			{ text: 'inspect changes' },
+			makeContext('grok', { command: child.customPath! })
+		);
+		expect(assembled.ok).toBe(true);
+		if (!assembled.ok) throw new Error(assembled.message);
+		expect(assembled.turn).toMatchObject({
+			settings: { provider: 'grok', model: 'grok-composer-2.5-fast', effort: 'high' },
+			permissionMode: 'readonly',
+			resumeSessionId: undefined,
+			launch: {
+				command: '/tools/custom grok',
+				remoteCommand: '/tools/custom grok',
+				cwd: child.cwd,
+				sessionCustomEnvVars: { GROK_HOME: '/accounts/selected' },
+				isResuming: false,
+				readOnlyMode: true,
+				sshRemoteConfig: remoteId
+					? { enabled: true, remoteId, workingDirOverride: child.cwd }
+					: undefined,
+			},
+		});
+		expect(assembled.turn.launch.args).toEqual(
+			expect.arrayContaining([
+				'-m',
+				'grok-composer-2.5-fast',
+				'--reasoning-effort',
+				'high',
+				'--max-turns',
+				'3',
+				'--permission-mode',
+				'plan',
+			])
+		);
+		expect(assembled.turn.launch.args).not.toContain('--resume');
+		expect(assembled.turn.launch.args).not.toContain('--always-approve');
+		expect(parent).toEqual(before);
+		expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
 	});
 });
