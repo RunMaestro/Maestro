@@ -19,7 +19,7 @@ import {
 	type PianolaLegacyMigrationResult,
 } from '../../pianola/pianola-legacy-migration';
 import * as migrationStore from '../../pianola/pianola-store-main';
-import { ipcMain, type BrowserWindow } from 'electron';
+import { ipcMain, dialog, type BrowserWindow } from 'electron';
 import type { MemoryRequest } from '../../../shared/pianola/memory';
 import { getPianolaMemory } from '../../pianola/memory-host';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -125,6 +125,12 @@ export interface PianolaHandlerDependencies {
 		set?: (key: string, value: unknown) => void;
 	};
 	getAppWindows?: () => BrowserWindow[];
+	/** Trusted native dialog adapter; never supplied by IPC payloads. */
+	confirmScopeConfiguration?: (
+		window: BrowserWindow,
+		detail: string,
+		signal: AbortSignal
+	) => Promise<boolean>;
 	/** The desktop supervised daemon; supervisor channels drive its reconcile. */
 	supervisor: PianolaSupervisor;
 	getWebServer?: () => WebServer | null;
@@ -506,7 +512,8 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		// spawns without waiting for the file-watch debounce.
 		async (
 			raw: unknown,
-			ownerAuthorized: () => boolean = () => false
+			ownerAuthorized: () => boolean = () => false,
+			approvalValid?: (current: PianolaSupervisedTarget[]) => boolean
 		): Promise<PianolaSupervisorSnapshot> => {
 			const candidate: Record<string, unknown> = isRecord(raw) ? { ...raw } : {};
 			// Handover receipts/fences are host results, never caller assertions.
@@ -522,6 +529,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			if (target.kind === 'watch-scope') {
 				const migration = await configurePianolaScope(target, {
 					ownerAuthorized,
+					approvalValid,
 					readRules: readRulesResult,
 					store: migrationStore,
 					featureEnabled: () => isPianolaEnabled(settingsStore),
@@ -637,7 +645,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 
 	ipcMain.handle(
 		'pianola:supervisor-add',
-		async (event, target: unknown): Promise<PianolaSupervisorSnapshot> => {
+		async (event, target: unknown, options?: unknown): Promise<PianolaSupervisorSnapshot> => {
 			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 			const transport: unknown = event;
 			const ownerAuthorized = (): boolean => {
@@ -653,7 +661,122 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 						user.id === identity.ownerWebUserId)
 				);
 			};
-			return wrappedSupervisorAdd(event, target, ownerAuthorized);
+			// Ordinary delegation and exact standing reconciliation never open a dialog.
+			const requested = isRecord(options) && options.requestOwnerApproval === true;
+			if (!requested) return wrappedSupervisorAdd(event, target, ownerAuthorized);
+			const denied = (status: 'Denied' | 'Unknown', reason: string): PianolaSupervisorSnapshot => ({
+				...snapshot(),
+				migration: {
+					status,
+					scopeId: isRecord(target) && typeof target.id === 'string' ? target.id : '',
+					watchIds: [],
+					reason,
+				},
+			});
+			if (
+				!isRecord(transport) ||
+				transport.type !== 'bridge' ||
+				transport.cli !== true ||
+				typeof transport.isCallerActive !== 'function' ||
+				!transport.isCallerActive()
+			)
+				return denied('Denied', 'Active authenticated CLI connection required');
+			const isCallerActive = transport.isCallerActive;
+			const candidate = validatePianolaSupervisedTarget({
+				...(isRecord(target) ? target : {}),
+				id: isRecord(target) && target.id ? target.id : generateUUID(),
+				createdAt:
+					isRecord(target) && target.createdAt !== undefined ? target.createdAt : Date.now(),
+				enabled: isRecord(target) && target.enabled !== undefined ? target.enabled : true,
+			});
+			if (
+				!candidate ||
+				candidate.kind !== 'watch-scope' ||
+				!candidate.selection ||
+				!candidate.managerAgentId
+			)
+				return denied('Denied', 'Invalid scope configuration');
+			// Caller policy and migration claims are not part of the proposed operation.
+			delete candidate.delegationPolicy;
+			delete candidate.legacyMigration;
+			delete candidate.migratedToScopeId;
+			const previous = canonicalJson(readSupervisorTargets());
+			const enrollmentRevision = readScopeCheckpoint(candidate.id)?.enrollmentRevision ?? null;
+			const rules = canonicalJson(readRulesResult());
+			const identity = canonicalJson(settingsStore.get('pianolaLearningIdentity') ?? null);
+			const reconciled = await wrappedSupervisorAdd(event, candidate);
+			if (reconciled.migration?.status !== 'NeedsConfiguration') return reconciled;
+			if (!readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity')).desktopIsOwner)
+				return denied('Denied', 'Desktop owner identity is restricted; use the configured owner');
+			const window = deps
+				.getAppWindows?.()
+				.find(
+					(win) =>
+						!win.isDestroyed() &&
+						!win.webContents.isDestroyed() &&
+						win.webContents.getType() === 'window'
+				);
+			if (!window) return denied('Unknown', 'Native owner window unavailable');
+			const controller = new AbortController();
+			const deadline = Date.now() + 60_000;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				const detail = canonicalJson({
+					operation: 'Configure Pianola supervision',
+					target: candidate,
+					previousTargets: JSON.parse(previous),
+					previousEnrollmentRevision: enrollmentRevision,
+				});
+				const confirm =
+					deps.confirmScopeConfiguration ??
+					(async (parent, text, signal) => {
+						const response = await dialog.showMessageBox(parent, {
+							type: 'question',
+							title: 'Approve Pianola scope configuration',
+							message: 'Allow this exact supervision configuration?',
+							detail: text,
+							buttons: ['Cancel', 'Approve configuration'],
+							defaultId: 0,
+							cancelId: 0,
+							noLink: true,
+							signal,
+						});
+						return response.response === 1;
+					});
+				const approved = await Promise.race([
+					confirm(window, detail, controller.signal),
+					new Promise<boolean>((resolve) => {
+						timer = setTimeout(() => {
+							controller.abort();
+							resolve(false);
+						}, 60_000);
+					}),
+				]);
+				if (!approved) return denied('Denied', 'Native owner approval cancelled or timed out');
+				const valid = (current: PianolaSupervisedTarget[]): boolean =>
+					Date.now() < deadline &&
+					!controller.signal.aborted &&
+					!window.isDestroyed() &&
+					!window.webContents.isDestroyed() &&
+					(deps.getAppWindows?.() ?? []).includes(window) &&
+					isCallerActive() === true &&
+					isPianolaEnabled(settingsStore) &&
+					readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity')).desktopIsOwner &&
+					canonicalJson(settingsStore.get('pianolaLearningIdentity') ?? null) === identity &&
+					canonicalJson(current) === previous &&
+					(readScopeCheckpoint(candidate.id)?.enrollmentRevision ?? null) === enrollmentRevision &&
+					canonicalJson(readRulesResult()) === rules;
+				return await wrappedSupervisorAdd(event, candidate, () => true, valid);
+			} catch (error) {
+				void captureException(error, { operation: 'approve Pianola scope configuration' });
+				return denied(
+					'Unknown',
+					'Native approval or configuration could not be confirmed; read back before retrying'
+				);
+			} finally {
+				if (timer) clearTimeout(timer);
+				controller.abort();
+			}
 		}
 	);
 

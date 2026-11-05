@@ -11,10 +11,12 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	pianolaSuperviseWatch,
+	pianolaSuperviseScope,
 	pianolaSuperviseList,
 	pianolaSuperviseProgram,
 	pianolaSuperviseOrchestrate,
 } from '../../../cli/commands/pianola-supervise';
+import { CommandTimeoutError } from '../../../cli/services/maestro-client';
 import { pianolaProgramLoop } from '../../../cli/commands/pianola-program-loop';
 import { pianolaProgramStatus } from '../../../cli/commands/pianola-portfolio';
 import {
@@ -28,6 +30,7 @@ import {
 
 const { sendCommand, dispatch } = vi.hoisted(() => ({ sendCommand: vi.fn(), dispatch: vi.fn() }));
 vi.mock('../../../cli/services/maestro-client', () => ({
+	CommandTimeoutError: class CommandTimeoutError extends Error {},
 	withMaestroClient: async (fn: (client: { sendCommand: typeof sendCommand }) => unknown) =>
 		fn({ sendCommand }),
 	MaestroClient: class {
@@ -306,5 +309,26 @@ describe('program-loop target registration', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('scope acknowledgement', () => {
+	it('reports Unknown on transport timeout and never retries a possible commit', async () => {
+		sendCommand.mockRejectedValueOnce(new CommandTimeoutError('bridge.response'));
+		const before = sendCommand.mock.calls.length;
+		await pianolaSuperviseScope({
+			manager: 'manager',
+			label: 'Scope',
+			agents: 'agent',
+			requestOwnerApproval: true,
+			json: true,
+		});
+		expect(sendCommand.mock.calls.length - before).toBe(1);
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)![0]))).toMatchObject({
+			success: false,
+			migration: { status: 'Unknown' },
+		});
+		expect(process.exitCode).toBe(1);
+		process.exitCode = 0;
 	});
 });

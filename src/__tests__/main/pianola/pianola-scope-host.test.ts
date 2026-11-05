@@ -27,10 +27,10 @@ import {
 } from '../../../shared/pianola/pianola-scope-cycle';
 
 const { handlers, native } = vi.hoisted(() => {
-	const sender = { mainFrame: {}, isDestroyed: () => false, getType: () => 'window' };
+	const sender = { mainFrame: {}, isDestroyed: (): boolean => false, getType: () => 'window' };
 	return {
 		handlers: new Map<string, (...args: unknown[]) => Promise<unknown>>(),
-		native: { sender, window: { webContents: sender, isDestroyed: () => false } },
+		native: { sender, window: { webContents: sender, isDestroyed: (): boolean => false } },
 	};
 });
 vi.mock('electron', () => ({
@@ -63,6 +63,10 @@ let census: PianolaScopeSnapshot;
 let feature: boolean;
 let desktopOwner: boolean;
 let fence: boolean;
+let confirm: ReturnType<
+	typeof vi.fn<(window: unknown, detail: string, signal: AbortSignal) => Promise<boolean>>
+>;
+let callerActive: boolean;
 let clientUser: { id: string; username: string; displayName: string } | undefined;
 let logs: ReturnType<typeof vi.spyOn>;
 const scopeId = '11111111-1111-4111-8111-111111111111';
@@ -105,6 +109,8 @@ beforeEach(async () => {
 	feature = true;
 	desktopOwner = true;
 	fence = true;
+	callerActive = true;
+	confirm = vi.fn(async () => true);
 	clientUser = undefined;
 	process.exitCode = 0;
 	logs = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -151,6 +157,7 @@ beforeEach(async () => {
 			reconcile: vi.fn(),
 		} as never,
 		getAppWindows: () => [native.window as never],
+		confirmScopeConfiguration: (...args) => confirm(...args),
 		getWebServer: (() => ({ getPianolaScopeSnapshot: () => census })) as never,
 	});
 	server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -158,7 +165,13 @@ beforeEach(async () => {
 	server.on('connection', (socket) => {
 		socket.on('message', (bytes) => {
 			void handleBridgeInvoke(
-				{ id: 'fixture-cli', cli: true, user: clientUser },
+				{
+					id: 'fixture-cli',
+					cli: true,
+					user: clientUser,
+					socket,
+					isAuthorized: () => callerActive,
+				},
 				JSON.parse(String(bytes)),
 				(_client, reply) => socket.send(JSON.stringify(reply))
 			);
@@ -186,6 +199,135 @@ afterEach(async () => {
 });
 
 describe('owner scope configuration through production adapters', () => {
+	it('configures the first scope through CLI, bridge and one native confirmation, then reconciles silently', async () => {
+		await cli({ requestOwnerApproval: true, futureLocalAgents: true });
+		expect(lastOutput().success).toBe(true);
+		expect(confirm).toHaveBeenCalledTimes(1);
+		const saved = store.readSupervisorTargets()[0];
+		expect(saved.selection).toMatchObject({ futureAgentBaselineIds: ['agent', 'manager'] });
+		expect(JSON.parse(confirm.mock.calls[0][1]).target.managerAgentId).toBe('manager');
+		await cli({ id: saved.id, futureLocalAgents: true, requestOwnerApproval: true });
+		expect(lastOutput().success).toBe(true);
+		expect(confirm).toHaveBeenCalledTimes(1);
+		expect(store.readSupervisorTargets()).toHaveLength(1);
+	});
+
+	it('approves selection and manager changes through the same locked service', async () => {
+		await nativeSave();
+		census.owners.push({ ...census.owners[1], id: 'manager2' });
+		await cli({
+			id: scopeId,
+			agents: 'agent,manager',
+			manager: 'manager2',
+			requestOwnerApproval: true,
+		});
+		expect(lastOutput().success).toBe(true);
+		expect(confirm).toHaveBeenCalledTimes(1);
+		expect(store.readSupervisorTargets()[0].managerAgentId).toBe('manager2');
+		expect(store.readSupervisorTargets()[0].delegationPolicy?.managerAgentId).toBe('manager2');
+	});
+
+	it.each(['cancel', 'registry', 'revoke', 'identity', 'window', 'unknown', 'rules', 'off'])(
+		'refuses %s during native approval without committing',
+		async (kind) => {
+			confirm.mockImplementation(async () => {
+				if (kind === 'registry')
+					await store.updateSupervisorTargetsAsync(() => [{ ...target(), enabled: false }]);
+				if (kind === 'revoke') callerActive = false;
+				if (kind === 'identity') desktopOwner = false;
+				if (kind === 'window') vi.spyOn(native.window, 'isDestroyed').mockReturnValue(true);
+				if (kind === 'unknown') census.complete = false;
+				if (kind === 'rules')
+					fs.writeFileSync(path.join(directory, 'maestro-pianola-rules.json'), '{');
+				if (kind === 'off') feature = false;
+				return kind !== 'cancel';
+			});
+			await cli({ requestOwnerApproval: true });
+			expect(lastOutput().success).toBe(false);
+			expect(store.readSupervisorTargets()).toEqual(
+				kind === 'registry' ? [{ ...target(), enabled: false }] : []
+			);
+			expect(store.readScopeCheckpoint(scopeId)).toBeNull();
+		}
+	);
+
+	it('rejects changed and restored configuration using the existing enrollment revision', async () => {
+		await nativeSave();
+		const revision = store.readScopeCheckpoint(scopeId)!.enrollmentRevision;
+		confirm.mockImplementation(async () => {
+			await nativeSave({
+				...target(),
+				selection: { ...target().selection!, excludedAgentIds: ['agent'] },
+			});
+			await nativeSave();
+			return true;
+		});
+		await cli({ id: scopeId, agents: 'agent,manager', requestOwnerApproval: true });
+		expect(lastOutput().success).toBe(false);
+		expect(store.readSupervisorTargets()[0].selection).toMatchObject({ agentIds: ['agent'] });
+		expect(store.readScopeCheckpoint(scopeId)!.enrollmentRevision).toBeGreaterThan(revision!);
+	});
+
+	it('times out the dialog and ignores a later positive answer', async () => {
+		const original = globalThis.setTimeout;
+		vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+			fn: (...args: unknown[]) => void,
+			ms?: number,
+			...args: unknown[]
+		) => original(fn, ms === 60_000 ? 1 : ms, ...args)) as typeof setTimeout);
+		let answer!: (value: boolean) => void;
+		confirm.mockImplementation(
+			() =>
+				new Promise<boolean>((resolve) => {
+					answer = resolve;
+				})
+		);
+		await cli({ requestOwnerApproval: true });
+		expect(lastOutput().migration.status).toBe('Denied');
+		expect(confirm.mock.calls[0][2].aborted).toBe(true);
+		answer(true);
+		await Promise.resolve();
+		expect(store.readSupervisorTargets()).toEqual([]);
+	});
+
+	it('commits at most one of two approvals against the same prior revision', async () => {
+		const pending: Array<(value: boolean) => void> = [];
+		confirm.mockImplementation(
+			() =>
+				new Promise<boolean>((resolve) => {
+					pending.push(resolve);
+					if (pending.length === 2) pending.forEach((approve) => approve(true));
+				})
+		);
+		await Promise.all([
+			cli({ id: scopeId, requestOwnerApproval: true }),
+			cli({ id: scopeId, requestOwnerApproval: true }),
+		]);
+		const outputs = logs.mock.calls.map(([line]: unknown[]) => JSON.parse(String(line)));
+		expect(outputs.filter((output: { success?: boolean }) => output.success)).toHaveLength(1);
+		expect(store.readSupervisorTargets()).toHaveLength(1);
+		expect(confirm).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not ask a restricted desktop to impersonate the configured web owner', async () => {
+		desktopOwner = false;
+		await cli({ requestOwnerApproval: true });
+		expect(lastOutput().migration.status).toBe('Denied');
+		expect(confirm).not.toHaveBeenCalled();
+		expect(store.readSupervisorTargets()).toEqual([]);
+	});
+
+	it('rejects an expired approval without waiting for a real timer', async () => {
+		const now = Date.now();
+		confirm.mockImplementation(async () => {
+			vi.spyOn(Date, 'now').mockReturnValue(now + 61_000);
+			return true;
+		});
+		await cli({ requestOwnerApproval: true });
+		expect(lastOutput().success).toBe(false);
+		expect(store.readSupervisorTargets()).toEqual([]);
+	});
+
 	it('creates policy from verified native choice and actual rules, ignoring claimed policy', async () => {
 		const rules = store.readRulesResult().rules;
 		const response = await nativeSave({

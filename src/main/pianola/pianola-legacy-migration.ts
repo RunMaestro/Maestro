@@ -16,7 +16,13 @@ import {
 import { initialWatchState } from '../../shared/pianola/pianola-watcher';
 
 export type PianolaLegacyMigrationResult = {
-	status: 'migrated' | 'already-migrated' | 'registered' | 'NeedsConfiguration';
+	status:
+		| 'migrated'
+		| 'already-migrated'
+		| 'registered'
+		| 'NeedsConfiguration'
+		| 'Denied'
+		| 'Unknown';
 	scopeId: string;
 	watchIds: string[];
 	reason?: string;
@@ -380,11 +386,15 @@ export async function configurePianolaScope(
 	deps: Parameters<typeof migratePianolaLegacyWatches>[1] & {
 		ownerAuthorized: () => boolean;
 		readRules: () => RulesLoadResult;
+		/** One-use host consent precondition, checked inside the registry lock. */
+		approvalValid?: (current: PianolaSupervisedTarget[]) => boolean;
 	}
 ): Promise<PianolaLegacyMigrationResult> {
 	return migratePianolaLegacyWatches(target, {
 		...deps,
 		prepare: (current, snapshot) => {
+			if (deps.approvalValid && !deps.approvalValid(current))
+				return 'Owner approval expired or configuration changed';
 			const ownerAuthorized = deps.ownerAuthorized();
 			if (
 				ownerAuthorized &&

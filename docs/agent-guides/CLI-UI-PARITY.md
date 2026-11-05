@@ -461,6 +461,25 @@ Closing/disconnecting Lite never stops host workloads. Errors return
 uncertainty and never retries a potentially mutating command; read status before
 acting again.
 
+## Pianola owner scope configuration
+
+`pianola supervise scope --request-owner-approval` requests one native host
+confirmation of the exact selection, future-agent policy and manager, with the
+previous registry shown for review. The host uses the same `configurePianolaScope`
+service and migration lock as the native and bound web owner UI. CLI credentials,
+payload principals and manager IDs never establish owner identity. Desktop owner
+restrictions still apply; a restricted desktop cannot replace a configured web owner.
+
+Exact standing selections reconcile without a dialog, including when the flag is
+present. New or changed selections require the explicit flag and a positive native
+dialog answer within 60 seconds. The host checks the original registry, rules,
+identity, enabled feature, window and authenticated caller again inside the shared
+lock, including the existing enrollment revision to reject changed and restored scopes.
+Cancellation, timeout, revocation, changed configuration or an unknown native
+census cannot publish the operation. JSON returns the committed target and migration
+result, or `NeedsConfiguration`, `Denied` or `Unknown`; failures exit nonzero.
+No real host dialog is exercised by the fixture composition tests.
+
 ## Open gaps
 
 Ranked by how often an agent is likely to hit them. Every entry is buildable

@@ -21,7 +21,7 @@ import {
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
 import { ensurePianolaEnabled } from './pianola';
-import { MaestroClient, withMaestroClient } from '../services/maestro-client';
+import { MaestroClient, withMaestroClient, CommandTimeoutError } from '../services/maestro-client';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import type { PianolaSupervisorSnapshot } from '../../main/ipc/handlers/pianola';
 
@@ -54,6 +54,7 @@ export interface PianolaSuperviseScopeOptions {
 	groups?: string;
 	exclude?: string;
 	futureLocalAgents?: boolean;
+	requestOwnerApproval?: boolean;
 	json?: boolean;
 }
 
@@ -78,7 +79,7 @@ function parsePositiveInt(raw: string | undefined, min: number): number | undefi
 /** Ask the host to reconcile an owner-authorized whole-agent selection. */
 export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
-	if (options.futureLocalAgents && !options.id)
+	if (options.futureLocalAgents && !options.id && !options.requestOwnerApproval)
 		fail('--future-local-agents requires an existing --id', options.json);
 	const ids = (value?: string): string[] =>
 		(value ?? '')
@@ -110,14 +111,19 @@ export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOption
 							...(options.futureLocalAgents ? { futureLocalAgents: true } : {}),
 						},
 					},
+					{ requestOwnerApproval: options.requestOwnerApproval === true },
 				],
 			},
-			'bridge.response'
+			'bridge.response',
+			options.requestOwnerApproval ? 70_000 : undefined
 		);
 		if (!response.ok) fail(response.error ?? 'Scope host request failed', options.json);
 		const migration = response.result.migration;
-		if (!migration || migration.status === 'NeedsConfiguration') {
-			if (options.json) console.log(JSON.stringify({ success: false, migration }));
+		if (!migration || ['NeedsConfiguration', 'Denied', 'Unknown'].includes(migration.status)) {
+			if (options.json)
+				console.log(
+					JSON.stringify({ success: false, migration, targets: response.result.targets })
+				);
 			else console.error(migration?.reason ?? 'Scope host service unavailable');
 			process.exitCode = 1;
 			return;
@@ -129,6 +135,16 @@ export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOption
 				`Saved watch scope ${migration.scopeId} (${target?.enabled ? 'enabled' : 'paused'}).`
 			);
 	} catch (error) {
+		if (error instanceof CommandTimeoutError) {
+			const migration = {
+				status: 'Unknown',
+				reason: 'Host acknowledgement timed out; read supervision status before retrying',
+			};
+			if (options.json) console.log(JSON.stringify({ success: false, migration }));
+			else console.error(migration.reason);
+			process.exitCode = 1;
+			return;
+		}
 		exitIfMaestroNotRunning(error, options);
 		throw error;
 	} finally {

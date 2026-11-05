@@ -3093,14 +3093,23 @@ const pianolaSupervise = pianola
 
 pianolaSupervise
 	.command('scope')
-	.description('Reconcile an exact owner-authorized agent/group selection through the desktop host')
+	.description(
+		'Configure or reconcile an owner-authorized agent/group selection through the desktop host'
+	)
 	.requiredOption('--manager <agent-id>', 'Manager agent id')
 	.requiredOption('--label <label>', 'Selection label')
 	.option('--id <scope-id>', 'Existing owner-authorized selection id')
 	.option('--agents <ids>', 'Comma-separated agent IDs')
 	.option('--groups <ids>', 'Comma-separated group IDs')
 	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')
-	.option('--future-local-agents', 'Reconcile a future-agent selection (requires existing --id)')
+	.option(
+		'--future-local-agents',
+		'Include future local agents (requires --id or --request-owner-approval)'
+	)
+	.option(
+		'--request-owner-approval',
+		'Request one native owner confirmation for this exact configuration'
+	)
 	.option('--json', 'Output as JSON')
 	.action((options) => pianolaSuperviseScope(options));
 
