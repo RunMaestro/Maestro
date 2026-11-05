@@ -1015,6 +1015,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				nextTabIndex: undefined,
 				tabs: value.tabs.map((tab) => ({
 					...tab,
+					// The cycle may set these optional fields to undefined. JSON
+					// omits object members with that value on the next disk read.
+					nextWatchAt: tab.nextWatchAt,
+					emptyEnrollment: tab.emptyEnrollment,
 					coverage: tab.coverage ? { ...tab.coverage, observedAt: undefined } : undefined,
 				})),
 			});
