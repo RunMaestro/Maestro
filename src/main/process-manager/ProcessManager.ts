@@ -556,7 +556,7 @@ export class ProcessManager extends EventEmitter {
 	write(sessionId: string, data: string): boolean {
 		return withWorktreeTurnActivity(
 			(_start, observe) => this.writeAdmitted(sessionId, data, observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -599,7 +599,12 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
-			void captureException(error);
+			// Own diagnostics independently of the synchronous verdict and native close.
+			observe(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			logger.error('[ProcessManager] Failed to write to process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -612,15 +617,18 @@ export class ProcessManager extends EventEmitter {
 	 * Resize terminal (for pty processes)
 	 */
 	resize(sessionId: string, cols: number, rows: number): boolean {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			return this.resizeAdmitted(sessionId, cols, rows);
-		} finally {
-			release();
-		}
+		return withWorktreeTurnActivity(
+			(_start, observe) => this.resizeAdmitted(sessionId, cols, rows, observe),
+			(error) => captureException(error)
+		);
 	}
 
-	private resizeAdmitted(sessionId: string, cols: number, rows: number): boolean {
+	private resizeAdmitted(
+		sessionId: string,
+		cols: number,
+		rows: number,
+		observe: <Result>(completion: Promise<Result>) => Promise<Result>
+	): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process || !process.isTerminal || !process.ptyProcess) return false;
 
@@ -628,7 +636,12 @@ export class ProcessManager extends EventEmitter {
 			process.ptyProcess.resize(cols, rows);
 			return true;
 		} catch (error) {
-			void captureException(error);
+			// Own diagnostics independently of the synchronous verdict and native close.
+			observe(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			logger.error('[ProcessManager] Failed to resize terminal', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -653,7 +666,7 @@ export class ProcessManager extends EventEmitter {
 	interrupt(sessionId: string): boolean {
 		return withWorktreeTurnActivity(
 			(_start, observe) => this.interruptAdmitted(sessionId, observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -703,7 +716,12 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
-			void captureException(error);
+			// Own diagnostics independently of the synchronous verdict and native close.
+			observe(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			logger.error('[ProcessManager] Failed to interrupt process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -746,7 +764,7 @@ export class ProcessManager extends EventEmitter {
 	kill(sessionId: string, options: { sync?: boolean; shutdown?: boolean } = {}): boolean {
 		return withWorktreeTurnActivity(
 			(_start, observe) => this.killAdmitted(sessionId, options, observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -809,7 +827,12 @@ export class ProcessManager extends EventEmitter {
 			this.processes.delete(sessionId);
 			return true;
 		} catch (error) {
-			void captureException(error);
+			// Own diagnostics independently of the synchronous verdict and native close.
+			observe(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			logger.error('[ProcessManager] Failed to kill process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -877,7 +900,7 @@ export class ProcessManager extends EventEmitter {
 					throw error;
 				}
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -892,7 +915,7 @@ export class ProcessManager extends EventEmitter {
 	killAll(options: { shutdown?: boolean } = {}): void {
 		withWorktreeTurnActivity(
 			(_start, observe) => this.killAllAdmitted(options, observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -910,11 +933,15 @@ export class ProcessManager extends EventEmitter {
 		// Tear down the shared OpenCode server(s) that back the SDK path.
 		opencodeServerManager.shutdown();
 		observe(
-			this.copilotSdkSpawner.closeAll().catch((error) => {
-				captureException(error instanceof Error ? error : new Error(String(error)), {
-					context: 'Copilot native connection shutdown',
-				});
-			})
+			this.copilotSdkSpawner.closeAll().catch((error) =>
+				Promise.resolve()
+					.then(() =>
+						captureException(error instanceof Error ? error : new Error(String(error)), {
+							context: 'Copilot native connection shutdown',
+						})
+					)
+					.catch(() => {})
+			)
 		);
 	}
 	/** Stop every active turn for an agent and dispose retained native runtimes. */

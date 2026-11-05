@@ -87,6 +87,7 @@ beforeEach(() => {
 	vi.mocked(unusableCwdReason).mockReturnValue(null);
 	manager = new ProcessManager(() => false, { isCoworkingEnabled: () => false });
 	releases = [];
+	vi.spyOn(sentry, 'captureException').mockResolvedValue(undefined);
 	vi.spyOn(PtySpawner.prototype, 'spawn').mockReturnValue({ success: true, pid: 123 });
 	vi.spyOn(ChildProcessSpawner.prototype, 'spawn').mockReturnValue({ success: true, pid: 456 });
 });
@@ -582,7 +583,14 @@ describe('direct manager input and steering activity', () => {
 			expect(() => manager.write(config.sessionId, 'rm user-file\n')).toThrow(/reserved/);
 			expect(() => manager.resize(config.sessionId, 90, 30)).toThrow(/reserved/);
 			await expect(manager.steer(config.sessionId, 'change files')).rejects.toThrow(/reserved/);
-			for (const probe of [lookup, has, logger.error, sendSteeringRequest, steerCodexAppServerTurn])
+			for (const probe of [
+				lookup,
+				has,
+				logger.error,
+				sentry.captureException,
+				sendSteeringRequest,
+				steerCodexAppServerTurn,
+			])
 				expect(probe).not.toHaveBeenCalled();
 		}
 	);
@@ -633,8 +641,8 @@ describe('direct manager input and steering activity', () => {
 					? manager.write(config.sessionId, 'text')
 					: manager.resize(config.sessionId, 90, 30)
 			).toBe(false);
+			await vi.waitFor(async () => (await reserve()).release());
 			expect(capture).toHaveBeenCalledWith(error);
-			(await reserve()).release();
 		}
 	);
 
@@ -821,6 +829,7 @@ describe('direct manager stop and close activity', () => {
 				copilot.closeAgent,
 				copilot.closeAll,
 				logger.error,
+				sentry.captureException,
 			])
 				expect(probe).not.toHaveBeenCalled();
 			expect(proc.interrupted).toBe(false);
@@ -897,8 +906,8 @@ describe('direct manager stop and close activity', () => {
 			);
 			expect(manager[operation](config.sessionId)).toBe(false);
 			expect(proc.interrupted).toBe(true);
+			await vi.waitFor(async () => (await reserve()).release());
 			expect(capture).toHaveBeenCalledWith(error);
-			(await reserve()).release();
 		}
 	);
 
@@ -1015,5 +1024,284 @@ describe('direct manager stop and close activity', () => {
 		expect(manager.kill('retained')).toBe(true);
 		expect(copilot.closeSession).toHaveBeenLastCalledWith('retained');
 		(await reserve()).release();
+	});
+});
+
+describe('manager asynchronous control diagnostics', () => {
+	it.each(
+		(['write', 'resize', 'interrupt', 'kill'] as const).flatMap((operation) =>
+			(['resolve', 'reject', 'throw'] as const).map((settlement) => ({ operation, settlement }))
+		)
+	)(
+		'retains $operation failure diagnostics until $settlement with the original false verdict',
+		async ({ operation, settlement }) => {
+			const error = new Error('native control failed');
+			const reporting = Promise.withResolvers<void>();
+			const capture = vi.mocked(sentry.captureException).mockImplementation(() => {
+				if (settlement === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			const fail = vi.fn(() => {
+				throw error;
+			});
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			entries.set(config.sessionId, {
+				sessionId: config.sessionId,
+				isTerminal: true,
+				ptyProcess: { write: fail, resize: fail },
+				sdkController: { interrupt: fail, kill: fail },
+			} as unknown as ManagedProcess);
+			try {
+				const result =
+					operation === 'write'
+						? manager.write(config.sessionId, 'text')
+						: operation === 'resize'
+							? manager.resize(config.sessionId, 80, 24)
+							: manager[operation](config.sessionId);
+				expect(result).toBe(false);
+				await vi.waitFor(() => expect(capture).toHaveBeenCalledExactlyOnceWith(error));
+				entries.delete(config.sessionId);
+				manager.emit('exit', config.sessionId, 0);
+				manager.emit('query-complete', config.sessionId);
+				if (settlement !== 'throw') await blocked();
+				if (settlement === 'reject') reporting.reject(new Error('reporter rejected'));
+				else reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+				expect(capture).toHaveBeenCalledOnce();
+			} finally {
+				reporting.resolve();
+			}
+		}
+	);
+
+	it.each(['write', 'resize', 'interrupt', 'kill'] as const)(
+		'retains %s diagnostics when the synchronous logger also throws',
+		async (operation) => {
+			const original = new Error('control failed');
+			const logging = new Error('logger failed');
+			const reporting = Promise.withResolvers<void>();
+			const capture = vi
+				.mocked(sentry.captureException)
+				.mockImplementation((error) =>
+					error === original ? reporting.promise : Promise.resolve()
+				);
+			const fail = () => {
+				throw original;
+			};
+			(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+				isTerminal: true,
+				ptyProcess: { write: fail, resize: fail },
+				sdkController: { interrupt: fail, kill: fail },
+			} as unknown as ManagedProcess);
+			vi.mocked(logger.error).mockImplementationOnce(() => {
+				throw logging;
+			});
+			try {
+				expect(() =>
+					operation === 'write'
+						? manager.write(config.sessionId, 'text')
+						: operation === 'resize'
+							? manager.resize(config.sessionId, 80, 24)
+							: manager[operation](config.sessionId)
+				).toThrow(logging);
+				await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(original));
+				expect(capture).toHaveBeenCalledWith(logging);
+				await blocked();
+				reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+				expect(capture).toHaveBeenCalledTimes(2);
+			} finally {
+				reporting.resolve();
+			}
+		}
+	);
+
+	it.each(
+		(['stdin', 'interrupt', 'kill'] as const).flatMap((operation) =>
+			(['resolve', 'reject'] as const).map((settlement) => ({ operation, settlement }))
+		)
+	)(
+		'retains late $operation failure diagnostics through $settlement independently of native close',
+		async ({ operation, settlement }) => {
+			const pending = Promise.withResolvers<boolean>();
+			const reporting = Promise.withResolvers<void>();
+			const error = new Error('late control rejection');
+			const capture = vi.mocked(sentry.captureException).mockReturnValue(reporting.promise);
+			const harness = Reflect.get(manager, 'harnessControls') as HarnessControlRegistry;
+			vi.spyOn(harness, 'has').mockReturnValue(true);
+			vi.spyOn(harness, 'interrupt').mockReturnValue(pending.promise);
+			vi.spyOn(harness, 'close').mockReturnValue(pending.promise);
+			let acknowledge!: (error: Error) => void;
+			const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+			entries.set(config.sessionId, {
+				childProcess: {
+					stdin: {
+						write: (_data: string, callback: (error: Error) => void) => {
+							acknowledge = callback;
+						},
+					},
+				},
+			} as unknown as ManagedProcess);
+			const nativeRelease = beginGlobalWorktreeActivity();
+			releases.push(nativeRelease);
+			try {
+				expect(
+					operation === 'stdin'
+						? manager.write(config.sessionId, 'text')
+						: manager[operation](config.sessionId)
+				).toBe(true);
+				entries.delete(config.sessionId);
+				manager.emit('exit', config.sessionId, 0);
+				if (operation === 'stdin') acknowledge(error);
+				else pending.reject(error);
+				await vi.waitFor(() => expect(capture).toHaveBeenCalledExactlyOnceWith(error));
+				nativeRelease();
+				await blocked();
+				if (settlement === 'reject') reporting.reject(new Error('diagnostic failure'));
+				else reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+				expect(capture).toHaveBeenCalledOnce();
+			} finally {
+				pending.resolve(false);
+				reporting.resolve();
+			}
+		}
+	);
+
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'retains aggregate shutdown diagnostics through %s without recursively reporting',
+		async (settlement) => {
+			vi.spyOn(opencodeServerManager, 'shutdown').mockImplementation(() => {});
+			const copilot = Reflect.get(manager, 'copilotSdkSpawner') as CopilotSdkSpawner;
+			vi.mocked(copilot.closeAll).mockRejectedValueOnce('connection failed');
+			const reporting = Promise.withResolvers<void>();
+			const capture = vi.mocked(sentry.captureException).mockImplementation(() => {
+				if (settlement === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			try {
+				expect(manager.killAll()).toBeUndefined();
+				await vi.waitFor(() =>
+					expect(capture).toHaveBeenCalledExactlyOnceWith(
+						expect.objectContaining({ message: 'connection failed' }),
+						{ context: 'Copilot native connection shutdown' }
+					)
+				);
+				if (settlement !== 'throw') await blocked();
+				if (settlement === 'reject') reporting.reject(new Error('reporter rejected'));
+				else reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+				expect(capture).toHaveBeenCalledOnce();
+			} finally {
+				reporting.resolve();
+			}
+		}
+	);
+
+	it.each(['killAll', 'remote-timer'] as const)(
+		'preserves %s setup exception while asynchronous diagnostics remain pending',
+		async (operation) => {
+			const error = new Error('setup failed');
+			const reporting = Promise.withResolvers<void>();
+			const capture = vi.mocked(sentry.captureException).mockReturnValue(reporting.promise);
+			vi.spyOn(opencodeServerManager, 'shutdown').mockImplementation(() => {
+				throw error;
+			});
+			const proc = {
+				get sshRemotePidFile(): string {
+					throw error;
+				},
+			} as ManagedProcess;
+			const schedule = Reflect.get(manager, 'scheduleRemoteTerminate') as (
+				...args: unknown[]
+			) => void;
+			try {
+				expect(() =>
+					operation === 'killAll'
+						? manager.killAll()
+						: schedule.call(manager, config.sessionId, proc, new EventEmitter())
+				).toThrow(error);
+				expect(capture).toHaveBeenCalledExactlyOnceWith(error);
+				await blocked();
+				reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+			} finally {
+				reporting.resolve();
+			}
+		}
+	);
+
+	it('retains independent native activity after diagnostics finish first', async () => {
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(sentry.captureException).mockReturnValue(reporting.promise);
+		const nativeRelease = beginGlobalWorktreeActivity();
+		releases.push(nativeRelease);
+		(Reflect.get(manager, 'processes') as Map<string, ManagedProcess>).set(config.sessionId, {
+			sdkController: {
+				interrupt: () => {
+					throw new Error('control failed');
+				},
+			},
+		} as unknown as ManagedProcess);
+		try {
+			expect(manager.interrupt(config.sessionId)).toBe(false);
+			await vi.waitFor(() => expect(sentry.captureException).toHaveBeenCalledOnce());
+			reporting.resolve();
+			await blocked();
+			nativeRelease();
+			await vi.waitFor(async () => (await reserve()).release());
+		} finally {
+			reporting.resolve();
+		}
+	});
+
+	it('keeps concurrent diagnostics, pending canonicalization and successor stdin independently owned', async () => {
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(sentry.captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+		const fail = () => {
+			throw new Error('write failed');
+		};
+		entries.set(config.sessionId, {
+			isTerminal: true,
+			ptyProcess: { write: fail },
+		} as unknown as ManagedProcess);
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = reserveWorktreeCleanup(target);
+		let acknowledge!: () => void;
+		try {
+			expect(manager.write(config.sessionId, 'first')).toBe(false);
+			expect(manager.write(config.sessionId, 'second')).toBe(false);
+			canonical.resolve(target);
+			const hold = await reservation;
+			if (hold.status === 'reserved-partially') releases.push(hold.release);
+			expect(hold).toMatchObject({ status: 'blocked' });
+			entries.set(config.sessionId, {
+				childProcess: {
+					stdin: {
+						write: (_data: string, callback: () => void) => {
+							acknowledge = callback;
+						},
+					},
+				},
+			} as unknown as ManagedProcess);
+			expect(manager.write(config.sessionId, 'successor')).toBe(true);
+			first.resolve();
+			await blocked();
+			second.resolve();
+			await blocked();
+			acknowledge();
+			await vi.waitFor(async () => (await reserve()).release());
+			expect(sentry.captureException).toHaveBeenCalledTimes(2);
+		} finally {
+			canonical.resolve(target);
+			first.resolve();
+			second.resolve();
+			acknowledge?.();
+		}
 	});
 });
