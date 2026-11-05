@@ -1,3 +1,6 @@
+import { readAgentRuns } from '../../cli/services/agent-run-store';
+import { nativeTabSession } from './pianola-queue-session';
+import { isTerminalAgentRunStatus, type AgentRun } from '../../shared/agent-run';
 import { forgetQueueConsultRelease } from './pianola-queue-routing';
 import { getDispatchCallbackRegistry, type DispatchCallbackRegistry } from '../dispatch-callbacks';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -27,10 +30,21 @@ class NewTabSpawnFences {
 			capturedRunId?: string;
 			dispatchId?: string;
 			queueOnly?: boolean;
-			captured?: (runId: string) => void;
+			captured?: (runId: string) => void | boolean;
 			notStarted?: () => void;
+			beforeSpawn?: () => void;
+			runUpdated?: (run: AgentRun) => void;
 		}
 	>();
+	// Only confirmed native children retain observers; terminal capture (including
+	// supersession) removes them. Neither a wire locator nor restart restores these.
+	private readonly running = new Map<string, (run: AgentRun) => void>();
+	observeRun(run: AgentRun) {
+		const listener = this.running.get(run.id);
+		if (!listener) return;
+		if (isTerminalAgentRunStatus(run.status)) this.running.delete(run.id);
+		listener(run);
+	}
 	hold(agentId: string, tabId: string) {
 		const key = `${agentId}-ai-${tabId}`;
 		if (!this.held.has(key)) this.held.set(key, {});
@@ -48,7 +62,13 @@ class NewTabSpawnFences {
 		guard: (boundaryId?: string) => void,
 		started: (runId?: string) => void,
 		dispatchId?: string,
-		lifecycle?: { captured(runId: string): void; notStarted(): void; queueOnly?: boolean }
+		lifecycle?: {
+			captured(runId: string): void | boolean;
+			notStarted(): void;
+			queueOnly?: boolean;
+			beforeSpawn?(): void;
+			runUpdated?(run: AgentRun): void;
+		}
 	) {
 		const entry = this.held.get(`${agentId}-ai-${tabId}`);
 		if (!entry) throw new Error('DispatchTargetNotHeld');
@@ -56,6 +76,8 @@ class NewTabSpawnFences {
 		entry.queueOnly = lifecycle?.queueOnly;
 		entry.captured = lifecycle?.captured;
 		entry.notStarted = lifecycle?.notStarted;
+		entry.beforeSpawn = lifecycle?.beforeSpawn;
+		entry.runUpdated = lifecycle?.runUpdated;
 		entry.guard = guard;
 		entry.started = started;
 	}
@@ -97,6 +119,7 @@ class NewTabSpawnFences {
 			() => {
 				if (this.held.get(processId) !== entry) throw new Error('DispatchTargetUnavailable');
 				this.assertReady(processId, boundaryId);
+				entry.beforeSpawn?.();
 			},
 			{
 				notStarted: () => {
@@ -114,11 +137,13 @@ class NewTabSpawnFences {
 		const entry = this.held.get(processId);
 		if (
 			entry?.claimed &&
+			(!entry.capturedRunId || entry.capturedRunId === runId) &&
 			(!entry.dispatchId || entry.dispatchId === dispatchId) &&
 			(!entry.queueOnly || queueItemId === entry.dispatchId)
 		) {
+			if (entry.captured?.(runId) === false) return;
 			entry.capturedRunId = runId;
-			entry.captured?.(runId);
+			if (entry.runUpdated) this.running.set(runId, entry.runUpdated);
 		}
 	}
 
@@ -226,7 +251,7 @@ export class PianolaNewTabDispatch {
 			...deps,
 			readSnapshot: async () => deps.snapshot(),
 			queueSnapshot: () => deps.snapshot(),
-			assertTargetReady: (receipt, fingerprint) => {
+			assertTargetReady: (receipt, fingerprint, ownsLocalRun) => {
 				const snapshot = deps.snapshot();
 				const tab = snapshot.tabs.find(
 					(t) => t.agentId === receipt.targetAgentId && t.tabId === receipt.targetTabId
@@ -250,7 +275,7 @@ export class PianolaNewTabDispatch {
 					ownership.scopeId !== receipt.scopeId ||
 					!tab ||
 					tab.paused ||
-					tab.busy ||
+					(tab.busy && !ownsLocalRun) ||
 					tab.consult ||
 					tab.ephemeral ||
 					!scope?.selection ||
@@ -575,6 +600,14 @@ export class PianolaNewTabDispatch {
 				throw new Error('DispatchQueueReleaseUncertain');
 			if (!record.queueAuthority || Date.now() >= record.queueAuthority.expiresAt)
 				throw new Error('DispatchQueueAuthorityUnavailable');
+			const local = record.queueRouting?.steps.find((s) => s.kind === 'local');
+			if (
+				record.queueRouting &&
+				(!local ||
+					!['parallel', 'handoff'].includes(record.queueRouting.routing) ||
+					local.status !== 'prepared')
+			)
+				throw new Error('DispatchQueueLocalUnavailable');
 			let callbackId = record.queuePrepare.callbackId;
 			const registry = this.registry();
 			const callbackGuard = () => {
@@ -670,12 +703,99 @@ export class PianolaNewTabDispatch {
 				callbackGuard();
 				released.guard();
 			};
+			const nativeRuns = this.deps.readNativeRuns ?? readAgentRuns;
+			const nativeFrontier = new Set(
+				local
+					? nativeRuns()
+							.filter((run) => run.sessionId === `${agentId}-ai-${tabId}`)
+							.map((run) => run.id)
+					: []
+			);
+			const releasedSession = this.snapshot().tabs.find(
+				(t) => t.agentId === agentId && t.tabId === tabId
+			)?.agentSessionId;
+			let capturedRunId: string | undefined;
+			let uncertain = false;
+			const updateLocal = (
+				mutate: (step: NonNullable<typeof local>, current: NonNullable<typeof record>) => void
+			) => {
+				const current = this.deps.store.readDispatchAdmission(itemId);
+				const step = current?.queueRouting?.steps.find(
+					(s) => s.kind === 'local' && s.requestId === local?.requestId
+				);
+				if (
+					!current ||
+					!step ||
+					current.queueRelease?.generation !== released.generation ||
+					current.intentFingerprint !== record.intentFingerprint
+				)
+					throw new Error('DispatchRoutingStepChanged');
+				mutate(step, current);
+				this.deps.store.writeDispatchAdmission(current);
+			};
+			const observeLocal = (run: AgentRun) => {
+				if (!local || uncertain) return;
+				try {
+					const identity = nativeTabSession(run);
+					if (
+						run.id !== capturedRunId ||
+						nativeFrontier.has(run.id) ||
+						(identity?.initialSessionId ?? undefined) !== (releasedSession ?? undefined) ||
+						!identity ||
+						identity.conflicted ||
+						identity.agentId !== agentId ||
+						identity.tabId !== tabId ||
+						identity.createdAt !== record.queueAuthority!.createdAt
+					)
+						throw new Error('DispatchRoutingCaptureMismatch');
+					updateLocal((step, current) => {
+						if (step.terminal) return;
+						step.runId = run.id;
+						step.processId = run.sessionId;
+						step.status = isTerminalAgentRunStatus(run.status) ? 'settled' : 'started';
+						if (identity.announcedSessionId) step.agentSessionId = identity.announcedSessionId;
+						current.runId = run.id;
+						current.outcome = 'accepted';
+						current.phase = 'settled';
+						if (isTerminalAgentRunStatus(run.status))
+							step.terminal = {
+								text: typeof run.metadata?.answerTail === 'string' ? run.metadata.answerTail : '',
+								...(run.status !== 'completed' ? { error: `Native local run ${run.status}` } : {}),
+								...(run.status === 'cancelled' ? { canceled: true } : {}),
+							};
+					});
+				} catch (error) {
+					uncertain = true;
+					forgetQueueConsultRelease(itemId);
+					this.deps.onReconcileError(error);
+					try {
+						updateLocal((step, current) => {
+							if (step.terminal) return;
+							step.status = 'unknown';
+							step.startError = 'DispatchRoutingJournalUnknown';
+							current.outcome = 'unknown';
+						});
+					} catch (commitError) {
+						this.deps.onReconcileError(commitError);
+					}
+				}
+			};
+			if (local) {
+				try {
+					updateLocal((step) => {
+						step.status = 'intent';
+					});
+				} catch (error) {
+					pianolaNewTabSpawns.cancelHold(agentId, tabId);
+					throw error;
+				}
+			}
 			pianolaNewTabSpawns.arm(
 				agentId,
 				tabId,
 				guard,
 				(runId) => {
-					if (runId)
+					if (runId && !local)
 						void this.admission
 							.reconcile(itemId, 'accepted', runId)
 							.catch(this.deps.onReconcileError);
@@ -683,11 +803,32 @@ export class PianolaNewTabDispatch {
 				itemId,
 				{
 					queueOnly: true,
-					captured: () => {
-						if (callbackId) {
+					beforeSpawn: local
+						? () => {
+								guard();
+								updateLocal((step) => {
+									if (step.status !== 'intent') throw new Error('DispatchRoutingAlreadyStarting');
+									step.status = 'unknown';
+								});
+								guard();
+							}
+						: undefined,
+					runUpdated: local ? observeLocal : undefined,
+					captured: (runId) => {
+						if (local) {
+							capturedRunId = runId;
+							const run = nativeRuns().find((r) => r.id === runId);
+							if (run) observeLocal(run);
+							else {
+								uncertain = true;
+								this.deps.onReconcileError(new Error('DispatchRoutingCaptureUnavailable'));
+							}
+						}
+						if (callbackId && !local) {
 							registry!.releaseQueueAdmission(callbackId, itemId);
 							registry!.noteSpawn(`${agentId}-ai-${tabId}`);
 						}
+						return !uncertain;
 					},
 					notStarted: () => {
 						if (callbackId) registry?.cancel(callbackId);

@@ -1,3 +1,6 @@
+import { buildMaestroSystemPromptForSession } from '../../utils/maestro-system-prompt';
+import { queueLocalPrompt } from '../../pianola/pianola-queue-routing';
+import type { PianolaQueueItem } from '../../../shared/pianola/pianola-dispatch';
 import {
 	cancelRelayConversationTurn,
 	getLiveRelayConversationTurns,
@@ -10,7 +13,7 @@ import { getPendingPermissionSnapshot } from '../../permission-relay/registry';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
-import type { AgentConfigsData } from '../../stores/types';
+import type { AgentConfigsData, GroupsData } from '../../stores/types';
 import * as os from 'os';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
@@ -105,6 +108,7 @@ export interface ProcessHandlerDependencies {
 	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 	getWebServer?: () => import('../../web-server/WebServer').WebServer | null;
 	sessionsStore: Store<{ sessions: any[] }>;
+	groupsStore?: Store<GroupsData>;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
 	/**
@@ -218,6 +222,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			)
 				config = { ...config, transcriptBoundaryId: undefined };
 		}
+		let hostLocalConfig: string | undefined;
+		let hostSystemPrompt: string | undefined;
 		const assertOwner = () => {
 			const agent = deps.sessionsStore
 				.get('sessions', [])
@@ -244,13 +250,55 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				item?.readOnlyMode === true ||
 				tab.readOnlyMode === true ||
 				tab.permissionMode === 'readonly';
-			const expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
+			let expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
+			if (item?.crossAgentMention) {
+				expected = queueLocalPrompt(item as PianolaQueueItem, agent.id, {
+					agents: deps.sessionsStore.get('sessions', []),
+					groups: (deps.groupsStore?.get('groups', []) ?? []).map((group) => ({ ...group })),
+				});
+				const settings = item.turnSettings;
+				// The owner transports a request. Every executable field is host-derived;
+				// renderer prompt/context/args/system-prompt overrides confer no authority.
+				const local: SpawnProcessConfig = {
+					sessionId: config.sessionId,
+					pianolaDispatchId: config.pianolaDispatchId,
+					pianolaQueueItemId: config.pianolaQueueItemId,
+					transcriptBoundaryId: config.transcriptBoundaryId,
+					tabId: tab.id,
+					toolType: agent.toolType,
+					cwd: agent.cwd,
+					command: '',
+					args: [],
+					agentSessionId: tab.agentSessionId ?? undefined,
+					prompt: prependNewSessionMessageOnFirstTurn(
+						expected,
+						agent.newSessionMessage,
+						tab.agentSessionId
+					),
+					images: item.images,
+					sessionCustomModel: settings ? settings.model : (tab.customModel ?? agent.customModel),
+					sessionCustomEffort: settings
+						? settings.effort
+						: (tab.customEffort ?? agent.customEffort),
+					readOnlyMode: readOnly,
+					permissionMode: readOnly ? 'readonly' : resolveTabPermissionMode(tab),
+					sessionCustomPath: agent.customPath,
+					sessionCustomArgs: agent.customArgs,
+					sessionCustomEnvVars: agent.customEnvVars,
+					sessionCustomContextWindow: agent.customContextWindow,
+					sessionAdditionalDirectories: agent.additionalDirectories,
+					sessionSshRemoteConfig: agent.sessionSshRemoteConfig,
+				};
+				if (hostLocalConfig !== undefined && hostLocalConfig !== canonicalJson(local))
+					throw new Error('DispatchQueueSpawnIntentMismatch');
+				hostLocalConfig = canonicalJson(local);
+				config = { ...local, appendSystemPrompt: hostSystemPrompt };
+			}
 			const settings = item?.turnSettings;
 			if (
 				!item ||
 				item.pendingAdmissionId !== config.pianolaDispatchId ||
 				item.type !== 'message' ||
-				item.crossAgentMention ||
 				item.agentContext ||
 				config.toolType !== agent.toolType ||
 				config.cwd !== agent.cwd ||
@@ -303,6 +351,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				const tab = agent?.aiTabs?.find(
 					(t: { id: string }) => `${agent.id}-ai-${t.id}` === config.sessionId
 				);
+				if (hostLocalConfig) {
+					hostSystemPrompt = await buildMaestroSystemPromptForSession(agent, {
+						activeTabId: tab.id,
+					});
+					assertOwner();
+				}
 				const prepared = await server.prepareQueueSpawnFromMain(
 					agent.id,
 					tab.id,

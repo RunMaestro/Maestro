@@ -1,3 +1,5 @@
+import { buildConsultPendingNote, buildHandoffPendingNote } from '../../shared/crossAgentContext';
+import { getPrompt } from '../prompt-manager';
 /** Host-side mention identity and step journal. Uses the existing planner and peer rules. */
 import { createHash, randomUUID } from 'crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -45,7 +47,8 @@ function recipientFingerprint(agent: AgentRecord): string {
 export function prepareQueueRouting(
 	item: PianolaQueueItem,
 	sourceAgentId: string,
-	snapshot: QueueRoutingSnapshot
+	snapshot: QueueRoutingSnapshot,
+	allocateSteps = true
 ): PianolaQueueRouting | undefined {
 	const { agents, groups } = snapshot;
 	const plan = planMentions(item.text, agents, groups, sourceAgentId);
@@ -79,14 +82,14 @@ export function prepareQueueRouting(
 	const steps: PianolaQueueRouting['steps'] = targets.map((t) => ({
 		kind,
 		targetAgentId: t.agentId,
-		requestId: randomUUID(),
+		requestId: allocateSteps ? randomUUID() : '',
 		status: 'prepared',
 	}));
 	if (routing !== 'only')
 		steps.push({
 			kind: 'local',
 			targetAgentId: sourceAgentId,
-			requestId: randomUUID(),
+			requestId: allocateSteps ? randomUUID() : '',
 			status: 'prepared',
 		});
 	return { routing, targets, steps };
@@ -98,7 +101,7 @@ export function assertQueueRouting(
 	sourceAgentId: string,
 	snapshot: QueueRoutingSnapshot
 ): void {
-	const current = prepareQueueRouting(item, sourceAgentId, snapshot);
+	const current = prepareQueueRouting(item, sourceAgentId, snapshot, false);
 	if (
 		!current ||
 		canonicalJson({ routing: current.routing, targets: current.targets }) !==
@@ -106,6 +109,25 @@ export function assertQueueRouting(
 	) {
 		throw new Error('DispatchRoutingRecipientChanged');
 	}
+}
+
+/** Derive only the immediate local branch. Delayed continuation is a separate capability. */
+export function queueLocalPrompt(
+	item: PianolaQueueItem,
+	sourceAgentId: string,
+	snapshot: QueueRoutingSnapshot
+): string {
+	if ('agentContext' in item && item.agentContext)
+		throw new Error('DispatchQueueRoutingUnsupported');
+	const plan = prepareQueueRouting(item, sourceAgentId, snapshot, false);
+	if (!plan || !['parallel', 'handoff'].includes(plan.routing))
+		throw new Error('DispatchQueueLocalUnavailable');
+	const names = plan.targets.map((t) => snapshot.agents.find((a) => a.id === t.agentId)!.name);
+	const note =
+		plan.routing === 'parallel'
+			? buildConsultPendingNote(getPrompt('cross-agent-consult-pending'), names)
+			: buildHandoffPendingNote(getPrompt('cross-agent-handoff-pending'), names);
+	return `${item.text}\n\n---\n\n${note}`;
 }
 
 /** Native release closures only. This map is intentionally process-local: reading

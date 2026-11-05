@@ -226,6 +226,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Process management operations - extracted to src/main/ipc/handlers/process.ts
 	registerProcessHandlers({
+		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,

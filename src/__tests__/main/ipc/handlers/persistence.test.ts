@@ -1,3 +1,6 @@
+import type { PianolaQueueItem } from '../../../../shared/pianola/pianola-dispatch';
+import { registerProcessHandlers } from '../../../../main/ipc/handlers/process';
+import * as promptManager from '../../../../main/prompt-manager';
 import { registerCrossAgentHandlers } from '../../../../main/ipc/handlers/cross-agent';
 import { cancelCrossAgentRequestsForSource } from '../../../../main/cross-agent/cross-agent-router';
 import {
@@ -17,6 +20,7 @@ import {
 	validatePianolaScopeDelivery,
 	runPianolaScopeCycle,
 	type PianolaScopeCycleDeps,
+	type PianolaScopeSnapshot,
 } from '../../../../shared/pianola/pianola-scope-cycle';
 import { currentTurnMessages } from '../../../../shared/currentTurn';
 vi.mock('../../../../main/cue/cue-cli-executor', () => ({
@@ -89,6 +93,7 @@ import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridg
 // Mock electron's ipcMain and app
 vi.mock('electron', () => ({
 	ipcMain: {
+		on: vi.fn(),
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
 	},
@@ -809,6 +814,7 @@ describe('persistence IPC handlers', () => {
 					ledgerPath,
 					JSON.stringify([...readNativeRuns().filter((r) => r.id !== run.id), run])
 				);
+				pianolaNewTabSpawns.observeRun(run);
 				return run;
 			};
 			const capture = new AgentRunCaptureService({
@@ -883,7 +889,7 @@ describe('persistence IPC handlers', () => {
 					}),
 				},
 				featureEnabled: () => true,
-				snapshot: () => ({
+				snapshot: (): PianolaScopeSnapshot => ({
 					complete: true,
 					capturedAt: 100,
 					owners: [
@@ -915,7 +921,7 @@ describe('persistence IPC handlers', () => {
 						...request.item,
 						id: queued.dispatchId,
 						pendingAdmissionId: queued.dispatchId,
-					}) as unknown as QueuedItem,
+					}) as unknown as PianolaQueueItem,
 			};
 			const adapter = new PianolaNewTabDispatch(deps);
 			const arm = vi.fn(() => undefined);
@@ -955,6 +961,422 @@ describe('persistence IPC handlers', () => {
 			f.deps.snapshot = () => snapshot;
 			return { ...f, snapshot };
 		}
+
+		async function managedLocalFixture(mode: boolean | 'handoff' = true, mutation?: () => void) {
+			request.item = { ...request.item, turnSettings: { model: 'host-model', effort: 'high' } };
+			const f = await readyQueue(mode);
+			f.revoke();
+			const promptSpy = vi
+				.spyOn(promptManager, 'getPrompt')
+				.mockImplementation((id) => `${id}: {{CONSULTED_AGENTS}}{{HANDOFF_AGENTS}}`);
+			const systemSpy = vi
+				.spyOn(systemPromptService, 'buildMaestroSystemPromptForSession')
+				.mockResolvedValue('Host system prompt');
+			let fastExit = false;
+			let captureMissing = false;
+			let unknownSpawn = false;
+			const events = new EventEmitter();
+			const spawn = vi.fn((config) => {
+				const local = f.store
+					.readDispatchAdmission(f.input.dispatchId)!
+					.queueRouting!.steps.find((s) => s.kind === 'local')!;
+				expect(local.status).toBe('unknown'); // durable intent before the native side effect
+				if (unknownSpawn) throw new Error('Native spawn acknowledgement lost');
+				if (!captureMissing) {
+					const run = f.capture.captureSpawn({
+						sessionId: config.sessionId,
+						toolType: config.toolType,
+						cwd: config.cwd,
+						tabId: 'tab',
+						prompt: config.prompt,
+						nativeTabSession: {
+							agentId: 'agent',
+							tabId: 'tab',
+							createdAt: 1,
+							initialSessionId: config.agentSessionId,
+						},
+					})!;
+					pianolaNewTabSpawns.captured(
+						config.sessionId,
+						run.id,
+						config.pianolaDispatchId,
+						config.pianolaQueueItemId
+					);
+					f.snapshot.tabs[0].busy = true;
+					if (fastExit) {
+						void f.capture.captureExit({
+							sessionId: config.sessionId,
+							exitCode: 0,
+							settlement: { outcome: 'completed', answerTail: 'Fast native output' } as never,
+						});
+						events.emit('exit', config.sessionId, 0);
+					}
+				}
+				return { success: true, pid: 42 };
+			});
+			const manager = Object.assign(events, { spawn, get: () => undefined, getAll: () => [] });
+			const definition = getAgentDefinition('codex')!;
+			const processDeps = {
+				getProcessManager: () => manager as never,
+				getAgentDetector: () =>
+					({
+						getAgent: async () => {
+							mutation?.();
+							return {
+								...definition,
+								available: true,
+								path: '/fixture/codex',
+								capabilities: getAgentCapabilities('codex'),
+							};
+						},
+					}) as never,
+				agentConfigsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+				settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+				sessionsStore: mockSessionsStore as never,
+				groupsStore: { get: () => [] } as never,
+				getMainWindow: () => null,
+				getWindowForSession: () => ({ webContents: { id: 7 } }) as never,
+				getWebServer: () =>
+					({
+						prepareQueueSpawnFromMain: (...args: Parameters<typeof f.adapter.prepareQueueSpawn>) =>
+							f.adapter.prepareQueueSpawn(...args),
+					}) as never,
+			};
+			registerProcessHandlers(processDeps);
+			const start = (event = { sender: { id: 7, isDestroyed: () => false } }) =>
+				handlers.get('process:spawn')!(event, {
+					sessionId: 'agent-ai-tab',
+					pianolaDispatchId: f.input.dispatchId,
+					pianolaQueueItemId: f.input.dispatchId,
+					toolType: 'malicious-provider',
+					cwd: '/foreign',
+					command: 'foreign',
+					args: ['--foreign'],
+					prompt: 'Renderer tamper',
+					images: ['data:image/png;base64,Zm9yZWlnbg=='],
+					appendSystemPrompt: 'Foreign system prompt',
+					sessionCustomEnvVars: { FOREIGN: 'yes' },
+					agentContext: { text: 'Arbitrary continuation' },
+				});
+			return {
+				...f,
+				start,
+				spawn,
+				events,
+				manager,
+				processDeps,
+				fast: () => {
+					fastExit = true;
+				},
+				missing: () => {
+					captureMissing = true;
+				},
+				unknown: () => {
+					unknownSpawn = true;
+				},
+				cleanup: () => {
+					events.emit('exit', 'agent-ai-tab', 0);
+					promptSpy.mockRestore();
+					systemSpy.mockRestore();
+				},
+			};
+		}
+
+		it.each([true, 'handoff'] as const)(
+			'runs a host-derived LOCAL through owner IPC, release, native spawn and matching capture (%s)',
+			async (mode) => {
+				const f = await managedLocalFixture(mode);
+				try {
+					current[0].newSessionMessage = 'First turn instruction';
+					const result = await f.start();
+					expect(result.success).toBe(true);
+					expect(f.deps.onReconcileError.mock.calls).toEqual([]);
+					expect(f.spawn).toHaveBeenCalledOnce();
+					const config = f.spawn.mock.calls[0][0];
+					expect(config).toMatchObject({
+						toolType: 'codex',
+						cwd: '/project',
+						appendSystemPrompt: 'Host system prompt',
+					});
+					expect(config.images).toEqual(request.item.images);
+					expect(config.sessionCustomModel).toBe('host-model');
+					expect(config.sessionCustomEffort).toBe('high');
+					expect(config.prompt).toContain('First turn instruction');
+					expect(config.prompt).toContain('PeerA and PeerB');
+					expect(config.prompt).not.toContain('Renderer tamper');
+					expect(config.customEnvVars?.FOREIGN).toBeUndefined();
+					const runId = f.store.readDispatchAdmission(f.input.dispatchId)!.runId!;
+					f.capture.captureSessionAnnouncement('agent-ai-tab', 'provider-local');
+					current[0].aiTabs![0].agentSessionId = 'provider-local';
+					f.snapshot.tabs[0].agentSessionId = 'provider-local';
+					current[0].executionQueue = []; // own capture survives the drain removing its original row
+					await f.capture.captureExit({
+						sessionId: 'agent-ai-tab',
+						exitCode: 0,
+						settlement: { outcome: 'completed', answerTail: 'Authentic output' } as never,
+					});
+					f.events.emit('exit', 'agent-ai-tab', 0);
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					expect(record.queueRouting!.steps.find((s) => s.kind === 'local')).toMatchObject({
+						runId,
+						status: 'settled',
+						agentSessionId: 'provider-local',
+						terminal: { text: 'Authentic output' },
+					});
+					await expect(f.start()).rejects.toThrow(/Dispatch/);
+					expect(f.spawn).toHaveBeenCalledOnce();
+				} finally {
+					f.cleanup();
+				}
+			}
+		);
+
+		it.each(['pause', 'peer', 'owner', 'row', 'fifo', 'generation', 'enrollment'] as const)(
+			'refuses LOCAL %s changes during async native preparation',
+			async (mutation) => {
+				let f: Awaited<ReturnType<typeof managedLocalFixture>>;
+				f = await managedLocalFixture(true, () => {
+					if (mutation === 'pause') f.snapshot.tabs[0].paused = true;
+					if (mutation === 'peer') current[0].peerAgents = [];
+					if (mutation === 'owner')
+						f.processDeps.getWindowForSession = () => ({ webContents: { id: 8 } }) as never;
+					if (mutation === 'row') current[0].executionQueue[0].text = 'Replaced';
+					if (mutation === 'fifo')
+						current[0].executionQueue.unshift({
+							id: 'human',
+							type: 'message',
+							text: 'Human turn',
+							tabId: 'tab',
+						});
+					if (mutation === 'generation') f.snapshot.tabs[0].createdAt++;
+					if (mutation === 'enrollment') {
+						const checkpoint = f.store.readScopeCheckpoint(f.scopeId)!;
+						checkpoint.status = 'suspended';
+						f.store.writeScopeCheckpoint(checkpoint);
+					}
+				});
+				try {
+					await expect(f.start()).rejects.toThrow(/Dispatch|Pianola/);
+					expect(f.spawn).not.toHaveBeenCalled();
+				} finally {
+					f.cleanup();
+				}
+			}
+		);
+
+		it.each(['fast', 'missing', 'unknown'] as const)(
+			'preserves LOCAL capture/uncertainty without resend after %s native outcome',
+			async (outcome) => {
+				const f = await managedLocalFixture();
+				try {
+					f[outcome]();
+					if (outcome === 'unknown')
+						await expect(f.start()).rejects.toThrow('Native spawn acknowledgement lost');
+					else await f.start();
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					const local = record.queueRouting!.steps.find((s) => s.kind === 'local')!;
+					expect(local.status).toBe(outcome === 'fast' ? 'settled' : 'unknown');
+					if (outcome !== 'fast') expect(local.terminal).toBeUndefined();
+					if (outcome === 'fast') expect(local.terminal?.text).toBe('Fast native output');
+					if (outcome === 'fast') {
+						const restored = await new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+							'agent',
+							'tab',
+							f.input.dispatchId,
+							() => {}
+						);
+						expect(restored.reconciled).toBe(true);
+					} else
+						await expect(
+							new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+								'agent',
+								'tab',
+								f.input.dispatchId,
+								() => {}
+							)
+						).rejects.toThrow('DispatchQueueReleaseUncertain');
+					expect(f.spawn).toHaveBeenCalledOnce();
+				} finally {
+					f.events.emit('exit', 'agent-ai-tab', 0);
+					pianolaNewTabSpawns.started(
+						'agent-ai-tab',
+						undefined,
+						f.input.dispatchId,
+						f.input.dispatchId
+					);
+					f.cleanup();
+				}
+			}
+		);
+
+		it.each(['owned-running', 'owned-terminal', 'human', 'reset', 'peer-revoke'] as const)(
+			'allows only matching own LOCAL capture after queue removal (%s)',
+			async (transition) => {
+				const f = await managedLocalFixture();
+				const consultEvents = new EventEmitter();
+				const consultSpawn = vi.fn((_config: { sessionId: string }) => ({
+					success: true,
+					pid: 99,
+				}));
+				try {
+					await f.start();
+					current[0].executionQueue = [];
+					f.capture.captureSessionAnnouncement('agent-ai-tab', 'native-provider');
+					f.snapshot.tabs[0].agentSessionId = 'native-provider';
+					if (transition === 'owned-terminal')
+						await f.capture.captureExit({
+							sessionId: 'agent-ai-tab',
+							exitCode: 0,
+							settlement: { outcome: 'completed', answerTail: 'Native terminal' } as never,
+						});
+					if (transition === 'human') {
+						f.capture.captureSpawn({
+							sessionId: 'agent-ai-tab',
+							toolType: 'codex',
+							cwd: '/project',
+							tabId: 'tab',
+							nativeTabSession: {
+								agentId: 'agent',
+								tabId: 'tab',
+								createdAt: 1,
+								initialSessionId: 'native-provider',
+							},
+						});
+					}
+					if (transition === 'reset') f.snapshot.tabs[0].agentSessionId = 'replacement';
+					if (transition === 'peer-revoke') current[0].peerAgents = [];
+					const manager = Object.assign(consultEvents, { spawn: consultSpawn, kill: vi.fn() });
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					const start = (target: string) =>
+						startReleasedQueueConsult(
+							{ dispatchId: f.input.dispatchId, generation: record.queueRelease!.generation },
+							'agent',
+							'tab',
+							target,
+							{
+								processManager: manager as never,
+								agentDetector: f.processDeps.getAgentDetector(),
+								sshStore: null,
+								getTargetSession: (id) => ({ id, name: id, toolType: 'codex', cwd: directory }),
+								onChunk: () => {},
+							}
+						);
+					if (transition.startsWith('owned-')) {
+						await start('peer-a');
+						await start('peer-b');
+						expect(consultSpawn).toHaveBeenCalledTimes(2);
+						await expect(start('peer-a')).rejects.toThrow(/AlreadyClaimed/);
+					} else {
+						await expect(start('peer-a')).rejects.toThrow(/Dispatch/);
+						expect(consultSpawn).not.toHaveBeenCalled();
+					}
+				} finally {
+					for (const [config] of consultSpawn.mock.calls)
+						consultEvents.emit('exit', config.sessionId, 0);
+					await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+					f.cleanup();
+				}
+			}
+		);
+
+		it.each(['started', 'terminal'] as const)(
+			'retains LOCAL ownership and Unknown on %s journal failure',
+			async (phase) => {
+				const f = await managedLocalFixture();
+				const write = f.store.writeDispatchAdmission;
+				let failed = false;
+				f.store.writeDispatchAdmission = (record) => {
+					const local = record.queueRouting?.steps.find((s) => s.kind === 'local');
+					if (!failed && (phase === 'started' ? local?.status === 'started' : !!local?.terminal)) {
+						failed = true;
+						throw Object.assign(new Error('Local journal ENOSPC'), { code: 'ENOSPC' });
+					}
+					write(record);
+				};
+				try {
+					await f.start();
+					await f.capture.captureExit({
+						sessionId: 'agent-ai-tab',
+						exitCode: 0,
+						settlement: { outcome: 'completed', answerTail: 'Native answer' } as never,
+					});
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					expect(failed).toBe(true);
+					expect(record.outcome).toBe('unknown');
+					expect(record.queueRouting!.steps.find((s) => s.kind === 'local')).toMatchObject({
+						status: 'unknown',
+						startError: 'DispatchRoutingJournalUnknown',
+					});
+					expect(
+						record.queueRouting!.steps.find((s) => s.kind === 'local')!.terminal
+					).toBeUndefined();
+					expect(f.deps.readNativeRuns().at(-1)!.status).toBe('completed');
+					expect(f.deps.onReconcileError).toHaveBeenCalled();
+					await expect(
+						new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+							'agent',
+							'tab',
+							f.input.dispatchId,
+							() => {}
+						)
+					).rejects.toThrow('DispatchQueueReleaseUncertain');
+					expect(f.spawn).toHaveBeenCalledOnce();
+				} finally {
+					f.store.writeDispatchAdmission = write;
+					f.cleanup();
+				}
+			}
+		);
+
+		it.each(['foreign-tab', 'foreign-generation', 'foreign-session'] as const)(
+			'keeps LOCAL unknown for %s native capture',
+			async (mismatch) => {
+				const f = await managedLocalFixture();
+				try {
+					f.spawn.mockImplementation((config) => {
+						const run = f.capture.captureSpawn({
+							sessionId: config.sessionId,
+							toolType: 'codex',
+							cwd: '/project',
+							tabId: 'tab',
+							nativeTabSession: {
+								agentId: 'agent',
+								tabId: mismatch === 'foreign-tab' ? 'foreign' : 'tab',
+								createdAt: mismatch === 'foreign-generation' ? 2 : 1,
+								initialSessionId: mismatch === 'foreign-session' ? 'foreign' : undefined,
+							},
+						})!;
+						pianolaNewTabSpawns.captured(
+							config.sessionId,
+							run.id,
+							config.pianolaDispatchId,
+							config.pianolaQueueItemId
+						);
+						return { success: true, pid: 42 };
+					});
+					const result = await f.start();
+					expect(result.pianolaRunId).toBeUndefined();
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					expect(record.outcome).toBe('unknown');
+					expect(record.runId).toBeUndefined();
+					expect(
+						record.queueRouting!.steps.find((s) => s.kind === 'local')!.terminal
+					).toBeUndefined();
+					expect(f.deps.onReconcileError).toHaveBeenCalled();
+					await expect(
+						new PianolaNewTabDispatch(f.deps).prepareQueueSpawn(
+							'agent',
+							'tab',
+							f.input.dispatchId,
+							() => {}
+						)
+					).rejects.toThrow('DispatchQueueReleaseUncertain');
+				} finally {
+					await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+					f.cleanup();
+				}
+			}
+		);
 
 		async function managedConsultFixture() {
 			const f = await readyQueue(true);

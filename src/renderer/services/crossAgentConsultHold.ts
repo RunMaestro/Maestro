@@ -1,3 +1,13 @@
+import {
+	formatConsultedAgentNames,
+	buildConsultPendingNote,
+	buildHandoffPendingNote,
+} from '../../shared/crossAgentContext';
+export {
+	formatConsultedAgentNames,
+	buildConsultPendingNote,
+	buildHandoffPendingNote,
+} from '../../shared/crossAgentContext';
 /**
  * crossAgentConsultHold - a turn that consults another agent does not finish
  * until the consult has answered.
@@ -91,17 +101,6 @@ export async function loadCrossAgentConsultPrompts(force = false): Promise<void>
 // Pure helpers
 // ============================================================================
 
-/** "A", "A and B", "A, B and C". */
-export function formatConsultedAgentNames(names: string[]): string {
-	if (names.length <= 1) return names[0] ?? 'another agent';
-	return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-}
-
-/** The agent-only note appended to the local turn's prompt. */
-export function buildConsultPendingNote(template: string, names: string[]): string {
-	return template.split('{{CONSULTED_AGENTS}}').join(formatConsultedAgentNames(names));
-}
-
 /**
  * Append the pending note to a prompt about to be spawned. A no-op when the
  * prompt has not loaded (a test harness, a bridge-less window) rather than
@@ -114,11 +113,6 @@ export function withConsultPendingNote(prompt: string, targets: ConsultHoldTarge
 		targets.map((t) => t.targetAgentName)
 	);
 	return `${prompt}\n\n---\n\n${note}`;
-}
-
-/** The agent-only note appended to a turn whose answer is handed off. */
-export function buildHandoffPendingNote(template: string, names: string[]): string {
-	return template.split('{{HANDOFF_AGENTS}}').join(formatConsultedAgentNames(names));
 }
 
 /**

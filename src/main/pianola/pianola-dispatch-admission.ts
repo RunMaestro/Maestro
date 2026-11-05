@@ -10,7 +10,11 @@ import type { StartCrossAgentRequestOptions } from '../cross-agent/cross-agent-r
 /** Host-only pre-start boundary. Adapters prepare a held target, then bind/enroll/release.
  * One service per host; no watcher, timer, plugin activation or answer permission. */
 import { readAgentRuns } from '../../cli/services/agent-run-store';
-import { initialQueueSession, queueSessionMatches } from './pianola-queue-session';
+import {
+	initialQueueSession,
+	queueSessionMatches,
+	nativeTabSession,
+} from './pianola-queue-session';
 import { randomUUID, createHash } from 'crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
@@ -68,7 +72,11 @@ export interface PianolaDispatchAdmissionDeps {
 	/** Current answer-rule revision. Observation enrollment never grants answers. */
 	ruleSetRevision(): string;
 	/** Synchronous native fence: exact held target, current ownership/lineage, pause and queue hold. */
-	assertTargetReady(receipt: PianolaDispatchReceipt, bindingFingerprint: string): void;
+	assertTargetReady(
+		receipt: PianolaDispatchReceipt,
+		bindingFingerprint: string,
+		ownsLocalRun?: boolean
+	): void;
 	/** Adapter must hold exact tab/queue item and call guard at the actual send/drain. */
 	release(
 		receipt: PianolaDispatchReceipt,
@@ -479,7 +487,7 @@ export class PianolaDispatchAdmissionService {
 				record.targetTabId
 			);
 			this.checkPolicy(record, auth);
-			const guard = () => {
+			const guard = (ownLocal = false) => {
 				if (this.disposed) throw new Error('DispatchAdmissionDisposed');
 				const current = this.deps.store.readDispatchAdmission(dispatchId);
 				if (
@@ -496,20 +504,47 @@ export class PianolaDispatchAdmissionService {
 				const tab = snapshot.tabs.find(
 					(t) => t.agentId === record.targetAgentId && t.tabId === record.targetTabId
 				);
+				let ownsLocalRun = false;
+				if (ownLocal && current.runId) {
+					const local = current.queueRouting?.steps.find((s) => s.kind === 'local');
+					const runs = (this.deps.readNativeRuns ?? readAgentRuns)();
+					const history = runs.filter(
+						(r) => r.sessionId === `${record.targetAgentId}-ai-${record.targetTabId}`
+					);
+					const run = history.find((r) => r.id === current.runId);
+					const identity = run && nativeTabSession(run);
+					ownsLocalRun = !!(
+						run &&
+						local?.runId === run.id &&
+						local.processId === run.sessionId &&
+						['started', 'settled'].includes(local.status) &&
+						['running', 'completed'].includes(run.status) &&
+						identity &&
+						!identity.conflicted &&
+						identity.createdAt === authority.createdAt &&
+						identity.agentId === record.targetAgentId &&
+						identity.tabId === record.targetTabId &&
+						(tab?.agentSessionId ?? undefined) ===
+							(identity.announcedSessionId ?? identity.initialSessionId ?? undefined) &&
+						!history.some((r) => r.id !== run.id && r.createdAt >= run.createdAt)
+					);
+					if (!ownsLocalRun) throw new Error('DispatchRoutingOwnCaptureUnavailable');
+				}
 				if (
 					!snapshot.complete ||
 					!tab ||
 					!tab.cursorAvailable ||
-					tab.busy ||
+					(tab.busy && !ownsLocalRun) ||
 					tab.paused ||
 					tab.consult ||
 					tab.ephemeral ||
 					tab.createdAt !== authority.createdAt ||
-					!queueSessionMatches(
-						record,
-						tab.agentSessionId,
-						authority.initialSession ? (this.deps.readNativeRuns ?? readAgentRuns)() : []
-					) ||
+					(!ownsLocalRun &&
+						!queueSessionMatches(
+							record,
+							tab.agentSessionId,
+							authority.initialSession ? (this.deps.readNativeRuns ?? readAgentRuns)() : []
+						)) ||
 					pianolaScopeBindingFingerprint(auth.scope, record.targetAgentId, snapshot.owners) !==
 						authority.bindingFingerprint
 				)
@@ -548,7 +583,11 @@ export class PianolaDispatchAdmissionService {
 						this.deps.routingSnapshot()
 					);
 				}
-				this.deps.assertTargetReady(this.receipt(record), authority.bindingFingerprint);
+				this.deps.assertTargetReady(
+					this.receipt(record),
+					authority.bindingFingerprint,
+					ownsLocalRun
+				);
 			};
 			guard();
 			const releaseTab = this.deps.queueSnapshot!().tabs.find(
@@ -590,17 +629,29 @@ export class PianolaDispatchAdmissionService {
 					return { generation: record.queueRelease.generation, guard };
 				}
 			);
+			const routingGuard = () => {
+				const current = this.deps.store.readDispatchAdmission(dispatchId);
+				if (
+					current?.runId &&
+					current.queueRouting?.steps.some((s) => s.kind === 'local' && s.runId === current.runId)
+				)
+					guard(true);
+				else release.guard();
+			};
 			if (record.queueRouting?.steps.some((s) => s.kind === 'consult')) {
 				bindQueueConsultRelease(dispatchId, {
 					sourceAgentId: record.targetAgentId,
 					sourceTabId: record.targetTabId!,
 					generation: release.generation,
-					guard: release.guard,
+					guard: routingGuard,
 					revoke: () => this.routingReleases.delete(dispatchId),
 					start: (target, opts) =>
 						this.startQueueConsult(dispatchId, release.generation, target, opts),
 				});
-				this.routingReleases.set(dispatchId, release);
+				this.routingReleases.set(dispatchId, {
+					generation: release.generation,
+					guard: routingGuard,
+				});
 			}
 			return { receipt: this.receipt(record), ...release };
 		});

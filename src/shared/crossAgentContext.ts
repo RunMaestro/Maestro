@@ -456,3 +456,19 @@ export function selectContextWindow<T extends TranscriptEntryLike>(
 			return tailByConversationalCount(logs, strategy.turns * 2);
 	}
 }
+
+/** "A", "A and B", "A, B and C". */
+export function formatConsultedAgentNames(names: string[]): string {
+	if (names.length <= 1) return names[0] ?? 'another agent';
+	return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** The agent-only note appended to the local turn's prompt. */
+export function buildConsultPendingNote(template: string, names: string[]): string {
+	return template.split('{{CONSULTED_AGENTS}}').join(formatConsultedAgentNames(names));
+}
+
+/** The agent-only note appended to a turn whose answer is handed off. */
+export function buildHandoffPendingNote(template: string, names: string[]): string {
+	return template.split('{{HANDOFF_AGENTS}}').join(formatConsultedAgentNames(names));
+}

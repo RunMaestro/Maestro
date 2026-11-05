@@ -47,6 +47,7 @@ export interface PianolaQueueRouting {
 		targetAgentId: string;
 		requestId: string;
 		status: 'prepared' | 'intent' | 'unknown' | 'started' | 'settled';
+		runId?: string;
 		processId?: string;
 		startError?: string;
 		pid?: number;
@@ -149,6 +150,7 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 					(s.kind === 'local'
 						? s.targetAgentId !== r.targetAgentId
 						: !routing.targets.some((t) => t.agentId === s.targetAgentId)) ||
+					(s.runId !== undefined && !id(s.runId)) ||
 					(s.processId !== undefined && !id(s.processId)) ||
 					(s.startError !== undefined && typeof s.startError !== 'string') ||
 					(s.agentSessionId !== undefined && !id(s.agentSessionId)) ||

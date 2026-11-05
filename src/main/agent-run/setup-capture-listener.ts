@@ -64,6 +64,7 @@ export function setupAgentRunCapture(
 		getAgentRun,
 		upsertAgentRun: (run) => {
 			const saved = upsertAgentRun(run);
+			pianolaNewTabSpawns.observeRun(saved);
 			broadcastRunUpdated(saved);
 			return saved;
 		},
