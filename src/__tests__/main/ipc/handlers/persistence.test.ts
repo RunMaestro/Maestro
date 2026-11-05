@@ -5,6 +5,7 @@ import { registerCrossAgentHandlers } from '../../../../main/ipc/handlers/cross-
 import { cancelCrossAgentRequestsForSource } from '../../../../main/cross-agent/cross-agent-router';
 import {
 	bindQueueConsultRelease,
+	forgetQueueConsultRelease,
 	sweepQueueConsultReleases,
 	startReleasedQueueConsult,
 } from '../../../../main/pianola/pianola-queue-routing';
@@ -2452,6 +2453,157 @@ describe('persistence IPC handlers', () => {
 			expect(f.manager.eventNames()).toEqual([]);
 			await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
 		});
+
+		it.each(
+			(['health', 'reconcile'] as const).flatMap((boundary) =>
+				(['current', 'expiry', 'policy', 'cancel', 'dispose', 'stop'] as const).map((reason) => ({
+					boundary,
+					reason,
+				}))
+			)
+		)(
+			'cleans handoff service callbacks at supervisor $boundary after $reason without another queue job',
+			async ({ boundary, reason }) => {
+				const f = await readyQueue('handoff');
+				const settled = vi.fn();
+				const release = await f.adapter.prepareQueueSpawn(
+					'agent',
+					'tab',
+					f.input.dispatchId,
+					() => {},
+					{ onSettled: settled }
+				);
+				expect(f.adapter.admission.hasQueueRoutingConsumer(f.input.dispatchId)).toBe(true);
+				if (reason === 'expiry') {
+					vi.useFakeTimers();
+					vi.setSystemTime(Date.now() + 86_400_001);
+				}
+				if (reason === 'policy') f.store.writeSupervisorTargets([]);
+				if (reason === 'cancel') f.adapter.cancelQueueItem('agent', 'tab', f.input.dispatchId);
+				if (reason === 'dispose') {
+					f.adapter.admission.dispose();
+					f.adapter.admission.dispose();
+				}
+				const supervisor = new PianolaSupervisor({
+					isEnabled: () => false,
+					getPianolaAgentId: () => undefined,
+				});
+				if (reason === 'stop') {
+					supervisor.stopAll();
+					supervisor.stopAll();
+				}
+				const inspect = () =>
+					boundary === 'health' ? supervisor.getHealth() : supervisor.reconcile();
+				inspect();
+				inspect();
+				if (reason === 'current') {
+					expect(f.adapter.admission.hasQueueRoutingConsumer(f.input.dispatchId)).toBe(true);
+					expect(f.adapter.admission.queueLocalRelease(f.input.dispatchId).generation).toBe(
+						release.generation
+					);
+				} else {
+					expect(f.adapter.admission.hasQueueRoutingConsumer(f.input.dispatchId)).toBe(false);
+					expect(() => f.adapter.admission.queueLocalRelease(f.input.dispatchId)).toThrow(
+						'ReleaseUnavailable'
+					);
+					expect(forgetQueueConsultRelease(f.input.dispatchId)).toBe(false);
+					await expect(f.adapter.admission.releaseQueue(f.input.dispatchId)).rejects.toThrow();
+				}
+				await expect(
+					startReleasedQueueConsult(
+						{ dispatchId: f.input.dispatchId, generation: release.generation! },
+						'agent',
+						'tab',
+						'peer-a',
+						{} as never
+					)
+				).rejects.toThrow('ReleaseUnavailable');
+				expect(settled).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['cancel', 'expiry', 'policy', 'dispose', 'stop'] as const)(
+			'preserves native handoff child supervision after %s removes its future release',
+			async (reason) => {
+				const local = await managedLocalFixture('handoff');
+				try {
+					const settled = vi.fn();
+					await local.adapter.prepareQueueSpawn('agent', 'tab', local.input.dispatchId, () => {}, {
+						onSettled: settled,
+					});
+					await local.start();
+					await local.capture.captureExit({
+						sessionId: 'agent-ai-tab',
+						exitCode: 0,
+						settlement: { outcome: 'completed', answerTail: 'Native local output' } as never,
+					});
+					local.events.emit('exit', 'agent-ai-tab', 0);
+					expect(settled).toHaveBeenCalledOnce();
+					const f = await managedConsultFixture('handoff', local);
+					const { requestId } = await f.start();
+					if (reason === 'cancel') f.adapter.cancelQueueItem('agent', 'tab', f.input.dispatchId);
+					if (reason === 'expiry') {
+						vi.useFakeTimers();
+						vi.setSystemTime(Date.now() + 86_400_001);
+					}
+					if (reason === 'policy') f.store.writeSupervisorTargets([]);
+					if (reason === 'dispose') f.adapter.admission.dispose();
+					const supervisor = new PianolaSupervisor({
+						isEnabled: () => false,
+						getPianolaAgentId: () => undefined,
+					});
+					if (reason === 'stop') supervisor.stopAll();
+					supervisor.getHealth();
+					expect(f.adapter.admission.hasQueueRoutingConsumer(f.input.dispatchId)).toBe(false);
+					await expect(f.start('peer-b')).rejects.toThrow('ReleaseUnavailable');
+					expect(f.manager.kill).not.toHaveBeenCalled();
+					f.manager.emit('data', `cross-agent-${requestId}`, 'Handoff child after release cleanup');
+					f.manager.emit('exit', `cross-agent-${requestId}`, 0);
+					expect(
+						f.store
+							.readDispatchAdmission(f.input.dispatchId)!
+							.queueRouting!.steps.find((s) => s.requestId === requestId)?.terminal
+					).toMatchObject({ text: 'Handoff child after release cleanup' });
+					expect(f.manager.eventNames()).toEqual([]);
+					expect(settled).toHaveBeenCalledOnce();
+				} finally {
+					local.cleanup();
+				}
+			}
+		);
+
+		it.each(['health', 'reconcile'] as const)(
+			'keeps a native unknown handoff non-replayable across supervisor %s',
+			async (boundary) => {
+				const f = await managedLocalFixture('handoff');
+				try {
+					f.unknown();
+					await expect(f.start()).rejects.toThrow('Native spawn acknowledgement lost');
+					const before = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					expect(before.queueRouting!.steps.find((s) => s.kind === 'local')?.status).toBe(
+						'unknown'
+					);
+					const supervisor = new PianolaSupervisor({
+						isEnabled: () => false,
+						getPianolaAgentId: () => undefined,
+					});
+					if (boundary === 'health') supervisor.getHealth();
+					else supervisor.reconcile();
+					expect(f.store.readDispatchAdmission(f.input.dispatchId)).toEqual(before);
+					await expect(f.start()).rejects.toThrow();
+					expect(f.spawn).toHaveBeenCalledOnce();
+				} finally {
+					// Fixture teardown after all no-resend assertions; no native evidence is created.
+					pianolaNewTabSpawns.started(
+						'agent-ai-tab',
+						undefined,
+						f.input.dispatchId,
+						f.input.dispatchId
+					);
+					f.cleanup();
+				}
+			}
+		);
 
 		it('does not register consult release closures for handoff-only routing', async () => {
 			const f = await readyQueue('handoff');

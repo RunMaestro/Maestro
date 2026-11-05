@@ -7,6 +7,7 @@ import {
 	queueRoutingEpoch,
 	assertQueueRouting,
 	bindQueueConsultRelease,
+	bindQueueRoutingRelease,
 	forgetQueueConsultRelease,
 	type QueueRoutingSnapshot,
 } from './pianola-queue-routing';
@@ -784,6 +785,14 @@ export class PianolaDispatchAdmissionService {
 						start: (target, opts) =>
 							this.startQueueConsult(dispatchId, release.generation, target, opts),
 					});
+				else
+					bindQueueRoutingRelease(dispatchId, {
+						sourceAgentId: record.targetAgentId,
+						sourceTabId: record.targetTabId!,
+						generation: release.generation,
+						guard: routingGuard,
+						revoke: () => this.routingReleases.delete(dispatchId),
+					});
 			}
 
 			return { receipt: this.receipt(record), ...release };
@@ -934,7 +943,7 @@ export class PianolaDispatchAdmissionService {
 		return !!this.routingReleases.get(dispatchId)?.onSettled;
 	}
 
-	/** Revoke the live local/handoff release too; it has no consult transport entry. */
+	/** Revoke the service entry and its host lifecycle registration together. */
 	revokeQueueRouting(dispatchId: string): boolean {
 		const live = this.routingReleases.delete(dispatchId);
 		forgetQueueConsultRelease(dispatchId);

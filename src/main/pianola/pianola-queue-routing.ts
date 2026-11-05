@@ -122,10 +122,14 @@ export function queueLocalPrompt(
 	const plan = prepareQueueRouting(item, sourceAgentId, snapshot, false);
 	if (
 		plan?.routing === 'consult-first' ||
-		(plan?.routing === 'parallel' && consultReleases.get(item.id)?.replyReady?.())
+		(plan?.routing === 'parallel' && routingReleases.get(item.id)?.replyReady?.())
 	) {
-		const release = consultReleases.get(item.id);
-		if (!release || release.sourceAgentId !== sourceAgentId || release.sourceTabId !== item.tabId)
+		const release = routingReleases.get(item.id);
+		if (
+			!release?.localPrompt ||
+			release.sourceAgentId !== sourceAgentId ||
+			release.sourceTabId !== item.tabId
+		)
 			throw new Error('DispatchRoutingReleaseUnavailable');
 		return release.localPrompt();
 	}
@@ -141,17 +145,17 @@ export function queueLocalPrompt(
 
 /** Native release closures only. This map is intentionally process-local: reading
  * an old admission after a restart cannot reconstruct permission to send. */
-const consultReleases = new Map<
+const routingReleases = new Map<
 	string,
 	{
 		sourceAgentId: string;
 		sourceTabId: string;
 		generation: string;
 		guard(): void;
-		localPrompt(): string;
+		localPrompt?(): string;
 		replyReady?(): boolean;
 		revoke(): void;
-		start(
+		start?(
 			targetAgentId: string,
 			opts: Omit<
 				import('../cross-agent/cross-agent-router').StartCrossAgentRequestOptions,
@@ -161,18 +165,29 @@ const consultReleases = new Map<
 	}
 >();
 
-export function bindQueueConsultRelease(
+export function bindQueueRoutingRelease(
 	dispatchId: string,
-	release: NonNullable<ReturnType<typeof consultReleases.get>>
+	release: NonNullable<ReturnType<typeof routingReleases.get>>
 ): void {
 	sweepQueueConsultReleases();
 	release.guard();
 	forgetQueueConsultRelease(dispatchId);
 	// Fail closed under pressure: eviction removes only future send authority,
 	// never the ConsultService's supervision of already claimed children.
-	while (consultReleases.size >= 256)
-		forgetQueueConsultRelease(consultReleases.keys().next().value!);
-	consultReleases.set(dispatchId, release);
+	while (routingReleases.size >= 256)
+		forgetQueueConsultRelease(routingReleases.keys().next().value!);
+	routingReleases.set(dispatchId, release);
+}
+
+/** Consult transport is installed only for routing modes with consult steps. */
+export function bindQueueConsultRelease(
+	dispatchId: string,
+	release: NonNullable<ReturnType<typeof routingReleases.get>> & {
+		localPrompt(): string;
+		start: NonNullable<NonNullable<ReturnType<typeof routingReleases.get>>['start']>;
+	}
+): void {
+	bindQueueRoutingRelease(dispatchId, release);
 }
 
 export function startReleasedQueueConsult(
@@ -186,9 +201,9 @@ export function startReleasedQueueConsult(
 	>
 ): Promise<{ requestId: string }> {
 	sweepQueueConsultReleases();
-	const release = consultReleases.get(locator.dispatchId);
+	const release = routingReleases.get(locator.dispatchId);
 	if (
-		!release ||
+		!release?.start ||
 		release.sourceAgentId !== sourceAgentId ||
 		release.sourceTabId !== sourceTabId ||
 		release.generation !== locator.generation
@@ -198,21 +213,20 @@ export function startReleasedQueueConsult(
 }
 
 export function forgetQueueConsultRelease(dispatchId: string): boolean {
-	const release = consultReleases.get(dispatchId);
-	consultReleases.delete(dispatchId);
+	const release = routingReleases.get(dispatchId);
+	routingReleases.delete(dispatchId);
 	release?.revoke();
 	return !!release;
 }
 
 /** Called by existing supervisor health/reconcile/stop boundaries; no new timer.
  * Expired, cancelled or invalid policy releases cannot retain service closures. */
-// Existing supervisor stopAll invalidates delayed native releases too, without
-// registering non-consult closures in the consult transport registry.
+// Lifecycle entries cover all modes; only consult modes carry a start capability.
 export let queueRoutingEpoch = 0;
 
 export function sweepQueueConsultReleases(dispose = false): void {
 	if (dispose) queueRoutingEpoch++;
-	for (const [id, release] of consultReleases) {
+	for (const [id, release] of routingReleases) {
 		if (dispose) {
 			forgetQueueConsultRelease(id);
 			continue;
