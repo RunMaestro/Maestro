@@ -16,6 +16,8 @@ import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
+import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -32,6 +34,24 @@ export class PtySpawner {
 	 * Spawn a PTY process for a session
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		try {
+			return withWorktreeTurnActivity(
+				(_start, observe) => this.spawnAdmitted(config, observe),
+				(error) => captureException(error)
+			);
+		} catch (error) {
+			return {
+				pid: -1,
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+	}
+
+	private spawnAdmitted(
+		config: ProcessConfig,
+		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+	): SpawnResult {
 		const {
 			sessionId,
 			toolType,
@@ -147,12 +167,14 @@ export class PtySpawner {
 			// Install before fallible registration/data setup. If observing exit
 			// fails, retain activity: a failed spawn result cannot prove termination.
 			ptyProcess.onExit((event) => {
-				exited = true;
-				try {
-					reportExit?.(event);
-				} finally {
-					if (setupSettled) releaseActivity?.();
-				}
+				return withWorktreeTurnActivity(() => {
+					exited = true;
+					try {
+						reportExit?.(event);
+					} finally {
+						if (setupSettled) releaseActivity?.();
+					}
+				}, captureException);
 			});
 
 			const managedProcess: ManagedProcess = {
@@ -198,30 +220,32 @@ export class PtySpawner {
 
 			// Handle output
 			ptyProcess.onData((data) => {
-				if (isSuperseded()) return;
-				if (isTerminalTab) {
-					// Raw pass-through for xterm.js terminal tabs - no filtering
-					if (data.length > 0) {
-						logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
+				return withWorktreeTurnActivity(() => {
+					if (isSuperseded()) return;
+					if (isTerminalTab) {
+						// Raw pass-through for xterm.js terminal tabs - no filtering
+						if (data.length > 0) {
+							logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
+								sessionId,
+								pid: ptyProcess.pid,
+								dataLength: data.length,
+							});
+							this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
+						}
+					} else {
+						const managedProc = this.processes.get(sessionId);
+						const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
+						logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
 							sessionId,
 							pid: ptyProcess.pid,
-							dataLength: data.length,
+							dataPreview: cleanedData.substring(0, 100),
 						});
-						this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
+						// Only emit if there's actual content after filtering
+						if (cleanedData.trim()) {
+							this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
+						}
 					}
-				} else {
-					const managedProc = this.processes.get(sessionId);
-					const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
-					logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
-						sessionId,
-						pid: ptyProcess.pid,
-						dataPreview: cleanedData.substring(0, 100),
-					});
-					// Only emit if there's actual content after filtering
-					if (cleanedData.trim()) {
-						this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
-					}
-				}
+				}, captureException);
 			});
 
 			reportExit = ({ exitCode, signal }) => {
@@ -284,19 +308,25 @@ export class PtySpawner {
 
 			return { pid: ptyProcess.pid, success: true };
 		} catch (error) {
-			logger.error('[ProcessManager] Failed to spawn PTY process', 'ProcessManager', {
-				error: String(error),
-				sessionId,
-				toolType,
-				command,
-				args,
-				cwd,
-				shell: shell ?? '(none)',
-				isTerminal,
-				// Include errno/code when available (e.g., ENOENT, EMFILE)
-				...(error instanceof Error && 'code' in error && { code: (error as any).code }),
-				...(error instanceof Error && 'errno' in error && { errno: (error as any).errno }),
-			});
+			try {
+				logger.error('[ProcessManager] Failed to spawn PTY process', 'ProcessManager', {
+					error: String(error),
+					sessionId,
+					toolType,
+					command,
+					args,
+					cwd,
+					shell: shell ?? '(none)',
+					isTerminal,
+					// Include errno/code when available (e.g., ENOENT, EMFILE)
+					...(error instanceof Error && 'code' in error && { code: (error as any).code }),
+					...(error instanceof Error && 'errno' in error && { errno: (error as any).errno }),
+				});
+			} finally {
+				// Preserve the failed spawn result while diagnostics settle independently
+				// of setup, native exit and any failure in the logger above.
+				void observeCompletion(Promise.reject(error)).catch(() => {});
+			}
 			return { pid: -1, success: false };
 		} finally {
 			setupSettled = true;

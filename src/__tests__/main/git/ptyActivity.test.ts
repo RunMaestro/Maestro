@@ -11,6 +11,7 @@ vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/utils/terminalFilter', () => ({ stripControlSequences: vi.fn() }));
 vi.mock('../../../main/process-manager/utils/envBuilder', () => ({
 	buildPtyTerminalEnv: vi.fn(() => ({})),
@@ -23,6 +24,8 @@ vi.mock('../../../main/process-manager/utils/pathResolver', () => ({
 vi.mock('../../../shared/platformDetection', () => ({ isWindows: vi.fn(() => false) }));
 
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
+import { stripControlSequences } from '../../../main/utils/terminalFilter';
 import { resolveShellPath } from '../../../main/process-manager/utils/pathResolver';
 import { isWindows } from '../../../shared/platformDetection';
 import {
@@ -47,7 +50,7 @@ function makeNative(pid = 12345) {
 	return {
 		pid,
 		events,
-		onData: vi.fn(),
+		onData: vi.fn((cb: (data: string) => void) => events.on('native-data', cb)),
 		onExit: vi.fn((cb: (event: { exitCode: number; signal?: number }) => void) => {
 			events.on('native-exit', cb);
 		}),
@@ -76,7 +79,9 @@ async function reserve(root = target) {
 }
 
 async function blocked() {
-	expect(await gate.reserveWorktreeCleanup(target)).toMatchObject({
+	const hold = await gate.reserveWorktreeCleanup(target);
+	if (hold.status === 'reserved-partially') hold.release();
+	expect(hold).toMatchObject({
 		status: 'blocked',
 		blockers: [{ code: 'mutation-busy' }],
 	});
@@ -85,6 +90,7 @@ async function blocked() {
 beforeEach(async () => {
 	vi.resetModules();
 	vi.resetAllMocks();
+	vi.mocked(stripControlSequences).mockImplementation((data) => data);
 	vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 	vi.mocked(resolveShellPath).mockReturnValue('/bin/bash');
 	vi.mocked(isWindows).mockReturnValue(false);
@@ -109,6 +115,8 @@ describe('standalone PTY activity', () => {
 			expect(spawner.spawn(config())).toMatchObject({ success: false });
 			for (const probe of [resolveShellPath, buildPtyTerminalEnv, collectMaestroEnvVars, pty.spawn])
 				expect(probe).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
 			expect(fs.realpath).not.toHaveBeenCalled();
 			expect(processes.size).toBe(0);
 			hold.release();
@@ -231,7 +239,7 @@ describe('standalone PTY activity', () => {
 		expect(processes.get(config().sessionId)?.pid).toBe(native.pid);
 		native.events.emit('native-exit', { exitCode: 0 });
 		const hold = await reserve();
-		old.events.emit('native-exit', { exitCode: 0 });
+		expect(() => old.events.emit('native-exit', { exitCode: 0 })).toThrow('reserved');
 		expect(spawner.spawn(config()).success).toBe(false);
 		hold.release();
 	});
@@ -247,6 +255,181 @@ describe('standalone PTY activity', () => {
 		await blocked();
 		native.events.emit('native-exit', { exitCode: 0 });
 		(await reserve()).release();
+	});
+
+	it.each(['raw data', 'filtered data', 'exit'])(
+		'refuses retained %s before side effects and permits retry after release',
+		async (stage) => {
+			expect(
+				spawner.spawn(config(stage === 'filtered data' ? { sessionId: 'agent-ai' } : {})).success
+			).toBe(true);
+			native.events.emit('native-exit', { exitCode: 0 });
+			const callback = () =>
+				native.events.emit(
+					stage === 'exit' ? 'native-exit' : 'native-data',
+					stage === 'exit' ? { exitCode: 0 } : 'late output'
+				);
+			for (const root of [target, path.join(target, 'child'), path.resolve('unrelated')]) {
+				const hold = await reserve(root);
+				for (const probe of [
+					logger.debug,
+					logger.warn,
+					stripControlSequences,
+					buffer.emitDataBuffered,
+					buffer.flushDataBuffer,
+					captureException,
+				])
+					vi.mocked(probe).mockClear();
+				expect(callback).toThrow('reserved');
+				for (const probe of [
+					logger.debug,
+					logger.warn,
+					stripControlSequences,
+					buffer.emitDataBuffered,
+					buffer.flushDataBuffer,
+					captureException,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+				hold.release();
+				expect(callback).not.toThrow();
+			}
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['setup', 'data', 'exit'])(
+		'owns asynchronous %s diagnostics through resolution, rejection or throw',
+		async (stage) => {
+			for (const outcome of ['resolve', 'reject', 'throw']) {
+				const failure = Error(`${stage} failure`);
+				const reporting = Promise.withResolvers<void>();
+				void reporting.promise.catch(() => {});
+				vi.mocked(captureException).mockClear();
+				vi.mocked(captureException).mockImplementationOnce(() => {
+					if (outcome === 'throw') throw Error('reporter threw');
+					return reporting.promise;
+				});
+				const fail = () => {
+					throw failure;
+				};
+				if (stage === 'setup') {
+					vi.mocked(resolveShellPath).mockImplementationOnce(fail);
+					expect(spawner.spawn(config())).toEqual({ pid: -1, success: false });
+				} else {
+					expect(spawner.spawn(config()).success).toBe(true);
+					if (stage === 'data') buffer.emitDataBuffered.mockImplementationOnce(fail);
+					else buffer.flushDataBuffer.mockImplementationOnce(fail);
+					expect(() =>
+						native.events.emit(
+							stage === 'data' ? 'native-data' : 'native-exit',
+							stage === 'data' ? 'output' : { exitCode: 0 }
+						)
+					).toThrow(failure);
+					if (stage === 'data') native.events.emit('native-exit', { exitCode: 0 });
+				}
+				await vi.waitFor(() => expect(captureException).toHaveBeenCalledExactlyOnceWith(failure));
+				if (outcome !== 'throw') await blocked();
+				if (outcome === 'reject') reporting.reject(Error('reporter rejected'));
+				else reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+				expect(captureException).toHaveBeenCalledOnce();
+				// Retained callbacks are invoked explicitly above. Each iteration owns
+				// one PTY and cannot accumulate another active native listener.
+				native = makeNative();
+				vi.mocked(pty.spawn).mockReturnValue(native as unknown as pty.IPty);
+			}
+		}
+	);
+
+	it.each([false, true])(
+		'keeps independent native and diagnostic ownership (native first: %s)',
+		async (nativeFirst) => {
+			expect(spawner.spawn(config()).success).toBe(true);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			buffer.emitDataBuffered.mockImplementationOnce(() => {
+				throw Error('data consumer');
+			});
+			expect(() => native.events.emit('native-data', 'output')).toThrow('data consumer');
+			if (nativeFirst) native.events.emit('native-exit', { exitCode: 0 });
+			else {
+				reporting.resolve();
+				await Promise.resolve();
+			}
+			await blocked();
+			if (nativeFirst) reporting.resolve();
+			else native.events.emit('native-exit', { exitCode: 0 });
+			await vi.waitFor(async () => (await reserve()).release());
+		}
+	);
+
+	it('retains setup and logger diagnostics when failure logging throws', async () => {
+		const failure = Error('shell setup');
+		const logging = Error('logger failed');
+		vi.mocked(resolveShellPath).mockImplementationOnce(() => {
+			throw failure;
+		});
+		vi.mocked(logger.error).mockImplementationOnce(() => {
+			throw logging;
+		});
+		const reporting = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+		vi.mocked(captureException)
+			.mockReturnValueOnce(reporting[0].promise)
+			.mockReturnValueOnce(reporting[1].promise);
+		expect(spawner.spawn(config())).toMatchObject({ pid: -1, success: false });
+		await vi.waitFor(() => expect(captureException).toHaveBeenCalledTimes(2));
+		expect(captureException).toHaveBeenCalledWith(failure);
+		expect(captureException).toHaveBeenCalledWith(logging);
+		reporting[0].resolve();
+		await blocked();
+		reporting[1].resolve();
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it('blocks a pending reservation when retained data begins reporting', async () => {
+		expect(spawner.spawn(config()).success).toBe(true);
+		native.events.emit('native-exit', { exitCode: 0 });
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		buffer.emitDataBuffered.mockImplementationOnce(() => {
+			throw Error('late data');
+		});
+		expect(() => native.events.emit('native-data', 'output')).toThrow('late data');
+		canonical.resolve(target);
+		const result = await reservation;
+		if (result.status === 'reserved-partially') result.release();
+		expect(result.status).toBe('blocked');
+		await blocked();
+		reporting.resolve();
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it('retains concurrent diagnostics and a same-session successor independently', async () => {
+		expect(spawner.spawn(config()).success).toBe(true);
+		const old = native;
+		const reporting = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+		vi.mocked(captureException)
+			.mockReturnValueOnce(reporting[0].promise)
+			.mockReturnValueOnce(reporting[1].promise);
+		buffer.emitDataBuffered.mockImplementation(() => {
+			throw Error('consumer');
+		});
+		for (let i = 0; i < 2; i++)
+			expect(() => old.events.emit('native-data', 'output')).toThrow('consumer');
+		native = makeNative(23456);
+		expect(spawner.spawn(config()).success).toBe(true);
+		old.events.emit('native-exit', { exitCode: 0 });
+		reporting[0].resolve();
+		await blocked();
+		native.events.emit('native-exit', { exitCode: 0 });
+		await blocked();
+		reporting[1].resolve();
+		await vi.waitFor(async () => (await reserve()).release());
+		expect(processes.size).toBe(0);
 	});
 
 	it('shares sync/async global admission with independent idempotent releases', async () => {
