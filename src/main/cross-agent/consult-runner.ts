@@ -21,6 +21,8 @@ import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 import type { ConsultRunner } from '../../shared/maestro-lib/agents/consult';
 import type { AgentError } from '../../shared/types';
 import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
+import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
+import { captureException } from '../utils/sentry';
 
 interface RunningConsult {
 	/** The target's stream-json output so far. Each `data` event is a delta. */
@@ -45,29 +47,60 @@ export function createDesktopConsultRunner(
 			// Buffer the target's output; hand the text over once it exits. The ProcessManager flushes
 			// the final delta BEFORE it emits 'exit', so by the time onExit fires the buffer is whole.
 			const onData = (sid: string, data: string): void => {
-				if (sid === sessionId) run.buffer += data;
+				if (sid !== sessionId) return;
+				withWorktreeTurnActivity(
+					() => {
+						run.buffer += data;
+					},
+					(error) => void captureException(error)
+				);
 			};
 			// Any liveness signal for THIS consult restarts the silence budget. Separate from `onData`
 			// because most of these events carry no text we want to buffer - they only prove the
 			// target is still working (a claude-code consult emits `data` once, at the very end).
 			const onLiveness = (sid: string): void => {
-				if (sid === sessionId) observer.onActivity();
+				if (sid !== sessionId) return;
+				withWorktreeTurnActivity(
+					() => observer.onActivity(),
+					(error) => void captureException(error)
+				);
 			};
 			const onSessionId = (sid: string, agentSessionId: string): void => {
-				if (sid === sessionId) observer.onSessionId(agentSessionId);
+				if (sid !== sessionId) return;
+				withWorktreeTurnActivity(
+					() => observer.onSessionId(agentSessionId),
+					(error) => void captureException(error)
+				);
 			};
 			const onError = (sid: string, error: AgentError): void => {
-				if (sid === sessionId && error.source === 'host-supervision') run.error ??= error.message;
+				if (sid !== sessionId) return;
+				withWorktreeTurnActivity(
+					() => {
+						if (error.source === 'host-supervision') run.error ??= error.message;
+					},
+					(failure) => void captureException(failure)
+				);
 			};
 			const onExit = (sid: string, code: number): void => {
 				if (sid !== sessionId) return;
-				run.detach();
-				runs.delete(sessionId);
-				observer.onEnd({
-					exitCode: code,
-					error: run.error,
-					readText: () => extractTextFromStreamJson(run.buffer, spawn.providerId),
-				});
+				// Events and deferred parsing outlive the start request's activity.
+				// Each owns its callback scope; native close is tracked separately.
+				withWorktreeTurnActivity(
+					() => {
+						run.detach();
+						runs.delete(sessionId);
+						observer.onEnd({
+							exitCode: code,
+							error: run.error,
+							readText: () =>
+								withWorktreeTurnActivity(
+									() => extractTextFromStreamJson(run.buffer, spawn.providerId),
+									(error) => void captureException(error)
+								),
+						});
+					},
+					(error) => void captureException(error)
+				);
 			};
 
 			run.detach = () => {

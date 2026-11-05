@@ -15,10 +15,13 @@ vi.mock('child_process', async (original) => ({
 vi.mock('../../../main/group-chat/spawnGroupChatAgent', () => ({ spawnGroupChatAgent: vi.fn() }));
 vi.mock('../../../main/group-chat/spawn-config', () => ({ toSpawnGroupChatAgentConfig: vi.fn() }));
 vi.mock('../../../main/group-chat/output-parser', () => ({ extractTextFromStreamJson: vi.fn() }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import { spawnGroupChatAgent } from '../../../main/group-chat/spawnGroupChatAgent';
 import { toSpawnGroupChatAgentConfig } from '../../../main/group-chat/spawn-config';
 import { extractTextFromStreamJson } from '../../../main/group-chat/output-parser';
+import { captureException } from '../../../main/utils/sentry';
+import { AGENT_LIVENESS_EVENTS } from '../../../main/utils/agent-liveness';
 
 describe('desktop consult start and stop activity', () => {
 	const target = path.resolve('consult-target');
@@ -307,4 +310,261 @@ describe('desktop consult start and stop activity', () => {
 			await idle();
 		}
 	);
+
+	describe('callbacks after start settles', () => {
+		const events = ['data', 'thinking-chunk', 'session-id', 'agent-error', 'exit'] as const;
+		const payloads = {
+			data: 'answer',
+			'thinking-chunk': undefined,
+			'session-id': 'provider-session',
+			'agent-error': { source: 'host-supervision', message: 'host failure' },
+			exit: 1,
+		};
+
+		it.each(events)('refuses matching %s before mutation, observers or detach', async (event) => {
+			await runner.start(spawn, observer);
+			const off = vi.spyOn(manager, 'off');
+			const hold = await reserve();
+			expect(() => manager.emit(event, spawn.processId, payloads[event])).toThrow(/reserved/);
+			for (const effect of [off, ...Object.values(observer), extractTextFromStreamJson])
+				expect(effect).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+			expect(manager.listenerCount('exit')).toBe(1);
+			if (hold.status === 'reserved-partially') hold.release();
+			manager.emit('exit', spawn.processId, 0);
+			const end = vi.mocked(observer.onEnd).mock.calls[0][0];
+			expect(end.error).toBeUndefined();
+			expect(end.readText()).toBe('');
+			await idle();
+		});
+
+		it('ignores unrelated events under reservation without inspecting their payloads', async () => {
+			await runner.start(spawn, observer);
+			await reserve();
+			const inspect = vi.fn(() => {
+				throw new Error('unrelated payload inspected');
+			});
+			for (const event of events)
+				expect(() =>
+					manager.emit(event, 'unrelated', new Proxy({}, { get: inspect }))
+				).not.toThrow();
+			expect(inspect).not.toHaveBeenCalled();
+			for (const effect of [...Object.values(observer), captureException])
+				expect(effect).not.toHaveBeenCalled();
+			expect(active).toBe(0);
+		});
+
+		it.each(AGENT_LIVENESS_EVENTS)('admits the %s observer after start', async (event) => {
+			const observations: number[] = [];
+			vi.mocked(observer.onActivity).mockImplementation(() => observations.push(active));
+			await runner.start(spawn, observer);
+			manager.emit(event, spawn.processId, 'delta');
+			expect(observations).toEqual([1]);
+			await idle();
+		});
+
+		it('admits buffer coercion, error inspection, session dispatch and exit cleanup', async () => {
+			await runner.start(spawn, observer);
+			const observations: number[] = [];
+			manager.emit('data', spawn.processId, {
+				toString: () => {
+					observations.push(active);
+					return 'answer';
+				},
+			});
+			manager.emit('agent-error', spawn.processId, {
+				get source() {
+					observations.push(active);
+					return 'host-supervision';
+				},
+				get message() {
+					observations.push(active);
+					return 'first failure';
+				},
+			});
+			vi.mocked(observer.onSessionId).mockImplementation(() => observations.push(active));
+			manager.emit('session-id', spawn.processId, 'provider-session');
+			const off = manager.off.bind(manager);
+			vi.spyOn(manager, 'off').mockImplementation((event, listener) => {
+				observations.push(active);
+				return off(event, listener);
+			});
+			vi.mocked(observer.onEnd).mockImplementation((end) => {
+				observations.push(active);
+				expect(end).toMatchObject({ exitCode: 2, error: 'first failure' });
+				expect(end.readText()).toBe('answer');
+			});
+			manager.emit('exit', spawn.processId, 2);
+			expect(observations.length).toBeGreaterThan(5);
+			expect(observations.every((n) => n === 1)).toBe(true);
+			expect(manager.eventNames()).toEqual([]);
+			await idle();
+		});
+
+		it.each(['activity', 'session', 'error payload', 'detach', 'end', 'parser'])(
+			'preserves the original %s exception and releases callback activity',
+			async (failure) => {
+				await runner.start(spawn, observer);
+				const error = new Error(`${failure} failed`);
+				const fail = () => {
+					expect(active).toBeGreaterThan(0);
+					throw error;
+				};
+				vi.mocked(captureException).mockImplementation(() => {
+					throw new Error('diagnostic failed');
+				});
+				let invoke: () => unknown;
+				if (failure === 'activity') {
+					vi.mocked(observer.onActivity).mockImplementation(fail);
+					invoke = () => manager.emit('thinking-chunk', spawn.processId);
+				} else if (failure === 'session') {
+					vi.mocked(observer.onSessionId).mockImplementation(fail);
+					invoke = () => manager.emit('session-id', spawn.processId, 'id');
+				} else if (failure === 'error payload') {
+					invoke = () =>
+						manager.emit('agent-error', spawn.processId, {
+							get source() {
+								return fail();
+							},
+						});
+				} else if (failure === 'parser') {
+					manager.emit('exit', spawn.processId, 0);
+					vi.mocked(extractTextFromStreamJson).mockImplementation(fail);
+					invoke = vi.mocked(observer.onEnd).mock.calls[0][0].readText;
+				} else {
+					if (failure === 'detach') vi.spyOn(manager, 'off').mockImplementationOnce(fail);
+					else vi.mocked(observer.onEnd).mockImplementation(fail);
+					invoke = () => manager.emit('exit', spawn.processId, 0);
+				}
+				expect(invoke).toThrow(error);
+				expect(captureException).toHaveBeenCalledWith(error);
+				await idle();
+			}
+		);
+
+		it.each([target, path.join(target, 'child'), path.resolve('unrelated')])(
+			'refuses delayed parsing under %s before provider lookup or parser effects',
+			async (root) => {
+				const provider = vi.fn(() => 'codex');
+				await runner.start(
+					{
+						...spawn,
+						get providerId() {
+							return provider();
+						},
+					},
+					observer
+				);
+				manager.emit('data', spawn.processId, 'answer');
+				manager.emit('exit', spawn.processId, 0);
+				const end = vi.mocked(observer.onEnd).mock.calls[0][0];
+				provider.mockClear();
+				const hold = await reserve(root);
+				expect(end.readText).toThrow(/reserved/);
+				expect(provider).not.toHaveBeenCalled();
+				expect(extractTextFromStreamJson).not.toHaveBeenCalled();
+				if (hold.status === 'reserved-partially') hold.release();
+				const observations: number[] = [];
+				provider.mockImplementation(() => {
+					observations.push(active);
+					return 'codex';
+				});
+				vi.mocked(extractTextFromStreamJson).mockImplementation((text) => {
+					observations.push(active);
+					return text;
+				});
+				expect(end.readText()).toBe('answer');
+				expect(observations).toEqual([1, 1]);
+				await idle();
+			}
+		);
+
+		it('guards callbacks already captured by an emitter after stop detaches them', async () => {
+			await runner.start(spawn, observer);
+			const callbacks = events.map((event) => manager.listeners(event));
+			runner.stop(spawn.processId);
+			await reserve();
+			for (let i = 0; i < events.length; i++)
+				for (const callback of callbacks[i])
+					expect(() => callback(spawn.processId, payloads[events[i]])).toThrow(/reserved/);
+			for (const effect of [...Object.values(observer), captureException])
+				expect(effect).not.toHaveBeenCalled();
+		});
+
+		it('keeps nested callbacks independent when native close occurs during exit parsing', async () => {
+			await runner.start(spawn, observer);
+			turns.withWorktreeTurnActivity(
+				(_, __, launch) => launch('agent', [], {}),
+				() => {}
+			);
+			await blocked();
+			const observations: number[] = [];
+			vi.mocked(observer.onEnd).mockImplementation((end) => {
+				observations.push(active);
+				expect(end.readText()).toBe('answer');
+				observations.push(active);
+			});
+			vi.mocked(extractTextFromStreamJson).mockImplementation(() => {
+				observations.push(active);
+				children[0].emit('close');
+				observations.push(active);
+				return 'answer';
+			});
+			manager.emit('exit', spawn.processId, 0);
+			expect(observations).toEqual([2, 3, 2, 1]);
+			await idle();
+		});
+
+		it('keeps a callback admitted through reentrant stop and an observer exception', async () => {
+			await runner.start(spawn, observer);
+			const error = new Error('observer failed after stop');
+			const observations: number[] = [];
+			manager.kill.mockImplementation(() => observations.push(active));
+			vi.mocked(observer.onActivity).mockImplementation(() => {
+				observations.push(active);
+				runner.stop(spawn.processId);
+				observations.push(active);
+				throw error;
+			});
+			expect(() => manager.emit('thinking-chunk', spawn.processId)).toThrow(error);
+			expect(observations).toEqual([1, 2, 1]);
+			expect(manager.eventNames()).toEqual([]);
+			await idle();
+		});
+
+		it('does not retire another consult or native lifetime when one exit callback finishes', async () => {
+			const other = { ...spawn, processId: 'second' };
+			const second: ConsultObserver = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
+			for (const [input, listener] of [
+				[spawn, observer],
+				[other, second],
+			] as const) {
+				await runner.start(input, listener);
+				turns.withWorktreeTurnActivity(
+					(_, __, launch) => launch('agent', [], {}),
+					() => {}
+				);
+			}
+			const observations: number[] = [];
+			vi.mocked(observer.onEnd).mockImplementation(() => {
+				observations.push(active);
+				children[0].emit('close');
+				observations.push(active);
+			});
+			manager.emit('exit', spawn.processId, 0);
+			expect(observations).toEqual([3, 2]);
+			await blocked();
+			manager.emit('session-id', other.processId, 'second-provider');
+			expect(second.onSessionId).toHaveBeenCalledExactlyOnceWith('second-provider');
+			manager.emit('exit', other.processId, 0);
+			expect(second.onEnd).toHaveBeenCalledOnce();
+			expect(manager.eventNames()).toEqual([]);
+			await blocked();
+			children[1].emit('error', new Error('not close'));
+			children[1].emit('exit', 0);
+			await blocked();
+			children[1].emit('close');
+			await idle();
+		});
+	});
 });
