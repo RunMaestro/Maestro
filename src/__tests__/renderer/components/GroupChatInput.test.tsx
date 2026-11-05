@@ -15,6 +15,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
@@ -1151,6 +1152,61 @@ describe('GroupChatInput', () => {
 
 				fireEvent.keyDown(textarea, { key: 'Tab' });
 				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
+			it('completes a dotted agent name with the caret mid-token', () => {
+				const sessions = [createMockSession('session-1', 'RunMaestro.ai', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@RunMaestr.ai');
+				textarea.selectionStart = textarea.selectionEnd = 10;
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@RunMaestro.ai ');
+			});
+
+			it('keeps the sentence full stop when completing a dotted agent name', () => {
+				const sessions = [createMockSession('session-1', 'RunMaestro.ai', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@RunMaestro.ai.');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@RunMaestro.ai .');
+			});
+
+			it('never offers or completes a dormant Pianola agent', () => {
+				useSettingsStore.setState({
+					encoreFeatures: {
+						...useSettingsStore.getState().encoreFeatures,
+						pianola: false,
+					},
+				} as any);
+				const sessions = [
+					createMockSession('session-1', 'Pia', 'claude-code'),
+					{
+						...createMockSession('session-2', 'Pianola', 'claude-code'),
+						isPianola: true,
+					} as Session,
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@pia');
+
+				expect(screen.getByText('Pia')).toBeInTheDocument();
+				expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Pia ');
 			});
 
 			it('does not complete group mentions on Tab with picker closed', () => {

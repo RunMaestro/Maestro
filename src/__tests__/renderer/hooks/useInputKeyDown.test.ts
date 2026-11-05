@@ -2721,5 +2721,116 @@ describe('IME composition leaves the AI composer branches alone', () => {
 			expect(mockInputContext.setAtMentionCategory).toHaveBeenCalledWith('agents');
 			expect(deps.setInputValue).not.toHaveBeenCalled();
 		});
+
+		it('completes a dotted agent name with the caret mid-token', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-dot',
+						name: 'RunMaestro.ai',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const textarea = document.createElement('textarea');
+			textarea.value = 'ask @RunMaestr.ai';
+			textarea.selectionStart = textarea.selectionEnd = 14;
+
+			const deps = createMockDeps({
+				inputValue: 'ask @RunMaestr.ai',
+				inputRef: { current: textarea },
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @RunMaestro.ai ');
+		});
+
+		it('keeps the sentence full stop when completing a dotted name', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-dot',
+						name: 'RunMaestro.ai',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({ inputValue: 'ask @RunMaestro.ai.' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @RunMaestro.ai .');
+		});
+
+		it('never completes or counts a dormant Pianola agent', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSettingsStore.setState({
+				encoreFeatures: {
+					...useSettingsStore.getState().encoreFeatures,
+					pianola: false,
+				},
+			} as any);
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-live',
+						name: 'Pia',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-dormant',
+						name: 'Pianola',
+						toolType: 'codex',
+						inputMode: 'ai',
+						isPianola: true,
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({ inputValue: 'ask @pia' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Pia ');
+			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		});
 	});
 });

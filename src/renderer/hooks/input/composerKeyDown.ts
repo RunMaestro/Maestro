@@ -38,7 +38,12 @@ import { useUIStore } from '../../stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { isImeComposing } from '../../utils/ime';
 import { getAtMentionTrigger } from '../../../shared/maestro-lib/mentions/trigger';
-import { mentionQuoteChar, stripMentionQuotes } from '../../../shared/mentionPatterns';
+import {
+	mentionBodyEndAt,
+	mentionQuoteChar,
+	stripMentionQuotes,
+	trimMentionBodyPunctuation,
+} from '../../../shared/mentionPatterns';
 import type { AgentMentionSuggestion } from './useAgentMentionCompletion';
 
 interface WindowIsolation {
@@ -176,23 +181,25 @@ export function findPartialMentionAtCursor(
 	if (!trigger) return null;
 
 	const openQuote = mentionQuoteChar(trigger.filter);
-	let tail = '';
-	let idx = cursorPosition;
 	if (openQuote) {
+		let tail = '';
+		let idx = cursorPosition;
 		while (idx < value.length && value[idx] !== openQuote && value[idx] !== '\n') {
 			tail += value[idx];
 			idx++;
 		}
-	} else {
-		while (idx < value.length && !/[\s.,;:!?)\]}>'"]/.test(value[idx])) {
-			tail += value[idx];
-			idx++;
-		}
+		return { startIndex: trigger.startIndex, filter: trigger.filter + tail };
 	}
-	const rawFilter = trigger.filter + tail;
+
+	// Walk the rest of the bare token by code point. A dot is a NAME character
+	// (`@RunMaestro.ai`), so the scan must not stop at it; only sentence
+	// punctuation that ends the token is trimmed back off, leaving it in the
+	// draft.
+	const bodyEnd = mentionBodyEndAt(value, cursorPosition);
+	const rawFilter = trigger.filter + value.slice(cursorPosition, bodyEnd);
 	return {
 		startIndex: trigger.startIndex,
-		filter: rawFilter,
+		filter: trimMentionBodyPunctuation(rawFilter),
 	};
 }
 
