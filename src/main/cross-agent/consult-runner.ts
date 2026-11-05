@@ -9,7 +9,8 @@
  * output, and report liveness, the provider session id and the end to the service.
  *
  * The emitter is shared app-wide, so every listener filters on this consult's process id, and
- * every listener is removed once the consult ends, is stopped, or fails to start.
+ * every listener is removed once the consult ends or fails to start. Managed Stop retains
+ * observation until the matching native exit; requesting a kill is not terminal evidence.
  */
 
 import { captureException } from '../utils/sentry';
@@ -148,8 +149,12 @@ export function createDesktopConsultRunner(
 
 		stop(processId) {
 			const run = runs.get(processId);
-			run?.detach();
-			runs.delete(processId);
+			// A managed branch still needs its authentic exit after the service has displayed
+			// cancellation. Keep the observer (including for a lost spawn acknowledgement).
+			if (!nativeAdmission) {
+				run?.detach();
+				runs.delete(processId);
+			}
 			try {
 				processManager.kill(processId);
 			} catch {

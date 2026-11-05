@@ -1,3 +1,4 @@
+import * as systemPromptDelivery from '../../../../main/utils/system-prompt-delivery';
 import type { PianolaQueueItem } from '../../../../shared/pianola/pianola-dispatch';
 import { registerProcessHandlers } from '../../../../main/ipc/handlers/process';
 import * as promptManager from '../../../../main/prompt-manager';
@@ -1896,6 +1897,12 @@ describe('persistence IPC handlers', () => {
 			(['parallel', 'only', 'consult-first', 'handoff'] as const).flatMap((mode) =>
 				[
 					'normal',
+					'stop-native',
+					'stop-sync-native',
+					'stop-kill-error-native',
+					'idle-native',
+					'max-native',
+					'stop-unknown-native',
 					'long-output',
 					'long-unicode',
 					'oversized-reply',
@@ -1982,7 +1989,7 @@ describe('persistence IPC handlers', () => {
 					callerAgentId: 'agent',
 					prompt: record.queuePrepare!.item.text,
 					pendingAdmissionId: f.input.dispatchId,
-					timeoutMs: 60000,
+					timeoutMs: scenario.endsWith('-native') ? 60 * 60 * 1000 : 60000,
 				});
 				record.queuePrepare!.callbackId = callback.callbackId;
 				record.queuePrepare!.callbackProof = {
@@ -1992,7 +1999,7 @@ describe('persistence IPC handlers', () => {
 						callerAgentId: 'agent',
 						prompt: record.queuePrepare!.item.text,
 						pendingAdmissionId: f.input.dispatchId,
-						timeoutMs: 60000,
+						timeoutMs: scenario.endsWith('-native') ? 60 * 60 * 1000 : 60000,
 					},
 					expiresAt: callback.expiresAt,
 					owner: f.snapshot.owners[0],
@@ -2003,7 +2010,8 @@ describe('persistence IPC handlers', () => {
 				const owner = { id: 7, isDestroyed: () => destroyed };
 				const peerManager = Object.assign(new EventEmitter(), {
 					spawn: vi.fn((config: { sessionId: string }) => {
-						if (scenario === 'partial-unknown') throw new Error('Spawn acknowledgement lost');
+						if (scenario === 'partial-unknown' || scenario === 'stop-unknown-native')
+							throw new Error('Spawn acknowledgement lost');
 						if (scenario === 'partial-unknown-false' && peerManager.spawn.mock.calls.length === 2)
 							return { success: false, pid: -1 };
 						if (scenario === 'fast') {
@@ -2014,6 +2022,11 @@ describe('persistence IPC handlers', () => {
 					}),
 					kill: vi.fn(),
 				});
+				peerManager.kill.mockImplementation((...args: unknown[]) => {
+					if (scenario === 'stop-sync-native') peerManager.emit('exit', args[0], 1);
+					if (scenario === 'stop-kill-error-native') throw new Error('Kill failed');
+				});
+				const deliveredChunks: unknown[] = [];
 				const settled = vi.fn();
 				let continuation: Promise<void> | undefined;
 				registerCrossAgentHandlers({
@@ -2044,6 +2057,7 @@ describe('persistence IPC handlers', () => {
 					sshStore: null,
 					safeSend: (channel, result) => {
 						if (channel === 'cross-agent:queue-settled') settled(result);
+						if (channel === 'cross-agent:chunk') deliveredChunks.push(result);
 					},
 				});
 				const call = (channel: string, payload: unknown) =>
@@ -2139,6 +2153,7 @@ describe('persistence IPC handlers', () => {
 							}
 						);
 					}
+					if (scenario.endsWith('-native')) vi.useFakeTimers();
 					const pending = drain();
 					if (['peer-revoke', 'pause', 'owner-reset', 'foreign-socket'].includes(scenario)) {
 						await expect(pending).rejects.toThrow();
@@ -2204,6 +2219,7 @@ describe('persistence IPC handlers', () => {
 							['setup-one-fail', 'setup-cancel'].includes(scenario) ? 1 : 0
 						);
 						expect(peerManager.eventNames()).toEqual([]);
+						expect(deliveredChunks).toHaveLength(2);
 						expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
 						await expect(drain()).rejects.toThrow();
 						expect(peerManager.spawn).toHaveBeenCalledTimes(
@@ -2345,6 +2361,61 @@ describe('persistence IPC handlers', () => {
 					const consults = journal.queueRouting!.steps.filter(
 						(s) => s.kind === (mode === 'handoff' ? 'handoff' : 'consult')
 					);
+					if (scenario.endsWith('-native')) {
+						for (const step of consults)
+							peerManager.emit('data', `cross-agent-${step.requestId}`, 'Partial native output');
+						if (scenario.startsWith('stop'))
+							expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(2);
+						else if (scenario === 'idle-native')
+							await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+						else {
+							for (let n = 0; n < 6; n++) {
+								for (const step of consults)
+									peerManager.emit('data', `cross-agent-${step.requestId}`, 'Still working');
+								await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+							}
+						}
+						expect(peerManager.kill).toHaveBeenCalledTimes(2);
+						expect(deliveredChunks).toHaveLength(2);
+						if (scenario !== 'stop-sync-native') {
+							expect(fires).not.toHaveBeenCalled();
+							expect(settled).toHaveBeenCalledTimes(mode === 'handoff' ? 1 : 0);
+							expect(peerManager.listenerCount('exit')).toBe(2);
+							for (const step of f.store
+								.readDispatchAdmission(f.input.dispatchId)!
+								.queueRouting!.steps.filter(
+									(s) => s.kind === (mode === 'handoff' ? 'handoff' : 'consult')
+								)) {
+								expect(step.status).toBe('unknown');
+								expect(step.terminal).toBeUndefined();
+							}
+						}
+						peerManager.emit('exit', 'cross-agent-foreign', 1);
+						for (const [index, step] of consults.entries()) {
+							peerManager.emit('exit', `cross-agent-${step.requestId}`, 1);
+							peerManager.emit('exit', `cross-agent-${step.requestId}`, 1);
+							if (index === 0 && scenario !== 'stop-sync-native')
+								expect(fires).not.toHaveBeenCalled();
+						}
+						await continuation;
+						expect(fires).toHaveBeenCalledExactlyOnceWith(
+							expect.objectContaining({ status: 'failed' })
+						);
+						expect(peerManager.eventNames()).toEqual([]);
+						expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+						const saved = f.store.readDispatchAdmission(f.input.dispatchId)!;
+						for (const step of saved.queueRouting!.steps.filter(
+							(s) => s.kind === (mode === 'handoff' ? 'handoff' : 'consult')
+						)) {
+							expect(step.status).toBe('settled');
+							expect(step.terminal?.text).toContain('Partial native output');
+							expect(step.terminal?.canceled || step.terminal?.error).toBeTruthy();
+						}
+						await expect(drain()).rejects.toThrow();
+						expect(peerManager.spawn).toHaveBeenCalledTimes(2);
+						registerSessionPersistenceFlush(null);
+						return;
+					}
 					for (const [index, step] of consults.entries()) {
 						peerManager.emit('data', `cross-agent-${step.requestId}`, nativeReply);
 						peerManager.emit(
@@ -2502,6 +2573,10 @@ describe('persistence IPC handlers', () => {
 					expect(fires).toHaveBeenCalledTimes(1);
 					registerSessionPersistenceFlush(null);
 				} finally {
+					vi.useRealTimers();
+					cancelCrossAgentRequestsForSource('agent', 'tab');
+					for (const [config] of peerManager.spawn.mock.calls)
+						peerManager.emit('exit', config.sessionId, 1);
 					await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 1 });
 					f.events.emit('exit', 'agent-ai-tab', 1);
 					// Fixture teardown: clear an uncertain native fence only after no-resend assertions.
@@ -2661,6 +2736,61 @@ describe('persistence IPC handlers', () => {
 			}
 		);
 
+		it.each(['ack', 'lost-ack'] as const)(
+			'consumes real exit after Stop inside native spawn before %s',
+			async (ack) => {
+				const f = await managedConsultFixture('consult-first');
+				const id = `cross-agent-${f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].requestId}`;
+				f.manager.spawn.mockImplementationOnce(() => {
+					f.manager.emit('data', id, 'Partial at native spawn');
+					expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(1);
+					if (ack === 'lost-ack') throw new Error('Lost acknowledgement');
+					return { success: true, pid: 4242 };
+				});
+				await f.start();
+				const read = () =>
+					f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0];
+				expect(read().status).toBe('unknown');
+				expect(read().terminal).toBeUndefined();
+				expect(f.manager.listenerCount('exit')).toBe(1);
+				expect(f.chunks).toEqual([
+					expect.objectContaining({ done: true, canceled: true, chunk: 'Partial at native spawn' }),
+				]);
+				await expect(f.start()).rejects.toThrow();
+				f.manager.emit('exit', id, 1);
+				f.manager.emit('exit', id, 1);
+				expect(read()).toMatchObject({
+					status: 'settled',
+					terminal: { canceled: true, text: 'Partial at native spawn' },
+				});
+				expect(f.chunks).toHaveLength(1);
+				expect(f.manager.eventNames()).toEqual([]);
+				expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it('settles Stop during runner preparation only after native nonstart proof', async () => {
+			const f = await managedConsultFixture('consult-first');
+			const deliver = systemPromptDelivery.applySystemPromptDelivery;
+			vi.spyOn(systemPromptDelivery, 'applySystemPromptDelivery').mockImplementationOnce(
+				async (...args) => {
+					expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(1);
+					const step = f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0];
+					expect(step.status).toBe('unknown');
+					expect(step.terminal).toBeUndefined();
+					return deliver(...args);
+				}
+			);
+			await f.start();
+			expect(f.manager.spawn).not.toHaveBeenCalled();
+			expect(f.manager.eventNames()).toEqual([]);
+			expect(f.chunks).toEqual([expect.objectContaining({ done: true, canceled: true })]);
+			expect(
+				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0]
+			).toMatchObject({ status: 'settled', terminal: { canceled: true } });
+			await expect(f.start()).rejects.toThrow();
+		});
+
 		it.each(['failure', 'cancel', 'idle', 'hard', 'journal'] as const)(
 			'keeps a lost-ack consult supervised and the two-target continuation fenced through %s',
 			async (ending) => {
@@ -2700,7 +2830,9 @@ describe('persistence IPC handlers', () => {
 							await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 						}
 					} else f.manager.emit('exit', id, ending === 'failure' ? 1 : 0);
-					expect(f.manager.eventNames()).toEqual([]);
+					expect(f.manager.listenerCount('exit')).toBe(
+						['cancel', 'idle', 'hard'].includes(ending) ? 1 : 0
+					);
 					expect(f.chunks).toHaveLength(2);
 					const step = f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0];
 					if (ending === 'failure') expect(step.terminal?.error).toBeTruthy();
@@ -2713,6 +2845,13 @@ describe('persistence IPC handlers', () => {
 					await expect(local.start()).rejects.toThrow();
 					await expect(f.start()).rejects.toThrow();
 					expect(local.spawn).not.toHaveBeenCalled();
+					f.manager.emit('exit', id, 1);
+					expect(f.manager.eventNames()).toEqual([]);
+					expect(f.chunks).toHaveLength(2);
+					if (['cancel', 'idle', 'hard'].includes(ending))
+						expect(
+							f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].status
+						).toBe('settled');
 					expect(f.manager.spawn).toHaveBeenCalledTimes(2);
 				} finally {
 					vi.useRealTimers();
@@ -2860,6 +2999,8 @@ describe('persistence IPC handlers', () => {
 				await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
 				expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(1);
 				expect(f.manager.kill).toHaveBeenCalledExactlyOnceWith(`cross-agent-${requestId}`);
+				expect(f.manager.listenerCount('exit')).toBe(1);
+				f.manager.emit('exit', `cross-agent-${requestId}`, 1);
 				expect(f.manager.eventNames()).toEqual([]);
 				expect(f.chunks).toEqual([
 					expect.objectContaining({
@@ -2912,6 +3053,8 @@ describe('persistence IPC handlers', () => {
 			const { requestId } = await f.start();
 			await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
 			expect(f.manager.kill).toHaveBeenCalledExactlyOnceWith(`cross-agent-${requestId}`);
+			expect(f.manager.listenerCount('exit')).toBe(1);
+			f.manager.emit('exit', `cross-agent-${requestId}`, 1);
 			expect(f.manager.eventNames()).toEqual([]);
 			expect(f.chunks).toEqual([
 				expect.objectContaining({ done: true, error: 'DispatchRoutingJournalUnknown' }),

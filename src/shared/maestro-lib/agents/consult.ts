@@ -106,7 +106,8 @@ export interface CrossAgentTargetSession {
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
 }
 
-/** How a runner reports a running consult. Nothing is reported after `stop`. */
+/** How a runner reports a running consult. Hosts may retain native exit observation after
+ * `stop`; the service ignores a later `onEnd` once its display chunk has settled. */
 export interface ConsultObserver {
 	/** Proof of life: output, thinking, a tool call, a usage report. Restarts the silence budget. */
 	onActivity(): void;
@@ -127,7 +128,8 @@ export interface ConsultEnd {
 /**
  * Starts and stops the one process a consult is made of. The runner attaches its listeners
  * BEFORE it spawns (no event is missed) and owns their release. Definite nonstart detaches;
- * an uncertain acknowledgement retains observation and Stop ownership until exit or stop.
+ * an uncertain acknowledgement retains observation and Stop ownership. Managed hosts may
+ * retain observation after Stop until authentic native exit.
  */
 export interface ConsultRunner {
 	/** `unknown` retains supervision of a possible child; ordinary false proves nonstart. */
@@ -136,7 +138,7 @@ export interface ConsultRunner {
 		observer: ConsultObserver
 	): Promise<{ success: boolean; unknown?: boolean; pid?: number; error?: string }>;
 	/**
-	 * Kill the process, detach, and answer whatever it had said so far (best effort, `''` when
+	 * Request a kill and answer whatever it had said so far (best effort, `''` when
 	 * unreadable). Idempotent, and safe for an id whose process does not exist yet.
 	 */
 	stop(processId: string): string;

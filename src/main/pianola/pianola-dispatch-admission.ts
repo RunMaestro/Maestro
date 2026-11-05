@@ -1,4 +1,7 @@
-import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
+import type {
+	CrossAgentResponseChunk,
+	ManagedQueueRoutingProgress,
+} from '../../shared/crossAgentTypes';
 import { buildConsultFirstContext, buildConsultReplyContext } from '../../shared/crossAgentContext';
 import { getPrompt } from '../prompt-manager';
 import { captureException } from '../utils/sentry';
@@ -1129,6 +1132,89 @@ export class PianolaDispatchAdmissionService {
 					});
 				}
 			};
+			let pendingTerminal: CrossAgentResponseChunk | undefined;
+			const consumeChunk = (nativeChunk: CrossAgentResponseChunk, deliver = true): void => {
+				const terminal = boundPianolaQueueTerminal({
+					text: nativeChunk.chunk,
+					...(nativeChunk.error ? { error: nativeChunk.error } : {}),
+					...(nativeChunk.canceled ? { canceled: true } : {}),
+				});
+				const chunk = nativeChunk.done
+					? {
+							...nativeChunk,
+							chunk: terminal.text,
+							error: terminal.error,
+							canceled: terminal.canceled,
+						}
+					: nativeChunk;
+				if (
+					chunk.requestId !== requestId ||
+					chunk.sourceSessionId !== record.targetAgentId ||
+					chunk.sourceTabId !== record.targetTabId ||
+					chunk.targetSessionId !== targetAgentId
+				)
+					return;
+				// Retain display intent separately from native terminal authority. A later real
+				// exit consumes this exact chunk without sending a second answer.
+				if (chunk.done && !nativeEndObserved && !confirmedNonstart) pendingTerminal = chunk;
+				try {
+					if (chunk.done && !journalUncertain)
+						update((s) => {
+							if (s.terminal) return;
+							if (!confirmedNonstart && !nativeEndObserved) {
+								s.status = 'unknown';
+								s.startError = chunk.error ?? 'Native start acknowledgement unavailable';
+								return;
+							}
+							s.status = 'settled';
+							delete s.startError;
+							s.terminal = {
+								text: chunk.chunk,
+								...(chunk.error ? { error: chunk.error } : {}),
+								...(chunk.canceled ? { canceled: true } : {}),
+							};
+							if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
+						});
+					if (
+						chunk.done &&
+						((nativeClaimed && nativeEndObserved) ||
+							(confirmedNonstart && !!(chunk.error || chunk.canceled))) &&
+						!journalUncertain
+					) {
+						const saved = this.deps.store
+							.readDispatchAdmission(dispatchId)
+							?.queueRouting?.steps.find((s) => s.requestId === requestId);
+						if (
+							saved?.terminal &&
+							saved.status === 'settled' &&
+							!release.terminals.has(requestId) &&
+							canonicalJson(saved.terminal) ===
+								canonicalJson({
+									text: chunk.chunk,
+									...(chunk.error ? { error: chunk.error } : {}),
+									...(chunk.canceled ? { canceled: true } : {}),
+								})
+						)
+							release.terminals.set(requestId, canonicalJson(saved));
+						this.settleQueueRouting(dispatchId);
+					}
+				} catch (error) {
+					journalFailure(error);
+				}
+				// A persistence failure cannot be promoted to a successful terminal
+				// or retried. Durable nonterminal evidence remains non-repeatable.
+				if (deliver)
+					opts.onChunk(
+						journalUncertain
+							? {
+									...chunk,
+									chunk: '',
+									targetAgentSessionId: undefined,
+									error: 'DispatchRoutingJournalUnknown',
+								}
+							: chunk
+					);
+			};
 			const { startCrossAgentRequest } = await import('../cross-agent/cross-agent-router');
 			await startCrossAgentRequest(
 				{
@@ -1150,6 +1236,11 @@ export class PianolaDispatchAdmissionService {
 					nativeAdmission: {
 						notStarted: () => {
 							confirmedNonstart = true;
+							if (pendingTerminal) {
+								const terminal = pendingTerminal;
+								pendingTerminal = undefined;
+								consumeChunk(terminal, false);
+							}
 						},
 						beforeSpawn: () => {
 							if (nativeClaimed) throw new Error('DispatchRoutingAlreadyStarting');
@@ -1172,6 +1263,11 @@ export class PianolaDispatchAdmissionService {
 						},
 						ended: () => {
 							nativeEndObserved = true;
+							if (pendingTerminal) {
+								const terminal = pendingTerminal;
+								pendingTerminal = undefined;
+								consumeChunk(terminal, false);
+							}
 						},
 						started: (processId, pid) => {
 							// A fast real exit may already have committed terminal evidence.
@@ -1181,90 +1277,14 @@ export class PianolaDispatchAdmissionService {
 									if (!nativeClaimed) throw new Error('DispatchRoutingNativeClaimMissing');
 									s.processId = processId;
 									if (pid !== undefined) s.pid = pid;
-									if (s.status !== 'settled') s.status = 'started';
+									if (s.status !== 'settled' && !pendingTerminal) s.status = 'started';
 								});
 							} catch (error) {
 								journalFailure(error);
 							}
 						},
 					},
-					onChunk: (nativeChunk) => {
-						const terminal = boundPianolaQueueTerminal({
-							text: nativeChunk.chunk,
-							...(nativeChunk.error ? { error: nativeChunk.error } : {}),
-							...(nativeChunk.canceled ? { canceled: true } : {}),
-						});
-						const chunk = nativeChunk.done
-							? {
-									...nativeChunk,
-									chunk: terminal.text,
-									error: terminal.error,
-									canceled: terminal.canceled,
-								}
-							: nativeChunk;
-						if (
-							chunk.requestId !== requestId ||
-							chunk.sourceSessionId !== record.targetAgentId ||
-							chunk.sourceTabId !== record.targetTabId ||
-							chunk.targetSessionId !== targetAgentId
-						)
-							return;
-						try {
-							if (chunk.done && !journalUncertain)
-								update((s) => {
-									if (s.terminal) return;
-									if (!confirmedNonstart && !nativeEndObserved) {
-										s.status = 'unknown';
-										s.startError = chunk.error ?? 'Native start acknowledgement unavailable';
-										return;
-									}
-									s.status = 'settled';
-									s.terminal = {
-										text: chunk.chunk,
-										...(chunk.error ? { error: chunk.error } : {}),
-										...(chunk.canceled ? { canceled: true } : {}),
-									};
-									if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
-								});
-							if (
-								chunk.done &&
-								((nativeClaimed && nativeEndObserved) ||
-									(confirmedNonstart && !!(chunk.error || chunk.canceled))) &&
-								!journalUncertain
-							) {
-								const saved = this.deps.store
-									.readDispatchAdmission(dispatchId)
-									?.queueRouting?.steps.find((s) => s.requestId === requestId);
-								if (
-									saved?.terminal &&
-									saved.status === 'settled' &&
-									!release.terminals.has(requestId) &&
-									canonicalJson(saved.terminal) ===
-										canonicalJson({
-											text: chunk.chunk,
-											...(chunk.error ? { error: chunk.error } : {}),
-											...(chunk.canceled ? { canceled: true } : {}),
-										})
-								)
-									release.terminals.set(requestId, canonicalJson(saved));
-								this.settleQueueRouting(dispatchId);
-							}
-						} catch (error) {
-							journalFailure(error);
-						}
-						// A persistence failure cannot be promoted to a successful terminal
-						// or retried. Durable nonterminal evidence remains non-repeatable.
-						opts.onChunk(
-							journalUncertain
-								? {
-										...chunk,
-										chunk: '',
-										targetAgentSessionId: undefined,
-										error: 'DispatchRoutingJournalUnknown',
-									}
-								: chunk
-						);
-					},
+					onChunk: consumeChunk,
 				}
 			);
 			return { requestId };

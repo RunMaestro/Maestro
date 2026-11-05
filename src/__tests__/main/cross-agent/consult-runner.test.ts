@@ -111,6 +111,8 @@ describe('desktop consult listener lifecycle', () => {
 		expect(emitter.listenerCount('exit')).toBe(1);
 		expect(runner.stop(spawn.processId)).toBe('Owned output');
 		expect(emitter.kill).toHaveBeenCalledExactlyOnceWith(spawn.processId);
+		expect(emitter.listenerCount('exit')).toBe(1);
+		emitter.emit('exit', spawn.processId, 1);
 		expect(emitter.eventNames()).toEqual([]);
 	});
 
@@ -132,19 +134,49 @@ describe('desktop consult listener lifecycle', () => {
 		expect(emitter.eventNames()).toEqual([]);
 	});
 
-	it('detaches on stop', async () => {
+	it.each(['delayed', 'synchronous', 'kill-error'] as const)(
+		'retains managed exit observation after stop: %s',
+		async (ending) => {
+			const emitter = Object.assign(new EventEmitter(), { kill: vi.fn() });
+			const ended = vi.fn();
+			const runner = createDesktopConsultRunner(emitter as unknown as ProcessManager, null, {
+				beforeSpawn() {},
+				started() {},
+				ended,
+			});
+			emitter.kill.mockImplementation(() => {
+				if (ending === 'synchronous') emitter.emit('exit', spawn.processId, 1);
+				if (ending === 'kill-error') throw new Error('Kill failed');
+			});
+			const observer = {
+				onActivity: vi.fn(),
+				onSessionId: vi.fn(),
+				onEnd: vi.fn(),
+			} satisfies ConsultObserver;
+			await runner.start(spawn, observer);
+			runner.stop(spawn.processId);
+			expect(emitter.kill).toHaveBeenCalledWith(spawn.processId);
+			if (ending !== 'synchronous') {
+				expect(ended).not.toHaveBeenCalled();
+				expect(emitter.listenerCount('exit')).toBe(1);
+			}
+			emitter.emit('exit', 'foreign', 1);
+			emitter.emit('exit', spawn.processId, 1);
+			emitter.emit('exit', spawn.processId, 1);
+			expect(ended).toHaveBeenCalledExactlyOnceWith(spawn.processId);
+			expect(observer.onEnd).toHaveBeenCalledOnce();
+			expect(emitter.eventNames()).toEqual([]);
+		}
+	);
+
+	it('detaches an unmanaged consult on stop without a second end notification', async () => {
 		const emitter = Object.assign(new EventEmitter(), { kill: vi.fn() });
 		const runner = createDesktopConsultRunner(emitter as unknown as ProcessManager, null);
-		const observer = {
-			onActivity: vi.fn(),
-			onSessionId: vi.fn(),
-			onEnd: vi.fn(),
-		} satisfies ConsultObserver;
+		const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
 		await runner.start(spawn, observer);
 		runner.stop(spawn.processId);
-		expect(emitter.kill).toHaveBeenCalledWith(spawn.processId);
 		expect(emitter.eventNames()).toEqual([]);
-		emitter.emit('exit', spawn.processId, 0);
+		emitter.emit('exit', spawn.processId, 1);
 		expect(observer.onEnd).not.toHaveBeenCalled();
 	});
 
