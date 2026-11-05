@@ -3,8 +3,10 @@
  * @description Unit tests for web server factory with dependency injection.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
+import { nativeCurrentTurns } from '../../../main/pianola/current-turn';
+import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -669,11 +671,54 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('native scope census', () => {
-		it('retains a tabless parent and enrolls background work through the real cycle', async () => {
+		afterEach(() => nativeCurrentTurns.setEnabled(false));
+		it('fails closed for a same-row native revision and handles a fresh row', async () => {
+			nativeCurrentTurns.setEnabled(true);
+			const observation = {
+				sourceGeneration: 'fixture-renderer',
+				createdAt: 10,
+				provider: 'codex',
+			};
+			const user = { id: 'user', source: 'user', text: 'Work on this', timestamp: 19 };
+			const stream = { id: 'stream', source: 'ai', text: 'Working.', timestamp: 20 };
+			nativeCurrentTurns.commit({
+				sessionId: 'child',
+				tabId: 'background',
+				field: 'logs',
+				snapshot: true,
+				upserts: [user],
+				removedIds: [],
+				orderIds: ['user'],
+				observation: { ...observation, sequence: 1 },
+			});
+			const capture = new AgentRunCaptureService({
+				getAgentRun: () => undefined,
+				upsertAgentRun: (run) => run,
+				appendAgentRunEvent: (event) => event,
+				findActiveRunBySession: () => undefined,
+			});
+			const run = capture.captureSpawn({
+				sessionId: 'child-ai-background',
+				toolType: 'codex',
+				cwd: '/worktrees/child',
+				transcriptBoundaryId: 'user',
+				nativeTabSession: { agentId: 'child', tabId: 'background', createdAt: 10 },
+			})!;
+			nativeCurrentTurns.begin(run, 'user');
+			nativeCurrentTurns.commit({
+				sessionId: 'child',
+				tabId: 'background',
+				field: 'logs',
+				upserts: [stream],
+				removedIds: [],
+				orderIds: ['user', 'stream'],
+				observation: { ...observation, sequence: 2 },
+			});
 			const sessions = [
 				{ id: 'parent', cwd: '/project', aiTabs: [] },
 				{
 					id: 'child',
+					toolType: 'codex',
 					cwd: '/worktrees/child',
 					parentSessionId: 'parent',
 					activeTabId: 'active',
@@ -682,7 +727,7 @@ describe('web-server/web-server-factory', () => {
 							id: 'background',
 							state: 'idle',
 							createdAt: 10,
-							logs: [{ id: 'stream', source: 'ai', text: 'Working.', timestamp: 20 }],
+							logs: [user, stream],
 						},
 					],
 				},
@@ -731,11 +776,19 @@ describe('web-server/web-server-factory', () => {
 				readTranscript: async () => ({
 					agentId: 'child',
 					tabId: 'background',
+					currentTurn: nativeCurrentTurns.read({
+						agentId: 'child',
+						tabId: 'background',
+						createdAt: 10,
+						provider: 'codex',
+						agentSessionId: null,
+						open: true,
+					}),
 					messages: sessions[1].aiTabs
 						.map((tab) =>
 							tab.logs!.map((log) => ({
 								id: log.id,
-								role: 'assistant' as const,
+								role: log.source === 'user' ? ('user' as const) : ('assistant' as const),
 								source: log.source,
 								content: log.text,
 								timestamp: new Date(log.timestamp).toISOString(),
@@ -769,14 +822,40 @@ describe('web-server/web-server-factory', () => {
 			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
 			expect(dispatch).not.toHaveBeenCalled();
 			mockProcessManager.get.mockReturnValue(undefined);
-			sessions[1].aiTabs[0].logs![0].text = 'Should I run tests?';
+			stream.text = 'Should I run tests?';
+			nativeCurrentTurns.commit({
+				sessionId: 'child',
+				tabId: 'background',
+				field: 'logs',
+				upserts: [stream],
+				removedIds: [],
+				orderIds: ['user', 'stream'],
+				observation: { ...observation, sequence: 3 },
+			});
+			// Known coverage gap: a turn revision alone does not establish row freshness.
+			const result = await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+			expect(result.iterations[0]?.result.skipped).toBe('prompt precedes enrollment baseline');
+			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+			expect(dispatch).not.toHaveBeenCalled();
+
+			const fresh = { id: 'fresh', source: 'ai', text: 'Should I run tests?', timestamp: 21 };
+			sessions[1].aiTabs[0].logs!.push(fresh);
+			nativeCurrentTurns.commit({
+				sessionId: 'child',
+				tabId: 'background',
+				field: 'logs',
+				upserts: [fresh],
+				removedIds: [],
+				orderIds: ['user', 'stream', 'fresh'],
+				observation: { ...observation, sequence: 4 },
+			});
 			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
 			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
 			expect(dispatch).toHaveBeenCalledTimes(1);
 			expect(dispatch.mock.calls[0]).toMatchObject([
 				{ agentId: 'child', tabId: 'background' },
 				'Controlled reply.',
-				{ scopeId, messageId: 'stream' },
+				{ scopeId, messageId: 'fresh' },
 			]);
 		});
 
