@@ -9,6 +9,9 @@ export interface PianolaScopeCursor {
 	id: string;
 	count: number;
 	textLength: number;
+	contentRevision?: number;
+	contentSignature?: string;
+	orderMutationRevision?: number;
 	native?: import('../currentTurn').CurrentTurnCursor;
 }
 
@@ -60,6 +63,8 @@ export interface PianolaScopeCheckpointTab {
 	baseline: PianolaScopeCursor | null;
 	/** Only a live stream at enrollment may complete within the baseline entry. */
 	baselineBusy?: boolean;
+	/** Native busy enrollment permits only a host-proven prose change. */
+	nativeStreamingBaseline?: boolean;
 	lastSeen: PianolaScopeCursor | null;
 	state: WatchState;
 	/** Earliest retry iteration; event volume must not spend retry budgets. */
@@ -109,6 +114,11 @@ export function isPianolaScopeCursor(value: unknown): value is PianolaScopeCurso
 			nonnegativeInteger(value.count) &&
 			value.count > 0 &&
 			nonnegativeInteger(value.textLength) &&
+			(value.contentRevision === undefined || nonnegativeInteger(value.contentRevision)) &&
+			(value.contentSignature === undefined ||
+				(typeof value.contentSignature === 'string' && FINGERPRINT.test(value.contentSignature))) &&
+			(value.orderMutationRevision === undefined ||
+				nonnegativeInteger(value.orderMutationRevision)) &&
 			(value.native === undefined || isCurrentTurnCursor(value.native)))
 	);
 }
@@ -182,6 +192,8 @@ export function validatePianolaScopeCheckpoint(
 			(tab.emptyEnrollment !== undefined && !isCurrentTurnCursor(tab.emptyEnrollment)) ||
 			!isPianolaScopeCursor(tab.baseline) ||
 			(tab.baselineBusy !== undefined && typeof tab.baselineBusy !== 'boolean') ||
+			(tab.nativeStreamingBaseline !== undefined &&
+				typeof tab.nativeStreamingBaseline !== 'boolean') ||
 			!isPianolaScopeCursor(tab.lastSeen) ||
 			!state(tab.state) ||
 			(tab.nextWatchAt !== undefined && !nonnegativeInteger(tab.nextWatchAt)) ||

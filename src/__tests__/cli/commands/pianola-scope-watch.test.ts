@@ -198,6 +198,21 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		'disable',
 		'rule-revoked',
 		'historical-busy',
+		'stream-answer',
+		'stream-late-rewrite',
+		'stream-late-human',
+		'stream-unchanged',
+		'stream-timestamp',
+		'stream-restore',
+		'stream-risk',
+		'stream-prefix-risk',
+		'stream-handover',
+		'stream-resume',
+		'stream-renew',
+		'stream-snapshot',
+		'stream-gap',
+		'stream-tool',
+		'stream-source',
 		'unknown',
 	] as const)('preserves the observation and final boundary for %s', async (mode) => {
 		const f = fixture();
@@ -369,9 +384,11 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			// Exercise the same native claim and late revalidation as handleProcessSpawn.
 			if (mode === 'disable') settings.enabled = false;
 			if (mode === 'rule-revoked') store.writeRules([]);
-			if (mode === 'late-human') f.commit([f.row('human', 'Stop', 'user')]);
+			if (mode === 'late-human' || mode === 'stream-late-human')
+				f.commit([f.row('human', 'Stop', 'user')]);
 			if (mode === 'late-rewrite')
 				f.commit([f.row('progress-0', 'I will delete the production database.')]);
+			if (mode === 'stream-late-rewrite') f.commit([f.row('question', 'Delete production?')]);
 			const originalOrder = f.orderIds();
 			const reordered = [...originalOrder];
 			[reordered[reordered.length - 2], reordered[reordered.length - 1]] = [
@@ -403,6 +420,25 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			deliverPianolaScopeDecision(callbacks, guard, answer, false, store);
 		try {
 			const cycle = () => runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			const streaming = mode.startsWith('stream-');
+			if (streaming) {
+				if (mode === 'stream-prefix-risk') f.commit([f.row('prefix', 'Inspecting files.')]);
+				f.commit([
+					f.row(
+						'question',
+						[
+							'stream-unchanged',
+							'stream-timestamp',
+							'stream-restore',
+							'stream-tool',
+							'stream-source',
+						].includes(mode)
+							? 'Should I name it count or total?'
+							: 'Working.'
+					),
+				]);
+				busy = true;
+			}
 			if (mode === 'historical-busy') {
 				f.commit([f.row('question', 'Should I name it count or total?')]);
 				busy = true;
@@ -416,7 +452,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				'reorder-restore',
 				'after-claim-reorder',
 			].includes(mode);
-			if (mode !== 'historical-busy' && !orderRegression)
+			if (!streaming && mode !== 'historical-busy' && !orderRegression)
 				f.commit(
 					Array.from({ length: 150 }, (_, i) =>
 						f.row(
@@ -427,20 +463,59 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				);
 			if (mode === 'tool-risk')
 				f.commit([f.row('tool', 'I will delete the production database.', 'tool')]);
-			f.commit([f.row('finished', 'The implementation is finished.')]);
-			f.commit([f.row('question', 'Should I name it count or total?')]);
+			if (!streaming) f.commit([f.row('finished', 'The implementation is finished.')]);
+			if (mode === 'stream-resume' || mode === 'stream-handover') {
+				const checkpoint = store.readScopeCheckpoint(scopeId)!;
+				checkpoint.status = 'suspended';
+				if (mode === 'stream-handover') checkpoint.tabs[0].nativeStreamingBaseline = false;
+				store.writeScopeCheckpoint(checkpoint);
+			}
+			if (mode === 'stream-renew') {
+				const scopes = store.readSupervisorTargets();
+				scopes[0].managerAgentId = 'other-manager';
+				store.writeSupervisorTargets(scopes);
+			}
+			if (mode === 'stream-snapshot') f.commit([], { snapshot: true });
+			if (mode === 'stream-gap')
+				f.commit([], {
+					observation: {
+						sourceGeneration: 'renderer',
+						sequence: 999,
+						createdAt: 7,
+						provider: 'codex',
+					},
+				});
+			if (mode === 'stream-prefix-risk')
+				f.commit([f.row('prefix', 'I will DROP DATABASE production.')]);
+			if (mode === 'stream-restore') f.commit([f.row('question', 'Working again.')]);
+			f.commit([
+				{
+					...f.row(
+						'question',
+						mode === 'stream-risk'
+							? 'Delete production data. Should I name it count or total?'
+							: 'Should I name it count or total?'
+					),
+					...(mode === 'stream-timestamp' ? { timestamp: 999999 } : {}),
+					...(mode === 'stream-source' ? { source: 'stdout' } : {}),
+				},
+			]);
+			if (mode === 'stream-tool') f.commit([f.row('tool-update', 'Completed', 'tool')]);
 			if (orderRegression)
 				expect(f.read().messages.map((row) => row.id)).toEqual(['user', 'finished', 'question']);
 			if (mode === 'human-read') humanDuringRead = true;
 			await cycle();
 			expect(sends).toHaveBeenCalledTimes(
 				mode === 'answer' ||
+					mode === 'stream-answer' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
 					mode === 'stale-receipt'
 					? 1
 					: 0
 			);
+			if (mode === 'stream-late-rewrite' || mode === 'stream-late-human')
+				expect(assert.mock.results.at(-1)?.type).toBe('throw');
 			if (orderRegression) {
 				if (mode === 'ordered-append') expect(assert.mock.results.at(-1)?.value).toBe(true);
 				else {
@@ -454,6 +529,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			await cycle();
 			expect(sends).toHaveBeenCalledTimes(
 				mode === 'answer' ||
+					mode === 'stream-answer' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
 					mode === 'stale-receipt'

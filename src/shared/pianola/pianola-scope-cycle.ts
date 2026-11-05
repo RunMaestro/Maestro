@@ -347,7 +347,31 @@ function sameCursor(a: PianolaScopeCursor | null, b: PianolaScopeCursor | null):
 			a.id === b.id &&
 			a.count === b.count &&
 			a.textLength === b.textLength &&
+			a.contentRevision === b.contentRevision &&
+			a.contentSignature === b.contentSignature &&
+			a.orderMutationRevision === b.orderMutationRevision &&
 			sameCurrentTurnCursor(a.native, b.native))
+	);
+}
+
+/** Constant-size native proof, bound to the exact enrolled turn and ordered prefix. */
+function freshNativeStream(saved: PianolaScopeCheckpointTab, cursor: PianolaScopeCursor): boolean {
+	const base = saved.baseline;
+	return !!(
+		saved.nativeStreamingBaseline &&
+		base?.native &&
+		cursor.native &&
+		base.id === cursor.id &&
+		base.count === cursor.count &&
+		typeof base.contentSignature === 'string' &&
+		typeof cursor.contentSignature === 'string' &&
+		base.contentSignature !== cursor.contentSignature &&
+		sameCurrentTurnCursor({ ...base.native, revision: cursor.native.revision }, cursor.native) &&
+		Number.isSafeInteger(cursor.contentRevision) &&
+		cursor.contentRevision! > base.native.revision &&
+		cursor.contentRevision! <= cursor.native.revision &&
+		Number.isSafeInteger(cursor.orderMutationRevision) &&
+		cursor.orderMutationRevision! <= base.native.revision
 	);
 }
 
@@ -662,6 +686,12 @@ export async function runPianolaScopeCycle(
 				bindingFingerprint: binding,
 				emptyEnrollment: tab.enrollment,
 				baseline: createdAfterActivation && !tab.paused ? null : tab.cursor,
+				nativeStreamingBaseline:
+					!!tab.cursor?.native &&
+					tab.busy &&
+					!tab.paused &&
+					(firstActivation || !resume) &&
+					!historicalAtHandover,
 				baselineBusy: !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover,
 				lastSeen: createdAfterActivation && !tab.paused ? null : tab.cursor,
 				state:
@@ -679,6 +709,12 @@ export async function runPianolaScopeCycle(
 		} else if (needsBaseline || tab.paused) {
 			saved.emptyEnrollment = tab.enrollment;
 			saved.baseline = tab.cursor;
+			saved.nativeStreamingBaseline =
+				!!tab.cursor?.native &&
+				tab.busy &&
+				!tab.paused &&
+				(firstActivation || !resume) &&
+				!historicalAtHandover;
 			saved.baselineBusy = !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover;
 			saved.lastSeen = tab.cursor;
 			saved.bindingFingerprint = binding;
@@ -686,6 +722,8 @@ export async function runPianolaScopeCycle(
 			saved.status = tab.paused ? 'suspended' : 'active';
 			// An unresolved intent survives loss of ownership, disable and close.
 		}
+		// A renewed scope cannot reuse a streaming exception from its old enrollment.
+		if (configurationChanged) saved.nativeStreamingBaseline = false;
 		// A transcript failure persists until an actual successful retry. An
 		// unchanged cursor alone must never clear the previous failure.
 		if (
@@ -777,7 +815,11 @@ export async function runPianolaScopeCycle(
 				(!tab.cursor?.native && !atCursor(messages, saved.baseline)) ||
 				(!tab.cursor?.native && !atCursor(messages, saved.lastSeen)) ||
 				(tab.cursor?.native &&
-					!sameCurrentTurnCursor(history.currentTurn?.cursor, tab.cursor.native)) ||
+					(!sameCurrentTurnCursor(history.currentTurn?.cursor, tab.cursor.native) ||
+						history.currentTurn?.lastEntry?.contentRevision !== tab.cursor.contentRevision ||
+						history.currentTurn?.lastEntry?.contentSignature !== tab.cursor.contentSignature ||
+						history.currentTurn?.lastEntry?.orderMutationRevision !==
+							tab.cursor.orderMutationRevision)) ||
 				(!tab.cursor?.native &&
 					tab.cursor &&
 					messages[messages.length - 1]?.content.length !== tab.cursor.textLength)
@@ -800,7 +842,10 @@ export async function runPianolaScopeCycle(
 			)
 				throw new Error('Enrollment boundary lost in current turn');
 			const actionableIds = new Set(messages.slice(offset).map((message) => message.id));
-			if (saved.baselineBusy && saved.baseline) {
+			if (
+				(saved.baselineBusy || (tab.cursor && freshNativeStream(saved, tab.cursor))) &&
+				saved.baseline
+			) {
 				const streamed = messages[offset - 1];
 				if (streamed?.id === saved.baseline.id && streamed.role === 'assistant')
 					actionableIds.add(streamed.id);
@@ -1247,6 +1292,7 @@ export function validatePianolaScopeDelivery(
 		!saved ||
 		(requireIntent &&
 			!saved.baselineBusy &&
+			!freshNativeStream(saved, guard.cursor) &&
 			saved.baseline !== null &&
 			guard.cursor.count <= saved.baseline.count &&
 			(!guard.cursor.native || guard.cursor.native.turnId === saved.baseline.native?.turnId)) ||

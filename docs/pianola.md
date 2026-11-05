@@ -365,6 +365,18 @@ revision. A host restart creates a new generation. This cursor is evidence about
 data, and grants no authority to reply; enrollment, ownership, pause, policy,
 and delivery guards remain separate.
 
+For a busy tab enrolled while its last assistant row is still streaming, the host
+also reports that row's prose revision and SHA-256 signature, plus the last
+ordered-prefix mutation revision. A changed timestamp, metadata update or
+identical upsert does not change the prose proof. The worker may answer a
+same-ID question only when its prose differs from the enrolled baseline, changed
+after enrollment in the same native turn, and the ordered prefix stayed intact.
+A restored historical text, pause/resume, scope renewal or lost native continuity
+cannot reuse that exception. Classification still includes the full turn and
+risk context. Native admission and the final spawn fence recheck the bound
+cursor after asynchronous preparation. Hashing runs only for changed,
+size-checked prose at commit time; census reads copy constant-size proof fields.
+
 A `complete` read contains the entire observed current turn from its submitted
 user row, including earlier assistant, system, thinking, and tool rows and their
 native payloads. It reads ordered commits from the owning desktop renderer,

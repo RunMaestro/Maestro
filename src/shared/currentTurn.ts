@@ -28,7 +28,13 @@ export interface CurrentTurnRead {
 	enrollment?: CurrentTurnCursor;
 	reason?: string;
 	entryCount?: number;
-	lastEntry?: { id: string; textLength: number };
+	lastEntry?: {
+		id: string;
+		textLength: number;
+		contentRevision?: number;
+		contentSignature?: string;
+		orderMutationRevision?: number;
+	};
 	mode?: 'full' | 'delta';
 	baseCursor?: CurrentTurnCursor;
 	orderIds?: string[];

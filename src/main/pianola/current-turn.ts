@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { generateUUID } from '../../shared/uuid';
 import { canonicalJson } from '../../shared/canonicalJson';
 import type { SessionTranscriptPatch } from '../../shared/sessionTranscript';
@@ -15,6 +16,9 @@ type State = {
 	source: string;
 	sequence: number;
 	rowRevisions: Map<string, number>;
+	/** Prose changes only; timestamps, metadata and order never confer freshness. */
+	contentRevisions: Map<string, number>;
+	contentSignatures: Map<string, string>;
 	rowBytes: Map<string, number>;
 	rows: Map<string, CurrentTurnMessage>;
 	order: string[];
@@ -174,6 +178,8 @@ export class NativeCurrentTurns {
 				sequence: meta.sequence - 1,
 				rows: new Map(),
 				rowRevisions: new Map(),
+				contentRevisions: new Map(),
+				contentSignatures: new Map(),
 				rowBytes: new Map(),
 				order: [],
 				orderMutationRevision: 0,
@@ -209,6 +215,8 @@ export class NativeCurrentTurns {
 		if (patch.snapshot) {
 			state.rows.clear();
 			state.rowRevisions.clear();
+			state.contentRevisions.clear();
+			state.contentSignatures.clear();
 			state.rowBytes.clear();
 			state.order = [];
 			state.bytes = 0;
@@ -218,6 +226,8 @@ export class NativeCurrentTurns {
 			if (old) state.bytes -= state.rowBytes.get(id)!;
 			state.rows.delete(id);
 			state.rowRevisions.delete(id);
+			state.contentRevisions.delete(id);
+			state.contentSignatures.delete(id);
 			state.rowBytes.delete(id);
 			state.order = state.order.filter((entry) => entry !== id);
 		}
@@ -241,6 +251,7 @@ export class NativeCurrentTurns {
 				state.reason = 'native-tool-output-truncated';
 			const bytes = Buffer.byteLength(serialized);
 			const old = state.rows.get(row.id);
+			if (old && old.source !== value.source) state.reason = 'native-row-source-changed';
 			if (!old && row.source === 'user' && (!patch.snapshot || !replaced))
 				state.freshBoundaryId = row.id;
 			if (old) state.bytes -= state.rowBytes.get(row.id)!;
@@ -251,10 +262,20 @@ export class NativeCurrentTurns {
 				state.reason = 'current-turn-overflow';
 				state.rows.clear();
 				state.rowRevisions.clear();
+				state.contentRevisions.clear();
+				state.contentSignatures.clear();
 				state.rowBytes.clear();
 				state.order = [];
 				state.bytes = 0;
 				break;
+			}
+			if (!old || old.text !== value.text || old.source !== value.source) {
+				state.contentRevisions.set(row.id, state.cursor.revision);
+				// Hash only changed, size-checked prose at the native commit boundary.
+				state.contentSignatures.set(
+					row.id,
+					createHash('sha256').update(value.source).update('\0').update(value.text).digest('hex')
+				);
 			}
 			state.rows.set(row.id, value);
 			state.rowBytes.set(row.id, bytes);
@@ -285,6 +306,8 @@ export class NativeCurrentTurns {
 					state.bytes -= state.rowBytes.get(id)!;
 					state.rows.delete(id);
 					state.rowRevisions.delete(id);
+					state.contentRevisions.delete(id);
+					state.contentSignatures.delete(id);
 					state.rowBytes.delete(id);
 				}
 				state.order = state.order.slice(user);
@@ -385,6 +408,8 @@ export class NativeCurrentTurns {
 			state.freshBoundaryId = undefined;
 			state.rows = new Map([[boundaryId!, boundary]]);
 			state.rowRevisions = new Map([[boundaryId!, state.cursor.revision]]);
+			state.contentRevisions = new Map([[boundaryId!, state.cursor.revision]]);
+			state.contentSignatures = new Map([[boundaryId!, state.contentSignatures.get(boundaryId!)!]]);
 			state.order = [boundaryId!];
 			const bytes = state.rowBytes.get(boundaryId!)!;
 			state.rowBytes = new Map([[boundaryId!, bytes]]);
@@ -511,7 +536,13 @@ export class NativeCurrentTurns {
 			...(state.enrollment && { enrollment: { ...state.enrollment } }),
 			entryCount: state.order.length,
 			lastEntry: state.order.length
-				? { id: state.order.at(-1)!, textLength: state.rows.get(state.order.at(-1)!)!.text.length }
+				? {
+						id: state.order.at(-1)!,
+						textLength: state.rows.get(state.order.at(-1)!)!.text.length,
+						contentRevision: state.contentRevisions.get(state.order.at(-1)!),
+						contentSignature: state.contentSignatures.get(state.order.at(-1)!),
+						orderMutationRevision: state.orderMutationRevision,
+					}
 				: undefined,
 			mode: delta ? 'delta' : 'full',
 			...(delta ? { baseCursor: deltaBase, orderIds: [...state.order] } : {}),

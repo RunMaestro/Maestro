@@ -1,9 +1,15 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
 import type { AgentRun } from '../../../shared/agent-run';
 import { composeCurrentTurn, type CurrentTurnMessage } from '../../../shared/currentTurn';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
+
+vi.mock('node:crypto', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('node:crypto')>();
+	return { ...actual, createHash: vi.fn(actual.createHash) };
+});
 
 const binding = {
 	agentId: 'agent',
@@ -575,6 +581,51 @@ describe('native current-turn delta and final spawn revision fence', () => {
 		expect(() => f.index.assertDelivery(baseline.cursor, 2, 'reply', 'Run them.')).toThrow(
 			'Native turn changed during delivery'
 		);
+	});
+
+	it('hashes only changed size-checked prose at commits, with no hashing on census or feature-off', () => {
+		const f = fixture(
+			new NativeCurrentTurns({ tabs: 2, messages: 8, bytes: 1024, totalBytes: 4096 })
+		);
+		f.begin('user');
+		const hash = vi.mocked(createHash);
+		const before = hash.mock.calls.length;
+		const stream = row('stream', 'x'.repeat(512));
+		f.commit([stream]);
+		expect(hash.mock.calls.length - before).toBe(1);
+		for (let i = 0; i < 20; i++) {
+			f.index.read(binding, undefined, false);
+			f.commit([{ ...stream, timestamp: i }]);
+		}
+		expect(hash.mock.calls.length - before).toBe(1);
+		f.commit([row('oversized', 'x'.repeat(2048))]);
+		expect(hash.mock.calls.length - before).toBe(1);
+		f.index.setEnabled(false);
+		f.commit([row('off', 'No projection')]);
+		expect(hash.mock.calls.length - before).toBe(1);
+		expect(f.read().status).toBe('unknown');
+	});
+
+	it('binds constant-size prose signatures to commits, independently of timestamps and order', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('stream', 'Working.')]);
+		const base = f.read();
+		f.commit([
+			{ ...row('stream', 'Working.'), timestamp: 999999, metadata: { systemUpdate: true } },
+		]);
+		expect(f.read().lastEntry).toEqual(base.lastEntry);
+		f.commit([row('stream', 'Should I run tests?')]);
+		const changed = f.read();
+		expect(changed.lastEntry!.contentRevision).toBeGreaterThan(base.cursor.revision);
+		expect(changed.lastEntry!.contentSignature).not.toBe(base.lastEntry!.contentSignature);
+		f.commit([row('stream', 'Working.')]);
+		expect(f.read().lastEntry!.contentSignature).toBe(base.lastEntry!.contentSignature);
+		const signature = f.read().lastEntry!.contentSignature;
+		f.commit([], { orderIds: ['stream', 'user'] });
+		f.commit([], { orderIds: ['user', 'stream'] });
+		expect(f.read().lastEntry!.contentSignature).toBe(signature);
+		expect(f.read().lastEntry!.orderMutationRevision).toBeGreaterThan(base.cursor.revision);
 	});
 
 	it('reconstructs append and same-length replacement deltas without losing earlier risk', () => {
