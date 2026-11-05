@@ -5,7 +5,7 @@
 // non-zero on failure. Centralizing that here keeps the per-command files thin
 // and the behavior consistent across the whole CLI surface.
 
-import { withMaestroClient } from './maestro-client';
+import { UnsupportedCommandError, withMaestroClient } from './maestro-client';
 import { MaestroNotRunningError } from './maestro-not-running';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { resolveAgentId, readActiveAgentId } from './storage';
@@ -91,6 +91,26 @@ export function exitIfMaestroNotRunning(
 		console.error(error.hint);
 	}
 	exitWith(ExitCode.NotRunning);
+}
+
+/**
+ * Which peer, if any, left a bridge READ for the caller to answer from disk:
+ * `'app-not-running'` when nothing is serving the data directory, and
+ * `'headless-host'` when a `maestro-cli host` serves it but did not answer this
+ * message (an older host, or one whose Cue engine is not running).
+ *
+ * Everything else is `null` and must be reported, never masked by figures
+ * from disk: an old DESKTOP build that echoed (its fix is a restart), a
+ * timeout, a renderer that never answered, an error frame.
+ */
+export type DiskFallbackPeer = 'app-not-running' | 'headless-host';
+
+export function diskFallbackPeer(error: unknown): DiskFallbackPeer | null {
+	if (error instanceof MaestroNotRunningError) return 'app-not-running';
+	if (error instanceof UnsupportedCommandError && error.hostKind === 'headless') {
+		return 'headless-host';
+	}
+	return null;
 }
 
 /**

@@ -24,6 +24,7 @@ import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { sendBounded } from './socket-send';
+import type { WebLoginPolicyContext } from '../auth/web-login-policy';
 import type {
 	Theme,
 	WebClient,
@@ -155,11 +156,13 @@ export class BroadcastService {
 	/** Send a stamped frame to every open client its scope reaches. */
 	private deliver(frame: ReplayFrame): boolean {
 		if (!this.getWebClients) return false;
+		// This context expires with this synchronous pass; client authorization remains live.
+		const policy: WebLoginPolicyContext = {};
 		let delivered = false;
 		for (const client of this.getWebClients().values()) {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&
-				client.isAuthorized?.() !== false &&
+				client.isAuthorized?.(policy) !== false &&
 				frameReaches(frame.scope, client.subscribedSessionId)
 			) {
 				delivered = sendBounded(client.socket, frame.data, frame.bytes) || delivered;
