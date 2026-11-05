@@ -15,6 +15,11 @@ import type {
 import { canonicalJson } from '../../shared/canonicalJson';
 import { execGitReadOnly } from '../utils/remote-git';
 import {
+	recordBoardTransitions,
+	snapshotBoardTransitions,
+	type BoardTransitionsListener,
+} from './board-transitions';
+import {
 	BoardStorageError,
 	captureBoardCard,
 	getBoardStorage,
@@ -241,7 +246,10 @@ export function recoverIncompleteBoardReview(
 
 /** Called by the existing Cue heartbeat and native completion, never a second scheduler.
  * A missing/removed reviewer leaves work in Review. Busy reviewers get a normal queued task. */
-export function queueBoardReviews(storage: BoardStorageFacade): void {
+export function queueBoardReviews(
+	storage: BoardStorageFacade,
+	onTransitions?: BoardTransitionsListener
+): void {
 	storage.db
 		.transaction(() => {
 			for (const entry of storage.query().collections) {
@@ -282,7 +290,17 @@ export function queueBoardReviews(storage: BoardStorageFacade): void {
 						['done', 'review'].includes(run.outcome ?? '') &&
 						recoverIncompleteBoardReview(work, run, work.workflow.workRunId)
 					) {
-						writeWorkflowCard(storage, { ...entry, cardId: work.id }, work);
+						const key = { ...entry, cardId: work.id };
+						const before = snapshotBoardTransitions(storage, key, onTransitions);
+						writeWorkflowCard(storage, key, work);
+						recordBoardTransitions(
+							storage,
+							before,
+							key,
+							work.workflow.workRunId,
+							'review-queue',
+							onTransitions
+						);
 						continue;
 					}
 					if (!work.reviewerAgentId) continue;
@@ -420,7 +438,8 @@ export function approveBoardWork(
 	key: BoardCardKey,
 	collectionRevision: number,
 	cardRevision: number,
-	principal: string
+	principal: string,
+	onTransitions?: BoardTransitionsListener
 ): void {
 	storage.db
 		.transaction(() => {
@@ -475,6 +494,7 @@ export function approveBoardWork(
 						'Final approval requires native work and review evidence'
 					);
 			}
+			const before = snapshotBoardTransitions(storage, key, onTransitions);
 			work.workflow.humanDecision = {
 				principal,
 				decidedAt: new Date().toISOString(),
@@ -493,6 +513,7 @@ export function approveBoardWork(
 				};
 				writeWorkflowCard(storage, { ...key, cardId: review.id }, review);
 			}
+			recordBoardTransitions(storage, before, key, result.workRunId, 'human', onTransitions);
 		})
 		.immediate();
 }

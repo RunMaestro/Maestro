@@ -26,6 +26,7 @@ import {
 	type CardPrResult,
 } from '../../../main/board/board-pr';
 import { BoardCueHost, type BoardPreparedContext } from '../../../main/board/board-cue';
+import type { BoardTransitionReceipt } from '../../../main/board/board-transitions';
 import {
 	readBoardRunArtifact,
 	captureBoardCardFromHost,
@@ -46,6 +47,7 @@ let runtime: BoardRuntime;
 let cue: BoardCueHost;
 let waits: { cardId: string; reason: string }[];
 let changed: string[][];
+let transitions: BoardTransitionReceipt[];
 let roots: string[];
 let host: Omit<BoardClaimHostContext, 'owner'>;
 let agents: { id: string; groupId: string }[];
@@ -176,6 +178,7 @@ beforeEach(() => {
 	createPr = vi.fn(async () => ({ success: true, prUrl: 'https://example.test/pr/1' }));
 	completionTasks = [];
 	changed = [];
+	transitions = [];
 	prepare = vi.fn(async () => ({
 		repository: host.repository,
 		reviewArtifact: host.reviewArtifact,
@@ -206,6 +209,7 @@ beforeEach(() => {
 		onCompleted: (spec) => {
 			completionTasks.push(startBoardRunPr(spec, { createPr }));
 		},
+		onTransitions: (receipts) => transitions.push(...receipts),
 		onWait: (key, reason) => waits.push({ cardId: key.cardId, reason }),
 	});
 	configureBoardRuntimeHost(cue.runtimeFor);
@@ -274,6 +278,15 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		settle(good);
 		await cue.settle();
 		expect(reserved()).toHaveLength(0);
+		expect(
+			transitions.map((receipt) => [receipt.key.collectionKey, receipt.change.toStatus])
+		).toEqual([
+			['collection0', 'running'],
+			['collection0', 'review'],
+			['collection1', 'running'],
+			['collection1', 'review'],
+		]);
+		expect(transitions.filter((receipt) => receipt.notification?.kind === 'done')).toEqual([]);
 	});
 	it('reports the busy authorized worker when a foreign registered worker is free', async () => {
 		agents.push({ id: 'foreign', groupId: 'other' });

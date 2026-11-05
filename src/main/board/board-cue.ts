@@ -12,6 +12,7 @@ import { executeBoardRuntimeCommand } from './board-runtime-host';
 import type { BoardStorageFacade } from './board-storage';
 import type { BoardTickResult } from '../../shared/board/commands';
 import type { BoardCardKey } from './board-workspace-storage';
+import type { BoardTransitionsListener } from './board-transitions';
 
 /** Native IO evidence belongs to one runtime lookup and its launch attempt. */
 export type BoardPreparedContext = Pick<BoardClaimHostContext, 'repository' | 'reviewArtifact'>;
@@ -28,6 +29,7 @@ export interface BoardCueHostDeps {
 	ownerLiveness: (identity: string) => 'alive' | 'dead' | 'unknown';
 	onChanged?: () => void;
 	onCompleted?: (spec: BoardRunSpecification) => void;
+	onTransitions?: BoardTransitionsListener;
 	onTask?: (task: Promise<unknown>) => void;
 	onWait: (key: BoardCardKey, reason: string) => void;
 }
@@ -71,7 +73,8 @@ export class BoardCueHost {
 			service,
 			this.deps.ownerLiveness,
 			this.deps.onChanged,
-			this.deps.onCompleted
+			this.deps.onCompleted,
+			this.deps.onTransitions
 		);
 		if (!runtime.acquire().ok) return null;
 		this.runtimes.set(id, runtime);
@@ -82,7 +85,7 @@ export class BoardCueHost {
 		await refreshBoardSources();
 		// All registered sources, including projects without an open Left Bar agent.
 		const storage = this.deps.storage();
-		queueBoardReviews(storage);
+		queueBoardReviews(storage, this.deps.onTransitions);
 		for (const initial of storage.query().collections) {
 			await yieldToEventLoop();
 			const entry = storage.workspace.readCollection(initial);

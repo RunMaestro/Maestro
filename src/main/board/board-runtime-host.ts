@@ -17,7 +17,7 @@ import {
 	getBoardStorage,
 } from './board-storage';
 import { canonicalJson } from '../../shared/canonicalJson';
-import { approveBoardWork, prepareBoardReviewHandoff } from './board-review';
+import { prepareBoardReviewHandoff } from './board-review';
 import { evaluateClaimWorker } from '../../shared/board/domain';
 
 let runtimeFor: (
@@ -238,13 +238,7 @@ export async function executeBoardRuntimeCommand(
 		)?.reviewHandoff;
 		if (!handoff || !(await prepareBoardReviewHandoff(runtime.storage, handoff)))
 			return failed('review-artifact-unresolved');
-		approveBoardWork(
-			runtime.storage,
-			key,
-			target.expectedRevision,
-			command.cardRevision,
-			principal
-		);
+		runtime.acceptWork(key, target.expectedRevision, command.cardRevision, principal);
 		return { ok: true, value: { accepted: true } };
 	}
 	if (command.operation === 'approve') {

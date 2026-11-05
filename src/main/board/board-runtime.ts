@@ -5,6 +5,7 @@ import { parseCardMarkers } from '../../shared/board/cardMarkers';
  * existing lock and native liveness evidence; unknown always keeps capacity. */
 import type { DataDirLock } from '../../shared/maestro-lib/runtime/data-dir-lock';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { generateUUID } from '../../shared/uuid';
 import { validateBoard, type Board, type BoardCard } from '../../shared/board/types';
 import { applyCardResult, DEFAULT_MAX_FAILURES, type CardSpawnResult } from './board-dispatcher';
 import {
@@ -17,11 +18,18 @@ import {
 import type { BoardStorageFacade } from './board-storage';
 import {
 	applyBoardReviewResult,
+	approveBoardWork,
 	queueBoardReviews,
 	recoverIncompleteBoardReview,
 } from './board-review';
 import { evaluateClaimWorker, persistedCaptureInput } from '../../shared/board/domain';
 import { listBoardWorkers } from './board-workspace-storage';
+import {
+	recordBoardTransitions,
+	snapshotBoardTransitions,
+	type BoardTransitionsListener,
+	type BoardTransitionPhase,
+} from './board-transitions';
 
 export type BoardRunPhase =
 	| 'prepared'
@@ -35,6 +43,8 @@ export interface BoardRunLifecycle {
 	launchAuthorized?: boolean;
 	process?: { cueRunId: string; pid?: number };
 	reason?: string;
+	/** Bounded commit witnesses; advisory receipts are never a dispatch authority. */
+	transitionCommits?: Partial<Record<BoardTransitionPhase, string>>;
 }
 export interface BoardRunHooks {
 	canPrepare(): boolean;
@@ -68,7 +78,8 @@ export class BoardRuntime {
 		/** Must prove death of the exact boot/start identity, never heartbeat age. */
 		private readonly ownerLiveness: (identity: string) => 'alive' | 'dead' | 'unknown',
 		private readonly onChanged: () => void = () => {},
-		private readonly onCompleted: (spec: BoardRunSpecification) => void = () => {}
+		private readonly onCompleted: (spec: BoardRunSpecification) => void = () => {},
+		private readonly onTransitions?: BoardTransitionsListener
 	) {
 		const { pid, startedAt, bootTime } = lock.info;
 		this.processIdentity = canonicalJson({ pid, startedAt, bootTime: bootTime ?? null });
@@ -134,6 +145,23 @@ export class BoardRuntime {
 	/** Host-owned selection data. No caller supplies membership or registry revision. */
 	intakeRevision() {
 		return this.context().registryRevision;
+	}
+
+	/** Principal admission stays at the native runtime-host boundary. */
+	acceptWork(
+		key: import('./board-workspace-storage').BoardCardKey,
+		collectionRevision: number,
+		cardRevision: number,
+		principal: string
+	): void {
+		approveBoardWork(
+			this.storage,
+			key,
+			collectionRevision,
+			cardRevision,
+			principal,
+			this.onTransitions
+		);
 	}
 
 	/** Native dispatch grant. Revision checks and grant are one transaction. */
@@ -284,6 +312,7 @@ export class BoardRuntime {
 					!['starting', 'stopping'].includes(row.life.phase)
 				)
 					return;
+				const before = snapshotBoardTransitions(this.storage, row.spec.key, this.onTransitions);
 				this.writeLife(token, {
 					...row.life,
 					phase: row.life.phase === 'stopping' ? 'stopping' : 'running',
@@ -301,6 +330,14 @@ export class BoardRuntime {
 						},
 					];
 				});
+				recordBoardTransitions(
+					this.storage,
+					before,
+					row.spec.key,
+					token.runId,
+					'started',
+					this.onTransitions
+				);
 			})
 			.immediate();
 		this.onChanged();
@@ -566,6 +603,7 @@ export class BoardRuntime {
 						return reclaimed.ok ? { ok: false, reason } : reclaimed;
 					}
 				}
+				const before = snapshotBoardTransitions(this.storage, row.spec.key, this.onTransitions);
 				let cardOutcome: unknown;
 				this.updateCard(row.spec, (card, board) => {
 					const cause = card.heldByUser ? 'canceled' : forced;
@@ -662,8 +700,10 @@ export class BoardRuntime {
 					};
 				});
 				this.writeLife(token, { ...row.life, phase: 'finished', reason: result.error });
+				const completionId = generateUUID();
 				this.storage.db.prepare('UPDATE runs SET outcome_json=? WHERE run_id=?').run(
 					canonicalJson({
+						completionId,
 						result,
 						cardOutcome,
 						forced: forced ?? null,
@@ -674,11 +714,21 @@ export class BoardRuntime {
 				this.storage.db
 					.prepare('DELETE FROM reservations WHERE run_id=? AND owner_epoch=? AND generation=?')
 					.run(token.runId, token.ownerEpoch, token.generation);
-				queueBoardReviews(this.storage);
+				recordBoardTransitions(
+					this.storage,
+					before,
+					row.spec.key,
+					token.runId,
+					'result',
+					this.onTransitions
+				);
+				queueBoardReviews(this.storage, this.onTransitions);
 				queueMicrotask(() => {
-					// Re-read the committed outcome: a surrounding transaction may have rolled back.
+					// Match this completion, including an identical retry after outer rollback.
 					try {
-						if (this.read(token)?.outcome) this.onCompleted(row.spec);
+						if (!this.storage.db.open || this.storage.db.inTransaction) return;
+						if (this.read(token)?.outcome?.completionId === completionId)
+							this.onCompleted(row.spec);
 					} catch (error) {
 						void captureException(error, { operation: 'board:completion' });
 					}

@@ -49,11 +49,16 @@ import { pathToFileURL } from 'node:url';
 import { FAKE_AGENT_PATH, fakeAgentSpec } from '../../shared/maestro-lib/run/fakeAgent';
 import { isAgentBusy } from '../../../main/utils/agent-busy';
 import { ProcessManager } from '../../../main/process-manager';
-import type { BoardClaimHostContext } from '../../../main/board/board-claims';
+import type {
+	BoardClaimHostContext,
+	BoardRunSpecification,
+} from '../../../main/board/board-claims';
+import type { BoardCard } from '../../../shared/board/types';
 import type { CardSpawnResult } from '../../../main/board/board-dispatcher';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { generateUUID } from '../../../shared/uuid';
 import { runProcess, stopProcess } from '../../../main/cue/cue-process-lifecycle';
+import type { BoardTransitionReceipt } from '../../../main/board/board-transitions';
 
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: () => undefined,
@@ -75,7 +80,9 @@ let db: ReturnType<typeof openBoardDb>;
 let storage: BoardStorageFacade;
 let runtime: BoardRuntime;
 let roots: string[];
-let host: Omit<BoardClaimHostContext, 'owner'>;
+let host: Omit<BoardClaimHostContext, 'owner' | 'agentStates'> & {
+	agentStates: Record<string, BoardClaimHostContext['agentStates'][string]>;
+};
 let agents: { id: string; groupId: string }[];
 let service: BoardRunService;
 let hooks: BoardRunHooks;
@@ -83,6 +90,8 @@ let settle: (result: CardSpawnResult) => void;
 let lockValid: boolean;
 let databasePath: string;
 let ownsDatabase = false;
+let transitions: BoardTransitionReceipt[];
+let completed: ReturnType<typeof vi.fn<(spec: BoardRunSpecification) => void>>;
 const good: CardSpawnResult = {
 	// A trusted run-service fixture supplies complete host evidence. Real Git is
 	// exercised by the workflow cases below, including deliberately missing evidence.
@@ -111,10 +120,15 @@ function newRuntime(
 		},
 		() => host,
 		service,
-		() => liveness
+		() => liveness,
+		undefined,
+		(spec) => completed(spec),
+		(receipts) => transitions.push(...receipts)
 	);
 }
 beforeEach(() => {
+	transitions = [];
+	completed = vi.fn();
 	ownsDatabase = false;
 	dir = '';
 	// The fake agent consumes these inherited variables as file paths or a hold flag.
@@ -244,6 +258,7 @@ afterEach(() => {
 					if (dir) fs.rmSync(dir, { recursive: true, force: true });
 				} finally {
 					vi.unstubAllEnvs();
+					vi.useRealTimers();
 					vi.restoreAllMocks();
 				}
 			}
@@ -274,7 +289,7 @@ function claim() {
 }
 function card(index = 0) {
 	return storage.workspace.readCollection(storage.workspace.listCollections(roots[index])[0])!
-		.cards[0].payload;
+		.cards[0].payload as unknown as BoardCard;
 }
 function reservations() {
 	return db.prepare('SELECT * FROM reservations').all();
@@ -288,6 +303,101 @@ function persisted() {
 }
 
 describe('durable Board runtime over SQLite and the existing run-service seam', () => {
+	it('publishes immutable attempt-bound receipts after commit and keeps invalidation/completion independent', async () => {
+		const input = command();
+		const first = runtime.claim(input);
+		if (!first.ok) throw new Error(first.reason);
+		expect(runtime.claim(input)).toEqual(first);
+		await Promise.resolve();
+		expect(transitions).toEqual([]); // A claim reserves capacity without changing public status.
+		const pending = runtime.start(first.runToken);
+		expect(transitions).toEqual([]);
+		await Promise.resolve();
+		expect(transitions).toHaveLength(1);
+		expect(transitions[0]).toMatchObject({
+			key: { sourceKey: input.sourceKey, collectionKey: 'collection0', cardId: 'same' },
+			change: { fromStatus: 'todo', toStatus: 'running', attempt: 1, workerAgentId: 'worker' },
+			runToken: first.runToken,
+			cause: { runId: first.runToken.runId, phase: 'started' },
+		});
+		expect(Object.isFrozen(transitions[0])).toBe(true);
+		expect(Object.isFrozen(transitions[0].change)).toBe(true);
+		expect(Object.isFrozen(transitions[0].key)).toBe(true);
+		const running = canonicalJson(transitions[0]);
+		settle(good);
+		await pending;
+		await Promise.resolve();
+		expect(transitions).toHaveLength(2);
+		expect(transitions[1]).toMatchObject({
+			change: { fromStatus: 'running', toStatus: 'review' },
+			notification: { kind: 'review', detail: 'Fixture checks passed', workerAgentId: 'worker' },
+		});
+		expect(canonicalJson(transitions[0])).toBe(running);
+		expect(completed).toHaveBeenCalledTimes(1);
+		expect(runtime.complete(first.runToken, good)).toMatchObject({ ok: false });
+		expect(runtime.complete({ ...first.runToken, generation: 99 }, good)).toMatchObject({
+			ok: false,
+		});
+		await Promise.resolve();
+		expect(transitions).toHaveLength(2);
+		expect(completed).toHaveBeenCalledTimes(1);
+	});
+	it('suppresses nested rollback receipts and accepts a committed retry despite unrelated later writes', async () => {
+		const token = claim();
+		const pending = runtime.start(token);
+		await Promise.resolve();
+		transitions = [];
+		expect(() =>
+			db
+				.transaction(() => {
+					expect(runtime.complete(token, good)).toEqual({ ok: true });
+					expect(transitions).toEqual([]);
+					throw new Error('outer rollback');
+				})
+				.immediate()
+		).toThrow('outer rollback');
+		await Promise.resolve();
+		expect(transitions).toEqual([]);
+		expect(completed).not.toHaveBeenCalled();
+		expect(card().status).toBe('running');
+		db.transaction(() => {
+			expect(runtime.complete(token, good)).toEqual({ ok: true });
+			expect(transitions).toEqual([]);
+		}).immediate();
+		// Same collection and workspace revisions change, but this receipt's run/card still committed.
+		db.prepare(
+			"UPDATE collections SET revision=revision+1 WHERE collection_key='collection0'"
+		).run();
+		db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+		await Promise.resolve();
+		expect(transitions).toHaveLength(1);
+		expect(transitions[0].change.toStatus).toBe('review');
+		expect(completed).toHaveBeenCalledTimes(1);
+		settle(good);
+		await pending;
+	});
+	it('distinguishes an identical rollback/retry before microtasks by its durable commit marker', async () => {
+		const token = claim();
+		const pending = runtime.start(token);
+		await Promise.resolve();
+		transitions = [];
+		vi.useFakeTimers({ toFake: ['Date'] });
+		expect(() =>
+			db
+				.transaction(() => {
+					runtime.complete(token, good);
+					throw new Error('rollback');
+				})
+				.immediate()
+		).toThrow('rollback');
+		db.transaction(() => runtime.complete(token, good)).immediate();
+		await Promise.resolve();
+		expect(transitions).toHaveLength(1);
+		expect(completed).toHaveBeenCalledTimes(1);
+		vi.useRealTimers();
+		settle(good);
+		await pending;
+	});
 	it('binds a separate review to a real clean source commit and refuses dirty or forged handoffs', async () => {
 		const git = (...args: string[]) =>
 			execFileSync('git', args, { cwd: roots[0], encoding: 'utf8' });
@@ -1466,6 +1576,93 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 // Real SQLite, Git artifacts and the existing native Cue process lifecycle.
 // This scoped contract test is not the final rendered-host acceptance.
 describe('work, linked review and explicit final human decision', () => {
+	it('publishes both human-approved statuses once, with one work completion notification', async () => {
+		setupWorkflow();
+		nativeService();
+		const work = await runWork();
+		const review = await runReview();
+		await Promise.resolve();
+		expect(transitions.filter((receipt) => receipt.notification?.kind === 'done')).toEqual([]);
+		expect(transitions).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					key: expect.objectContaining({ cardId: 'same' }),
+					change: expect.objectContaining({ fromStatus: 'review', toStatus: 'ready-for-human' }),
+					cause: expect.objectContaining({ runId: review.runId }),
+				}),
+			])
+		);
+		transitions = [];
+		const board = storage.read(roots[0], 'board');
+		const accept = () =>
+			runtime.acceptWork(
+				command(),
+				board.storage!.expectedRevision!,
+				board.cards[0].storageRevision!,
+				'native-desktop-main-frame'
+			);
+		expect(() =>
+			db
+				.transaction(() => {
+					accept();
+					expect(transitions).toEqual([]);
+					throw new Error('approval rollback');
+				})
+				.immediate()
+		).toThrow('approval rollback');
+		// Identical approval retried before either deferred callback, at the same revisions.
+		accept();
+		expect(() => accept()).toThrow();
+		db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+		await Promise.resolve();
+		expect(transitions).toHaveLength(2);
+		expect(transitions.map((receipt) => receipt.change.toStatus)).toEqual(['done', 'done']);
+		const workReceipt = transitions.find((receipt) => receipt.key.cardId === 'same')!;
+		expect(workReceipt).toMatchObject({
+			runToken: work,
+			notification: { kind: 'done' },
+			cause: { phase: 'human' },
+		});
+		const reviewReceipt = transitions.find((receipt) => receipt.key.cardId !== 'same')!;
+		expect(reviewReceipt.runToken).toEqual(review);
+		expect(reviewReceipt.notification).toBeUndefined();
+		expect(completed).toHaveBeenCalledTimes(2); // Native work and review only, no human PR replay.
+	});
+	it('publishes review-queue recovery only after its owning commit and never for a new card appearance', async () => {
+		setupWorkflow();
+		nativeService(undefined, '<!-- maestro:card-complete -->');
+		const work = claimFor('same');
+		if (!work.ok) throw new Error(work.reason);
+		await runtime.start(work.runToken);
+		db.prepare(
+			"UPDATE cards SET payload_json=json_remove(json_set(payload_json, '$.status', 'review'), '$.workflow.evidenceIncomplete') WHERE collection_key='collection0' AND id='same'"
+		).run();
+		transitions = [];
+		const outcome = runtime.read(work.runToken)!.outcome;
+		const listener = (receipts: readonly BoardTransitionReceipt[]) => transitions.push(...receipts);
+		expect(() =>
+			db
+				.transaction(() => {
+					queueBoardReviews(storage, listener);
+					throw new Error('queue rollback');
+				})
+				.immediate()
+		).toThrow('queue rollback');
+		await Promise.resolve();
+		expect(transitions).toEqual([]);
+		expect(card().status).toBe('review');
+		db.transaction(() => queueBoardReviews(storage, listener)).immediate();
+		queueBoardReviews(storage, listener);
+		await Promise.resolve();
+		expect(transitions).toHaveLength(1);
+		expect(transitions[0]).toMatchObject({
+			change: { fromStatus: 'review', toStatus: 'blocked' },
+			cause: { phase: 'review-queue', runId: work.runToken.runId },
+			notification: { kind: 'blocked' },
+		});
+		expect(runtime.read(work.runToken)!.outcome).toEqual(outcome);
+		expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+	});
 	function setupWorkflow() {
 		agents.push({ id: 'reviewer', groupId: 'group' }, { id: 'foreign', groupId: 'other' });
 		for (const id of ['reviewer', 'foreign']) {
