@@ -137,6 +137,8 @@ export async function handleProcessSpawn(
 	try {
 		return await handleAdmittedProcessSpawn(config, deps);
 	} finally {
+		// ProcessManager overlaps this pending-start admission with a hold on
+		// the concrete child/PTY until close/onExit; handler return is not exit.
 		admission.release();
 	}
 }

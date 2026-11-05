@@ -106,8 +106,15 @@ export class ProcessManager extends EventEmitter {
 		this.on('exit', (sessionId: string) => this.harnessControls.forget(sessionId));
 		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
 		this.bufferManager = new DataBufferManager(this.processes, this);
-		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
-		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
+		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager, (config, handle) =>
+			this.retainRetirementAdmission(config, { ptyProcess: handle })
+		);
+		this.childProcessSpawner = new ChildProcessSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config, handle) => this.retainRetirementAdmission(config, { childProcess: handle })
+		);
 		// The OpenCode SDK path falls back to the CLI spawner when the shared
 		// server can't start, so local OpenCode never regresses to "broken".
 		this.opencodeServerSpawner = new OpencodeServerSpawner(
@@ -173,6 +180,20 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const admission = worktreeRetirement.admit(
+			config.sshRemoteId ? null : [expandTilde(config.cwd)]
+		);
+		if (!admission.ok) throw new Error(admission.reason);
+		try {
+			return this.spawnAdmitted(config);
+		} finally {
+			// Concrete spawners acquire an overlapping hold before returning. A
+			// pending desktop handler can now release without exposing a gap.
+			admission.release();
+		}
+	}
+
+	private spawnAdmitted(config: ProcessConfig): SpawnResult {
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&
@@ -418,8 +439,35 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	private fallbackToCli(config: ProcessConfig): SpawnResult {
-		this.harnessControls.forget(config.sessionId);
-		return this.childProcessSpawner.spawn(config);
+		// Native transports may invoke this asynchronously, outside spawn().
+		const admission = worktreeRetirement.admit(
+			config.sshRemoteId ? null : [expandTilde(config.cwd)]
+		);
+		if (!admission.ok) throw new Error(admission.reason);
+		try {
+			this.harnessControls.forget(config.sessionId);
+			return this.childProcessSpawner.spawn(config);
+		} finally {
+			admission.release();
+		}
+	}
+
+	/** Bind to the actual handle, independent of kill(), map replacement or synthetic exit. */
+	private retainRetirementAdmission(
+		config: ProcessConfig,
+		handle: Pick<ManagedProcess, 'childProcess' | 'ptyProcess'>
+	): void {
+		const admission = worktreeRetirement.admit(
+			config.sshRemoteId ? null : [expandTilde(config.cwd)]
+		);
+		if (!admission.ok) throw new Error(admission.reason);
+		if (handle.childProcess) {
+			// Even a spawn error produces close. Do not release on error/exit:
+			// streams can still be draining, and kill only sends a signal.
+			handle.childProcess.once('close', admission.release);
+		} else if (handle.ptyProcess) {
+			handle.ptyProcess.onExit(admission.release);
+		}
 	}
 
 	private registerHarnessControl(config: ProcessConfig): void {
