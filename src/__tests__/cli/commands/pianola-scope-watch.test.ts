@@ -1641,6 +1641,13 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 		'pre-owner',
 		'request-risk-header',
 	] as const)('consumes only the exact open native question: %s', async (mode) => {
+		// The CLI gate reads disk settings separately from the host store. Keep both
+		// on this fixture's switch rather than inheriting the machine's Encore flags.
+		const cliSettings = vi
+			.spyOn(cliStorage, 'readSettingValue')
+			.mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: settings.enabled } : undefined
+			);
 		const provider = mode === 'unsupported-provider' ? 'codex' : 'claude-code';
 		const f = fixture(provider);
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'Q06-'));
@@ -1996,6 +2003,7 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 			socket?.destroy();
 			spawn.cleanup();
 			relay.stop();
+			cliSettings.mockRestore();
 			originalRead.mockRestore();
 			processRead.mockRestore();
 			fs.rmSync(directory, { recursive: true, force: true });
