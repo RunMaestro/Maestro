@@ -38,6 +38,7 @@ type Prepared = {
  */
 export class WorktreeRetirementHost {
 	private readonly receipts = new WeakMap<object, Map<string, RemovalResult>>();
+	private readonly aborted = new WeakMap<object, Set<string>>();
 	private readonly prepared = new Map<string, Prepared>();
 	private readonly recoveries = new Map<
 		string,
@@ -390,11 +391,18 @@ export class WorktreeRetirementHost {
 
 	abort(id: string, renderer: object): boolean {
 		const entry = this.prepared.get(id);
-		if (!entry || entry.renderer.identity !== renderer) return false;
+		if (!entry) return this.aborted.get(renderer)?.has(id) ?? false;
+		if (entry.renderer.identity !== renderer) return false;
 		// Owner invalidation may already have aborted Main's fence. Never thaw
 		// an active removal, even when its renderer disappears or lease expires.
 		if (!this.fence.abort(entry.token) && this.fence.tokenState(entry.token) !== undefined)
 			return false;
+		// Expiry or a lost abort reply must be safely retryable by the same
+		// sender. A receipt never touches a newer preparation or a removal.
+		const aborted = this.aborted.get(renderer) ?? new Set<string>();
+		aborted.add(id);
+		if (aborted.size > 64) aborted.delete(aborted.values().next().value!);
+		this.aborted.set(renderer, aborted);
 		this.release(id, entry);
 		return true;
 	}

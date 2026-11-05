@@ -272,6 +272,7 @@ describe('Git IPC handlers', () => {
 				'git:invalidateWorktreePullRequest',
 				'git:prepareWorktreeRetirement',
 				'git:abortWorktreeRetirement',
+				'git:removeWorktreeRetirement',
 				'git:getWorktreeRetirementRecoveries',
 				'git:cancelWorktreeRetirementRecovery',
 				'git:completeWorktreeRetirementRecovery',

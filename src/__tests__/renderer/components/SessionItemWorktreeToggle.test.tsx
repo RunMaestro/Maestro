@@ -19,6 +19,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { WorktreePullRequestDetailsHost } from '../../../renderer/components/WorktreePullRequestDetails';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useWorktreeCleanupStore } from '../../../renderer/stores/worktreeCleanupStore';
 import { SessionItem } from '../../../renderer/components/SessionItem';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
@@ -281,6 +282,12 @@ describe('worktree PR summary', () => {
 	beforeEach(() => {
 		useModalStore.getState().closeModal('worktreePRDetails');
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		useWorktreeCleanupStore.setState({
+			runs: {},
+			recoveries: [],
+			recoveryRuns: {},
+			recoveryError: undefined,
+		});
 	});
 	afterEach(() => useModalStore.getState().closeModal('worktreePRDetails'));
 
@@ -436,6 +443,44 @@ describe('worktree PR summary', () => {
 		expect(screen.getByRole('dialog')).toHaveTextContent('no longer available');
 		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+	});
+	it('reopens the absent original child and retries its parked token from another target', async () => {
+		const target = createMockSession({
+			id: 'retiring-child',
+			name: 'Retiring child',
+			parentSessionId: 'parent',
+		});
+		const parent = createMockSession({ id: 'parent', name: 'Surviving parent' });
+		const prepare = vi.fn().mockResolvedValue({ ok: true, token: 'original', revision: 1 });
+		const remove = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('Reply lost'))
+			.mockResolvedValue({ status: 'removed' });
+		window.maestro.git.prepareWorktreeRetirement = prepare;
+		window.maestro.git.removeWorktreeRetirement = remove;
+		window.maestro.git.getWorktreeRetirementRecoveries = vi.fn().mockResolvedValue([]);
+		useSessionStore.setState({ sessions: [target, parent], activeSessionId: parent.id });
+		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		useModalStore.getState().openModal('worktreePRDetails', { sessionId: target.id });
+		render(
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+			</LayerStackProvider>
+		);
+		fireEvent.click(screen.getByText('Prepare worktree cleanup'));
+		fireEvent.click(await screen.findByText('Confirm worktree removal'));
+		await screen.findByText('Cleanup pending: Reply lost');
+		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+		act(() => {
+			useSessionStore.setState({ sessions: [parent] });
+			useModalStore.getState().openModal('worktreePRDetails', { sessionId: parent.id });
+		});
+		fireEvent.click(screen.getByText('View cleanup for Retiring child'));
+		expect(screen.getByRole('dialog')).toHaveTextContent('no longer available');
+		fireEvent.click(screen.getByText('Retry cleanup settlement'));
+		await screen.findByText(/Worktree removed\. Saved chat/);
+		expect(remove.mock.calls).toEqual([['original'], ['original']]);
+		expect(prepare).toHaveBeenCalledOnce();
 	});
 
 	it('shows CI transitions and refreshes without selecting the worktree', () => {

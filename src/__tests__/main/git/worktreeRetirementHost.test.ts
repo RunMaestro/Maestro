@@ -97,6 +97,16 @@ function setup() {
 }
 
 describe('Main-owned renderer retirement protocol', () => {
+	it('replays expired preparation release only to its owner without authorizing removal', async () => {
+		const f = setup();
+		const result = await f.host.prepare('child', f.renderer);
+		if (!result.ok) throw new Error(result.reason);
+		await vi.advanceTimersByTimeAsync(1001);
+		expect(f.host.abort(result.token, f.identity)).toBe(true);
+		expect(f.host.abort(result.token, {})).toBe(false);
+		expect(await f.host.remove(result.token, f.identity)).toMatchObject({ status: 'blocked' });
+		expect(f.renderer.release).toHaveBeenCalledExactlyOnceWith('child', result.token);
+	});
 	it('binds fresh opaque ids to Main objects, rechecks the revision and fences both checkouts', async () => {
 		const f = setup();
 		const result = await f.host.prepare('child', f.renderer);
@@ -119,7 +129,7 @@ describe('Main-owned renderer retirement protocol', () => {
 		const second = await f.host.prepare('child', f.renderer);
 		if (!second.ok) throw new Error(second.reason);
 		expect(second.token).not.toBe(first.token);
-		expect(f.host.abort(first.token, f.identity)).toBe(false);
+		expect(f.host.abort(first.token, f.identity)).toBe(true);
 		expect(f.fence.state(f.root)).toBe('preparing');
 		expect(f.host.abort(second.token, f.identity)).toBe(true);
 	});

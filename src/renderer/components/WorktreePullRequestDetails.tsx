@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
-import { WorktreeCleanup, useWorktreeCleanup } from './WorktreeCleanup';
+import { useEffect, type ReactNode } from 'react';
+import { WorktreeCleanup, WorktreeCleanupResults, useWorktreeCleanup } from './WorktreeCleanup';
+import { useWorktreeCleanupStore } from '../stores/worktreeCleanupStore';
 import { WorktreePullRequestMerge } from './WorktreePullRequestMerge';
 import { Modal } from './ui/Modal';
 import { resolveGitSshRemoteId } from '../hooks/git/useGitAgentActions';
@@ -218,17 +219,27 @@ export function WorktreePullRequestDetailsHost({ theme }: { theme: Theme }) {
 	const open = useModalStore(selectModalOpen('worktreePRDetails'));
 	const data = useModalStore(selectModalData('worktreePRDetails'));
 	const session = useSessionStore((s) => s.sessions.find((entry) => entry.id === data?.sessionId));
-	const controller = useWorktreeCleanup(open ? data?.sessionId : undefined);
+	const controller = useWorktreeCleanup(open ? data?.sessionId : undefined, {
+		path: session?.cwd,
+		name: session?.name,
+	});
+	useEffect(() => {
+		if (open && typeof window.maestro.git.getWorktreeRetirementRecoveries === 'function')
+			void useWorktreeCleanupStore.getState().refreshRecoveries();
+	}, [open]);
 	const cleanup = (
-		<WorktreeCleanup
-			controller={controller}
-			path={session?.cwd}
-			eligible={
-				!!session?.parentSessionId &&
-				!resolveGitSshRemoteId(session) &&
-				!session.sessionSshRemoteConfig?.enabled
-			}
-		/>
+		<>
+			<WorktreeCleanup
+				controller={controller}
+				path={session?.cwd}
+				eligible={
+					!!session?.parentSessionId &&
+					!resolveGitSshRemoteId(session) &&
+					!session.sessionSshRemoteConfig?.enabled
+				}
+			/>
+			<WorktreeCleanupResults sessionId={data?.sessionId} />
+		</>
 	);
 	const close = () => useModalStore.getState().closeModal('worktreePRDetails');
 	if (!open) return null;

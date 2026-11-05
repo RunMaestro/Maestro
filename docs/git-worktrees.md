@@ -239,7 +239,11 @@ merged PR head and refuses changed, untracked or ignored data. Saved chat is ret
 before Git runs, startup restores journal reservations, and desktop recovery
 checks disk and Git administration without repeating deletion.
 Uncertain outcomes remain reserved, with a same-token settlement retry in the
-details even after the child registration disappears. A lost success reply can
+details even after the child registration disappears. Closing or retargeting
+the dialog parks active cleanup and its result. Reopen the original target, or
+choose **View cleanup for…** from another target's details, to resume settlement.
+Unused preparations are released on close; a lost keep reply retries only the
+keep action. A lost success reply can
 be replayed to its original sender without another Git removal. The transaction drains local
 worktree watcher probes/scans and cancels target discovery timers before Git;
 late discovery/removal events cannot recreate the retiring session. Parent
@@ -250,13 +254,18 @@ loaded sole primary renderer. It freezes the stale or already-absent child and i
 surviving parent, reuses the original journal/archive identity, settles watchers
 and durable registration state, and then releases the parent. Failed writes or
 lost replies retain the fence for retry; reloads require a fresh token and
-revision. Recovery never repeats Git deletion. A primary document lost during
+revision. In the same PR details, **Refresh cleanup recoveries** lists restored
+pending journals. **Complete removed checkout recovery** settles an already
+removed checkout; **Keep present checkout** cancels recovery only after Main
+verifies that the original checkout and registrations are fully present.
+Results survive dialog close/reopen for the current application document.
+Recovery never repeats Git deletion. A primary document lost during
 an active removal cannot adopt that runner: the result explicitly requires
 restart recovery and the fence stays held. Owner loss during durable intent
 persistence stops before Git starts.
 
 Cleanup currently keeps the checkout by default and asks for each removal.
-Automatic opt-in policy, recovery/archive browsing UI and policy persistence
+Automatic opt-in policy, archived-worktree browsing and policy persistence
 remain in progress. Neither merging nor status polling triggers removal.
 
 ### Removing Worktrees

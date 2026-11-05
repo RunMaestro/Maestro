@@ -1,122 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
-import { logger } from '../utils/logger';
-import type { RetirementRemovalResult } from '../../shared/worktreeRetirement';
+import { useEffect } from 'react';
+import { useWorktreeCleanupStore } from '../stores/worktreeCleanupStore';
+import type { WorktreeCleanupTarget } from '../stores/worktreeCleanupStore';
+import { useModalStore } from '../stores/modalStore';
 
-/** Owned by the details host so removal of the child row cannot lose the result
- * or the retry capability. Closing/retargeting abandons preparation only; Main
- * refuses abort once an actual removal has started.
- */
-export function useWorktreeCleanup(sessionId: string | undefined) {
-	const [token, setToken] = useState<string>();
-	const [busy, setBusy] = useState(false);
-	const [result, setResult] = useState<RetirementRemovalResult>();
-	const lifetime = useRef<{ active: boolean; busy: boolean; token?: string }>();
-	useEffect(() => {
-		const owner = { active: true, busy: false, token: undefined as string | undefined };
-		lifetime.current = owner;
-		setToken(undefined);
-		setBusy(false);
-		setResult(undefined);
-		return () => {
-			owner.active = false;
-			if (owner.token)
-				void window.maestro.git
-					.abortWorktreeRetirement(owner.token)
-					.catch((error) =>
-						logger.warn(
-							'Cleanup preparation release unavailable; Main retains its lease or removal fence',
-							'WorktreeCleanup',
-							String(error)
-						)
-					);
-		};
-	}, [sessionId]);
-
-	const prepare = async () => {
-		const owner = lifetime.current;
-		if (!sessionId || !owner?.active || owner.busy || owner.token) return;
-		owner.busy = true;
-		setBusy(true);
-		setResult(undefined);
-		try {
-			const prepared = await window.maestro.git.prepareWorktreeRetirement(sessionId);
-			if (!owner.active) {
-				if (prepared.ok) await window.maestro.git.abortWorktreeRetirement(prepared.token);
-				return;
-			}
-			if (prepared.ok) {
-				owner.token = prepared.token;
-				setToken(prepared.token);
-			} else setResult({ status: 'blocked', reason: prepared.reason });
-		} catch (error) {
-			if (owner.active)
-				setResult({
-					status: 'blocked',
-					reason: error instanceof Error ? error.message : 'Preparation unavailable',
-				});
-		} finally {
-			owner.busy = false;
-			if (owner.active) setBusy(false);
-		}
+/** The view owns unused preparation only. The store owns commit and its result. */
+export function useWorktreeCleanup(
+	sessionId: string | undefined,
+	target?: Omit<WorktreeCleanupTarget, 'sessionId'>
+) {
+	const run = useWorktreeCleanupStore((state) => (sessionId ? state.runs[sessionId] : undefined));
+	useEffect(
+		() => () => {
+			if (sessionId) useWorktreeCleanupStore.getState().releasePreparation(sessionId);
+		},
+		[sessionId]
+	);
+	return {
+		token: run?.token,
+		busy: run?.busy ?? false,
+		result: run?.result,
+		path: run?.path,
+		keeping: run?.phase === 'keeping',
+		prepare: () =>
+			sessionId
+				? useWorktreeCleanupStore.getState().prepare({ sessionId, ...target })
+				: Promise.resolve(),
+		cancel: () =>
+			sessionId ? useWorktreeCleanupStore.getState().keep(sessionId) : Promise.resolve(),
+		remove: () =>
+			sessionId ? useWorktreeCleanupStore.getState().remove(sessionId) : Promise.resolve(),
 	};
-	const cancel = async () => {
-		const owner = lifetime.current;
-		if (!owner?.active || owner.busy || !owner.token) return;
-		owner.busy = true;
-		setBusy(true);
-		try {
-			const aborted = await window.maestro.git.abortWorktreeRetirement(owner.token);
-			if (owner.active) {
-				if (aborted) {
-					owner.token = undefined;
-					setToken(undefined);
-					setResult(undefined);
-				} else
-					setResult({
-						status: 'pending',
-						reason:
-							'Preparation expired or cleanup settlement is pending. Retry to obtain the current outcome.',
-					});
-			}
-		} catch (error) {
-			if (owner.active)
-				setResult({
-					status: 'pending',
-					reason: error instanceof Error ? error.message : 'Cancellation unavailable',
-				});
-		} finally {
-			owner.busy = false;
-			if (owner.active) setBusy(false);
-		}
-	};
-	const remove = async () => {
-		const owner = lifetime.current;
-		if (!owner?.active || owner.busy || !owner.token) return;
-		owner.busy = true;
-		setBusy(true);
-		try {
-			const outcome = await window.maestro.git.removeWorktreeRetirement(owner.token);
-			if (owner.active) {
-				setResult(outcome);
-				if (outcome.status !== 'pending') {
-					owner.token = undefined;
-					setToken(undefined);
-				}
-			}
-		} catch (error) {
-			// A lost commit reply is uncertain. Preserve the exact token for retry;
-			// never create a second preparation or infer that nothing was removed.
-			if (owner.active)
-				setResult({
-					status: 'pending',
-					reason: error instanceof Error ? error.message : 'Removal reply unavailable',
-				});
-		} finally {
-			owner.busy = false;
-			if (owner.active) setBusy(false);
-		}
-	};
-	return { token, busy, result, prepare, cancel, remove };
 }
 
 export function WorktreeCleanup({
@@ -128,14 +41,14 @@ export function WorktreeCleanup({
 	path?: string;
 	eligible: boolean;
 }) {
-	const { token, busy, result, prepare, cancel, remove } = controller;
+	const { token, busy, result, keeping, prepare, cancel, remove } = controller;
 	return (
 		<section aria-label="Worktree cleanup" className="space-y-2">
 			<h3 className="font-bold">Worktree cleanup</h3>
 			<p>
 				Keep this checkout until you explicitly confirm removal. Merging alone does not remove it.
 			</p>
-			{path && <p>{path}</p>}
+			{(controller.path ?? path) && <p>{controller.path ?? path}</p>}
 			{!eligible && !token && result?.status !== 'removed' && (
 				<p>Cleanup requires a registered local child worktree.</p>
 			)}
@@ -154,10 +67,19 @@ export function WorktreeCleanup({
 						The child and parent are temporarily frozen. Main rechecks merged PR identity, exact
 						HEAD and all local data before non-force removal. Preparation expires after 30 seconds.
 					</p>
-					<button type="button" className="underline" disabled={busy} onClick={remove}>
-						{result?.status === 'pending' ? 'Retry cleanup settlement' : 'Confirm worktree removal'}
+					<button
+						type="button"
+						className="underline"
+						disabled={busy}
+						onClick={keeping ? cancel : remove}
+					>
+						{keeping
+							? 'Retry keeping checkout'
+							: result?.status === 'pending'
+								? 'Retry cleanup settlement'
+								: 'Confirm worktree removal'}
 					</button>{' '}
-					{result?.status !== 'pending' && (
+					{!keeping && result?.status !== 'pending' && (
 						<button type="button" className="underline" disabled={busy} onClick={cancel}>
 							Keep checkout
 						</button>
@@ -183,6 +105,82 @@ export function WorktreeCleanup({
 					or the outcome remains uncertain; deletion is never repeated by recovery.
 				</p>
 			)}
+		</section>
+	);
+}
+
+/** Part of the existing PR details surface, including when its child is absent. */
+export function WorktreeCleanupResults({ sessionId }: { sessionId?: string }) {
+	const runs = useWorktreeCleanupStore((state) => state.runs);
+	const recoveries = useWorktreeCleanupStore((state) => state.recoveries);
+	const recoveryRuns = useWorktreeCleanupStore((state) => state.recoveryRuns);
+	const recoveryError = useWorktreeCleanupStore((state) => state.recoveryError);
+	const others = Object.values(runs).filter((run) => run.sessionId !== sessionId);
+	return (
+		<section aria-label="Cleanup results and recovery" className="space-y-2">
+			<h3 className="font-bold">Cleanup results and recovery</h3>
+			{others.map((run) => (
+				<div key={run.sessionId}>
+					<button
+						type="button"
+						className="underline"
+						onClick={() =>
+							useModalStore.getState().openModal('worktreePRDetails', { sessionId: run.sessionId })
+						}
+					>
+						View cleanup for {run.name ?? run.path ?? run.sessionId}
+					</button>
+					<p>{run.busy ? 'Cleanup in progress' : (run.result?.status ?? 'Prepared')}</p>
+					{!run.busy && !run.token && (
+						<button
+							type="button"
+							className="underline"
+							onClick={() => useWorktreeCleanupStore.getState().clearResult(run.sessionId)}
+						>
+							Dismiss result
+						</button>
+					)}
+				</div>
+			))}
+			<p>
+				Startup recovery settles an already removed checkout or keeps a fully present checkout. It
+				never runs Git deletion. Partial or changed outcomes stay reserved for inspection.
+			</p>
+			<button
+				type="button"
+				className="underline"
+				onClick={() => useWorktreeCleanupStore.getState().refreshRecoveries()}
+			>
+				Refresh cleanup recoveries
+			</button>
+			{recoveryError && <p role="status">Recovery unavailable: {recoveryError}</p>}
+			{!recoveries.length && !recoveryError && <p>No startup cleanup recoveries.</p>}
+			{recoveries.map((target) => (
+				<div key={target.id}>
+					<p>{target.path}</p>
+					<button
+						type="button"
+						className="underline"
+						disabled={recoveryRuns[target.id]?.busy}
+						onClick={() => useWorktreeCleanupStore.getState().recover(target, 'complete')}
+					>
+						Complete removed checkout recovery
+					</button>{' '}
+					<button
+						type="button"
+						className="underline"
+						disabled={recoveryRuns[target.id]?.busy}
+						onClick={() => useWorktreeCleanupStore.getState().recover(target, 'cancel')}
+					>
+						Keep present checkout
+					</button>
+				</div>
+			))}
+			{Object.values(recoveryRuns).map((run) => (
+				<p role="status" key={run.target.id}>
+					{run.target.path}: {run.busy ? 'Recovering…' : run.message}
+				</p>
+			))}
 		</section>
 	);
 }
