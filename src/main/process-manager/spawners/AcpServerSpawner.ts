@@ -75,9 +75,13 @@ export class AcpServerSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(start, observe) => this.spawnAdmitted(config, start, observe),
-				(error) => {
-					void captureException(error);
-					logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				async (error) => {
+					const reporting = Promise.resolve().then(() => captureException(error));
+					try {
+						logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+					} finally {
+						await reporting;
+					}
 				}
 			);
 		} catch (error) {
@@ -101,7 +105,11 @@ export class AcpServerSpawner {
 					error: `ACP Standard mode could not start: ${String(error)}`,
 				};
 			}
-			void captureException(error);
+			observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -257,9 +265,13 @@ class AcpTurn {
 								return acpPermissionResponse(await opened.completion);
 							})()
 						),
-					(error) => {
-						void captureException(error);
-						logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+					async (error) => {
+						const reporting = Promise.resolve().then(() => captureException(error));
+						try {
+							logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+						} finally {
+							await reporting;
+						}
 					}
 				)
 			)
@@ -271,7 +283,7 @@ class AcpTurn {
 						if (this.providerSessionId && params.sessionId !== this.providerSessionId) return;
 						this.forwardUpdate(params);
 					},
-					(error) => void captureException(error)
+					(error) => captureException(error)
 				)
 			);
 		this.connection = app.connect(connectionStream);
@@ -393,7 +405,7 @@ class AcpTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -415,7 +427,7 @@ class AcpTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -467,7 +479,11 @@ class AcpTurn {
 				label: 'error',
 			}
 		);
-		void captureException(error);
+		this.observeCompletion(
+			Promise.resolve()
+				.then(() => captureException(error))
+				.catch(() => {})
+		);
 		this.emitAgentError(error);
 		this.finish(1);
 	}

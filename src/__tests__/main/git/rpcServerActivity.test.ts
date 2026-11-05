@@ -1194,6 +1194,7 @@ describe('standalone Antigravity SDK activity', () => {
 					spawn,
 					fallback,
 					fs.realpath,
+					captureException,
 				])
 					expect(probe).not.toHaveBeenCalled();
 				expect(processes.size).toBe(0);
@@ -1622,6 +1623,176 @@ describe('standalone Antigravity SDK activity', () => {
 		releaseFallback();
 		(await reserve()).release();
 	});
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'owns async antigravity setup diagnostics on %s and preserves fallback',
+		async (outcome) => {
+			const failure = new Error('setup failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(planSpawnShell).mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('report failed');
+				return reporting.promise;
+			});
+			expect(antigravity.spawn(input({ permissionMode: 'full' }))).toEqual({
+				success: true,
+				pid: 999,
+			});
+			expect(fallback).toHaveBeenCalledOnce();
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async antigravity outer failure diagnostics despite logger failure: %s',
+		async (loggerFails) => {
+			const failure = new Error('fallback failed');
+			const reporting = Promise.withResolvers<void>();
+			fallback.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+			expect(antigravity.spawn(input({ toolType: 'terminal' }))).toEqual({
+				success: false,
+				pid: -1,
+				error: String(failure),
+			});
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async antigravity run diagnostics independently of native close (report first: %s)',
+		async (reportFirst) => {
+			const failure = new Error('request failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.request.mockRejectedValueOnce(failure);
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			expect(antigravity.spawn(input()).success).toBe(true);
+			await drain();
+			expect(probes.exit).toHaveBeenCalledOnce();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (reportFirst) reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (reportFirst) await close();
+			else reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async antigravity completion diagnostics despite logger failure: %s',
+		async (loggerFails) => {
+			antigravity.spawn(input());
+			await drain();
+			const failure = new Error('connection close failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.close.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+			await close();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each(['permission', 'notification', 'interrupt', 'kill'] as const)(
+		'owns async antigravity late %s diagnostics in fresh activity',
+		async (action) => {
+			antigravity.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			await close();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			const failure = new Error('callback failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (action === 'permission') {
+				probes.interaction.mockRejectedValueOnce(failure);
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+				await expect(connection().onServerRequest({ id: 1, method: 'permission' })).rejects.toBe(
+					failure
+				);
+			} else if (action === 'notification') {
+				const record = {
+					get params(): never {
+						throw failure;
+					},
+				};
+				expect(() => connection().onNotification(record)).toThrow(failure);
+			} else {
+				vi.mocked(stopProcess).mockImplementationOnce(() => {
+					throw failure;
+				});
+				await expect(managed.sdkController![action]()).rejects.toBe(failure);
+			}
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			processes.clear();
+			const successor = Promise.withResolvers<void>();
+			boundary.withWorktreeTurnActivity((_start, observe) => observe(successor.promise), vi.fn());
+			reporting.reject(new Error('report failed'));
+			await drain();
+			await blocked();
+			successor.resolve();
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it('owns async antigravity exit diagnostics when exit logging also throws', async () => {
+		const failure = new Error('exit logger failed');
+		const reporting = Promise.withResolvers<void>();
+		probes.exit.mockRejectedValueOnce(new Error('exit failed'));
+		vi.mocked(logger.error).mockImplementationOnce(() => {
+			throw failure;
+		});
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		antigravity.spawn(input());
+		connection().onNotification({ method: 'complete' });
+		await close();
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		expect(captureException).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
 });
 
 describe('standalone ACP activity', () => {
@@ -1922,6 +2093,7 @@ describe('standalone ACP activity', () => {
 					spawn,
 					fallback,
 					fs.realpath,
+					captureException,
 					probes.acpClient,
 				])
 					expect(probe).not.toHaveBeenCalled();
@@ -2142,6 +2314,171 @@ describe('standalone ACP activity', () => {
 		await close();
 		await blocked();
 		releaseFallback();
+		(await reserve()).release();
+	});
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'owns async acp setup diagnostics on %s and preserves fallback',
+		async (outcome) => {
+			const failure = new Error('setup failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(planSpawnShell).mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('report failed');
+				return reporting.promise;
+			});
+			expect(acp.spawn(input({ permissionMode: 'full' }))).toEqual({ success: true, pid: 999 });
+			expect(fallback).toHaveBeenCalledOnce();
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async acp outer failure diagnostics despite logger failure: %s',
+		async (loggerFails) => {
+			const failure = new Error('fallback failed');
+			const reporting = Promise.withResolvers<void>();
+			fallback.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+			expect(acp.spawn(input({ nativeAcpArgs: undefined }))).toEqual({
+				success: false,
+				pid: -1,
+				error: String(failure),
+			});
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async acp run diagnostics independently of native close (report first: %s)',
+		async (reportFirst) => {
+			const failure = new Error('request failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.request.mockRejectedValueOnce(failure);
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			expect(acp.spawn(input()).success).toBe(true);
+			await drain();
+			expect(probes.exit).toHaveBeenCalledOnce();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (reportFirst) reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (reportFirst) await close();
+			else reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async acp completion diagnostics despite logger failure: %s',
+		async (loggerFails) => {
+			acp.spawn(input());
+			await drain();
+			const failure = new Error('connection close failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.close.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+			await close();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each(['permission', 'notification', 'interrupt', 'kill'] as const)(
+		'owns async acp late %s diagnostics in fresh activity',
+		async (action) => {
+			acp.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			await close();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			const failure = new Error('callback failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (action === 'permission') {
+				probes.interaction.mockRejectedValueOnce(failure);
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+				await expect(permission()).rejects.toBe(failure);
+			} else if (action === 'notification') {
+				const record = {
+					get params(): never {
+						throw failure;
+					},
+				};
+				expect(() => app.onNotification.mock.calls.at(-1)![1](record)).toThrow(failure);
+			} else {
+				vi.mocked(stopProcess).mockImplementationOnce(() => {
+					throw failure;
+				});
+				await expect(managed.sdkController![action]()).rejects.toBe(failure);
+			}
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			processes.clear();
+			const successor = Promise.withResolvers<void>();
+			boundary.withWorktreeTurnActivity((_start, observe) => observe(successor.promise), vi.fn());
+			reporting.reject(new Error('report failed'));
+			await drain();
+			await blocked();
+			successor.resolve();
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it('owns async acp exit diagnostics when exit logging also throws', async () => {
+		const failure = new Error('exit logger failed');
+		const reporting = Promise.withResolvers<void>();
+		probes.exit.mockRejectedValueOnce(new Error('exit failed'));
+		vi.mocked(logger.error).mockImplementationOnce(() => {
+			throw failure;
+		});
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		acp.spawn(input());
+		await drain();
+		await close();
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		expect(captureException).toHaveBeenCalledOnce();
 		(await reserve()).release();
 	});
 });

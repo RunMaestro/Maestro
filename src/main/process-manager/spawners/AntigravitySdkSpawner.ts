@@ -66,11 +66,15 @@ export class AntigravitySdkSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(start, observe) => this.spawnAdmitted(config, start, observe),
-				(error) => {
-					void captureException(error);
-					logger.error('[AntigravityTurn] Completion failed', LOG_CONTEXT, {
-						error: String(error),
-					});
+				async (error) => {
+					const reporting = Promise.resolve().then(() => captureException(error));
+					try {
+						logger.error('[AntigravityTurn] Completion failed', LOG_CONTEXT, {
+							error: String(error),
+						});
+					} finally {
+						await reporting;
+					}
 				}
 			);
 		} catch (error) {
@@ -107,7 +111,11 @@ export class AntigravitySdkSpawner {
 					error: `Antigravity native mode could not start: ${String(error)}`,
 				};
 			}
-			void captureException(error);
+			observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -227,16 +235,20 @@ class AntigravityTurn {
 			onNotification: (record) =>
 				withWorktreeTurnActivity(
 					() => this.onNotification(record),
-					(error) => void captureException(error)
+					(error) => captureException(error)
 				),
 			onServerRequest: async (record) =>
 				withWorktreeTurnActivity(
 					(_start, observe) => observe(this.onServerRequest(record)),
-					(error) => {
-						void captureException(error);
-						logger.error('[AntigravityTurn] Completion failed', LOG_CONTEXT, {
-							error: String(error),
-						});
+					async (error) => {
+						const reporting = Promise.resolve().then(() => captureException(error));
+						try {
+							logger.error('[AntigravityTurn] Completion failed', LOG_CONTEXT, {
+								error: String(error),
+							});
+						} finally {
+							await reporting;
+						}
 					}
 				),
 		});
@@ -324,7 +336,7 @@ class AntigravityTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -343,7 +355,7 @@ class AntigravityTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -358,7 +370,11 @@ class AntigravityTurn {
 				label: 'error',
 			}
 		);
-		void captureException(error);
+		this.observeCompletion(
+			Promise.resolve()
+				.then(() => captureException(error))
+				.catch(() => {})
+		);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -399,7 +415,7 @@ class AntigravityTurn {
 						})
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
