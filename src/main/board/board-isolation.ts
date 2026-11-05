@@ -157,17 +157,15 @@ function checkoutAnchor(
 	return worktree;
 }
 
-/** Native demos and harnesses opt in; direct DB/child callers must always call requireBoardIsolation. */
-export function isBoardIsolationRequested(env = process.env, argv = process.argv): boolean {
+/** Board fixtures and test harnesses opt in; ordinary demo mode is independent. */
+export function isBoardIsolationRequested(env = process.env): boolean {
 	return (
 		(env === process.env && !!processContract) ||
-		argv.includes('--demo') ||
-		!!env.MAESTRO_DEMO_DIR ||
 		!!env.MAESTRO_E2E_TEST ||
 		env.NODE_ENV === 'test' ||
 		!!env.VITEST ||
-		!!env.BOARD_ISOLATION_ID ||
-		!!env.BOARD_ISOLATION_CONTRACT ||
+		env.BOARD_ISOLATION_ID !== undefined ||
+		env.BOARD_ISOLATION_CONTRACT !== undefined ||
 		Object.values(PATH_ENV).some((key) => key !== 'MAESTRO_USER_DATA' && env[key] !== undefined)
 	);
 }

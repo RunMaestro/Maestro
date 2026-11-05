@@ -99,12 +99,9 @@ const BRIDGE_ISOLATION_ENV = [
 	'BOARD_AGENT_REGISTRY',
 	'BOARD_SOURCE_REGISTRY',
 	'BOARD_SOURCE_ROOT',
-	'MAESTRO_DEMO_DIR',
 	'MAESTRO_E2E_TEST',
 ] as const;
-let isolatedBridge =
-	process.argv.includes('--demo') ||
-	BRIDGE_ISOLATION_ENV.some((key) => process.env[key] !== undefined);
+let isolatedBridge = BRIDGE_ISOLATION_ENV.some((key) => process.env[key] !== undefined);
 
 /**
  * Options that keep the CLI's behavior as the default: a bare

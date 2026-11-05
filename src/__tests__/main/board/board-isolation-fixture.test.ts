@@ -7,6 +7,7 @@ import { buildSync } from 'esbuild';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import {
 	boardIsolationChildEnv,
+	isBoardIsolationRequested,
 	readBoardIsolationRegistries,
 	requireBoardIsolation,
 } from '../../../main/board/board-isolation';
@@ -27,6 +28,22 @@ afterEach(async () => {
 });
 
 describe('portable Board isolation fixture', () => {
+	it('distinguishes ordinary demo mode from explicit Board isolation', () => {
+		expect(isBoardIsolationRequested({ MAESTRO_DEMO_DIR: '/demo' })).toBe(false);
+		expect(isBoardIsolationRequested({ MAESTRO_DEMO_DIR: '/demo', BOARD_DB_PATH: '/db' })).toBe(
+			true
+		);
+		expect(() => requireBoardIsolation({ env: { BOARD_DB_PATH: '/db' } })).toThrow(
+			'missing explicit BOARD_ISOLATION_ID'
+		);
+		for (const env of [{ BOARD_ISOLATION_ID: '' }, { BOARD_ISOLATION_CONTRACT: '' }]) {
+			expect(isBoardIsolationRequested(env)).toBe(true);
+			expect(() => requireBoardIsolation({ env })).toThrow('missing explicit BOARD_ISOLATION_ID');
+		}
+		for (const env of [{ VITEST: '1' }, { NODE_ENV: 'test' }, { MAESTRO_E2E_TEST: '1' }]) {
+			expect(isBoardIsolationRequested(env)).toBe(true);
+		}
+	});
 	it('creates distinct private canonical storage and registries without changing process env', async () => {
 		const original = { ...process.env };
 		const first = fixture();
