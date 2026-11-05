@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { once } from 'events';
 import * as os from 'os';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -220,53 +220,66 @@ describe('host Pianola dispatch admission', () => {
 		return { ...f, records };
 	}
 
-	it('bounds completed dispatch payloads across restart, preserves receipts and rejects stale resurrection', async () => {
-		const f = await completedFixture();
-		const scans = vi.spyOn(fs, 'readdirSync');
-		const reopened = createPianolaFsStore({
-			resolveDir: () => f.dir,
-			indent: 2,
-			trailingNewline: true,
+	describe('completed payload retention', () => {
+		let prepared: Awaited<ReturnType<typeof completedFixture>>;
+		beforeEach(async ({ task }) => {
+			// Durable historical records are fixture setup; keep the default test
+			// timeout focused on real cleanup, restart readback and no-resend checks.
+			prepared = await completedFixture(task.name.startsWith('bounds completed') ? 40 : 34);
 		});
-		const cleanup = reopened.compactDispatchArtifacts();
-		expect(reopened.compactDispatchArtifacts()).toBe(cleanup);
-		await cleanup;
-		expect(scans).not.toHaveBeenCalled();
-		const results = f.records.map((r) => reopened.readDispatchAdmission(r.dispatchId)!);
-		expect(results.filter((r) => r.payloadRetiredAt)).toHaveLength(8);
-		expect(results.filter((r) => r.queuePrepare)).toHaveLength(32);
-		for (const r of results) {
-			expect(r.outcome).toBe('accepted');
-			if (r.payloadRetiredAt) {
-				expect(r.intentFingerprint).toBe(f.record.intentFingerprint);
-				expect(() =>
-					reopened.writeDispatchAdmission(f.records.find((old) => old.dispatchId === r.dispatchId)!)
-				).toThrow(/retired/);
-			}
-		}
-		expect(fs.readdirSync(f.dir).filter((n) => n.endsWith('.artifact.json'))).toHaveLength(33 * 3);
-	});
 
-	it.each(['unknown', 'active', 'missing-callback', 'unreconciled'] as const)(
-		'retains %s payloads even under retention pressure',
-		async (state) => {
-			const f = await completedFixture(34);
-			const r = f.records[0];
-			if (state === 'unknown') r.outcome = 'unknown';
-			if (state === 'active') r.queueRouting!.steps[0].status = 'started';
-			if (state === 'unreconciled') delete r.queueRouting!.completed;
-			if (state === 'missing-callback') {
-				delete r.callbackDeliveredAt;
-				const journal = path.join(f.dir, `maestro-pianola-dispatch-${r.dispatchId}.json`);
-				const disk = JSON.parse(fs.readFileSync(journal, 'utf8'));
-				delete disk.callbackDeliveredAt;
-				fs.writeFileSync(journal, JSON.stringify(disk));
+		it('bounds completed dispatch payloads across restart, preserves receipts and rejects stale resurrection', async () => {
+			const f = prepared;
+			const scans = vi.spyOn(fs, 'readdirSync');
+			const reopened = createPianolaFsStore({
+				resolveDir: () => f.dir,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const cleanup = reopened.compactDispatchArtifacts();
+			expect(reopened.compactDispatchArtifacts()).toBe(cleanup);
+			await cleanup;
+			expect(scans).not.toHaveBeenCalled();
+			const results = f.records.map((r) => reopened.readDispatchAdmission(r.dispatchId)!);
+			expect(results.filter((r) => r.payloadRetiredAt)).toHaveLength(8);
+			expect(results.filter((r) => r.queuePrepare)).toHaveLength(32);
+			for (const r of results) {
+				expect(r.outcome).toBe('accepted');
+				if (r.payloadRetiredAt) {
+					expect(r.intentFingerprint).toBe(f.record.intentFingerprint);
+					expect(() =>
+						reopened.writeDispatchAdmission(
+							f.records.find((old) => old.dispatchId === r.dispatchId)!
+						)
+					).toThrow(/retired/);
+				}
 			}
-			f.store.writeDispatchAdmission(r);
-			await f.store.compactDispatchArtifacts();
-			expect(f.store.readDispatchAdmission(r.dispatchId)).toEqual(r);
-		}
-	);
+			expect(fs.readdirSync(f.dir).filter((n) => n.endsWith('.artifact.json'))).toHaveLength(
+				33 * 3
+			);
+		});
+
+		it.each(['unknown', 'active', 'missing-callback', 'unreconciled'] as const)(
+			'retains %s payloads even under retention pressure',
+			async (state) => {
+				const f = prepared;
+				const r = f.records[0];
+				if (state === 'unknown') r.outcome = 'unknown';
+				if (state === 'active') r.queueRouting!.steps[0].status = 'started';
+				if (state === 'unreconciled') delete r.queueRouting!.completed;
+				if (state === 'missing-callback') {
+					delete r.callbackDeliveredAt;
+					const journal = path.join(f.dir, `maestro-pianola-dispatch-${r.dispatchId}.json`);
+					const disk = JSON.parse(fs.readFileSync(journal, 'utf8'));
+					delete disk.callbackDeliveredAt;
+					fs.writeFileSync(journal, JSON.stringify(disk));
+				}
+				f.store.writeDispatchAdmission(r);
+				await f.store.compactDispatchArtifacts();
+				expect(f.store.readDispatchAdmission(r.dispatchId)).toEqual(r);
+			}
+		);
+	});
 
 	it('cleans old first-write orphans at startup but preserves fresh orphans and lost journal acknowledgements', async () => {
 		const f = await payloadFixture();

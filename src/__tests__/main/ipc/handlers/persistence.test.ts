@@ -756,6 +756,32 @@ describe('persistence IPC handlers', () => {
 		) => handlers.get('sessions:setMany')!({}, updates, remove, baseline);
 		const confirm = () => server.confirmQueueItemFromMain(request);
 
+		beforeAll(async () => {
+			// Cold module transforms belong to fixture setup. In particular, a test
+			// timeout must not start teardown while renderer imports later resume
+			// and write into the already-removed queue receipt directory.
+			const { JSDOM } = await import('jsdom');
+			const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
+			vi.stubGlobal('window', dom.window);
+			vi.stubGlobal('document', dom.window.document);
+			vi.stubGlobal('navigator', dom.window.navigator);
+			try {
+				await Promise.all([
+					import('react-dom/client'),
+					import('../../../../renderer/hooks/session/useSessionTranscriptSync'),
+					import('../../../../renderer/stores/agentStore'),
+					import('../../../../renderer/services/crossAgentConsultHold'),
+					import('../../../../renderer/services/sessionPersistenceFlush'),
+					import('../../../../renderer/hooks/input/useInputProcessing'),
+					import('../../../helpers/mockSession'),
+					import('../../../helpers/mockTab'),
+				]);
+			} finally {
+				dom.window.close();
+				vi.unstubAllGlobals();
+			}
+		});
+
 		beforeEach(async () => {
 			realFs = await vi.importActual<typeof fs>('fs/promises');
 			directory = await realFs.mkdtemp(path.join(process.cwd(), '.queue-receipt-test-'));
@@ -1002,30 +1028,6 @@ describe('persistence IPC handlers', () => {
 		}
 
 		describe('plain renderer queue', () => {
-			beforeAll(async () => {
-				// Cold module transforms belong to fixture setup. In particular, a test
-				// timeout must not start teardown while renderer imports later resume
-				// and write into the already-removed queue receipt directory.
-				const { JSDOM } = await import('jsdom');
-				const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
-				vi.stubGlobal('window', dom.window);
-				vi.stubGlobal('document', dom.window.document);
-				vi.stubGlobal('navigator', dom.window.navigator);
-				try {
-					await Promise.all([
-						import('react-dom/client'),
-						import('../../../../renderer/hooks/session/useSessionTranscriptSync'),
-						import('../../../../renderer/stores/agentStore'),
-						import('../../../../renderer/hooks/input/useInputProcessing'),
-						import('../../../helpers/mockSession'),
-						import('../../../helpers/mockTab'),
-					]);
-				} finally {
-					dom.window.close();
-					vi.unstubAllGlobals();
-				}
-			});
-
 			it.each([
 				'fresh',
 				'image-fresh',
@@ -2660,6 +2662,11 @@ describe('persistence IPC handlers', () => {
 						f.input.dispatchId
 					);
 					f.cleanup();
+					// Join native callback work before afterEach removes its durable store.
+					await continuation?.catch(() => {});
+					const { registerSessionPersistenceFlush } =
+						await import('../../../../renderer/services/sessionPersistenceFlush');
+					registerSessionPersistenceFlush(null);
 					vi.unstubAllGlobals();
 				}
 			}

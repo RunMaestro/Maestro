@@ -1916,7 +1916,13 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 				await new Promise<void>((resolve) => setTimeout(resolve, 20));
 			}
 			const result = await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
-			if (['late-cancel', 'late-risk', 'feature-off'].includes(mode)) expect(mutate).toBe(true);
+			const diagnostic = JSON.stringify({
+				result,
+				decisions: store.readDecisions(),
+				checkpoint: store.readScopeCheckpoint(scopeId),
+			});
+			if (['late-cancel', 'late-risk', 'feature-off'].includes(mode))
+				expect(mutate, diagnostic).toBe(true);
 			if (
 				[
 					'late-human',
@@ -1928,14 +1934,14 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 					'feature-off',
 				].includes(mode)
 			)
-				expect(replies).toHaveLength(1);
+				expect(replies, diagnostic).toHaveLength(1);
 			expect(execute).not.toHaveBeenCalled();
 			const snapshot = callbacks.listDesktopSessions!();
 			expect(snapshot && !Array.isArray(snapshot)).toBe(true);
 			if (!snapshot || Array.isArray(snapshot)) throw new Error('Versioned snapshot required');
 			expect(snapshot.sessions[0].supervision?.busy).toBe(true);
 			if (mode === 'answer' || mode === 'unknown-receipt') {
-				expect(replies).toHaveLength(1);
+				expect(replies, diagnostic).toHaveLength(1);
 				const record = store.readDecisions()[0];
 				if (mode === 'answer') {
 					expect(record).toMatchObject({
