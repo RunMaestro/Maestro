@@ -8,11 +8,14 @@ import type { ProcessHandlerDependencies } from '../../../main/ipc/handlers/proc
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
-vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('child_process', async (importOriginal) => ({
+	...(await importOriginal<typeof import('child_process')>()),
+	spawn: vi.fn(),
+}));
 vi.mock('../../../main/plugins/relay-conversations', () => ({}));
 vi.mock('../../../main/permission-relay/registry', () => ({}));
 vi.mock('../../../main/utils/headless-agent-activity', () => ({}));
-vi.mock('../../../main/utils/sentry', () => ({}));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/utils/safe-send', () => ({}));
 vi.mock('../../../main/process-manager/utils/childProcessInfo', () => ({}));
 vi.mock('../../../main/concerto-html', () => ({}));

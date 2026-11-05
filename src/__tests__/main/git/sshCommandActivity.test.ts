@@ -6,10 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SshRemoteConfig } from '../../../shared/types';
 
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
-vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('child_process', async (importOriginal) => ({
+	...(await importOriginal<typeof import('child_process')>()),
+	spawn: vi.fn(),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/utils/cliDetection', () => ({
 	resolveSshPath: vi.fn(),
 	getExpandedEnv: vi.fn(() => ({})),
@@ -19,6 +23,7 @@ vi.mock('../../../main/process-manager/utils/commandKill', () => ({
 }));
 
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 import { resolveSshPath, getExpandedEnv } from '../../../main/utils/cliDetection';
 import { killProcessTreeNow } from '../../../main/process-manager/utils/commandKill';
 
@@ -50,6 +55,7 @@ function makeNative() {
 beforeEach(async () => {
 	vi.resetModules();
 	vi.resetAllMocks();
+	vi.mocked(captureException).mockResolvedValue(undefined);
 	vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 	vi.mocked(resolveSshPath).mockResolvedValue(sshPath);
 	native = makeNative();
@@ -106,7 +112,7 @@ describe('SSH command activity', () => {
 			expect(resolveSshPath).not.toHaveBeenCalled();
 			expect(getExpandedEnv).not.toHaveBeenCalled();
 			expect(spawn).not.toHaveBeenCalled();
-			expect(runner.cancel('session')).toBe(false);
+			expect(() => runner.cancel('session')).toThrow('reserved');
 			hold.release();
 			(await reserve()).release();
 		}
@@ -360,5 +366,243 @@ describe('SSH command activity', () => {
 		await expect(pending).resolves.toEqual({ exitCode: 3 });
 		native.emit('close', 3);
 		(await reserve()).release();
+	});
+});
+
+describe('retained SSH command callback admission', () => {
+	const callbacks = {
+		stdout: () => native.stdout.emit('data', Buffer.from('late output')),
+		stderr: () => native.stderr.emit('data', Buffer.from('ssh: connection refused')),
+		exit: () => native.emit('exit', 2),
+		error: () => native.emit('error', Error('late native error')),
+		close: () => native.emit('close', 2),
+	};
+
+	async function completed() {
+		const { pending } = await started();
+		native.emit('exit', 0);
+		native.emit('close', 0);
+		await pending;
+		vi.clearAllMocks();
+	}
+
+	it.each(Object.keys(callbacks) as (keyof typeof callbacks)[])(
+		'refuses retained %s before reporting or emission under a reservation',
+		async (event) => {
+			await completed();
+			const emit = vi.spyOn(emitter, 'emit');
+			const hold = await reserve();
+			expect(() => callbacks[event]()).toThrow('reserved');
+			expect(emit).not.toHaveBeenCalled();
+			expect(logger.debug).not.toHaveBeenCalled();
+			expect(logger.warn).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+			hold.release();
+			callbacks[event]();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['stdout', 'stderr', 'error'] as const)(
+		'refuses before inspecting retained %s payload',
+		async (event) => {
+			await completed();
+			const read = vi.fn(() => 'late payload');
+			const payload: unknown =
+				event === 'error'
+					? {
+							get message() {
+								return read();
+							},
+						}
+					: { toString: read };
+			const hold = await reserve();
+			expect(() =>
+				(event === 'error' ? native : native[event]).emit(
+					event === 'error' ? 'error' : 'data',
+					payload
+				)
+			).toThrow('reserved');
+			expect(read).not.toHaveBeenCalled();
+			hold.release();
+		}
+	);
+
+	it('refuses cancellation before registry lookup or diagnostics', async () => {
+		const lookup = vi.fn(() => new Map());
+		Object.defineProperty(runner, 'running', { get: lookup });
+		const hold = await reserve();
+		expect(() => runner.cancel('missing')).toThrow('reserved');
+		expect(lookup).not.toHaveBeenCalled();
+		expect(captureException).not.toHaveBeenCalled();
+		expect(killProcessTreeNow).not.toHaveBeenCalled();
+		hold.release();
+		expect(runner.cancel('missing')).toBe(false);
+	});
+
+	it('admits a retained callback while a reservation is still canonicalizing', async () => {
+		await completed();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const failure = Error('late consumer');
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		emitter.once('data', () => {
+			throw failure;
+		});
+		expect(callbacks.stdout).toThrow(failure);
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({ status: 'blocked' });
+		reporting.resolve();
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it.each(['data', 'stderr', 'command-exit'] as const)(
+		'owns asynchronous failure diagnostics from %s independently of native close',
+		async (event) => {
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const failure = Error('consumer failure');
+			emitter.once(event, () => {
+				throw failure;
+			});
+			const { pending } = await started();
+			expect(() =>
+				event === 'data'
+					? callbacks.stdout()
+					: event === 'stderr'
+						? callbacks.stderr()
+						: callbacks.exit()
+			).toThrow(failure);
+			if (event !== 'command-exit') native.emit('exit', 0);
+			native.emit('close', 0);
+			await pending;
+			expect(captureException).toHaveBeenCalledWith(failure);
+			await blocked();
+			reporting.resolve();
+			await vi.waitFor(async () => (await reserve()).release());
+		}
+	);
+
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'preserves late callback failure when diagnostic %s occurs',
+		async (outcome) => {
+			await completed();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw Error('reporter');
+				return reporting.promise;
+			});
+			const failure = Error('original callback');
+			emitter.once('data', () => {
+				throw failure;
+			});
+			expect(callbacks.stdout).toThrow(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(Error('reporter'));
+			}
+			await vi.waitFor(async () => (await reserve()).release());
+			expect(captureException).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it('preserves a failed cancellation and owns its delayed report through local close', async () => {
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		const failure = Error('signal failure');
+		vi.mocked(killProcessTreeNow).mockImplementationOnce(() => {
+			throw failure;
+		});
+		const { pending } = await started();
+		expect(() => runner.cancel('session')).toThrow(failure);
+		native.emit('exit', 0);
+		native.emit('close', 0);
+		await pending;
+		await blocked();
+		expect(captureException).toHaveBeenCalledWith(failure);
+		reporting.resolve();
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it('does not let diagnostic settlement or predecessor callbacks release a successor', async () => {
+		await completed();
+		const callbacksNative = native;
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		emitter.once('data', () => {
+			throw Error('late');
+		});
+		expect(callbacks.stdout).toThrow('late');
+		native = makeNative();
+		vi.mocked(spawn).mockReturnValueOnce(native as unknown as ReturnType<typeof spawn>);
+		const { pending } = await started();
+		reporting.resolve();
+		await vi.waitFor(() => expect(captureException).toHaveBeenCalledTimes(1));
+		callbacksNative.emit('exit', 2);
+		callbacksNative.emit('close', 2);
+		await blocked();
+		expect(runner.cancel('session')).toBe(true);
+		await expect(pending).resolves.toEqual({ exitCode: 137 });
+		await blocked();
+		native.emit('close', 0);
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it('preserves a throwing exit logger and retains its diagnostic after the result settles', async () => {
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		const { pending } = await started();
+		const failure = Error('exit logger');
+		vi.mocked(logger.debug).mockImplementationOnce(() => {
+			throw failure;
+		});
+		expect(callbacks.exit).toThrow(failure);
+		await expect(pending).resolves.toEqual({ exitCode: 2 });
+		native.emit('close', 2);
+		await blocked();
+		reporting.reject(Error('failed diagnostic'));
+		await vi.waitFor(async () => (await reserve()).release());
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+	});
+
+	it('does not let diagnostic settlement release independently open native ownership', async () => {
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		emitter.once('data', () => {
+			throw Error('consumer');
+		});
+		const { pending } = await started();
+		expect(callbacks.stdout).toThrow('consumer');
+		reporting.resolve();
+		native.emit('exit', 0);
+		await pending;
+		await blocked();
+		native.emit('close', 0);
+		await vi.waitFor(async () => (await reserve()).release());
+	});
+
+	it('keeps overlapping retained callback diagnostics independently owned', async () => {
+		await completed();
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		emitter.on('data', () => {
+			throw Error('consumer');
+		});
+		expect(callbacks.stdout).toThrow('consumer');
+		expect(callbacks.stdout).toThrow('consumer');
+		first.resolve();
+		await blocked();
+		callbacks.close();
+		await blocked();
+		second.reject(Error('reporter'));
+		await vi.waitFor(async () => (await reserve()).release());
+		expect(captureException).toHaveBeenCalledTimes(2);
 	});
 });
