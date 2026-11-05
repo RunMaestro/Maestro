@@ -457,12 +457,14 @@ async function runRenderedLifecycle(context, io = system()) {
 }
 
 async function launchRendered(
-	{ count, addon, qualificationPath, exercise, timeoutMs, reopen },
+	{ count, addon, qualificationPath, exercise, timeoutMs, reopen, createWorker = false },
 	io = system()
 ) {
 	assert.equal(process.platform, 'linux');
 	assert.equal(fs.realpathSync(process.cwd()), checkout);
 	assert.ok(reopen ? count === undefined : [0, 100, 500].includes(count));
+	assert.equal(typeof createWorker, 'boolean');
+	assert.ok(!createWorker || !reopen, 'Creation requires a fresh parent-owned fixture');
 	const activeAddon = path.join(
 		checkout,
 		'node_modules/better-sqlite3/build/Release/better_sqlite3.node'
@@ -497,7 +499,12 @@ async function launchRendered(
 				const preparation = own(
 					'prepare',
 					process.execPath,
-					[path.join(checkout, 'scripts/board-rendered-prepare.cjs'), String(count), addon],
+					[
+						path.join(checkout, 'scripts/board-rendered-prepare.cjs'),
+						String(count),
+						addon,
+						...(createWorker ? ['--create-worker'] : []),
+					],
 					{ cwd: checkout, env, stdio: ['ignore', 'pipe', 'pipe'] }
 				);
 				let stdout = '',

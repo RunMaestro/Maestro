@@ -6,7 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 
-function installRenderedBoundary(electron, validate, record, gitProbe) {
+function installRenderedBoundary(electron, validate, record, gitProbe, creation) {
 	const deny = (operation) => () => {
 		record.denied.push(operation);
 		throw new Error(`Isolated Board fixture denies ${operation}`);
@@ -95,6 +95,9 @@ function installRenderedBoundary(electron, validate, record, gitProbe) {
 		'logger:getMaxLogBuffer',
 		'notification:show',
 	]);
+	if (creation)
+		for (const channel of require('./board-rendered-creation.cjs').creationChannels)
+			support.add(channel);
 	electron.ipcMain.handle = (channel, handler) => {
 		assert.ok(
 			channel.startsWith('board:') || support.has(channel),
@@ -102,6 +105,7 @@ function installRenderedBoundary(electron, validate, record, gitProbe) {
 		);
 		originalHandle(channel, (event, ...args) => {
 			validate(event);
+			if (channel === 'board:registerWorker') creation?.beforeRegister(args[0]);
 			// There is no runtime owner, Cue engine, CLI server or provider service in this host.
 			if (['board:cancelCard', 'board:resumeCard'].includes(channel)) return deny(channel)();
 			if (channel === 'board:runtimeCommand') {

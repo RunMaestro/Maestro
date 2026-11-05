@@ -8,11 +8,8 @@ const checkout = path.resolve(__dirname, '..');
 
 function main() {
 	assert.equal(fs.realpathSync(process.cwd()), checkout);
-	assert.equal(
-		process.argv.length,
-		4,
-		'Usage: node scripts/board-rendered-prepare.cjs 0|100|500 ELECTRON_SQLITE.node'
-	);
+	assert.ok(process.argv.length === 4 || process.argv.length === 5);
+	if (process.argv.length === 5) assert.equal(process.argv[4], '--create-worker');
 	assert.ok(['0', '100', '500'].includes(process.argv[2]));
 	const buildPath = path.join(checkout, 'dist/board-rendered-build.json');
 	const build = JSON.parse(fs.readFileSync(buildPath));
@@ -142,6 +139,9 @@ function main() {
 				schemaVersion: 1,
 				checkout,
 				head: build.head,
+				...(process.argv[4] && {
+					creation: binding.workerCreationRequest(contract, { sources }),
+				}),
 				contract,
 				env,
 				entry: binding.entry,

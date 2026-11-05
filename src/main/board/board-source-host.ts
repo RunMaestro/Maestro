@@ -20,6 +20,7 @@ import {
 import { BoardStorageError, getBoardStorage, type BoardStorageFacade } from './board-storage';
 import {
 	assertBoardIsolationPath,
+	assertBoardIsolationRegistrations,
 	isBoardIsolationRequested,
 	readBoardIsolationRegistries,
 	requireBoardIsolation,
@@ -32,7 +33,10 @@ let isolatedHost:
 	| undefined;
 
 /** Native bootstrap calls this after admission, before importing index or opening stores. */
-export function configureIsolatedBoardSourceHost(contract: BoardIsolation): void {
+export function configureIsolatedBoardSourceHost(
+	contract: BoardIsolation,
+	creation?: { identity: string; name: string; toolType: string; cwd: string }
+): ((agent: BoardSourceSession, persist: () => void) => void) | undefined {
 	requireBoardIsolation({ expected: contract });
 	const provider = () => readBoardIsolationRegistries(contract).sessions as BoardSourceSession[];
 	const refuseRemote = (): never => {
@@ -47,6 +51,50 @@ export function configureIsolatedBoardSourceHost(contract: BoardIsolation): void
 	configureBoardSourceHost(provider, remote);
 	// Reject agent roots outside the source registry before the first native store opens.
 	admittedSources(provider(), remote);
+	if (!creation) return;
+	// A capability held only by the admitting parent/fixture host, never by IPC.
+	// Normal isolated hosts remain sealed. This permits one exact append at an
+	// already admitted source, without resetting admission or changing providers.
+	const request = Object.freeze({ ...creation });
+	const before = canonicalJson(readBoardIsolationRegistries(contract));
+	if (
+		request.identity !== contract.identity ||
+		!request.name ||
+		!request.toolType ||
+		!admittedSources(provider(), remote)?.has(request.cwd)
+	)
+		throw new Error('Board isolation creation request was not admitted');
+	let consumed = false;
+	return (agent, persist) => {
+		requireBoardIsolation({ expected: contract });
+		admittedSources(provider(), remote);
+		const current = readBoardIsolationRegistries(contract);
+		const record = agent as BoardSourceSession & Record<string, unknown>;
+		if (
+			consumed ||
+			canonicalJson(current) !== before ||
+			!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(agent.id) ||
+			(current.sessions as BoardSourceSession[]).some((item) => item.id === agent.id) ||
+			record.name !== request.name ||
+			record.toolType !== request.toolType ||
+			record.cwd !== request.cwd ||
+			record.projectRoot !== request.cwd ||
+			record.fullPath !== request.cwd
+		)
+			throw new Error('Board isolation creation differs from the parent request');
+		const after = {
+			sessions: [...(current.sessions as BoardSourceSession[]), agent],
+			sources: current.sources,
+		};
+		assertBoardIsolationRegistrations(contract, after);
+		const expected = canonicalJson(after);
+		consumed = true;
+		persist(); // Synchronous owned-store write. A failure leaves admission sealed.
+		if (canonicalJson(readBoardIsolationRegistries(contract)) !== expected)
+			throw new Error('Board isolation creation changed unrelated registrations');
+		isolatedHost!.snapshot = expected;
+		admittedSources(provider(), remote);
+	};
 }
 
 export function configureBoardSourceHost(

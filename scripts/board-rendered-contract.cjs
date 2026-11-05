@@ -76,6 +76,17 @@ function registryFingerprints(contract) {
 	);
 }
 
+// Fixed opt-in scenario, bound in the manifest by the preparing parent. No
+// renderer-supplied root, provider, group or generic registry write permission.
+function workerCreationRequest(contract, registrations) {
+	return {
+		identity: contract.identity,
+		name: 'Fixture created worker',
+		toolType: 'codex',
+		cwd: registrations.sources[0].root,
+	};
+}
+
 function renderedRunRoot(manifest) {
 	if (!manifest.reopen) return manifest.contract.root;
 	assert.match(manifest.contract.identity, /^board-reopen-[a-f0-9-]{36}$/);
@@ -317,6 +328,10 @@ function admitRenderedFixture(manifestPath, checkout, admission, env) {
 	);
 	assert.equal(registrations.sessions.length, 100);
 	assert.equal(registrations.sources.length, 50);
+	if (manifest.creation !== undefined) {
+		assert.ok(!manifest.reopen, 'Creation scenario cannot reuse a consumed registry');
+		assert.deepEqual(manifest.creation, workerCreationRequest(contract, registrations));
+	}
 	const groups = JSON.parse(
 		fs.readFileSync(path.join(contract.sync, 'maestro-groups.json'))
 	).groups;
@@ -395,6 +410,7 @@ module.exports = {
 	filesUnder,
 	renderedFingerprints,
 	registryFingerprints,
+	workerCreationRequest,
 	renderedRunRoot,
 	persistenceSnapshot,
 	closedDatabaseBinding,

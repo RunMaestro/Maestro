@@ -84,6 +84,7 @@ let db;
 let measurement;
 let stopObserver;
 let finished = false;
+let creationHost;
 const finish = (code, error) => {
 	if (finished) return;
 	finished = true;
@@ -111,7 +112,8 @@ const { installRenderedBoundary } = require(
 const boundary = installRenderedBoundary(
 	electron,
 	(event) => {
-		binding.assertRenderedRegistries(manifest, admission);
+		if (creationHost) creationHost.validate();
+		else binding.assertRenderedRegistries(manifest, admission);
 		assert.ok(window && !window.isDestroyed());
 		assert.equal(event.sender, window.webContents);
 		assert.equal(event.senderFrame, window.webContents.mainFrame);
@@ -123,7 +125,10 @@ const boundary = installRenderedBoundary(
 		roots: registrations.sources.map((source) => source.root),
 		path: manifest.env.PATH,
 		home: contract.root,
-	}
+	},
+	manifest.creation
+		? { beforeRegister: (options) => creationHost.beforeRegister(options) }
+		: undefined
 );
 app.on('session-created', (created) => boundary.secureSession(created));
 
@@ -139,7 +144,7 @@ async function main() {
 	assert.ok(Object.entries(settings).every(([key, value]) => value === (key === 'board')));
 	assert.deepEqual(instances.settingsStore.get('sshRemotes'), []);
 	const sources = require(path.join(checkout, 'dist/main/board/board-source-host.js'));
-	sources.configureIsolatedBoardSourceHost(contract);
+	const appendAgent = sources.configureIsolatedBoardSourceHost(contract, manifest.creation);
 	const storage = require(path.join(checkout, 'dist/main/board/board-storage.js'));
 	const previousState = manifest.reopen
 		? binding.verifiedPreviousLaunch(contract.root, checkout, admission).host.persistence
@@ -220,6 +225,20 @@ async function main() {
 	registerBoardHandlers({ getMainWindow: () => window, getCueEngine: () => null });
 	ipcMain.handle('sessions:getAll', () => instances.sessionsStore.get('sessions'));
 	ipcMain.handle('groups:getAll', () => instances.groupsStore.get('groups'));
+	if (manifest.creation) {
+		creationHost = require(
+			path.join(checkout, 'scripts/board-rendered-creation.cjs')
+		).installCreationFixture({
+			ipcMain,
+			manifest,
+			admission,
+			instances,
+			appendAgent,
+			record,
+			db,
+			flushPendingSessionWritesSync: stores.flushPendingSessionWritesSync,
+		});
+	}
 	const uiPreferences = {};
 	ipcMain.handle('settings:getAll', () => ({ ...instances.settingsStore.store, ...uiPreferences }));
 	// Only UI size preferences can be written by the fixture shell. Registry/config writes fail closed.
