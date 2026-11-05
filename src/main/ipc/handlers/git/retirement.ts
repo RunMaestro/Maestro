@@ -1,3 +1,4 @@
+import { settleRetiredWorktreeWatchers } from './worktreeWatch';
 import { markDesktopOnlyChannel } from '../../desktop-only-channels';
 import { withErrorLogging } from '../../../utils/ipcHandler';
 import { handlerOpts } from './shared';
@@ -12,7 +13,11 @@ import type { RetirementRendererReply } from '../../../../shared/worktreeRetirem
 
 /** Desktop only: Main verifies the actual sender against the loaded primary. */
 export function registerRetirementHandlers(): void {
-	const host = new WorktreeRetirementHost(worktreeRetirement);
+	const host = new WorktreeRetirementHost(
+		worktreeRetirement,
+		undefined,
+		settleRetiredWorktreeWatchers
+	);
 	for (const channel of [
 		'git:prepareWorktreeRetirement',
 		'git:abortWorktreeRetirement',

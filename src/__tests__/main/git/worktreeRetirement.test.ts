@@ -19,6 +19,36 @@ describe('worktree retirement admission', () => {
 		expect(fence.register(checkout)).toBe(true);
 		return { dir, root, checkout, fence };
 	}
+	it('invalidates only overlapping discovery across reservation and abort, including missing aliases', () => {
+		const { dir, root, checkout, fence } = setup();
+		const alias = join(dir, 'alias');
+		symlinkSync(root, alias, 'junction');
+		const target = fence.captureDiscovery(join(alias, 'new-child'));
+		const group = fence.captureDiscovery(dir);
+		const sibling = fence.captureDiscovery(join(dir, 'sibling'));
+		const parentWatcher = fence.captureDiscovery(dir, { includeAncestors: false });
+		expect([target(), group(), sibling(), parentWatcher()]).toEqual([true, true, true, true]);
+		const prepared = fence.prepare(checkout);
+		if (!prepared.ok) throw new Error(prepared.reason);
+		expect([target(), group(), sibling(), parentWatcher()]).toEqual([false, false, true, true]);
+		expect(fence.abort(prepared.token)).toBe(true);
+		// An aborted reservation must not revive a pre-reservation result.
+		expect([target(), group(), sibling(), parentWatcher()]).toEqual([false, false, true, true]);
+		expect(fence.captureDiscovery(root)()).toBe(true);
+	});
+	it('keeps a removed checkout undiscoverable while allowing its parent watcher and siblings', () => {
+		const { dir, root, checkout, fence } = setup();
+		const prepared = fence.prepare(checkout);
+		if (!prepared.ok) throw new Error(prepared.reason);
+		expect(fence.commit(prepared.token)).toBe(true);
+		rmSync(root, { recursive: true });
+		expect(fence.complete(prepared.token)).toBe(true);
+		expect(fence.captureDiscovery(root)()).toBe(false);
+		expect(fence.captureDiscovery(join(root, 'later'))()).toBe(false);
+		expect(fence.captureDiscovery(join(dir, 'sibling'))()).toBe(true);
+		expect(fence.captureDiscovery(dir, { includeAncestors: false })()).toBe(true);
+	});
+
 	it('retains admissions until released and rejects stale identity', () => {
 		const { checkout, fence } = setup();
 		const hold = fence.admit([checkout.path]);

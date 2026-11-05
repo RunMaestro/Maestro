@@ -16,6 +16,7 @@ import {
 	isWorktreeCreatedByMaestro,
 	clearWorktreeCreationMarks,
 } from '../../../../main/ipc/handlers/git/worktreeCreationMarks';
+import { settleRetiredWorktreeWatchers } from '../../../../main/ipc/handlers/git/worktreeWatch';
 import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
 import type { SshRemoteConfig } from '../../../../shared/types';
@@ -7014,6 +7015,288 @@ branch refs/heads/bugfix-123
 			expect(checkedPaths).toEqual(['/parent/worktrees/dir1']);
 
 			vi.useRealTimers();
+		});
+	});
+
+	describe('retirement watcher settlement', () => {
+		const dirs: string[] = [];
+		afterEach(() => {
+			vi.restoreAllMocks();
+			vi.useRealTimers();
+			for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+		});
+		async function fixture() {
+			const dir = mkdtempSync(path.join(process.cwd(), '.watcher-retirement-'));
+			dirs.push(dir);
+			const root = path.join(dir, 'group', 'child');
+			mkdirSync(root, { recursive: true });
+			const sibling = path.join(dir, 'group', 'sibling');
+			mkdirSync(sibling);
+			const checkout = { path: root, head: 'abc', generation: 1 };
+			expect(worktreeRetirement.register(checkout)).toBe(true);
+			const fs = (await import('fs/promises')).default;
+			const chokidar = (await import('chokidar')).default;
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			const listeners = new Map<string, (dir: string) => unknown>();
+			const watcher = {
+				on: vi.fn((event: string, cb: (dir: string) => unknown) => {
+					listeners.set(event, cb);
+					return watcher;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(chokidar.watch).mockReturnValue(watcher as any);
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => ({
+				stdout: args?.includes('--is-inside-work-tree')
+					? 'true'
+					: args?.includes('--show-toplevel')
+						? String(cwd)
+						: 'feature',
+				stderr: '',
+				exitCode: 0,
+			}));
+			const sessionId = path.basename(dir);
+			await handlers.get('git:watchWorktreeDirectory')!({} as any, sessionId, dir);
+			return { dir, root, sibling, checkout, fs, chokidar, watcher, listeners, sessionId };
+		}
+		it('cancels target timers and unlink broadcasts while retaining parent sibling discovery', async () => {
+			vi.useFakeTimers();
+			const f = await fixture();
+			f.listeners.get('addDir')!(f.root);
+			f.listeners.get('addDir')!(f.sibling);
+			const prepared = worktreeRetirement.prepare(f.checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			try {
+				await settleRetiredWorktreeWatchers(f.checkout);
+				f.listeners.get('unlinkDir')!(f.root);
+				f.listeners.get('unlinkDir')!(path.dirname(f.root));
+				await vi.advanceTimersByTimeAsync(500);
+				expect(f.watcher.close).not.toHaveBeenCalled();
+				expect(mockBroadcastBridgeEvent.mock.calls).toEqual([
+					[
+						'worktree:discovered',
+						[
+							{
+								sessionId: f.sessionId,
+								worktree: { path: f.sibling, name: 'sibling', branch: 'feature' },
+							},
+						],
+					],
+				]);
+				expect(
+					vi.mocked(execFile.execFileNoThrow).mock.calls.every((call) => call[2] === f.sibling)
+				).toBe(true);
+			} finally {
+				worktreeRetirement.abort(prepared.token);
+				await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+			}
+		});
+		it('waits for already-started discovery and emits no late result or further probe', async () => {
+			vi.useFakeTimers();
+			const f = await fixture();
+			let finish!: (value: any) => void;
+			vi.mocked(execFile.execFileNoThrow).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			f.listeners.get('addDir')!(f.root);
+			vi.advanceTimersByTime(500);
+			const prepared = worktreeRetirement.prepare(f.checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			try {
+				let settled = false;
+				const draining = settleRetiredWorktreeWatchers(f.checkout).then(() => {
+					settled = true;
+				});
+				await Promise.resolve();
+				expect(settled).toBe(false);
+				finish({ stdout: 'true', stderr: '', exitCode: 0 });
+				await draining;
+				expect(execFile.execFileNoThrow).toHaveBeenCalledOnce();
+				expect(mockBroadcastBridgeEvent).not.toHaveBeenCalled();
+			} finally {
+				worktreeRetirement.abort(prepared.token);
+				await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+			}
+		});
+		it('waits for a pending scan and refuses its pre-reservation snapshot after abort', async () => {
+			const f = await fixture();
+			vi.mocked(f.fs.readdir).mockResolvedValue([
+				{ name: 'group', isDirectory: () => true },
+			] as any);
+			const { execGit } = await import('../../../../main/utils/remote-git');
+			let finish!: (value: any) => void;
+			let entered!: () => void;
+			const started = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			vi.mocked(execGit).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+						entered();
+					})
+			);
+			const scan = handlers.get('git:scanWorktreeDirectory')!({} as any, f.dir);
+			await started;
+			const prepared = worktreeRetirement.prepare(f.checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			let settled = false;
+			const drain = settleRetiredWorktreeWatchers(f.checkout).then(() => {
+				settled = true;
+			});
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			worktreeRetirement.abort(prepared.token);
+			finish({ stdout: 'true', stderr: '', exitCode: 0 });
+			expect(await scan).toMatchObject({ gitSubdirs: [], scanFailed: true });
+			await drain;
+			expect(execGit).toHaveBeenCalledOnce();
+			await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+		});
+		it('continues parent scans after a retired tombstone and skips the retired candidate', async () => {
+			const f = await fixture();
+			const prepared = worktreeRetirement.prepare(f.checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			expect(worktreeRetirement.commit(prepared.token)).toBe(true);
+			expect(worktreeRetirement.complete(prepared.token)).toBe(true);
+			// Even an externally recreated directory must not revive this owner.
+			vi.mocked(f.fs.readdir).mockImplementation(
+				async (p) =>
+					[
+						...(p === f.dir ? ['group'] : p === path.dirname(f.root) ? ['child', 'sibling'] : []),
+					].map((name) => ({ name, isDirectory: () => true })) as any
+			);
+			vi.mocked(f.fs.stat).mockImplementation(async (p) => {
+				if (p === path.join(f.dir, 'group', '.git'))
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				return {} as any;
+			});
+			const { execGit } = await import('../../../../main/utils/remote-git');
+			vi.mocked(execGit).mockImplementation(async (args, cwd) => ({
+				stdout: args.includes('--is-inside-work-tree')
+					? 'true'
+					: args.includes('--show-toplevel')
+						? String(cwd)
+						: '.git',
+				stderr: '',
+				exitCode: 0,
+			}));
+			const scan = await handlers.get('git:scanWorktreeDirectory')!({} as any, f.dir);
+			expect(scan.scanFailed).not.toBe(true);
+			expect(scan.gitSubdirs.map((entry: { path: string }) => entry.path)).toEqual([f.sibling]);
+			expect(vi.mocked(execGit).mock.calls.some((call) => call[1] === f.root)).toBe(false);
+			await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+		});
+
+		it('does not erase the replacement watcher timer when an old unwatch finishes late', async () => {
+			vi.useFakeTimers();
+			const f = await fixture();
+			let close!: () => void;
+			f.watcher.close.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						close = resolve;
+					})
+			);
+			const unwatch = handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+			const nextListeners = new Map<string, (dir: string) => unknown>();
+			const next = {
+				on: vi.fn((event: string, cb: (dir: string) => unknown) => {
+					nextListeners.set(event, cb);
+					return next;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(f.chokidar.watch).mockReturnValue(next as any);
+			await handlers.get('git:watchWorktreeDirectory')!({} as any, f.sessionId, f.dir);
+			nextListeners.get('addDir')!(f.sibling);
+			close();
+			await unwatch;
+			await vi.advanceTimersByTimeAsync(500);
+			expect(next.close).not.toHaveBeenCalled();
+			expect(mockBroadcastBridgeEvent).toHaveBeenCalledOnce();
+			await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+		});
+		it('invalidates a running candidate when unlink arrives before its Git reply', async () => {
+			vi.useFakeTimers();
+			const f = await fixture();
+			let finish!: (value: any) => void;
+			vi.mocked(execFile.execFileNoThrow).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			f.listeners.get('addDir')!(f.root);
+			vi.advanceTimersByTime(500);
+			f.listeners.get('unlinkDir')!(f.root);
+			finish({ stdout: 'true', stderr: '', exitCode: 0 });
+			await vi.advanceTimersByTimeAsync(0);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledOnce();
+			expect(mockBroadcastBridgeEvent.mock.calls.map((call) => call[0])).toEqual([
+				'worktree:removed',
+			]);
+			await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+		});
+
+		it('retains a failed target watcher close for settlement retry', async () => {
+			const f = await fixture();
+			// A child can itself watch a directory outside its cwd; identity owns it.
+			const owned = { ...f.checkout, ownership: { sessionId: f.sessionId } } as any;
+			f.watcher.close.mockRejectedValueOnce(new Error('close pending'));
+			await expect(settleRetiredWorktreeWatchers(owned)).rejects.toThrow('close pending');
+			await settleRetiredWorktreeWatchers(owned);
+			expect(f.watcher.close).toHaveBeenCalledTimes(2);
+			f.listeners.get('unlinkDir')!(f.sibling);
+			expect(mockBroadcastBridgeEvent).not.toHaveBeenCalled();
+		});
+		it('blocks a retiring child from starting a watcher outside its checkout', async () => {
+			const f = await fixture();
+			const checkout = {
+				...f.checkout,
+				ownership: { sessionId: f.sessionId, parentPath: f.sibling },
+			} as any;
+			expect(worktreeRetirement.register(checkout)).toBe(true);
+			const prepared = worktreeRetirement.prepare(checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			try {
+				expect(
+					await handlers.get('git:watchWorktreeDirectory')!({} as any, f.sessionId, f.sibling)
+				).toMatchObject({ success: false });
+				await settleRetiredWorktreeWatchers(checkout);
+				expect(f.watcher.close).toHaveBeenCalledOnce();
+				f.listeners.get('addDir')!(f.sibling);
+				f.listeners.get('unlinkDir')!(f.sibling);
+				expect(mockBroadcastBridgeEvent).not.toHaveBeenCalled();
+			} finally {
+				worktreeRetirement.abort(prepared.token);
+			}
+		});
+
+		it('prevents pending startup from recreating an unwatched target watcher', async () => {
+			const f = await fixture();
+			await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+			let resume!: () => void;
+			let entered!: () => void;
+			const started = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			vi.mocked(f.fs.access).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resume = resolve;
+						entered();
+					})
+			);
+			const starting = handlers.get('git:watchWorktreeDirectory')!({} as any, f.sessionId, f.root);
+			await started;
+			await handlers.get('git:unwatchWorktreeDirectory')!({} as any, f.sessionId);
+			resume();
+			expect(await starting).toMatchObject({ success: false });
+			expect(f.chokidar.watch).toHaveBeenCalledOnce();
 		});
 	});
 

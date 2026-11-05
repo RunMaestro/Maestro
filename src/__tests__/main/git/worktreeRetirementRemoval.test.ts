@@ -172,7 +172,8 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 			...(command.kind === 'prepare' ? { snapshots: [child, parentSession] } : {}),
 		})
 	);
-	const host = new WorktreeRetirementHost(fence, 60000);
+	const discovery = vi.fn(async () => {});
+	const host = new WorktreeRetirementHost(fence, 60000, discovery);
 	const prepared = await host.prepare('child', {
 		identity,
 		request,
@@ -203,6 +204,7 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 		release,
 		request,
 		watchers,
+		discovery,
 		token: prepared.token,
 		remove: () => host.remove(prepared.token, identity, watchers),
 		invalidate: () => {
@@ -673,6 +675,48 @@ describe('checked worktree removal with real local Git fixtures', () => {
 		expect(f.archive).toHaveLength(0);
 		expect(f.fence.state(f.root)).toBe('removing');
 	});
+	it('drains discovery before the durable intent and Git, then settles watchers again', async () => {
+		const f = await setup();
+		let resume!: () => void;
+		let started!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		f.discovery.mockImplementationOnce(async () => {
+			started();
+			await new Promise<void>((resolve) => {
+				resume = resolve;
+			});
+		});
+		const removal = f.remove();
+		await entered;
+		expect(f.journal).toHaveLength(0);
+		expect(adapter.beforeRemove).not.toHaveBeenCalled();
+		expect(f.fence.state(f.root)).toBe('preparing');
+		resume();
+		expect(await removal).toEqual({ status: 'removed' });
+		expect(f.discovery).toHaveBeenCalledOnce();
+		expect(f.watchers).toHaveBeenCalledOnce();
+	});
+	it.each(['close failure', 'owner loss', 'new ignored data'])(
+		'rechecks safety after draining discovery: %s',
+		async (failure) => {
+			const f = await setup();
+			f.discovery.mockImplementationOnce(async () => {
+				if (failure === 'close failure') throw new Error('watcher close failed');
+				if (failure === 'owner loss') f.invalidate();
+				if (failure === 'new ignored data') {
+					mkdirSync(join(f.root, 'ignored'));
+					writeFileSync(join(f.root, 'ignored', 'saved.txt'), 'keep');
+				}
+			});
+			expect((await f.remove()).status).toBe('blocked');
+			expect(adapter.beforeRemove).not.toHaveBeenCalled();
+			expect(f.journal).toHaveLength(0);
+			expect(existsSync(f.root)).toBe(true);
+		}
+	);
+
 	it.each(['watchers', 'persistence', 'renderer'])(
 		'retries failed %s settlement after deletion without removing twice',
 		async (kind) => {

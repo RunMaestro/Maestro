@@ -39,7 +39,8 @@ export class WorktreeRetirementHost {
 	private readonly prepared = new Map<string, Prepared>();
 	constructor(
 		private readonly fence: WorktreeRetirement,
-		private readonly leaseMs = 30000
+		private readonly leaseMs = 30000,
+		private readonly settleDiscovery?: (checkout: Readonly<ManagedCheckout>) => Promise<void>
 	) {}
 
 	async prepare(
@@ -121,7 +122,7 @@ export class WorktreeRetirementHost {
 	remove(
 		id: string,
 		renderer: object,
-		settleWatchers: (checkout: Readonly<ManagedCheckout>) => Promise<void>
+		settleWatchers = this.settleDiscovery
 	): Promise<RemovalResult> {
 		const entry = this.prepared.get(id);
 		if (!entry || entry.renderer.identity !== renderer)
@@ -134,6 +135,11 @@ export class WorktreeRetirementHost {
 					if (!initial.ok) throw new Error(initial.reason);
 					await verifyRetirementMerge(initial.expected);
 					// GitHub reads can outlive a registration, lease, or primary owner.
+					if (!this.settleDiscovery || !settleWatchers)
+						throw new Error('Watcher settlement unavailable');
+					// Drain pending Git discovery while still preparing. Revalidate
+					// afterwards so timeout/navigation wins before the durable intent.
+					await this.settleDiscovery(entry.expected);
 					const current = await this.validate(id, renderer);
 					if (!current.ok) throw new Error(current.reason);
 					await verifyRetirementClean(current.expected);
@@ -142,6 +148,7 @@ export class WorktreeRetirementHost {
 					entry.diskRemoved = true;
 				}
 				if (!entry.diskRemoved) throw new Error('Removal outcome requires recovery');
+				if (!settleWatchers) throw new Error('Watcher settlement unavailable');
 				await settleWatchers(entry.expected);
 				const reconciled = await this.reconcileRenderer(id, renderer);
 				if (!reconciled.ok) throw new Error(reconciled.reason);

@@ -41,6 +41,7 @@ export type Preparation =
 type Entry = {
 	identity: ManagedCheckout;
 	state: RetirementState;
+	discoveryEpoch?: number;
 	token?: RetirementToken;
 	owner?: object;
 	intent?: RetirementIntent;
@@ -480,6 +481,55 @@ export class WorktreeRetirement {
 		return true;
 	}
 
+	/** Discovery is read-only, but its late result can recreate a retired owner.
+	 * Capture before awaits and recheck before probing/emitting/returning. Keep an
+	 * epoch across abort so work begun before a transient reservation stays stale.
+	 * Watcher roots may be ancestors of the checkout; existing parent watching
+	 * remains useful, while individual candidate/group events include ancestors.
+	 */
+	captureDiscovery(
+		checkoutPath: string,
+		options: {
+			includeAncestors?: boolean;
+			watcherSessionId?: string;
+			allowRemovedDescendants?: boolean;
+		} = {}
+	): () => boolean {
+		const root = canonical(checkoutPath, true);
+		const relevant = () =>
+			[...this.entries.values()].filter(
+				(entry) =>
+					!(
+						options.allowRemovedDescendants &&
+						root &&
+						entry.state === 'removed' &&
+						root !== entry.identity.path &&
+						isPathWithin(entry.identity.path, root)
+					) &&
+					((options.watcherSessionId !== undefined &&
+						entry.identity.ownership?.sessionId === options.watcherSessionId) ||
+						!root ||
+						(options.includeAncestors !== false
+							? overlaps(root, entry.identity.path)
+							: isPathWithin(root, entry.identity.path)))
+			);
+		const initial = relevant().map((entry) => ({ entry, epoch: entry.discoveryEpoch }));
+		const allowed = initial.every(({ entry }) => entry.state === 'available');
+		return () => {
+			if (!allowed || canonical(checkoutPath, true) !== root) return false;
+			const current = relevant();
+			return (
+				current.length === initial.length &&
+				current.every(
+					(entry, index) =>
+						entry === initial[index].entry &&
+						entry.discoveryEpoch === initial[index].epoch &&
+						entry.state === 'available'
+				)
+			);
+		};
+	}
+
 	/** Unknown paths acquire a global hold; while reserved they fail closed. */
 	admit(paths: readonly string[] | null, options: { allowMissing?: boolean } = {}): Admission {
 		const resolved = paths?.length ? paths.map((p) => canonical(p, options.allowMissing)) : null;
@@ -574,6 +624,7 @@ export class WorktreeRetirement {
 		const token = Object.freeze({});
 		entry.token = token;
 		entry.state = 'preparing';
+		entry.discoveryEpoch = (entry.discoveryEpoch ?? 0) + 1;
 		return { ok: true, token, expected: Object.freeze({ ...entry.identity }) };
 	}
 
