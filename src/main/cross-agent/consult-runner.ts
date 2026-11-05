@@ -20,6 +20,7 @@ import { extractTextFromStreamJson } from '../group-chat/output-parser';
 import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 import type { ConsultRunner } from '../../shared/maestro-lib/agents/consult';
 import type { AgentError } from '../../shared/types';
+import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 interface RunningConsult {
 	/** The target's stream-json output so far. Each `data` event is a delta. */
@@ -36,7 +37,7 @@ export function createDesktopConsultRunner(
 ): ConsultRunner {
 	const runs = new Map<string, RunningConsult>();
 
-	return {
+	const admitted: ConsultRunner = {
 		async start(spawn, observer) {
 			const sessionId = spawn.processId;
 			const run: RunningConsult = { buffer: '', toolType: spawn.providerId, detach: () => {} };
@@ -115,6 +116,29 @@ export function createDesktopConsultRunner(
 			} catch {
 				// A stream truncated mid-object may not parse; the caller's error still lands.
 				return '';
+			}
+		},
+	};
+
+	return {
+		async start(spawn, observer) {
+			// Own listener/config setup as well as the shared spawn helper. A stop
+			// during async preparation cannot release this pending start's activity.
+			const release = beginGlobalWorktreeActivity();
+			try {
+				return await admitted.start(spawn, observer);
+			} finally {
+				release();
+			}
+		},
+		stop(processId) {
+			// Refuse before detach, kill or their best-effort recovery. Native
+			// process holds remain independent of this synchronous request scope.
+			const release = beginGlobalWorktreeActivity();
+			try {
+				return admitted.stop(processId);
+			} finally {
+				release();
 			}
 		},
 	};
