@@ -367,9 +367,14 @@ export class PianolaNewTabDispatch {
 					},
 					request.dispatchId
 				);
-				guard();
+				try {
+					guard();
+				} catch {
+					// The final guard failed before invoking any renderer transport.
+					return 'rejected';
+				}
 				if ('targetTabId' in request) {
-					if (!deps.executeCommand) throw new Error('DispatchTransportUnavailable');
+					if (!deps.executeCommand) return 'rejected';
 					const accepted = await deps.executeCommand(
 						request.targetAgentId,
 						request.prompt,

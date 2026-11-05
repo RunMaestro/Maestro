@@ -814,7 +814,7 @@ export async function runPianolaScopeCycle(
 			((positions.get(b.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length)
 	);
 	const unattempted = new Set(
-		working
+		eligible
 			.filter(({ saved }) => saved.coverage?.status !== 'blocked')
 			.map(({ tab }) => canonicalJson([tab.agentId, tab.tabId]))
 	);

@@ -67,6 +67,7 @@ interface ProcessConfig {
 	sessionId: string;
 	pianolaDispatchId?: string;
 	pianolaQueueStepId?: string;
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

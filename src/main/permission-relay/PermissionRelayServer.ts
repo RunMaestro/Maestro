@@ -35,6 +35,7 @@ const LOG_CONTEXT = '[PermissionRelay]';
 export type OnPermissionRequest = (request: PermissionRequest) => void;
 
 export class PermissionRelayServer {
+	private readonly socketId = randomUUID();
 	private server: net.Server | null = null;
 	private socketPath: string | null = null;
 	private onRequest: OnPermissionRequest | null = null;
@@ -77,15 +78,15 @@ export class PermissionRelayServer {
 	private resolveSocketPath(userDataDir: string): string {
 		if (process.platform === 'win32') {
 			// Named pipes are per-user by default ACL; unique per app instance.
-			return `\\\\.\\pipe\\maestro-permission-relay-${process.pid}`;
+			return `\\\\.\\pipe\\maestro-permission-relay-${process.pid}-${this.socketId}`;
 		}
 		// Prefer userData, but macOS caps unix socket paths at ~104 bytes. Fall
 		// back to tmpdir when the userData-based path would be too long.
 		const preferred = path.join(userDataDir, 'permission-relay.sock');
-		if (preferred.length <= 100) {
+		if (Buffer.byteLength(preferred, 'utf8') <= 100) {
 			return preferred;
 		}
-		return path.join(os.tmpdir(), `maestro-relay-${process.pid}.sock`);
+		return path.join(os.tmpdir(), `mr-${process.pid}-${this.socketId.slice(0, 8)}.sock`);
 	}
 
 	private async start(userDataDir: string): Promise<string> {

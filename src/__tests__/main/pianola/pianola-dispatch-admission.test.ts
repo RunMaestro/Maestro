@@ -233,7 +233,14 @@ describe('host Pianola dispatch admission', () => {
 		if (fault === 'path') ref.sha256 = '../foreign';
 		if (fault === 'symlink') {
 			fs.rmSync(file);
-			fs.symlinkSync(f.artifact(disk.payloads.terminals[b.requestId]), file);
+			const target = f.artifact(disk.payloads.terminals[b.requestId]);
+			// A directory junction needs no Windows symlink privilege and still
+			// exercises the native reparse-point/non-file rejection at this boundary.
+			fs.symlinkSync(
+				process.platform === 'win32' ? path.dirname(target) : target,
+				file,
+				process.platform === 'win32' ? 'junction' : 'file'
+			);
 		}
 		fs.writeFileSync(f.journal, JSON.stringify(disk));
 		expect(() => f.store.readDispatchAdmission(dispatchId)).toThrow();

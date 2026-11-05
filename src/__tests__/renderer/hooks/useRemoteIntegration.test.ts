@@ -1679,6 +1679,29 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote new AI tab with prompt', () => {
+		it('refuses supervised mention routing before creating or releasing a tab', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({ suppressLocal: true } as never);
+			renderHook(() => useRemoteIntegration(deps));
+			const before = useSessionStore.getState().sessions[0].aiTabs.length;
+			await act(async () => {
+				await onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'@Peer inspect',
+					'mention-refused',
+					true,
+					false,
+					undefined,
+					{ phase: 'release', dispatchId: 'held-mention', tabId: 'held-tab' }
+				);
+			});
+			expect(window.maestro.process.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'mention-refused',
+				{ success: false, error: 'DispatchMentionRoutingUnavailable' }
+			);
+			expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(before);
+		});
+
 		it('prepares and persists an empty exact tab, then releases once without moving focus', async () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
 			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });

@@ -1,4 +1,11 @@
 import * as os from 'os';
+import * as net from 'node:net';
+import { PermissionRelayServer } from '../../../main/permission-relay/PermissionRelayServer';
+import {
+	registerSpawn,
+	resolvePending,
+	getPendingQuestion,
+} from '../../../main/permission-relay/registry';
 import { performance as realPerformance } from 'node:perf_hooks';
 import { syncBuiltinESMExports } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
@@ -1634,11 +1641,6 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 		'pre-owner',
 		'request-risk-header',
 	] as const)('consumes only the exact open native question: %s', async (mode) => {
-		const { PermissionRelayServer } =
-			await import('../../../main/permission-relay/PermissionRelayServer');
-		const { registerSpawn, resolvePending, getPendingQuestion } =
-			await import('../../../main/permission-relay/registry');
-		const net = await import('node:net');
 		const provider = mode === 'unsupported-provider' ? 'codex' : 'claude-code';
 		const f = fixture(provider);
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'Q06-'));
@@ -1832,29 +1834,47 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 				if (mode === 'risk-rewrite') f.commit([f.row('risk', 'Inspecting files.')]);
 			}
 			let committed!: () => void;
-			const requestCommitted = new Promise<void>((resolve) => {
+			let commitFailed!: (error: unknown) => void;
+			const requestCommitted = new Promise<void>((resolve, reject) => {
 				committed = resolve;
+				commitFailed = reject;
 			});
+			// Observe failures even if connect/write has not reached its await yet.
+			void requestCommitted.catch(() => {});
 			relay.setOnRequest((request) => {
-				requestId = request.requestId;
-				// Snapshot notification follows actual pending-map commit, not UI parsing.
-				if (
-					provider === 'claude-code' &&
-					!['multi-question', 'multi-select', 'tool-permission'].includes(mode) &&
-					!mode.startsWith('raw-')
-				) {
-					expect(getPendingQuestion('agent-ai-tab', f.read().cursor)?.requestId).toBe(requestId);
+				try {
+					requestId = request.requestId;
+					// Snapshot notification follows actual pending-map commit, not UI parsing.
+					if (
+						provider === 'claude-code' &&
+						!['multi-question', 'multi-select', 'tool-permission'].includes(mode) &&
+						!mode.startsWith('raw-')
+					) {
+						expect(getPendingQuestion('agent-ai-tab', f.read().cursor)?.requestId).toBe(requestId);
+					}
+					committed();
+				} catch (error) {
+					commitFailed(error);
 				}
-				committed();
 			});
 			const socketPath = await relay.ensureStarted(directory);
 			socket = net.createConnection(socketPath);
+			socket.on('error', commitFailed);
+			socket.once('close', () => {
+				if (!requestId) commitFailed(new Error('Relay closed before native request commit'));
+			});
 			await new Promise<void>((resolve, reject) => {
 				socket!.once('connect', resolve);
 				socket!.once('error', reject);
 			});
 			answerResponse = new Promise<string>((resolve) => {
-				socket!.once('data', (data) => resolve(data.toString()));
+				socket!.once('data', (data) => {
+					if (!requestId && mode !== 'foreign-token')
+						commitFailed(
+							new Error(`Relay responded before native request commit: ${data.toString()}`)
+						);
+					resolve(data.toString());
+				});
 			});
 			const question: Record<string, unknown> = {
 				header: mode === 'request-risk-header' ? 'I will DROP DATABASE production.' : 'Naming',
@@ -1952,6 +1972,7 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 						{ classification: { risk: 'high' } },
 					]);
 			}
+			if (mode === 'feature-off') expect(replies).toMatchObject([{ status: 'rejected' }]);
 			if (mode !== 'reset') {
 				const restarted = createPianolaScopeWorkerDeps({ sendCommand } as unknown as Pick<
 					MaestroClient,

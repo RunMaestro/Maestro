@@ -866,6 +866,7 @@ describe('persistence IPC handlers', () => {
 				targetAgentId: 'agent',
 				targetTabId: 'tab',
 				prompt: String(request.item.text),
+				images: request.item.images,
 				background: true,
 				hidden: false,
 				held: false,
@@ -999,6 +1000,8 @@ describe('persistence IPC handlers', () => {
 
 		it.each([
 			'fresh',
+			'image-fresh',
+			'image-existing',
 			'existing',
 			'owner',
 			'row',
@@ -1030,11 +1033,26 @@ describe('persistence IPC handlers', () => {
 				const { createMockSession } = await import('../../../helpers/mockSession');
 				const { createMockAITab } = await import('../../../helpers/mockTab');
 				const f = queueAdapter(true, false);
+				const imagePromptSpy = kind.startsWith('image-')
+					? vi
+							.spyOn(promptManager, 'getPrompt')
+							.mockReturnValue(
+								(await import('../../../../renderer/hooks/input/useInputProcessing'))
+									.DEFAULT_IMAGE_ONLY_PROMPT
+							)
+					: undefined;
+				if (kind.startsWith('image-')) {
+					f.input.prompt = '';
+					request.item.text = '';
+					f.input.images = ['maestro-image://synthetic.png'];
+					request.item.images = f.input.images;
+				}
 				const snapshot = f.deps.snapshot();
-				snapshot.tabs[0].agentSessionId = kind === 'existing' ? 'provider-existing' : null;
+				snapshot.tabs[0].agentSessionId = kind.endsWith('existing') ? 'provider-existing' : null;
 				current[0].aiTabs[0].agentSessionId = snapshot.tabs[0].agentSessionId;
 				f.deps.snapshot = () => snapshot;
-				await f.adapter.runQueue(f.client, f.input, f.arm);
+				const queuedReceipt = await f.adapter.runQueue(f.client, f.input, f.arm);
+				expect(queuedReceipt.receipt.outcome).toBe('queued');
 				snapshot.tabs[0].busy = false;
 				snapshot.tabs[0].cursorAvailable = true;
 				const owner = {
@@ -1154,7 +1172,7 @@ describe('persistence IPC handlers', () => {
 						tabId: 'tab',
 						createdAt: 1,
 						provider: 'codex',
-						agentSessionId: kind === 'existing' ? 'provider-existing' : null,
+						agentSessionId: kind.endsWith('existing') ? 'provider-existing' : null,
 						open: true,
 					});
 				const workerSpies = [
@@ -1228,14 +1246,14 @@ describe('persistence IPC handlers', () => {
 											createdAt: 1,
 											state: 'idle',
 											logs: newEmptyTranscript(),
-											agentSessionId: kind === 'existing' ? 'provider-existing' : null,
+											agentSessionId: kind.endsWith('existing') ? 'provider-existing' : null,
 										}),
 									],
 								} as never),
 							],
 						})
 					);
-					if (kind === 'existing') {
+					if (kind.endsWith('existing')) {
 						await act(async () =>
 							useSessionStore
 								.getState()
@@ -1296,7 +1314,7 @@ describe('persistence IPC handlers', () => {
 							).toHaveLength(1);
 							return;
 						}
-						if (!['fresh', 'existing'].includes(kind)) {
+						if (!['fresh', 'existing', 'image-fresh', 'image-existing'].includes(kind)) {
 							await act(async () => {
 								await expect(drain()).rejects.toThrow();
 							});
@@ -1390,6 +1408,7 @@ describe('persistence IPC handlers', () => {
 						f.input.dispatchId
 					);
 					clock.mockRestore();
+					imagePromptSpy?.mockRestore();
 					workerSpies.forEach((spy) => spy.mockRestore());
 					await act(async () => root.unmount());
 					dom.window.close();
@@ -1425,6 +1444,8 @@ describe('persistence IPC handlers', () => {
 							s.kind === 'local' &&
 							(config.pianolaQueueStepId ? s.requestId === config.pianolaQueueStepId : !s.stage)
 					)!;
+				expect(config.command).toBe('/fixture/codex');
+				expect(config.args.slice(0, definition.args.length)).toEqual(definition.args);
 				expect(local.status).toBe('unknown'); // durable intent before the native side effect
 				if (unknownSpawn) throw new Error('Native spawn acknowledgement lost');
 				if (!captureMissing) {
@@ -1466,7 +1487,7 @@ describe('persistence IPC handlers', () => {
 				getAgentDetector: () =>
 					({
 						getAgent: async () => {
-							mutation?.();
+							if (f.store.readScopeCheckpoint(f.scopeId)) mutation?.();
 							return {
 								...definition,
 								available: true,

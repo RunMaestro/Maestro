@@ -505,7 +505,7 @@ export class NativeCurrentTurns {
 		if (
 			row?.source !== 'user' ||
 			row.queuedItemId !== item.id ||
-			row.text !== item.text ||
+			row.text !== (item.text ?? '') ||
 			canonicalJson(row.images ?? []) !== canonicalJson(item.images ?? []) ||
 			state.order.at(-1) !== proof.boundaryId
 		)
@@ -517,7 +517,7 @@ export class NativeCurrentTurns {
 						proof.base.cursor,
 						proof.base.entryCount!,
 						proof.boundaryId,
-						item.text!
+						item.text ?? ''
 					)
 				)
 					return;

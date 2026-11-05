@@ -406,8 +406,9 @@ quotes and code receive the same conservative treatment as other turn content.
 The host returns `incomplete`, `gap`, `reset`, or `unknown` with a concrete reason
 and no actionable message subset when that proof is unavailable. Clients must
 refresh or suspend observation in those cases. A supplied cursor must match
-exactly. This version returns complete refreshes; delta consumption and worker
-send fencing are separate integration work.
+exactly. Clients may request a delta with a matching `deltaBase` and compose it
+with the retained full turn. A lost base requires a complete refresh. Native
+send fencing revalidates the submitted boundary before spawning.
 
 The in-memory projection retains at most 8,192 rows and 2 MiB per tab, 2,048 tabs,
 and 32 MiB of serialized row payloads across the host. Eviction and overflow are

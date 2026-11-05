@@ -488,3 +488,22 @@ describe('strict automation question schema', () => {
 		);
 	});
 });
+
+describe('permission relay instance transport isolation', () => {
+	it('starts two hosts in one process without sharing a Windows pipe', async () => {
+		const first = new PermissionRelayServer();
+		const second = new PermissionRelayServer();
+		const dirs = [0, 1].map(() => fs.mkdtempSync(path.join(os.tmpdir(), 'relay-instance-')));
+		try {
+			const a = await first.ensureStarted(dirs[0]);
+			const b = await second.ensureStarted(dirs[1]);
+			expect(a).not.toBe(b);
+			expect(first.isRunning()).toBe(true);
+			expect(second.isRunning()).toBe(true);
+		} finally {
+			first.stop();
+			second.stop();
+			for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

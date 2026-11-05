@@ -80,7 +80,10 @@ function parsePositiveInt(raw: string | undefined, min: number): number | undefi
 export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
 	if (options.futureLocalAgents && !options.id && !options.requestOwnerApproval)
-		fail('--future-local-agents requires an existing --id', options.json);
+		fail(
+			'--future-local-agents requires an existing --id or --request-owner-approval',
+			options.json
+		);
 	const ids = (value?: string): string[] =>
 		(value ?? '')
 			.split(',')

@@ -117,6 +117,44 @@ function fixture() {
 }
 
 describe('native new-tab Pianola admission adapter', () => {
+	it.each([false, true])(
+		'releases an existing-tab fence only after proven nonstart: %s',
+		async (changed) => {
+			const f = fixture();
+			const tabId = 'existing';
+			f.snapshot.tabs.push({
+				agentId: 'worker',
+				tabId,
+				createdAt: 99,
+				busy: false,
+				paused: false,
+				consult: false,
+				ephemeral: false,
+				cursorAvailable: true,
+				cursor: null,
+			});
+			const executeCommand = vi.fn(async () => true);
+			const adapter = new PianolaNewTabDispatch({ ...f.deps, executeCommand });
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				write(record);
+				if (changed && record.phase === 'released') f.snapshot.tabs[0].createdAt++;
+			});
+			try {
+				const result = await adapter.runExisting(
+					f.client,
+					{ ...f.request, targetTabId: tabId },
+					f.arm
+				);
+				expect(result.receipt.outcome).toBe(changed ? 'rejected' : 'unknown');
+				expect(executeCommand).toHaveBeenCalledTimes(changed ? 0 : 1);
+				expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(!changed);
+				if (changed) expect(() => pianolaNewTabSpawns.claim('worker-ai-existing')).not.toThrow();
+			} finally {
+				pianolaNewTabSpawns.cancelHold('worker', tabId);
+			}
+		}
+	);
 	it('re-resolves group ownership at the native boundary even when parent identity is unchanged', async () => {
 		const f = fixture();
 		const scope = f.store.readSupervisorTargets()[0];

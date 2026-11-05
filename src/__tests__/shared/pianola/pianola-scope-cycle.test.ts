@@ -1011,7 +1011,7 @@ describe('RF review regressions', () => {
 		expect(f.checkpoint().tabs[0].unresolvedIntent).toBeTruthy();
 	});
 
-	it('drains a healthy expired deadline excluded by the previous sweep before recovery', async () => {
+	it('does not schedule a short wake for an expired deadline already attempted in the sweep', async () => {
 		const f = fixture();
 		f.rules.splice(0);
 		const tab = f.tab();
@@ -1032,7 +1032,7 @@ describe('RF review regressions', () => {
 		);
 		const sweep = new Set([JSON.stringify([tab.agentId, tab.tabId])]);
 		const result = await runPianolaScopeCycle(scopeId, f.deps, { dryRun: false, sweep });
-		expect(result.nextDueAt).toBe(Date.parse(f.deps.watch.now()) + 50);
+		expect(result.nextDueAt).toBeUndefined();
 		sweep.clear();
 		await runPianolaScopeCycle(scopeId, f.deps, { dryRun: false, sweep });
 		expect(f.store.readDecisions()[0].lifecycle?.status).toBe('waiting_human');

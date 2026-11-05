@@ -20,7 +20,10 @@ import {
 	startPianolaDecision,
 	updatePianolaDecision,
 } from '../../../shared/pianola/pianola-decision-lifecycle';
-import { resolvePianolaScopeOwnership } from '../../../shared/pianola/pianola-scope';
+import {
+	resolvePianolaScopeOwnership,
+	validatePianolaScopeSelection,
+} from '../../../shared/pianola/pianola-scope';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
@@ -1319,6 +1322,22 @@ describe('owner scope configuration through production adapters', () => {
 });
 
 describe('standing future local agents', () => {
+	it('retains missing future consent baseline and does not select existing agents', () => {
+		const selection = validatePianolaScopeSelection({
+			label: 'Future',
+			mode: 'agents-and-groups',
+			agentIds: [],
+			groupIds: [],
+			excludedAgentIds: [],
+			futureLocalAgents: true,
+		});
+		expect(selection).not.toBeNull();
+		expect(selection).not.toHaveProperty('futureAgentBaselineIds');
+		const scope = { ...target(), selection: selection! };
+		expect(
+			resolvePianolaScopeOwnership(census.tabs[0], census.owners, [scope as never], [])
+		).not.toMatchObject({ kind: 'scope' });
+	});
 	it('CLI live status reads the host registry and coverage snapshot over the bridge', async () => {
 		await nativeSave();
 		await pianolaSuperviseList({ live: true, json: true });

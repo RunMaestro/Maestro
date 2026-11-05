@@ -182,11 +182,15 @@ describe('atomic legacy handover', () => {
 			vi.spyOn(hostCallerRuns, 'issue').mockImplementation(callerRuns.issue.bind(callerRuns));
 			supervisor.reconcile();
 			const client = { cliAuthenticated: true };
-			callerRuns.bind(
-				client,
-				fs.readFileSync(spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!, 'utf8')
-			);
-			expect(callerRuns.resolve(client)).toBeDefined();
+			const proofPath = spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!;
+			if (process.platform === 'win32') {
+				// Verified private ACL delivery is unavailable, so no caller authority exists.
+				expect(proofPath).toBe('');
+				expect(supervisor.canFenceLegacyWatch('legacy')).toBe(false);
+			} else {
+				callerRuns.bind(client, fs.readFileSync(proofPath, 'utf8'));
+				expect(callerRuns.resolve(client)).toBeDefined();
+			}
 			const file = store.supervisorFilePath();
 			const updated = JSON.stringify({ targets: [legacy('legacy', 'old', false)] });
 			if (mode === 'rename') {
@@ -207,7 +211,7 @@ describe('atomic legacy handover', () => {
 			if (mode === 'missing') fs.unlinkSync(file);
 			if (mode === 'corrupt') fs.writeFileSync(file, '{');
 			expect(callerRuns.resolve(client)).toBeUndefined();
-			expect(callerRuns.isRunClient(client)).toBe(true);
+			expect(callerRuns.isRunClient(client)).toBe(process.platform !== 'win32');
 			expect(spawned).toHaveLength(1);
 		}
 	);
@@ -215,6 +219,13 @@ describe('atomic legacy handover', () => {
 	it('fences a real active owner at host ingress before stop, preserves a concrete pause and covers siblings/worktrees with one scope', async () => {
 		supervisor.reconcile();
 		const proofPath = spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!;
+		if (process.platform === 'win32') {
+			expect(proofPath).toBe('');
+			expect(supervisor.canFenceLegacyWatch('legacy')).toBe(false);
+			expect(await migrate()).toMatchObject({ status: 'NeedsConfiguration' });
+			expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+			return;
+		}
 		expect(proofPath).toBeTruthy();
 		const proof = fs.readFileSync(proofPath, 'utf8');
 		const client = { cliAuthenticated: true };
@@ -382,11 +393,17 @@ describe('atomic legacy handover', () => {
 					{ dryRun: false }
 				);
 			supervisor.reconcile();
-			expect(supervisor.canFenceLegacyWatch('legacy')).toBe(true);
+			expect(supervisor.canFenceLegacyWatch('legacy')).toBe(process.platform !== 'win32');
 			const client = { cliAuthenticated: true };
 			const proofPath = spawned.find((child) => child.args.includes('watch'))!.opts.env![
 				CALLER_RUN_PROOF_FILE_ENV_VAR
 			]!;
+			if (process.platform === 'win32') {
+				expect(proofPath).toBe('');
+				expect(await migrate(target)).toMatchObject({ status: 'NeedsConfiguration' });
+				expect(dispatch).not.toHaveBeenCalled();
+				return;
+			}
 			callerRuns.bind(client, fs.readFileSync(proofPath, 'utf8'));
 			expect(callerRuns.resolve(client)).toBeDefined();
 			await cycle(overlappingId);

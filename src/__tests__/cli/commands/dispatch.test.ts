@@ -54,6 +54,24 @@ describe('dispatch command', () => {
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
+	it('preserves an unknown new-tab receipt even without a tab ID', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		const sendCommand = vi
+			.fn()
+			.mockResolvedValue({ success: false, unknown: true, dispatchId: 'uncertain' });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		await dispatch('agent-abc', 'Hello', { newTab: true });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: false,
+			unknown: true,
+			dispatchId: 'uncertain',
+			code: 'DISPATCH_UNKNOWN',
+			tabId: null,
+		});
+	});
+
 	it.each([false, true])('preserves optional supervision receipts for queue=%s', async (queue) => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		const admission = {

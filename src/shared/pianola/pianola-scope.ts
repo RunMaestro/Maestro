@@ -145,9 +145,12 @@ export function validatePianolaScopeSelection(raw: unknown): PianolaScopeSelecti
 		const groupIds = selectionIds(value.groupIds);
 		if (value.futureLocalAgents !== undefined && typeof value.futureLocalAgents !== 'boolean')
 			return null;
-		const futureAgentBaselineIds = selectionIds(value.futureAgentBaselineIds ?? []);
+		const futureAgentBaselineIds =
+			value.futureAgentBaselineIds === undefined
+				? undefined
+				: selectionIds(value.futureAgentBaselineIds);
 		if (
-			!futureAgentBaselineIds ||
+			futureAgentBaselineIds === null ||
 			(!value.futureLocalAgents && value.futureAgentBaselineIds !== undefined)
 		)
 			return null;
@@ -171,7 +174,7 @@ export function validatePianolaScopeSelection(raw: unknown): PianolaScopeSelecti
 			agentIds,
 			groupIds,
 			...(value.futureLocalAgents === true
-				? { futureLocalAgents: true, futureAgentBaselineIds }
+				? { futureLocalAgents: true, ...(futureAgentBaselineIds ? { futureAgentBaselineIds } : {}) }
 				: {}),
 			excludedAgentIds,
 		};

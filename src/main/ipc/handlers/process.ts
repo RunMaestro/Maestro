@@ -222,6 +222,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			)
 				config = { ...config, transcriptBoundaryId: undefined };
 		}
+		let hostQueueAgent: Awaited<ReturnType<AgentDetector['getAgent']>> | undefined;
 		let hostLocalConfig: string | undefined;
 		let hostSystemPrompt: string | undefined;
 		const assertOwner = () => {
@@ -252,6 +253,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				tab.permissionMode === 'readonly';
 			let expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
 			if (item?.crossAgentMention) {
+				if (!hostQueueAgent || hostQueueAgent.id !== agent.toolType)
+					throw new Error('DispatchAgentUnavailable');
 				expected = queueLocalPrompt(item as PianolaQueueItem, agent.id, {
 					agents: deps.sessionsStore.get('sessions', []),
 					groups: (deps.groupsStore?.get('groups', []) ?? []).map((group) => ({ ...group })),
@@ -268,8 +271,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					tabId: tab.id,
 					toolType: agent.toolType,
 					cwd: agent.cwd,
-					command: '',
-					args: [],
+					command: hostQueueAgent.path || hostQueueAgent.binaryName,
+					args: [...(hostQueueAgent.apiModeArgs ?? hostQueueAgent.args)],
 					agentSessionId: tab.agentSessionId ?? undefined,
 					prompt: prependNewSessionMessageOnFirstTurn(
 						expected,
@@ -339,6 +342,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		};
 		return withIpcErrorLogging(handlerOpts('spawn'), async () => {
 			if (config.pianolaQueueItemId) {
+				hostQueueAgent = await getAgentDetector()?.getAgent(config.toolType);
 				assertOwner();
 				if (config.pianolaDispatchId !== config.pianolaQueueItemId)
 					throw new Error('DispatchIdentityMismatch');

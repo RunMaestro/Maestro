@@ -10,6 +10,7 @@ import type { Session, ThinkingMode, QueuedItem, CustomAICommand } from '../../t
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
@@ -790,6 +791,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// no flag able to express what the caller wanted and turned every
 					// dispatch at a working agent into a dropped prompt (#1602). The
 					// prompt is queued below instead.
+					if (control && planCrossAgentMentions(prompt, sessionId, mentionRouting)) {
+						ack({ success: false, error: 'DispatchMentionRoutingUnavailable' });
+						return;
+					}
 					let createdTabId: string | undefined;
 					if (control?.phase === 'release') {
 						if (releasedAdmissions.has(control.dispatchId)) {

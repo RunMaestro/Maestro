@@ -498,7 +498,7 @@ export async function runDispatch(
 				// code so consumers (Maestro-Discord, Cue) can distinguish this
 				// from a generic command failure instead of silently returning
 				// `tabId: null` from a "successful" response.
-				if (!result.tabId) {
+				if (!result.tabId && !result.unknown) {
 					throw new Error('NEW_TAB_NO_ID: new_ai_tab_with_prompt acknowledged without a tabId');
 				}
 				return {

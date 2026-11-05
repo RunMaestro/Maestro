@@ -509,11 +509,9 @@ export function buildConsultFirstContext(
 	const body = formatConsultReplies(replies);
 	if (!template) return `${body}\n\n${message}`;
 	const names = formatConsultedAgentNames(replies.map((r) => r.targetAgentName));
-	return template
-		.split('{{CONSULTED_AGENTS}}')
-		.join(names)
-		.split('{{CONSULT_REPLIES}}')
-		.join(body)
-		.split('{{USER_MESSAGE}}')
-		.join(message);
+	return template.replace(/\{\{(CONSULTED_AGENTS|CONSULT_REPLIES|USER_MESSAGE)\}\}/g, (_, key) => {
+		if (key === 'CONSULTED_AGENTS') return names;
+		if (key === 'CONSULT_REPLIES') return body;
+		return message;
+	});
 }

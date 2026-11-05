@@ -92,6 +92,8 @@ async function sendClaimedDecision(
 ): Promise<PianolaScopeDeliveryResult> {
 	const phase = record.lifecycle!.phase;
 	let result: PianolaScopeDeliveryResult;
+	let sent = false;
+	let held = false;
 	try {
 		const guard = record.lifecycle!.guard;
 		const native = guard.cursor.native;
@@ -115,6 +117,7 @@ async function sendClaimedDecision(
 			const classification = currentAsk(callbacks, current);
 			if (classification.risk === 'high' || rateRisk(command) === 'high')
 				throw new Error('Sensitive native question requires the human relay');
+			sent = true;
 			result = answerPendingQuestion(question, command)
 				? { status: 'accepted' }
 				: { status: 'rejected', error: 'Native question already closed or transport unavailable' };
@@ -124,6 +127,7 @@ async function sendClaimedDecision(
 				if (pianolaNewTabSpawns.isHeld(destination.agentId, destination.tabId))
 					throw new Error('Decision destination already held');
 				pianolaNewTabSpawns.hold(destination.agentId, destination.tabId);
+				held = true;
 				pianolaNewTabSpawns.arm(
 					destination.agentId,
 					destination.tabId,
@@ -196,6 +200,7 @@ async function sendClaimedDecision(
 					record.id
 				);
 			}
+			sent = true;
 			const accepted = await callbacks.executeCommand(
 				destination.agentId,
 				command,
@@ -214,11 +219,17 @@ async function sendClaimedDecision(
 				? { status: 'accepted' }
 				: { status: 'rejected', error: 'Renderer refused the decision message' };
 		}
-	} catch {
-		result = {
-			status: 'unknown',
-			error: 'Native delivery receipt unavailable; reconcile before retrying',
-		};
+	} catch (error) {
+		if (!sent && held) pianolaNewTabSpawns.cancelHold(destination.agentId, destination.tabId);
+		result = sent
+			? {
+					status: 'unknown',
+					error: 'Native delivery receipt unavailable; reconcile before retrying',
+				}
+			: {
+					status: 'rejected',
+					error: error instanceof Error ? error.message : 'Native delivery refused',
+				};
 	}
 	// A manager may already have answered while its handoff receipt was in flight.
 	const current = store.readDecisions().find((candidate) => candidate.id === record.id);

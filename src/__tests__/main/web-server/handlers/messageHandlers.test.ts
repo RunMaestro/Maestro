@@ -1,3 +1,6 @@
+const hostPaths = vi.hoisted(() => ({ userData: '' }));
+vi.mock('electron', () => ({ app: { getPath: () => hostPaths.userData } }));
+
 vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
@@ -26,7 +29,7 @@ import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
  * - Select session with focus (window foregrounding)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -333,6 +336,15 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
 }
+
+beforeAll(() => {
+	hostPaths.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'message-handler-host-'));
+	vi.stubEnv('MAESTRO_USER_DATA', hostPaths.userData);
+});
+afterAll(() => {
+	vi.unstubAllEnvs();
+	fs.rmSync(hostPaths.userData, { recursive: true, force: true });
+});
 
 describe('WebSocketMessageHandler', () => {
 	let handler: WebSocketMessageHandler;

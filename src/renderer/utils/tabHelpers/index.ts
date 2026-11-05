@@ -933,12 +933,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
-	if (item.type === 'message' && item.text) {
+	if (item.type === 'message' && (item.text || item.images?.length)) {
 		const logEntry: LogEntry = {
 			id: generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
-			text: item.text,
+			text: item.text ?? '',
 			images: item.images,
 			// Stamped so a dispatch that throws before spawning can take this card
 			// back out again - the prompt never reached a model, and leaving the
