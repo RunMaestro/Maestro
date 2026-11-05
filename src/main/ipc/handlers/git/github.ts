@@ -1,9 +1,15 @@
 import { ipcMain } from 'electron';
-import type { WorktreePullRequestDiscoveryRequest } from '../../../../shared/worktreePullRequests';
+import type {
+	WorktreePullRequestDiscoveryRequest,
+	WorktreePullRequestMergePreflightRequest,
+	WorktreePullRequestMergeRequest,
+} from '../../../../shared/worktreePullRequests';
 import {
 	refreshWorktreePullRequest,
 	invalidateWorktreePullRequest,
 } from '../../../git/worktreePullRequestRefresh';
+import { preflightWorktreePullRequestMerge } from '../../../git/worktreePullRequestMergePreflight';
+import { mergeWorktreePullRequest } from '../../../git/worktreePullRequestMerge';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
@@ -41,6 +47,28 @@ export function registerGithubHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('invalidateWorktreePullRequest'),
 			async (worktreePath: string) => invalidateWorktreePullRequest(worktreePath)
+		)
+	);
+	ipcMain.handle(
+		'git:preflightWorktreePullRequestMerge',
+		withIpcErrorLogging(
+			handlerOpts('preflightWorktreePullRequestMerge'),
+			(request: WorktreePullRequestMergePreflightRequest) =>
+				preflightWorktreePullRequestMerge(request)
+		)
+	);
+	ipcMain.handle(
+		'git:mergeWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('mergeWorktreePullRequest'),
+			async (request: WorktreePullRequestMergeRequest) => {
+				try {
+					return await mergeWorktreePullRequest(request);
+				} finally {
+					if (typeof request?.worktreePath === 'string')
+						invalidateWorktreePullRequest(request.worktreePath);
+				}
+			}
 		)
 	);
 	// Create a PR from the worktree branch to a base branch

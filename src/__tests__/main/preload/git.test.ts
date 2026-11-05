@@ -240,6 +240,26 @@ describe('Git Preload API', () => {
 			expect(await api.discoverWorktreePullRequest(request)).toEqual(result);
 			expect(mockInvoke).toHaveBeenCalledWith('git:discoverWorktreePullRequest', request);
 		});
+		it('forwards merge preflight and mutation requests without changing the target', async () => {
+			const repo = { host: 'github.com', owner: 'owner', name: 'repo' };
+			const request = {
+				worktreePath: '/tree',
+				sshRemoteId: 'remote',
+				target: {
+					identity: { repository: repo, number: 1 },
+					headRepository: repo,
+					headBranch: 'feature',
+					headSha: 'a'.repeat(40),
+					baseBranch: 'rc',
+				},
+			};
+			mockInvoke.mockResolvedValue({ status: 'unavailable', message: 'unsupported' });
+			await api.preflightWorktreePullRequestMerge(request);
+			expect(mockInvoke).toHaveBeenCalledWith('git:preflightWorktreePullRequestMerge', request);
+			const mutation = { ...request, action: { kind: 'enqueue' as const } };
+			await api.mergeWorktreePullRequest(mutation);
+			expect(mockInvoke).toHaveBeenCalledWith('git:mergeWorktreePullRequest', mutation);
+		});
 		it('should invoke git:createPR', async () => {
 			mockInvoke.mockResolvedValue({
 				success: true,

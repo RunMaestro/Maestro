@@ -6,6 +6,10 @@ import type {
 	WorktreePullRequestDiscoveryRequest,
 	WorktreePullRequestDiscoveryResult,
 	WorktreePullRequestSnapshot,
+	WorktreePullRequestMergePreflightRequest,
+	WorktreePullRequestMergePreflight,
+	WorktreePullRequestMergeRequest,
+	WorktreePullRequestMergeResult,
 } from '../shared/worktreePullRequests';
 import type {
 	HarnessInteractionRequest,
@@ -1780,6 +1784,12 @@ interface MaestroAPI {
 		refreshWorktreePullRequest: (
 			request: WorktreePullRequestDiscoveryRequest
 		) => Promise<WorktreePullRequestSnapshot>;
+		preflightWorktreePullRequestMerge: (
+			request: WorktreePullRequestMergePreflightRequest
+		) => Promise<WorktreePullRequestMergePreflight>;
+		mergeWorktreePullRequest: (
+			request: WorktreePullRequestMergeRequest
+		) => Promise<WorktreePullRequestMergeResult>;
 		invalidateWorktreePullRequest: (worktreePath: string) => Promise<void>;
 		createPR: (
 			worktreePath: string,

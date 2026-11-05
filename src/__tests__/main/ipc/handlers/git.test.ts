@@ -263,6 +263,8 @@ describe('Git IPC handlers', () => {
 				'git:worktreeCheckout',
 				'git:createPR',
 				'git:discoverWorktreePullRequest',
+				'git:preflightWorktreePullRequestMerge',
+				'git:mergeWorktreePullRequest',
 				'git:refreshWorktreePullRequest',
 				'git:invalidateWorktreePullRequest',
 				'git:checkGhCli',
@@ -3577,6 +3579,20 @@ export function Component() {
 		});
 	});
 
+	describe('worktree merge IPC', () => {
+		it('refuses SSH without accessing a local worktree', async () => {
+			const request = { worktreePath: '/remote/tree', sshRemoteId: 'remote' };
+			expect(
+				await handlers.get('git:preflightWorktreePullRequestMerge')({}, request)
+			).toMatchObject({ status: 'unavailable' });
+			expect(
+				await handlers.get('git:mergeWorktreePullRequest')(
+					{},
+					{ ...request, action: { kind: 'enqueue' } }
+				)
+			).toMatchObject({ status: 'unknown' });
+		});
+	});
 	describe('git:createPR', () => {
 		it('should create PR successfully via gh CLI', async () => {
 			vi.mocked(execFile.execFileNoThrow)

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { LongPressable, longPressMouseEvent } from './shared/LongPressable';
+import { WorktreePullRequestMerge } from './WorktreePullRequestMerge';
 import { WorktreePill } from './ui/WorktreePill';
 import { Modal } from './ui/Modal';
 import { CueIndicator } from './SessionList/CueIndicator';
@@ -161,6 +162,19 @@ function WorktreePullRequestRefresh({ session, theme }: { session: Session; them
 											? `Local divergence from PR head: ${snapshot.divergence.ahead} ahead, ${snapshot.divergence.behind} behind`
 											: `Local divergence unknown${snapshot?.divergence?.status === 'unavailable' ? `: ${snapshot.divergence.message}` : ''}`}
 								</p>
+								<WorktreePullRequestMerge
+									key={JSON.stringify([session.cwd, ssh?.remoteId, discovery.pullRequest])}
+									pullRequest={discovery.pullRequest}
+									worktreePath={session.cwd}
+									sshRemoteId={ssh?.enabled ? (ssh.remoteId ?? 'unconfigured-ssh') : undefined}
+									disabled={
+										stale ||
+										loading ||
+										discovery.pullRequest.state !== 'OPEN' ||
+										snapshot?.divergence?.status !== 'equal'
+									}
+									refresh={refresh}
+								/>
 								<h3 className="font-bold">Checks</h3>
 								{ci?.status === 'no-ci' ||
 								(ci?.status === 'available' && ci.checks.length === 0) ? (

@@ -14,6 +14,10 @@ import type {
 	WorktreePullRequestDiscoveryRequest,
 	WorktreePullRequestDiscoveryResult,
 	WorktreePullRequestSnapshot,
+	WorktreePullRequestMergePreflightRequest,
+	WorktreePullRequestMergePreflight,
+	WorktreePullRequestMergeRequest,
+	WorktreePullRequestMergeResult,
 } from '../../shared/worktreePullRequests';
 import type {
 	GitCommandOutputChunk,
@@ -472,6 +476,14 @@ export function createGitApi() {
 			request: WorktreePullRequestDiscoveryRequest
 		): Promise<WorktreePullRequestSnapshot> =>
 			ipcRenderer.invoke('git:refreshWorktreePullRequest', request),
+		preflightWorktreePullRequestMerge: (
+			request: WorktreePullRequestMergePreflightRequest
+		): Promise<WorktreePullRequestMergePreflight> =>
+			ipcRenderer.invoke('git:preflightWorktreePullRequestMerge', request),
+		mergeWorktreePullRequest: (
+			request: WorktreePullRequestMergeRequest
+		): Promise<WorktreePullRequestMergeResult> =>
+			ipcRenderer.invoke('git:mergeWorktreePullRequest', request),
 		invalidateWorktreePullRequest: (worktreePath: string): Promise<void> =>
 			ipcRenderer.invoke('git:invalidateWorktreePullRequest', worktreePath),
 		createPR: (
