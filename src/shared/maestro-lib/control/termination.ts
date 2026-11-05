@@ -100,8 +100,7 @@ export interface StopHandle {
 
 interface Ladder {
 	handle: StopHandle;
-	request(options: StopOptions): void;
-	finished(): boolean;
+	request(options: StopOptions, runActivity?: <T>(operation: () => T) => T): void;
 }
 
 const INERT_HANDLE: StopHandle = { stage: () => undefined, dispose: () => {} };
@@ -131,29 +130,49 @@ const ladders = new WeakMap<object, Ladder>();
  *   on a signal leaves its tools running.
  * - A tree is only killed when the pid is provably a running child of this
  *   process. Anything else gets the signal through its own handle and no more.
+ *
+ * Optional host activity guards synchronous requests, escalation, exit and
+ * handle callbacks. Async tree refresh/taskkill work needs separate ownership;
+ * this injection alone does not establish a drained tree or safe cleanup.
  */
-export function stopProcess(target: StopTarget, options: StopOptions): StopHandle {
-	const key = target.child ?? target.pty;
-	if (!key) return INERT_HANDLE;
+export function stopProcess(
+	target: StopTarget,
+	options: StopOptions,
+	runActivity?: <T>(operation: () => T) => T
+): StopHandle {
+	const request = (): StopHandle => {
+		const key = target.child ?? target.pty;
+		if (!key)
+			return runActivity
+				? {
+						stage: () => runActivity(INERT_HANDLE.stage),
+						dispose: () => runActivity(INERT_HANDLE.dispose),
+					}
+				: INERT_HANDLE;
 
-	const running = ladders.get(key);
-	if (running && !running.finished()) {
-		running.request(options);
-		return running.handle;
-	}
+		const running = ladders.get(key);
+		if (running) {
+			running.request(options, runActivity);
+			return running.handle;
+		}
 
-	const ladder = createLadder(target, key);
-	ladders.set(key, ladder);
-	ladder.request(options);
-	return ladder.handle;
+		const ladder = createLadder(target, key, runActivity);
+		ladders.set(key, ladder);
+		ladder.request(options);
+		return ladder.handle;
+	};
+	return runActivity ? runActivity(request) : request();
 }
 
-function createLadder(target: StopTarget, key: object): Ladder {
+function createLadder(
+	target: StopTarget,
+	key: object,
+	runActivity: <T>(operation: () => T) => T = (operation) => operation()
+): Ladder {
 	const pid = target.pid ?? target.child?.pid ?? target.pty?.pid;
 	const hasPid = typeof pid === 'number' && pid > 0;
 
 	let stage: StopStage | undefined;
-	let done = false;
 	let exited = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -182,8 +201,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		stopRefreshing();
 		removeExitListener?.();
 		removeExitListener = undefined;
-		done = true;
-		ladders.delete(key);
+		if (ladders.get(key)?.handle === handle) ladders.delete(key);
 	};
 
 	const sweep = (): void => {
@@ -193,11 +211,12 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		tree = undefined;
 	};
 
-	const onExit = (): void => {
-		exited = true;
-		release();
-		sweep();
-	};
+	const onExit = (): void =>
+		runActivity(() => {
+			exited = true;
+			release();
+			sweep();
+		});
 
 	// The first record is taken before anything is signalled. An agent that is
 	// winding down can still start a tool after that, so the record is re-read
@@ -379,7 +398,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 			run(following, options);
 			return;
 		}
-		timer = setTimeout(() => run(following, options), options.graceMs);
+		timer = setTimeout(() => runActivity(() => run(following, options)), options.graceMs);
 		timer.unref?.();
 	};
 
@@ -424,11 +443,20 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	};
 
 	const handle: StopHandle = {
-		stage: () => stage,
-		dispose: release,
+		stage: () => runActivity(() => stage),
+		dispose: () => runActivity(release),
 	};
 
-	return { handle, request, finished: () => done };
+	return {
+		handle,
+		request: (options, activity = runActivity) =>
+			activity(() => {
+				// Upgrade an existing portable ladder; omitted injection never drops
+				// the current guard, including callbacks retained before this request.
+				runActivity = activity;
+				request(options);
+			}),
+	};
 }
 
 function nextStage(stage: Exclude<StopStage, 'kill'>): StopStage {

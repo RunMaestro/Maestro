@@ -47,13 +47,14 @@ export function superviseAgentProcess(
 	},
 	// Admit retained callbacks before supervisor effects. Portable callers keep
 	// synchronous behavior without depending on the desktop activity registry.
-	runActivity: <T>(operation: () => T) => T = (operation) => operation()
+	activity?: <T>(operation: () => T) => T
 ): {
 	modelActivity: () => void;
 	observe: (event: ParsedEvent) => void;
 	processExited: Promise<void>;
 	dispose: () => void;
 } {
+	const runActivity = activity ?? (<T>(operation: () => T): T => operation());
 	let confirmExit!: () => void;
 	const processExited = new Promise<void>((resolve) => {
 		confirmExit = resolve;
@@ -120,7 +121,8 @@ export function superviseAgentProcess(
 		// reparent them. Reuse the same tree kill as the host's Stop action.
 		termination = stopProcess(
 			{ child },
-			{ from: 'terminate', graceMs: BACKGROUND_STOP_GRACE_MS, label: 'headless agent' }
+			{ from: 'terminate', graceMs: BACKGROUND_STOP_GRACE_MS, label: 'headless agent' },
+			activity
 		);
 		options.onStatus?.(reason);
 	};

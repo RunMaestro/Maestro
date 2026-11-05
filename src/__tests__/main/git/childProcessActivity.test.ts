@@ -57,6 +57,15 @@ vi.mock('../../../shared/maestro-lib/control/termination', async (original) => (
 	...(await original<typeof import('../../../shared/maestro-lib/control/termination')>()),
 	stopProcess: vi.fn(),
 }));
+vi.mock('../../../shared/maestro-lib/control/process-tree', () => ({
+	snapshotProcessTree: vi.fn(() => ({
+		owned: true,
+		descendants: [{ pid: 45678, startedAt: 'fixture' }],
+	})),
+	refreshProcessTree: vi.fn(async (_pid, snapshot) => snapshot),
+	killSurvivors: vi.fn(),
+	killProcessTreeNow: vi.fn(),
+}));
 
 import { getAgentCapabilities } from '../../../main/agents';
 import {
@@ -68,6 +77,7 @@ import { captureException } from '../../../main/utils/sentry';
 import { logger } from '../../../main/utils/logger';
 import { armStdioCloseWatchdog } from '../../../main/process-manager/utils/stdioCloseWatchdog';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
+import { killSurvivors } from '../../../shared/maestro-lib/control/process-tree';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
 import { armStdioCloseWatchdog as armSharedWatchdog } from '../../../shared/maestro-lib/control/stdio-close-watchdog';
 
@@ -1599,5 +1609,312 @@ describe('retained shared process supervisor callbacks', () => {
 			expect(exited).toHaveBeenCalledOnce();
 			retained.supervision.dispose();
 		}
+	});
+});
+
+describe('retained shared synchronous stop-ladder callbacks', () => {
+	const sources = ['request', 'timer', 'exit', 'stage', 'dispose'] as const;
+	const fallible = sources.filter((source) => source !== 'stage');
+	beforeEach(() =>
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+	);
+	afterEach(() => vi.useRealTimers());
+
+	async function retain(source: (typeof sources)[number], portableFirst = false, withTree = false) {
+		expect(spawner.spawn(config({ toolType: 'codex', prompt: 'fixture' })).success).toBe(true);
+		const activity = vi.mocked(superviseAgentProcess).mock.calls.at(-1)![2]!;
+		const actual = await vi.importActual<
+			typeof import('../../../shared/maestro-lib/control/termination')
+		>('../../../shared/maestro-lib/control/termination');
+		const child = Object.assign(makeNative(24680), { signalCode: null });
+		const schedule = vi.spyOn(globalThis, 'setTimeout');
+		const cancel = vi.spyOn(globalThis, 'clearTimeout');
+		const remove = vi.spyOn(child, 'off');
+		const requested = vi.fn();
+		const options = {
+			from: 'interrupt' as const,
+			graceMs: 10,
+			includeDescendants: withTree,
+			onStopRequested: requested,
+		};
+		const targetChild = {
+			child: child as unknown as Parameters<typeof actual.stopProcess>[0]['child'],
+		};
+		const handle = actual.stopProcess(targetChild, options, portableFirst ? undefined : activity);
+		const exit = child.listeners('exit')[0] as () => void;
+		const timer = schedule.mock.calls.at(-1)![0] as () => void;
+		if (portableFirst) expect(actual.stopProcess(targetChild, options, activity)).toBe(handle);
+		const request = () => actual.stopProcess(targetChild, { ...options, from: 'terminate' });
+		const callback =
+			source === 'request'
+				? request
+				: source === 'timer'
+					? timer
+					: source === 'exit'
+						? exit
+						: source === 'stage'
+							? handle.stage
+							: handle.dispose;
+		const fail = (failure: Error) => {
+			const throws = () => {
+				throw failure;
+			};
+			if (source === 'exit' || source === 'dispose') remove.mockImplementationOnce(throws);
+			else Object.defineProperty(child, 'exitCode', { get: throws, configurable: true });
+		};
+		return {
+			activity,
+			actual,
+			callback,
+			fail,
+			child,
+			handle,
+			schedule,
+			cancel,
+			remove,
+			requested,
+			request,
+			timer,
+			exit,
+		};
+	}
+
+	it.each(['stage', 'dispose'] as const)(
+		'admits inert %s callbacks before returning',
+		async (source) => {
+			const retained = await retain('dispose');
+			const handle = retained.actual.stopProcess(
+				{},
+				{ from: 'terminate', graceMs: 10 },
+				retained.activity
+			);
+			await close();
+			const hold = await reserve();
+			expect(() => handle[source]()).toThrow(/reserved/);
+			hold.release();
+			expect(handle[source]()).toBeUndefined();
+			retained.handle.dispose();
+		}
+	);
+
+	it('refuses exit before the descendant sweep and preserves the record for retry', async () => {
+		const retained = await retain('exit', false, true);
+		await close();
+		const hold = await reserve();
+		expect(() => retained.exit()).toThrow(/reserved/);
+		expect(killSurvivors).not.toHaveBeenCalled();
+		hold.release();
+		retained.exit();
+		expect(killSurvivors).toHaveBeenCalledExactlyOnceWith(
+			[{ pid: 45678, startedAt: 'fixture' }],
+			expect.any(Object)
+		);
+		retained.exit();
+		expect(killSurvivors).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+
+	it.each(
+		sources.flatMap((source) =>
+			[target, path.join(target, 'child'), path.resolve('elsewhere')].map((root) => ({
+				source,
+				root,
+			}))
+		)
+	)('refuses $source before stop-ladder effects under $root', async ({ source, root }) => {
+		const retained = await retain(source);
+		await close();
+		processes.clear();
+		const inspect = vi.fn(() => null);
+		Object.defineProperty(retained.child, 'exitCode', { get: inspect, configurable: true });
+		const probes = [
+			retained.schedule,
+			retained.cancel,
+			retained.remove,
+			retained.requested,
+			retained.child.kill,
+			inspect,
+			captureException,
+		];
+		for (const probe of probes) vi.mocked(probe).mockClear();
+		const hold = await reserve(root);
+		expect(() => retained.callback()).toThrow(/reserved/);
+		for (const probe of probes) expect(probe).not.toHaveBeenCalled();
+		hold.release();
+		retained.callback();
+		if (source === 'request' || source === 'timer')
+			expect(retained.child.kill).toHaveBeenCalledWith('SIGTERM');
+		if (source === 'exit' || source === 'dispose') expect(retained.remove).toHaveBeenCalledOnce();
+		retained.handle.dispose();
+		const stale = await reserve(root);
+		// An omitted injection inherits a live ladder's guard. Once disposed,
+		// a fresh standalone request needs its own injection again.
+		if (source !== 'request') expect(() => retained.callback()).toThrow(/reserved/);
+		stale.release();
+	});
+
+	it('refuses injected setup before inspecting target or recording a stop', async () => {
+		const retained = await retain('request');
+		const actual = await vi.importActual<
+			typeof import('../../../shared/maestro-lib/control/termination')
+		>('../../../shared/maestro-lib/control/termination');
+		await close();
+		const inspect = vi.fn(() => retained.child);
+		const targetChild = {
+			get child() {
+				return inspect() as unknown as Parameters<typeof actual.stopProcess>[0]['child'];
+			},
+		};
+		const requested = vi.fn();
+		const activity = vi.mocked(superviseAgentProcess).mock.calls.at(-1)![2];
+		const hold = await reserve();
+		expect(() =>
+			actual.stopProcess(
+				targetChild,
+				{ from: 'kill', graceMs: 10, onStopRequested: requested },
+				activity
+			)
+		).toThrow(/reserved/);
+		expect(inspect).not.toHaveBeenCalled();
+		expect(requested).not.toHaveBeenCalled();
+		hold.release();
+		retained.handle.dispose();
+	});
+
+	it.each(sources)(
+		'upgrades a prior portable ladder including retained $0 callbacks',
+		async (source) => {
+			const retained = await retain(source, true);
+			await close();
+			const hold = await reserve();
+			expect(() => retained.callback()).toThrow(/reserved/);
+			hold.release();
+			retained.callback();
+			retained.handle.dispose();
+		}
+	);
+
+	it.each(
+		fallible.flatMap((source) =>
+			['resolve', 'reject', 'throw'].map((outcome) => ({ source, outcome }))
+		)
+	)(
+		'owns $source failure independently through diagnostic $outcome',
+		async ({ source, outcome }) => {
+			const retained = await retain(source);
+			await close();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementation(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			const failure = new Error('retained stop effect failed');
+			retained.fail(failure);
+			expect(() => retained.callback()).toThrow(failure);
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('reporter rejected'));
+				await drain();
+			}
+			(await reserve()).release();
+		}
+	);
+
+	it.each(fallible)('blocks pending canonicalization during $0 diagnostics', async (source) => {
+		const retained = await retain(source);
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		retained.fail(new Error('failure during canonicalization'));
+		expect(() => retained.callback()).toThrow('failure during canonicalization');
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(['native', 'report'])(
+		'retains stop diagnostic and native ownership with %s first',
+		async (first) => {
+			const retained = await retain('timer');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			retained.fail(new Error('stop timer failed'));
+			expect(() => retained.callback()).toThrow('stop timer failed');
+			if (first === 'native') await close();
+			else {
+				reporting.resolve();
+				await drain();
+			}
+			await blocked();
+			if (first === 'native') {
+				reporting.reject(new Error('late rejection'));
+				await drain();
+			} else await close();
+			(await reserve()).release();
+		}
+	);
+
+	it('retains concurrent old stop diagnostics independently of a successor', async () => {
+		const retained = await retain('timer');
+		await close();
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		retained.fail(new Error('retained timer failed'));
+		for (let i = 0; i < 2; i++) expect(() => retained.callback()).toThrow('retained timer failed');
+		native = makeNative(34567);
+		expect(spawner.spawn(config()).success).toBe(true);
+		first.resolve();
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		second.reject(new Error('late diagnostic rejected'));
+		await drain();
+		expect(captureException).toHaveBeenCalledTimes(2);
+		(await reserve()).release();
+	});
+
+	it('does not let stale disposal unregister a replacement ladder on the same child', async () => {
+		const retained = await retain('dispose');
+		retained.handle.dispose();
+		const next = retained.request();
+		retained.handle.dispose();
+		expect(retained.request()).toBe(next);
+		next.dispose();
+		await close();
+		(await reserve()).release();
+	});
+
+	it('forwards desktop activity from the supervisor into its shared stop ladder', async () => {
+		expect(spawner.spawn(config({ toolType: 'codex', prompt: 'fixture' })).success).toBe(true);
+		const activity = vi.mocked(superviseAgentProcess).mock.calls.at(-1)![2];
+		const actual = await vi.importActual<
+			typeof import('../../../shared/maestro-lib/control/agent-process-supervisor')
+		>('../../../shared/maestro-lib/control/agent-process-supervisor');
+		const controller = new AbortController();
+		const supervision = actual.superviseAgentProcess(
+			native as unknown as Parameters<typeof actual.superviseAgentProcess>[0],
+			{
+				signal: controller.signal,
+				onStop: vi.fn(),
+				onForcedStop: vi.fn(),
+			},
+			activity
+		);
+		controller.abort();
+		expect(vi.mocked(stopProcess).mock.calls.at(-1)![2]).toBe(activity);
+		supervision.dispose();
+		await close();
+		(await reserve()).release();
 	});
 });
