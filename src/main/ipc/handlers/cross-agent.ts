@@ -12,6 +12,7 @@
  */
 
 import { ipcMain } from 'electron';
+import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 import * as os from 'os';
 import type Store from 'electron-store';
 import {
@@ -133,74 +134,91 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 		withIpcErrorLogging(
 			handlerOpts('send'),
 			async (payload: CrossAgentSendRequest): Promise<{ requestId: string }> => {
-				const processManager = requireDependency(getProcessManager, 'Process manager');
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+				// Own preparation and detached reporting independently of router/native holds.
+				const release = beginGlobalWorktreeActivity();
+				try {
+					const processManager = requireDependency(getProcessManager, 'Process manager');
+					const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-				const requestId = generateUUID();
-				const request: CrossAgentRequest = {
-					requestId,
-					sourceSessionId: payload.sourceSessionId,
-					sourceAgentName: payload.sourceAgentName,
-					sourceTabId: payload.sourceTabId,
-					targetSessionId: payload.targetSessionId,
-					targetTabId: payload.targetTabId,
-					resumeAgentSessionId: payload.resumeAgentSessionId,
-					userPrompt: payload.userPrompt,
-					transcript: payload.transcript,
-					strategy: payload.strategy,
-					sourceCwd: payload.sourceCwd,
-					handoffAnswer: payload.handoffAnswer,
-					createdAt: Date.now(),
-				};
-
-				// Consults are read-only by default; hand-offs may write by default,
-				// because passing work on is their point. Each has its own switch
-				// under Settings > General > Cross-Agent Mentions.
-				const writable = resolveCrossAgentWritable(request, settingsStore);
-
-				logger.info(`${LOG_CONTEXT} Dispatching cross-agent request`, LOG_CONTEXT, {
-					requestId,
-					sourceSessionId: payload.sourceSessionId,
-					targetSessionId: payload.targetSessionId,
-					transcriptEntries: payload.transcript.length,
-					writable,
-				});
-
-				// Fire-and-forget: startCrossAgentRequest resolves once the spawn is
-				// initiated; response chunks arrive over time via onChunk. Any error
-				// during dispatch is surfaced as a terminal error chunk (either by the
-				// router or the catch below), never thrown back to the renderer.
-				void startCrossAgentRequest(request, {
-					processManager,
-					agentDetector,
-					sshStore,
-					getTargetSession,
-					getAgentConfig,
-					getCustomEnvVars,
-					writable,
-					onChunk: (chunk: CrossAgentResponseChunk) => safeSend('cross-agent:chunk', chunk),
-				}).catch((err) => {
-					logger.error(`${LOG_CONTEXT} Cross-agent dispatch failed`, LOG_CONTEXT, {
-						requestId,
-						error: err instanceof Error ? err.message : String(err),
-					});
-					const errorTarget = getTargetSession(payload.targetSessionId);
-					const errorChunk: CrossAgentResponseChunk = {
+					const requestId = generateUUID();
+					const request: CrossAgentRequest = {
 						requestId,
 						sourceSessionId: payload.sourceSessionId,
+						sourceAgentName: payload.sourceAgentName,
 						sourceTabId: payload.sourceTabId,
 						targetSessionId: payload.targetSessionId,
 						targetTabId: payload.targetTabId,
-						targetAgentName: errorTarget?.name ?? payload.targetSessionId,
-						targetToolType: (errorTarget?.toolType ?? 'claude-code') as ToolType,
-						chunk: '',
-						done: true,
-						error: err instanceof Error ? err.message : String(err),
+						resumeAgentSessionId: payload.resumeAgentSessionId,
+						userPrompt: payload.userPrompt,
+						transcript: payload.transcript,
+						strategy: payload.strategy,
+						sourceCwd: payload.sourceCwd,
+						handoffAnswer: payload.handoffAnswer,
+						createdAt: Date.now(),
 					};
-					safeSend('cross-agent:chunk', errorChunk);
-				});
 
-				return { requestId };
+					// Consults are read-only by default; hand-offs may write by default,
+					// because passing work on is their point. Each has its own switch
+					// under Settings > General > Cross-Agent Mentions.
+					const writable = resolveCrossAgentWritable(request, settingsStore);
+
+					logger.info(`${LOG_CONTEXT} Dispatching cross-agent request`, LOG_CONTEXT, {
+						requestId,
+						sourceSessionId: payload.sourceSessionId,
+						targetSessionId: payload.targetSessionId,
+						transcriptEntries: payload.transcript.length,
+						writable,
+					});
+
+					// Fire-and-forget: startCrossAgentRequest resolves once the spawn is
+					// initiated; response chunks arrive over time via onChunk. Any error
+					// during dispatch is surfaced as a terminal error chunk (either by the
+					// router or the catch below), never thrown back to the renderer.
+					void startCrossAgentRequest(request, {
+						processManager,
+						agentDetector,
+						sshStore,
+						getTargetSession,
+						getAgentConfig,
+						getCustomEnvVars,
+						writable,
+						onChunk: (chunk: CrossAgentResponseChunk) => {
+							// Chunks can arrive after start settles; each delivery owns admission.
+							const releaseChunk = beginGlobalWorktreeActivity();
+							try {
+								safeSend('cross-agent:chunk', chunk);
+							} finally {
+								releaseChunk();
+							}
+						},
+					})
+						.catch((err) => {
+							logger.error(`${LOG_CONTEXT} Cross-agent dispatch failed`, LOG_CONTEXT, {
+								requestId,
+								error: err instanceof Error ? err.message : String(err),
+							});
+							const errorTarget = getTargetSession(payload.targetSessionId);
+							const errorChunk: CrossAgentResponseChunk = {
+								requestId,
+								sourceSessionId: payload.sourceSessionId,
+								sourceTabId: payload.sourceTabId,
+								targetSessionId: payload.targetSessionId,
+								targetTabId: payload.targetTabId,
+								targetAgentName: errorTarget?.name ?? payload.targetSessionId,
+								targetToolType: (errorTarget?.toolType ?? 'claude-code') as ToolType,
+								chunk: '',
+								done: true,
+								error: err instanceof Error ? err.message : String(err),
+							};
+							safeSend('cross-agent:chunk', errorChunk);
+						})
+						.finally(release);
+
+					return { requestId };
+				} catch (error) {
+					release();
+					throw error;
+				}
 			}
 		)
 	);
@@ -213,22 +231,27 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 				sourceSessionId: string;
 				sourceTabId?: string;
 			}): Promise<{ canceled: number }> => {
-				// Stop in the source agent must reach every agent its turn fanned out to,
-				// not just the tab process. Addressed by source agent (never by request
-				// id) because the renderer only learns a request id once `send` resolves,
-				// and a Stop pressed before that would otherwise miss a live consult.
-				// A Stop aimed at one tab narrows it to that tab's consults.
-				const sourceTabId =
-					typeof payload.sourceTabId === 'string' ? payload.sourceTabId : undefined;
-				const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId, sourceTabId);
-				if (canceled > 0) {
-					logger.info(`${LOG_CONTEXT} Stopped in-flight consults`, LOG_CONTEXT, {
-						sourceSessionId: payload.sourceSessionId,
-						sourceTabId,
-						canceled,
-					});
+				const release = beginGlobalWorktreeActivity();
+				try {
+					// Stop in the source agent must reach every agent its turn fanned out to,
+					// not just the tab process. Addressed by source agent (never by request
+					// id) because the renderer only learns a request id once `send` resolves,
+					// and a Stop pressed before that would otherwise miss a live consult.
+					// A Stop aimed at one tab narrows it to that tab's consults.
+					const sourceTabId =
+						typeof payload.sourceTabId === 'string' ? payload.sourceTabId : undefined;
+					const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId, sourceTabId);
+					if (canceled > 0) {
+						logger.info(`${LOG_CONTEXT} Stopped in-flight consults`, LOG_CONTEXT, {
+							sourceSessionId: payload.sourceSessionId,
+							sourceTabId,
+							canceled,
+						});
+					}
+					return { canceled };
+				} finally {
+					release();
 				}
-				return { canceled };
 			}
 		)
 	);
