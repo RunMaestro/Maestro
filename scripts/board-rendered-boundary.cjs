@@ -6,7 +6,32 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 
-function installRenderedBoundary(electron, validate, record, gitProbe, creation) {
+// Exact read-only review operations; no arbitrary Git verbs or caller paths.
+function isAuthorityGitRead(args) {
+	return (
+		[
+			['status', '--porcelain', '--untracked-files=normal'],
+			['rev-parse', '--verify', 'HEAD^{commit}'],
+			['symbolic-ref', '--quiet', '--short', 'HEAD'],
+		].some((allowed) => JSON.stringify(args) === JSON.stringify(allowed)) ||
+		(args.length === 6 &&
+			args[0] === 'diff' &&
+			['--binary', '--stat'].includes(args[1]) &&
+			args[2] === '--no-ext-diff' &&
+			/^[a-f0-9]{40}$/.test(args[3]) &&
+			/^[a-f0-9]{40}$/.test(args[4]) &&
+			args[5] === '--')
+	);
+}
+
+function installRenderedBoundary(
+	electron,
+	validate,
+	record,
+	gitProbe,
+	creation,
+	authority = false
+) {
 	const deny = (operation) => () => {
 		record.denied.push(operation);
 		throw new Error(`Isolated Board fixture denies ${operation}`);
@@ -33,9 +58,8 @@ function installRenderedBoundary(electron, validate, record, gitProbe, creation)
 			gitProbe &&
 			command === 'git' &&
 			Array.isArray(args) &&
-			args.length === 2 &&
-			args[0] === 'rev-parse' &&
-			args[1] === '--show-toplevel' &&
+			(JSON.stringify(args) === JSON.stringify(['rev-parse', '--show-toplevel']) ||
+				(authority && isAuthorityGitRead(args))) &&
 			options &&
 			options.shell === false &&
 			typeof callback === 'function' &&
@@ -104,11 +128,13 @@ function installRenderedBoundary(electron, validate, record, gitProbe, creation)
 			`Unexpected fixture IPC: ${channel}`
 		);
 		originalHandle(channel, (event, ...args) => {
-			validate(event);
+			// In the dedicated authority fixture, the real handler must itself reject
+			// a foreign sender. All other channels retain the owning frame fence.
+			validate(event, !(authority && channel === 'board:runtimeCommand'));
 			if (channel === 'board:registerWorker') creation?.beforeRegister(args[0]);
-			// There is no runtime owner, Cue engine, CLI server or provider service in this host.
+			// Default fixtures have no runtime owner; authority fixtures use only a simulated run service.
 			if (['board:cancelCard', 'board:resumeCard'].includes(channel)) return deny(channel)();
-			if (channel === 'board:runtimeCommand') {
+			if (channel === 'board:runtimeCommand' && !authority) {
 				record.denied.push(channel);
 				return {
 					ok: false,
@@ -134,4 +160,4 @@ function installRenderedBoundary(electron, validate, record, gitProbe, creation)
 	};
 }
 
-module.exports = { installRenderedBoundary };
+module.exports = { installRenderedBoundary, isAuthorityGitRead };

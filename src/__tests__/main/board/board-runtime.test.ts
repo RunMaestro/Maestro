@@ -98,6 +98,7 @@ let events: PluginEvent[];
 let toasts: BoardCardToastPayload[];
 let notifications: ReturnType<typeof createBoardNotificationHandlers>;
 let completed: ReturnType<typeof vi.fn<(spec: BoardRunSpecification) => void>>;
+let changed: ReturnType<typeof vi.fn<() => void>>;
 const good: CardSpawnResult = {
 	// A trusted run-service fixture supplies complete host evidence. Real Git is
 	// exercised by the workflow cases below, including deliberately missing evidence.
@@ -127,7 +128,7 @@ function newRuntime(
 		() => host,
 		service,
 		() => liveness,
-		undefined,
+		() => changed(),
 		(spec) => completed(spec),
 		(receipts) => {
 			transitions.push(...receipts);
@@ -144,6 +145,7 @@ beforeEach(() => {
 		(toast) => toasts.push(toast)
 	);
 	completed = vi.fn();
+	changed = vi.fn<() => void>();
 	ownsDatabase = false;
 	dir = '';
 	// The fake agent consumes these inherited variables as file paths or a hold flag.
@@ -1609,6 +1611,33 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 // Real SQLite, Git artifacts and the existing native Cue process lifecycle.
 // This scoped contract test is not the final rendered-host acceptance.
 describe('work, linked review and explicit final human decision', () => {
+	it('invalidates the shared view after human acceptance and never after a rejected repeat', async () => {
+		setupWorkflow();
+		nativeService();
+		await runWork();
+		await runReview();
+		const board = storage.read(roots[0], 'board');
+		const key = command();
+		const accept = (principal: string) =>
+			runtime.acceptWork(
+				key,
+				board.storage!.expectedRevision!,
+				board.cards[0].storageRevision!,
+				principal
+			);
+		changed.mockClear();
+		expect(() => accept('')).toThrow('Final approval');
+		expect(changed).not.toHaveBeenCalled();
+		accept('native-desktop-main-frame');
+		expect(changed).toHaveBeenCalledTimes(1);
+		expect(storage.read(roots[0], 'board').cards.map((card) => card.status)).toEqual([
+			'done',
+			'done',
+		]);
+		expect(() => accept('native-desktop-main-frame')).toThrow('changed since read');
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
 	it('publishes both human-approved statuses once, with one work completion notification', async () => {
 		setupWorkflow();
 		nativeService();

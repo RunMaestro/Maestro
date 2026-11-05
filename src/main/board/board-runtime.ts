@@ -162,6 +162,9 @@ export class BoardRuntime {
 			principal,
 			this.onTransitions
 		);
+		// Other clients also need the committed pair, even when the initiating
+		// editor refreshes itself after its IPC reply.
+		this.onChanged();
 	}
 
 	/** Native dispatch grant. Revision checks and grant are one transaction. */

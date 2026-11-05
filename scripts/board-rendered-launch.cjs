@@ -457,13 +457,24 @@ async function runRenderedLifecycle(context, io = system()) {
 }
 
 async function launchRendered(
-	{ count, addon, qualificationPath, exercise, timeoutMs, reopen, createWorker = false },
+	{
+		count,
+		addon,
+		qualificationPath,
+		exercise,
+		timeoutMs,
+		reopen,
+		createWorker = false,
+		authority = false,
+	},
 	io = system()
 ) {
 	assert.equal(process.platform, 'linux');
 	assert.equal(fs.realpathSync(process.cwd()), checkout);
 	assert.ok(reopen ? count === undefined : [0, 100, 500].includes(count));
 	assert.equal(typeof createWorker, 'boolean');
+	assert.equal(typeof authority, 'boolean');
+	assert.ok(!authority || (!reopen && !createWorker && count === 0));
 	assert.ok(!createWorker || !reopen, 'Creation requires a fresh parent-owned fixture');
 	const activeAddon = path.join(
 		checkout,
@@ -503,7 +514,7 @@ async function launchRendered(
 						path.join(checkout, 'scripts/board-rendered-prepare.cjs'),
 						String(count),
 						addon,
-						...(createWorker ? ['--create-worker'] : []),
+						...(createWorker ? ['--create-worker'] : authority ? ['--authority'] : []),
 					],
 					{ cwd: checkout, env, stdio: ['ignore', 'pipe', 'pipe'] }
 				);

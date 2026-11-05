@@ -15,8 +15,10 @@ related:
 This developer fixture uses the current `BoardModal`, renderer stores, layer stack,
 styles and production preload. Its owned Electron main process registers the real
 Board IPC handlers over the admitted SQLite facade and real isolated Electron
-stores. It does not import the general desktop bootstrap/index or start a Cue
-engine, worker runtime, provider, SSH adapter or installed CLI bridge.
+stores. Its default mode does not import the general desktop bootstrap/index or start
+a Cue engine, worker runtime, provider, SSH adapter or installed CLI bridge.
+The dedicated authority mode below installs only the Board runtime over a fake
+provider execution boundary.
 
 ## Build and prepare
 
@@ -237,3 +239,31 @@ node scripts/board-rendered-bulk-scenario.cjs stale /absolute/checkout/fixture/e
 Both scenarios retain the launcher's source, parent, registry and addon checks.
 They use fresh owned roots and emit evidence there; no local receipt path is
 part of the driver.
+
+## Dedicated execution-authority fixture
+
+`launchRendered({ count: 0, authority: true, addon, qualificationPath, exercise })`
+opts a fresh parent into the authority scenario. It cannot compose with worker
+creation or database reopen. Default fixtures still refuse execution controls.
+The manifest binds identical isolated CLI/host agent registry bytes and the
+prepared Git baseline. The entry installs a real data-directory lock, the real
+Board runtime and runtime host over its owned database, and the existing IPC
+handlers. It never starts Cue, a provider, SSH, the installed CLI bridge or a
+production process.
+
+The parent exchanges identity-bound JSON requests in `authority-control/` under
+the private root. Commands pass through `answerBoardCommand` and the shared
+command host without a human principal. Separate parent simulation actions can
+supply recorded group-membership snapshots, claims and launch/completion proofs.
+The fake provider service records no PID and counts zero provider turns; it is
+an execution boundary for host tests, not evidence of a native provider run.
+Only the exact read-only Git operations needed to verify the clean, prepared
+artifact are admitted. Process launch, network and external actions remain denied.
+
+Native approval tests use the production preload and actual Electron IPC sender
+and frame. A dedicated foreign window can request acceptance to exercise the
+production handler's principal check; it cannot use the other fixture channels.
+The parent's non-human command path never receives that principal. A CLI bundle
+may explicitly substitute this file transport for tests; record that substitution
+and keep it separate from native sender acceptance and authenticated bridge tests.
+No authority endpoint is added to the production preload or app bootstrap.

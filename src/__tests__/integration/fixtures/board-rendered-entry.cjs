@@ -85,11 +85,13 @@ let measurement;
 let stopObserver;
 let finished = false;
 let creationHost;
+let authorityHost;
 const finish = (code, error) => {
 	if (finished) return;
 	finished = true;
 	clearTimeout(deadline);
 	stopObserver?.();
+	authorityHost?.dispose();
 	if (error) record.error = String(error.stack ?? error);
 	measurement?.dispose();
 	if (db?.open) {
@@ -111,12 +113,14 @@ const { installRenderedBoundary } = require(
 );
 const boundary = installRenderedBoundary(
 	electron,
-	(event) => {
+	(event, requireOwner = true) => {
 		if (creationHost) creationHost.validate();
 		else binding.assertRenderedRegistries(manifest, admission);
 		assert.ok(window && !window.isDestroyed());
-		assert.equal(event.sender, window.webContents);
-		assert.equal(event.senderFrame, window.webContents.mainFrame);
+		if (requireOwner) {
+			assert.equal(event.sender, window.webContents);
+			assert.equal(event.senderFrame, window.webContents.mainFrame);
+		}
 	},
 	record,
 	{
@@ -128,7 +132,8 @@ const boundary = installRenderedBoundary(
 	},
 	manifest.creation
 		? { beforeRegister: (options) => creationHost.beforeRegister(options) }
-		: undefined
+		: undefined,
+	!!manifest.authority
 );
 app.on('session-created', (created) => boundary.secureSession(created));
 
@@ -238,6 +243,11 @@ async function main() {
 			db,
 			flushPendingSessionWritesSync: stores.flushPendingSessionWritesSync,
 		});
+	}
+	if (manifest.authority) {
+		authorityHost = await require(
+			path.join(checkout, 'scripts/board-rendered-authority.cjs')
+		).installAuthorityFixture({ manifest, admission, facade, instances, window, record });
 	}
 	const uiPreferences = {};
 	ipcMain.handle('settings:getAll', () => ({ ...instances.settingsStore.store, ...uiPreferences }));

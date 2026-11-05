@@ -9,7 +9,8 @@ const checkout = path.resolve(__dirname, '..');
 function main() {
 	assert.equal(fs.realpathSync(process.cwd()), checkout);
 	assert.ok(process.argv.length === 4 || process.argv.length === 5);
-	if (process.argv.length === 5) assert.equal(process.argv[4], '--create-worker');
+	if (process.argv.length === 5)
+		assert.ok(['--create-worker', '--authority'].includes(process.argv[4]));
 	assert.ok(['0', '100', '500'].includes(process.argv[2]));
 	const buildPath = path.join(checkout, 'dist/board-rendered-build.json');
 	const build = JSON.parse(fs.readFileSync(buildPath));
@@ -128,6 +129,54 @@ function main() {
 	} finally {
 		db.close();
 	}
+	if (process.argv[4] === '--authority') {
+		fs.copyFileSync(
+			contract.agentRegistry,
+			path.join(contract.sync, 'maestro-sessions.json'),
+			fs.constants.COPYFILE_EXCL
+		);
+		const cwd = sources[0].root;
+		const gitRun = (...args) =>
+			cp.execFileSync(git, args, {
+				cwd,
+				env: parentEnv,
+				timeout: 5000,
+				encoding: 'utf8',
+			});
+		gitRun('add', '--', '.maestro/board.yaml');
+		gitRun(
+			'-c',
+			'user.name=Fixture',
+			'-c',
+			'user.email=fixture@example.invalid',
+			'-c',
+			'core.hooksPath=/dev/null',
+			'commit',
+			'-qm',
+			'Fixture baseline'
+		);
+		const baseCommit = gitRun('rev-parse', 'HEAD').trim();
+		fs.writeFileSync(path.join(cwd, 'authority.txt'), 'Owned authority fixture change\n', {
+			flag: 'wx',
+		});
+		gitRun('add', '--', 'authority.txt');
+		gitRun(
+			'-c',
+			'user.name=Fixture',
+			'-c',
+			'user.email=fixture@example.invalid',
+			'-c',
+			'core.hooksPath=/dev/null',
+			'commit',
+			'-qm',
+			'Fixture work artifact'
+		);
+		fs.writeFileSync(
+			path.join(contract.root, 'authority-artifact.json'),
+			JSON.stringify({ baseCommit }) + '\n',
+			{ flag: 'wx', mode: 0o600 }
+		);
+	}
 	// Bind the final env as well as the exact registry bytes (not just path/count claims).
 	prepared.env = env;
 	fs.writeFileSync(preparedPath, JSON.stringify(prepared, null, 2) + '\n');
@@ -139,9 +188,10 @@ function main() {
 				schemaVersion: 1,
 				checkout,
 				head: build.head,
-				...(process.argv[4] && {
+				...(process.argv[4] === '--create-worker' && {
 					creation: binding.workerCreationRequest(contract, { sources }),
 				}),
+				...(process.argv[4] === '--authority' && { authority: binding.authorityRequest(contract) }),
 				contract,
 				env,
 				entry: binding.entry,

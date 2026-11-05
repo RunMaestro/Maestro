@@ -87,6 +87,26 @@ function workerCreationRequest(contract, registrations) {
 	};
 }
 
+function authorityRequest(contract) {
+	const cliRegistry = path.join(contract.sync, 'maestro-sessions.json');
+	const artifact = path.join(contract.root, 'authority-artifact.json');
+	assert.equal(fs.realpathSync(artifact), artifact);
+	assert.equal(fs.statSync(artifact).nlink, 1);
+	assert.equal(fs.realpathSync(cliRegistry), cliRegistry);
+	assert.equal(fs.statSync(cliRegistry).nlink, 1);
+	assert.equal(
+		sha(cliRegistry),
+		sha(contract.agentRegistry),
+		'CLI and host agent snapshots differ'
+	);
+	return {
+		identity: contract.identity,
+		scenario: 'host-authority-v1',
+		cliRegistrySha256: sha(cliRegistry),
+		artifactBaseSha256: sha(artifact),
+	};
+}
+
 function renderedRunRoot(manifest) {
 	if (!manifest.reopen) return manifest.contract.root;
 	assert.match(manifest.contract.identity, /^board-reopen-[a-f0-9-]{36}$/);
@@ -332,6 +352,14 @@ function admitRenderedFixture(manifestPath, checkout, admission, env) {
 		assert.ok(!manifest.reopen, 'Creation scenario cannot reuse a consumed registry');
 		assert.deepEqual(manifest.creation, workerCreationRequest(contract, registrations));
 	}
+	if (manifest.authority !== undefined) {
+		assert.equal(prepared.counts.cards, 0, 'Authority requires the empty fixture');
+		assert.ok(
+			!manifest.reopen && !manifest.creation,
+			'Authority requires a fresh dedicated fixture'
+		);
+		assert.deepEqual(manifest.authority, authorityRequest(contract));
+	}
 	const groups = JSON.parse(
 		fs.readFileSync(path.join(contract.sync, 'maestro-groups.json'))
 	).groups;
@@ -395,6 +423,7 @@ function assertRenderedRegistries(manifest, admission) {
 	assertPrivateRoot(manifest.contract.root);
 	admission.requireBoardIsolation({ expected: manifest.contract });
 	admission.readBoardIsolationRegistries(manifest.contract);
+	if (manifest.authority) assert.deepEqual(manifest.authority, authorityRequest(manifest.contract));
 	assert.deepEqual(
 		registryFingerprints(manifest.contract),
 		manifest.registries,
@@ -411,6 +440,7 @@ module.exports = {
 	renderedFingerprints,
 	registryFingerprints,
 	workerCreationRequest,
+	authorityRequest,
 	renderedRunRoot,
 	persistenceSnapshot,
 	closedDatabaseBinding,

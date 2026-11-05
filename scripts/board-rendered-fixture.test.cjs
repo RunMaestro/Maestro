@@ -10,10 +10,10 @@ const checkout = path.resolve(__dirname, '..');
 const addon = path.join(checkout, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node');
 const read = (file) => JSON.parse(fs.readFileSync(file));
 const save = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
-const prepare = (count) => {
+const prepare = (count, ...flags) => {
 	const result = cp.spawnSync(
 		process.execPath,
-		['scripts/board-rendered-prepare.cjs', String(count), addon],
+		['scripts/board-rendered-prepare.cjs', String(count), addon, ...flags],
 		{
 			cwd: checkout,
 			env: { PATH: process.env.PATH },
@@ -324,4 +324,65 @@ test('execution boundary permits only the admitted local Git probe', async (t) =
 		{ cwd: checkout, env: {}, encoding: 'utf8', timeout: 10000 }
 	);
 	assert.equal(result.status, 0, result.stderr);
+});
+
+test(
+	'dedicated authority capability is bound to its fresh parent and cannot compose with creation or reopen',
+	{ timeout: 30000 },
+	(t) => {
+		const file = prepare(0, '--authority');
+		const { manifest, contract, registrations } = binding.admitRenderedFixture(
+			file,
+			checkout,
+			admission
+		);
+		t.after(() => fs.rmSync(contract.root, { recursive: true, force: true }));
+		assert.deepEqual(manifest.authority, binding.authorityRequest(contract));
+		const before = binding.sha(contract.db);
+		for (const authority of [
+			true,
+			{},
+			{ ...manifest.authority, identity: 'foreign' },
+			{ ...manifest.authority, scenario: 'execute-anything' },
+			{ ...manifest.authority, root: '/tmp' },
+		]) {
+			save(file, { ...manifest, authority });
+			assert.throws(() => binding.admitRenderedFixture(file, checkout, admission));
+			assert.equal(binding.sha(contract.db), before);
+		}
+		save(file, {
+			...manifest,
+			creation: binding.workerCreationRequest(contract, registrations),
+		});
+		assert.throws(() => binding.admitRenderedFixture(file, checkout, admission), /dedicated/);
+		save(file, manifest);
+		assert.ok(binding.admitRenderedFixture(file, checkout, admission));
+		for (const input of [
+			path.join(contract.sync, 'maestro-sessions.json'),
+			path.join(contract.root, 'authority-artifact.json'),
+		]) {
+			const bytes = fs.readFileSync(input);
+			fs.appendFileSync(input, '\n');
+			assert.throws(() => binding.admitRenderedFixture(file, checkout, admission));
+			assert.equal(binding.sha(contract.db), before);
+			fs.writeFileSync(input, bytes);
+		}
+		assert.ok(binding.admitRenderedFixture(file, checkout, admission));
+	}
+);
+
+test('authority Git allowance contains only the exact review reads and never a mutation or external diff helper', () => {
+	const { isAuthorityGitRead } = require('./board-rendered-boundary.cjs');
+	const sha = 'a'.repeat(40);
+	assert.ok(isAuthorityGitRead(['status', '--porcelain', '--untracked-files=normal']));
+	assert.ok(isAuthorityGitRead(['diff', '--binary', '--no-ext-diff', sha, sha, '--']));
+	for (const args of [
+		['reset', '--hard'],
+		['push'],
+		['status'],
+		['diff', '--binary', '--ext-diff', sha, sha, '--'],
+		['diff', '--binary', '--no-ext-diff', '--output=/tmp/x', sha, '--'],
+		['diff', '--binary', '--no-ext-diff', sha, sha, '--', '/tmp'],
+	])
+		assert.equal(isAuthorityGitRead(args), false);
 });
