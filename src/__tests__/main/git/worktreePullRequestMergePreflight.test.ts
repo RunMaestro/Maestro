@@ -102,6 +102,32 @@ describe('worktree PR merge preflight', () => {
 		);
 		expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(2);
 	});
+	it('blocks unpublished local commits before checking GitHub merge readiness', async () => {
+		vi.mocked(discoverWorktreePullRequest).mockResolvedValue({
+			...found,
+			head: { ...found.head, localSha: 'b'.repeat(40) },
+		});
+		expect(await preflightWorktreePullRequestMerge(request)).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'head-changed', message: expect.stringContaining('Local HEAD') }],
+		});
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+	});
+	it.each(['UNSTABLE', 'HAS_HOOKS'])(
+		'allows GitHub mergeable state %s without overriding required protections',
+		async (mergeStateStatus) => {
+			const metadata = apiRepo();
+			metadata.pullRequest.mergeStateStatus = mergeStateStatus;
+			reply({ data: { repository: metadata } });
+			expect(await preflightWorktreePullRequestMerge(request)).toMatchObject({ status: 'ready' });
+			metadata.pullRequest.reviewDecision = 'REVIEW_REQUIRED' as never;
+			reply({ data: { repository: metadata } });
+			expect(await preflightWorktreePullRequestMerge(request)).toMatchObject({
+				status: 'blocked',
+				blockers: [{ code: 'reviews', message: expect.any(String) }],
+			});
+		}
+	);
 	it('rejects SSH before any local or network access', async () => {
 		expect(
 			await preflightWorktreePullRequestMerge({ ...request, sshRemoteId: 'remote' })
@@ -133,7 +159,7 @@ describe('worktree PR merge preflight', () => {
 		const metadata = apiRepo();
 		metadata.viewerPermission = 'READ';
 		metadata.pullRequest.mergeable = 'CONFLICTING';
-		metadata.pullRequest.mergeStateStatus = 'UNSTABLE';
+		metadata.pullRequest.mergeStateStatus = 'BLOCKED';
 		metadata.pullRequest.reviewDecision = 'REVIEW_REQUIRED' as never;
 		reply({ data: { repository: metadata } });
 		expect(await preflightWorktreePullRequestMerge(request)).toMatchObject({
@@ -141,7 +167,6 @@ describe('worktree PR merge preflight', () => {
 			blockers: expect.arrayContaining([
 				{ code: 'protection', message: expect.any(String) },
 				{ code: 'conflict', message: expect.any(String) },
-				{ code: 'checks', message: expect.any(String) },
 				{ code: 'reviews', message: expect.any(String) },
 			]),
 		});

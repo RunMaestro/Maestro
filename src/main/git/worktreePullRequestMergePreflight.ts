@@ -94,6 +94,8 @@ export async function preflightWorktreePullRequestMerge(
 			return blocked('identity-changed', 'Pull request identity or base changed.');
 		if (pr.headSha.toLowerCase() !== target.headSha.toLowerCase())
 			return blocked('head-changed', 'Pull request head changed since review.');
+		if (found.head.localSha.toLowerCase() !== target.headSha.toLowerCase())
+			return blocked('head-changed', 'Local HEAD differs from the reviewed pull request head.');
 		const gh = await resolveGhPath();
 		const result = await execFileNoThrow(
 			gh,
@@ -230,16 +232,14 @@ export async function preflightWorktreePullRequestMerge(
 			blockers.push({ code: 'unknown', message: 'GitHub review status is unavailable.' });
 		switch (remote.mergeStateStatus) {
 			case 'CLEAN':
+			case 'HAS_HOOKS':
+			case 'UNSTABLE':
 				break;
 			case 'DIRTY':
 				blockers.push({ code: 'conflict', message: 'GitHub cannot create a clean merge.' });
 				break;
-			case 'UNSTABLE':
-				blockers.push({ code: 'checks', message: 'GitHub reports non-passing checks.' });
-				break;
 			case 'BLOCKED':
 			case 'BEHIND':
-			case 'HAS_HOOKS':
 				blockers.push({
 					code: 'protection',
 					message: `GitHub merge state is ${remote.mergeStateStatus}; requirements must be satisfied.`,

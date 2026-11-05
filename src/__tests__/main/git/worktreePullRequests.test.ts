@@ -124,6 +124,49 @@ describe('worktree PR discovery', () => {
 			})
 		).toMatchObject({ status: 'found', pullRequest: { state: 'MERGED' } });
 	});
+	it.each(['MERGED', 'CLOSED'])(
+		'rediscovers a %s PR without a retained identity after restart',
+		async (state) => {
+			const completed = {
+				...pull('fork', 'closed'),
+				merged_at: state === 'MERGED' ? '2026-01-01' : null,
+				head: { ...pull().head, sha: 'local-sha' },
+			};
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+				.mockResolvedValueOnce(ok(JSON.stringify([[completed]])));
+			expect(await discoverWorktreePullRequest({ worktreePath: '/checkout' })).toMatchObject({
+				status: 'found',
+				pullRequest: { state },
+			});
+			expect(vi.mocked(execFileNoThrow).mock.calls[1][1]).toContain('state=all');
+		}
+	);
+	it('prefers an open PR over completed matches and rejects completed PRs from a reused branch', async () => {
+		const old = pull('fork', 'closed');
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+			.mockResolvedValueOnce(ok(JSON.stringify([[old, { ...pull(), number: 4 }]])))
+			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+			.mockResolvedValueOnce(ok(JSON.stringify([[old]])));
+		expect(await discoverWorktreePullRequest({ worktreePath: '/checkout' })).toMatchObject({
+			status: 'found',
+			pullRequest: { state: 'OPEN', identity: { number: 4 } },
+		});
+		expect(await discoverWorktreePullRequest({ worktreePath: '/checkout' })).toMatchObject({
+			status: 'no-pr',
+		});
+	});
+	it('keeps completed PRs with the same branch and head ambiguous across list pages', async () => {
+		const completed = { ...pull('fork', 'closed'), head: { ...pull().head, sha: 'local-sha' } };
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(ok(JSON.stringify(metadata)))
+			.mockResolvedValueOnce(ok(JSON.stringify([[completed], [{ ...completed, number: 4 }]])));
+		expect(await discoverWorktreePullRequest({ worktreePath: '/checkout' })).toMatchObject({
+			status: 'ambiguous',
+			pullRequests: [{ identity: { number: 3 } }, { identity: { number: 4 } }],
+		});
+	});
 	it('never reads local paths for SSH and reports detached HEAD', async () => {
 		expect(
 			await discoverWorktreePullRequest({ worktreePath: '/remote', sshRemoteId: 'remote' })

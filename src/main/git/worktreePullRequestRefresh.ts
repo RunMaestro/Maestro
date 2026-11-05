@@ -10,7 +10,7 @@ const TTL_MS = 30_000;
 const MAX_ENTRIES = 100;
 const entries = new Map<
 	string,
-	{ expires: number; promise: Promise<WorktreePullRequestSnapshot> }
+	{ expires: number | null; promise: Promise<WorktreePullRequestSnapshot> }
 >();
 
 /** Invalidate all identities for a checkout, including requests already in flight. */
@@ -55,9 +55,23 @@ export async function refreshWorktreePullRequest(
 		};
 	const key = JSON.stringify([request.worktreePath, before, request.knownPullRequest ?? null]);
 	const now = Date.now();
-	for (const [oldKey, entry] of entries) if (entry.expires <= now) entries.delete(oldKey);
+	for (const [oldKey, entry] of entries)
+		if (entry.expires !== null && entry.expires <= now) entries.delete(oldKey);
 	let entry = entries.get(key);
 	if (!entry) {
+		// Pending entries must survive both TTL expiry and cache pressure.
+		for (const [oldKey, cached] of entries) {
+			if (entries.size < MAX_ENTRIES) break;
+			if (cached.expires !== null) entries.delete(oldKey);
+		}
+		if (entries.size >= MAX_ENTRIES)
+			return {
+				discovery: {
+					status: 'unavailable',
+					reason: 'gh',
+					message: 'Too many pull request refreshes are in flight; retry shortly.',
+				},
+			};
 		const promise = (async (): Promise<WorktreePullRequestSnapshot> => {
 			const discovery = await discoverWorktreePullRequest(request);
 			if (discovery.status !== 'found') return { discovery };
@@ -70,11 +84,16 @@ export async function refreshWorktreePullRequest(
 			}
 			return { discovery, ...details };
 		})();
-		entry = { expires: now + TTL_MS, promise };
+		entry = { expires: null, promise };
 		entries.set(key, entry);
-		while (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
 	}
-	const snapshot = await entry.promise;
+	let snapshot: WorktreePullRequestSnapshot;
+	try {
+		snapshot = await entry.promise;
+	} catch (error) {
+		if (entries.get(key) === entry) entries.delete(key);
+		throw error;
+	}
 	const after = await checkout(request);
 	if (entries.get(key) !== entry || before !== after) {
 		if (entries.get(key) === entry) entries.delete(key);
@@ -89,5 +108,6 @@ export async function refreshWorktreePullRequest(
 	// Errors should be retryable immediately, not cached as authoritative results.
 	if (snapshot.discovery.status === 'unavailable' || snapshot.ci?.status === 'unavailable')
 		entries.delete(key);
+	else entry.expires ??= Date.now() + TTL_MS;
 	return snapshot;
 }

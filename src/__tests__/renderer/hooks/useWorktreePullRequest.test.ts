@@ -50,6 +50,103 @@ describe('useWorktreePullRequest', () => {
 		}
 	});
 
+	it('does not supersede a slow response with timer or visibility refreshes', async () => {
+		let finish!: (snapshot: WorktreePullRequestSnapshot) => void;
+		const refresh = vi.fn().mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+		);
+		window.maestro.git.refreshWorktreePullRequest = refresh;
+		vi.useFakeTimers();
+		try {
+			const { result } = renderHook(() => useWorktreePullRequest('/slow', 'feature'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(180_000);
+			});
+			act(() => document.dispatchEvent(new Event('visibilitychange')));
+			expect(refresh).toHaveBeenCalledTimes(1);
+			await act(async () => {
+				finish({ discovery: { status: 'detached', localSha: 'sha' } });
+			});
+			expect(result.current.loading).toBe(false);
+			expect(result.current.snapshot?.discovery.status).toBe('detached');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+	it('allows an explicit refresh to replace a slow request without its old response overwriting state', async () => {
+		let finishOld!: (snapshot: WorktreePullRequestSnapshot) => void;
+		let finishNew!: (snapshot: WorktreePullRequestSnapshot) => void;
+		const refresh = vi
+			.fn()
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					finishOld = resolve;
+				})
+			)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					finishNew = resolve;
+				})
+			);
+		window.maestro.git.refreshWorktreePullRequest = refresh;
+		window.maestro.git.invalidateWorktreePullRequest = vi.fn().mockResolvedValue(undefined);
+		vi.useFakeTimers();
+		try {
+			const { result } = renderHook(() => useWorktreePullRequest('/manual', 'feature'));
+			await act(async () => result.current.refresh());
+			expect(refresh).toHaveBeenCalledTimes(2);
+			await act(async () => {
+				finishOld({ discovery: { status: 'detached', localSha: 'old' } });
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60_000);
+			});
+			expect(refresh).toHaveBeenCalledTimes(2);
+			expect(result.current.loading).toBe(true);
+			await act(async () => {
+				finishNew({ discovery: { status: 'detached', localSha: 'new' } });
+			});
+			expect(result.current.snapshot?.discovery).toMatchObject({ localSha: 'new' });
+			expect(result.current.loading).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+	it('skips hidden initial and interval polls, refreshes on visibility and removes its listener', async () => {
+		let visibility = 'hidden';
+		vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+			() => visibility as DocumentVisibilityState
+		);
+		const refresh = vi
+			.fn()
+			.mockResolvedValue({ discovery: { status: 'detached', localSha: 'sha' } });
+		window.maestro.git.refreshWorktreePullRequest = refresh;
+		vi.useFakeTimers();
+		try {
+			const { result, unmount } = renderHook(() => useWorktreePullRequest('/hidden', 'feature'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(120_000);
+			});
+			expect(refresh).not.toHaveBeenCalled();
+			visibility = 'visible';
+			await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+			expect(refresh).toHaveBeenCalledTimes(1);
+			expect(result.current.loading).toBe(false);
+			visibility = 'hidden';
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(120_000);
+			});
+			expect(refresh).toHaveBeenCalledTimes(1);
+			unmount();
+			visibility = 'visible';
+			await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+			expect(refresh).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 	it.each(['authentication required', 'offline'])(
 		'exposes %s when no earlier snapshot exists',
 		async (message) => {

@@ -41,10 +41,12 @@ export function useWorktreePullRequest(
 
 	useEffect(() => {
 		let disposed = false;
+		let pendingGeneration: number | undefined;
 		if (known.current?.key !== key) known.current = undefined;
 		const refresh = async (force: boolean) => {
-			if (!worktreePath) return;
+			if (!worktreePath || (!force && pendingGeneration !== undefined)) return;
 			const requestGeneration = ++generation.current;
+			pendingGeneration = requestGeneration;
 			setState((previous) => ({
 				key,
 				snapshot: previous.key === key ? previous.snapshot : undefined,
@@ -105,6 +107,8 @@ export function useWorktreePullRequest(
 								},
 							}
 				);
+			} finally {
+				if (pendingGeneration === requestGeneration) pendingGeneration = undefined;
 			}
 		};
 		const onCheckout = (event: Event) => {
@@ -128,12 +132,15 @@ export function useWorktreePullRequest(
 			}
 		});
 		refreshRef.current = (force) => void refresh(force);
-		if (worktreePath) void refresh(false);
-		const timer = worktreePath
-			? setInterval(() => void refresh(false), POLL_INTERVAL_MS)
-			: undefined;
+		const onVisible = () => {
+			if (document.visibilityState === 'visible') void refresh(false);
+		};
+		document.addEventListener('visibilitychange', onVisible);
+		if (worktreePath) onVisible();
+		const timer = worktreePath ? setInterval(onVisible, POLL_INTERVAL_MS) : undefined;
 		return () => {
 			disposed = true;
+			document.removeEventListener('visibilitychange', onVisible);
 			window.removeEventListener('maestro:git-checkout', onCheckout);
 			unsubscribe();
 			++generation.current;

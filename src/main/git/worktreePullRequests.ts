@@ -130,7 +130,7 @@ export async function discoverWorktreePullRequest(
 			'--slurp',
 			endpoint,
 			'-f',
-			'state=open',
+			'state=all',
 			'-f',
 			`head=${headRepo.owner}:${head.branch}`,
 			'-f',
@@ -145,8 +145,9 @@ export async function discoverWorktreePullRequest(
 		if (prs.some((pr) => !pr))
 			return unavailable('invalid-response', 'Invalid pull request data from GitHub.');
 		const matches = (prs as WorktreePullRequest[]).filter(matchesHead);
-		if (matches.length > 1) return { status: 'ambiguous', head, pullRequests: matches };
-		if (matches.length === 1) return { status: 'found', head, pullRequest: matches[0] };
+		const open = matches.filter((pr) => pr.state === 'OPEN');
+		if (open.length > 1) return { status: 'ambiguous', head, pullRequests: open };
+		if (open.length === 1) return { status: 'found', head, pullRequest: open[0] };
 		const known = request.knownPullRequest;
 		if (
 			known &&
@@ -162,6 +163,13 @@ export async function discoverWorktreePullRequest(
 				return unavailable('invalid-response', 'Invalid known pull request data from GitHub.');
 			if (matchesHead(pr)) return { status: 'found', head, pullRequest: pr };
 		}
+		// Rediscover completed PRs after row unmount or app restart without trusting
+		// a reused branch name alone. Preserve ambiguity instead of guessing.
+		const completed = matches.filter(
+			(pr) => pr.state !== 'OPEN' && pr.headSha.toLowerCase() === head.localSha.toLowerCase()
+		);
+		if (completed.length > 1) return { status: 'ambiguous', head, pullRequests: completed };
+		if (completed.length === 1) return { status: 'found', head, pullRequest: completed[0] };
 		return { status: 'no-pr', head, repository: target };
 	} catch (error) {
 		return unavailable(
