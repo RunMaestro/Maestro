@@ -12,17 +12,22 @@ export interface AcpByteStream {
  * `startTurn` calls setEncoding('utf8'), so Readable.toWeb alone would feed
  * strings into ACP's Uint8Array line buffer and fail on the first frame.
  * Setup and retained stream callbacks share conservative global activity.
- * Completion of a write/end/destroy covers that stream operation, not retained
- * listeners, SDK continuations, descendants or another process's registry.
+ * Owned stdout listeners remain active through stream close and confirmed
+ * detach. SDK continuations, descendants and other registries remain uncovered.
  */
 export function acpStdioStream(child: ChildProcess): AcpByteStream {
-	return withWorktreeTurnActivity(() => {
+	return withWorktreeTurnActivity((_start, observe) => {
 		const stdout = child.stdout;
 		const stdin = child.stdin;
 		if (!stdout || !stdin) throw new Error('ACP child requires piped stdin and stdout');
 		const encoder = new TextEncoder();
 		const readable = new ReadableStream<Uint8Array>({
 			start(controller) {
+				const detached = Promise.withResolvers<void>();
+				observe(detached.promise);
+				let registering = true;
+				let detaching = false;
+				let closed = false;
 				const onData = (chunk: unknown) =>
 					withWorktreeTurnActivity(() => {
 						try {
@@ -36,9 +41,61 @@ export function acpStdioStream(child: ChildProcess): AcpByteStream {
 				const onEnd = () => withWorktreeTurnActivity(() => controller.close(), captureException);
 				const onError = (error: Error) =>
 					withWorktreeTurnActivity(() => controller.error(error), captureException);
-				stdout.on('data', onData);
-				stdout.once('end', onEnd);
-				stdout.once('error', onError);
+				const onClose = () =>
+					withWorktreeTurnActivity(() => {
+						closed = true;
+						detach();
+					}, captureException);
+				const listeners = [
+					{ event: 'close', callback: onClose },
+					{ event: 'data', callback: onData },
+					{ event: 'end', callback: onEnd },
+					{ event: 'error', callback: onError },
+				];
+				const pendingDetach: typeof listeners = [];
+				const detach = () => {
+					// EventEmitter hooks may reenter before insertion/removal completes.
+					if (registering || detaching) return;
+					detaching = true;
+					try {
+						for (const listener of pendingDetach.toReversed()) {
+							stdout.removeListener(listener.event, listener.callback);
+							if (stdout.listeners(listener.event).includes(listener.callback))
+								throw new Error('ACP stdout listener remains attached. Retry close.');
+						}
+						// A later removeListener hook can reattach an earlier callback.
+						for (const listener of pendingDetach) {
+							if (stdout.listeners(listener.event).includes(listener.callback))
+								throw new Error('ACP stdout listener remains attached. Retry close.');
+						}
+						pendingDetach.length = 0;
+						detached.resolve();
+					} finally {
+						detaching = false;
+					}
+				};
+				try {
+					try {
+						for (const listener of listeners) {
+							// A failed insertion may already own the callback. Keep close
+							// installed until all other removals are confirmed for retry.
+							pendingDetach.push(listener);
+							if (listener.event === 'end' || listener.event === 'error')
+								stdout.once(listener.event, listener.callback);
+							else stdout.on(listener.event, listener.callback);
+						}
+					} finally {
+						registering = false;
+					}
+					if (closed || stdout.closed) detach();
+				} catch (error) {
+					try {
+						detach();
+					} catch (detachError) {
+						observe(Promise.reject(detachError));
+					}
+					throw error;
+				}
 			},
 			cancel() {
 				return withWorktreeTurnActivity((_start, observe) => {
