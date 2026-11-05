@@ -872,25 +872,34 @@ export class ChildProcessSpawner {
 			// spawn refusal. Supervised Codex turns already use the shared exit-drain
 			// watchdog and remote termination callback above.
 			if (!supervision)
-				armStdioCloseWatchdog(childProcess, {
-					onForceClose: () =>
-						withWorktreeTurnActivity(() => {
-							logger.warn(
-								'[ProcessManager] stdio still open after exit, forcing close',
-								'ProcessManager',
-								{ sessionId, pid: childProcess.pid }
-							);
-							// For SSH the open stdio usually means the remote agent is still
-							// running behind a ControlMaster. Settling the turn while it keeps
-							// working would put a second writer on the session next turn.
-							if (sshRemotePidFile) {
-								signalRemoteAgent(
-									{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
-									'terminate'
+				armStdioCloseWatchdog(
+					childProcess,
+					{
+						onForceClose: () =>
+							withWorktreeTurnActivity(() => {
+								logger.warn(
+									'[ProcessManager] stdio still open after exit, forcing close',
+									'ProcessManager',
+									{ sessionId, pid: childProcess.pid }
 								);
-							}
-						}, captureException),
-				});
+								// For SSH the open stdio usually means the remote agent is still
+								// running behind a ControlMaster. Settling the turn while it keeps
+								// working would put a second writer on the session next turn.
+								if (sshRemotePidFile) {
+									signalRemoteAgent(
+										{
+											sshCommand: command,
+											sshArgs: finalArgs,
+											pidFile: sshRemotePidFile,
+											sessionId,
+										},
+										'terminate'
+									);
+								}
+							}, captureException),
+					},
+					(callback) => withWorktreeTurnActivity(callback, captureException)
+				);
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {

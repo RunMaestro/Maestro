@@ -34,29 +34,40 @@ export const STDIO_CLOSE_GRACE_MS = 5000;
  */
 export function armStdioCloseWatchdog(
 	child: Pick<ChildProcess, 'on' | 'stdin' | 'stdout' | 'stderr'>,
-	opts: { graceMs?: number; onForceClose?: () => void } = {}
+	opts: { graceMs?: number; onForceClose?: () => void } = {},
+	// Admit every retained callback before inspecting or changing watchdog state.
+	// Portable callers retain synchronous behavior without main-process imports.
+	runActivity: <T>(operation: () => T) => T = (operation) => operation()
 ): void {
 	const graceMs = opts.graceMs ?? STDIO_CLOSE_GRACE_MS;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	let closed = false;
 
-	child.on('exit', () => {
-		if (closed || timer) return;
-		timer = setTimeout(() => {
-			timer = null;
-			if (closed) return;
-			opts.onForceClose?.();
-			for (const stream of [child.stdin, child.stdout, child.stderr]) {
-				if (stream && !stream.destroyed) stream.destroy();
-			}
-		}, graceMs);
-	});
+	child.on('exit', () =>
+		runActivity(() => {
+			if (closed || timer) return;
+			timer = setTimeout(
+				() =>
+					runActivity(() => {
+						timer = null;
+						if (closed) return;
+						opts.onForceClose?.();
+						for (const stream of [child.stdin, child.stdout, child.stderr]) {
+							if (stream && !stream.destroyed) stream.destroy();
+						}
+					}),
+				graceMs
+			);
+		})
+	);
 
-	child.on('close', () => {
-		closed = true;
-		if (timer) {
-			clearTimeout(timer);
-			timer = null;
-		}
-	});
+	child.on('close', () =>
+		runActivity(() => {
+			closed = true;
+			if (timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
+		})
+	);
 }

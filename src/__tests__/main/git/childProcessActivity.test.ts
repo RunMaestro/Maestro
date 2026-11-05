@@ -69,6 +69,7 @@ import { logger } from '../../../main/utils/logger';
 import { armStdioCloseWatchdog } from '../../../main/process-manager/utils/stdioCloseWatchdog';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
+import { armStdioCloseWatchdog as armSharedWatchdog } from '../../../shared/maestro-lib/control/stdio-close-watchdog';
 
 const reports = vi.hoisted(() => ({
 	exit: vi.fn(),
@@ -1109,6 +1110,219 @@ describe('retained child supervision adapters', () => {
 		expect(reports.exit).toHaveBeenCalledWith('child-session', 1, managed, null, undefined);
 		await blocked();
 		await close();
+		(await reserve()).release();
+	});
+});
+
+describe('retained shared stdio watchdog callbacks', () => {
+	const sources = ['exit', 'close', 'timer'] as const;
+	beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+	afterEach(() => vi.useRealTimers());
+
+	function retain(source: (typeof sources)[number]) {
+		expect(spawner.spawn(config()).success).toBe(true);
+		// Exercise the real portable core with the actual desktop activity adapter.
+		const runActivity = vi.mocked(armStdioCloseWatchdog).mock.calls.at(-1)![2];
+		expect(runActivity).toBeTypeOf('function');
+		const child = makeNative(24680);
+		const streams = [child.stdin, child.stdout, child.stderr].map((stream) =>
+			Object.assign(stream, { destroyed: false, destroy: vi.fn() })
+		);
+		const force = vi.fn();
+		const schedule = vi.spyOn(globalThis, 'setTimeout');
+		const cancel = vi.spyOn(globalThis, 'clearTimeout');
+		armSharedWatchdog(
+			child as unknown as Parameters<typeof armSharedWatchdog>[0],
+			{
+				graceMs: 10,
+				onForceClose: force,
+			},
+			runActivity
+		);
+		const exit = child.listeners('exit')[0] as () => void;
+		const closed = child.listeners('close')[0] as () => void;
+		if (source !== 'exit') exit();
+		const scheduled = source === 'exit' ? undefined : schedule.mock.calls.at(-1)![0];
+		const timer = () => ((scheduled ?? schedule.mock.calls.at(-1)![0]) as () => void)();
+		const callback = source === 'exit' ? exit : source === 'close' ? closed : timer;
+		const fail = (error: Error) => {
+			const effect =
+				source === 'exit' ? schedule : source === 'close' ? cancel : streams[0].destroy;
+			effect.mockImplementationOnce(() => {
+				throw error;
+			});
+		};
+		return { child, streams, force, schedule, cancel, callback, exit, closed, timer, fail };
+	}
+
+	it.each(
+		sources.flatMap((source) =>
+			[target, path.join(target, 'child'), path.resolve('elsewhere')].map((root) => ({
+				source,
+				root,
+			}))
+		)
+	)(
+		'refuses $source before watchdog state, timers or stream effects under $root',
+		async ({ source, root }) => {
+			const retained = retain(source);
+			await close();
+			processes.clear();
+			retained.schedule.mockClear();
+			retained.cancel.mockClear();
+			const inspect = vi.fn(() => retained.streams[0]);
+			Object.defineProperty(retained.child, 'stdin', { get: inspect });
+			const hold = await reserve(root);
+			expect(() => retained.callback()).toThrow(/reserved/);
+			for (const probe of [
+				retained.schedule,
+				retained.cancel,
+				retained.force,
+				inspect,
+				captureException,
+				...retained.streams.map((stream) => stream.destroy),
+			])
+				expect(probe).not.toHaveBeenCalled();
+			hold.release();
+			// Refusal leaves closed/timer state untouched, so the original drain still runs.
+			if (source === 'exit') retained.exit();
+			else if (source === 'timer') {
+				retained.exit();
+				expect(retained.schedule).not.toHaveBeenCalled();
+			}
+			if (source !== 'exit') {
+				// The original timer callback was captured before clearing call history.
+				retained.schedule.mockRestore();
+				vi.advanceTimersByTime(10);
+			} else retained.timer();
+			expect(retained.force).toHaveBeenCalledOnce();
+			for (const stream of retained.streams) expect(stream.destroy).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(
+		sources.flatMap((source) =>
+			['resolve', 'reject', 'throw'].map((outcome) => ({ source, outcome }))
+		)
+	)('owns late $source diagnostics through reporter $outcome', async ({ source, outcome }) => {
+		const retained = retain(source);
+		await close();
+		const failure = new Error('watchdog effect failed');
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockImplementation(() => {
+			if (outcome === 'throw') throw new Error('reporter threw');
+			return reporting.promise;
+		});
+		retained.fail(failure);
+		expect(() => retained.callback()).toThrow(failure);
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		if (outcome !== 'throw') {
+			await blocked();
+			if (outcome === 'resolve') reporting.resolve();
+			else reporting.reject(new Error('reporter rejected'));
+			await drain();
+		}
+		expect(captureException).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+
+	it.each(sources)(
+		'blocks pending canonicalization while $0 diagnostics remain',
+		async (source) => {
+			const retained = retain(source);
+			await close();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const pending = gate.reserveWorktreeCleanup(target);
+			const failure = new Error('watchdog failed during canonicalization');
+			retained.fail(failure);
+			expect(() => retained.callback()).toThrow(failure);
+			canonical.resolve(target);
+			expect(await pending).toMatchObject({ status: 'blocked' });
+			reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(sources.flatMap((source) => ['native', 'report'].map((first) => ({ source, first }))))(
+		'keeps $source diagnostic and native ownership independent when $first finishes first',
+		async ({ source, first }) => {
+			const retained = retain(source);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			const failure = new Error('watchdog failed before native close');
+			retained.fail(failure);
+			expect(() => retained.callback()).toThrow(failure);
+			if (first === 'native') await close();
+			else {
+				reporting.resolve();
+				await drain();
+			}
+			await blocked();
+			if (first === 'native') {
+				reporting.reject(new Error('reporter rejected'));
+				await drain();
+			} else await close();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(sources)(
+		'admits even stale no-op $0 callbacks before closed-state checks',
+		async (source) => {
+			const retained = retain(source);
+			retained.closed();
+			await close();
+			const hold = await reserve();
+			expect(() => retained.callback()).toThrow(/reserved/);
+			expect(retained.force).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+			hold.release();
+			expect(retained.callback()).toBeUndefined();
+			(await reserve()).release();
+		}
+	);
+
+	it('keeps concurrent retained watchdog diagnostics independent of a successor', async () => {
+		const retained = retain('timer');
+		await close();
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		for (let i = 0; i < 2; i++) {
+			const failure = new Error('retained stream destroy failed');
+			retained.fail(failure);
+			expect(() => retained.callback()).toThrow(failure);
+		}
+		native = makeNative(34567);
+		expect(spawner.spawn(config()).success).toBe(true);
+		first.resolve();
+		await drain();
+		await blocked();
+		await close();
+		processes.clear();
+		await blocked();
+		second.reject(new Error('late report rejected'));
+		await drain();
+		expect(captureException).toHaveBeenCalledTimes(2);
+		(await reserve()).release();
+	});
+
+	it('preserves synchronous stream destruction and normal close cancellation', async () => {
+		const retained = retain('timer');
+		await close();
+		expect(retained.callback()).toBeUndefined();
+		expect(retained.force).toHaveBeenCalledOnce();
+		for (const stream of retained.streams) expect(stream.destroy).toHaveBeenCalledOnce();
+		retained.closed();
+		vi.advanceTimersByTime(20);
+		expect(retained.force).toHaveBeenCalledOnce();
 		(await reserve()).release();
 	});
 });
