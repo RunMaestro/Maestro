@@ -61,14 +61,16 @@ import {
 } from '../../../main/process-manager/utils/envBuilder';
 import { saveImageToTempFile } from '../../../main/process-manager/utils/imageUtils';
 import { captureException } from '../../../main/utils/sentry';
+import { logger } from '../../../main/utils/logger';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
 
-const reports = vi.hoisted(() => ({ exit: vi.fn(), error: vi.fn() }));
+const reports = vi.hoisted(() => ({ exit: vi.fn(), error: vi.fn(), flush: vi.fn() }));
 const target = path.resolve('child-cleanup-target');
 let gate: typeof import('../../../main/git/worktreeActivity');
 let spawner: import('../../../main/process-manager/spawners/ChildProcessSpawner').ChildProcessSpawner;
 let native: ReturnType<typeof makeNative>;
 let processes: Map<string, ManagedProcess>;
+let emitter: EventEmitter;
 
 function makeNative(pid = 12345) {
 	return Object.assign(new EventEmitter(), {
@@ -128,7 +130,10 @@ beforeEach(async () => {
 	const { ChildProcessSpawner } =
 		await import('../../../main/process-manager/spawners/ChildProcessSpawner');
 	processes = new Map();
-	spawner = new ChildProcessSpawner(processes, new EventEmitter(), {} as DataBufferManager);
+	emitter = new EventEmitter();
+	spawner = new ChildProcessSpawner(processes, emitter, {
+		flushDataBuffer: reports.flush,
+	} as unknown as DataBufferManager);
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -147,6 +152,7 @@ describe('standalone child-process activity', () => {
 				buildChildProcessEnv,
 				spawn,
 				fs.realpath,
+				captureException,
 			])
 				expect(probe).not.toHaveBeenCalled();
 			expect(processes.size).toBe(0);
@@ -354,3 +360,272 @@ describe('standalone child-process activity', () => {
 		(await reserve()).release();
 	});
 });
+
+describe('child-process asynchronous diagnostics', () => {
+	it.each(
+		[getAgentCapabilities, buildChildProcessEnv, spawn, collectMaestroEnvVars].flatMap(
+			(setup, phase) => ['resolve', 'reject'].map((outcome) => ({ setup, phase, outcome }))
+		)
+	)(
+		'retains phase $phase diagnostics through $outcome after native close or nonstart',
+		async ({ setup, phase, outcome }) => {
+			const reporting = Promise.withResolvers<void>();
+			const failure = new Error('original setup failure');
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			vi.mocked(setup).mockImplementationOnce(() => {
+				throw failure;
+			});
+			expect(spawner.spawn(config())).toMatchObject({
+				success: false,
+				error: expect.stringContaining('original setup failure'),
+			});
+			if (phase === 3) await close();
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(
+				phase === 2 ? expect.objectContaining({ cause: failure }) : failure
+			);
+			await blocked();
+			if (outcome === 'resolve') reporting.resolve();
+			else reporting.reject(new Error('report rejected'));
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(1);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['resolve', 'reject', 'throw'])(
+		'preserves a synchronous failed spawn when its reporter will %s',
+		async (outcome) => {
+			vi.mocked(buildChildProcessEnv).mockImplementationOnce(() => {
+				throw new Error('setup');
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('report threw');
+				return outcome === 'reject'
+					? Promise.reject(new Error('report rejected'))
+					: Promise.resolve();
+			});
+			expect(spawner.spawn(config())).toMatchObject({ success: false, error: 'setup' });
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(1);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['exit', 'error', 'raw', 'supervised'])(
+		'retains %s recovery diagnostics independently after completion',
+		async (source) => {
+			const reporting = Promise.withResolvers<void>();
+			const failure = new Error('callback failed');
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (source === 'exit') reports.exit.mockRejectedValueOnce(failure);
+			if (source === 'error')
+				reports.error.mockImplementationOnce(() => {
+					throw failure;
+				});
+			if (source === 'raw')
+				emitter.on('raw-stdout', () => {
+					throw failure;
+				});
+			if (source === 'supervised') {
+				reports.flush.mockImplementationOnce(() => {
+					throw failure;
+				});
+				reports.exit.mockImplementationOnce(async () => {
+					emitter.emit('exit', 'child-session', 1);
+				});
+			}
+			expect(
+				spawner.spawn(
+					config(source === 'supervised' ? { toolType: 'codex', prompt: 'fixture' } : {})
+				).success
+			).toBe(true);
+			if (source === 'supervised') {
+				const opts = vi.mocked(superviseAgentProcess).mock.calls[0][1];
+				opts.onStop!('fixture timeout');
+			}
+			if (source === 'error') native.emit('error', new Error('native error'));
+			if (source === 'raw') native.stdout.emit('data', 'fixture');
+			await close();
+			expect(captureException).toHaveBeenCalledWith(failure);
+			await blocked();
+			reporting.reject(new Error('report rejected'));
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(1);
+			(await reserve()).release();
+		}
+	);
+
+	it('keeps the native child when diagnostics settle first', async () => {
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		vi.mocked(collectMaestroEnvVars).mockImplementationOnce(() => {
+			throw new Error('metadata');
+		});
+		expect(spawner.spawn(config()).success).toBe(false);
+		await drain();
+		reporting.resolve();
+		await drain();
+		await blocked();
+		await close();
+		(await reserve()).release();
+	});
+
+	it.each(['setup', 'exit', 'completion', 'raw'])(
+		'keeps prior diagnostics when the %s logger also throws',
+		async (source) => {
+			const reporting = Promise.withResolvers<void>();
+			const failure = new Error('original failure');
+			const logFailure = new Error('logger failed');
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			vi.mocked(logger.error).mockImplementation(() => {
+				throw logFailure;
+			});
+			if (source === 'setup')
+				vi.mocked(buildChildProcessEnv).mockImplementationOnce(() => {
+					throw failure;
+				});
+			if (source === 'exit') reports.exit.mockRejectedValueOnce(failure);
+			if (source === 'completion')
+				reports.error.mockImplementationOnce(() => {
+					throw failure;
+				});
+			if (source === 'raw')
+				emitter.on('raw-stdout', () => {
+					throw failure;
+				});
+			const result = spawner.spawn(config());
+			if (source === 'setup')
+				expect(result).toMatchObject({ success: false, error: 'logger failed' });
+			else {
+				expect(result.success).toBe(true);
+				if (source === 'completion') native.emit('error', new Error('native error'));
+				if (source === 'raw')
+					expect(() => native.stdout.emit('data', 'fixture')).toThrow(logFailure);
+				await close();
+			}
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(failure);
+			expect(captureException).toHaveBeenCalledWith(logFailure);
+			await blocked();
+			reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it('keeps multiple raw diagnostics and a same-session successor independent', async () => {
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		emitter.on('raw-stdout', () => {
+			throw new Error('listener');
+		});
+		expect(spawner.spawn(config()).success).toBe(true);
+		native.stdout.emit('data', 'one');
+		native.stdout.emit('data', 'two');
+		const old = native;
+		native = makeNative(23456);
+		expect(spawner.spawn(config()).success).toBe(true);
+		await close(old);
+		first.resolve();
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		second.reject(new Error('late report'));
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
+		'refuses a retained raw-output callback before effects under %s',
+		async (root) => {
+			expect(spawner.spawn(config()).success).toBe(true);
+			const callback = native.stdout.listeners('data')[0];
+			await close();
+			const raw = vi.fn(() => {
+				throw new Error('listener');
+			});
+			emitter.on('raw-stdout', raw);
+			const hold = await reserve(root);
+			expect(() => callback('late')).toThrow(/reserved/);
+			expect(raw).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+			hold.release();
+		}
+	);
+
+	it('retained raw diagnostics block a pending canonical reservation after native close', async () => {
+		expect(spawner.spawn(config()).success).toBe(true);
+		const callback = native.stdout.listeners('data')[0];
+		await close();
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		emitter.on('raw-stdout', () => {
+			throw new Error('late listener');
+		});
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		callback('late');
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await drain();
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+});
+
+it('retained supervised-exit diagnostics have their own admission after completion', async () => {
+	let listener!: (...args: unknown[]) => void;
+	expect(spawner.spawn(config({ toolType: 'codex', prompt: 'fixture' })).success).toBe(true);
+	const opts = vi.mocked(superviseAgentProcess).mock.calls[0][1];
+	opts.onStop!('fixture timeout');
+	reports.exit.mockImplementationOnce(async () => {
+		listener = emitter.listeners('exit')[0] as (...args: unknown[]) => void;
+	});
+	await close();
+	const reporting = Promise.withResolvers<void>();
+	const failure = new Error('flush failed');
+	reports.flush.mockImplementationOnce(() => {
+		throw failure;
+	});
+	vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+	const hold = await reserve();
+	expect(() => listener('child-session')).toThrow(/reserved/);
+	expect(reports.flush).not.toHaveBeenCalled();
+	expect(captureException).not.toHaveBeenCalled();
+	hold.release();
+	listener('child-session');
+	await drain();
+	expect(captureException).toHaveBeenCalledWith(failure);
+	await blocked();
+	reporting.resolve();
+	await drain();
+	(await reserve()).release();
+});
+
+it.each(['reject', 'throw'])(
+	'raw output keeps its recovery verdict when reporting will %s',
+	async (outcome) => {
+		emitter.on('raw-stdout', () => {
+			throw new Error('listener failed');
+		});
+		vi.mocked(captureException).mockImplementationOnce(() => {
+			if (outcome === 'throw') throw new Error('report failed');
+			return Promise.reject(new Error('report rejected'));
+		});
+		expect(spawner.spawn(config()).success).toBe(true);
+		expect(() => native.stdout.emit('data', 'fixture')).not.toThrow();
+		await drain();
+		expect(captureException).toHaveBeenCalledTimes(1);
+		await blocked();
+		await close();
+		(await reserve()).release();
+	}
+);
