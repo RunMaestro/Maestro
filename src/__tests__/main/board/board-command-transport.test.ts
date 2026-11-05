@@ -20,6 +20,7 @@ import {
 } from '../../../main/board/board-runtime-host';
 import {
 	registerBoardWorker,
+	listBoardWorkers,
 	setBoardWorkerAccess,
 } from '../../../main/board/board-workspace-storage';
 import type { BoardRuntimeToken } from '../../../shared/board/commands';
@@ -325,96 +326,162 @@ afterEach(async () => {
 });
 
 describe('Board through native runtime/WebSocket and real SQLite', () => {
-	it('routes worker lifecycle changes through the host and rejects an unknown agent without writes', async () => {
+	// Each real CLI child has startup/connection overhead. Independent operations
+	// get separate host/DB lifetimes and the unchanged per-test timeout.
+	it('routes worker lifecycle: rejects an unknown agent without writes', async () => {
 		const before = db.prepare('SELECT * FROM workers ORDER BY agent_id').all();
 		expect((await cli('worker-register', '--agent', 'missing', '--json')).code).toBe(1);
 		expect(db.prepare('SELECT * FROM workers ORDER BY agent_id').all()).toEqual(before);
+	});
 
-		expect(await cli('worker-register', '--agent', 'a', '--json')).toMatchObject({
-			code: 0,
-			value: { agentId: 'a', enabled: true, paused: false },
-		});
-		expect(await cli('worker-pause', '--agent', 'a', '--json')).toMatchObject({
-			code: 0,
-			value: { agentId: 'a', enabled: true, paused: true },
-		});
-		expect(await cli('worker-resume', '--agent', 'a', '--json')).toMatchObject({
-			code: 0,
-			value: { agentId: 'a', enabled: true, paused: false },
-		});
-		expect(await cli('worker-unregister', '--agent', 'a', '--json')).toMatchObject({
-			code: 0,
-			value: { agentId: 'a', enabled: false },
-		});
+	it.each([
+		['register', false, { agentId: 'a', enabled: true, paused: false }],
+		['pause', false, { agentId: 'a', enabled: true, paused: true }],
+		['resume', true, { agentId: 'a', enabled: true, paused: false }],
+		['unregister', false, { agentId: 'a', enabled: false }],
+	] as const)(
+		'routes worker lifecycle: %s through the host',
+		async (operation, paused, expected) => {
+			if (operation !== 'register') {
+				result(
+					await send({
+						action: 'worker-lifecycle',
+						agentId: 'a',
+						operation: 'register',
+						expected: null,
+					})
+				);
+				if (paused)
+					result(
+						await send({
+							action: 'worker-lifecycle',
+							agentId: 'a',
+							operation: 'pause',
+							expected: canonicalJson(listBoardWorkers(db)[0]),
+						})
+					);
+			}
+			expect(await cli(`worker-${operation}`, '--agent', 'a', '--json')).toMatchObject({
+				code: 0,
+				value: expected,
+			});
+			expect(listBoardWorkers(db)).toEqual([expect.objectContaining(expected)]);
+		}
+	);
+
+	it('routes worker lifecycle: lists an unregistered worker through the CLI', async () => {
+		result(
+			await send({
+				action: 'worker-lifecycle',
+				agentId: 'a',
+				operation: 'register',
+				expected: null,
+			})
+		);
+		result(
+			await send({
+				action: 'worker-lifecycle',
+				agentId: 'a',
+				operation: 'unregister',
+				expected: canonicalJson(listBoardWorkers(db)[0]),
+			})
+		);
 		expect((await cli('worker-list', '--json')).value).toEqual([
 			expect.objectContaining({ agentId: 'a', enabled: false }),
 		]);
 	});
 
-	it('reads and patches one worker through the CLI, preserving other workers and profiles', async () => {
-		registerBoardWorker(db, 'a');
-		registerBoardWorker(db, 'foreign');
-		const otherBefore = db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('foreign');
-		const profilesBefore = db
-			.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id')
-			.all();
-		const initial = await cli('worker-options', '--agent', 'a', '--json');
-		expect(initial.code).toBe(0);
-		const changed = await cli(
-			'worker-options',
-			'--agent',
-			'a',
-			'--set',
-			JSON.stringify({
-				customModel: 'fixture-model',
-				customEffort: 'high',
-				appendSystemPrompt: 'fixture',
-				customArgs: '--fixture',
-			}),
-			'--json'
-		);
-		expect(changed).toMatchObject({
-			code: 0,
-			value: {
-				agentId: 'a',
-				payload: {
-					executionOptions: {
-						customModel: 'fixture-model',
-						customEffort: 'high',
-						appendSystemPrompt: 'fixture',
-						customArgs: '--fixture',
-					},
-				},
-			},
-		});
-		const stale = await send({
-			action: 'set-worker-options',
-			command: {
-				agentId: 'a',
-				expectedPayload: '{}',
-				patch: { customModel: 'stale' },
-			},
-		});
-		expect(stale).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
-		expect(
-			(await cli('worker-options', '--agent', 'a', '--set', '{"customEffort":null}', '--json')).code
-		).toBe(0);
-		expect(
-			(await cli('worker-options', '--agent', 'a', '--json')).value.payload.executionOptions
-		).toEqual({
+	describe('reads and patches one worker through the CLI, preserving other workers and profiles', () => {
+		const options = {
 			customModel: 'fixture-model',
+			customEffort: 'high',
 			appendSystemPrompt: 'fixture',
 			customArgs: '--fixture',
+		} as const;
+		let otherBefore: unknown;
+		let profilesBefore: unknown;
+		beforeEach(() => {
+			registerBoardWorker(db, 'a');
+			registerBoardWorker(db, 'foreign');
+			otherBefore = db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('foreign');
+			profilesBefore = db.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id').all();
 		});
-		expect(
-			(await cli('worker-options', '--agent', 'a', '--set', '{"customModel":""}', '--json')).code
-		).toBe(1);
-		expect(db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('foreign')).toEqual(
-			otherBefore
-		);
-		expect(db.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id').all()).toEqual(
-			profilesBefore
-		);
+		afterEach(() => {
+			expect(db.prepare('SELECT * FROM workers WHERE agent_id = ?').get('foreign')).toEqual(
+				otherBefore
+			);
+			expect(db.prepare('SELECT * FROM profiles ORDER BY profile_namespace, id').all()).toEqual(
+				profilesBefore
+			);
+		});
+		it('reads the registered worker', async () => {
+			expect((await cli('worker-options', '--agent', 'a', '--json')).code).toBe(0);
+		});
+		it('patches options and rejects a stale host revision without writes', async () => {
+			const changed = await cli(
+				'worker-options',
+				'--agent',
+				'a',
+				'--set',
+				JSON.stringify(options),
+				'--json'
+			);
+			expect(changed).toMatchObject({
+				code: 0,
+				value: { agentId: 'a', payload: { executionOptions: options } },
+			});
+			const before = db.prepare('SELECT * FROM workers ORDER BY agent_id').all();
+			const stale = await send({
+				action: 'set-worker-options',
+				command: { agentId: 'a', expectedPayload: '{}', patch: { customModel: 'stale' } },
+			});
+			expect(stale).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
+			expect(db.prepare('SELECT * FROM workers ORDER BY agent_id').all()).toEqual(before);
+		});
+		it('clears only the nullable effort and reads the persisted options', async () => {
+			result(
+				await send({
+					action: 'set-worker-options',
+					command: {
+						agentId: 'a',
+						expectedPayload: canonicalJson(
+							listBoardWorkers(db).find((worker) => worker.agentId === 'a')!.payload
+						),
+						patch: options,
+					},
+				})
+			);
+			expect(
+				(await cli('worker-options', '--agent', 'a', '--set', '{"customEffort":null}', '--json'))
+					.code
+			).toBe(0);
+			expect(
+				(await cli('worker-options', '--agent', 'a', '--json')).value.payload.executionOptions
+			).toEqual({
+				customModel: 'fixture-model',
+				appendSystemPrompt: 'fixture',
+				customArgs: '--fixture',
+			});
+		});
+		it('rejects an empty model without writes', async () => {
+			result(
+				await send({
+					action: 'set-worker-options',
+					command: {
+						agentId: 'a',
+						expectedPayload: canonicalJson(
+							listBoardWorkers(db).find((worker) => worker.agentId === 'a')!.payload
+						),
+						patch: { ...options, customEffort: null },
+					},
+				})
+			);
+			const before = db.prepare('SELECT * FROM workers ORDER BY agent_id').all();
+			expect(
+				(await cli('worker-options', '--agent', 'a', '--set', '{"customModel":""}', '--json')).code
+			).toBe(1);
+			expect(db.prepare('SELECT * FROM workers ORDER BY agent_id').all()).toEqual(before);
+		});
 	});
 	it('initializes the global destination over the authenticated bridge and captures root-free through the same host', async () => {
 		const original = facade.query();
@@ -1103,51 +1170,79 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 		).toContain('pin-outside-scope');
 	});
 
-	it('preserves source/card collisions, current card revisions and approval on status patches while allowing authorized direct capture', async () => {
-		const first = result<Board>(await send(capture()));
-		await send(capture(card({ repositoryId: 'repo1', workingDirectory: roots[1] }), 1));
-		expect(
-			(await cli('update-card', 'c', '--title', 'Ambiguous', '--json')).value.details.message
-		).toContain('ambiguous');
-		const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
-		expect(
-			(await cli('update-card', 'c', '--title', 'Stale', '--card-revision', '999', ...common)).value
-				.details.code
-		).toBe('stale-revision');
-		expect(
-			(await cli('rename', 'b', 'Stale', '--revision', '999', ...common)).value.details.code
-		).toBe('stale-revision');
-		expect((await cli('set-status', 'c', 'ready', ...common)).value.details.code).toBe(
-			'invalid-input'
+	describe('preserves source/card collisions, current card revisions and approval', () => {
+		let first: Board;
+		let common: string[];
+		let before: Board[];
+		beforeEach(async () => {
+			first = result<Board>(await send(capture()));
+			result(await send(capture(card({ repositoryId: 'repo1', workingDirectory: roots[1] }), 1)));
+			common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
+			before = roots.map((root) => facade.read(root, 'b'));
+		});
+		it.each([
+			[
+				'ambiguous source',
+				['update-card', 'c', '--title', 'Ambiguous', '--json'],
+				false,
+				'ambiguous',
+			],
+			[
+				'stale card revision',
+				['update-card', 'c', '--title', 'Stale', '--card-revision', '999'],
+				true,
+				'stale-revision',
+			],
+			[
+				'stale collection revision',
+				['rename', 'b', 'Stale', '--revision', '999'],
+				true,
+				'stale-revision',
+			],
+			['invalid ready status', ['set-status', 'c', 'ready'], true, 'invalid-input'],
+			['unauthorized done status', ['set-status', 'c', 'done'], true, null],
+		] as const)(
+			'rejects %s without changing either source or approval',
+			async (_name, args, scoped, error) => {
+				const reply = await cli(...args, ...(scoped ? common : []));
+				expect(reply.code).toBe(1);
+				if (error === 'ambiguous') expect(reply.value.details.message).toContain('ambiguous');
+				else if (error) expect(reply.value.details.code).toBe(error);
+				expect(roots.map((root) => facade.read(root, 'b'))).toEqual(before);
+				expect(facade.read(roots[0], 'b').cards[0].capturePolicy!.dispatchApproval).toBe(
+					'required'
+				);
+				expect(facade.read(roots[1], 'b').cards[0].title).toBe('Work');
+			}
 		);
-		expect((await cli('set-status', 'c', 'done', ...common)).code).toBe(1);
-		expect(facade.read(roots[0], 'b').cards[0].capturePolicy!.dispatchApproval).toBe('required');
-		expect(facade.read(roots[1], 'b').cards[0].title).toBe('Work');
-		db.prepare(
-			"UPDATE collections SET payload_json = json_set(payload_json, '$.defaultStartMode', 'direct') WHERE source_key = ? AND collection_key = ?"
-		).run(first.storage!.sourceKey, first.storage!.collectionKey);
-		expect(
-			(
-				await cli(
-					'add-card',
-					'b',
-					'--title',
-					'Direct',
-					'--scope-agent',
-					'a',
-					'--repository',
-					'repo0',
-					'--working-directory',
-					roots[0],
-					'--start-mode',
-					'direct',
-					...common
-				)
-			).code
-		).toBe(0);
-		expect(facade.read(roots[0], 'b').cards[1].capturePolicy!.dispatchApproval).toBe(
-			'not-required'
-		);
+		it('allows authorized direct capture without changing the foreign card or existing approval', async () => {
+			db.prepare(
+				"UPDATE collections SET payload_json = json_set(payload_json, '$.defaultStartMode', 'direct') WHERE source_key = ? AND collection_key = ?"
+			).run(first.storage!.sourceKey, first.storage!.collectionKey);
+			expect(
+				(
+					await cli(
+						'add-card',
+						'b',
+						'--title',
+						'Direct',
+						'--scope-agent',
+						'a',
+						'--repository',
+						'repo0',
+						'--working-directory',
+						roots[0],
+						'--start-mode',
+						'direct',
+						...common
+					)
+				).code
+			).toBe(0);
+			const saved = facade.read(roots[0], 'b');
+			expect(saved.cards[1].capturePolicy!.dispatchApproval).toBe('not-required');
+			expect(saved.cards[0]).toEqual(before[0].cards[0]);
+			expect(facade.read(roots[1], 'b')).toEqual(before[1]);
+		});
 	});
 });
 
