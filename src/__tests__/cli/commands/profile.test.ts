@@ -6,10 +6,20 @@
  * lookup (`storage`) is mocked; the profile storage module runs unmodified.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import {
+	describe,
+	it,
+	expect,
+	vi,
+	beforeAll,
+	afterAll,
+	beforeEach,
+	afterEach,
+	type MockInstance,
+} from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 
 const mockGetSessionById = vi.fn();
 const mockResolveAgentId = vi.fn();
@@ -28,7 +38,26 @@ import {
 	profileDelete,
 } from '../../../cli/commands/profile';
 import { listProfiles } from '../../../main/profiles/profile-storage';
-import { createBoard, addCard, loadBoards } from '../../../main/board/board-storage';
+import {
+	createBoard,
+	addCard,
+	loadBoards,
+	closeBoardStorage,
+	BoardStorageFacade,
+	configureBoardStorage,
+} from '../../../main/board/board-storage';
+import { openBoardDb } from '../../../main/board/board-db';
+import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
+
+const fixture = createBoardIsolationFixture();
+let ownedDb: ReturnType<typeof openBoardDb> | undefined;
+beforeAll(() => fixture.install());
+afterAll(() =>
+	fixture.cleanup(() => {
+		closeBoardStorage();
+		if (ownedDb?.open) ownedDb.close();
+	})
+);
 
 describe('maestro-cli profile', () => {
 	let projectRoot = '';
@@ -37,7 +66,7 @@ describe('maestro-cli profile', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'profile-cli-'));
+		projectRoot = fs.mkdtempSync(path.join(fixture.sources.one, 'profile-cli-'));
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
@@ -53,6 +82,12 @@ describe('maestro-cli profile', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		closeBoardStorage();
+		if (ownedDb) {
+			ownedDb.close();
+			expect(ownedDb.open).toBe(false);
+			ownedDb = undefined;
+		}
 		if (projectRoot && fs.existsSync(projectRoot)) {
 			fs.rmSync(projectRoot, { recursive: true, force: true });
 		}
@@ -95,6 +130,19 @@ describe('maestro-cli profile', () => {
 	it('profile update edits in place, keeping the id and every card that references it', async () => {
 		await profileCreate({ base: 'Alpha', name: 'Reviewer', model: 'sonnet', json: true });
 		const created = listProfiles(projectRoot)[0];
+
+		// Admit the actual project and use the fixture's owned database.
+		const db = (ownedDb = openBoardDb(fixture.contract.db));
+		applyBoardMigration(
+			db,
+			planBoardMigration({
+				source: { location: { kind: 'local' }, path: projectRoot },
+				boardBytes: Buffer.from('{"boards":[]}'),
+				profileBytes: null,
+				workers: [],
+			})
+		);
+		configureBoardStorage(new BoardStorageFacade(db));
 
 		// A board card pointing at this role must survive the edit.
 		const board = createBoard(projectRoot, 'B');
