@@ -41,6 +41,7 @@ describe('permission-relay registry', () => {
 			expect(getPendingPermissionSnapshot()).toEqual({
 				version: expect.any(Number),
 				processIds: ['agent-ai-tab'],
+				requestIds: ['timed-status'],
 			});
 			const version = getPendingPermissionSnapshot().version;
 			await vi.advanceTimersByTimeAsync(10);
@@ -50,7 +51,11 @@ describe('permission-relay registry', () => {
 			const exited = createPending('exited-status', spawn.token);
 			spawn.cleanup();
 			await exited;
-			expect(changes).toHaveBeenLastCalledWith({ version: expect.any(Number), processIds: [] });
+			expect(changes).toHaveBeenLastCalledWith({
+				version: expect.any(Number),
+				processIds: [],
+				requestIds: [],
+			});
 		} finally {
 			off();
 			spawn.cleanup();

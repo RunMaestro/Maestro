@@ -23,7 +23,7 @@ const binding = {
 	agentSessionId: null,
 	open: true,
 };
-function fixture() {
+function fixture(provider = 'codex') {
 	const index = new NativeCurrentTurns();
 	let sequence = 0;
 	let order: string[] = [];
@@ -44,7 +44,7 @@ function fixture() {
 				sourceGeneration: 'renderer',
 				sequence: ++sequence,
 				createdAt: 7,
-				provider: 'codex',
+				provider,
 			},
 			...rest,
 		});
@@ -54,7 +54,7 @@ function fixture() {
 	index.begin(
 		{
 			id: 'run',
-			provider: 'codex',
+			provider,
 			sessionId: 'agent-ai-tab',
 			tabId: 'tab',
 			metadata: { nativeTabSession: { agentId: 'agent', tabId: 'tab', createdAt: 7 } },
@@ -62,7 +62,13 @@ function fixture() {
 		'user'
 	);
 	// Capture through the actual AgentRun envelope shape used by nativeTabSession.
-	return { index, commit, row, orderIds: () => [...order], read: () => index.read(binding) };
+	return {
+		index,
+		commit,
+		row,
+		orderIds: () => [...order],
+		read: () => index.read({ ...binding, provider }),
+	};
 }
 
 describe('scope worker current-turn wire consumer', () => {
@@ -1253,6 +1259,18 @@ describe('production scope loop event drain', () => {
 			await vi.advanceTimersByTimeAsync(25);
 			await deadline;
 			expect(woke).toBe(true);
+			wakeups.consume();
+			woke = false;
+			const nativeRequest = wakeups.wait(Date.now() + 20000).then(() => {
+				woke = true;
+			});
+			for (let i = 0; i < 100; i++)
+				wakeups.onFrame({ ...frame, args: [{ agentId: 'selected', inputRequest: true }] });
+			await vi.advanceTimersByTimeAsync(49);
+			expect(woke).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+			await nativeRequest;
+			expect(woke).toBe(true);
 		} finally {
 			wakeups.dispose();
 			vi.useRealTimers();
@@ -1546,4 +1564,358 @@ describe('equal wall clock recovery and chunk budgets', () => {
 		},
 		30000
 	);
+});
+
+describe('active native AskUserQuestion -> wire -> worker -> request response', () => {
+	it.each([
+		'answer',
+		'human',
+		'late-human',
+		'cancel',
+		'late-cancel',
+		'risk',
+		'risk-rewrite',
+		'late-risk',
+		'policy',
+		'owner',
+		'reset',
+		'wrong-request',
+		'foreign-run',
+		'stale-host-generation',
+		'stale-question-content',
+		'foreign-token',
+		'tool-permission',
+		'multi-question',
+		'multi-select',
+		'unsupported-provider',
+		'disconnect',
+		'feature-off',
+		'unknown-receipt',
+		'pre-policy',
+		'pre-owner',
+		'request-risk-header',
+	] as const)('consumes only the exact open native question: %s', async (mode) => {
+		const { PermissionRelayServer } =
+			await import('../../../main/permission-relay/PermissionRelayServer');
+		const { registerSpawn, resolvePending, getPendingQuestion } =
+			await import('../../../main/permission-relay/registry');
+		const net = await import('node:net');
+		const provider = mode === 'unsupported-provider' ? 'codex' : 'claude-code';
+		const f = fixture(provider);
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'Q06-'));
+		const relay = new PermissionRelayServer();
+		const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });
+		let socket: import('node:net').Socket | undefined;
+		const originalRead = vi
+			.spyOn(nativeCurrentTurns, 'read')
+			.mockImplementation((...args) => f.index.read(...args));
+		const processRead = vi
+			.spyOn(nativeCurrentTurns, 'readProcessTurn')
+			.mockImplementation((...args) => f.index.readProcessTurn(...args));
+		const store = createPianolaFsStore({
+			resolveDir: () => directory,
+			indent: 2,
+			trailingNewline: true,
+		});
+		const scopeId = '11111111-1111-4111-8111-111111111111';
+		const callbacks: Partial<MessageHandlerCallbacks> = {};
+		const execute = vi.fn(async () => true);
+		callbacks.executeCommand = execute;
+		const sessions = [
+			{
+				id: 'agent',
+				name: 'Agent',
+				cwd: directory,
+				toolType: provider,
+				activeTabId: 'tab',
+				aiTabs: [{ id: 'tab', createdAt: 7, logs: [] }],
+			},
+			{
+				id: 'manager',
+				name: 'Manager',
+				cwd: directory,
+				toolType: 'codex',
+				isPianola: true,
+				aiTabs: [],
+			},
+		];
+		registerSessionCallbacks(
+			new Proxy(
+				{},
+				{
+					get: (_t, key) => (cb: unknown) => {
+						if (key === 'setListDesktopSessionsCallback')
+							callbacks.listDesktopSessions = cb as never;
+						if (key === 'setGetSessionHistoryCallback') callbacks.getSessionHistory = cb as never;
+					},
+				}
+			) as never,
+			{
+				sessionsStore: { get: () => sessions },
+				groupsStore: { get: () => [] },
+				settingsStore: { get: (_k: string, fallback: unknown) => fallback },
+				getProcessManager: () => ({
+					get: (id: string) => (id === 'agent-ai-tab' ? { sessionId: id } : undefined),
+				}),
+			} as never
+		);
+		store.writeSupervisorTargets([
+			{
+				id: scopeId,
+				kind: 'watch-scope',
+				enabled: true,
+				createdAt: 1,
+				managerAgentId: 'manager',
+				selection: {
+					mode: 'agents-and-groups',
+					label: 'Selected',
+					agentIds: ['agent'],
+					groupIds: [],
+					excludedAgentIds: [],
+				},
+			},
+		]);
+		store.writeRules([
+			{
+				id: 'rule',
+				enabled: true,
+				scope: 'project',
+				scopeId: directory,
+				match: { kinds: ['question'], maxRisk: 'low' },
+				action: 'auto_answer',
+				answer: 'Use count.',
+				priority: 1,
+				createdAt: 1,
+				updatedAt: 1,
+			},
+		]);
+		let requestId = '';
+		let answerResponse: Promise<string> | undefined;
+		let mutate = false;
+		const replies: Array<{ status: string }> = [];
+		relay.setQuestionAuthority(() =>
+			JSON.stringify({
+				rules: store.readRules(),
+				targets: store.readSupervisorTargets(),
+				owners: sessions.map((s) => ({ id: s.id, cwd: s.cwd })),
+			})
+		);
+		const sendCommand = vi.fn(async (message: Record<string, unknown>) => {
+			if (message.type === 'pianola_scope_reply') {
+				if (mode === 'late-human')
+					resolvePending(requestId, { behavior: 'deny', message: 'Human selected total.' });
+				if (mode === 'policy')
+					store.writeRules(store.readRules().map((r) => ({ ...r, updatedAt: 2 })));
+				if (mode === 'owner') sessions[0].cwd = directory + '/moved';
+				if (mode === 'foreign-run')
+					(
+						message.guard as { nativeQuestion: { cursor: { runId: string } } }
+					).nativeQuestion.cursor.runId = 'foreign-run';
+				if (mode === 'stale-host-generation')
+					(
+						message.guard as { nativeQuestion: { cursor: { generation: string } } }
+					).nativeQuestion.cursor.generation = 'old-host';
+				if (mode === 'stale-question-content')
+					(message.guard as { nativeQuestion: { question: string } }).nativeQuestion.question =
+						'Should I use amount?';
+				if (mode === 'wrong-request')
+					(message.guard as { nativeQuestion: { requestId: string } }).nativeQuestion.requestId =
+						'foreign';
+				try {
+					const response = await deliverPianolaScopeDecision(
+						callbacks,
+						message.guard,
+						message.answer as string,
+						false,
+						store
+					);
+					replies.push(response);
+					return response;
+				} catch {
+					const response = { status: 'unknown', error: 'Native refusal or receipt lost' };
+					replies.push(response);
+					return response;
+				}
+			}
+			let response: unknown;
+			handleGetSessionHistory(
+				{
+					callbacks,
+					send: (_c: unknown, v: unknown) => {
+						response = v;
+					},
+				} as never,
+				{} as never,
+				message as never
+			);
+			return response;
+		});
+		const deps = createPianolaScopeWorkerDeps({ sendCommand } as unknown as Pick<
+			MaestroClient,
+			'sendCommand'
+		>);
+		deps.store = store;
+		deps.readSnapshot = async () =>
+			pianolaScopeSnapshotFromDesktop({ success: true, ...callbacks.listDesktopSessions!() });
+		let id = 0;
+		deps.watch = {
+			now: () => new Date().toISOString(),
+			genId: () => `q06-${++id}`,
+			readRules: store.readRules,
+			recordDecision: store.appendDecision,
+			log: vi.fn(),
+			notify: vi.fn(),
+		};
+		const append = store.appendDecision;
+		store.appendDecision = (record) => {
+			append(record);
+			if (!mutate && record.deliveryStatus === 'admitted') {
+				mutate = true;
+				if (mode === 'late-cancel') spawn.cleanup();
+				if (mode === 'feature-off') settings.enabled = false;
+				if (mode === 'late-risk') {
+					f.commit([f.row('risk', 'I will DROP DATABASE production.')]);
+					f.commit([f.row('risk', 'Inspecting files.')]);
+				}
+			}
+		};
+		const appendAsync = store.appendDecisionAsync;
+		store.appendDecisionAsync = async (record) => {
+			if (mode === 'unknown-receipt' && record.lifecycle?.delivery === 'accepted')
+				throw new Error('ENOSPC receipt');
+			await appendAsync(record);
+		};
+		try {
+			f.commit([f.row('progress', 'Inspecting files.')]);
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			if (mode === 'risk' || mode === 'risk-rewrite') {
+				f.commit([f.row('risk', 'I will DROP DATABASE production.')]);
+				if (mode === 'risk-rewrite') f.commit([f.row('risk', 'Inspecting files.')]);
+			}
+			let committed!: () => void;
+			const requestCommitted = new Promise<void>((resolve) => {
+				committed = resolve;
+			});
+			relay.setOnRequest((request) => {
+				requestId = request.requestId;
+				// Snapshot notification follows actual pending-map commit, not UI parsing.
+				if (
+					provider === 'claude-code' &&
+					!['multi-question', 'multi-select', 'tool-permission'].includes(mode)
+				) {
+					expect(getPendingQuestion('agent-ai-tab', f.read().cursor)?.requestId).toBe(requestId);
+				}
+				committed();
+			});
+			const socketPath = await relay.ensureStarted(directory);
+			socket = net.createConnection(socketPath);
+			await new Promise<void>((resolve, reject) => {
+				socket!.once('connect', resolve);
+				socket!.once('error', reject);
+			});
+			answerResponse = new Promise<string>((resolve) => {
+				socket!.once('data', (data) => resolve(data.toString()));
+			});
+			const question = {
+				header: mode === 'request-risk-header' ? 'I will DROP DATABASE production.' : 'Naming',
+				question: 'Should I name it count or total?',
+				options: [{ label: 'count' }, { label: 'total' }],
+				multiSelect: mode === 'multi-select',
+			};
+			socket.write(
+				JSON.stringify({
+					type: 'permission-request',
+					token: mode === 'foreign-token' ? 'forged' : spawn.token,
+					requestId: 'bridge-request',
+					toolName: mode === 'tool-permission' ? 'Bash' : 'AskUserQuestion',
+					input: { questions: mode === 'multi-question' ? [question, question] : [question] },
+				}) + '\n'
+			);
+			if (mode !== 'foreign-token') await requestCommitted;
+			else expect(JSON.parse(await answerResponse).decision.behavior).toBe('deny');
+			if (mode === 'pre-policy')
+				store.writeRules(store.readRules().map((r) => ({ ...r, updatedAt: 3 })));
+			if (mode === 'pre-owner') sessions[0].cwd += '/new-owner';
+			if (mode === 'human')
+				resolvePending(requestId, { behavior: 'deny', message: 'Human selected total.' });
+			if (mode === 'cancel') spawn.cleanup();
+			if (mode === 'reset') {
+				f.index.setEnabled(false);
+				f.index.setEnabled(true);
+			}
+			if (mode === 'disconnect') {
+				socket.destroy();
+				await new Promise<void>((resolve) => socket!.once('close', resolve));
+				await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			}
+			const result = await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			if (['late-cancel', 'late-risk', 'feature-off'].includes(mode)) expect(mutate).toBe(true);
+			if (
+				[
+					'late-human',
+					'late-cancel',
+					'late-risk',
+					'policy',
+					'owner',
+					'wrong-request',
+					'feature-off',
+				].includes(mode)
+			)
+				expect(replies).toHaveLength(1);
+			expect(execute).not.toHaveBeenCalled();
+			const snapshot = callbacks.listDesktopSessions!();
+			expect(snapshot && !Array.isArray(snapshot)).toBe(true);
+			if (!snapshot || Array.isArray(snapshot)) throw new Error('Versioned snapshot required');
+			expect(snapshot.sessions[0].supervision?.busy).toBe(true);
+			if (mode === 'answer' || mode === 'unknown-receipt') {
+				expect(JSON.parse(await answerResponse)).toMatchObject({
+					type: 'permission-response',
+					requestId: 'bridge-request',
+					decision: { behavior: 'deny', message: 'Use count.' },
+				});
+				expect(replies).toHaveLength(1);
+				const record = store.readDecisions()[0];
+				if (mode === 'answer') {
+					expect(record).toMatchObject({
+						deliveryStatus: 'admitted',
+						dispatched: true,
+						lifecycle: {
+							status: 'done',
+							delivery: 'accepted',
+							guard: { nativeQuestion: { requestId } },
+						},
+					});
+					expect(result.iterations).toHaveLength(1);
+				} else
+					expect(record).toMatchObject({
+						deliveryStatus: 'admitted',
+						lifecycle: { delivery: 'unknown' },
+					});
+			} else {
+				expect(store.readDecisions().some((r) => r.dispatched)).toBe(false);
+				if (['risk', 'risk-rewrite', 'request-risk-header'].includes(mode))
+					expect(store.readDecisions(), JSON.stringify(result)).toMatchObject([
+						{ classification: { risk: 'high' } },
+					]);
+			}
+			if (mode !== 'reset') {
+				const restarted = createPianolaScopeWorkerDeps({ sendCommand } as unknown as Pick<
+					MaestroClient,
+					'sendCommand'
+				>);
+				Object.assign(restarted, { store, readSnapshot: deps.readSnapshot, watch: deps.watch });
+				await runPianolaScopeCycle(scopeId, restarted, { dryRun: false });
+			}
+			expect(replies.length).toBeLessThanOrEqual(1);
+			expect(execute).not.toHaveBeenCalled();
+		} finally {
+			settings.enabled = true;
+			socket?.destroy();
+			spawn.cleanup();
+			relay.stop();
+			originalRead.mockRestore();
+			processRead.mockRestore();
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
 });

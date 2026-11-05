@@ -441,3 +441,33 @@ Creation evidence is held in memory by the creator and consumed once. Disk
 hydration, unknown empty windows, renderer or host restart, eviction, commit
 gaps, trims and transcript resets cannot reconstruct it. These remain blocked
 until a later genuine native turn establishes a safe baseline.
+
+### Questions from a process that is still running
+
+A scoped watcher can answer an actual open Claude Code `AskUserQuestion` relay
+request while the original process waits. It classifies a bounded projection of
+that request alongside the complete native turn and its retained risk. The
+projection is never written as a captured transcript row. Standing answer rules
+still decide whether to reply; high-risk requests stay with the human.
+
+| Provider / input path                                                                                                      | Active-process support                                                             | Consumer                                            |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Claude Code standard API/print mode, one single-select AskUserQuestion through the permission relay                        | Supported with a complete authenticated native run/turn and matching standing rule | Exact pending request's deny/message answer channel |
+| Claude Code multi-question or multi-select request, malformed/oversized input, or missing native turn                      | Needs human                                                                        | Existing question picker                            |
+| Claude Code Bash/Edit/Write or another permission request                                                                  | No question automation                                                             | Existing permission policy and allow/deny UI        |
+| Claude Code TUI without this relay; Codex, OpenCode and other providers without an authenticated question response channel | Unsupported for active-process answers; needs human                                | Provider's native input surface                     |
+
+Each request is bound to its host/source generation, native run, turn, process,
+owner census and policy at request commit. Human response, cancellation, timeout,
+disconnect, restart, transcript reset, ownership or policy changes prevent an
+old request from being answered. A changed census or policy conservatively
+invalidates request automation, even for an unrelated ownership edit; the human
+relay remains available. Final admission rechecks the exact request and current
+rules after any waits. No new provider process, generic stdin write or automatic
+tool permission grant is used.
+
+The durable claim precedes the single-use response. A committed host response
+gets one decision receipt and closes its UI request; it does not assert that the
+provider executed or completed anything. A missing receipt remains unknown and
+must be reconciled without resending. Native request commits use the existing
+coalesced scope wakeup channel, with no new per-tab watcher or model observation.

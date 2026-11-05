@@ -269,7 +269,11 @@ export class PianolaScopeWakeups {
 						? (cursor as { agentId?: unknown }).agentId
 						: undefined;
 				if (typeof agentId === 'string' && this.unselected.has(agentId)) return;
-				if (typeof agentId === 'string' && this.busyOwners.has(agentId)) {
+				if (
+					typeof agentId === 'string' &&
+					this.busyOwners.has(agentId) &&
+					!(cursor as { inputRequest?: unknown })?.inputRequest
+				) {
 					if (this.stopped) return;
 					this.dirtyAt = Math.min(this.dirtyAt ?? Infinity, Date.now() + 5000);
 					this.wake?.();

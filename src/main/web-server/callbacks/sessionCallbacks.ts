@@ -1,3 +1,4 @@
+import { getPendingQuestion } from '../../permission-relay/registry';
 import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
@@ -237,6 +238,25 @@ export function registerSessionCallbacks(
 						// CLI activity is agent-scoped; do not infer which sibling
 						// tab is safe to address from its selected-tab status.
 						busy: managedProcessActive || cliBusy,
+						nativeQuestion: (() => {
+							if (!managedProcessActive || cliBusy || s.toolType !== 'claude-code')
+								return undefined;
+							const turn = nativeCurrentTurns.read(
+								{
+									agentId: s.id,
+									tabId: tab.id,
+									createdAt: tab.createdAt,
+									provider: s.toolType,
+									agentSessionId: tab.agentSessionId ?? null,
+									open: true,
+								},
+								undefined,
+								false
+							);
+							return turn.status === 'complete'
+								? getPendingQuestion(`${s.id}-ai-${tab.id}`, turn.cursor)
+								: undefined;
+						})(),
 						consult: !!tab.consultOrigin,
 						ephemeral: tab.quickChat === true && tab.hidden === true,
 						currentTurn: (() => {

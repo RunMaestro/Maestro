@@ -1,3 +1,4 @@
+import { isNativeQuestionRequest, sameCurrentTurnCursor } from '../currentTurn';
 /**
  * Pianola storage contract - shared constants, the audit record type, and a
  * pure validator. The fs/electron specifics live in the CLI store
@@ -433,6 +434,15 @@ function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 		(guard.enrollmentRevision === undefined ||
 			(Number.isSafeInteger(guard.enrollmentRevision) &&
 				(guard.enrollmentRevision as number) >= 0)) &&
+		(guard.nativeQuestion === undefined ||
+			(isNativeQuestionRequest(guard.nativeQuestion) &&
+				typeof guard.ruleRevision === 'string' &&
+				/^[a-f0-9]{64}$/.test(guard.ruleRevision) &&
+				guard.messageId === guard.nativeQuestion.requestId &&
+				sameCurrentTurnCursor(
+					guard.nativeQuestion.cursor,
+					(guard.cursor as { native?: import('../currentTurn').CurrentTurnCursor })?.native
+				))) &&
 		isRecord(guard.cursor) &&
 		typeof guard.cursor.id === 'string' &&
 		Number.isSafeInteger(guard.cursor.count) &&

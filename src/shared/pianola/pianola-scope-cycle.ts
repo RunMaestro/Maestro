@@ -5,7 +5,14 @@
  * unguarded fallback, including for a delayed manager reply.
  */
 import { createHash } from 'crypto';
-import { isCurrentTurnCursor, sameCurrentTurnCursor, type CurrentTurnRead } from '../currentTurn';
+import {
+	isCurrentTurnCursor,
+	sameCurrentTurnCursor,
+	isNativeQuestionRequest,
+	nativeQuestionMessage,
+	type NativeQuestionRequest,
+	type CurrentTurnRead,
+} from '../currentTurn';
 import { canonicalJson } from '../canonicalJson';
 import type { DesktopSessionsSnapshot } from '../desktopTabs';
 import type { PianolaFsStore } from './fs-store';
@@ -32,6 +39,7 @@ import {
 	type WatchTarget,
 } from './pianola-watcher';
 import type { PianolaDecisionRecord, PianolaSupervisedTarget } from './storage';
+import { maxRisk } from './pianola-risk';
 import { decide } from './pianola-policy';
 import type { PianolaMessage } from './types';
 import {
@@ -46,6 +54,7 @@ export interface PianolaScopeSnapshotTab extends PianolaScopeTab {
 	/** Host creation time, never the provider session's creation time. */
 	createdAt: number;
 	busy: boolean;
+	nativeQuestion?: NativeQuestionRequest;
 	enrollment?: CurrentTurnRead['cursor'];
 	cursorAvailable: boolean;
 	cursor: PianolaScopeCursor | null;
@@ -69,6 +78,8 @@ export interface PianolaScopeDeliveryGuard {
 	tabId: string;
 	messageId: string;
 	decisionId: string;
+	nativeQuestion?: NativeQuestionRequest;
+	ruleRevision?: string;
 	cursor: PianolaScopeCursor;
 }
 
@@ -204,6 +215,12 @@ function assertSnapshot(snapshot: PianolaScopeSnapshot): void {
 				typeof tab.consult !== 'boolean' ||
 				typeof tab.ephemeral !== 'boolean' ||
 				typeof tab.busy !== 'boolean' ||
+				(tab.nativeQuestion !== undefined &&
+					(!isNativeQuestionRequest(tab.nativeQuestion) ||
+						!tab.busy ||
+						tab.nativeQuestion.cursor.agentId !== tab.agentId ||
+						tab.nativeQuestion.cursor.tabId !== tab.tabId ||
+						!sameCurrentTurnCursor(tab.nativeQuestion.cursor, tab.cursor?.native))) ||
 				typeof tab.cursorAvailable !== 'boolean' ||
 				(tab.enrollment !== undefined &&
 					(!isCurrentTurnCursor(tab.enrollment) ||
@@ -282,6 +299,7 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 			agentSessionId: tab.agentSessionId,
 			paused: info.paused,
 			busy: info.busy,
+			nativeQuestion: info.nativeQuestion,
 			consult: info.consult,
 			ephemeral: info.ephemeral,
 			enrollment: info.currentTurn?.enrollment,
@@ -757,8 +775,9 @@ export async function runPianolaScopeCycle(
 		);
 		if (
 			!tab.paused &&
-			(!tab.busy || openDecision) &&
-			(saved.coverage?.status === 'blocked' ||
+			(!tab.busy || !!tab.nativeQuestion || openDecision) &&
+			(!!tab.nativeQuestion ||
+				saved.coverage?.status === 'blocked' ||
 				!sameCursor(saved.lastSeen, tab.cursor) ||
 				saved.baselineBusy ||
 				saved.state.pendingRetry ||
@@ -809,7 +828,7 @@ export async function runPianolaScopeCycle(
 				groupId: snapshot.owners.find((owner) => owner.id === tab.agentId)!.groupId,
 			};
 			const history = await deps.readTranscript(target, tab.cursor?.native);
-			const messages = history.messages;
+			const messages = [...history.messages];
 			if (
 				history.agentId !== tab.agentId ||
 				history.tabId !== tab.tabId ||
@@ -854,6 +873,14 @@ export async function runPianolaScopeCycle(
 				const streamed = messages[offset - 1];
 				if (streamed?.id === saved.baseline.id && streamed.role === 'assistant')
 					actionableIds.add(streamed.id);
+			}
+			// A native request is its own single-use question generation. This is a
+			// classification projection, never a fabricated captured transcript entry.
+			if (tab.nativeQuestion) {
+				if (messages.some((m) => m.id === tab.nativeQuestion!.requestId))
+					throw new Error('Request/log identity collision');
+				messages.push(nativeQuestionMessage(tab.nativeQuestion));
+				actionableIds.add(tab.nativeQuestion.requestId);
 			}
 			// Settle earlier decisions before classifying another ask. Authorship is
 			// established only by the controlled resolution path, never guessed.
@@ -993,7 +1020,7 @@ export async function runPianolaScopeCycle(
 					? 'Reconcile the native receipt or recipient transcript before any retry'
 					: 'Continue bounded transcript monitoring',
 			};
-			if (saved.unresolvedIntent || pending || tab.busy) {
+			if (saved.unresolvedIntent || pending || (tab.busy && !tab.nativeQuestion)) {
 				// Native decision lifecycle/deadline owns an in-flight handoff.
 				// A stale watcher retry must not keep waking an acknowledged decision.
 				saved.nextWatchAt = undefined;
@@ -1019,6 +1046,13 @@ export async function runPianolaScopeCycle(
 				tabId: tab.tabId,
 				messageId: record.classification.evidence.messageId!,
 				decisionId: record.id,
+				...(tab.nativeQuestion
+					? {
+							nativeQuestion: tab.nativeQuestion,
+							ruleRevision:
+								latestRecord?.lifecycle?.guard.ruleRevision ?? fingerprint(deps.watch.readRules()),
+						}
+					: {}),
 				cursor: tab.cursor!,
 			});
 			const guard = async (): Promise<PianolaScopeDeliveryGuard> => {
@@ -1044,7 +1078,12 @@ export async function runPianolaScopeCycle(
 					current.capturedAt < snapshot.capturedAt ||
 					pianolaScopeConfigurationFingerprint(currentScope) !== configurationFingerprint ||
 					!currentTab ||
-					currentTab.busy ||
+					(currentTab.busy && !tab.nativeQuestion) ||
+					(tab.nativeQuestion &&
+						(canonicalJson(currentTab.nativeQuestion ?? null) !==
+							canonicalJson(tab.nativeQuestion) ||
+							fingerprint(deps.watch.readRules()) !==
+								latestRecord!.lifecycle?.guard.ruleRevision)) ||
 					!currentTab.cursorAvailable ||
 					!sameCursor(currentTab.cursor, tab.cursor)
 				)
@@ -1073,6 +1112,14 @@ export async function runPianolaScopeCycle(
 					tabId: tab.tabId,
 					messageId,
 					decisionId: latestRecord!.id,
+					...(tab.nativeQuestion
+						? {
+								nativeQuestion: tab.nativeQuestion,
+								ruleRevision:
+									latestRecord!.lifecycle?.guard.ruleRevision ??
+									fingerprint(deps.watch.readRules()),
+							}
+						: {}),
 					cursor: tab.cursor,
 				};
 			};
@@ -1128,7 +1175,10 @@ export async function runPianolaScopeCycle(
 					...options,
 					canActOnMessage: (messageId) => actionableIds.has(messageId),
 					observedRisk: tab.cursor?.native
-						? (history.currentTurn?.observedRisk ?? 'high')
+						? maxRisk(
+								history.currentTurn?.observedRisk ?? 'high',
+								tab.nativeQuestion?.observedRisk ?? 'low'
+							)
 						: undefined,
 				}
 			);
@@ -1273,7 +1323,13 @@ export function validatePianolaScopeDelivery(
 		scope.selection.mode !== 'agents-and-groups' ||
 		pianolaScopeConfigurationFingerprint(scope) !== guard.configurationFingerprint ||
 		!tab ||
-		tab.busy ||
+		(tab.busy && !guard.nativeQuestion) ||
+		(guard.nativeQuestion !== undefined &&
+			(!isNativeQuestionRequest(guard.nativeQuestion) ||
+				!tab.busy ||
+				canonicalJson(tab.nativeQuestion ?? null) !== canonicalJson(guard.nativeQuestion) ||
+				guard.messageId !== guard.nativeQuestion.requestId ||
+				guard.ruleRevision !== fingerprint(store.readRules()))) ||
 		!tab.cursorAvailable ||
 		!sameCursor(tab.cursor, guard.cursor)
 	)
@@ -1301,7 +1357,8 @@ export function validatePianolaScopeDelivery(
 		checkpoint.configurationFingerprint !== guard.configurationFingerprint ||
 		snapshot.capturedAt < (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt) ||
 		!saved ||
-		((requireIntent || !!guard.cursor.native) &&
+		(!guard.nativeQuestion &&
+			(requireIntent || !!guard.cursor.native) &&
 			!saved.baselineBusy &&
 			!freshNativeStream(saved, guard.cursor) &&
 			saved.baseline !== null &&

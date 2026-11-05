@@ -87,6 +87,18 @@ export class NativeCurrentTurns {
 		},
 		private enabled = true
 	) {}
+	/** Capture only an authenticated native run at the relay request commit. */
+	readProcessTurn(processId: string, tabId?: string): CurrentTurnRead | undefined {
+		if (!this.enabled || !tabId) return undefined;
+		for (const state of this.states.values()) {
+			const c = state.cursor;
+			if (c.tabId !== tabId || processId !== `${c.agentId}-ai-${c.tabId}`) continue;
+			const read = this.read({ ...c, open: true }, undefined, false);
+			return read.status === 'complete' && c.runId && c.turnId ? read : undefined;
+		}
+		return undefined;
+	}
+
 	private key(agentId: string, tabId: string): string {
 		return canonicalJson([agentId, tabId]);
 	}

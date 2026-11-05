@@ -156,3 +156,53 @@ export function currentTurnMessages(read: CurrentTurnRead): PianolaMessage[] {
 		timestamp: new Date(row.timestamp).toISOString(),
 	}));
 }
+
+/** An open host relay question, never a permission grant or a transcript row. */
+export interface NativeQuestionRequest {
+	requestId: string;
+	processId: string;
+	cursor: CurrentTurnCursor;
+	createdAt: number;
+	question: string;
+	options: string[];
+	observedRisk: PianolaRisk;
+}
+
+export function isNativeQuestionRequest(value: unknown): value is NativeQuestionRequest {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	const q = value as NativeQuestionRequest;
+	return (
+		typeof q.requestId === 'string' &&
+		q.requestId.length > 0 &&
+		q.requestId.length <= 500 &&
+		typeof q.processId === 'string' &&
+		q.processId.length > 0 &&
+		q.processId.length <= 1000 &&
+		isCurrentTurnCursor(q.cursor) &&
+		q.cursor.provider === 'claude-code' &&
+		!!q.cursor.runId &&
+		!!q.cursor.turnId &&
+		q.processId === `${q.cursor.agentId}-ai-${q.cursor.tabId}` &&
+		Number.isSafeInteger(q.createdAt) &&
+		q.createdAt >= 0 &&
+		['low', 'medium', 'high'].includes(q.observedRisk) &&
+		typeof q.question === 'string' &&
+		q.question.trim().length > 0 &&
+		q.question.length <= 8000 &&
+		Array.isArray(q.options) &&
+		q.options.length <= 32 &&
+		q.options.every((o) => typeof o === 'string' && o.length > 0 && o.length <= 1000)
+	);
+}
+
+/** Classification projection of a real request; never stored as a captured log. */
+export function nativeQuestionMessage(request: NativeQuestionRequest): PianolaMessage {
+	return {
+		id: request.requestId,
+		role: 'assistant',
+		source: 'native-question-request',
+		content: [request.question, ...request.options].join('\n'),
+		timestamp: new Date(request.createdAt).toISOString(),
+		awaitingInput: { kind: 'question', prompt: request.question, options: request.options },
+	};
+}

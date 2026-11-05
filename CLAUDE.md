@@ -268,7 +268,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Composer, queue, and transcript
 
-- **Native current-turn observation:** `isCurrentTurnCursor()`, `sameCurrentTurnCursor()`, `composeCurrentTurn()`, `currentTurnMessages()` in `src/shared/currentTurn.ts`
+- **Native current-turn observation:** `isCurrentTurnCursor()`, `sameCurrentTurnCursor()`, `composeCurrentTurn()`, `currentTurnMessages()`, `isNativeQuestionRequest()`, `nativeQuestionMessage()` in `src/shared/currentTurn.ts`
 - **Coalescing Pianola scope wakeups:** `PianolaScopeWakeups` in `src/cli/commands/pianola-scope-watch.ts`
 - **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 

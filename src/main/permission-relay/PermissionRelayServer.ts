@@ -22,8 +22,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
-import { createPending, lookupBinding } from './registry';
+import { createPending, lookupBinding, resolvePending } from './registry';
 import { parseQuestionRequest } from './question-request';
+import { rateRisk } from '../../shared/pianola/pianola-risk';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { nativeCurrentTurns } from '../pianola/current-turn';
 import type { BridgeToServerMessage, PermissionRequest, ServerToBridgeMessage } from './types';
 
 const LOG_CONTEXT = '[PermissionRelay]';
@@ -36,6 +39,12 @@ export class PermissionRelayServer {
 	private socketPath: string | null = null;
 	private onRequest: OnPermissionRequest | null = null;
 	private starting: Promise<string> | null = null;
+	private questionAuthority?: () => string;
+
+	/** Native host policy/owner census; absence keeps question automation unsupported. */
+	setQuestionAuthority(read: () => string): void {
+		this.questionAuthority = read;
+	}
 
 	/** Set the callback that surfaces requests to the user (renderer). */
 	setOnRequest(cb: OnPermissionRequest): void {
@@ -226,9 +235,57 @@ export class PermissionRelayServer {
 			...(questionFields ?? {}),
 		};
 
-		const decisionPromise = createPending(requestId, msg.token);
+		const native = nativeCurrentTurns.readProcessTurn(binding.sessionId, binding.tabId);
+		// Only a single parsed AskUserQuestion is supported. Multi-question and all
+		// ordinary permission requests retain their existing human consumer.
+		const question =
+			questionFields?.questions.length === 1 &&
+			Array.isArray(input.questions) &&
+			input.questions.length === 1
+				? questionFields.questions[0]
+				: undefined;
+		let authority: string | undefined;
+		try {
+			authority = native && question ? this.questionAuthority?.() : undefined;
+		} catch {
+			/* Human relay remains available. */
+		}
+		let authorityCurrent = !!authority;
+		const decisionPromise = createPending(
+			requestId,
+			msg.token,
+			undefined,
+			native &&
+				question &&
+				!question.multiSelect &&
+				Buffer.byteLength(canonicalJson(input)) <= 16000
+				? {
+						requestId,
+						processId: binding.sessionId,
+						cursor: native.cursor,
+						createdAt: request.createdAt,
+						question: question.question,
+						observedRisk: rateRisk(canonicalJson(input)),
+						options: question.options.map((o) =>
+							o.description ? `${o.label}: ${o.description}` : o.label
+						),
+					}
+				: undefined,
+			() => {
+				try {
+					authorityCurrent = authorityCurrent && this.questionAuthority?.() === authority;
+				} catch {
+					authorityCurrent = false;
+				}
+				return authorityCurrent && !socket.destroyed && socket.writable;
+			}
+		);
+		const onClose = () =>
+			resolvePending(requestId, { behavior: 'deny', message: 'Question transport disconnected.' });
+		socket.once('close', onClose);
 		this.onRequest(request);
 		const decision = await decisionPromise;
+		socket.removeListener('close', onClose);
 
 		this.send(socket, {
 			type: 'permission-response',
