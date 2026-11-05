@@ -19,19 +19,15 @@ let sshDetectionDone = false;
  * Detect the path to the ssh binary.
  * Uses 'which' on Unix, 'where' on Windows with expanded PATH.
  * Results are cached for performance.
- * @param execute - Optional host adapter for the canonical executor, allowing
- * native child observation without importing desktop state into the library.
  */
-export async function detectSshPath(
-	execute: typeof execFileNoThrow = execFileNoThrow
-): Promise<string | null> {
+export async function detectSshPath(): Promise<string | null> {
 	if (sshDetectionDone) {
 		return sshPathCache;
 	}
 
 	const command = getWhichCommand();
 	const env = buildExpandedEnv();
-	const result = await execute(command, ['ssh'], undefined, env);
+	const result = await execFileNoThrow(command, ['ssh'], undefined, env);
 
 	if (result.exitCode === 0 && result.stdout.trim()) {
 		// Handle Windows CRLF line endings properly
@@ -63,9 +59,7 @@ export async function detectSshPath(
  * Falls back to 'ssh' if detection fails (will use PATH at runtime).
  * @returns The path to use for ssh commands
  */
-export async function resolveSshPath(
-	execute: typeof execFileNoThrow = execFileNoThrow
-): Promise<string> {
-	await detectSshPath(execute);
+export async function resolveSshPath(): Promise<string> {
+	await detectSshPath();
 	return sshPathCache || 'ssh';
 }

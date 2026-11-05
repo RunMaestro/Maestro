@@ -34,7 +34,7 @@ vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 const { mockWrapSpawnWithSsh } = vi.hoisted(() => ({
 	mockWrapSpawnWithSsh: vi.fn(),
 }));
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: mockWrapSpawnWithSsh,
 	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
 		`remote "${cfg.remoteId}" could not be resolved`,

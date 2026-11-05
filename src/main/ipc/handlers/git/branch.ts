@@ -1,5 +1,4 @@
 import { ipcMain } from 'electron';
-import { beginWorktreeGitActivity } from '../../../git/worktreeActivity';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { execGit, execGitReadOnly } from '../../../utils/remote-git';
 import { getSshRemoteById } from '../../../stores';
@@ -66,57 +65,52 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 				}
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 
-				const release = sshRemote ? undefined : await beginWorktreeGitActivity();
-				try {
-					// Stage everything first so the porcelain check below reflects the
-					// full pending change set (including untracked files).
-					const addResult = await execGit(['add', '-A'], cwd, sshRemote, effectiveRemoteCwd);
-					if (addResult.exitCode !== 0) {
-						return {
-							success: false,
-							committed: false,
-							error: addResult.stderr?.trim() || 'git add failed',
-						};
-					}
-
-					// Nothing staged → clean tree, nothing to commit. Report success.
-					const statusResult = await execGit(
-						['status', '--porcelain'],
-						cwd,
-						sshRemote,
-						effectiveRemoteCwd
-					);
-					if (statusResult.exitCode === 0 && statusResult.stdout.trim() === '') {
-						return { success: true, committed: false };
-					}
-
-					const commitResult = await execGit(
-						['commit', '-m', message],
-						cwd,
-						sshRemote,
-						effectiveRemoteCwd
-					);
-					if (commitResult.exitCode !== 0) {
-						return {
-							success: false,
-							committed: false,
-							error:
-								commitResult.stderr?.trim() || commitResult.stdout?.trim() || 'git commit failed',
-						};
-					}
-
-					// Best-effort short hash for feedback/logging; absence is non-fatal.
-					const hashResult = await execGit(
-						['rev-parse', '--short', 'HEAD'],
-						cwd,
-						sshRemote,
-						effectiveRemoteCwd
-					);
-					const commitHash = hashResult.exitCode === 0 ? hashResult.stdout.trim() : undefined;
-					return { success: true, committed: true, commitHash };
-				} finally {
-					release?.();
+				// Stage everything first so the porcelain check below reflects the
+				// full pending change set (including untracked files).
+				const addResult = await execGit(['add', '-A'], cwd, sshRemote, effectiveRemoteCwd);
+				if (addResult.exitCode !== 0) {
+					return {
+						success: false,
+						committed: false,
+						error: addResult.stderr?.trim() || 'git add failed',
+					};
 				}
+
+				// Nothing staged → clean tree, nothing to commit. Report success.
+				const statusResult = await execGit(
+					['status', '--porcelain'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				if (statusResult.exitCode === 0 && statusResult.stdout.trim() === '') {
+					return { success: true, committed: false };
+				}
+
+				const commitResult = await execGit(
+					['commit', '-m', message],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				if (commitResult.exitCode !== 0) {
+					return {
+						success: false,
+						committed: false,
+						error:
+							commitResult.stderr?.trim() || commitResult.stdout?.trim() || 'git commit failed',
+					};
+				}
+
+				// Best-effort short hash for feedback/logging; absence is non-fatal.
+				const hashResult = await execGit(
+					['rev-parse', '--short', 'HEAD'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				const commitHash = hashResult.exitCode === 0 ? hashResult.stdout.trim() : undefined;
+				return { success: true, committed: true, commitHash };
 			}
 		)
 	);
@@ -234,25 +228,20 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
 				}
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const release = sshRemote ? undefined : await beginWorktreeGitActivity();
-				try {
-					const blocker = await branchSwitchBlocker(deps, cwd, sshRemote, effectiveRemoteCwd);
-					if (blocker) return { success: false, error: blocker };
-					const args = createTracking
-						? ['checkout', '-b', branch, '--track', `origin/${branch}`]
-						: ['checkout', branch];
-					const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
-					if (result.exitCode !== 0) {
-						return {
-							success: false,
-							error: result.stderr?.trim() || result.stdout?.trim() || 'git checkout failed',
-						};
-					}
-					// git checkout reports "Switched to branch 'x'" on stderr.
-					return { success: true, output: (result.stderr || result.stdout).trim() };
-				} finally {
-					release?.();
+				const blocker = await branchSwitchBlocker(deps, cwd, sshRemote, effectiveRemoteCwd);
+				if (blocker) return { success: false, error: blocker };
+				const args = createTracking
+					? ['checkout', '-b', branch, '--track', `origin/${branch}`]
+					: ['checkout', branch];
+				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
+				if (result.exitCode !== 0) {
+					return {
+						success: false,
+						error: result.stderr?.trim() || result.stdout?.trim() || 'git checkout failed',
+					};
 				}
+				// git checkout reports "Switched to branch 'x'" on stderr.
+				return { success: true, output: (result.stderr || result.stdout).trim() };
 			}
 		)
 	);

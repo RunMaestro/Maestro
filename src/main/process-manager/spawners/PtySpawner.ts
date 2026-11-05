@@ -15,9 +15,6 @@ import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
-import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
-import { captureException } from '../../utils/sentry';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -34,24 +31,6 @@ export class PtySpawner {
 	 * Spawn a PTY process for a session
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(_start, observe) => this.spawnAdmitted(config, observe),
-				(error) => captureException(error)
-			);
-		} catch (error) {
-			return {
-				pid: -1,
-				success: false,
-				error: error instanceof Error ? error.message : String(error),
-			};
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		const {
 			sessionId,
 			toolType,
@@ -65,16 +44,8 @@ export class PtySpawner {
 		} = config;
 
 		const isTerminal = toolType === 'terminal';
-		let releaseActivity: (() => void) | undefined;
-		let spawned = false;
-		let exited = false;
-		let setupSettled = false;
-		let reportExit: ((event: { exitCode: number; signal?: number }) => void) | undefined;
 
 		try {
-			// A shell, agent or local SSH client can touch paths beyond its cwd.
-			// Refuse synchronously before setup, without inspecting remote paths.
-			releaseActivity = beginGlobalWorktreeActivity();
 			let ptyCommand: string;
 			let ptyArgs: string[];
 
@@ -163,19 +134,6 @@ export class PtySpawner {
 				cwd: cwd,
 				env: ptyEnv as Record<string, string>,
 			});
-			spawned = true;
-			// Install before fallible registration/data setup. If observing exit
-			// fails, retain activity: a failed spawn result cannot prove termination.
-			ptyProcess.onExit((event) => {
-				return withWorktreeTurnActivity(() => {
-					exited = true;
-					try {
-						reportExit?.(event);
-					} finally {
-						if (setupSettled) releaseActivity?.();
-					}
-				}, captureException);
-			});
 
 			const managedProcess: ManagedProcess = {
 				sessionId,
@@ -220,35 +178,33 @@ export class PtySpawner {
 
 			// Handle output
 			ptyProcess.onData((data) => {
-				return withWorktreeTurnActivity(() => {
-					if (isSuperseded()) return;
-					if (isTerminalTab) {
-						// Raw pass-through for xterm.js terminal tabs - no filtering
-						if (data.length > 0) {
-							logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
-								sessionId,
-								pid: ptyProcess.pid,
-								dataLength: data.length,
-							});
-							this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
-						}
-					} else {
-						const managedProc = this.processes.get(sessionId);
-						const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
-						logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
+				if (isSuperseded()) return;
+				if (isTerminalTab) {
+					// Raw pass-through for xterm.js terminal tabs - no filtering
+					if (data.length > 0) {
+						logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
 							sessionId,
 							pid: ptyProcess.pid,
-							dataPreview: cleanedData.substring(0, 100),
+							dataLength: data.length,
 						});
-						// Only emit if there's actual content after filtering
-						if (cleanedData.trim()) {
-							this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
-						}
+						this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
 					}
-				}, captureException);
+				} else {
+					const managedProc = this.processes.get(sessionId);
+					const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
+					logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
+						sessionId,
+						pid: ptyProcess.pid,
+						dataPreview: cleanedData.substring(0, 100),
+					});
+					// Only emit if there's actual content after filtering
+					if (cleanedData.trim()) {
+						this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
+					}
+				}
 			});
 
-			reportExit = ({ exitCode, signal }) => {
+			ptyProcess.onExit(({ exitCode, signal }) => {
 				if (isSuperseded()) {
 					logger.warn('[ProcessManager] Ignoring exit from superseded PTY', 'ProcessManager', {
 						sessionId,
@@ -293,7 +249,7 @@ export class PtySpawner {
 				if (currentProcess && currentProcess !== managedProcess) return;
 				if (currentProcess === managedProcess) this.processes.delete(sessionId);
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-			};
+			});
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {
 				sessionId,
@@ -308,29 +264,20 @@ export class PtySpawner {
 
 			return { pid: ptyProcess.pid, success: true };
 		} catch (error) {
-			try {
-				logger.error('[ProcessManager] Failed to spawn PTY process', 'ProcessManager', {
-					error: String(error),
-					sessionId,
-					toolType,
-					command,
-					args,
-					cwd,
-					shell: shell ?? '(none)',
-					isTerminal,
-					// Include errno/code when available (e.g., ENOENT, EMFILE)
-					...(error instanceof Error && 'code' in error && { code: (error as any).code }),
-					...(error instanceof Error && 'errno' in error && { errno: (error as any).errno }),
-				});
-			} finally {
-				// Preserve the failed spawn result while diagnostics settle independently
-				// of setup, native exit and any failure in the logger above.
-				void observeCompletion(Promise.reject(error)).catch(() => {});
-			}
+			logger.error('[ProcessManager] Failed to spawn PTY process', 'ProcessManager', {
+				error: String(error),
+				sessionId,
+				toolType,
+				command,
+				args,
+				cwd,
+				shell: shell ?? '(none)',
+				isTerminal,
+				// Include errno/code when available (e.g., ENOENT, EMFILE)
+				...(error instanceof Error && 'code' in error && { code: (error as any).code }),
+				...(error instanceof Error && 'errno' in error && { errno: (error as any).errno }),
+			});
 			return { pid: -1, success: false };
-		} finally {
-			setupSettled = true;
-			if (!spawned || exited) releaseActivity?.();
 		}
 	}
 }

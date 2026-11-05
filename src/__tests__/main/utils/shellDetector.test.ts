@@ -167,13 +167,7 @@ describe('shellDetector', () => {
 
 			await detectShells();
 
-			expect(mockedExecFileNoThrow).toHaveBeenCalledWith(
-				'which',
-				['zsh'],
-				undefined,
-				undefined,
-				expect.any(Function)
-			);
+			expect(mockedExecFileNoThrow).toHaveBeenCalledWith('which', ['zsh']);
 
 			// Restore original platform
 			Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
@@ -194,13 +188,7 @@ describe('shellDetector', () => {
 			await detectShells();
 
 			// On Windows, the first shell is powershell.exe
-			expect(mockedExecFileNoThrow).toHaveBeenCalledWith(
-				'where',
-				['powershell.exe'],
-				undefined,
-				undefined,
-				expect.any(Function)
-			);
+			expect(mockedExecFileNoThrow).toHaveBeenCalledWith('where', ['powershell.exe']);
 
 			// Restore original platform
 			Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });

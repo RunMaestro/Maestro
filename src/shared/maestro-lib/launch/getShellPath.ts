@@ -1,23 +1,16 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
+import { spawn } from 'child_process';
 import * as path from 'path';
 import { isWindows } from '../../platformDetection';
 
 let cachedPath: string | null = null;
 let cachedPathPromise: Promise<string> | null = null;
 
-/** Optional native adapter; the shared cache and default library launch stay unchanged. */
-export type ShellPathSpawner = (
-	command: string,
-	args: readonly string[],
-	options: SpawnOptions
-) => ChildProcess;
-
 /**
  * Spawn the user's login shell and print the PATH. Cache the result for the
  * process lifetime. Times out after 2000ms and rejects on failure.
  */
 
-export async function refreshShellPath(spawnShell: ShellPathSpawner = spawn): Promise<string> {
+export async function refreshShellPath(): Promise<string> {
 	// Cache in-flight promise so concurrent callers don't spawn multiple shells
 	if (cachedPathPromise) return cachedPathPromise;
 
@@ -39,7 +32,7 @@ export async function refreshShellPath(spawnShell: ShellPathSpawner = spawn): Pr
 				: ['-l', '-c', 'printf "%s" "$PATH"'];
 
 		return await new Promise<string>((resolve, reject) => {
-			const child = spawnShell(shell, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+			const child = spawn(shell, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 			let stdout = '';
 			let stderr = '';
 
@@ -86,9 +79,9 @@ export async function refreshShellPath(spawnShell: ShellPathSpawner = spawn): Pr
 /**
  * Return cached shell PATH if available, otherwise refresh.
  */
-export async function getShellPath(spawnShell: ShellPathSpawner = spawn): Promise<string> {
+export async function getShellPath(): Promise<string> {
 	if (cachedPath) return cachedPath;
-	return refreshShellPath(spawnShell);
+	return refreshShellPath();
 }
 
 /**

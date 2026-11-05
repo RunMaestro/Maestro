@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../../../utils/logger';
 import { createSafeSend } from '../../../utils/safe-send';
+import { createIpcHandler } from '../../../utils/ipcHandler';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { ensureForkSetup } from '../../../utils/symphony-fork';
 import { fetchWithTimeout } from '../../../utils/fetchWithTimeout';
@@ -14,7 +15,7 @@ import type {
 } from '../../../../shared/symphony-types';
 import {
 	LOG_CONTEXT,
-	createSymphonyGitHandler,
+	handlerOpts,
 	readState,
 	writeState,
 	broadcastSymphonyUpdate,
@@ -225,8 +226,8 @@ export function registerContributionStartHandlers({
 	 */
 	ipcMain.handle(
 		'symphony:start',
-		createSymphonyGitHandler(
-			'start',
+		createIpcHandler(
+			handlerOpts('start'),
 			async (params: {
 				repoSlug: string;
 				repoUrl: string;
@@ -435,8 +436,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 	 */
 	ipcMain.handle(
 		'symphony:cloneRepo',
-		createSymphonyGitHandler(
-			'cloneRepo',
+		createIpcHandler(
+			handlerOpts('cloneRepo'),
 			async (params: {
 				repoUrl: string;
 				localPath: string;
@@ -472,8 +473,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 	 */
 	ipcMain.handle(
 		'symphony:startContribution',
-		createSymphonyGitHandler(
-			'startContribution',
+		createIpcHandler(
+			handlerOpts('startContribution'),
 			async (params: {
 				contributionId: string;
 				sessionId: string;

@@ -11,21 +11,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
 
-// The compatibility fixture settles both the result and observed native child.
-const executor = vi.hoisted(() =>
-	vi.fn<typeof import('../../../main/utils/execFile').execFileNoThrow>()
-);
-vi.mock('../../../main/utils/execFile', async () => {
-	const { EventEmitter } = await import('events');
-	return {
-		execFileNoThrow: (...args: Parameters<typeof executor>) => {
-			const child = new EventEmitter();
-			args[4]?.(child as Parameters<NonNullable<(typeof args)[4]>>[0]);
-			child.emit('close');
-			return executor(...args);
-		},
-	};
-});
+// Mock execFileNoThrow before importing the module
+vi.mock('../../../main/utils/execFile', () => ({
+	execFileNoThrow: vi.fn(),
+}));
 
 // Mock os module for homedir
 vi.mock('os', () => ({
@@ -43,7 +32,9 @@ import {
 	resolveGhPath,
 	isGhInstalled,
 } from '../../../main/utils/cliDetection';
-const mockedExecFileNoThrow = executor;
+import { execFileNoThrow } from '../../../main/utils/execFile';
+
+const mockedExecFileNoThrow = vi.mocked(execFileNoThrow);
 
 describe('cliDetection.ts', () => {
 	const originalPlatform = process.platform;
@@ -80,8 +71,7 @@ describe('cliDetection.ts', () => {
 					'which',
 					['cloudflared'],
 					undefined,
-					expect.any(Object),
-					expect.any(Function)
+					expect.any(Object)
 				);
 			});
 
@@ -139,8 +129,7 @@ describe('cliDetection.ts', () => {
 					undefined,
 					expect.objectContaining({
 						PATH: expect.stringContaining('/opt/homebrew/bin'),
-					}),
-					expect.any(Function)
+					})
 				);
 			});
 
@@ -184,8 +173,7 @@ describe('cliDetection.ts', () => {
 					'where',
 					['cloudflared'],
 					undefined,
-					expect.any(Object),
-					expect.any(Function)
+					expect.any(Object)
 				);
 			});
 		});

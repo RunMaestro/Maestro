@@ -22,16 +22,11 @@ import {
 import {
 	NdJsonConnection,
 	type NdJsonRecord,
-	type NdJsonServerResponse,
 } from '../../../shared/maestro-lib/harness/rpc/connection';
 import { answerRpcExtensionRequest } from '../../harness-control/rpc-interactions';
 import { steeringTextMatches, type SteeringResultFrame } from '../../../shared/chatSteering';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { NativeRpcProtocol } from '../../../shared/maestro-lib/providers/native-control';
-import {
-	withWorktreeCallbackActivity,
-	withWorktreeTurnActivity,
-} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'NativeRpc';
 
@@ -64,31 +59,9 @@ export class RpcServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(start, observe) => this.spawnAdmitted(config, start, observe),
-				async (error) => {
-					const reporting = Promise.resolve().then(() => captureException(error));
-					try {
-						logger.error('[RpcTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
-					} finally {
-						await reporting;
-					}
-				}
-			);
-		} catch (error) {
-			return { pid: -1, success: false, error: String(error) };
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		startAdmittedTurn: typeof startTurn,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		if (!config.nativeRpcArgs || !config.nativeRpcProtocol) return this.fallbackToCli(config);
 		try {
-			return new RpcTurn(this.context, config, startAdmittedTurn, observeCompletion).start();
+			return new RpcTurn(this.context, config).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -97,11 +70,7 @@ export class RpcServerSpawner {
 					error: `Native RPC Standard mode could not start: ${String(error)}`,
 				};
 			}
-			observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -123,9 +92,7 @@ class RpcTurn {
 
 	constructor(
 		private readonly ctx: RpcTurnContext,
-		private readonly config: ProcessConfig,
-		private readonly startAdmittedTurn: typeof startTurn,
-		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+		private readonly config: ProcessConfig
 	) {
 		this.protocol = config.nativeRpcProtocol ?? 'pi-rpc';
 		const { sessionId, toolType, cwd, command, args } = config;
@@ -189,7 +156,7 @@ class RpcTurn {
 			config.extraPathDirs,
 			config.querySource
 		);
-		this.turn = this.startAdmittedTurn(
+		this.turn = startTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -217,8 +184,8 @@ class RpcTurn {
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
-		void this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
+		void this.turn.done.then((exit) => this.handleChildExit(exit));
+		void this.run().catch((error) => this.handleRunError(error));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -227,12 +194,14 @@ class RpcTurn {
 		const connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'pi',
 			negotiateV2: config.nativeRpcProtocol === 'omp-rpc',
-			onNotification: (record) => {
-				// The fresh callback scope owns reporting. A released startup observer
-				// cannot own late diagnostics or report a refused admission.
-				void this.onNotification(record).catch(() => {});
-			},
-			onServerRequest: (record) => this.onServerRequest(record),
+			onNotification: (record) => this.onNotification(record),
+			onServerRequest: (record) =>
+				answerRpcExtensionRequest(record, {
+					sessionId: config.sessionId,
+					tabId: config.tabId,
+					spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
+					provider: config.toolType,
+				}),
 		});
 		this.connection = connection;
 		if (config.agentSessionId) {
@@ -290,29 +259,7 @@ class RpcTurn {
 		});
 	}
 
-	private async onServerRequest(record: NdJsonRecord): Promise<NdJsonServerResponse> {
-		return withWorktreeTurnActivity(
-			(_start, observe) =>
-				observe(
-					answerRpcExtensionRequest(record, {
-						sessionId: this.config.sessionId,
-						tabId: this.config.tabId,
-						spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
-						provider: this.config.toolType,
-					})
-				),
-			(error) => captureException(error)
-		);
-	}
-
 	private async steer(request: { id: string; text: string }): Promise<SteeringResultFrame> {
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.steerAdmitted(request)),
-			(error) => captureException(error)
-		);
-	}
-
-	private async steerAdmitted(request: { id: string; text: string }): Promise<SteeringResultFrame> {
 		if (!this.connection || !this.promptSent || this.finished) {
 			return {
 				type: 'steering',
@@ -340,15 +287,7 @@ class RpcTurn {
 		}
 	}
 
-	private async onNotification(record: NdJsonRecord): Promise<void> {
-		// Retained callbacks must admit independently after startup/close settles.
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.onNotificationAdmitted(record)),
-			(error) => captureException(error)
-		);
-	}
-
-	private async onNotificationAdmitted(record: NdJsonRecord): Promise<void> {
+	private onNotification(record: NdJsonRecord): void {
 		if (this.isSuperseded()) return;
 		if (record.type === 'message_start') {
 			const message = record.message as { role?: string; content?: unknown } | undefined;
@@ -368,7 +307,8 @@ class RpcTurn {
 		}
 		if (record.type === 'agent_end' && this.protocol === 'pi-rpc' && record.willRetry !== true) {
 			this.forwardLine(JSON.stringify(record));
-			return this.finishPiAgentEnd();
+			void this.finishPiAgentEnd();
+			return;
 		}
 		if (record.type === 'agent_settled' || record.type === 'session_settled') {
 			this.dropPendingSteers();
@@ -451,45 +391,33 @@ class RpcTurn {
 	}
 
 	private async interrupt(): Promise<void> {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				this.cancelled = true;
-				if (this.connection) void observe(this.connection.request('abort').catch(() => undefined));
-				stopProcess(
-					{ child: this.turn.child },
-					{
-						from: 'interrupt',
-						graceMs: INTERACTIVE_STOP_GRACE_MS,
-						sessionId: this.config.sessionId,
-						label: 'interrupt',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
-				);
-			},
-			(error) => captureException(error)
+		this.cancelled = true;
+		void this.connection?.request('abort').catch(() => undefined);
+		stopProcess(
+			{ child: this.turn.child },
+			{
+				from: 'interrupt',
+				graceMs: INTERACTIVE_STOP_GRACE_MS,
+				sessionId: this.config.sessionId,
+				label: 'interrupt',
+			}
 		);
 	}
 
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				this.cancelled = true;
-				if (this.connection) void observe(this.connection.request('abort').catch(() => undefined));
-				stopProcess(
-					{ child: this.turn.child },
-					{
-						from: 'terminate',
-						upTo: options?.shutdown ? 'terminate' : 'kill',
-						graceMs: INTERACTIVE_STOP_GRACE_MS,
-						immediate: options?.shutdown,
-						blocking: options?.sync,
-						sessionId: this.config.sessionId,
-						label: 'kill',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
-				);
-			},
-			(error) => captureException(error)
+		this.cancelled = true;
+		void this.connection?.request('abort').catch(() => undefined);
+		stopProcess(
+			{ child: this.turn.child },
+			{
+				from: 'terminate',
+				upTo: options?.shutdown ? 'terminate' : 'kill',
+				graceMs: INTERACTIVE_STOP_GRACE_MS,
+				immediate: options?.shutdown,
+				blocking: options?.sync,
+				sessionId: this.config.sessionId,
+				label: 'kill',
+			}
 		);
 	}
 
@@ -512,8 +440,7 @@ class RpcTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'fallback',
-				},
-				(operation) => withWorktreeCallbackActivity(operation, captureException)
+				}
 			);
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
@@ -529,14 +456,9 @@ class RpcTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			},
-			(operation) => withWorktreeCallbackActivity(operation, captureException)
+			}
 		);
-		this.observeCompletion(
-			Promise.resolve()
-				.then(() => captureException(error))
-				.catch(() => {})
-		);
+		void captureException(error);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -568,23 +490,16 @@ class RpcTurn {
 	}
 
 	private finish(code: number): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				if (this.finished) return;
-				this.finished = true;
-				observe(
-					this.ctx.exitHandler
-						.handleExit(this.config.sessionId, code, this.managedProcess)
-						.catch((error) => {
-							logger.error('[RpcTurn] handleExit failed', LOG_CONTEXT, {
-								sessionId: this.config.sessionId,
-								error: String(error),
-							});
-						})
-				);
-			},
-			(error) => captureException(error)
-		);
+		if (this.finished) return;
+		this.finished = true;
+		void this.ctx.exitHandler
+			.handleExit(this.config.sessionId, code, this.managedProcess)
+			.catch((error) => {
+				logger.error('[RpcTurn] handleExit failed', LOG_CONTEXT, {
+					sessionId: this.config.sessionId,
+					error: String(error),
+				});
+			});
 	}
 
 	private isSuperseded(): boolean {

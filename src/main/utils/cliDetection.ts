@@ -1,11 +1,6 @@
 import { execFileNoThrow } from './execFile';
 import { buildExpandedEnv } from '../../shared/pathUtils';
 import { getWhichCommand } from '../../shared/platformDetection';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
-import {
-	detectSshPath as detectSshPathCore,
-	resolveSshPath as resolveSshPathCore,
-} from '../../shared/maestro-lib/launch/ssh-path';
 
 let cloudflaredInstalledCache: boolean | null = null;
 let cloudflaredPathCache: string | null = null;
@@ -36,15 +31,6 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 }
 
 export async function isCloudflaredInstalled(): Promise<boolean> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await detectCloudflaredAdmitted();
-	} finally {
-		release();
-	}
-}
-
-async function detectCloudflaredAdmitted(): Promise<boolean> {
 	// Return cached result if available
 	if (cloudflaredInstalledCache !== null) {
 		return cloudflaredInstalledCache;
@@ -53,12 +39,7 @@ async function detectCloudflaredAdmitted(): Promise<boolean> {
 	// Use 'which' on macOS/Linux, 'where' on Windows
 	const command = getWhichCommand();
 	const env = getExpandedEnv();
-	// Results (including timeouts) and cache state cannot prove native close.
-	// Unknown launch or observation keeps this independent hold busy.
-	const releaseNative = beginGlobalWorktreeActivity();
-	const result = await execFileNoThrow(command, ['cloudflared'], undefined, env, (child) =>
-		child.once('close', releaseNative)
-	);
+	const result = await execFileNoThrow(command, ['cloudflared'], undefined, env);
 
 	if (result.exitCode === 0 && result.stdout.trim()) {
 		cloudflaredInstalledCache = true;
@@ -86,15 +67,6 @@ export function clearCloudflaredCache(): void {
  * Uses platform-appropriate detection: 'where' on Windows, 'which' on Unix.
  */
 export async function isGhInstalled(): Promise<boolean> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await detectGhAdmitted();
-	} finally {
-		release();
-	}
-}
-
-async function detectGhAdmitted(): Promise<boolean> {
 	// Return cached result if available
 	if (ghInstalledCache !== null) {
 		return ghInstalledCache;
@@ -103,10 +75,7 @@ async function detectGhAdmitted(): Promise<boolean> {
 	// Use 'which' on macOS/Linux, 'where' on Windows
 	const command = getWhichCommand();
 	const env = getExpandedEnv();
-	const releaseNative = beginGlobalWorktreeActivity();
-	const result = await execFileNoThrow(command, ['gh'], undefined, env, (child) =>
-		child.once('close', releaseNative)
-	);
+	const result = await execFileNoThrow(command, ['gh'], undefined, env);
 
 	if (result.exitCode === 0 && result.stdout.trim()) {
 		ghInstalledCache = true;
@@ -128,22 +97,15 @@ async function detectGhAdmitted(): Promise<boolean> {
  * @returns The path to use for gh commands
  */
 export async function resolveGhPath(customPath?: string): Promise<string> {
-	// Admission also covers cached/custom answers and the continuation after
-	// detection. It must precede setup and must not be swallowed by recovery.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		if (customPath) {
-			return customPath;
-		}
-
-		// Ensure detection has run
-		await isGhInstalled();
-
-		// Return cached path or fallback to 'gh'
-		return ghPathCache || 'gh';
-	} finally {
-		release();
+	if (customPath) {
+		return customPath;
 	}
+
+	// Ensure detection has run
+	await isGhInstalled();
+
+	// Return cached path or fallback to 'gh'
+	return ghPathCache || 'gh';
 }
 
 /**
@@ -209,30 +171,5 @@ export function clearGhCache(): void {
 	ghStatusCache = null;
 }
 
-// Keep the library's implementation/cache; only desktop requests participate in
-// main-process exclusion. Direct library callers remain a separate safety gap.
-const execSshDetection: typeof execFileNoThrow = (command, args, cwd, options) => {
-	// Unknown launch/observation and early results must retain native ownership.
-	const releaseNative = beginGlobalWorktreeActivity();
-	return execFileNoThrow(command, args, cwd, options, (child) =>
-		child.once('close', releaseNative)
-	);
-};
-
-export async function detectSshPath(): Promise<string | null> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await detectSshPathCore(execSshDetection);
-	} finally {
-		release();
-	}
-}
-
-export async function resolveSshPath(): Promise<string> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await resolveSshPathCore(execSshDetection);
-	} finally {
-		release();
-	}
-}
+// SSH detection moved into maestro-lib so the SSH command builder can live there.
+export { detectSshPath, resolveSshPath } from '../../shared/maestro-lib/launch/ssh-path';

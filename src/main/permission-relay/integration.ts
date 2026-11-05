@@ -17,7 +17,6 @@ import { registerSpawn, resolvePending, subscribePendingPermissions } from './re
 import { createSafeSend } from '../utils/safe-send';
 import { buildRelayArgs, resolveBridgeScriptPath } from './spawn-args';
 import type { PermissionDecision } from './types';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[PermissionRelay]';
 
@@ -25,7 +24,7 @@ const LOG_CONTEXT = '[PermissionRelay]';
 export const PERMISSION_REQUEST_CHANNEL = 'process:permission-request';
 
 /** Per-spawn token cleanups, keyed by the (compound) spawn session id. */
-const sessionCleanups = new Map<string, { cleanup: () => void; running: boolean }>();
+const sessionCleanups = new Map<string, () => void>();
 
 let initialized = false;
 
@@ -38,67 +37,52 @@ export function initPermissionRelay(
 	getMainWindow: () => BrowserWindow | null,
 	processManager: EventEmitter | null
 ): void {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		if (initialized) {
+	if (initialized) {
+		return;
+	}
+	initialized = true;
+
+	const send = createSafeSend(() => BrowserWindow.getAllWindows());
+	subscribePendingPermissions((snapshot) => {
+		// Status only: prompt bodies and per-spawn authentication tokens stay private.
+		send('process:pending-permissions', snapshot);
+	});
+
+	permissionRelayServer.setOnRequest((request) => {
+		const win = getMainWindow();
+		if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+			// No window to prompt: deny so the agent gets a clear answer instead
+			// of hanging until the timeout.
+			resolvePending(request.requestId, {
+				behavior: 'deny',
+				message: 'Maestro window unavailable to prompt for permission.',
+			});
 			return;
 		}
-		initialized = true;
-
-		const send = createSafeSend(() => BrowserWindow.getAllWindows());
-		subscribePendingPermissions((snapshot) => {
-			const releaseSnapshot = beginGlobalWorktreeActivity();
-			try {
-				// Status only: prompt bodies and per-spawn authentication tokens stay private.
-				send('process:pending-permissions', snapshot);
-			} finally {
-				releaseSnapshot();
-			}
-		});
-
-		permissionRelayServer.setOnRequest((request) => {
-			const releaseRequest = beginGlobalWorktreeActivity();
-			try {
-				const win = getMainWindow();
-				if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
-					// No window to prompt: deny so the agent gets a clear answer instead
-					// of hanging until the timeout.
-					resolvePending(request.requestId, {
-						behavior: 'deny',
-						message: 'Maestro window unavailable to prompt for permission.',
-					});
-					return;
-				}
-				try {
-					win.webContents.send(PERMISSION_REQUEST_CHANNEL, request);
-				} catch (e) {
-					// The destroyed-window guard above covers the realistic case; this
-					// catches a rare teardown race between the check and the send. Deny so
-					// the awaiting bridge call unblocks instead of waiting on the timeout.
-					logger.warn('Failed to deliver permission request to renderer; denying', LOG_CONTEXT, {
-						requestId: request.requestId,
-						error: e instanceof Error ? e.message : String(e),
-					});
-					resolvePending(request.requestId, {
-						behavior: 'deny',
-						message: 'Failed to deliver permission request to the Maestro window.',
-					});
-				}
-			} finally {
-				releaseRequest();
-			}
-		});
-
-		// Best-effort per-spawn cleanup on process exit. Not fatal if the emitter
-		// isn't ready yet: the registry auto-denies pending requests on timeout and
-		// each new spawn clears its session's prior binding.
-		if (processManager && typeof processManager.on === 'function') {
-			processManager.on('exit', (sessionId: string) => {
-				cleanupSessionRelay(sessionId);
+		try {
+			win.webContents.send(PERMISSION_REQUEST_CHANNEL, request);
+		} catch (e) {
+			// The destroyed-window guard above covers the realistic case; this
+			// catches a rare teardown race between the check and the send. Deny so
+			// the awaiting bridge call unblocks instead of waiting on the timeout.
+			logger.warn('Failed to deliver permission request to renderer; denying', LOG_CONTEXT, {
+				requestId: request.requestId,
+				error: e instanceof Error ? e.message : String(e),
+			});
+			resolvePending(request.requestId, {
+				behavior: 'deny',
+				message: 'Failed to deliver permission request to the Maestro window.',
 			});
 		}
-	} finally {
-		release();
+	});
+
+	// Best-effort per-spawn cleanup on process exit. Not fatal if the emitter
+	// isn't ready yet: the registry auto-denies pending requests on timeout and
+	// each new spawn clears its session's prior binding.
+	if (processManager && typeof processManager.on === 'function') {
+		processManager.on('exit', (sessionId: string) => {
+			cleanupSessionRelay(sessionId);
+		});
 	}
 }
 
@@ -112,21 +96,10 @@ export function resolvePermissionResponse(
 
 /** Clean up a spawn's relay binding (on process exit or re-spawn). */
 export function cleanupSessionRelay(sessionId: string): void {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		const entry = sessionCleanups.get(sessionId);
-		if (entry && !entry.running) {
-			entry.running = true;
-			try {
-				entry.cleanup();
-				// Keep retry ownership on failure; nested cleanup cannot retire it.
-				if (sessionCleanups.get(sessionId) === entry) sessionCleanups.delete(sessionId);
-			} finally {
-				entry.running = false;
-			}
-		}
-	} finally {
-		release();
+	const cleanup = sessionCleanups.get(sessionId);
+	if (cleanup) {
+		sessionCleanups.delete(sessionId);
+		cleanup();
 	}
 }
 
@@ -143,70 +116,42 @@ export async function preparePermissionRelayArgs(params: {
 	userDataDir: string;
 	execPath: string;
 }): Promise<string[]> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		const bridgeScriptPath = resolveBridgeScriptPath();
-		if (!bridgeScriptPath) {
-			throw new Error('permission relay bridge script not found');
-		}
-
-		const socketPath = await permissionRelayServer.ensureStarted(params.userDataDir);
-
-		// Replace any stale binding for this session before registering a new one.
-		cleanupSessionRelay(params.sessionId);
-		const { token, cleanup } = registerSpawn({
-			sessionId: params.sessionId,
-			tabId: params.tabId,
-		});
-		// Argument construction may throw after registration. Keep the known
-		// binding reachable by spawn-failure, exit and replacement cleanup.
-		const entry = { cleanup, running: true };
-		sessionCleanups.set(params.sessionId, entry);
-		try {
-			// Install recovery before construction: the exclusive file may exist even
-			// when writing its content fails and buildRelayArgs never returns.
-			let configPath: string | undefined;
-			let releaseRecovery: (() => void) | undefined;
-			entry.cleanup = () => {
-				cleanup();
-				if (configPath === undefined) return;
-				try {
-					fs.unlinkSync(configPath);
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
-						// Token cleanup may already have released its hold. Keep this
-						// session's recovery busy and reachable until unlink succeeds.
-						releaseRecovery ??= beginGlobalWorktreeActivity();
-						throw error;
-					}
-				}
-				releaseRecovery?.();
-				releaseRecovery = undefined;
-			};
-			const config = buildRelayArgs(
-				params.execPath,
-				bridgeScriptPath,
-				socketPath,
-				token,
-				params.userDataDir,
-				(createdPath) => {
-					configPath = createdPath;
-				}
-			);
-			configPath = config.configPath;
-
-			logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
-				sessionId: params.sessionId,
-				socketPath,
-			});
-
-			return config.args;
-		} finally {
-			// Reentrant cleanup during construction cannot retire a partial owner.
-			// Once setup unwinds, failure/exit/replacement callers can retry it.
-			entry.running = false;
-		}
-	} finally {
-		release();
+	const bridgeScriptPath = resolveBridgeScriptPath();
+	if (!bridgeScriptPath) {
+		throw new Error('permission relay bridge script not found');
 	}
+
+	const socketPath = await permissionRelayServer.ensureStarted(params.userDataDir);
+
+	// Replace any stale binding for this session before registering a new one.
+	cleanupSessionRelay(params.sessionId);
+	const { token, cleanup } = registerSpawn({
+		sessionId: params.sessionId,
+		tabId: params.tabId,
+	});
+
+	const { args, configPath } = buildRelayArgs(
+		params.execPath,
+		bridgeScriptPath,
+		socketPath,
+		token,
+		params.userDataDir
+	);
+
+	// Wrap the registry cleanup so process exit also deletes the temp MCP config.
+	sessionCleanups.set(params.sessionId, () => {
+		cleanup();
+		try {
+			fs.unlinkSync(configPath);
+		} catch {
+			// Already gone - fine.
+		}
+	});
+
+	logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
+		sessionId: params.sessionId,
+		socketPath,
+	});
+
+	return args;
 }

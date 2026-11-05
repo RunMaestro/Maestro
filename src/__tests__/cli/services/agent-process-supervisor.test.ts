@@ -382,8 +382,7 @@ describe('headless process supervision', () => {
 		controller.abort();
 		expect(stop).toHaveBeenCalledWith(
 			{ child },
-			{ from: 'terminate', graceMs: 5_000, label: 'headless agent' },
-			undefined
+			{ from: 'terminate', graceMs: 5_000, label: 'headless agent' }
 		);
 		expect(onStop).toHaveBeenCalledWith('Agent run cancelled');
 		expect(child.kill).toHaveBeenCalledWith('SIGTERM');

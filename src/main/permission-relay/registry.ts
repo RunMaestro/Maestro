@@ -13,14 +13,13 @@
  */
 
 import { randomBytes } from 'crypto';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import type { PermissionDecision, RelaySpawnBinding } from './types';
 import { RELAY_DECISION_TIMEOUT_MS } from './types';
 import type { PendingPermissionSnapshot } from '../../shared/pendingPermissions';
 
 interface PendingRequest {
 	resolve: (decision: PermissionDecision) => void;
-	cancelTimer: () => void;
+	timer: NodeJS.Timeout;
 	token: string;
 }
 
@@ -47,39 +46,10 @@ export function getPendingPermissionSnapshot(): PendingPermissionSnapshot {
 export function subscribePendingPermissions(
 	listener: (snapshot: PendingPermissionSnapshot) => void
 ): () => void {
-	const release = beginGlobalWorktreeActivity();
-	// A retained listener may resume consumers long after subscription setup.
-	let setupSettled = false;
-	let cleanupSettled = false;
-	let cleanupDepth = 0;
-	let released = false;
-	const releaseIfSettled = () => {
-		if (setupSettled && cleanupSettled && cleanupDepth === 0 && !released) {
-			released = true;
-			release();
-		}
+	pendingListeners.add(listener);
+	return () => {
+		pendingListeners.delete(listener);
 	};
-	try {
-		// A throwing insertion may already have retained the listener.
-		pendingListeners.add(listener);
-		return () => {
-			const releaseUnsubscribe = beginGlobalWorktreeActivity();
-			cleanupDepth++;
-			let completed = false;
-			try {
-				pendingListeners.delete(listener);
-				completed = true;
-			} finally {
-				cleanupSettled = completed;
-				cleanupDepth--;
-				releaseIfSettled();
-				releaseUnsubscribe();
-			}
-		};
-	} finally {
-		setupSettled = true;
-		releaseIfSettled();
-	}
 }
 
 function notifyPendingPermissions(): void {
@@ -102,59 +72,26 @@ export function registerSpawn(binding: RelaySpawnBinding): {
 	token: string;
 	cleanup: () => void;
 } {
-	// A valid token can admit future permission work after setup or native close.
-	// Own it independently through successful cleanup, including reentrant calls.
-	const release = beginGlobalWorktreeActivity();
-	let insertionStarted = false;
-	let setupSettled = false;
-	let cleanupDepth = 0;
-	let cleanupSettled = false;
-	let released = false;
-	const releaseIfSettled = () => {
-		if (setupSettled && cleanupSettled && cleanupDepth === 0 && !released) {
-			released = true;
-			release();
-		}
-	};
-	try {
-		const token = generateRelayToken();
-		// Once insertion starts, an exception cannot prove the token is absent.
-		insertionStarted = true;
-		bindings.set(token, binding);
+	const token = generateRelayToken();
+	bindings.set(token, binding);
 
-		const cleanup = () => {
-			const releaseCleanup = beginGlobalWorktreeActivity();
-			cleanupDepth++;
-			let completed = false;
-			try {
-				bindings.delete(token);
-				let changed = false;
-				// Deny any requests still waiting on this dead spawn so the bridge's
-				// socket handler (if somehow still open) doesn't hang forever.
-				for (const [requestId, req] of pending) {
-					if (req.token === token) {
-						req.cancelTimer();
-						pending.delete(requestId);
-						changed = true;
-						req.resolve({ behavior: 'deny', message: 'Agent process exited.' });
-					}
-				}
-				if (changed) notifyPendingPermissions();
-				completed = true;
-			} finally {
-				cleanupSettled = completed;
-				cleanupDepth--;
-				releaseIfSettled();
-				releaseCleanup();
+	const cleanup = () => {
+		bindings.delete(token);
+		let changed = false;
+		// Deny any requests still waiting on this dead spawn so the bridge's
+		// socket handler (if somehow still open) doesn't hang forever.
+		for (const [requestId, req] of pending) {
+			if (req.token === token) {
+				clearTimeout(req.timer);
+				pending.delete(requestId);
+				changed = true;
+				req.resolve({ behavior: 'deny', message: 'Agent process exited.' });
 			}
-		};
+		}
+		if (changed) notifyPendingPermissions();
+	};
 
-		return { token, cleanup };
-	} finally {
-		setupSettled = true;
-		if (!insertionStarted) cleanupSettled = true;
-		releaseIfSettled();
-	}
+	return { token, cleanup };
 }
 
 /** Look up which session/tab a token belongs to, or undefined if unknown. */
@@ -172,68 +109,22 @@ export function createPending(
 	token: string,
 	timeoutMs: number = RELAY_DECISION_TIMEOUT_MS
 ): Promise<PermissionDecision> {
-	const release = beginGlobalWorktreeActivity();
-	let setupSettled = false;
-	let timerSettled = false;
-	let decisionSettled = false;
-	let expiring = false;
-	let released = false;
-	// A rejected setup can leave a live timer; a failed notification can leave
-	// an unresolved decision. Neither is completion of this request's work.
-	const releaseIfSettled = () => {
-		if (setupSettled && timerSettled && decisionSettled && !expiring && !released) {
-			released = true;
-			release();
+	return new Promise<PermissionDecision>((resolve) => {
+		const timer = setTimeout(() => {
+			pending.delete(requestId);
+			notifyPendingPermissions();
+			resolve({
+				behavior: 'deny',
+				message: 'Permission request timed out with no response.',
+			});
+		}, timeoutMs);
+		// Don't keep the event loop alive purely for a pending prompt.
+		if (typeof timer.unref === 'function') {
+			timer.unref();
 		}
-	};
-	try {
-		return new Promise<PermissionDecision>((resolve) => {
-			const resolveDecision = (decision: PermissionDecision) => {
-				resolve(decision);
-				decisionSettled = true;
-				releaseIfSettled();
-			};
-			try {
-				const timer = setTimeout(() => {
-					expiring = true;
-					try {
-						pending.delete(requestId);
-						notifyPendingPermissions();
-						resolveDecision({
-							behavior: 'deny',
-							message: 'Permission request timed out with no response.',
-						});
-					} finally {
-						timerSettled = true;
-						expiring = false;
-						releaseIfSettled();
-					}
-				}, timeoutMs);
-				// Don't keep the event loop alive purely for a pending prompt.
-				if (typeof timer.unref === 'function') {
-					timer.unref();
-				}
-				pending.set(requestId, {
-					resolve: resolveDecision,
-					cancelTimer: () => {
-						clearTimeout(timer);
-						timerSettled = true;
-						releaseIfSettled();
-					},
-					token,
-				});
-				notifyPendingPermissions();
-			} catch (error) {
-				// The Promise executor rejects with this same error. A timer whose
-				// completion was not observed must continue to exclude cleanup.
-				decisionSettled = true;
-				throw error;
-			}
-		});
-	} finally {
-		setupSettled = true;
-		releaseIfSettled();
-	}
+		pending.set(requestId, { resolve, timer, token });
+		notifyPendingPermissions();
+	});
 }
 
 /**
@@ -241,20 +132,15 @@ export function createPending(
  * (already resolved, timed out, or cleaned up). Returns whether it matched.
  */
 export function resolvePending(requestId: string, decision: PermissionDecision): boolean {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		const req = pending.get(requestId);
-		if (!req) {
-			return false;
-		}
-		req.cancelTimer();
-		pending.delete(requestId);
-		notifyPendingPermissions();
-		req.resolve(decision);
-		return true;
-	} finally {
-		release();
+	const req = pending.get(requestId);
+	if (!req) {
+		return false;
 	}
+	clearTimeout(req.timer);
+	pending.delete(requestId);
+	notifyPendingPermissions();
+	req.resolve(decision);
+	return true;
 }
 
 /** Test/inspection helper: current counts. */

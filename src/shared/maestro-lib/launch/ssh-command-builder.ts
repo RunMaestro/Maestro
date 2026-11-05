@@ -277,7 +277,6 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
  *
  * @param config SSH remote configuration
  * @param remoteOptions Options for the remote command
- * @param resolvePath Optional host resolver; standalone callers keep library discovery.
  * @returns SSH command/args plus the script+prompt to send via stdin
  *
  * @example
@@ -306,13 +305,12 @@ export async function buildSshCommandWithStdin(
 		/** When set to 'prompt-embed', embed image paths in the prompt/stdinInput instead of adding -i CLI args.
 		 * Used for resumed Codex sessions where the resume command doesn't support -i flag. */
 		imageResumeMode?: 'prompt-embed';
-	},
-	resolvePath: () => Promise<string> = resolveSshPath
+	}
 ): Promise<SshCommandResult> {
 	const args: string[] = [];
 
 	// Resolve the SSH binary path
-	const sshPath = await resolvePath();
+	const sshPath = await resolveSshPath();
 
 	// For stdin-based execution, we never need TTY (stdin is the script, not user input)
 	// TTY would interfere with piping the script
@@ -510,7 +508,6 @@ export async function buildSshCommandWithStdin(
  *
  * @param config SSH remote configuration
  * @param remoteOptions Options for the remote command (command, args, cwd, env)
- * @param resolvePath Optional host resolver; standalone callers keep library discovery.
  * @returns Object with 'ssh' command and arguments array
  *
  * @example
@@ -551,13 +548,12 @@ export async function buildSshCommandWithStdin(
  */
 export async function buildSshCommand(
 	config: SshRemoteConfig,
-	remoteOptions: RemoteCommandOptions,
-	resolvePath: () => Promise<string> = resolveSshPath
+	remoteOptions: RemoteCommandOptions
 ): Promise<SshCommandResult> {
 	const args: string[] = [];
 
 	// Resolve the SSH binary path (handles packaged Electron apps where PATH is limited)
-	const sshPath = await resolvePath();
+	const sshPath = await resolveSshPath();
 
 	// Decide whether we need to force a TTY for the remote command.
 	// Historically we forced a TTY for Claude Code when running with `--print`.

@@ -34,10 +34,6 @@ import type {
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
 import { resolveHermesGatewayLaunch } from '../../../shared/maestro-lib/providers/hermes-launch';
-import {
-	withWorktreeCallbackActivity,
-	withWorktreeTurnActivity,
-} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'HermesGateway';
 
@@ -70,28 +66,6 @@ export class HermesApiSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(start, observe) => this.spawnAdmitted(config, start, observe),
-				async (error) => {
-					const reporting = Promise.resolve().then(() => captureException(error));
-					try {
-						logger.error('[HermesTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
-					} finally {
-						await reporting;
-					}
-				}
-			);
-		} catch (error) {
-			return { pid: -1, success: false, error: String(error) };
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		startAdmittedTurn: typeof startTurn,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		if (config.toolType !== 'hermes' || config.harnessControlMode !== 'native') {
 			return this.fallbackToCli(config);
 		}
@@ -101,13 +75,7 @@ export class HermesApiSpawner {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new HermesTurn(
-				this.context,
-				resolveHermesGatewayLaunch(config),
-				config,
-				startAdmittedTurn,
-				observeCompletion
-			).start();
+			return new HermesTurn(this.context, resolveHermesGatewayLaunch(config), config).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -116,11 +84,7 @@ export class HermesApiSpawner {
 					error: `Hermes native mode could not start: ${String(error)}`,
 				};
 			}
-			observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -155,9 +119,7 @@ class HermesTurn {
 	constructor(
 		private readonly ctx: HermesTurnContext,
 		private readonly config: ProcessConfig,
-		private readonly fallbackConfig: ProcessConfig,
-		private readonly startAdmittedTurn: typeof startTurn,
-		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+		private readonly fallbackConfig: ProcessConfig
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -211,7 +173,7 @@ class HermesTurn {
 			config.extraPathDirs,
 			config.querySource
 		);
-		this.turn = this.startAdmittedTurn(
+		this.turn = startTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -239,8 +201,8 @@ class HermesTurn {
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
-		this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
+		void this.turn.done.then((exit) => this.handleChildExit(exit));
+		void this.run().catch((error) => this.handleRunError(error));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -251,9 +213,7 @@ class HermesTurn {
 		}
 		this.connection = new NdJsonConnection(this.turn.child, {
 			protocol: 'jsonrpc',
-			onNotification: (record) => {
-				this.observeCompletion(this.onNotification(record));
-			},
+			onNotification: (record) => this.onNotification(record),
 			onServerRequest: (record) => this.onServerRequest(record),
 		});
 		if (config.agentSessionId) {
@@ -272,19 +232,15 @@ class HermesTurn {
 					pending_clarify?: unknown;
 				};
 				if (pending.pending_approval && typeof pending.pending_approval === 'object') {
-					this.observeCompletion(
-						this.onGatewayInteraction(
-							'approval.request',
-							pending.pending_approval as Record<string, unknown>
-						)
+					void this.onGatewayInteraction(
+						'approval.request',
+						pending.pending_approval as Record<string, unknown>
 					);
 				}
 				if (pending.pending_clarify && typeof pending.pending_clarify === 'object') {
-					this.observeCompletion(
-						this.onGatewayInteraction(
-							'clarify.request',
-							pending.pending_clarify as Record<string, unknown>
-						)
+					void this.onGatewayInteraction(
+						'clarify.request',
+						pending.pending_clarify as Record<string, unknown>
 					);
 				}
 			}
@@ -318,15 +274,7 @@ class HermesTurn {
 		});
 	}
 
-	private async onNotification(record: NdJsonRecord): Promise<void> {
-		// Retained transport callbacks can outlive the original start observer.
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.onNotificationAdmitted(record)),
-			(error) => captureException(error)
-		);
-	}
-
-	private async onNotificationAdmitted(record: NdJsonRecord): Promise<void> {
+	private onNotification(record: NdJsonRecord): void {
 		if (this.isSuperseded()) return;
 		let method = record.method;
 		let params = (record.params ?? {}) as Record<string, unknown>;
@@ -373,7 +321,8 @@ class HermesTurn {
 			case 'clarify.request':
 			case 'secret.request':
 			case 'sudo.request':
-				return this.onGatewayInteraction(method, params);
+				void this.onGatewayInteraction(method, params);
+				return;
 			case 'approval.expire':
 			case 'clarify.expire':
 			case 'secret.expire':
@@ -400,7 +349,8 @@ class HermesTurn {
 				this.forwardUsage(params.usage);
 				return;
 			case 'message.complete':
-				return this.onComplete(params);
+				void this.onComplete(params);
+				return;
 			case 'message.error':
 			case 'run.failed':
 			case 'run.cancelled':
@@ -481,13 +431,6 @@ class HermesTurn {
 	}
 
 	private async steer(request: { id: string; text: string }): Promise<SteeringResultFrame> {
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.steerAdmitted(request)),
-			(error) => captureException(error)
-		);
-	}
-
-	private async steerAdmitted(request: { id: string; text: string }): Promise<SteeringResultFrame> {
 		if (!this.connection || !this.providerSessionId || this.finished) {
 			return {
 				type: 'steering',
@@ -531,29 +474,16 @@ class HermesTurn {
 		method: string,
 		params: Record<string, unknown>
 	): Promise<void> {
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.onGatewayInteractionAdmitted(method, params, observe)),
-			(error) => captureException(error)
-		);
-	}
-
-	private async onGatewayInteractionAdmitted(
-		method: string,
-		params: Record<string, unknown>,
-		observe: <T>(completion: Promise<T>) => Promise<T>
-	): Promise<void> {
 		const nativeId = typeof params.request_id === 'string' ? params.request_id : '';
 		if (!nativeId || !this.connection) return;
 		const base = method.slice(0, -'.request'.length);
 		if (base === 'approval') {
-			observe(
-				this.connection
-					.request('approval.received', {
-						session_id: this.providerSessionId,
-						request_id: nativeId,
-					})
-					.catch(() => undefined)
-			);
+			void this.connection
+				.request('approval.received', {
+					session_id: this.providerSessionId,
+					request_id: nativeId,
+				})
+				.catch(() => undefined);
 		}
 		try {
 			const response = await this.onServerRequest({
@@ -590,15 +520,6 @@ class HermesTurn {
 	}
 
 	private async onServerRequest(record: NdJsonRecord): Promise<NdJsonServerResponse> {
-		// Retained callbacks need fresh admission even after the original native
-		// turn and its observer have settled. Refuse before broker or record access.
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.onServerRequestAdmitted(record)),
-			(error) => captureException(error)
-		);
-	}
-
-	private async onServerRequestAdmitted(record: NdJsonRecord): Promise<NdJsonServerResponse> {
 		const method = typeof record.method === 'string' ? record.method.replace(/\.request$/, '') : '';
 		const params = (record.params ?? {}) as Record<string, unknown>;
 		const nativeId =
@@ -719,57 +640,41 @@ class HermesTurn {
 	}
 
 	private async interrupt(): Promise<void> {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				this.cancelled = true;
-				if (this.connection && this.providerSessionId) {
-					observe(
-						this.connection
-							.request('session.interrupt', { session_id: this.providerSessionId })
-							.catch(() => undefined)
-					);
-				}
-				stopProcess(
-					{ child: this.turn.child },
-					{
-						from: 'interrupt',
-						graceMs: INTERACTIVE_STOP_GRACE_MS,
-						sessionId: this.config.sessionId,
-						label: 'interrupt',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
-				);
-			},
-			(error) => captureException(error)
+		this.cancelled = true;
+		if (this.connection && this.providerSessionId) {
+			void this.connection
+				.request('session.interrupt', { session_id: this.providerSessionId })
+				.catch(() => undefined);
+		}
+		stopProcess(
+			{ child: this.turn.child },
+			{
+				from: 'interrupt',
+				graceMs: INTERACTIVE_STOP_GRACE_MS,
+				sessionId: this.config.sessionId,
+				label: 'interrupt',
+			}
 		);
 	}
 
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				this.cancelled = true;
-				if (this.connection && this.providerSessionId) {
-					observe(
-						this.connection
-							.request('session.interrupt', { session_id: this.providerSessionId })
-							.catch(() => undefined)
-					);
-				}
-				stopProcess(
-					{ child: this.turn.child },
-					{
-						from: 'terminate',
-						upTo: options?.shutdown ? 'terminate' : 'kill',
-						graceMs: INTERACTIVE_STOP_GRACE_MS,
-						immediate: options?.shutdown,
-						blocking: options?.sync,
-						sessionId: this.config.sessionId,
-						label: 'kill',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
-				);
-			},
-			(error) => captureException(error)
+		this.cancelled = true;
+		if (this.connection && this.providerSessionId) {
+			void this.connection
+				.request('session.interrupt', { session_id: this.providerSessionId })
+				.catch(() => undefined);
+		}
+		stopProcess(
+			{ child: this.turn.child },
+			{
+				from: 'terminate',
+				upTo: options?.shutdown ? 'terminate' : 'kill',
+				graceMs: INTERACTIVE_STOP_GRACE_MS,
+				immediate: options?.shutdown,
+				blocking: options?.sync,
+				sessionId: this.config.sessionId,
+				label: 'kill',
+			}
 		);
 	}
 
@@ -814,8 +719,7 @@ class HermesTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'fallback',
-				},
-				(operation) => withWorktreeCallbackActivity(operation, captureException)
+				}
 			);
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
@@ -831,14 +735,9 @@ class HermesTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			},
-			(operation) => withWorktreeCallbackActivity(operation, captureException)
+			}
 		);
-		this.observeCompletion(
-			Promise.resolve()
-				.then(() => captureException(error))
-				.catch(() => {})
-		);
+		void captureException(error);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -870,23 +769,16 @@ class HermesTurn {
 	}
 
 	private finish(code: number): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				if (this.finished) return;
-				this.finished = true;
-				observe(
-					this.ctx.exitHandler
-						.handleExit(this.config.sessionId, code, this.managedProcess)
-						.catch((error) => {
-							logger.error('[HermesTurn] handleExit failed', LOG_CONTEXT, {
-								sessionId: this.config.sessionId,
-								error: String(error),
-							});
-						})
-				);
-			},
-			(error) => captureException(error)
-		);
+		if (this.finished) return;
+		this.finished = true;
+		void this.ctx.exitHandler
+			.handleExit(this.config.sessionId, code, this.managedProcess)
+			.catch((error) => {
+				logger.error('[HermesTurn] handleExit failed', LOG_CONTEXT, {
+					sessionId: this.config.sessionId,
+					error: String(error),
+				});
+			});
 	}
 
 	private isSuperseded(): boolean {

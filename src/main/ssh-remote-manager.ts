@@ -9,8 +9,6 @@ import { SshRemoteConfig, SshRemoteTestResult } from '../shared/types';
 import { execFileNoThrow, ExecResult } from './utils/execFile';
 import { expandTilde } from '../shared/pathUtils';
 import { captureException } from './utils/sentry';
-import { beginGlobalWorktreeActivity } from './git/worktreeActivity';
-import { withWorktreeTurnActivity } from './git/worktreeTurnActivity';
 import { getPathAccessCache, defaultReadableProbe } from './utils/path-access-cache';
 import { validateSshOption } from '../shared/sshOptions';
 import {
@@ -56,12 +54,7 @@ const defaultDeps: SshRemoteManagerDeps = {
 		return getPathAccessCache().check(filePath, defaultReadableProbe);
 	},
 	execSsh: (command: string, args: string[]): Promise<ExecResult> => {
-		// Result/error/timeout may precede stdio close. Unknown observation or
-		// launch retains this hold; only actual native close can release it.
-		const releaseNative = beginGlobalWorktreeActivity();
-		return execFileNoThrow(command, args, undefined, undefined, (child) => {
-			child.once('close', releaseNative);
-		});
+		return execFileNoThrow(command, args);
 	},
 };
 
@@ -170,20 +163,6 @@ export class SshRemoteManager {
 		config: SshRemoteConfig,
 		agentCommand?: string
 	): Promise<SshRemoteTestResult> {
-		return withWorktreeTurnActivity(
-			(_start, observe) => observe(this.testConnectionAdmitted(config, agentCommand, observe)),
-			() => {
-				// Diagnostics below are observed independently without replacing
-				// the connection result or producing an unhandled rejection.
-			}
-		);
-	}
-
-	private async testConnectionAdmitted(
-		config: SshRemoteConfig,
-		agentCommand: string | undefined,
-		observe: <T>(completion: Promise<T>) => Promise<T>
-	): Promise<SshRemoteTestResult> {
 		// First validate the config
 		const validation = this.validateConfig(config);
 		if (!validation.valid) {
@@ -238,7 +217,7 @@ export class SshRemoteManager {
 				},
 			};
 		} catch (err) {
-			void observe(captureException(err));
+			void captureException(err);
 			return {
 				success: false,
 				error: `Connection test failed: ${String(err)}`,

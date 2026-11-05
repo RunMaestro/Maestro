@@ -51,11 +51,6 @@ import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
-import {
-	withWorktreeCallbackActivity,
-	withWorktreeTurnActivity,
-} from '../git/worktreeTurnActivity';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -177,17 +172,6 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			return this.spawnAdmitted(config);
-		} finally {
-			// SDK/server work may outlive this synchronous setup. Its native lifetime
-			// needs independent coverage; manager settlement is not completion.
-			release();
-		}
-	}
-
-	private spawnAdmitted(config: ProcessConfig): SpawnResult {
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&
@@ -433,13 +417,8 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	private fallbackToCli(config: ProcessConfig): SpawnResult {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			this.harnessControls.forget(config.sessionId);
-			return this.childProcessSpawner.spawn(config);
-		} finally {
-			release();
-		}
+		this.harnessControls.forget(config.sessionId);
+		return this.childProcessSpawner.spawn(config);
 	}
 
 	private registerHarnessControl(config: ProcessConfig): void {
@@ -500,9 +479,8 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Ask a running turn to take `text` into the turn in flight (chat steering):
 	 * a Claude turn on maestro-p, or a Codex turn on the app-server transport.
-	 * Resolves with a verdict for the UI. Cleanup reservation refusal rejects
-	 * before control lookup. The later verdict for a delivered steer is emitted
-	 * as `steering-verdict` with the same id: for
+	 * Resolves with a verdict for the UI; never rejects. The later verdict for a
+	 * delivered steer is emitted as `steering-verdict` with the same id: for
 	 * maestro-p it arrives on stdout (StdoutHandler), for Codex it comes from
 	 * `steerCodexAppServerTurn`.
 	 *
@@ -522,15 +500,6 @@ export class ProcessManager extends EventEmitter {
 	 * turn.
 	 */
 	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			return await this.steerAdmitted(sessionId, text);
-		} finally {
-			release();
-		}
-	}
-
-	private async steerAdmitted(sessionId: string, text: string): Promise<SteeringResultFrame> {
 		const id = randomUUID();
 		const process = this.processes.get(sessionId);
 		if (!process) {
@@ -557,17 +526,6 @@ export class ProcessManager extends EventEmitter {
 	 * Write data to a process's stdin
 	 */
 	write(sessionId: string, data: string): boolean {
-		return withWorktreeTurnActivity(
-			(_start, observe) => this.writeAdmitted(sessionId, data, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private writeAdmitted(
-		sessionId: string,
-		data: string,
-		observe: <Result>(completion: Promise<Result>) => Promise<Result>
-	): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process) {
 			logger.error('[ProcessManager] write() - No process found for session', 'ProcessManager', {
@@ -585,29 +543,12 @@ export class ProcessManager extends EventEmitter {
 				process.ptyProcess.write(data);
 				return true;
 			} else if (process.childProcess?.stdin) {
-				// Retain buffered input independently of map removal or native close.
-				// The callback acknowledges the stream write, not the agent's work.
-				const pending = Promise.withResolvers<void>();
-				observe(pending.promise);
-				try {
-					process.childProcess.stdin.write(data, (error) => {
-						if (error) pending.reject(error);
-						else pending.resolve();
-					});
-				} catch (error) {
-					pending.resolve();
-					throw error;
-				}
+				process.childProcess.stdin.write(data);
 				return true;
 			}
 			return false;
 		} catch (error) {
-			// Own diagnostics independently of the synchronous verdict and native close.
-			observe(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to write to process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -620,18 +561,6 @@ export class ProcessManager extends EventEmitter {
 	 * Resize terminal (for pty processes)
 	 */
 	resize(sessionId: string, cols: number, rows: number): boolean {
-		return withWorktreeTurnActivity(
-			(_start, observe) => this.resizeAdmitted(sessionId, cols, rows, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private resizeAdmitted(
-		sessionId: string,
-		cols: number,
-		rows: number,
-		observe: <Result>(completion: Promise<Result>) => Promise<Result>
-	): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process || !process.isTerminal || !process.ptyProcess) return false;
 
@@ -639,12 +568,7 @@ export class ProcessManager extends EventEmitter {
 			process.ptyProcess.resize(cols, rows);
 			return true;
 		} catch (error) {
-			// Own diagnostics independently of the synchronous verdict and native close.
-			observe(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to resize terminal', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -667,16 +591,6 @@ export class ProcessManager extends EventEmitter {
 	 * TUI that cancelled its turn and is waiting for the next prompt.
 	 */
 	interrupt(sessionId: string): boolean {
-		return withWorktreeTurnActivity(
-			(_start, observe) => this.interruptAdmitted(sessionId, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private interruptAdmitted(
-		sessionId: string,
-		observe: <Result>(completion: Promise<Result>) => Promise<Result>
-	): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process) return false;
 
@@ -689,7 +603,7 @@ export class ProcessManager extends EventEmitter {
 
 		try {
 			if (this.harnessControls.has(sessionId)) {
-				observe(this.harnessControls.interrupt(sessionId));
+				void this.harnessControls.interrupt(sessionId);
 				return true;
 			}
 			if (process.sdkController) {
@@ -708,8 +622,7 @@ export class ProcessManager extends EventEmitter {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId,
 						label: 'interrupt',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
+					}
 				);
 				// The local child of an SSH spawn is only the ssh client; the agent on
 				// the remote host never sees its signals. Ask the host to deliver them:
@@ -720,12 +633,7 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
-			// Own diagnostics independently of the synchronous verdict and native close.
-			observe(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to interrupt process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -765,17 +673,9 @@ export class ProcessManager extends EventEmitter {
 	 *   and one sent right behind the SIGTERM would take that chance away.
 	 * - on Windows both go through a blocking `taskkill /t /f`.
 	 */
-	kill(sessionId: string, options: { sync?: boolean; shutdown?: boolean } = {}): boolean {
-		return withWorktreeTurnActivity(
-			(_start, observe) => this.killAdmitted(sessionId, options, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private killAdmitted(
+	kill(
 		sessionId: string,
-		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean },
-		observe: <Result>(completion: Promise<Result>) => Promise<Result>
+		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean } = {}
 	): boolean {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return this.copilotSdkSpawner.closeSession(sessionId);
@@ -792,7 +692,7 @@ export class ProcessManager extends EventEmitter {
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (this.harnessControls.has(sessionId)) {
-				observe(this.harnessControls.close(sessionId, { sync, shutdown }));
+				void this.harnessControls.close(sessionId, { sync, shutdown });
 			} else if (proc.sdkController) {
 				// Server-backed process (OpenCode SDK, Codex app-server): the stop
 				// starts with a protocol call. The controller tears its transport down
@@ -810,8 +710,7 @@ export class ProcessManager extends EventEmitter {
 						includeDescendants: !shutdown && proc.toolType !== 'terminal',
 						sessionId,
 						label: 'kill',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
+					}
 				);
 			} else if (proc.childProcess) {
 				this.signalRemote(sessionId, proc, 'terminate');
@@ -826,19 +725,13 @@ export class ProcessManager extends EventEmitter {
 						includeDescendants: !shutdown,
 						sessionId,
 						label: 'kill',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
+					}
 				);
 			}
 			this.processes.delete(sessionId);
 			return true;
 		} catch (error) {
-			// Own diagnostics independently of the synchronous verdict and native close.
-			observe(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to kill process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -875,43 +768,13 @@ export class ProcessManager extends EventEmitter {
 		proc: ManagedProcess,
 		child: NonNullable<ManagedProcess['childProcess']>
 	): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				if (!proc.sshRemotePidFile) return;
-				// Registry removal or native close cannot cancel a scheduled callback.
-				// Own its lifetime separately from the signal adapter's SSH child.
-				const scheduled = Promise.withResolvers<void>();
-				observe(scheduled.promise);
-				let timer: ReturnType<typeof setTimeout> | undefined;
-				const finish = (): void =>
-					withWorktreeCallbackActivity(() => {
-						clearTimeout(timer);
-						child.removeListener('exit', finish);
-						scheduled.resolve();
-					}, captureException);
-				try {
-					timer = setTimeout(() => {
-						// Retained callbacks need fresh admission even after cancellation.
-						withWorktreeCallbackActivity(() => {
-							try {
-								if (child.exitCode === null && child.signalCode === null) {
-									this.signalRemote(sessionId, proc, 'terminate');
-								}
-							} finally {
-								finish();
-							}
-						}, captureException);
-					}, INTERACTIVE_STOP_GRACE_MS);
-					child.once('exit', finish);
-				} catch (error) {
-					// A failed listener setup must not leave an admitted timer behind.
-					// If cancellation itself fails, the unresolved hold stays blocked.
-					finish();
-					throw error;
-				}
-			},
-			(error) => captureException(error)
-		);
+		if (!proc.sshRemotePidFile) return;
+		const timer = setTimeout(() => {
+			if (child.exitCode === null && child.signalCode === null) {
+				this.signalRemote(sessionId, proc, 'terminate');
+			}
+		}, INTERACTIVE_STOP_GRACE_MS);
+		child.once('exit', () => clearTimeout(timer));
 	}
 
 	/**
@@ -922,17 +785,7 @@ export class ProcessManager extends EventEmitter {
 	 * the libuv/N-API teardown race that aborts the main process during
 	 * Electron environment cleanup (see kill() docs).
 	 */
-	killAll(options: { shutdown?: boolean } = {}): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => this.killAllAdmitted(options, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private killAllAdmitted(
-		{ shutdown = false }: { shutdown?: boolean },
-		observe: <Result>(completion: Promise<Result>) => Promise<Result>
-	): void {
+	killAll({ shutdown = false }: { shutdown?: boolean } = {}): void {
 		const sessionIds = [...this.processes.keys()];
 		for (const sessionId of sessionIds) {
 			// Use sync kills so process trees are dead before the app exits.
@@ -942,29 +795,18 @@ export class ProcessManager extends EventEmitter {
 		}
 		// Tear down the shared OpenCode server(s) that back the SDK path.
 		opencodeServerManager.shutdown();
-		observe(
-			this.copilotSdkSpawner.closeAll().catch((error) =>
-				Promise.resolve()
-					.then(() =>
-						captureException(error instanceof Error ? error : new Error(String(error)), {
-							context: 'Copilot native connection shutdown',
-						})
-					)
-					.catch(() => {})
-			)
-		);
+		void this.copilotSdkSpawner.closeAll().catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				context: 'Copilot native connection shutdown',
+			});
+		});
 	}
 	/** Stop every active turn for an agent and dispose retained native runtimes. */
 	closeAgent(agentId: string): void {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			for (const proc of [...this.processes.values()]) {
-				if (proc.sessionId.replace(/-ai(?:-.+)?$/, '') === agentId) this.kill(proc.sessionId);
-			}
-			this.copilotSdkSpawner.closeAgent(agentId);
-		} finally {
-			release();
+		for (const proc of [...this.processes.values()]) {
+			if (proc.sessionId.replace(/-ai(?:-.+)?$/, '') === agentId) this.kill(proc.sessionId);
 		}
+		this.copilotSdkSpawner.closeAgent(agentId);
 	}
 
 	/**
@@ -1046,38 +888,33 @@ export class ProcessManager extends EventEmitter {
 		cols?: number;
 		rows?: number;
 	}): SpawnResult {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			const shell = config.shell || getDefaultShell();
-			logger.info('[ProcessManager] Spawning terminal tab PTY', 'ProcessManager', {
-				sessionId: config.sessionId,
-				cwd: config.cwd,
-				shell,
-				cols: config.cols || 80,
-				rows: config.rows || 24,
-			});
-			return this.spawn({
-				sessionId: config.sessionId,
-				toolType: 'terminal',
-				reuseTerminal: true,
-				cwd: config.cwd,
-				command: shell,
-				args: [],
-				shell,
-				shellArgs: config.shellArgs,
-				shellEnvVars: config.shellEnvVars,
-				cols: config.cols || 80,
-				rows: config.rows || 24,
-			});
-		} finally {
-			release();
-		}
+		const shell = config.shell || getDefaultShell();
+		logger.info('[ProcessManager] Spawning terminal tab PTY', 'ProcessManager', {
+			sessionId: config.sessionId,
+			cwd: config.cwd,
+			shell,
+			cols: config.cols || 80,
+			rows: config.rows || 24,
+		});
+		return this.spawn({
+			sessionId: config.sessionId,
+			toolType: 'terminal',
+			reuseTerminal: true,
+			cwd: config.cwd,
+			command: shell,
+			args: [],
+			shell,
+			shellArgs: config.shellArgs,
+			shellEnvVars: config.shellEnvVars,
+			cols: config.cols || 80,
+			rows: config.rows || 24,
+		});
 	}
 
 	/**
 	 * Run a single command and capture stdout/stderr cleanly
 	 */
-	async runCommand(
+	runCommand(
 		sessionId: string,
 		command: string,
 		cwd: string,
@@ -1085,21 +922,10 @@ export class ProcessManager extends EventEmitter {
 		shellEnvVars?: Record<string, string>,
 		sshRemoteConfig?: SshRemoteConfig | null
 	): Promise<CommandResult> {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			if (sshRemoteConfig) {
-				return await this.sshCommandRunner.run(
-					sessionId,
-					command,
-					cwd,
-					sshRemoteConfig,
-					shellEnvVars
-				);
-			}
-			return await this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
-		} finally {
-			release();
+		if (sshRemoteConfig) {
+			return this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars);
 		}
+		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
 	}
 
 	/**

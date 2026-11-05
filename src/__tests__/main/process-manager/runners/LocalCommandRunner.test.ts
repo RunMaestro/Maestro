@@ -113,10 +113,9 @@ describe('LocalCommandRunner', () => {
 			const runner = new LocalCommandRunner(new EventEmitter());
 
 			const run = runner.run('session-1', 'tail -f log', '/tmp');
-			await vi.waitFor(() => expect(mockPtySpawn).toHaveBeenCalledOnce());
 			expect(runner.cancel('session-1')).toBe(true);
 
-			const signals = killSpy.mock.calls.map((c: Parameters<typeof process.kill>) => c[1]);
+			const signals = killSpy.mock.calls.map((c) => c[1]);
 			expect(signals).toContain('SIGKILL');
 			expect(signals).not.toContain('SIGTERM');
 			expect(signals).not.toContain('SIGHUP');
@@ -137,7 +136,6 @@ describe('LocalCommandRunner', () => {
 			const runner = new LocalCommandRunner(emitter);
 
 			const run = runner.run('session-1', 'top', '/tmp');
-			await vi.waitFor(() => expect(mockPtySpawn).toHaveBeenCalledOnce());
 			runner.cancel('session-1');
 
 			// No timers advanced, nothing awaited beyond the microtask queue.
@@ -152,7 +150,6 @@ describe('LocalCommandRunner', () => {
 			const runner = new LocalCommandRunner(new EventEmitter());
 
 			const run = runner.run('session-1', 'top', '/tmp');
-			await vi.waitFor(() => expect(mockPtySpawn).toHaveBeenCalledOnce());
 			runner.cancel('session-1');
 
 			expect(ptyKill).toHaveBeenCalledWith('SIGKILL');
@@ -167,7 +164,6 @@ describe('LocalCommandRunner', () => {
 			const runner = new LocalCommandRunner(emitter);
 
 			const run = runner.run('session-1', 'tail -f log', '/tmp');
-			await vi.waitFor(() => expect(mockPtySpawn).toHaveBeenCalledOnce());
 			runner.cancel('session-1');
 			exit(143); // the pty catching up afterwards must not double-report
 			await run;
@@ -185,7 +181,6 @@ describe('LocalCommandRunner', () => {
 			const runner = new LocalCommandRunner(new EventEmitter());
 
 			const run = runner.run('session-1', 'ls', '/tmp');
-			await vi.waitFor(() => expect(mockPtySpawn).toHaveBeenCalledOnce());
 			runner.cancel('session-1');
 			exit();
 			await run;
@@ -202,7 +197,6 @@ describe('LocalCommandRunner', () => {
 			const runner = new LocalCommandRunner(new EventEmitter());
 
 			const run = runner.run('session-1', 'tail -f log', '/tmp');
-			await vi.waitFor(() => expect(mockPtySpawn).toHaveBeenCalledOnce());
 			runner.cancel('session-1');
 			exit();
 			await run;

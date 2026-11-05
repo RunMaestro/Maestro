@@ -44,28 +44,23 @@ export function superviseAgentProcess(
 		signal?: AbortSignal;
 		onStop: (reason: string) => void;
 		onForcedStop: () => void;
-	},
-	// Admit retained callbacks before supervisor effects. Portable callers keep
-	// synchronous behavior without depending on the desktop activity registry.
-	activity?: <T>(operation: () => T) => T
+	}
 ): {
 	modelActivity: () => void;
 	observe: (event: ParsedEvent) => void;
 	processExited: Promise<void>;
 	dispose: () => void;
 } {
-	const runActivity = activity ?? (<T>(operation: () => T): T => operation());
 	let confirmExit!: () => void;
 	const processExited = new Promise<void>((resolve) => {
 		confirmExit = resolve;
 	});
-	const onClose = (): void => runActivity(confirmExit);
-	const onError = (): void =>
-		runActivity(() => {
-			// An error on an already-started child (for example a failed kill) says
-			// nothing about termination. A failed spawn has no process to retain.
-			if (child.pid === undefined) confirmExit();
-		});
+	const onClose = (): void => confirmExit();
+	const onError = (): void => {
+		// An error on an already-started child (for example a failed kill) says
+		// nothing about termination. A failed spawn has no process to retain.
+		if (child.pid === undefined) confirmExit();
+	};
 	child.once?.('close', onClose);
 	child.on?.('error', onError);
 	if (child.exitCode != null || child.signalCode != null) confirmExit();
@@ -95,14 +90,13 @@ export function superviseAgentProcess(
 	assertHeadlessIdleProfile(profile, options.timeoutMs);
 	let closeDeadline: ReturnType<typeof setTimeout> | undefined;
 
-	const forceStop = (): void =>
-		runActivity(() => {
-			if (disposed || forced) return;
-			forced = true;
-			child.stdout?.destroy();
-			child.stderr?.destroy();
-			options.onForcedStop();
-		});
+	const forceStop = (): void => {
+		if (disposed || forced) return;
+		forced = true;
+		child.stdout?.destroy();
+		child.stderr?.destroy();
+		options.onForcedStop();
+	};
 	const stop = (reason: string): void => {
 		if (disposed || stopping) return;
 		stopping = true;
@@ -121,12 +115,11 @@ export function superviseAgentProcess(
 		// reparent them. Reuse the same tree kill as the host's Stop action.
 		termination = stopProcess(
 			{ child },
-			{ from: 'terminate', graceMs: BACKGROUND_STOP_GRACE_MS, label: 'headless agent' },
-			activity
+			{ from: 'terminate', graceMs: BACKGROUND_STOP_GRACE_MS, label: 'headless agent' }
 		);
 		options.onStatus?.(reason);
 	};
-	const abort = (): void => runActivity(() => stop('Agent run cancelled'));
+	const abort = (): void => stop('Agent run cancelled');
 	const armSilence = (): void => {
 		if (!profile || disposed || stopping) return;
 		silence?.disarm();
@@ -144,34 +137,28 @@ export function superviseAgentProcess(
 				? correlatedToolDeadline
 				: toolReturnDeadline
 		);
-		silence = createIdleWatchdog(
-			{
-				idleMs: Math.max(1, deadline - Date.now()),
-				onIdle: () =>
-					stop(
-						hasOpenTool
-							? 'Agent run stopped: bounded tool or wait budget exhausted without new model progress'
-							: 'Agent run stopped: semantic inactivity budget exhausted'
-					),
-			},
-			runActivity
-		);
+		silence = createIdleWatchdog({
+			idleMs: Math.max(1, deadline - Date.now()),
+			onIdle: () =>
+				stop(
+					hasOpenTool
+						? 'Agent run stopped: bounded tool or wait budget exhausted without new model progress'
+						: 'Agent run stopped: semantic inactivity budget exhausted'
+				),
+		});
 	};
 	const armWarning = (): void => {
 		if (!profile || disposed || stopping) return;
 		warning?.disarm();
-		warning = createIdleWatchdog(
-			{
-				idleMs: profile.warnMs,
-				onIdle: () => {
-					warned = true;
-					options.onStatus?.(
-						'Warning: no new model progress; monitoring bounded inactivity and tool/wait budgets'
-					);
-				},
+		warning = createIdleWatchdog({
+			idleMs: profile.warnMs,
+			onIdle: () => {
+				warned = true;
+				options.onStatus?.(
+					'Warning: no new model progress; monitoring bounded inactivity and tool/wait budgets'
+				);
 			},
-			runActivity
-		);
+		});
 	};
 	const modelProgress = (): void => {
 		lastProgress = Date.now();
@@ -298,41 +285,31 @@ export function superviseAgentProcess(
 		armSilence();
 	};
 	if (options.startupMs) {
-		startup = createIdleWatchdog(
-			{
-				idleMs: options.startupMs,
-				onIdle: () =>
-					stop(
-						`Codex produced no model activity within ${options.startupMs! / 1000} seconds (host startup deadline). Last observed startup phase: ${startupPhase}${startupPhaseAt === undefined ? '' : ` at +${startupPhaseAt / 1000}s`}. Cause unknown: exec can be silent during context compaction; a turn start alone cannot distinguish compaction, provider waiting or other pre-output work.`
-					),
-			},
-			runActivity
-		);
+		startup = createIdleWatchdog({
+			idleMs: options.startupMs,
+			onIdle: () =>
+				stop(
+					`Codex produced no model activity within ${options.startupMs! / 1000} seconds (host startup deadline). Last observed startup phase: ${startupPhase}${startupPhaseAt === undefined ? '' : ` at +${startupPhaseAt / 1000}s`}. Cause unknown: exec can be silent during context compaction; a turn start alone cannot distinguish compaction, provider waiting or other pre-output work.`
+				),
+		});
 	}
 	if (options.timeoutMs) {
-		lifetime = createIdleWatchdog(
-			{
-				idleMs: options.timeoutMs,
-				onIdle: () => stop('Agent run stopped: absolute runtime ceiling exceeded'),
-			},
-			runActivity
-		);
-	}
-	const onExit = (): void =>
-		runActivity(() => {
-			confirmExit();
-			if (disposed || stopping) return;
-			exitDrain = createIdleWatchdog(
-				{
-					idleMs: HEADLESS_PROCESS_CLOSE_TIMEOUT_MS,
-					onIdle: () => {
-						stop('Agent run stopped: provider exited without closing output streams');
-						forceStop();
-					},
-				},
-				runActivity
-			);
+		lifetime = createIdleWatchdog({
+			idleMs: options.timeoutMs,
+			onIdle: () => stop('Agent run stopped: absolute runtime ceiling exceeded'),
 		});
+	}
+	const onExit = (): void => {
+		confirmExit();
+		if (disposed || stopping) return;
+		exitDrain = createIdleWatchdog({
+			idleMs: HEADLESS_PROCESS_CLOSE_TIMEOUT_MS,
+			onIdle: () => {
+				stop('Agent run stopped: provider exited without closing output streams');
+				forceStop();
+			},
+		});
+	};
 	child.once?.('exit', onExit);
 	armWarning();
 	armSilence();
@@ -340,26 +317,24 @@ export function superviseAgentProcess(
 	if (options.signal?.aborted) abort();
 	return {
 		processExited,
-		modelActivity: () =>
-			runActivity(() => {
-				if (!disposed && !stopping) startup?.disarm();
-			}),
-		observe: (event) => runActivity(() => observe(event)),
-		dispose: () =>
-			runActivity(() => {
-				child.removeListener?.('exit', onExit);
-				child.removeListener?.('close', onClose);
-				child.removeListener?.('error', onError);
-				if (disposed) return;
-				disposed = true;
-				startup?.disarm();
-				lifetime?.disarm();
-				silence?.disarm();
-				warning?.disarm();
-				exitDrain?.disarm();
-				if (closeDeadline) clearTimeout(closeDeadline);
-				options.signal?.removeEventListener('abort', abort);
-				termination?.dispose();
-			}),
+		modelActivity: () => {
+			if (!disposed && !stopping) startup?.disarm();
+		},
+		observe,
+		dispose: () => {
+			child.removeListener?.('exit', onExit);
+			child.removeListener?.('close', onClose);
+			child.removeListener?.('error', onError);
+			if (disposed) return;
+			disposed = true;
+			startup?.disarm();
+			lifetime?.disarm();
+			silence?.disarm();
+			warning?.disarm();
+			exitDrain?.disarm();
+			if (closeDeadline) clearTimeout(closeDeadline);
+			options.signal?.removeEventListener('abort', abort);
+			termination?.dispose();
+		},
 	};
 }

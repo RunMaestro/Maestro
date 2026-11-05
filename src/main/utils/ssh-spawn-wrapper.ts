@@ -1,22 +1,6 @@
-// Keep spawn assembly shared with the headless runtime.
+// Moved into maestro-lib (Maestro-lib Part One): remote (SSH) spawn wrapping
+// carries no desktop-framework dependency, so it now lives in the shared
+// library. Re-exported here so every existing `from '../utils/ssh-spawn-wrapper'`
+// import keeps resolving unchanged (this is also the path CLAUDE.md's
+// "SSH Remote Execution Awareness" section names - do not delete this shim).
 export * from '../../shared/maestro-lib/launch/ssh-spawn-wrapper';
-import { wrapSpawnWithSsh as wrapSpawnWithSshCore } from '../../shared/maestro-lib/launch/ssh-spawn-wrapper';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
-import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
-
-/** Hold all desktop setup/fallback; discovery owns native children until close. */
-export async function wrapSpawnWithSsh(
-	config: Parameters<typeof wrapSpawnWithSshCore>[0],
-	sshConfig: Parameters<typeof wrapSpawnWithSshCore>[1],
-	sshStore: Parameters<typeof wrapSpawnWithSshCore>[2]
-): ReturnType<typeof wrapSpawnWithSshCore> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await wrapSpawnWithSshCore(config, sshConfig, sshStore, {
-			buildSshCommand,
-			buildSshCommandWithStdin,
-		});
-	} finally {
-		release();
-	}
-}

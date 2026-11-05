@@ -39,11 +39,7 @@ import { isWindows } from '../../../shared/platformDetection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
-import type { startTurn } from '../../../shared/maestro-lib/run/start-turn';
-import {
-	withWorktreeCallbackActivity,
-	withWorktreeTurnActivity,
-} from '../../git/worktreeTurnActivity';
+import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
 import {
 	INTERACTIVE_STOP_GRACE_MS,
 	stopProcess,
@@ -101,25 +97,6 @@ export class ChildProcessSpawner {
 	 * Spawn a child process for a session
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(start, observe) => this.spawnAdmitted(config, start, observe),
-				(error) => captureException(error)
-			);
-		} catch (error) {
-			return {
-				pid: -1,
-				success: false,
-				error: error instanceof Error ? error.message : String(error),
-			};
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		startAdmittedTurn: typeof startTurn,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		const {
 			sessionId,
 			toolType,
@@ -490,7 +467,7 @@ export class ChildProcessSpawner {
 			const isSuperseded = (): boolean =>
 				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 
-			const turn = startAdmittedTurn(
+			const turn = startTurn(
 				{
 					command: spawnCommand,
 					args: spawnArgs,
@@ -500,34 +477,25 @@ export class ChildProcessSpawner {
 					shell: spawnShell,
 				},
 				{
-					onStdout: (output) =>
-						withWorktreeTurnActivity(
-							(_start, observeCompletion) => {
-								if (isSuperseded()) return;
-								// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
-								// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
-								try {
-									this.emitter.emit('raw-stdout', sessionId, output);
-								} catch (err) {
-									observeCompletion(
-										Promise.resolve()
-											.then(() => captureException(err))
-											.catch(() => {})
-									);
-									logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
-										sessionId,
-										error: String(err),
-									});
-								}
-								this.stdoutHandler.handleData(sessionId, output);
-							},
-							(error) => captureException(error)
-						),
-					onStderr: (stderrData) =>
-						withWorktreeTurnActivity(() => {
-							if (isSuperseded()) return;
-							this.stderrHandler.handleData(sessionId, stderrData);
-						}, captureException),
+					onStdout: (output) => {
+						if (isSuperseded()) return;
+						// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
+						// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
+						try {
+							this.emitter.emit('raw-stdout', sessionId, output);
+						} catch (err) {
+							void captureException(err);
+							logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
+								sessionId,
+								error: String(err),
+							});
+						}
+						this.stdoutHandler.handleData(sessionId, output);
+					},
+					onStderr: (stderrData) => {
+						if (isSuperseded()) return;
+						this.stderrHandler.handleData(sessionId, stderrData);
+					},
 				},
 				{
 					// The desktop stops through ProcessManager.interrupt() / kill(),
@@ -548,42 +516,34 @@ export class ChildProcessSpawner {
 			// A stream error with no listener is an uncaught exception. stdin's is
 			// the common one: EPIPE, from a prompt written to a process that has
 			// already gone; the exit that follows reports what happened.
-			// These listeners may be retained beyond close. Each callback owns its
-			// effects and diagnostics independently of the original native lifetime.
-			childProcess.stdin?.on('error', (err) =>
-				withWorktreeTurnActivity(() => {
-					const errorCode = (err as NodeJS.ErrnoException).code;
-					if (errorCode === 'EPIPE') {
-						logger.debug(
-							'[ProcessManager] stdin EPIPE - process closed before write completed',
-							'ProcessManager',
-							{ sessionId }
-						);
-					} else {
-						logger.error('[ProcessManager] stdin error', 'ProcessManager', {
-							sessionId,
-							error: String(err),
-							code: errorCode,
-						});
-					}
-				}, captureException)
-			);
-			childProcess.stdout?.on('error', (err) =>
-				withWorktreeTurnActivity(() => {
-					logger.error('[ProcessManager] stdout error', 'ProcessManager', {
+			childProcess.stdin?.on('error', (err) => {
+				const errorCode = (err as NodeJS.ErrnoException).code;
+				if (errorCode === 'EPIPE') {
+					logger.debug(
+						'[ProcessManager] stdin EPIPE - process closed before write completed',
+						'ProcessManager',
+						{ sessionId }
+					);
+				} else {
+					logger.error('[ProcessManager] stdin error', 'ProcessManager', {
 						sessionId,
 						error: String(err),
+						code: errorCode,
 					});
-				}, captureException)
-			);
-			childProcess.stderr?.on('error', (err) =>
-				withWorktreeTurnActivity(() => {
-					logger.error('[ProcessManager] stderr error', 'ProcessManager', {
-						sessionId,
-						error: String(err),
-					});
-				}, captureException)
-			);
+				}
+			});
+			childProcess.stdout?.on('error', (err) => {
+				logger.error('[ProcessManager] stdout error', 'ProcessManager', {
+					sessionId,
+					error: String(err),
+				});
+			});
+			childProcess.stderr?.on('error', (err) => {
+				logger.error('[ProcessManager] stderr error', 'ProcessManager', {
+					sessionId,
+					error: String(err),
+				});
+			});
 
 			logger.debug('[ProcessManager] Child process spawned', 'ProcessManager', {
 				sessionId,
@@ -686,71 +646,60 @@ export class ChildProcessSpawner {
 			let supervisionFailure: string | undefined;
 			const supervision =
 				toolType === 'codex' && (isBatchMode || stdinText !== undefined)
-					? superviseAgentProcess(
-							childProcess,
-							{
-								startupMs: CODEX_STARTUP_TIMEOUT_MS,
-								idle: HEADLESS_IDLE_PROFILE,
-								onStop: (reason) =>
-									withWorktreeTurnActivity(() => {
-										supervisionFailed = true;
-										if (isSuperseded()) return;
-										if (sshRemotePidFile)
-											signalRemoteAgent(
-												{
-													sshCommand: command,
-													sshArgs: finalArgs,
-													pidFile: sshRemotePidFile,
-													sessionId,
-												},
-												'terminate'
-											);
-										// Record failure now, but let termination drain its last bytes.
-										// Suppress generic exit classification without suppressing text.
-										supervisionFailure = reason;
-										managedProcess.errorEmitted = true;
-									}, captureException),
-								onForcedStop: () => withWorktreeTurnActivity(forceCompletion, captureException),
+					? superviseAgentProcess(childProcess, {
+							startupMs: CODEX_STARTUP_TIMEOUT_MS,
+							idle: HEADLESS_IDLE_PROFILE,
+							onStop: (reason) => {
+								supervisionFailed = true;
+								if (isSuperseded()) return;
+								if (sshRemotePidFile)
+									signalRemoteAgent(
+										{
+											sshCommand: command,
+											sshArgs: finalArgs,
+											pidFile: sshRemotePidFile,
+											sessionId,
+										},
+										'terminate'
+									);
+								// Record failure now, but let termination drain its last bytes.
+								// Suppress generic exit classification without suppressing text.
+								supervisionFailure = reason;
+								managedProcess.errorEmitted = true;
 							},
-							(operation) => withWorktreeCallbackActivity(operation, captureException)
-						)
+							onForcedStop: forceCompletion,
+						})
 					: undefined;
 			// The existing channel includes whole lines, error envelopes and final
 			// unterminated lines. Generation and identity keep a predecessor from
 			// consuming a replacement's events under the same session id.
-			// Retained callbacks need fresh admission even after this turn's close.
-			// Their diagnostics must not borrow a settled startup observer.
-			const onParsedEvent = (sid: string, event: ParsedEvent): void =>
-				withWorktreeTurnActivity(() => {
-					if (sid === sessionId && !isSuperseded() && this.processes.get(sid) === managedProcess)
-						supervision?.observe(event);
-				}, captureException);
-			const disposeSupervision = (): void =>
-				withWorktreeTurnActivity(() => {
-					this.emitter.off('parsed-event', onParsedEvent);
-					supervision?.dispose();
-					if (this.supervisions.get(sessionId) === supersedeSupervision)
-						this.supervisions.delete(sessionId);
-				}, captureException);
-			const supersedeSupervision = (): void =>
-				withWorktreeTurnActivity(() => {
-					// Disposal cancels the supervisor's shared stop ladder. Finish an
-					// already-failed predecessor first so SIGTERM resistance cannot leave
-					// an unowned writer behind when a replacement takes this session.
-					if (supervisionFailed)
-						stopProcess(
-							{ child: childProcess },
-							{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true },
-							(operation) => withWorktreeCallbackActivity(operation, captureException)
-						);
-					disposeSupervision();
-					forceCompletion();
-				}, captureException);
+			const onParsedEvent = (sid: string, event: ParsedEvent): void => {
+				if (sid === sessionId && !isSuperseded() && this.processes.get(sid) === managedProcess)
+					supervision?.observe(event);
+			};
+			const disposeSupervision = (): void => {
+				this.emitter.off('parsed-event', onParsedEvent);
+				supervision?.dispose();
+				if (this.supervisions.get(sessionId) === supersedeSupervision)
+					this.supervisions.delete(sessionId);
+			};
+			const supersedeSupervision = (): void => {
+				// Disposal cancels the supervisor's shared stop ladder. Finish an
+				// already-failed predecessor first so SIGTERM resistance cannot leave
+				// an unowned writer behind when a replacement takes this session.
+				if (supervisionFailed)
+					stopProcess(
+						{ child: childProcess },
+						{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
+					);
+				disposeSupervision();
+				forceCompletion();
+			};
 			if (supervision) {
 				this.emitter.on('parsed-event', onParsedEvent);
 				this.supervisions.set(sessionId, supersedeSupervision);
 			}
-			const completion = Promise.race([turn.done, forced]).then((completed) => {
+			void Promise.race([turn.done, forced]).then((completed) => {
 				disposeSupervision();
 				const exit = completed
 					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
@@ -801,48 +750,36 @@ export class ChildProcessSpawner {
 				// ExitHandler parses the final unterminated line and flushes data
 				// before exit. Publish our host failure first among exit observers,
 				// after that drain, so late output cannot hide or overtake the error.
-				const onSupervisedExit = (sid: string): void =>
-					withWorktreeTurnActivity(
-						(_start, observeCompletion) => {
-							if (sid !== sessionId || isSuperseded()) return;
-							this.emitter.off('exit', onSupervisedExit);
-							if (!supervisionFailure || managedProcess.interrupted) return;
-							try {
-								emitAgentErrorAfterOutput(
-									this.emitter,
-									this.bufferManager,
-									sessionId,
-									managedProcess,
-									{
-										type: 'agent_crashed',
-										source: 'host-supervision',
-										message: supervisionFailure,
-										recoverable: true,
-										agentId: toolType,
-										sessionId,
-										timestamp: Date.now(),
-									},
-									{ flushStreamedText: true }
-								);
-							} catch (error) {
-								observeCompletion(
-									Promise.resolve()
-										.then(() => captureException(error))
-										.catch(() => {})
-								);
-							}
-						},
-						(error) => captureException(error)
-					);
+				const onSupervisedExit = (sid: string): void => {
+					if (sid !== sessionId || isSuperseded()) return;
+					this.emitter.off('exit', onSupervisedExit);
+					if (!supervisionFailure || managedProcess.interrupted) return;
+					try {
+						emitAgentErrorAfterOutput(
+							this.emitter,
+							this.bufferManager,
+							sessionId,
+							managedProcess,
+							{
+								type: 'agent_crashed',
+								source: 'host-supervision',
+								message: supervisionFailure,
+								recoverable: true,
+								agentId: toolType,
+								sessionId,
+								timestamp: Date.now(),
+							},
+							{ flushStreamedText: true }
+						);
+					} catch (error) {
+						void captureException(error);
+					}
+				};
 				if (supervisionFailure) this.emitter.prependListener('exit', onSupervisedExit);
 				return this.exitHandler
 					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
-						observeCompletion(
-							Promise.resolve()
-								.then(() => captureException(err))
-								.catch(() => {})
-						);
+						void captureException(err);
 						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 							sessionId,
 							error: String(err),
@@ -859,19 +796,6 @@ export class ChildProcessSpawner {
 					})
 					.finally(() => this.emitter.off('exit', onSupervisedExit));
 			});
-			observeCompletion(
-				completion.catch((error) => {
-					observeCompletion(
-						Promise.resolve()
-							.then(() => captureException(error))
-							.catch(() => {})
-					);
-					logger.error('[ProcessManager] Child completion failed', 'ProcessManager', {
-						sessionId,
-						error: String(error),
-					});
-				})
-			);
 
 			// The run layer settles on `close`, which waits on every holder of the
 			// stdio pipes, and an SSH ControlMaster or a stray grandchild can hold
@@ -880,43 +804,29 @@ export class ChildProcessSpawner {
 			// spawn refusal. Supervised Codex turns already use the shared exit-drain
 			// watchdog and remote termination callback above.
 			if (!supervision)
-				armStdioCloseWatchdog(
-					childProcess,
-					{
-						onForceClose: () =>
-							withWorktreeTurnActivity(() => {
-								logger.warn(
-									'[ProcessManager] stdio still open after exit, forcing close',
-									'ProcessManager',
-									{ sessionId, pid: childProcess.pid }
-								);
-								// For SSH the open stdio usually means the remote agent is still
-								// running behind a ControlMaster. Settling the turn while it keeps
-								// working would put a second writer on the session next turn.
-								if (sshRemotePidFile) {
-									signalRemoteAgent(
-										{
-											sshCommand: command,
-											sshArgs: finalArgs,
-											pidFile: sshRemotePidFile,
-											sessionId,
-										},
-										'terminate'
-									);
-								}
-							}, captureException),
+				armStdioCloseWatchdog(childProcess, {
+					onForceClose: () => {
+						logger.warn(
+							'[ProcessManager] stdio still open after exit, forcing close',
+							'ProcessManager',
+							{ sessionId, pid: childProcess.pid }
+						);
+						// For SSH the open stdio usually means the remote agent is still
+						// running behind a ControlMaster. Settling the turn while it keeps
+						// working would put a second writer on the session next turn.
+						if (sshRemotePidFile) {
+							signalRemoteAgent(
+								{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+								'terminate'
+							);
+						}
 					},
-					(callback) => withWorktreeTurnActivity(callback, captureException)
-				);
+				});
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
 			cleanupTempFiles(tempFiles);
-			observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});

@@ -42,8 +42,9 @@ vi.mock('../../../shared/maestro-lib/control/termination', async (importOriginal
 });
 
 const mockSignalRemoteAgent = vi.fn(() => true);
-vi.mock('../../../main/utils/ssh-remote-signal', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../../../main/utils/ssh-remote-signal')>();
+vi.mock('../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../shared/maestro-lib/control/ssh-remote-signal')>();
 	return {
 		...actual,
 		signalRemoteAgent: (...args: unknown[]) => mockSignalRemoteAgent(...(args as [])),
@@ -486,8 +487,7 @@ describe('CodexAppServerSpawner', () => {
 		h.processes.get(h.sessionId)!.sdkController!.kill({ sync: true });
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate', upTo: 'kill', blocking: true }),
-			expect.any(Function)
+			expect.objectContaining({ from: 'terminate', upTo: 'kill', blocking: true })
 		);
 	});
 
@@ -559,8 +559,7 @@ describe('CodexAppServerSpawner', () => {
 		expect(h.processes.has(h.sessionId)).toBe(false);
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate' }),
-			expect.any(Function)
+			expect.objectContaining({ from: 'terminate' })
 		);
 		expect(h.errors).toEqual([]);
 		// The abandoned child's exit reports nothing: exec owns the turn now.
@@ -702,8 +701,7 @@ describe('CodexAppServerSpawner on an SSH remote', () => {
 		);
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate' }),
-			expect.any(Function)
+			expect.objectContaining({ from: 'terminate' })
 		);
 	});
 
@@ -780,8 +778,7 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 		expect(h.processes.has(h.sessionId)).toBe(false);
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate', label: 'fallback' }),
-			expect.any(Function)
+			expect.objectContaining({ from: 'terminate', label: 'fallback' })
 		);
 		// The abandoned child's exit reports nothing: exec owns the turn.
 		server.exit(1);
@@ -884,8 +881,7 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 			const server = await stopDuringSetup();
 			expect(mockStopProcess).toHaveBeenCalledWith(
 				{ child: server },
-				expect.objectContaining({ from: 'terminate', label: 'interrupt' }),
-				expect.any(Function)
+				expect.objectContaining({ from: 'terminate', label: 'interrupt' })
 			);
 		});
 
@@ -894,8 +890,7 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 			const server = await stopDuringSetup();
 			expect(mockStopProcess).toHaveBeenCalledWith(
 				{ child: server },
-				expect.objectContaining({ from: 'interrupt', label: 'interrupt' }),
-				expect.any(Function)
+				expect.objectContaining({ from: 'interrupt', label: 'interrupt' })
 			);
 		});
 
@@ -920,8 +915,7 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 			vi.advanceTimersByTime(CODEX_APP_SERVER_EXIT_GRACE_MS);
 			expect(mockStopProcess).toHaveBeenCalledWith(
 				{ child: server },
-				expect.objectContaining({ from: 'terminate', label: 'codex-app-server' }),
-				expect.any(Function)
+				expect.objectContaining({ from: 'terminate', label: 'codex-app-server' })
 			);
 		});
 	});

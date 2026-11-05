@@ -10,66 +10,7 @@ describe('createIdleWatchdog', () => {
 	});
 
 	afterEach(() => {
-		vi.restoreAllMocks();
 		vi.useRealTimers();
-	});
-
-	it.each([1, 2])('publishes disposal before timer setup %i can fail', (nth) => {
-		let disposal: ReturnType<typeof createIdleWatchdog> | undefined;
-		const schedule = globalThis.setTimeout;
-		const failure = new Error('setup failed');
-		let count = 0;
-		vi.spyOn(globalThis, 'setTimeout').mockImplementation((...args) => {
-			expect(disposal).toBeDefined();
-			if (++count === nth) throw failure;
-			return schedule(...args);
-		});
-		const onIdle = vi.fn();
-		expect(() =>
-			createIdleWatchdog({
-				idleMs: IDLE_MS,
-				maxMs: MAX_MS,
-				onIdle,
-				onCreate: (dog) => {
-					disposal = dog;
-				},
-			})
-		).toThrow(failure);
-		disposal!.disarm();
-		expect(vi.getTimerCount()).toBe(0);
-		vi.advanceTimersByTime(MAX_MS);
-		expect(onIdle).not.toHaveBeenCalled();
-	});
-
-	it('does not arm a watchdog disposed by its initial owner', () => {
-		const onIdle = vi.fn();
-		createIdleWatchdog({
-			idleMs: IDLE_MS,
-			maxMs: MAX_MS,
-			onIdle,
-			onCreate: (dog) => dog.disarm(),
-		});
-		expect(vi.getTimerCount()).toBe(0);
-	});
-
-	it('retries only handles whose clearing did not complete', () => {
-		const onIdle = vi.fn();
-		const dog = createIdleWatchdog({ idleMs: IDLE_MS, maxMs: MAX_MS, onIdle });
-		const clear = globalThis.clearTimeout;
-		const failure = new Error('max clear failed');
-		const clears = vi
-			.spyOn(globalThis, 'clearTimeout')
-			.mockImplementationOnce(clear)
-			.mockImplementationOnce(() => {
-				throw failure;
-			});
-		expect(() => dog.disarm()).toThrow(failure);
-		const [idle, max] = clears.mock.calls.map(([handle]) => handle);
-		dog.disarm();
-		expect(clears.mock.calls.map(([handle]) => handle)).toEqual([idle, max, max]);
-		dog.disarm();
-		expect(clears).toHaveBeenCalledTimes(3);
-		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('fires onIdle after the silence budget with no activity', () => {

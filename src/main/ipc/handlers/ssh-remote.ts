@@ -20,7 +20,6 @@ import { logger } from '../../utils/logger';
 import { MaestroSettings } from './persistence';
 import { parseSshConfig, SshConfigParseResult } from '../../utils/ssh-config-parser';
 import { normalizeSshOptions } from '../../../shared/sshOptions';
-import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 const LOG_CONTEXT = '[SshRemote]';
 
@@ -259,41 +258,34 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 				configOrId: string | SshRemoteConfig,
 				agentCommand?: string
 			): Promise<{ result: SshRemoteTestResult }> => {
-				// Configuration and reporting can outlive the nested connection request.
-				// Native SSH children retain their independent holds until actual close.
-				const release = beginGlobalWorktreeActivity();
-				try {
-					let config: SshRemoteConfig;
+				let config: SshRemoteConfig;
 
-					if (typeof configOrId === 'string') {
-						// Lookup by ID
-						const remotes = getSshRemotes(settingsStore);
-						const found = remotes.find((r) => r.id === configOrId);
-						if (!found) {
-							throw new Error(`SSH remote not found: ${configOrId}`);
-						}
-						config = found;
-					} else {
-						// Use provided config directly
-						config = configOrId;
+				if (typeof configOrId === 'string') {
+					// Lookup by ID
+					const remotes = getSshRemotes(settingsStore);
+					const found = remotes.find((r) => r.id === configOrId);
+					if (!found) {
+						throw new Error(`SSH remote not found: ${configOrId}`);
 					}
-
-					logger.info(`Testing SSH connection to ${config.host}...`, LOG_CONTEXT);
-					const result = await sshRemoteManager.testConnection(config, agentCommand);
-
-					if (result.success) {
-						logger.info(
-							`SSH connection test successful: ${result.remoteInfo?.hostname || 'unknown host'}`,
-							LOG_CONTEXT
-						);
-					} else {
-						logger.warn(`SSH connection test failed: ${result.error}`, LOG_CONTEXT);
-					}
-
-					return { result };
-				} finally {
-					release();
+					config = found;
+				} else {
+					// Use provided config directly
+					config = configOrId;
 				}
+
+				logger.info(`Testing SSH connection to ${config.host}...`, LOG_CONTEXT);
+				const result = await sshRemoteManager.testConnection(config, agentCommand);
+
+				if (result.success) {
+					logger.info(
+						`SSH connection test successful: ${result.remoteInfo?.hostname || 'unknown host'}`,
+						LOG_CONTEXT
+					);
+				} else {
+					logger.warn(`SSH connection test failed: ${result.error}`, LOG_CONTEXT);
+				}
+
+				return { result };
 			}
 		)
 	);

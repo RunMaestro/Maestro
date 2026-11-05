@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../platformDetection';
@@ -155,21 +155,18 @@ function resolveExecOptions(options: ExecOptions | NodeJS.ProcessEnv | undefined
  * @param args - Arguments to pass to the command
  * @param cwd - Working directory for the command
  * @param options - Additional options (input for stdin, env for environment)
- * @param onSpawn - Optional synchronous native-child observer. Result settlement
- * does not establish child close; callers must admit before invoking this helper.
  */
 export async function execFileNoThrow(
 	command: string,
 	args: string[] = [],
 	cwd?: string,
-	options?: ExecOptions | NodeJS.ProcessEnv,
-	onSpawn?: (child: ChildProcess) => void
+	options?: ExecOptions | NodeJS.ProcessEnv
 ): Promise<ExecResult> {
 	const { env, input, timeout } = resolveExecOptions(options);
 
 	// If input is provided, use spawn instead of execFile to write to stdin
 	if (input !== undefined) {
-		return execFileWithInput(command, args, cwd, input, timeout, env, onSpawn);
+		return execFileWithInput(command, args, cwd, input, timeout, env);
 	}
 
 	try {
@@ -177,7 +174,7 @@ export async function execFileNoThrow(
 		// This is safe because we're executing a specific file path, not user input
 		const useShell = isWindows() && needsWindowsShell(command);
 
-		const execution = execFileAsync(command, args, {
+		const { stdout, stderr } = await execFileAsync(command, args, {
 			cwd,
 			env,
 			encoding: 'utf8',
@@ -185,16 +182,6 @@ export async function execFileNoThrow(
 			shell: useShell,
 			timeout,
 		});
-		// Observe rejection even if the host observer fails before the await.
-		if (onSpawn) {
-			try {
-				onSpawn(execution.child);
-			} catch (error) {
-				await execution.catch(() => {});
-				throw error;
-			}
-		}
-		const { stdout, stderr } = await execution;
 
 		return {
 			stdout,
@@ -394,8 +381,7 @@ async function execFileWithInput(
 	cwd: string | undefined,
 	input: string,
 	timeout?: number,
-	env?: NodeJS.ProcessEnv,
-	onSpawn?: (child: ChildProcess) => void
+	env?: NodeJS.ProcessEnv
 ): Promise<ExecResult> {
 	return new Promise((resolve) => {
 		const useShell = isWindows() && needsWindowsShell(command);
@@ -413,14 +399,11 @@ async function execFileWithInput(
 		let settled = false;
 		let stdinError: NodeJS.ErrnoException | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
-		let observerFailure: { message: string } | undefined;
 		const settle = (result: ExecResult) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			resolve(
-				observerFailure ? { ...result, stderr: observerFailure.message, exitCode: 1 } : result
-			);
+			resolve(result);
 		};
 		const timeoutResult = (): ExecResult => ({
 			stdout,
@@ -466,11 +449,6 @@ async function execFileWithInput(
 		child.stdin?.on('error', (error) => {
 			stdinError ??= error;
 		});
-		try {
-			onSpawn?.(child);
-		} catch (error) {
-			observerFailure = { message: String(error) };
-		}
 		child.stdin?.write(input, (error) => {
 			if (error) stdinError ??= error;
 		});

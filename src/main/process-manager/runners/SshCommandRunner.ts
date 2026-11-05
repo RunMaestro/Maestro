@@ -11,9 +11,6 @@ import { killProcessTreeNow } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
-import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
-import { captureException } from '../../utils/sentry';
 
 /** Exit code for a command we SIGKILLed. 128+9, the shell convention. */
 const SIGKILL_EXIT_CODE = 137;
@@ -24,8 +21,8 @@ const SIGKILL_EXIT_CODE = 137;
 export class SshCommandRunner {
 	/**
 	 * In-flight SSH commands keyed by sessionId. Killing the local `ssh` client
-	 * drops the channel, but does not prove remote termination. Entries are
-	 * removed when the command result settles, independently of native close.
+	 * drops the channel, which terminates the remote command. Entries are
+	 * removed on exit. Mirrors LocalCommandRunner's registry.
 	 */
 	private running = new Map<string, () => void>();
 
@@ -36,15 +33,10 @@ export class SshCommandRunner {
 	 * Returns false when nothing is running under that sessionId.
 	 */
 	cancel(sessionId: string): boolean {
-		return withWorktreeTurnActivity(
-			() => {
-				const kill = this.running.get(sessionId);
-				if (!kill) return false;
-				kill();
-				return true;
-			},
-			(error) => captureException(error)
-		);
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
 	}
 
 	/**
@@ -55,52 +47,6 @@ export class SshCommandRunner {
 		command: string,
 		cwd: string,
 		sshConfig: SshRemoteConfig,
-		shellEnvVars?: Record<string, string>
-	): Promise<CommandResult> {
-		// SSH options/proxies and setup can touch arbitrary local paths. Never
-		// canonicalize the remote cwd or treat it as the local activity domain.
-		const release = beginGlobalWorktreeActivity();
-		let settled = false;
-		const forget = (): void => {
-			if (this.running.get(sessionId) === cancel) this.running.delete(sessionId);
-		};
-		const activity = {
-			cancelled: false,
-			nativeAttempted: false,
-			nativeClosed: false,
-			kill: undefined as (() => void) | undefined,
-			onResult: forget,
-			onClose: () => {
-				if (settled) release();
-			},
-		};
-		const cancel = () => {
-			activity.cancelled = true;
-			activity.kill?.();
-		};
-		this.running.set(sessionId, cancel);
-		try {
-			return await this.runAdmitted(sessionId, command, cwd, sshConfig, activity, shellEnvVars);
-		} finally {
-			settled = true;
-			if (!activity.nativeAttempted || activity.nativeClosed) release();
-			forget();
-		}
-	}
-
-	private async runAdmitted(
-		sessionId: string,
-		command: string,
-		cwd: string,
-		sshConfig: SshRemoteConfig,
-		activity: {
-			cancelled: boolean;
-			nativeAttempted: boolean;
-			nativeClosed: boolean;
-			kill?: () => void;
-			onResult: () => void;
-			onClose: () => void;
-		},
 		shellEnvVars?: Record<string, string>
 	): Promise<CommandResult> {
 		// Build SSH arguments
@@ -173,16 +119,9 @@ export class SshCommandRunner {
 
 		// Resolve SSH path before entering the Promise
 		const sshPath = await resolveSshPath();
-		if (activity.cancelled) {
-			activity.onResult();
-			this.emitter.emit('command-exit', sessionId, SIGKILL_EXIT_CODE);
-			return { exitCode: SIGKILL_EXIT_CODE };
-		}
 		const expandedEnv = getExpandedEnv();
 
 		return new Promise((resolve) => {
-			// Without a returned handle/observer, a failed native attempt is unknown.
-			activity.nativeAttempted = true;
 			const childProcess = spawn(sshPath, sshArgs, {
 				env: {
 					...expandedEnv,
@@ -190,17 +129,6 @@ export class SshCommandRunner {
 					SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
 				},
 			});
-			// Install before fallible stream/reporting setup. UI completion, error,
-			// exit or kill requests cannot release an unobserved local child.
-			childProcess.on('close', () =>
-				withWorktreeTurnActivity(
-					() => {
-						activity.nativeClosed = true;
-						activity.onClose();
-					},
-					(error) => captureException(error)
-				)
-			);
 
 			let settled = false;
 
@@ -208,18 +136,15 @@ export class SshCommandRunner {
 			const settle = (exitCode: number) => {
 				if (settled) return;
 				settled = true;
-				activity.onResult();
-				try {
-					this.emitter.emit('command-exit', sessionId, exitCode);
-				} finally {
-					resolve({ exitCode });
-				}
+				this.running.delete(sessionId);
+				this.emitter.emit('command-exit', sessionId, exitCode);
+				resolve({ exitCode });
 			};
 
-			// Killing the local client is best effort for the remote command; neither
-			// a signal nor local close proves remote termination. SIGKILL immediately,
+			// Killing the local ssh client drops the channel, which is what ends the
+			// remote command - we have no other handle on it. SIGKILL immediately,
 			// same contract as the local runner: Stop means stopped, now.
-			activity.kill = () => {
+			this.running.set(sessionId, () => {
 				if (childProcess.pid) {
 					killProcessTreeNow(childProcess.pid, { sessionId });
 				}
@@ -229,93 +154,59 @@ export class SshCommandRunner {
 					// Already gone.
 				}
 				settle(SIGKILL_EXIT_CODE);
-			};
+			});
 
-			// Retained callbacks can run after request/native ownership ends. Admit
-			// each invocation before decoding, reporting or notifying consumers.
-			// Remote termination and asynchronous event listeners remain unproven.
 			// Handle stdout
-			childProcess.stdout?.on('data', (data: Buffer) =>
-				withWorktreeTurnActivity(
-					() => {
-						const output = data.toString();
-						if (output.trim()) {
-							logger.debug('[ProcessManager] runCommandViaSsh stdout', 'ProcessManager', {
-								sessionId,
-								length: output.length,
-							});
-							this.emitter.emit('data', sessionId, output);
-						}
-					},
-					(error) => captureException(error)
-				)
-			);
+			childProcess.stdout?.on('data', (data: Buffer) => {
+				const output = data.toString();
+				if (output.trim()) {
+					logger.debug('[ProcessManager] runCommandViaSsh stdout', 'ProcessManager', {
+						sessionId,
+						length: output.length,
+					});
+					this.emitter.emit('data', sessionId, output);
+				}
+			});
 
 			// Handle stderr
-			childProcess.stderr?.on('data', (data: Buffer) =>
-				withWorktreeTurnActivity(
-					() => {
-						const output = data.toString();
-						logger.debug('[ProcessManager] runCommandViaSsh stderr', 'ProcessManager', {
-							sessionId,
-							output: output.substring(0, 200),
-						});
+			childProcess.stderr?.on('data', (data: Buffer) => {
+				const output = data.toString();
+				logger.debug('[ProcessManager] runCommandViaSsh stderr', 'ProcessManager', {
+					sessionId,
+					output: output.substring(0, 200),
+				});
 
-						// Check for SSH-specific errors
-						const sshError = matchSshErrorPattern(output);
-						if (sshError) {
-							logger.warn(
-								'[ProcessManager] SSH error detected in terminal command',
-								'ProcessManager',
-								{
-									sessionId,
-									errorType: sshError.type,
-									message: sshError.message,
-								}
-							);
-						}
+				// Check for SSH-specific errors
+				const sshError = matchSshErrorPattern(output);
+				if (sshError) {
+					logger.warn('[ProcessManager] SSH error detected in terminal command', 'ProcessManager', {
+						sessionId,
+						errorType: sshError.type,
+						message: sshError.message,
+					});
+				}
 
-						this.emitter.emit('stderr', sessionId, output);
-					},
-					(error) => captureException(error)
-				)
-			);
+				this.emitter.emit('stderr', sessionId, output);
+			});
 
 			// Handle process exit
-			childProcess.on('exit', (code) =>
-				withWorktreeTurnActivity(
-					() => {
-						try {
-							logger.debug('[ProcessManager] runCommandViaSsh exit', 'ProcessManager', {
-								sessionId,
-								exitCode: code,
-							});
-						} finally {
-							settle(code || 0);
-						}
-					},
-					(error) => captureException(error)
-				)
-			);
+			childProcess.on('exit', (code) => {
+				logger.debug('[ProcessManager] runCommandViaSsh exit', 'ProcessManager', {
+					sessionId,
+					exitCode: code,
+				});
+				settle(code || 0);
+			});
 
 			// Handle errors
-			childProcess.on('error', (error) =>
-				withWorktreeTurnActivity(
-					() => {
-						try {
-							logger.error('[ProcessManager] runCommandViaSsh error', 'ProcessManager', {
-								sessionId,
-								error: error.message,
-							});
-							this.emitter.emit('stderr', sessionId, `SSH Error: ${error.message}`);
-						} finally {
-							settle(1);
-						}
-					},
-					(error) => captureException(error)
-				)
-			);
-			if (activity.cancelled) activity.kill();
+			childProcess.on('error', (error) => {
+				logger.error('[ProcessManager] runCommandViaSsh error', 'ProcessManager', {
+					sessionId,
+					error: error.message,
+				});
+				this.emitter.emit('stderr', sessionId, `SSH Error: ${error.message}`);
+				settle(1);
+			});
 		});
 	}
 }

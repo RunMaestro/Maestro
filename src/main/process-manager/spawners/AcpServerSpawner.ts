@@ -36,10 +36,6 @@ import {
 } from '../../../shared/maestro-lib/harness/acp/interactions';
 import { harnessInteractionBroker } from '../../harness-control/integration';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
-import {
-	withWorktreeCallbackActivity,
-	withWorktreeTurnActivity,
-} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'AcpServer';
 
@@ -75,31 +71,9 @@ export class AcpServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(start, observe) => this.spawnAdmitted(config, start, observe),
-				async (error) => {
-					const reporting = Promise.resolve().then(() => captureException(error));
-					try {
-						logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
-					} finally {
-						await reporting;
-					}
-				}
-			);
-		} catch (error) {
-			return { pid: -1, success: false, error: String(error) };
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		startAdmittedTurn: typeof startTurn,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		if (!config.nativeAcpArgs) return this.fallbackToCli(config);
 		try {
-			return new AcpTurn(this.context, config, startAdmittedTurn, observeCompletion).start();
+			return new AcpTurn(this.context, config).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -108,11 +82,7 @@ export class AcpServerSpawner {
 					error: `ACP Standard mode could not start: ${String(error)}`,
 				};
 			}
-			observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -143,9 +113,7 @@ class AcpTurn {
 
 	constructor(
 		private readonly ctx: AcpTurnContext,
-		private readonly config: ProcessConfig,
-		private readonly startAdmittedTurn: typeof startTurn,
-		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+		private readonly config: ProcessConfig
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -205,7 +173,7 @@ class AcpTurn {
 			config.extraPathDirs,
 			config.querySource
 		);
-		this.turn = this.startAdmittedTurn(
+		this.turn = startTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -233,8 +201,8 @@ class AcpTurn {
 		this.managedProcess.pid = this.turn.pid ?? -1;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		void this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
-		void this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
+		void this.turn.done.then((exit) => this.handleChildExit(exit));
+		void this.run().catch((error) => this.handleRunError(error));
 		return { pid: this.managedProcess.pid, success: true };
 	}
 
@@ -243,75 +211,29 @@ class AcpTurn {
 		const child = this.turn.child;
 		if (!child.stdin || !child.stdout) throw new Error('ACP child requires stdin and stdout');
 		const stream = acpStdioStream(child);
-		// NDJSON setup starts SDK readers before connect returns. A failed setup
-		// or unavailable closure observer cannot prove protocol ownership ended.
-		const protocolClosed = Promise.withResolvers<void>();
-		this.observeCompletion(protocolClosed.promise);
 		const connectionStream = acp.ndJsonStream(stream.writable, stream.readable);
-		// Retained SDK callbacks need fresh admission after run/child ownership ends.
-		// The SDK's subsequent response serialization/write is a separate boundary.
 		const app = acp
 			.client({ name: 'maestro' })
-			.onRequest(acp.methods.client.session.requestPermission, async (request) =>
-				withWorktreeTurnActivity(
-					(_start, observe) =>
-						observe(
-							(async () => {
-								const { params } = request;
-								if (this.providerSessionId && params.sessionId !== this.providerSessionId) {
-									return { outcome: { outcome: 'cancelled' as const } };
-								}
-								const opened = harnessInteractionBroker.open(
-									acpPermissionOpenRequest(params, {
-										sessionId: config.sessionId,
-										tabId: config.tabId,
-										spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
-										provider: config.toolType,
-									})
-								);
-								return acpPermissionResponse(await opened.completion);
-							})()
-						),
-					async (error) => {
-						const reporting = Promise.resolve().then(() => captureException(error));
-						try {
-							logger.error('[AcpTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
-						} finally {
-							await reporting;
-						}
-					}
-				)
-			)
-			.onNotification(acp.methods.client.session.update, (notification) =>
-				withWorktreeTurnActivity(
-					() => {
-						const { params } = notification;
-						if (!this.promptSent) return;
-						if (this.providerSessionId && params.sessionId !== this.providerSessionId) return;
-						this.forwardUpdate(params);
-					},
-					(error) => captureException(error)
-				)
-			);
+			.onRequest(acp.methods.client.session.requestPermission, async ({ params }) => {
+				if (this.providerSessionId && params.sessionId !== this.providerSessionId) {
+					return { outcome: { outcome: 'cancelled' as const } };
+				}
+				const opened = harnessInteractionBroker.open(
+					acpPermissionOpenRequest(params, {
+						sessionId: config.sessionId,
+						tabId: config.tabId,
+						spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
+						provider: config.toolType,
+					})
+				);
+				return acpPermissionResponse(await opened.completion);
+			})
+			.onNotification(acp.methods.client.session.update, ({ params }) => {
+				if (!this.promptSent) return;
+				if (this.providerSessionId && params.sessionId !== this.providerSessionId) return;
+				this.forwardUpdate(params);
+			});
 		this.connection = app.connect(connectionStream);
-		// ACP 2.0.2 closed acknowledges protocol abort, not reader cancellation,
-		// queued writes or response serialization draining. Those remain uncovered.
-		let observationReady = false;
-		let acknowledged = false;
-		try {
-			this.observeCompletion(
-				this.connection.closed.then(() => {
-					acknowledged = true;
-					if (observationReady) protocolClosed.resolve();
-				})
-			);
-			// A reentrant observer must finish registering before it can release.
-			observationReady = true;
-			if (acknowledged) protocolClosed.resolve();
-		} catch (error) {
-			// Keep uncertain ownership without replacing the original turn outcome.
-			this.observeCompletion(Promise.reject(error));
-		}
 		const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
 			protocolVersion: acp.PROTOCOL_VERSION,
 			clientCapabilities: {
@@ -416,45 +338,33 @@ class AcpTurn {
 	}
 
 	private async interrupt(): Promise<void> {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				this.cancelled = true;
-				void observe(this.cancelNative());
-				stopProcess(
-					{ child: this.turn.child },
-					{
-						from: 'interrupt',
-						graceMs: INTERACTIVE_STOP_GRACE_MS,
-						sessionId: this.config.sessionId,
-						label: 'interrupt',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
-				);
-			},
-			(error) => captureException(error)
+		this.cancelled = true;
+		void this.cancelNative();
+		stopProcess(
+			{ child: this.turn.child },
+			{
+				from: 'interrupt',
+				graceMs: INTERACTIVE_STOP_GRACE_MS,
+				sessionId: this.config.sessionId,
+				label: 'interrupt',
+			}
 		);
 	}
 
 	private async kill(options?: { sync?: boolean; shutdown?: boolean }): Promise<void> {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				this.cancelled = true;
-				void observe(this.cancelNative());
-				stopProcess(
-					{ child: this.turn.child },
-					{
-						from: 'terminate',
-						upTo: options?.shutdown ? 'terminate' : 'kill',
-						graceMs: INTERACTIVE_STOP_GRACE_MS,
-						immediate: options?.shutdown,
-						blocking: options?.sync,
-						sessionId: this.config.sessionId,
-						label: 'kill',
-					},
-					(operation) => withWorktreeCallbackActivity(operation, captureException)
-				);
-			},
-			(error) => captureException(error)
+		this.cancelled = true;
+		void this.cancelNative();
+		stopProcess(
+			{ child: this.turn.child },
+			{
+				from: 'terminate',
+				upTo: options?.shutdown ? 'terminate' : 'kill',
+				graceMs: INTERACTIVE_STOP_GRACE_MS,
+				immediate: options?.shutdown,
+				blocking: options?.sync,
+				sessionId: this.config.sessionId,
+				label: 'kill',
+			}
 		);
 	}
 
@@ -488,8 +398,7 @@ class AcpTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'fallback',
-				},
-				(operation) => withWorktreeCallbackActivity(operation, captureException)
+				}
 			);
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
@@ -505,14 +414,9 @@ class AcpTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			},
-			(operation) => withWorktreeCallbackActivity(operation, captureException)
+			}
 		);
-		this.observeCompletion(
-			Promise.resolve()
-				.then(() => captureException(error))
-				.catch(() => {})
-		);
+		void captureException(error);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -546,16 +450,14 @@ class AcpTurn {
 	private finish(code: number): void {
 		if (this.finished) return;
 		this.finished = true;
-		void this.observeCompletion(
-			this.ctx.exitHandler
-				.handleExit(this.config.sessionId, code, this.managedProcess)
-				.catch((error) => {
-					logger.error('[AcpTurn] handleExit failed', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-				})
-		);
+		void this.ctx.exitHandler
+			.handleExit(this.config.sessionId, code, this.managedProcess)
+			.catch((error) => {
+				logger.error('[AcpTurn] handleExit failed', LOG_CONTEXT, {
+					sessionId: this.config.sessionId,
+					error: String(error),
+				});
+			});
 	}
 
 	private isSuperseded(): boolean {

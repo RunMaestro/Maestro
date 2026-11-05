@@ -713,8 +713,7 @@ describe('path-prober', () => {
 					'which',
 					['test-binary'],
 					undefined,
-					expect.any(Object),
-					expect.any(Function)
+					expect.any(Object)
 				);
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
@@ -738,13 +737,7 @@ describe('path-prober', () => {
 
 				const result = await checkBinaryExists('test');
 				expect(result.exists).toBe(true);
-				expect(execMock).toHaveBeenCalledWith(
-					'where',
-					['test'],
-					undefined,
-					expect.any(Object),
-					expect.any(Function)
-				);
+				expect(execMock).toHaveBeenCalledWith('where', ['test'], undefined, expect.any(Object));
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}

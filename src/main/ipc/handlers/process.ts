@@ -42,7 +42,6 @@ import {
 	resolveHarnessInteractionResponse,
 } from '../../harness-control/integration';
 import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
-import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -57,23 +56,6 @@ const handlerOpts = (
 	operation,
 	...extra,
 });
-
-/** Hold outer requests; standalone managers/runners separately track native completion. */
-function withProcessActivity<TArgs extends unknown[], TResult>(
-	options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
-	handler: (...args: TArgs) => Promise<TResult>
-): (_event: unknown, ...args: TArgs) => Promise<TResult> {
-	const wrapped = withIpcErrorLogging(options, handler);
-	return async (event: unknown, ...args: TArgs) => {
-		// Shells, SSH proxies and preparation may affect paths outside the agent cwd.
-		const release = beginGlobalWorktreeActivity();
-		try {
-			return await wrapped(event, ...args);
-		} finally {
-			release();
-		}
-	};
-}
 
 /** Extract a fail-closed owner from either an Electron or bridge invocation event. */
 function harnessControlOwner(event: { sender?: { id: number }; clientId?: unknown }): {
@@ -198,31 +180,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle(
 		'permission:respond',
 		(_event, requestId: string, decision: PermissionDecision) => {
-			const release = beginGlobalWorktreeActivity();
-			try {
-				return resolvePermissionResponse(requestId, decision);
-			} finally {
-				release();
-			}
+			return resolvePermissionResponse(requestId, decision);
 		}
 	);
 	ipcMain.handle('harnessControl:listPending', (event) =>
 		pendingHarnessInteractions(harnessControlOwner(event))
 	);
-	ipcMain.handle('harnessControl:respond', (event, response: unknown) => {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			return resolveHarnessInteractionResponse(response, harnessControlOwner(event));
-		} finally {
-			release();
-		}
-	});
+	ipcMain.handle('harnessControl:respond', (event, response: unknown) =>
+		resolveHarnessInteractionResponse(response, harnessControlOwner(event))
+	);
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle(
 		'process:spawn',
-		withProcessActivity(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
+		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
 			handleProcessSpawn(config, {
 				getProcessManager,
 				getAgentDetector,
@@ -239,7 +211,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Write data to a process
 	ipcMain.handle(
 		'process:write',
-		withProcessActivity(handlerOpts('write'), async (sessionId: string, data: string) => {
+		withIpcErrorLogging(handlerOpts('write'), async (sessionId: string, data: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			logger.debug(`Writing to process: ${sessionId}`, LOG_CONTEXT, {
 				sessionId,
@@ -256,7 +228,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// src/shared/chatSteering.ts.
 	ipcMain.handle(
 		'process:steer',
-		withProcessActivity(handlerOpts('steer'), async (sessionId: string, text: string) => {
+		withIpcErrorLogging(handlerOpts('steer'), async (sessionId: string, text: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			logger.debug(`Steering running turn: ${sessionId}`, LOG_CONTEXT, {
 				sessionId,
@@ -300,7 +272,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Send SIGINT to a process
 	ipcMain.handle(
 		'process:interrupt',
-		withProcessActivity(handlerOpts('interrupt'), async (sessionId: string) => {
+		withIpcErrorLogging(handlerOpts('interrupt'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			if (
 				!processManager.get(sessionId) &&
@@ -315,7 +287,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Kill a process
 	ipcMain.handle(
 		'process:kill',
-		withProcessActivity(handlerOpts('kill'), async (sessionId: string) => {
+		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			if (
 				!processManager.get(sessionId) &&
@@ -332,20 +304,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 	ipcMain.handle('process:closeAgent', (_event, agentId: string) => {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			const processManager = requireProcessManager(getProcessManager);
-			processManager.closeAgent(agentId);
-			return true;
-		} finally {
-			release();
-		}
+		const processManager = requireProcessManager(getProcessManager);
+		processManager.closeAgent(agentId);
+		return true;
 	});
 
 	// Resize PTY dimensions
 	ipcMain.handle(
 		'process:resize',
-		withProcessActivity(
+		withIpcErrorLogging(
 			handlerOpts('resize'),
 			async (sessionId: string, cols: number, rows: number) => {
 				const processManager = requireProcessManager(getProcessManager);
@@ -441,7 +408,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// wrapped with ssh to execute on the remote host.
 	ipcMain.handle(
 		'process:spawnTerminalTab',
-		withProcessActivity(
+		withIpcErrorLogging(
 			handlerOpts('spawnTerminalTab'),
 			async (config: {
 				sessionId: string;
@@ -616,7 +583,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// TODO: Remove this handler once all callers migrate to process:spawnTerminalTab for persistent PTY sessions
 	ipcMain.handle(
 		'process:runCommand',
-		withProcessActivity(
+		withIpcErrorLogging(
 			handlerOpts('runCommand'),
 			async (config: {
 				sessionId: string;
@@ -647,22 +614,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// ========================================================================
 				let sshRemoteConfig: SshRemoteConfig | null = null;
 
-				if (config.sessionSshRemoteConfig?.enabled) {
+				if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig?.remoteId) {
 					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
 						sessionSshConfig: config.sessionSshRemoteConfig,
 					});
-					if (!sshResult.config) {
-						throw new Error('Terminal command SSH config not found or disabled.');
-					}
 
-					sshRemoteConfig = sshResult.config;
-					logger.info(`Terminal command will execute via SSH`, LOG_CONTEXT, {
-						sessionId: config.sessionId,
-						remoteName: sshResult.config.name,
-						remoteHost: sshResult.config.host,
-						source: sshResult.source,
-					});
+					if (sshResult.config) {
+						sshRemoteConfig = sshResult.config;
+						logger.info(`Terminal command will execute via SSH`, LOG_CONTEXT, {
+							sessionId: config.sessionId,
+							remoteName: sshResult.config.name,
+							remoteHost: sshResult.config.host,
+							source: sshResult.source,
+						});
+					}
 				}
 
 				logger.debug(`Running command: ${config.command}`, LOG_CONTEXT, {
@@ -691,7 +657,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// process map, so process:kill can't reach it.
 	ipcMain.handle(
 		'process:cancelCommand',
-		withProcessActivity(
+		withIpcErrorLogging(
 			handlerOpts('cancelCommand'),
 			async (config: { sessionId: string }): Promise<boolean> => {
 				const processManager = requireProcessManager(getProcessManager);

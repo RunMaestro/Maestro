@@ -100,7 +100,8 @@ export interface StopHandle {
 
 interface Ladder {
 	handle: StopHandle;
-	request(options: StopOptions, runActivity?: <T>(operation: () => T) => T): void;
+	request(options: StopOptions): void;
+	finished(): boolean;
 }
 
 const INERT_HANDLE: StopHandle = { stage: () => undefined, dispose: () => {} };
@@ -130,50 +131,29 @@ const ladders = new WeakMap<object, Ladder>();
  *   on a signal leaves its tools running.
  * - A tree is only killed when the pid is provably a running child of this
  *   process. Anything else gets the signal through its own handle and no more.
- *
- * Optional host activity guards requests and retained callbacks. Hosts must
- * observe returned promises to retain tree refresh, taskkill native close and
- * diagnostics through settlement. This does not establish a drained descendant
- * tree or safe cleanup, or cover work launched before a host guard was adopted.
  */
-export function stopProcess(
-	target: StopTarget,
-	options: StopOptions,
-	runActivity?: <T>(operation: () => T) => T
-): StopHandle {
-	const request = (): StopHandle => {
-		const key = target.child ?? target.pty;
-		if (!key)
-			return runActivity
-				? {
-						stage: () => runActivity(INERT_HANDLE.stage),
-						dispose: () => runActivity(INERT_HANDLE.dispose),
-					}
-				: INERT_HANDLE;
+export function stopProcess(target: StopTarget, options: StopOptions): StopHandle {
+	const key = target.child ?? target.pty;
+	if (!key) return INERT_HANDLE;
 
-		const running = ladders.get(key);
-		if (running) {
-			running.request(options, runActivity);
-			return running.handle;
-		}
+	const running = ladders.get(key);
+	if (running && !running.finished()) {
+		running.request(options);
+		return running.handle;
+	}
 
-		const ladder = createLadder(target, key, runActivity);
-		ladders.set(key, ladder);
-		ladder.request(options);
-		return ladder.handle;
-	};
-	return runActivity ? runActivity(request) : request();
+	const ladder = createLadder(target, key);
+	ladders.set(key, ladder);
+	ladder.request(options);
+	return ladder.handle;
 }
 
-function createLadder(
-	target: StopTarget,
-	key: object,
-	runActivity: <T>(operation: () => T) => T = (operation) => operation()
-): Ladder {
+function createLadder(target: StopTarget, key: object): Ladder {
 	const pid = target.pid ?? target.child?.pid ?? target.pty?.pid;
 	const hasPid = typeof pid === 'number' && pid > 0;
 
 	let stage: StopStage | undefined;
+	let done = false;
 	let exited = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -202,7 +182,8 @@ function createLadder(
 		stopRefreshing();
 		removeExitListener?.();
 		removeExitListener = undefined;
-		if (ladders.get(key)?.handle === handle) ladders.delete(key);
+		done = true;
+		ladders.delete(key);
 	};
 
 	const sweep = (): void => {
@@ -212,34 +193,29 @@ function createLadder(
 		tree = undefined;
 	};
 
-	const onExit = (): void =>
-		runActivity(() => {
-			exited = true;
-			release();
-			sweep();
-		});
+	const onExit = (): void => {
+		exited = true;
+		release();
+		sweep();
+	};
 
 	// The first record is taken before anything is signalled. An agent that is
 	// winding down can still start a tool after that, so the record is re-read
 	// until the process exits or the last stage has run.
 	const refreshTree = (): void => {
-		void runActivity(() => {
-			const current = tree;
-			if (refreshing || !current?.owned || !hasPid) return;
-			refreshing = true;
-			return refreshProcessTree(pid, current).then(
-				(next) =>
-					runActivity(() => {
-						refreshing = false;
-						// An exit or a sweep in the meantime owns the record; leave it.
-						if (tree === current) tree = next;
-					}),
-				() =>
-					runActivity(() => {
-						refreshing = false;
-					})
-			);
-		});
+		const current = tree;
+		if (refreshing || !current?.owned || !hasPid) return;
+		refreshing = true;
+		void refreshProcessTree(pid, current).then(
+			(next) => {
+				refreshing = false;
+				// An exit or a sweep in the meantime owns the record; leave it.
+				if (tree === current) tree = next;
+			},
+			() => {
+				refreshing = false;
+			}
+		);
 	};
 
 	const keepTreeFresh = (): void => {
@@ -294,48 +270,27 @@ function createLadder(
 			}
 			return;
 		}
-		void runActivity(() => {
-			const completion = Promise.withResolvers<void>();
-			// Observe before launch/listener setup. An unavailable close observer
-			// must keep the host blocked rather than release an unknown native child.
-			void runActivity(() => completion.promise);
-			let killer: ChildProcess;
-			try {
-				killer = execFile('taskkill', args, (error) =>
-					runActivity(() => {
-						if (!error) return;
-						// A process that exited before taskkill ran makes it fail benignly.
-						// Only a pipe child can prove it is still running; a PTY cannot.
-						if (!target.child || !isRunning()) {
-							logger.debug('[Termination] taskkill failed, process may be gone', LOG_CONTEXT, {
-								...context,
-								pid,
-								error: String(error),
-							});
-							return;
-						}
-						logger.warn('[Termination] taskkill failed for a running process', LOG_CONTEXT, {
-							...context,
-							pid,
-							error: String(error),
-						});
-						// A rejecting/throwing reporter cannot prevent the synchronous
-						// fallback. Hosts observe this promise independently of close.
-						const reporting = Promise.resolve()
-							.then(() => captureException(error, { operation: 'termination:taskkill', pid }))
-							.catch(() => {});
-						void runActivity(() => reporting);
-						killThroughHandle();
-					})
-				);
-			} catch (error) {
-				// A synchronous execFile throw created no child. Preserve the throw.
-				completion.resolve();
-				throw error;
+		execFile('taskkill', args, (error) => {
+			if (!error) return;
+			// A process that exited before taskkill ran makes it fail benignly.
+			// Only a pipe child can prove it is still running (its exit state is
+			// locale-independent, unlike taskkill's message); a PTY cannot, so its
+			// failure is logged and not reported.
+			if (!target.child || !isRunning()) {
+				logger.debug('[Termination] taskkill failed, process may be gone', LOG_CONTEXT, {
+					...context,
+					pid,
+					error: String(error),
+				});
+				return;
 			}
-			// Neither the result callback, target exit nor ladder disposal proves
-			// this subprocess and its stdio have closed. Late callbacks admit anew.
-			killer.once('close', () => runActivity(() => completion.resolve()));
+			logger.warn('[Termination] taskkill failed for a running process', LOG_CONTEXT, {
+				...context,
+				pid,
+				error: String(error),
+			});
+			void captureException(error, { operation: 'termination:taskkill', pid });
+			killThroughHandle();
 		});
 	};
 
@@ -424,7 +379,7 @@ function createLadder(
 			run(following, options);
 			return;
 		}
-		timer = setTimeout(() => runActivity(() => run(following, options)), options.graceMs);
+		timer = setTimeout(() => run(following, options), options.graceMs);
 		timer.unref?.();
 	};
 
@@ -469,20 +424,11 @@ function createLadder(
 	};
 
 	const handle: StopHandle = {
-		stage: () => runActivity(() => stage),
-		dispose: () => runActivity(release),
+		stage: () => stage,
+		dispose: release,
 	};
 
-	return {
-		handle,
-		request: (options, activity = runActivity) =>
-			activity(() => {
-				// Upgrade an existing portable ladder; omitted injection never drops
-				// the current guard, including callbacks retained before this request.
-				runActivity = activity;
-				request(options);
-			}),
-	};
+	return { handle, request, finished: () => done };
 }
 
 function nextStage(stage: Exclude<StopStage, 'kill'>): StopStage {

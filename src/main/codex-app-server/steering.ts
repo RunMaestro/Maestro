@@ -35,8 +35,6 @@ import {
 } from '../../shared/chatSteering';
 import type { CodexAppServerProcessHandle } from './protocol';
 import { CodexRpcRequestError } from './rpc-client';
-import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
-import { captureException } from '../utils/sentry';
 
 /**
  * The JSON-RPC code the server answers a steer with when the turn it names is
@@ -64,28 +62,14 @@ function claimedItemsFor(handle: CodexAppServerProcessHandle): Set<string> {
 
 /**
  * Ask a running app-server turn to take `text` into the turn in flight.
- * RPC failures resolve with an immediate verdict; admission/setup failures
- * reject before recovery. A delivered steer's later verdict arrives through
- * `onVerdict`, carrying the same `id`.
+ * Resolves with the immediate answer and never rejects; the later verdict for a
+ * delivered steer arrives through `onVerdict`, carrying the same `id`.
  */
 export async function steerCodexAppServerTurn(
 	handle: CodexAppServerProcessHandle,
 	request: { id: string; text: string },
 	onVerdict: (verdict: SteeringResultFrame) => void,
 	options: { timeoutMs?: number } = {}
-): Promise<SteeringResultFrame> {
-	return withWorktreeTurnActivity(
-		(_start, observe) => observe(steerAdmitted(handle, request, onVerdict, options, observe)),
-		(error) => void captureException(error)
-	);
-}
-
-async function steerAdmitted(
-	handle: CodexAppServerProcessHandle,
-	request: { id: string; text: string },
-	onVerdict: (verdict: SteeringResultFrame) => void,
-	options: { timeoutMs?: number },
-	observeCompletion: <T>(completion: Promise<T>) => Promise<T>
 ): Promise<SteeringResultFrame> {
 	const { id, text } = request;
 	const frame = (
@@ -115,39 +99,25 @@ async function steerAdmitted(
 		offMessage();
 		offTurnEnd();
 	};
-	const settle = () =>
-		withWorktreeTurnActivity(
-			() => {
-				if (settled || !outcome) return;
-				settled = true;
-				unsubscribe();
-				onVerdict(frame(outcome));
-			},
-			(error) => void captureException(error)
-		);
+	const settle = () => {
+		if (settled || !outcome) return;
+		settled = true;
+		unsubscribe();
+		onVerdict(frame(outcome));
+	};
 
-	const offMessage = handle.onUserMessage((message) =>
-		withWorktreeTurnActivity(
-			() => {
-				if (outcome || message.turnId !== turnId || claimed.has(message.itemId)) return;
-				if (!steeringTextMatches(message.text, text)) return;
-				claimed.add(message.itemId);
-				outcome = 'absorbed';
-				if (delivered) settle();
-			},
-			(error) => void captureException(error)
-		)
-	);
-	const offTurnEnd = handle.onTurnEnd(() =>
-		withWorktreeTurnActivity(
-			() => {
-				if (outcome) return;
-				outcome = 'dropped';
-				if (delivered) settle();
-			},
-			(error) => void captureException(error)
-		)
-	);
+	const offMessage = handle.onUserMessage((message) => {
+		if (outcome || message.turnId !== turnId || claimed.has(message.itemId)) return;
+		if (!steeringTextMatches(message.text, text)) return;
+		claimed.add(message.itemId);
+		outcome = 'absorbed';
+		if (delivered) settle();
+	});
+	const offTurnEnd = handle.onTurnEnd(() => {
+		if (outcome) return;
+		outcome = 'dropped';
+		if (delivered) settle();
+	});
 
 	// The child left without a `turn/completed` (which would have cleared the
 	// active turn id): there is no turn to steer.
@@ -189,23 +159,6 @@ async function steerAdmitted(
 	delivered = true;
 	// An echo seen while the request was in flight is reported on the next tick,
 	// so the caller has `delivered` in hand before the verdict that settles it.
-	if (seen()) {
-		// The immediate request can settle before this timer and the native turn
-		// can already be gone. Retain its state/listener/verdict work separately.
-		const completion = Promise.withResolvers<void>();
-		observeCompletion(completion.promise);
-		try {
-			setTimeout(() => {
-				try {
-					settle();
-				} finally {
-					completion.resolve();
-				}
-			}, 0);
-		} catch (error) {
-			completion.resolve();
-			throw error;
-		}
-	}
+	if (seen()) setTimeout(settle, 0);
 	return frame('delivered');
 }

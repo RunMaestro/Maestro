@@ -45,7 +45,6 @@ import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
-import { beginGlobalWorktreeActivity } from '../../git/worktreeActivity';
 
 const LOG_CONTEXT = '[TabNaming]';
 
@@ -136,23 +135,6 @@ export async function generateTabName(
 	// Internal: set by this function's own retry (see the effort-rejection
 	// branch in onExit) so the second attempt leaves the effort to the agent.
 	skipCheapEffort = false
-): Promise<string | null> {
-	// Naming has asynchronous provider/SSH setup and can retry after exit.
-	// Refuse before setup or recovery; native spawners independently retain
-	// their child lifetimes after an early name, abort or timeout resolves here.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await generateTabNameAdmitted(deps, config, signal, skipCheapEffort);
-	} finally {
-		release();
-	}
-}
-
-async function generateTabNameAdmitted(
-	deps: TabNamingHandlerDependencies,
-	config: TabNamingConfig,
-	signal: AbortSignal | undefined,
-	skipCheapEffort: boolean
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;

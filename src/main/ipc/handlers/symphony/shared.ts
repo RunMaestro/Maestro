@@ -5,11 +5,10 @@ import path from 'path';
 import { logger } from '../../../utils/logger';
 import { SafeSendFn } from '../../../utils/safe-send';
 import type { SessionsData, MaestroSettings } from '../../../stores/types';
-import { createIpcHandler, CreateHandlerOptions } from '../../../utils/ipcHandler';
+import { CreateHandlerOptions } from '../../../utils/ipcHandler';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { getExpandedEnv } from '../../../agents/path-prober';
 import { resolveGhPath } from '../../../utils/cliDetection';
-import { beginWorktreeGitActivity } from '../../../git/worktreeActivity';
 import {
 	SYMPHONY_STATE_PATH,
 	SYMPHONY_CACHE_PATH,
@@ -56,22 +55,6 @@ export const handlerOpts = (operation: string, logSuccess = true): CreateHandler
 	logSuccess,
 	precondition: requireSymphony,
 });
-
-/** Hold global Git activity across a complete IPC operation, including recovery. */
-export function createSymphonyGitHandler<
-	TArgs extends unknown[],
-	TResult extends Record<string, unknown>,
->(operation: string, handler: (...args: TArgs) => Promise<TResult>) {
-	return createIpcHandler(handlerOpts(operation), async (...args: TArgs) => {
-		// Refusal must happen outside the operation's own failure/cleanup paths.
-		const release = await beginWorktreeGitActivity();
-		try {
-			return await handler(...args);
-		} finally {
-			release();
-		}
-	});
-}
 
 /**
  * Get the symphony directory path.
@@ -355,23 +338,6 @@ export async function createDraftPR(
 	upstreamSlug?: string,
 	forkOwner?: string
 ): Promise<{ success: boolean; prUrl?: string; prNumber?: number; error?: string }> {
-	// Refuse before auth/setup, outside the failed-PR remote-branch rollback path.
-	const release = await beginWorktreeGitActivity();
-	try {
-		return await createDraftPRAdmitted(repoPath, baseBranch, title, body, upstreamSlug, forkOwner);
-	} finally {
-		release();
-	}
-}
-
-async function createDraftPRAdmitted(
-	repoPath: string,
-	baseBranch: string,
-	title: string,
-	body: string,
-	upstreamSlug?: string,
-	forkOwner?: string
-): ReturnType<typeof createDraftPR> {
 	// Check gh authentication first
 	const authCheck = await checkGhAuthentication();
 	if (!authCheck.authenticated) {

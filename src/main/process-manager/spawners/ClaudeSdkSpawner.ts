@@ -22,10 +22,6 @@ import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import { parseQuestionRequest } from '../../permission-relay/question-request';
 import { encodeQuestionAnswer } from '../../../renderer/components/PermissionPrompt/questionAnswer';
 import { isClaudeReadOnlyTool } from '../../../shared/maestro-lib/providers/claude-permissions';
-import {
-	withWorktreeTurnActivity,
-	type WorktreeChildSpawner,
-} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'ClaudeSdk';
 
@@ -58,33 +54,11 @@ export class ClaudeSdkSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(_start, observe, spawnChild) => this.spawnAdmitted(config, spawnChild, observe),
-				async (error) => {
-					const reporting = Promise.resolve().then(() => captureException(error));
-					try {
-						logger.error('[ClaudeTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
-					} finally {
-						await reporting;
-					}
-				}
-			);
-		} catch (error) {
-			return { pid: -1, success: false, error: String(error) };
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		spawnChild: WorktreeChildSpawner,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		if (config.toolType !== 'claude-code' || config.harnessControlMode !== 'native') {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new ClaudeTurn(this.context, config, spawnChild, observeCompletion).start();
+			return new ClaudeTurn(this.context, config).start();
 		} catch (error) {
 			if (config.permissionMode === 'standard') {
 				return {
@@ -93,11 +67,7 @@ export class ClaudeSdkSpawner {
 					error: `Claude native mode could not start: ${String(error)}`,
 				};
 			}
-			observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -132,9 +102,7 @@ class ClaudeTurn {
 
 	constructor(
 		private readonly ctx: ClaudeTurnContext,
-		private readonly config: ProcessConfig,
-		private readonly spawnChild: WorktreeChildSpawner,
-		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+		private readonly config: ProcessConfig
 	) {
 		const { sessionId, toolType, cwd, command, args } = config;
 		this.managedProcess = {
@@ -158,15 +126,15 @@ class ClaudeTurn {
 			projectPath: config.projectPath,
 			agentSessionId: config.agentSessionId,
 			sdkController: {
-				interrupt: () => this.withActivity(() => this.interrupt()),
-				kill: () => this.withActivity(() => this.close()),
+				interrupt: () => this.interrupt(),
+				kill: () => this.close(),
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
 				closed: this.closed.promise,
-				steer: (request) => this.withActivity(() => this.steer(request)),
-				interrupt: () => this.withActivity(() => this.interrupt()),
-				close: () => this.withActivity(() => this.close()),
+				steer: (request) => this.steer(request),
+				interrupt: async () => this.interrupt(),
+				close: async () => this.close(),
 			},
 		};
 	}
@@ -175,7 +143,7 @@ class ClaudeTurn {
 		const { sessionId } = this.config;
 		this.managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, this.managedProcess);
-		this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
+		void this.run().catch((error) => this.handleRunError(error));
 		return { pid: -1, success: true };
 	}
 
@@ -241,30 +209,9 @@ class ClaudeTurn {
 			}
 			return { behavior: 'deny', message: 'Denied by user.' };
 		};
-		const input = this.inputMessages();
 		this.query = query({
-			prompt: {
-				[Symbol.asyncIterator]: () => ({
-					// The SDK can retain input operations after the original turn settles.
-					next: () => this.withActivity(() => input.next()),
-					return: (value) => this.withActivity(() => input.return(value)),
-					throw: (error) => this.withActivity(() => input.throw(error)),
-				}),
-			},
+			prompt: this.inputMessages(),
 			options: {
-				spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }) => {
-					const child = this.spawnChild(command, args, { cwd, env, signal, windowsHide: true });
-					child.stderr.setEncoding('utf8');
-					child.stderr.on('data', (data: string) => {
-						withWorktreeTurnActivity(
-							() => {
-								if (!this.isSuperseded()) this.ctx.stderrHandler.handleData(config.sessionId, data);
-							},
-							(error) => captureException(error)
-						);
-					});
-					return child;
-				},
 				cwd: config.cwd,
 				resume: config.agentSessionId,
 				model: config.modelId,
@@ -275,7 +222,7 @@ class ClaudeTurn {
 						: config.permissionMode === 'readonly'
 							? 'plan'
 							: 'default',
-				canUseTool: (...args) => this.withActivity(() => canUseTool(...args)),
+				canUseTool,
 				additionalDirectories: config.sessionAdditionalDirectories?.map((item) => item.path),
 				pathToClaudeCodeExecutable: config.command,
 				allowDangerouslySkipPermissions: config.permissionMode === 'full',
@@ -421,11 +368,7 @@ class ClaudeTurn {
 			}
 			return;
 		}
-		this.observeCompletion(
-			Promise.resolve()
-				.then(() => captureException(error))
-				.catch(() => {})
-		);
+		void captureException(error);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -451,34 +394,14 @@ class ClaudeTurn {
 		this.queueWaiter = undefined;
 		this.query?.close();
 		this.closed.resolve();
-		this.observeCompletion(
-			this.ctx.exitHandler
-				.handleExit(this.config.sessionId, code, this.managedProcess)
-				.catch((error) => {
-					logger.error('[ClaudeTurn] handleExit failed', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-					throw error;
-				})
-		);
-	}
-
-	private withActivity<T>(operation: () => Promise<T>): Promise<T> {
-		try {
-			// Observe the actual callback/control promise, including fire-and-forget
-			// SDK callers, independently of the original turn's settled observer.
-			return withWorktreeTurnActivity(
-				(_start, observe) => observe(operation()),
-				(error) => captureException(error)
-			);
-		} catch (error) {
-			// Preserve async refusal without running the operation or reporting it
-			// as a transport failure. Ignored controls still have a rejection handler.
-			const refused = Promise.reject<T>(error);
-			void refused.catch(() => {});
-			return refused;
-		}
+		void this.ctx.exitHandler
+			.handleExit(this.config.sessionId, code, this.managedProcess)
+			.catch((error) => {
+				logger.error('[ClaudeTurn] handleExit failed', LOG_CONTEXT, {
+					sessionId: this.config.sessionId,
+					error: String(error),
+				});
+			});
 	}
 
 	private isSuperseded(): boolean {

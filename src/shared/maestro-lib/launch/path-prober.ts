@@ -36,13 +36,6 @@ export interface BinaryDetectionResult {
 	path?: string;
 }
 
-/** Optional host adapters; default library callers keep standalone discovery. */
-export interface PathProbeRuntime {
-	getShellPath?: typeof getShellPath;
-	execFileNoThrow?: typeof execFileNoThrow;
-	captureException?: typeof captureException;
-}
-
 function getCodexDesktopBinRoot(): string {
 	const home = os.homedir();
 	const localAppData = process.env.LOCALAPPDATA || path.win32.join(home, 'AppData', 'Local');
@@ -208,12 +201,10 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
  * Merge shell-provided PATH entries (when available) into an env object.
  * Shell PATH entries are prioritized (prepended) but de-duplicated.
  */
-export async function getExpandedEnvWithShell(
-	runtime: PathProbeRuntime = {}
-): Promise<NodeJS.ProcessEnv> {
+export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
 	const env = getExpandedEnv();
 	try {
-		const shellPath = await (runtime.getShellPath ?? getShellPath)();
+		const shellPath = await getShellPath();
 		if (!shellPath) return env;
 
 		const delim = path.delimiter;
@@ -241,7 +232,7 @@ export async function getExpandedEnvWithShell(
 			message.includes('Timed out reading shell PATH') ||
 			message.startsWith('Shell exited with code');
 		if (!isExpected) {
-			void (runtime.captureException ?? captureException)(err);
+			void captureException(err);
 		}
 		try {
 			logger.debug('Shell PATH probe failed; using base expanded env', LOG_CONTEXT, { err });
@@ -690,10 +681,7 @@ export async function probeUnixPathsAll(binaryName: string): Promise<string[]> {
  * 1. Direct probe of known installation paths (most reliable)
  * 2. Fall back to which/where command with expanded PATH
  */
-export async function checkBinaryExists(
-	binaryName: string,
-	runtime: PathProbeRuntime = {}
-): Promise<BinaryDetectionResult> {
+export async function checkBinaryExists(binaryName: string): Promise<BinaryDetectionResult> {
 	// First try direct file probing of known installation paths
 	// This is more reliable than which/where in packaged Electron apps
 	if (isWindows()) {
@@ -718,13 +706,8 @@ export async function checkBinaryExists(
 		// Use expanded PATH to find binaries in common installation locations.
 		// Prefer shell-provided PATH entries when available (they should be
 		// prioritized). This helps packaged apps locate user-installed tools.
-		const env = await getExpandedEnvWithShell(runtime);
-		const result = await (runtime.execFileNoThrow ?? execFileNoThrow)(
-			command,
-			[binaryName],
-			undefined,
-			env
-		);
+		const env = await getExpandedEnvWithShell();
+		const result = await execFileNoThrow(command, [binaryName], undefined, env);
 
 		if (result.exitCode === 0 && result.stdout.trim()) {
 			// Get all matches (Windows 'where' can return multiple)
@@ -815,10 +798,7 @@ export async function checkBinaryExists(
  * can present a chooser when multiple valid installations exist (e.g. an
  * `nvm`-managed `codex` alongside a `codex-multi-auth-codex` wrapper).
  */
-export async function findAllBinaryPaths(
-	binaryName: string,
-	runtime: PathProbeRuntime = {}
-): Promise<string[]> {
+export async function findAllBinaryPaths(binaryName: string): Promise<string[]> {
 	// 1. Direct probes
 	const probedPaths = isWindows()
 		? await probeWindowsPathsAll(binaryName)
@@ -828,7 +808,7 @@ export async function findAllBinaryPaths(
 	const fromShell: string[] = [];
 	try {
 		const command = getWhichCommand();
-		const env = await getExpandedEnvWithShell(runtime);
+		const env = await getExpandedEnvWithShell();
 		// On Unix, `which -a` returns every match in PATH. On Windows, `where`
 		// returns every match by default.
 		const args = isWindows() ? [binaryName] : ['-a', binaryName];
@@ -837,7 +817,7 @@ export async function findAllBinaryPaths(
 		// form. A broken PATH entry pointing at an unresponsive network mount
 		// could otherwise hang this indefinitely - doDetectAgents awaits it
 		// once per detected agent, sequentially.
-		const result = await (runtime.execFileNoThrow ?? execFileNoThrow)(command, args, undefined, {
+		const result = await execFileNoThrow(command, args, undefined, {
 			env,
 			timeout: WHICH_LOOKUP_TIMEOUT_MS,
 		});

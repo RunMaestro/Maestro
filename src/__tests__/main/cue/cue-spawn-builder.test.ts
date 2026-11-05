@@ -56,7 +56,7 @@ vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
 	const actual = await vi.importActual<
 		typeof import('../../../shared/maestro-lib/launch/ssh-spawn-wrapper')
 	>('../../../shared/maestro-lib/launch/ssh-spawn-wrapper');

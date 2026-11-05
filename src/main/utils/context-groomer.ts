@@ -30,7 +30,6 @@ import {
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getSshRemoteConfig, type SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { getClaudeTokenMode, type ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -116,20 +115,15 @@ const activeGroomingSessions = new Map<
  * Called when user cancels a summarization operation.
  */
 export function cancelAllGroomingSessions(): void {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		logger.info('Cancelling all grooming sessions', LOG_CONTEXT, {
-			count: activeGroomingSessions.size,
-		});
+	logger.info('Cancelling all grooming sessions', LOG_CONTEXT, {
+		count: activeGroomingSessions.size,
+	});
 
-		for (const [sessionId, session] of activeGroomingSessions) {
-			if (session.cancel) {
-				logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
-				session.cancel();
-			}
+	for (const [sessionId, session] of activeGroomingSessions) {
+		if (session.cancel) {
+			logger.debug('Cancelling grooming session', LOG_CONTEXT, { sessionId });
+			session.cancel();
 		}
-	} finally {
-		release();
 	}
 }
 
@@ -251,21 +245,6 @@ export interface GroomContextResult {
  * @returns Promise resolving to the grooming result
  */
 export async function groomContext(
-	options: GroomContextOptions,
-	processManager: GroomingProcessManager,
-	agentDetector: AgentDetector
-): Promise<GroomContextResult> {
-	// Preparation and effort fallback belong to one request. Native lifetimes
-	// remain independently held by the manager/spawners until actual close.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await groomContextWithRetry(options, processManager, agentDetector);
-	} finally {
-		release();
-	}
-}
-
-async function groomContextWithRetry(
 	options: GroomContextOptions,
 	processManager: GroomingProcessManager,
 	agentDetector: AgentDetector

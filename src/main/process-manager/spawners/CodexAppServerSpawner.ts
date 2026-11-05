@@ -46,11 +46,11 @@ import { argsResumeSession } from '../utils/resumeArgs';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { isWindows } from '../../../shared/platformDetection';
-import type { startTurn, TurnExit, TurnHandle } from '../../../shared/maestro-lib/run/start-turn';
 import {
-	withWorktreeTurnActivity,
-	withWorktreeCallbackActivity,
-} from '../../git/worktreeTurnActivity';
+	startTurn,
+	type TurnExit,
+	type TurnHandle,
+} from '../../../shared/maestro-lib/run/start-turn';
 import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
@@ -61,11 +61,10 @@ import {
 	sshConnectionArgs,
 	withRemotePidRecord,
 	type RemoteSignalMode,
-} from '../../utils/ssh-remote-signal';
+} from '../../../shared/maestro-lib/control/ssh-remote-signal';
 import {
 	CodexAppServerEventTranslator,
 	type CodexExecLine,
-	type CodexAppServerUserMessage,
 } from '../../codex-app-server/event-translator';
 import {
 	isCodexNotification,
@@ -164,30 +163,6 @@ export class CodexAppServerSpawner {
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(start, observe) => this.spawnAdmitted(config, start, observe),
-				async (error) => {
-					const reporting = Promise.resolve().then(() => captureException(error));
-					try {
-						logger.error('[CodexAppServerSpawner] Completion failed', LOG_CONTEXT, {
-							error: String(error),
-						});
-					} finally {
-						await reporting;
-					}
-				}
-			);
-		} catch (error) {
-			return { pid: -1, success: false, error: String(error) };
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		startAdmittedTurn: typeof startTurn,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		const parsed = parseCodexAppServerInvocation(config);
 		if (!parsed.ok) {
 			logger.info(
@@ -208,20 +183,10 @@ export class CodexAppServerSpawner {
 			return this.fallbackToCli(config);
 		}
 		try {
-			return new CodexAppServerTurn(
-				this.context,
-				config,
-				parsed.invocation,
-				startAdmittedTurn,
-				observeCompletion
-			).start();
+			return new CodexAppServerTurn(this.context, config, parsed.invocation).start();
 		} catch (error) {
-			// Setup may have created a child; admission retains any native uncertainty.
-			observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			// startTurn throws only on a bad spawn option; exec gets the turn.
+			void captureException(error);
 			logger.warn('[CodexAppServerSpawner] Could not start app-server; using exec', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				error: String(error),
@@ -252,7 +217,7 @@ class CodexAppServerTurn {
 	private heldLines: CodexExecLine[] = [];
 	/** Stderr produced before the turn was committed; forwarded on commit. */
 	private heldStderr = '';
-	private cancelExitGrace: (() => void) | undefined;
+	private exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
 	/** The turn is over (completed, failed, or the child is gone); steering listens. */
 	private turnEnded = false;
 	private readonly turnEndListeners = new Set<() => void>();
@@ -260,21 +225,13 @@ class CodexAppServerTurn {
 	constructor(
 		private readonly ctx: TurnContext,
 		private readonly config: ProcessConfig,
-		private readonly invocation: CodexAppServerInvocation,
-		private readonly startAdmittedTurn: typeof startTurn,
-		private readonly observeCompletion: <T>(completion: Promise<T>) => Promise<T>
+		private readonly invocation: CodexAppServerInvocation
 	) {
 		this.rpc = new CodexAppServerRpc((line) => this.writeLine(line));
 
 		const { sessionId, toolType, cwd, command, args } = config;
 		const translator = this.translator;
 		const rpc = this.rpc;
-		// Keep Set identity semantics across duplicate subscriptions and old unsubscribes.
-		const messageListeners = new WeakMap<
-			(message: CodexAppServerUserMessage) => void,
-			(message: CodexAppServerUserMessage) => void
-		>();
-		const endListeners = new WeakMap<() => void, () => void>();
 		this.managedProcess = {
 			sessionId,
 			toolType,
@@ -312,42 +269,9 @@ class CodexAppServerTurn {
 					method: string,
 					params?: unknown,
 					options?: { timeoutMs?: number }
-				) =>
-					withWorktreeTurnActivity(
-						(_start, observe) => observe(rpc.request<T>(method, params, options)),
-						(error) => captureException(error)
-					),
-				onUserMessage: (listener) =>
-					withWorktreeTurnActivity(
-						() => {
-							let admitted = messageListeners.get(listener);
-							if (!admitted) {
-								admitted = (message) =>
-									withWorktreeTurnActivity(
-										() => listener(message),
-										(error) => captureException(error)
-									);
-								messageListeners.set(listener, admitted);
-							}
-							const off = translator.onUserMessage(admitted);
-							return () => withWorktreeTurnActivity(off, (error) => captureException(error));
-						},
-						(error) => captureException(error)
-					),
-				onTurnEnd: (listener) =>
-					withWorktreeTurnActivity(
-						() => {
-							let admitted = endListeners.get(listener);
-							if (!admitted) {
-								admitted = () =>
-									withWorktreeTurnActivity(listener, (error) => captureException(error));
-								endListeners.set(listener, admitted);
-							}
-							const off = this.onTurnEnd(admitted);
-							return () => withWorktreeTurnActivity(off, (error) => captureException(error));
-						},
-						(error) => captureException(error)
-					),
+				) => rpc.request<T>(method, params, options),
+				onUserMessage: (listener) => translator.onUserMessage(listener),
+				onTurnEnd: (listener) => this.onTurnEnd(listener),
 			},
 			harnessControl: {
 				getCapabilities: () => ({
@@ -362,18 +286,9 @@ class CodexAppServerTurn {
 					imagePrompts: false,
 					resume: true,
 				}),
-				steer: (request) =>
-					withWorktreeTurnActivity(
-						(_start, observe) =>
-							observe(
-								steerCodexAppServerTurn(this.managedProcess.codexAppServer!, request, (verdict) =>
-									withWorktreeTurnActivity(
-										() => this.ctx.emitter.emit('steering-verdict', sessionId, verdict),
-										(error) => captureException(error)
-									)
-								)
-							),
-						(error) => captureException(error)
+				steer: ({ id, text }) =>
+					steerCodexAppServerTurn(this.managedProcess.codexAppServer!, { id, text }, (verdict) =>
+						this.ctx.emitter.emit('steering-verdict', sessionId, verdict)
 					),
 				interrupt: async () => this.interrupt(),
 				close: async (options) => this.kill(options),
@@ -410,7 +325,7 @@ class CodexAppServerTurn {
 					shell: config.shell,
 				});
 
-		this.turn = this.startAdmittedTurn(
+		this.turn = startTurn(
 			{
 				command: spawnPlan.command,
 				args: spawnPlan.args,
@@ -419,26 +334,13 @@ class CodexAppServerTurn {
 				shell: spawnPlan.shell,
 			},
 			{
-				// Retained stream callbacks may outlive startup and native close.
-				onLine: (line) =>
-					withWorktreeTurnActivity(
-						(_start, observe) => this.handleLine(line, observe),
-						(error) => captureException(error)
-					),
-				onStderr: (text) =>
-					withWorktreeTurnActivity(
-						() => this.handleStderr(text),
-						(error) => captureException(error)
-					),
+				onLine: (line) => this.handleLine(line),
+				onStderr: (text) => this.handleStderr(text),
 				onStdinError: (error) =>
-					withWorktreeTurnActivity(
-						() =>
-							logger.debug('[CodexAppServerSpawner] stdin error', LOG_CONTEXT, {
-								sessionId,
-								error: String(error),
-							}),
-						(error) => captureException(error)
-					),
+					logger.debug('[CodexAppServerSpawner] stdin error', LOG_CONTEXT, {
+						sessionId,
+						error: String(error),
+					}),
 			},
 			{
 				stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
@@ -456,8 +358,8 @@ class CodexAppServerTurn {
 		managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, managedProcess);
 
-		this.observeCompletion(this.turn.done.then((exit) => this.handleChildExit(exit)));
-		this.observeCompletion(this.run().catch((error) => this.handleRunError(error)));
+		void this.turn.done.then((exit) => this.handleChildExit(exit));
+		void this.run().catch((error) => this.handleRunError(error));
 
 		logger.info('[CodexAppServerSpawner] Started app-server turn', LOG_CONTEXT, {
 			sessionId,
@@ -572,7 +474,7 @@ class CodexAppServerTurn {
 	}
 
 	/** Route one framed stdout line from the server. */
-	private handleLine(line: string, observe: <T>(completion: Promise<T>) => Promise<T>): void {
+	private handleLine(line: string): void {
 		if (this.isSuperseded()) return;
 		const trimmed = line.trim();
 		if (!trimmed) return;
@@ -590,7 +492,7 @@ class CodexAppServerTurn {
 		if (!message || typeof message !== 'object') return;
 
 		if (isCodexServerRequest(message)) {
-			this.answerServerRequest(message, observe);
+			this.answerServerRequest(message);
 			return;
 		}
 		if (isCodexResponse(message)) {
@@ -622,10 +524,7 @@ class CodexAppServerTurn {
 	 * Answer a server request at once, by policy. An unanswered request stalls
 	 * the turn forever, so even a method Maestro does not know gets an error.
 	 */
-	private answerServerRequest(
-		request: CodexAppServerRequest,
-		observe: <T>(completion: Promise<T>) => Promise<T>
-	): void {
+	private answerServerRequest(request: CodexAppServerRequest): void {
 		if (this.config.permissionMode === 'standard') {
 			const interaction = codexServerInteraction(request, {
 				sessionId: this.config.sessionId,
@@ -633,23 +532,21 @@ class CodexAppServerTurn {
 				spawnGeneration: this.managedProcess.spawnGeneration ?? 1,
 			});
 			if (interaction) {
-				observe(
-					this.answerInteractiveServerRequest(request, interaction).catch((error) => {
-						logger.warn(
-							'[CodexAppServerSpawner] Interactive request failed; declining',
-							LOG_CONTEXT,
-							{
-								sessionId: this.config.sessionId,
-								method: request.method,
-								error: String(error),
-							}
-						);
-						this.respondToServerRequest(
-							request,
-							answerCodexServerRequest(request, { grantApprovals: false })
-						);
-					})
-				);
+				void this.answerInteractiveServerRequest(request, interaction).catch((error) => {
+					logger.warn(
+						'[CodexAppServerSpawner] Interactive request failed; declining',
+						LOG_CONTEXT,
+						{
+							sessionId: this.config.sessionId,
+							method: request.method,
+							error: String(error),
+						}
+					);
+					this.respondToServerRequest(
+						request,
+						answerCodexServerRequest(request, { grantApprovals: false })
+					);
+				});
 				return;
 			}
 		}
@@ -724,15 +621,7 @@ class CodexAppServerTurn {
 		try {
 			this.ctx.emitter.emit('raw-stdout', sessionId, chunk);
 		} catch (error) {
-			withWorktreeTurnActivity(
-				(_start, observe) =>
-					observe(
-						Promise.resolve()
-							.then(() => captureException(error))
-							.catch(() => {})
-					),
-				(error) => captureException(error)
-			);
+			void captureException(error);
 		}
 		this.ctx.stdoutHandler.handleData(sessionId, chunk);
 	}
@@ -780,53 +669,21 @@ class CodexAppServerTurn {
 
 	/** Run the stop ladder from `from` if the child is still here after the grace. */
 	private armExitGrace(from: 'interrupt' | 'terminate'): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				if (this.cancelExitGrace) return;
-				// A completed turn or removed registration cannot settle this timer.
-				const scheduled = Promise.withResolvers<void>();
-				observe(scheduled.promise);
-				let timer: ReturnType<typeof setTimeout> | undefined;
-				const finish = (): void => {
-					withWorktreeCallbackActivity(() => {
-						// A failed cancellation leaves the independent hold unresolved.
-						clearTimeout(timer);
-						if (this.cancelExitGrace === finish) this.cancelExitGrace = undefined;
-						scheduled.resolve();
-					}, captureException);
-				};
-				this.cancelExitGrace = finish;
-				try {
-					timer = setTimeout(() => {
-						// Admit retained callbacks before state reads or cancellation.
-						withWorktreeCallbackActivity(() => {
-							// Reentrant kill/interrupt must not settle this running callback.
-							this.cancelExitGrace = undefined;
-							try {
-								if (!this.childRunning()) return;
-								this.signalRemote('terminate');
-								stopProcess(
-									{ child: this.turn.child },
-									{
-										from,
-										graceMs: INTERACTIVE_STOP_GRACE_MS,
-										sessionId: this.config.sessionId,
-										label: 'codex-app-server',
-									},
-									(operation) => withWorktreeCallbackActivity(operation, captureException)
-								);
-							} finally {
-								finish();
-							}
-						}, captureException);
-					}, CODEX_APP_SERVER_EXIT_GRACE_MS);
-				} catch (error) {
-					finish();
-					throw error;
+		if (this.exitGraceTimer) return;
+		this.exitGraceTimer = setTimeout(() => {
+			this.exitGraceTimer = undefined;
+			if (!this.childRunning()) return;
+			this.signalRemote('terminate');
+			stopProcess(
+				{ child: this.turn.child },
+				{
+					from,
+					graceMs: INTERACTIVE_STOP_GRACE_MS,
+					sessionId: this.config.sessionId,
+					label: 'codex-app-server',
 				}
-			},
-			(error) => captureException(error)
-		);
+			);
+		}, CODEX_APP_SERVER_EXIT_GRACE_MS);
 	}
 
 	private childRunning(): boolean {
@@ -841,15 +698,8 @@ class CodexAppServerTurn {
 	 * child that ignored the interrupt goes on running commands.
 	 */
 	private interrupt(): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => this.interruptAdmitted(observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private interruptAdmitted(observe: <T>(completion: Promise<T>) => Promise<T>): void {
 		this.cancelled = true;
-		const sent = this.sendTurnInterrupt(observe);
+		const sent = this.sendTurnInterrupt();
 		if (!sent && this.childRunning()) {
 			// Nothing to interrupt yet (setup, or `turn/start` unanswered): stop the child now.
 			this.signalRemote('terminate');
@@ -860,8 +710,7 @@ class CodexAppServerTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'interrupt',
-				},
-				(operation) => withWorktreeCallbackActivity(operation, captureException)
+				}
 			);
 			return;
 		}
@@ -870,19 +719,12 @@ class CodexAppServerTurn {
 
 	/** Hard stop: interrupt the turn as a courtesy, then run the ladder from SIGTERM. */
 	private kill(options: { sync?: boolean; shutdown?: boolean } = {}): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => this.killAdmitted(options, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private killAdmitted(
-		options: { sync?: boolean; shutdown?: boolean },
-		observe: <T>(completion: Promise<T>) => Promise<T>
-	): void {
 		this.cancelled = true;
-		this.sendTurnInterrupt(observe);
-		this.cancelExitGrace?.();
+		this.sendTurnInterrupt();
+		if (this.exitGraceTimer) {
+			clearTimeout(this.exitGraceTimer);
+			this.exitGraceTimer = undefined;
+		}
 		this.signalRemote('terminate');
 		stopProcess(
 			{ child: this.turn.child },
@@ -895,35 +737,35 @@ class CodexAppServerTurn {
 				includeDescendants: !options.shutdown,
 				sessionId: this.config.sessionId,
 				label: 'kill',
-			},
-			(operation) => withWorktreeCallbackActivity(operation, captureException)
+			}
 		);
 	}
 
 	/** Send `turn/interrupt` for the active turn. False when there is no turn to interrupt. */
-	private sendTurnInterrupt(observe: <T>(completion: Promise<T>) => Promise<T>): boolean {
+	private sendTurnInterrupt(): boolean {
 		const threadId = this.translator.threadId;
 		const turnId = this.translator.activeTurnId;
 		if (!threadId || !turnId || this.phase !== 'committed' || this.rpc.isClosed) return false;
-		observe(
-			this.rpc
-				.request(
-					'turn/interrupt',
-					{ threadId, turnId },
-					{ timeoutMs: CODEX_APP_SERVER_EXIT_GRACE_MS }
-				)
-				.catch((error) => {
-					logger.debug('[CodexAppServerSpawner] turn/interrupt failed', LOG_CONTEXT, {
-						sessionId: this.config.sessionId,
-						error: String(error),
-					});
-				})
-		);
+		this.rpc
+			.request(
+				'turn/interrupt',
+				{ threadId, turnId },
+				{ timeoutMs: CODEX_APP_SERVER_EXIT_GRACE_MS }
+			)
+			.catch((error) => {
+				logger.debug('[CodexAppServerSpawner] turn/interrupt failed', LOG_CONTEXT, {
+					sessionId: this.config.sessionId,
+					error: String(error),
+				});
+			});
 		return true;
 	}
 
 	private handleChildExit(exit: TurnExit): void {
-		this.cancelExitGrace?.();
+		if (this.exitGraceTimer) {
+			clearTimeout(this.exitGraceTimer);
+			this.exitGraceTimer = undefined;
+		}
 		this.notifyTurnEnded();
 		this.rpc.close('app-server exited');
 		if (this.isSuperseded() || this.finished) return;
@@ -975,8 +817,7 @@ class CodexAppServerTurn {
 			this.signalRemote('terminate');
 			stopProcess(
 				{ child: this.turn.child },
-				{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, sessionId, label: 'fallback' },
-				(operation) => withWorktreeCallbackActivity(operation, captureException)
+				{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, sessionId, label: 'fallback' }
 			);
 		}
 		// Reclaim the slot only if it is still ours: a respawn that already took
@@ -998,11 +839,7 @@ class CodexAppServerTurn {
 				return;
 			}
 		} catch (fallbackError) {
-			this.observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(fallbackError))
-					.catch(() => {})
-			);
+			void captureException(fallbackError);
 		}
 		this.emitAgentError(error);
 		this.finish(1);
@@ -1012,11 +849,7 @@ class CodexAppServerTurn {
 	private handleRunError(error: unknown): void {
 		if (this.finished || this.cancelled || this.isSuperseded()) return;
 		if (!(error instanceof Error && error.name.startsWith('CodexRpc')))
-			this.observeCompletion(
-				Promise.resolve()
-					.then(() => captureException(error))
-					.catch(() => {})
-			);
+			void captureException(error);
 		logger.warn('[CodexAppServerSpawner] app-server turn failed', LOG_CONTEXT, {
 			sessionId: this.config.sessionId,
 			error: String(error),
@@ -1055,38 +888,23 @@ class CodexAppServerTurn {
 			try {
 				listener();
 			} catch (error) {
-				withWorktreeTurnActivity(
-					(_start, observe) =>
-						observe(
-							Promise.resolve()
-								.then(() => captureException(error))
-								.catch(() => {})
-						),
-					(error) => captureException(error)
-				);
+				void captureException(error);
 			}
 		}
 	}
 
 	/** Report the turn's exit through ExitHandler, exactly once. */
 	private finish(code: number, signal?: NodeJS.Signals | null): void {
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				if (this.finished) return;
-				this.finished = true;
-				observe(
-					this.ctx.exitHandler
-						.handleExit(this.config.sessionId, code, this.managedProcess, signal)
-						.catch((error) => {
-							logger.error('[CodexAppServerSpawner] handleExit threw', LOG_CONTEXT, {
-								sessionId: this.config.sessionId,
-								error: String(error),
-							});
-						})
-				);
-			},
-			(error) => captureException(error)
-		);
+		if (this.finished) return;
+		this.finished = true;
+		void this.ctx.exitHandler
+			.handleExit(this.config.sessionId, code, this.managedProcess, signal)
+			.catch((error) => {
+				logger.error('[CodexAppServerSpawner] handleExit threw', LOG_CONTEXT, {
+					sessionId: this.config.sessionId,
+					error: String(error),
+				});
+			});
 	}
 
 	private emitAgentError(error: unknown): void {

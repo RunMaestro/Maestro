@@ -1,7 +1,6 @@
 import { execFileNoThrow } from './execFile';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import type { ShellInfo } from '../../shared/types';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 export type { ShellInfo } from '../../shared/types';
 
 /**
@@ -9,17 +8,6 @@ export type { ShellInfo } from '../../shared/types';
  * Checks for platform-appropriate shells
  */
 export async function detectShells(): Promise<ShellInfo[]> {
-	// Admit the whole request before setup or per-shell recovery. The probes can
-	// overlap after a result/timeout, so each child also owns its native lifetime.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await detectShellsAdmitted();
-	} finally {
-		release();
-	}
-}
-
-async function detectShellsAdmitted(): Promise<ShellInfo[]> {
 	// Platform-specific shell definitions
 	const shells = isWindows()
 		? [
@@ -78,12 +66,7 @@ async function detectShell(shellId: string, shellName: string): Promise<ShellInf
 
 		// Use 'which' on Unix-like systems, 'where' on Windows
 		const command = getWhichCommand();
-		// Result, error and exit do not prove stdio closed. If launch or observation
-		// is unknown, keep this independent hold rather than infer completion.
-		const releaseNative = beginGlobalWorktreeActivity();
-		const result = await execFileNoThrow(command, [executableName], undefined, undefined, (child) =>
-			child.once('close', releaseNative)
-		);
+		const result = await execFileNoThrow(command, [executableName]);
 
 		if (result.exitCode === 0 && result.stdout.trim()) {
 			return {

@@ -17,7 +17,6 @@ import { buildSshCommand, RemoteCommandOptions } from '../utils/ssh-command-buil
 import { stripAnsi } from '../utils/stripAnsi';
 import type { SshRemoteConfig } from '../../shared/types';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import {
 	MODELS_REFRESHED_CHANNEL,
 	type ModelsRefreshedPayload,
@@ -64,14 +63,7 @@ async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Prom
 
 	try {
 		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const releaseNative = beginGlobalWorktreeActivity();
-		const resultPromise = execFileNoThrow(
-			sshCommand.command,
-			sshCommand.args,
-			undefined,
-			undefined,
-			(child) => child.once('close', releaseNative)
-		);
+		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
@@ -139,21 +131,6 @@ export async function discoverModelsRemote(
 	sshRemote: SshRemoteConfig,
 	forceRefresh: boolean
 ): Promise<string[]> {
-	// A cached result or timeout cannot stand in for native SSH close. Admit
-	// before cache/config access and retain each child independently below.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await discoverModelsRemoteAdmitted(agentId, sshRemote, forceRefresh);
-	} finally {
-		release();
-	}
-}
-
-async function discoverModelsRemoteAdmitted(
-	agentId: string,
-	sshRemote: SshRemoteConfig,
-	forceRefresh: boolean
-): Promise<string[]> {
 	const cacheKey = `${agentId}:${sshRemote.id}`;
 
 	// Check cache unless force refresh
@@ -186,14 +163,7 @@ async function discoverModelsRemoteAdmitted(
 		);
 
 		// Execute with timeout matching detectAgentsRemote pattern
-		const releaseNative = beginGlobalWorktreeActivity();
-		const resultPromise = execFileNoThrow(
-			sshCommand.command,
-			sshCommand.args,
-			undefined,
-			undefined,
-			(child) => child.once('close', releaseNative)
-		);
+		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(
@@ -322,18 +292,6 @@ export interface DiscoverAgentModelsOptions {
  * read as "this agent has no models" rather than as the failure it is.
  */
 export async function discoverAgentModels(
-	deps: DiscoverAgentModelsDeps,
-	options: DiscoverAgentModelsOptions
-): Promise<string[]> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await discoverAgentModelsAdmitted(deps, options);
-	} finally {
-		release();
-	}
-}
-
-async function discoverAgentModelsAdmitted(
 	deps: DiscoverAgentModelsDeps,
 	{ agentId, forceRefresh = false, sshRemoteId }: DiscoverAgentModelsOptions
 ): Promise<string[]> {

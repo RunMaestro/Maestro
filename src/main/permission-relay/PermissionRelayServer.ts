@@ -22,7 +22,6 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 import { createPending, lookupBinding } from './registry';
 import { parseQuestionRequest } from './question-request';
 import type { BridgeToServerMessage, PermissionRequest, ServerToBridgeMessage } from './types';
@@ -40,12 +39,7 @@ export class PermissionRelayServer {
 
 	/** Set the callback that surfaces requests to the user (renderer). */
 	setOnRequest(cb: OnPermissionRequest): void {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			this.onRequest = cb;
-		} finally {
-			release();
-		}
+		this.onRequest = cb;
 	}
 
 	/** True once the socket is listening. */
@@ -59,22 +53,16 @@ export class PermissionRelayServer {
 	 * bridge env.
 	 */
 	async ensureStarted(userDataDir: string): Promise<string> {
-		// Each caller owns a request scope in addition to the native server lifetime.
-		const release = beginGlobalWorktreeActivity();
-		try {
-			if (this.socketPath && this.server) {
-				return this.socketPath;
-			}
-			if (this.starting) {
-				return await this.starting;
-			}
-			this.starting = this.start(userDataDir).finally(() => {
-				this.starting = null;
-			});
-			return await this.starting;
-		} finally {
-			release();
+		if (this.socketPath && this.server) {
+			return this.socketPath;
 		}
+		if (this.starting) {
+			return this.starting;
+		}
+		this.starting = this.start(userDataDir).finally(() => {
+			this.starting = null;
+		});
+		return this.starting;
 	}
 
 	private resolveSocketPath(userDataDir: string): string {
@@ -92,123 +80,78 @@ export class PermissionRelayServer {
 	}
 
 	private async start(userDataDir: string): Promise<string> {
-		const release = beginGlobalWorktreeActivity();
-		let server: net.Server | undefined;
-		let closed = false;
-		let setupSettled = false;
-		const releaseIfSettled = (): void => {
-			if (setupSettled && (!server || closed)) release();
-		};
-		try {
-			const socketPath = this.resolveSocketPath(userDataDir);
+		const socketPath = this.resolveSocketPath(userDataDir);
 
-			// Remove any stale socket file from a previous unclean shutdown.
-			if (process.platform !== 'win32') {
-				try {
-					fs.unlinkSync(socketPath);
-				} catch {
-					// Not present - fine.
-				}
-			}
-
-			server = net.createServer((socket) => this.handleConnection(socket));
-			const endpoint = server;
-			endpoint.once('close', () => {
-				closed = true;
-				releaseIfSettled();
-			});
-
-			// Create the socket with 0600 from the start. listen() creates the socket
-			// file immediately, so a later chmod leaves a window where another local
-			// user could connect (on a permissive umask like 022). Constraining the
-			// umask around listen() makes the file restrictive at creation time; the
-			// chmod below is a belt-and-suspenders backstop. Not applicable on win32
-			// (named pipes are per-user by ACL and umask has no effect).
-			const prevUmask = process.platform !== 'win32' ? process.umask(0o177) : undefined;
+		// Remove any stale socket file from a previous unclean shutdown.
+		if (process.platform !== 'win32') {
 			try {
-				await new Promise<void>((resolve, reject) => {
-					endpoint.once('error', reject);
-					endpoint.listen(socketPath, () => {
-						endpoint.removeListener('error', reject);
-						resolve();
-					});
-				});
-			} finally {
-				if (prevUmask !== undefined) {
-					process.umask(prevUmask);
-				}
+				fs.unlinkSync(socketPath);
+			} catch {
+				// Not present - fine.
 			}
-
-			// Backstop: ensure 0600 even if the umask path was ineffective.
-			if (process.platform !== 'win32') {
-				try {
-					fs.chmodSync(socketPath, 0o600);
-				} catch (e) {
-					logger.warn('Failed to chmod relay socket to 0600', LOG_CONTEXT, {
-						socketPath,
-						error: e instanceof Error ? e.message : String(e),
-					});
-				}
-			}
-
-			this.server = server;
-			this.socketPath = socketPath;
-			logger.info('Permission relay socket listening', LOG_CONTEXT, { socketPath });
-			return socketPath;
-		} finally {
-			// A failed listen or requested stop does not prove native closure.
-			// Even an early close must retain pending startup/reporting work.
-			setupSettled = true;
-			releaseIfSettled();
 		}
+
+		const server = net.createServer((socket) => this.handleConnection(socket));
+
+		// Create the socket with 0600 from the start. listen() creates the socket
+		// file immediately, so a later chmod leaves a window where another local
+		// user could connect (on a permissive umask like 022). Constraining the
+		// umask around listen() makes the file restrictive at creation time; the
+		// chmod below is a belt-and-suspenders backstop. Not applicable on win32
+		// (named pipes are per-user by ACL and umask has no effect).
+		const prevUmask = process.platform !== 'win32' ? process.umask(0o177) : undefined;
+		try {
+			await new Promise<void>((resolve, reject) => {
+				server.once('error', reject);
+				server.listen(socketPath, () => {
+					server.removeListener('error', reject);
+					resolve();
+				});
+			});
+		} finally {
+			if (prevUmask !== undefined) {
+				process.umask(prevUmask);
+			}
+		}
+
+		// Backstop: ensure 0600 even if the umask path was ineffective.
+		if (process.platform !== 'win32') {
+			try {
+				fs.chmodSync(socketPath, 0o600);
+			} catch (e) {
+				logger.warn('Failed to chmod relay socket to 0600', LOG_CONTEXT, {
+					socketPath,
+					error: e instanceof Error ? e.message : String(e),
+				});
+			}
+		}
+
+		this.server = server;
+		this.socketPath = socketPath;
+		logger.info('Permission relay socket listening', LOG_CONTEXT, { socketPath });
+		return socketPath;
 	}
 
 	private handleConnection(socket: net.Socket): void {
-		const release = beginGlobalWorktreeActivity();
-		let closed = false;
-		let setupSettled = false;
-		const releaseIfSettled = (): void => {
-			if (closed && setupSettled) release();
-		};
-		try {
-			// A close request, error or server shutdown does not prove socket closure.
-			socket.once('close', () => {
-				closed = true;
-				releaseIfSettled();
-			});
-			let buffer = '';
-			socket.setEncoding('utf8');
+		let buffer = '';
+		socket.setEncoding('utf8');
 
-			socket.on('data', (chunk: string) => {
-				const releaseData = beginGlobalWorktreeActivity();
-				try {
-					buffer += chunk;
-					let newlineIndex: number;
-					while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-						const line = buffer.slice(0, newlineIndex).trim();
-						buffer = buffer.slice(newlineIndex + 1);
-						if (line.length === 0) {
-							continue;
-						}
-						this.handleLine(socket, line);
-					}
-				} finally {
-					releaseData();
+		socket.on('data', (chunk: string) => {
+			buffer += chunk;
+			let newlineIndex: number;
+			while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+				const line = buffer.slice(0, newlineIndex).trim();
+				buffer = buffer.slice(newlineIndex + 1);
+				if (line.length === 0) {
+					continue;
 				}
-			});
+				this.handleLine(socket, line);
+			}
+		});
 
-			socket.on('error', (err) => {
-				const releaseError = beginGlobalWorktreeActivity();
-				try {
-					logger.debug('Relay socket connection error', LOG_CONTEXT, { error: err.message });
-				} finally {
-					releaseError();
-				}
-			});
-		} finally {
-			setupSettled = true;
-			releaseIfSettled();
-		}
+		socket.on('error', (err) => {
+			logger.debug('Relay socket connection error', LOG_CONTEXT, { error: err.message });
+		});
 	}
 
 	private handleLine(socket: net.Socket, line: string): void {
@@ -240,63 +183,58 @@ export class PermissionRelayServer {
 		socket: net.Socket,
 		msg: Extract<BridgeToServerMessage, { type: 'permission-request' }>
 	): Promise<void> {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			const binding = lookupBinding(msg.token);
-			// The bridge's `requestId` is its local correlation id; echo it back so
-			// the bridge can match the response to its outstanding tools/call.
-			const bridgeRequestId = msg.requestId;
+		const binding = lookupBinding(msg.token);
+		// The bridge's `requestId` is its local correlation id; echo it back so
+		// the bridge can match the response to its outstanding tools/call.
+		const bridgeRequestId = msg.requestId;
 
-			if (!binding) {
-				// Unknown/expired token: deny. Never leak that the token was invalid
-				// as an "allow".
-				this.send(socket, {
-					type: 'permission-response',
-					requestId: bridgeRequestId,
-					decision: { behavior: 'deny', message: 'Unrecognized permission relay token.' },
-				});
-				return;
-			}
-
-			if (!this.onRequest) {
-				// No UI wired: fail closed.
-				this.send(socket, {
-					type: 'permission-response',
-					requestId: bridgeRequestId,
-					decision: { behavior: 'deny', message: 'Permission UI unavailable.' },
-				});
-				return;
-			}
-
-			// Server-side globally-unique id used as the pending key + renderer id.
-			const requestId = randomUUID();
-			const input = msg.input ?? {};
-			// AskUserQuestion is surfaced as a question picker, not an allow/deny
-			// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
-			const questionFields = parseQuestionRequest(msg.toolName, input);
-			const request: PermissionRequest = {
-				requestId,
-				token: msg.token,
-				sessionId: binding.sessionId,
-				tabId: binding.tabId,
-				toolName: msg.toolName,
-				input,
-				createdAt: Date.now(),
-				...(questionFields ?? {}),
-			};
-
-			const decisionPromise = createPending(requestId, msg.token);
-			this.onRequest(request);
-			const decision = await decisionPromise;
-
+		if (!binding) {
+			// Unknown/expired token: deny. Never leak that the token was invalid
+			// as an "allow".
 			this.send(socket, {
 				type: 'permission-response',
 				requestId: bridgeRequestId,
-				decision,
+				decision: { behavior: 'deny', message: 'Unrecognized permission relay token.' },
 			});
-		} finally {
-			release();
+			return;
 		}
+
+		if (!this.onRequest) {
+			// No UI wired: fail closed.
+			this.send(socket, {
+				type: 'permission-response',
+				requestId: bridgeRequestId,
+				decision: { behavior: 'deny', message: 'Permission UI unavailable.' },
+			});
+			return;
+		}
+
+		// Server-side globally-unique id used as the pending key + renderer id.
+		const requestId = randomUUID();
+		const input = msg.input ?? {};
+		// AskUserQuestion is surfaced as a question picker, not an allow/deny
+		// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
+		const questionFields = parseQuestionRequest(msg.toolName, input);
+		const request: PermissionRequest = {
+			requestId,
+			token: msg.token,
+			sessionId: binding.sessionId,
+			tabId: binding.tabId,
+			toolName: msg.toolName,
+			input,
+			createdAt: Date.now(),
+			...(questionFields ?? {}),
+		};
+
+		const decisionPromise = createPending(requestId, msg.token);
+		this.onRequest(request);
+		const decision = await decisionPromise;
+
+		this.send(socket, {
+			type: 'permission-response',
+			requestId: bridgeRequestId,
+			decision,
+		});
 	}
 
 	private send(socket: net.Socket, msg: ServerToBridgeMessage): void {
@@ -314,23 +252,18 @@ export class PermissionRelayServer {
 
 	/** Stop the server and remove the socket file. */
 	stop(): void {
-		const release = beginGlobalWorktreeActivity();
-		try {
-			if (this.server) {
-				this.server.close();
-				this.server = null;
-			}
-			if (this.socketPath && process.platform !== 'win32') {
-				try {
-					fs.unlinkSync(this.socketPath);
-				} catch {
-					// Already gone.
-				}
-			}
-			this.socketPath = null;
-		} finally {
-			release();
+		if (this.server) {
+			this.server.close();
+			this.server = null;
 		}
+		if (this.socketPath && process.platform !== 'win32') {
+			try {
+				fs.unlinkSync(this.socketPath);
+			} catch {
+				// Already gone.
+			}
+		}
+		this.socketPath = null;
 	}
 }
 

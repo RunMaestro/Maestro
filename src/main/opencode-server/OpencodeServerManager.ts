@@ -16,9 +16,7 @@
  * environment (version-manager PATH, shell env vars, etc.).
  */
 
-import type { ChildProcess } from 'child_process';
-import type { startTurn } from '../../shared/maestro-lib/run/start-turn';
-import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
+import { spawn, type ChildProcess } from 'child_process';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import { loadOpencodeSdk } from './sdk-loader';
 import { logger } from '../utils/logger';
@@ -94,16 +92,6 @@ class OpencodeServerManager {
 	 * client. Concurrent callers for the same key share a single startup.
 	 */
 	async ensureServer(opts: EnsureServerOptions): Promise<OpencodeServerHandle> {
-		return withWorktreeTurnActivity(
-			(start, observe) => observe(this.ensureAdmittedServer(opts, start)),
-			(error) => void captureException(error)
-		);
-	}
-
-	private async ensureAdmittedServer(
-		opts: EnsureServerOptions,
-		startAdmittedTurn: typeof startTurn
-	): Promise<OpencodeServerHandle> {
 		const key = buildServerKey(opts);
 
 		const existing = this.servers.get(key);
@@ -112,7 +100,7 @@ class OpencodeServerManager {
 		const inFlight = this.starting.get(key);
 		if (inFlight) return inFlight;
 
-		const startup = this.startServer(opts, key, startAdmittedTurn)
+		const startup = this.startServer(opts, key)
 			.then((instance) => {
 				this.servers.set(key, instance);
 				this.starting.delete(key);
@@ -127,11 +115,7 @@ class OpencodeServerManager {
 		return startup;
 	}
 
-	private async startServer(
-		opts: EnsureServerOptions,
-		key: string,
-		startAdmittedTurn: typeof startTurn
-	): Promise<ServerInstance> {
+	private async startServer(opts: EnsureServerOptions, key: string): Promise<ServerInstance> {
 		const hostname = '127.0.0.1';
 		const env = buildChildProcessEnv(
 			opts.customEnvVars,
@@ -151,18 +135,11 @@ class OpencodeServerManager {
 		// readiness banner. Pre-picking a "free" port and passing it separately is a
 		// TOCTOU race - the port can be taken between the probe and the server's
 		// bind, surfacing only as an opaque 15s startup timeout.
-		// The shared server outlives individual turns. Its activity ends only on
-		// independently observed close and settled startup, including SDK loading.
-		const { child } = startAdmittedTurn(
-			{
-				command: opts.binaryPath,
-				args: ['serve', `--hostname=${hostname}`, '--port=0'],
-				cwd: opts.cwd,
-				env,
-			},
-			{},
-			{ stopGraceMs: 1000, emptyStdin: 'ignore', stdoutTailLimit: 0, stderrTailLimit: 0 }
-		);
+		const child = spawn(opts.binaryPath, ['serve', `--hostname=${hostname}`, '--port=0'], {
+			cwd: opts.cwd,
+			env,
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
 
 		// Track the child so shutdown() can kill it even if readiness never resolves.
 		this.startupChildren.add(child);
@@ -286,34 +263,25 @@ class OpencodeServerManager {
 
 	/** Kill every running server and any still-starting child. Called on app shutdown. */
 	shutdown(): void {
-		// Feature teardown also calls this directly, outside ProcessManager.killAll.
-		// Admit before looking at registries; clearing them or sending a signal
-		// cannot release the independently held startup/native child lifetimes.
-		withWorktreeTurnActivity(
-			(_start, observe) => {
-				for (const [key, instance] of this.servers) {
-					try {
-						instance.process.kill();
-					} catch (err) {
-						observe(captureException(err));
-					}
-					this.servers.delete(key);
-				}
-				// Kill servers still waiting on their readiness banner (tracked separately
-				// from `servers`, so the loop above misses them).
-				for (const child of this.startupChildren) {
-					try {
-						child.kill();
-					} catch (err) {
-						observe(captureException(err));
-					}
-				}
-				this.startupChildren.clear();
-				this.starting.clear();
-			},
-			(error) =>
-				logger.error('Shared server shutdown failed', 'OpencodeServer', { error: String(error) })
-		);
+		for (const [key, instance] of this.servers) {
+			try {
+				instance.process.kill();
+			} catch (err) {
+				void captureException(err);
+			}
+			this.servers.delete(key);
+		}
+		// Kill servers still waiting on their readiness banner (tracked separately
+		// from `servers`, so the loop above misses them).
+		for (const child of this.startupChildren) {
+			try {
+				child.kill();
+			} catch (err) {
+				void captureException(err);
+			}
+		}
+		this.startupChildren.clear();
+		this.starting.clear();
 	}
 }
 

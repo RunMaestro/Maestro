@@ -10,7 +10,6 @@ import { logger } from '../utils/logger';
 import { execFileNoThrow } from '../utils/execFile';
 import { ensureForkSetup } from '../utils/symphony-fork';
 import { resolveGhPath } from '../utils/cliDetection';
-import { beginWorktreeGitActivity } from '../git/worktreeActivity';
 import type { DocumentReference } from '../../shared/symphony-types';
 import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
 import { captureException } from '../utils/sentry';
@@ -275,18 +274,6 @@ export async function startContribution(options: SymphonyRunnerOptions): Promise
 	forkSlug?: string;
 	error?: string;
 }> {
-	// Refused admission must never enter clone failure recovery or status callbacks.
-	const release = await beginWorktreeGitActivity();
-	try {
-		return await startContributionAdmitted(options);
-	} finally {
-		release();
-	}
-}
-
-async function startContributionAdmitted(
-	options: SymphonyRunnerOptions
-): ReturnType<typeof startContribution> {
 	const {
 		repoSlug,
 		repoUrl,
@@ -399,27 +386,6 @@ export async function finalizeContribution(
 	issueTitle: string,
 	upstreamSlug?: string
 ): Promise<{ success: boolean; prUrl?: string; error?: string }> {
-	const release = await beginWorktreeGitActivity();
-	try {
-		return await finalizeContributionAdmitted(
-			localPath,
-			prNumber,
-			issueNumber,
-			issueTitle,
-			upstreamSlug
-		);
-	} finally {
-		release();
-	}
-}
-
-async function finalizeContributionAdmitted(
-	localPath: string,
-	prNumber: number,
-	issueNumber: number,
-	issueTitle: string,
-	upstreamSlug?: string
-): ReturnType<typeof finalizeContribution> {
 	// Configure git user for commits (in case not already configured)
 	await configureGitUser(localPath);
 
@@ -487,20 +453,6 @@ export async function cancelContribution(
 	cleanup: boolean = true,
 	upstreamSlug?: string
 ): Promise<{ success: boolean; error?: string }> {
-	const release = await beginWorktreeGitActivity();
-	try {
-		return await cancelContributionAdmitted(localPath, prNumber, cleanup, upstreamSlug);
-	} finally {
-		release();
-	}
-}
-
-async function cancelContributionAdmitted(
-	localPath: string,
-	prNumber: number,
-	cleanup: boolean,
-	upstreamSlug?: string
-): ReturnType<typeof cancelContribution> {
 	// Close the draft PR
 	const ghCommand = await resolveGhPath();
 	const closeArgs = ['pr', 'close', prNumber.toString()];

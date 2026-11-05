@@ -27,7 +27,6 @@ import {
 } from '../../shared/maestro-lib/agents/consult-prompt';
 import { createDesktopConsultRunner } from './consult-runner';
 import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 /**
  * Session-id prefix for the ephemeral processes cross-agent dispatch spawns.
@@ -37,16 +36,7 @@ import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 export { CROSS_AGENT_SESSION_PREFIX, buildCrossAgentPrompt, serializeTranscript };
 export type { CrossAgentTargetSession };
 
-const consultService = createConsultService((operation) => {
-	// Admit deferred dispatch independently of retained supervision, request
-	// preparation and the runner's listener/native lifetimes.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return operation();
-	} finally {
-		release();
-	}
-}, beginGlobalWorktreeActivity);
+const consultService = createConsultService();
 
 /**
  * Stop every consult the given source agent still has in flight. Each is killed and settles
@@ -59,14 +49,7 @@ export function cancelCrossAgentRequestsForSource(
 	sourceSessionId: string,
 	sourceTabId?: string
 ): number {
-	// Cancel can mutate pending setup before a runner exists. Refuse before the
-	// service touches its registry, watchdogs, observers or best-effort recovery.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return consultService.cancelForSource(sourceSessionId, sourceTabId);
-	} finally {
-		release();
-	}
+	return consultService.cancelForSource(sourceSessionId, sourceTabId);
 }
 
 /**
@@ -113,26 +96,15 @@ export function startCrossAgentRequest(
 	request: CrossAgentRequest,
 	opts: StartCrossAgentRequestOptions
 ): Promise<void> {
-	// The runner admits only after target/agent/config/system-prompt preparation.
-	// Own this entire request independently, including setup resuming after Stop.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return consultService
-			.start(request, {
-				runner: createDesktopConsultRunner(opts.processManager, opts.sshStore),
-				resolveAgent: (providerId) => opts.agentDetector.getAgent(providerId),
-				sshStore: opts.sshStore,
-				getTargetSession: opts.getTargetSession,
-				getCustomEnvVars: opts.getCustomEnvVars,
-				getAgentConfig: opts.getAgentConfig,
-				writable: opts.writable,
-				getSystemPrompt: (target) => buildMaestroSystemPromptForSession(target.id),
-				onChunk: opts.onChunk,
-			})
-			.finally(release);
-	} catch (error) {
-		// Preserve synchronous option/factory errors as well as async rejection.
-		release();
-		throw error;
-	}
+	return consultService.start(request, {
+		runner: createDesktopConsultRunner(opts.processManager, opts.sshStore),
+		resolveAgent: (providerId) => opts.agentDetector.getAgent(providerId),
+		sshStore: opts.sshStore,
+		getTargetSession: opts.getTargetSession,
+		getCustomEnvVars: opts.getCustomEnvVars,
+		getAgentConfig: opts.getAgentConfig,
+		writable: opts.writable,
+		getSystemPrompt: (target) => buildMaestroSystemPromptForSession(target.id),
+		onChunk: opts.onChunk,
+	});
 }

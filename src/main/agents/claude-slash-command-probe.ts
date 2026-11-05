@@ -15,7 +15,6 @@
 
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
-import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 
 const LOG_CONTEXT = '[ClaudeSlashCommands]';
 
@@ -58,33 +57,10 @@ export async function probeClaudeSlashCommands(
 	cwd: string,
 	env?: NodeJS.ProcessEnv
 ): Promise<string[] | null> {
-	const release = beginGlobalWorktreeActivity();
-	try {
-		return await probeClaudeSlashCommandsAdmitted(commandPath, cwd, env);
-	} finally {
-		release();
-	}
-}
-
-async function probeClaudeSlashCommandsAdmitted(
-	commandPath: string,
-	cwd: string,
-	env?: NodeJS.ProcessEnv
-): Promise<string[] | null> {
-	const run = (args: string[]) => {
-		// Every retry owns its own native close, independently of the result,
-		// cache entry and other children. Unknown launch/observer state stays busy.
-		const releaseNative = beginGlobalWorktreeActivity();
-		return execFileNoThrow(
-			commandPath,
-			[...args, '--', '/help'],
-			cwd,
-			env ? { env } : undefined,
-			(child) => {
-				child.once('close', releaseNative);
-			}
-		);
-	};
+	const run = (args: string[]) =>
+		env
+			? execFileNoThrow(commandPath, [...args, '--', '/help'], cwd, { env })
+			: execFileNoThrow(commandPath, [...args, '--', '/help'], cwd);
 
 	let result = await run([...PROBE_ARGS, NO_PERSISTENCE_FLAG]);
 	// A claude too old to know the flag refuses to start; ask again without it.
@@ -117,28 +93,21 @@ const cache = new Map<string, CacheEntry>();
  * tabs starting at once spawn one claude, not several. A failed probe is not
  * cached, so the next turn tries again.
  */
-export async function probeClaudeSlashCommandsCached(
+export function probeClaudeSlashCommandsCached(
 	commandPath: string,
 	cwd: string,
 	env: NodeJS.ProcessEnv
 ): Promise<string[] | null> {
-	// A cache hit still reads configuration and schedules caller work. Admit
-	// before key/getter lookup and retain each concurrent request independently.
-	const release = beginGlobalWorktreeActivity();
-	try {
-		const key = [commandPath, cwd, env.CLAUDE_CONFIG_DIR ?? ''].join('\0');
-		const now = Date.now();
-		const hit = cache.get(key);
-		if (hit && now - hit.at < CACHE_TTL_MS) return await hit.commands;
-		const commands = probeClaudeSlashCommands(commandPath, cwd, env).then((found) => {
-			if (!found) cache.delete(key);
-			return found;
-		});
-		cache.set(key, { at: now, commands });
-		return await commands;
-	} finally {
-		release();
-	}
+	const key = [commandPath, cwd, env.CLAUDE_CONFIG_DIR ?? ''].join('\0');
+	const now = Date.now();
+	const hit = cache.get(key);
+	if (hit && now - hit.at < CACHE_TTL_MS) return hit.commands;
+	const commands = probeClaudeSlashCommands(commandPath, cwd, env).then((found) => {
+		if (!found) cache.delete(key);
+		return found;
+	});
+	cache.set(key, { at: now, commands });
+	return commands;
 }
 
 /** For tests: forget every cached probe. */

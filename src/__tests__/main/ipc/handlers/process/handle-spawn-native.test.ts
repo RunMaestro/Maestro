@@ -1,16 +1,5 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	cancelPendingDesktopSpawns,
-	handleProcessSpawn,
-	type SpawnHandlerDependencies,
-} from '../../../../../main/ipc/handlers/process/handle-spawn';
-import {
-	beginGlobalWorktreeActivity,
-	reserveWorktreeCleanup,
-} from '../../../../../main/git/worktreeActivity';
-import { acquireProviderSessionWriter } from '../../../../../main/utils/provider-session-writer';
+import { describe, expect, it, vi } from 'vitest';
+import { handleProcessSpawn } from '../../../../../main/ipc/handlers/process/handle-spawn';
 import type { SpawnProcessConfig } from '../../../../../main/ipc/handlers/process/spawn-types';
 import type { ProcessConfig } from '../../../../../main/process-manager/types';
 import { getAgentCapabilities } from '../../../../../shared/maestro-lib/providers/capabilities';
@@ -35,7 +24,6 @@ async function spawnNativeWithResult(
 		nativeCapabilities?: Record<string, unknown> | null;
 		opencodeServer?: boolean;
 		shellEnvVars?: Record<string, string>;
-		prepare?: (deps: SpawnHandlerDependencies) => void;
 	} = {}
 ) {
 	const definition = getAgentDefinition(toolType)!;
@@ -46,7 +34,7 @@ async function spawnNativeWithResult(
 		capabilities: getAgentCapabilities(toolType),
 	};
 	const processManager = {
-		spawn: vi.fn((_config: ProcessConfig) => ({ success: true, pid: 4242 })),
+		spawn: vi.fn(() => ({ success: true, pid: 4242 })),
 		get: vi.fn(),
 		getAll: vi.fn(() => []),
 		on: vi.fn(),
@@ -76,7 +64,7 @@ async function spawnNativeWithResult(
 		permissionMode: 'standard',
 		...overrides,
 	} as SpawnProcessConfig;
-	const deps: SpawnHandlerDependencies = {
+	const result = await handleProcessSpawn(config, {
 		getProcessManager: () => processManager as never,
 		getAgentDetector: () => ({ getAgent: async () => detected }) as never,
 		agentConfigsStore: {
@@ -96,10 +84,8 @@ async function spawnNativeWithResult(
 				webContents: { isDestroyed: () => false, send: webContentsSend },
 			}) as never,
 		safeSend,
-		sessionsStore: sessionsStore as never,
-	};
-	options.prepare?.(deps);
-	const result = await handleProcessSpawn(config, deps);
+		sessionsStore,
+	});
 	return {
 		config: processManager.spawn.mock.calls[0]?.[0] as ProcessConfig | undefined,
 		result,
@@ -238,269 +224,5 @@ describe('native spawn configuration', () => {
 			'agent-1-ai-tab-1',
 			expect.objectContaining({ mode: 'api' })
 		);
-	});
-});
-
-describe('outer spawn orchestration activity', () => {
-	const target = process.cwd();
-	const releases: Array<() => void> = [];
-
-	beforeEach(() => {
-		vi.mocked(acquireProviderSessionWriter).mockClear();
-	});
-	afterEach(() => {
-		for (const release of releases.splice(0)) release();
-		vi.restoreAllMocks();
-	});
-
-	async function reserve(root = target) {
-		const hold = await reserveWorktreeCleanup(root);
-		expect(hold.status).toBe('reserved-partially');
-		if (hold.status !== 'reserved-partially') throw new Error('Reservation failed');
-		releases.push(hold.release);
-		expect(hold.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
-		return hold;
-	}
-
-	async function blocked() {
-		const hold = await reserveWorktreeCleanup(target);
-		if (hold.status === 'reserved-partially') releases.push(hold.release);
-		expect(hold).toMatchObject({
-			status: 'blocked',
-			blockers: [{ code: 'mutation-busy' }],
-		});
-	}
-
-	it.each([target, path.join(target, 'src'), path.dirname(target)])(
-		'refuses before manager/session/writer setup for reservation %s',
-		async (root) => {
-			const hold = await reserve(root);
-			const manager = vi.fn();
-			const records = vi.fn();
-			const detector = vi.fn();
-			const realpath = vi.spyOn(fs, 'realpath');
-			await expect(
-				spawnNativeWithResult(
-					'codex',
-					{
-						cwd: '~/remote-only',
-						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' },
-					},
-					{},
-					{
-						prepare(deps) {
-							deps.getProcessManager = manager;
-							deps.getAgentDetector = detector;
-							deps.sessionsStore.get = records;
-						},
-					}
-				)
-			).rejects.toThrow('reserved');
-			expect(manager).not.toHaveBeenCalled();
-			expect(records).not.toHaveBeenCalled();
-			expect(detector).not.toHaveBeenCalled();
-			expect(acquireProviderSessionWriter).not.toHaveBeenCalled();
-			expect(realpath).not.toHaveBeenCalled();
-			expect(cancelPendingDesktopSpawns('agent-1-ai-tab-1')).toBe(false);
-			hold.release();
-			await reserve();
-		}
-	);
-
-	it.each(['manager', 'sessions'] as const)(
-		'releases a synchronous %s setup failure',
-		async (site) => {
-			const failure = Error(`${site} failed`);
-			await expect(
-				spawnNativeWithResult(
-					'codex',
-					{},
-					{},
-					{
-						prepare(deps) {
-							const fail = () => {
-								throw failure;
-							};
-							if (site === 'manager') deps.getProcessManager = fail;
-							else deps.sessionsStore.get = fail;
-						},
-					}
-				)
-			).rejects.toBe(failure);
-			expect(acquireProviderSessionWriter).not.toHaveBeenCalled();
-			expect(cancelPendingDesktopSpawns('agent-1-ai-tab-1')).toBe(false);
-			await reserve();
-		}
-	);
-
-	it('holds pending writer setup after cancellation until acquisition settles', async () => {
-		let finish!: (release: () => void) => void;
-		vi.mocked(acquireProviderSessionWriter).mockImplementationOnce(
-			() =>
-				new Promise((r) => {
-					finish = r;
-				})
-		);
-		const pending = spawnNativeWithResult('codex');
-		await blocked();
-		expect(cancelPendingDesktopSpawns('agent-1-ai-tab-1')).toBe(true);
-		expect(vi.mocked(acquireProviderSessionWriter).mock.calls[0][3]?.aborted).toBe(true);
-		await blocked();
-		const releaseWriter = vi.fn();
-		finish(releaseWriter);
-		await expect(pending).rejects.toThrow('cancelled');
-		expect(releaseWriter).toHaveBeenCalledOnce();
-		expect(cancelPendingDesktopSpawns('agent-1-ai-tab-1')).toBe(false);
-		await reserve();
-	});
-
-	it('retains each concurrent writer wait until that operation settles', async () => {
-		let failFirst!: (error: Error) => void;
-		let failSecond!: (error: Error) => void;
-		vi.mocked(acquireProviderSessionWriter)
-			.mockImplementationOnce(
-				() =>
-					new Promise((_r, reject) => {
-						failFirst = reject;
-					})
-			)
-			.mockImplementationOnce(
-				() =>
-					new Promise((_r, reject) => {
-						failSecond = reject;
-					})
-			);
-		const first = spawnNativeWithResult('codex', { sessionId: 'first-ai-tab' });
-		const second = spawnNativeWithResult('codex', { sessionId: 'second-ai-tab' });
-		await blocked();
-		failFirst(Error('first writer failed'));
-		await expect(first).rejects.toThrow('first writer failed');
-		await blocked();
-		failSecond(Error('second writer failed'));
-		await expect(second).rejects.toThrow('second writer failed');
-		await reserve();
-	});
-
-	it('holds cancelled detection through its unresolved setup, then releases before dispatch', async () => {
-		let finish!: (agent: null) => void;
-		const detection = new Promise<null>((r) => {
-			finish = r;
-		});
-		const getAgent = vi.fn(() => detection);
-		const pending = spawnNativeWithResult(
-			'codex',
-			{},
-			{},
-			{
-				prepare(deps) {
-					deps.getAgentDetector = () => ({ getAgent }) as never;
-				},
-			}
-		);
-		await vi.waitFor(() => expect(getAgent).toHaveBeenCalledOnce());
-		expect(cancelPendingDesktopSpawns('agent-1-ai-tab-1')).toBe(true);
-		await blocked();
-		finish(null);
-		await expect(pending).rejects.toThrow();
-		expect(cancelPendingDesktopSpawns('agent-1-ai-tab-1')).toBe(false);
-		await reserve();
-	});
-
-	it.each([false, true])(
-		'composes native activity through reporting failure=%s',
-		async (failReporting) => {
-			let releaseNative!: () => void;
-			const checks: Array<Promise<void>> = [];
-			const pending = spawnNativeWithResult(
-				'copilot-cli',
-				{},
-				{},
-				{
-					prepare(deps) {
-						const manager = deps.getProcessManager()!;
-						vi.mocked(manager.spawn).mockImplementationOnce(() => {
-							releaseNative = beginGlobalWorktreeActivity();
-							releases.push(releaseNative);
-							checks.push(blocked());
-							return { success: true, pid: 4242 };
-						});
-						const send = deps.safeSend!;
-						deps.safeSend = (channel, ...args) => {
-							if (channel === 'process:ssh-remote') {
-								checks.push(blocked());
-								if (failReporting) throw Error('reporting failed');
-							}
-							send(channel, ...args);
-						};
-					},
-				}
-			);
-			if (failReporting) await expect(pending).rejects.toThrow('reporting failed');
-			else expect((await pending).result.success).toBe(true);
-			expect(checks).toHaveLength(2);
-			await Promise.all(checks);
-			await blocked();
-			releaseNative();
-			await reserve();
-		}
-	);
-
-	it('releases after reentrant native completion and final reporting settle', async () => {
-		const reporting = vi.fn();
-		const result = await spawnNativeWithResult(
-			'copilot-cli',
-			{},
-			{},
-			{
-				prepare(deps) {
-					vi.mocked(deps.getProcessManager()!.spawn).mockImplementationOnce(() => {
-						beginGlobalWorktreeActivity()();
-						return { success: true, pid: 4242 };
-					});
-					const send = deps.safeSend!;
-					deps.safeSend = (channel, ...args) => {
-						if (channel === 'process:ssh-remote') reporting();
-						send(channel, ...args);
-					};
-				},
-			}
-		);
-		expect(result.result.success).toBe(true);
-		expect(reporting).toHaveBeenCalledOnce();
-		await reserve();
-	});
-
-	it('releases an early permission refusal without dispatch', async () => {
-		const result = await spawnNativeWithResult('codex', { images: ['image.png'] });
-		expect(result.result.success).toBe(false);
-		expect(result.processManager.spawn).not.toHaveBeenCalled();
-		await reserve();
-	});
-
-	it('wins admission against an earlier reservation still resolving its target', async () => {
-		let finish!: (root: string) => void;
-		vi.spyOn(fs, 'realpath').mockImplementationOnce(
-			() =>
-				new Promise((r) => {
-					finish = r;
-				})
-		);
-		const reserving = reserveWorktreeCleanup(target);
-		let fail!: (error: Error) => void;
-		vi.mocked(acquireProviderSessionWriter).mockImplementationOnce(
-			() =>
-				new Promise((_r, reject) => {
-					fail = reject;
-				})
-		);
-		const pending = spawnNativeWithResult('codex');
-		finish(target);
-		expect(await reserving).toMatchObject({
-			status: 'blocked',
-			blockers: [{ code: 'mutation-busy' }],
-		});
-		fail(Error('writer failed'));
-		await expect(pending).rejects.toThrow('writer failed');
-		await reserve();
 	});
 });

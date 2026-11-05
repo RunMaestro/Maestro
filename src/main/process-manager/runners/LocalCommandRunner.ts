@@ -18,8 +18,6 @@ import { killProcessTreeNow, sweepStragglers } from '../utils/commandKill';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { getDefaultShell } from '../../stores/defaults';
-import { beginWorktreeActivity } from '../../git/worktreeActivity';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 
 /**
  * Exit code reported when a command had to be SIGKILLed and never told us how it
@@ -47,12 +45,10 @@ export class LocalCommandRunner {
 	 * Returns false when nothing is running under that sessionId.
 	 */
 	cancel(sessionId: string): boolean {
-		return withWorktreeTurnActivity(() => {
-			const kill = this.running.get(sessionId);
-			if (!kill) return false;
-			kill();
-			return true;
-		}, captureException);
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
 	}
 
 	private isRecoverablePtySpawnError(error: unknown): boolean {
@@ -70,53 +66,14 @@ export class LocalCommandRunner {
 	/**
 	 * Run a single command and capture stdout/stderr cleanly
 	 */
-	async run(
+	run(
 		sessionId: string,
 		command: string,
 		cwd: string,
 		shell?: string,
 		shellEnvVars?: Record<string, string>
 	): Promise<CommandResult> {
-		// Commands and shell rc files may touch any repository or launch children
-		// outside cwd. Register globally before yielding, without probing cwd.
-		const admission = beginWorktreeActivity([]);
-		let cancelled = false;
-		const cancelPending = () => {
-			cancelled = true;
-		};
-		this.running.set(sessionId, cancelPending);
-		try {
-			const release = await admission;
-			if (cancelled) {
-				try {
-					this.emitter.emit('command-exit', sessionId, SIGKILL_EXIT_CODE);
-					return { exitCode: SIGKILL_EXIT_CODE };
-				} finally {
-					release();
-				}
-			}
-			return withWorktreeTurnActivity(
-				(_start, observe) =>
-					this.runAdmitted(sessionId, command, cwd, release, observe, shell, shellEnvVars),
-				captureException
-			);
-		} finally {
-			if (this.running.get(sessionId) === cancelPending) this.running.delete(sessionId);
-		}
-	}
-
-	private runAdmitted(
-		sessionId: string,
-		command: string,
-		cwd: string,
-		release: () => void,
-		observeCompletion: <T>(completion: Promise<T>) => Promise<T>,
-		shell?: string,
-		shellEnvVars?: Record<string, string>
-	): Promise<CommandResult> {
-		let spawned = false;
-		let cancel: (() => void) | undefined;
-		const result = new Promise<CommandResult>((resolve) => {
+		return new Promise((resolve) => {
 			const shellToUse = shell || getDefaultShell();
 
 			logger.debug('[ProcessManager] runCommand()', 'ProcessManager', {
@@ -199,22 +156,15 @@ export class LocalCommandRunner {
 						cwd,
 						env: env as Record<string, string>,
 					});
-					spawned = true;
 				} catch (error) {
 					if (!this.isRecoverablePtySpawnError(error)) {
-						observeCompletion(
-							Promise.resolve()
-								.then(() =>
-									captureException(error, {
-										operation: 'process-runner:pty-spawn',
-										sessionId,
-										shell: shellToUse,
-										shellPath,
-										cwd,
-									})
-								)
-								.catch(() => {})
-						);
+						captureException(error, {
+							operation: 'process-runner:pty-spawn',
+							sessionId,
+							shell: shellToUse,
+							shellPath,
+							cwd,
+						});
 						throw error;
 					}
 
@@ -240,33 +190,12 @@ export class LocalCommandRunner {
 				const settle = (exitCode: number) => {
 					if (settled) return;
 					settled = true;
-					if (this.running.get(sessionId) === cancel) this.running.delete(sessionId);
-					try {
-						this.emitter.emit('command-exit', sessionId, exitCode);
-					} finally {
-						resolve({ exitCode });
-					}
+					this.running.delete(sessionId);
+					this.emitter.emit('command-exit', sessionId, exitCode);
+					resolve({ exitCode });
 				};
 
-				// Stop settles the UI immediately; only an observed native exit releases
-				// activity. Missing exit remains blocked. Detached descendants and the
-				// background sweep are still unsupported cleanup coverage.
-				ptyProcess.onExit((event) => {
-					return withWorktreeTurnActivity(() => {
-						const { exitCode } = event;
-						try {
-							logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
-								sessionId,
-								exitCode,
-							});
-							settle(exitCode);
-						} finally {
-							release();
-						}
-					}, captureException);
-				});
-
-				cancel = () => {
+				this.running.set(sessionId, () => {
 					// SIGKILL the whole tree, synchronously, right now. No SIGTERM grace
 					// period and no Ctrl+C negotiation: Stop is a deliberate act on a
 					// command the user has already decided against, and anything catchable
@@ -290,25 +219,28 @@ export class LocalCommandRunner {
 					// Fire-and-forget sweep for anything mid-fork during the kill. Never
 					// awaited; the UI is already released.
 					sweepStragglers(ptyProcess.pid);
-				};
-				this.running.set(sessionId, cancel);
+				});
 
-				// Retained callbacks require fresh admission after native ownership ends.
-				// Asynchronous EventEmitter consumers and descendants remain unproven.
 				ptyProcess.onData((data) => {
-					return withWorktreeTurnActivity(() => {
-						const output = stripControlSequences(data, command, true);
-						logger.debug('[ProcessManager] runCommand PTY stdout FILTERED', 'ProcessManager', {
-							sessionId,
-							filteredLength: output.length,
-							filteredPreview: output.substring(0, 200),
-							trimmedEmpty: !output.trim(),
-						});
+					const output = stripControlSequences(data, command, true);
+					logger.debug('[ProcessManager] runCommand PTY stdout FILTERED', 'ProcessManager', {
+						sessionId,
+						filteredLength: output.length,
+						filteredPreview: output.substring(0, 200),
+						trimmedEmpty: !output.trim(),
+					});
 
-						if (output.trim()) {
-							this.emitter.emit('data', sessionId, output);
-						}
-					}, captureException);
+					if (output.trim()) {
+						this.emitter.emit('data', sessionId, output);
+					}
+				});
+
+				ptyProcess.onExit(({ exitCode }) => {
+					logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
+						sessionId,
+						exitCode,
+					});
+					settle(exitCode);
 				});
 
 				return;
@@ -330,11 +262,6 @@ export class LocalCommandRunner {
 				shell: shellPath,
 			});
 
-			spawned = true;
-			// exit/error/Stop can settle the UI before stdio closes. Never infer
-			// child termination from .killed or release after an unobserved close.
-			childProcess.once('close', () => withWorktreeTurnActivity(release, captureException));
-
 			// Windows path. Same contract as the PTY branch above: kill the whole
 			// tree at once (`taskkill /t /f`, since child.kill() takes only the
 			// shell and orphans its children) and settle immediately rather than
@@ -343,15 +270,12 @@ export class LocalCommandRunner {
 			const settleChild = (exitCode: number) => {
 				if (childSettled) return;
 				childSettled = true;
-				if (this.running.get(sessionId) === cancel) this.running.delete(sessionId);
-				try {
-					this.emitter.emit('command-exit', sessionId, exitCode);
-				} finally {
-					resolve({ exitCode });
-				}
+				this.running.delete(sessionId);
+				this.emitter.emit('command-exit', sessionId, exitCode);
+				resolve({ exitCode });
 			};
 
-			cancel = () => {
+			this.running.set(sessionId, () => {
 				if (childProcess.pid) {
 					killProcessTreeNow(childProcess.pid, { sessionId });
 				}
@@ -361,87 +285,73 @@ export class LocalCommandRunner {
 					// Already gone.
 				}
 				settleChild(SIGKILL_EXIT_CODE);
-			};
-			this.running.set(sessionId, cancel);
+			});
 
 			// Handle stdout - emit data events for real-time streaming
 			childProcess.stdout?.on('data', (data: Buffer) => {
-				return withWorktreeTurnActivity(() => {
-					let output = data.toString();
-					logger.debug('[ProcessManager] runCommand stdout RAW', 'ProcessManager', {
+				let output = data.toString();
+				logger.debug('[ProcessManager] runCommand stdout RAW', 'ProcessManager', {
+					sessionId,
+					rawLength: output.length,
+					rawPreview: output.substring(0, 200),
+				});
+
+				// Filter out shell integration sequences
+				output = output.replace(/\x1b?\]1337;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
+				output = output.replace(/\x1b?\]133;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
+				output = output.replace(/\x1b?\]7;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
+				output = output.replace(/\x1b?\][0-9];[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
+				output = stripControlSequences(output, command, true);
+
+				logger.debug('[ProcessManager] runCommand stdout FILTERED', 'ProcessManager', {
+					sessionId,
+					filteredLength: output.length,
+					filteredPreview: output.substring(0, 200),
+					trimmedEmpty: !output.trim(),
+				});
+
+				// Only emit if there's actual content after filtering
+				if (output.trim()) {
+					logger.debug('[ProcessManager] runCommand EMITTING data event', 'ProcessManager', {
 						sessionId,
-						rawLength: output.length,
-						rawPreview: output.substring(0, 200),
+						outputLength: output.length,
 					});
-
-					// Filter out shell integration sequences
-					output = output.replace(/\x1b?\]1337;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
-					output = output.replace(/\x1b?\]133;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
-					output = output.replace(/\x1b?\]7;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
-					output = output.replace(/\x1b?\][0-9];[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
-					output = stripControlSequences(output, command, true);
-
-					logger.debug('[ProcessManager] runCommand stdout FILTERED', 'ProcessManager', {
-						sessionId,
-						filteredLength: output.length,
-						filteredPreview: output.substring(0, 200),
-						trimmedEmpty: !output.trim(),
-					});
-
-					// Only emit if there's actual content after filtering
-					if (output.trim()) {
-						logger.debug('[ProcessManager] runCommand EMITTING data event', 'ProcessManager', {
+					this.emitter.emit('data', sessionId, output);
+				} else {
+					logger.debug(
+						'[ProcessManager] runCommand SKIPPED emit (empty after trim)',
+						'ProcessManager',
+						{
 							sessionId,
-							outputLength: output.length,
-						});
-						this.emitter.emit('data', sessionId, output);
-					} else {
-						logger.debug(
-							'[ProcessManager] runCommand SKIPPED emit (empty after trim)',
-							'ProcessManager',
-							{
-								sessionId,
-							}
-						);
-					}
-				}, captureException);
+						}
+					);
+				}
 			});
 
 			// Handle stderr
 			childProcess.stderr?.on('data', (data: Buffer) => {
-				return withWorktreeTurnActivity(() => {
-					const output = data.toString();
-					this.emitter.emit('stderr', sessionId, output);
-				}, captureException);
+				const output = data.toString();
+				this.emitter.emit('stderr', sessionId, output);
 			});
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
-				return withWorktreeTurnActivity(() => {
-					logger.debug('[ProcessManager] runCommand exit', 'ProcessManager', {
-						sessionId,
-						exitCode: code,
-					});
-					settleChild(code || 0);
-				}, captureException);
+				logger.debug('[ProcessManager] runCommand exit', 'ProcessManager', {
+					sessionId,
+					exitCode: code,
+				});
+				settleChild(code || 0);
 			});
 
 			// Handle errors
 			childProcess.on('error', (error) => {
-				return withWorktreeTurnActivity(() => {
-					logger.error('[ProcessManager] runCommand error', 'ProcessManager', {
-						sessionId,
-						error: error.message,
-					});
-					this.emitter.emit('stderr', sessionId, `Error: ${error.message}`);
-					settleChild(1);
-				}, captureException);
+				logger.error('[ProcessManager] runCommand error', 'ProcessManager', {
+					sessionId,
+					error: error.message,
+				});
+				this.emitter.emit('stderr', sessionId, `Error: ${error.message}`);
+				settleChild(1);
 			});
-		});
-		return result.finally(() => {
-			// Setup/spawn failure created no child. Once spawned, only its native
-			// completion event may release, even if listener setup or reporting fails.
-			if (!spawned) release();
 		});
 	}
 }

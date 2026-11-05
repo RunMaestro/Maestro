@@ -184,7 +184,7 @@ describe('runWorktreeSetupScript', () => {
 	});
 
 	it('still runs the script when the login-shell PATH probe fails', async () => {
-		const { getShellPath } = await import('../../../shared/maestro-lib/launch/getShellPath');
+		const { getShellPath } = await import('../../../main/runtime/getShellPath');
 		vi.mocked(getShellPath).mockRejectedValueOnce(new Error('no shell'));
 
 		const result = await runWorktreeSetupScript('./setup.sh', CONTEXT);

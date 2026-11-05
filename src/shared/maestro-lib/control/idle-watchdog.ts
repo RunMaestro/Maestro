@@ -44,8 +44,6 @@ export interface IdleWatchdogOptions {
 	 * that treats the two the same does not have to pass the handler twice.
 	 */
 	onMax?: () => void;
-	/** Retain a disposal handle before timer setup, including when setup throws. */
-	onCreate?: (watchdog: IdleWatchdog) => void;
 }
 
 export interface IdleWatchdog {
@@ -67,12 +65,7 @@ export interface IdleWatchdog {
  * Start watching a supervised run. The idle budget is armed immediately, so the
  * caller does not need an initial `touch()`.
  */
-export function createIdleWatchdog(
-	options: IdleWatchdogOptions,
-	// Admit timer dispatch before changing settlement state or clearing timers.
-	// Portable callers keep the original synchronous behavior by default.
-	runActivity: <T>(operation: () => T) => T = (operation) => operation()
-): IdleWatchdog {
+export function createIdleWatchdog(options: IdleWatchdogOptions): IdleWatchdog {
 	const { idleMs, maxMs, onIdle, onMax } = options;
 
 	let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -83,14 +76,10 @@ export function createIdleWatchdog(
 	let settled = false;
 
 	const clearTimers = (): void => {
-		if (idleTimer !== undefined) {
-			clearTimeout(idleTimer);
-			idleTimer = undefined;
-		}
-		if (maxTimer !== undefined) {
-			clearTimeout(maxTimer);
-			maxTimer = undefined;
-		}
+		if (idleTimer) clearTimeout(idleTimer);
+		if (maxTimer) clearTimeout(maxTimer);
+		idleTimer = undefined;
+		maxTimer = undefined;
 	};
 
 	const settle = (fire: () => void): void => {
@@ -103,20 +92,19 @@ export function createIdleWatchdog(
 	const armIdle = (): void => {
 		if (settled) return;
 		if (idleTimer) clearTimeout(idleTimer);
-		idleTimer = setTimeout(() => runActivity(() => settle(onIdle)), idleMs);
+		idleTimer = setTimeout(() => settle(onIdle), idleMs);
 	};
 
-	const watchdog: IdleWatchdog = {
+	if (maxMs !== undefined) {
+		maxTimer = setTimeout(() => settle(onMax ?? onIdle), maxMs);
+	}
+	armIdle();
+
+	return {
 		touch: armIdle,
 		disarm: (): void => {
 			settled = true;
 			clearTimers();
 		},
 	};
-	options.onCreate?.(watchdog);
-	if (!settled && maxMs !== undefined) {
-		maxTimer = setTimeout(() => runActivity(() => settle(onMax ?? onIdle)), maxMs);
-	}
-	armIdle();
-	return watchdog;
 }

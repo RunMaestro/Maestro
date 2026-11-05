@@ -37,7 +37,6 @@ import {
 } from '../../opencode-server/permission-requests';
 import type { OpencodePermissionRequest } from '../../opencode-server/permission-requests';
 import type { Event, OpencodeClient } from '@opencode-ai/sdk';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
 
 /** Parsed agent invocation bits we need from the CLI-style args. */
 interface OpencodeInvocation {
@@ -118,20 +117,6 @@ export class OpencodeServerSpawner {
 	 * Mirrors ChildProcessSpawner: returns immediately; events flow later.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
-		try {
-			return withWorktreeTurnActivity(
-				(_start, observe) => this.spawnAdmitted(config, observe),
-				(error) => captureException(error)
-			);
-		} catch (error) {
-			return { pid: -1, success: false, error: String(error) };
-		}
-	}
-
-	private spawnAdmitted(
-		config: ProcessConfig,
-		observe: <T>(completion: Promise<T>) => Promise<T>
-	): SpawnResult {
 		const { sessionId, toolType, cwd, command, args, prompt } = config;
 
 		const outputParser = createOutputParser(toolType) || undefined;
@@ -206,14 +191,12 @@ export class OpencodeServerSpawner {
 			finish: (code: number) => {
 				if (finished) return;
 				finished = true;
-				observe(
-					this.exitHandler.handleExit(sessionId, code, managedProcess).catch((err) => {
-						logger.error('[OpencodeServerSpawner] handleExit threw', 'OpencodeServer', {
-							sessionId,
-							error: String(err),
-						});
-					})
-				);
+				void this.exitHandler.handleExit(sessionId, code, managedProcess).catch((err) => {
+					logger.error('[OpencodeServerSpawner] handleExit threw', 'OpencodeServer', {
+						sessionId,
+						error: String(err),
+					});
+				});
 			},
 		};
 
@@ -234,19 +217,13 @@ export class OpencodeServerSpawner {
 
 		// run() owns its own error handling (CLI fallback for setup failures,
 		// agent-error for streaming failures). This catch is a last-resort net.
-		observe(
-			this.run(config, managedProcess, streamAbort, lifecycle, observe).catch((err) => {
-				observe(
-					Promise.resolve()
-						.then(() => captureException(err))
-						.catch(() => {})
-				);
-				if (!lifecycle.isFinished()) {
-					this.emitAgentError(managedProcess, err);
-					lifecycle.finish(1);
-				}
-			})
-		);
+		void this.run(config, managedProcess, streamAbort, lifecycle).catch((err) => {
+			void captureException(err);
+			if (!lifecycle.isFinished()) {
+				this.emitAgentError(managedProcess, err);
+				lifecycle.finish(1);
+			}
+		});
 
 		return { pid: -1, success: true };
 	}
@@ -273,8 +250,7 @@ export class OpencodeServerSpawner {
 		permission: OpencodePermissionRequest,
 		managedProcess: ManagedProcess,
 		serverUrl: string,
-		currentProtocol: boolean,
-		observe: <T>(completion: Promise<T>) => Promise<T>
+		currentProtocol: boolean
 	): void {
 		if (this.pendingPermissions.has(permission.id)) return;
 		try {
@@ -286,7 +262,7 @@ export class OpencodeServerSpawner {
 				})
 			);
 			this.pendingPermissions.set(permission.id, opened.request.requestId);
-			const reply = opened.completion
+			void opened.completion
 				.then(async (resolution) => {
 					if (this.pendingPermissions.get(permission.id) !== opened.request.requestId) return;
 					this.pendingPermissions.delete(permission.id);
@@ -321,7 +297,6 @@ export class OpencodeServerSpawner {
 					this.emitAgentError(managedProcess, error);
 					this.abortActiveSession(managedProcess);
 				});
-			observe(reply);
 		} catch (error) {
 			this.emitAgentError(managedProcess, error);
 			this.abortActiveSession(managedProcess);
@@ -339,29 +314,15 @@ export class OpencodeServerSpawner {
 		harnessInteractionBroker.withdraw(brokerId);
 	}
 	private abortActiveSession(managedProcess: ManagedProcess): void {
-		// Controls may arrive after this turn and its server have both settled.
-		// Acquire fresh admission before reading the client or starting HTTP work.
-		withWorktreeTurnActivity(
-			(_start, observe) => this.abortAdmittedSession(managedProcess, observe),
-			(error) => captureException(error)
-		);
-	}
-
-	private abortAdmittedSession(
-		managedProcess: ManagedProcess,
-		observe: <T>(completion: Promise<T>) => Promise<T>
-	): void {
 		const client = managedProcess.opencodeClient;
 		const ocSessionId = managedProcess.opencodeSessionId;
 		if (!client || !ocSessionId) return;
 		try {
-			observe(
-				client.session
-					.abort({ path: { id: ocSessionId }, query: { directory: managedProcess.cwd } })
-					.catch(() => {
-						/* best effort */
-					})
-			);
+			void client.session
+				.abort({ path: { id: ocSessionId }, query: { directory: managedProcess.cwd } })
+				.catch(() => {
+					/* best effort */
+				});
 		} catch {
 			/* best effort */
 		}
@@ -371,8 +332,7 @@ export class OpencodeServerSpawner {
 		config: ProcessConfig,
 		managedProcess: ManagedProcess,
 		streamAbort: AbortController,
-		lifecycle: Lifecycle,
-		observe: <T>(completion: Promise<T>) => Promise<T>
+		lifecycle: Lifecycle
 	): Promise<void> {
 		const { sessionId, cwd, command, prompt } = config;
 		const invocation = parseInvocation(config);
@@ -465,11 +425,7 @@ export class OpencodeServerSpawner {
 					this.fallbackToCli(config);
 					return;
 				} catch (fallbackErr) {
-					observe(
-						Promise.resolve()
-							.then(() => captureException(fallbackErr))
-							.catch(() => {})
-					);
+					void captureException(fallbackErr);
 				}
 			}
 			this.emitAgentError(managedProcess, setupErr);
@@ -488,20 +444,14 @@ export class OpencodeServerSpawner {
 					if (lifecycle.isFinished()) break;
 					if (event.type === 'permission.updated') {
 						if (event.properties.sessionID === ocSessionId) {
-							this.handlePermissionUpdated(
-								event.properties,
-								managedProcess,
-								serverUrl,
-								false,
-								observe
-							);
+							this.handlePermissionUpdated(event.properties, managedProcess, serverUrl, false);
 						}
 						continue;
 					}
 					if ((event.type as string) === 'permission.asked') {
 						const permission = event.properties as OpencodePermissionRequest;
 						if (permission.sessionID === ocSessionId) {
-							this.handlePermissionUpdated(permission, managedProcess, serverUrl, true, observe);
+							this.handlePermissionUpdated(permission, managedProcess, serverUrl, true);
 						}
 						continue;
 					}
@@ -537,7 +487,6 @@ export class OpencodeServerSpawner {
 				lifecycle.finish(aborted ? 0 : 1);
 			}
 		})();
-		observe(pump);
 
 		// Fire the prompt (async: events stream live via the subscription above).
 		try {

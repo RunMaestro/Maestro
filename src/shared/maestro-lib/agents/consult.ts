@@ -183,32 +183,18 @@ export interface ConsultStartOptions {
  * request already being spawned. The service holds the authoritative list.
  */
 interface ActiveConsult {
-	requestId: string;
 	/** The agent the mention was typed in - what Stop is addressed to. */
 	sourceSessionId: string;
 	/** The tab whose turn asked - what a Stop aimed at one tab is addressed to. */
 	sourceTabId: string;
 	/** The agent that is answering. */
 	targetSessionId: string;
-	/** Stop may arrive while provider/argument preparation is still pending. */
-	cancelRequested: boolean;
-	/** Timer setup has begun; a partial setup must retain its activity. */
-	supervisionStarted: boolean;
 	/** Terminate this consult and emit its terminal chunk. Idempotent. */
 	cancel: () => void;
 }
 
-export function createConsultService(
-	// A host can admit deferred dispatch before any state, timer or response work.
-	// The default keeps portable callers independent of desktop cleanup policy.
-	runActivity: <T>(operation: () => T) => T = (operation) => operation(),
-	// Own preparation, supervision and diagnostics beyond individual callback scopes.
-	// Hosts without cleanup reservations need no lifetime tracking.
-	beginSupervisionActivity: () => () => void = () => () => {}
-) {
+export function createConsultService() {
 	const activeConsults = new Map<string, ActiveConsult>();
-	// A successor may replace the public registration while older disposal fails.
-	const pendingDisposals = new Set<ActiveConsult>();
 
 	/**
 	 * Stop every consult the given source agent still has in flight.
@@ -226,7 +212,7 @@ export function createConsultService(
 	 */
 	function cancelForSource(sourceSessionId: string, sourceTabId?: string): number {
 		// Snapshot first: `cancel()` deletes from the map it is iterating.
-		const doomed = [...new Set([...activeConsults.values(), ...pendingDisposals])].filter(
+		const doomed = [...activeConsults.values()].filter(
 			(c) =>
 				c.sourceSessionId === sourceSessionId && (!sourceTabId || c.sourceTabId === sourceTabId)
 		);
@@ -241,7 +227,7 @@ export function createConsultService(
 	 * @returns How many consults were cancelled.
 	 */
 	function cancelAll(): number {
-		const doomed = [...new Set([...activeConsults.values(), ...pendingDisposals])];
+		const doomed = [...activeConsults.values()];
 		for (const consult of doomed) consult.cancel();
 		return doomed.length;
 	}
@@ -254,11 +240,10 @@ export function createConsultService(
 	 * @returns Whether a consult with that id was in flight.
 	 */
 	function cancel(requestId: string): boolean {
-		const doomed = [...new Set([...activeConsults.values(), ...pendingDisposals])].filter(
-			(consult) => consult.requestId === requestId
-		);
-		for (const consult of doomed) consult.cancel();
-		return doomed.length > 0;
+		const consult = activeConsults.get(requestId);
+		if (!consult) return false;
+		consult.cancel();
+		return true;
 	}
 
 	/**
@@ -270,40 +255,6 @@ export function createConsultService(
 	 * an error chunk instead of silently running locally.
 	 */
 	async function start(request: CrossAgentRequest, opts: ConsultStartOptions): Promise<void> {
-		const requestId = request.requestId;
-		// Stop can arrive before a process exists. Record it during preparation;
-		// the terminal cancellation path takes over once supervision is armed.
-		const registration: ActiveConsult = {
-			requestId,
-			sourceSessionId: request.sourceSessionId,
-			sourceTabId: request.sourceTabId,
-			targetSessionId: request.targetSessionId,
-			cancelRequested: false,
-			supervisionStarted: false,
-			cancel: () => {
-				registration.cancelRequested = true;
-			},
-		};
-		// Own preparation before publishing a cancellable registration. A failed
-		// setup has no watchdog to release it, but must not strand that entry.
-		const releaseActivity = beginSupervisionActivity();
-		activeConsults.set(requestId, registration);
-		try {
-			await startRegistered(request, opts, registration, releaseActivity);
-		} finally {
-			if (!registration.supervisionStarted) {
-				if (activeConsults.get(requestId) === registration) activeConsults.delete(requestId);
-				releaseActivity();
-			}
-		}
-	}
-
-	async function startRegistered(
-		request: CrossAgentRequest,
-		opts: ConsultStartOptions,
-		registration: ActiveConsult,
-		releaseActivity: () => void
-	): Promise<void> {
 		const { runner, sshStore, getTargetSession, onChunk } = opts;
 		const writable = opts.writable ?? false;
 
@@ -329,10 +280,26 @@ export function createConsultService(
 				requestId: request.requestId,
 				targetSessionId: request.targetSessionId,
 			});
-			if (activeConsults.get(request.requestId) === registration)
-				activeConsults.delete(request.requestId);
+			activeConsults.delete(request.requestId);
 			onChunk(baseChunk({ chunk: '', done: true, error: message }));
 		};
+
+		/**
+		 * Stop can land before the process exists: resolving the target agent's binary is async,
+		 * and the spawn itself is awaited. Register a cancel that only raises this flag now (it is
+		 * swapped for the real terminal path once the supervision is armed), and re-check it around
+		 * the spawn so a consult cancelled in that window is never left running.
+		 */
+		let cancelRequested = false;
+		const registration: ActiveConsult = {
+			sourceSessionId: request.sourceSessionId,
+			sourceTabId: request.sourceTabId,
+			targetSessionId: request.targetSessionId,
+			cancel: () => {
+				cancelRequested = true;
+			},
+		};
+		activeConsults.set(request.requestId, registration);
 
 		if (!target) {
 			emitError(`Target agent not found for session ${request.targetSessionId}`);
@@ -403,107 +370,79 @@ export function createConsultService(
 		const sessionId = `${CROSS_AGENT_SESSION_PREFIX}${request.requestId}`;
 
 		let settled = false;
-		let releasing = false;
-		let releaseFailed = false;
 		// The target's own provider session id, captured from its output stream. Forwarded on the
 		// terminal chunk so the caller stores it on the consult tab and resumes it on the next
 		// mention from this source tab.
 		let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
 		// Assigned once the consult is actually under way (see below). Held on a const object so
 		// `release` can close over it without a `let` that trips prefer-const.
-		const watch: { dog?: IdleWatchdog; releaseActivity?: () => void } = { releaseActivity };
+		const watch: { dog?: IdleWatchdog } = {};
 
 		const release = (): void => {
-			// A failed disarm leaves supervision uncertain. Keep both the owned
-			// registration and its hold so terminal delivery or Stop can retry.
-			releasing = true;
-			try {
-				watch.dog?.disarm();
-				releaseFailed = false;
-			} catch (error) {
-				releaseFailed = true;
-				pendingDisposals.add(registration);
-				throw error;
-			} finally {
-				releasing = false;
-			}
-			settled = true;
-			pendingDisposals.delete(registration);
-			if (activeConsults.get(request.requestId) === registration)
-				activeConsults.delete(request.requestId);
-			watch.releaseActivity?.();
-			watch.releaseActivity = undefined;
+			activeConsults.delete(request.requestId);
+			watch.dog?.disarm();
 		};
 
 		const observer: ConsultObserver = {
-			onActivity: () =>
-				runActivity(() => {
-					if (!settled && !releasing) watch.dog?.touch();
-				}),
-			onSessionId: (agentSessionId) =>
-				runActivity(() => {
-					if (agentSessionId) capturedAgentSessionId = agentSessionId;
-				}),
-			onEnd: (end) =>
-				runActivity(() => {
-					const { exitCode, readText, error } = end;
-					if (settled || releasing) return;
-					// Retry the observed completion rather than stopping a later process
-					// that may have reused this request's native process id.
-					registration.cancel = () => observer.onEnd(end);
-					release();
-					const code = (error && exitCode === 0 ? 1 : exitCode) ?? -1;
-					try {
-						const text = readText().trim();
-						// Only forward a captured provider session id on a SUCCESSFUL consult, so the
-						// caller never persists (and later resumes) a session id from a run that
-						// auth/usage/CLI-errored - matching Group Chat's recovery, which clears the id on
-						// failure to force a fresh session next time.
-						const continuity =
-							code === 0 && capturedAgentSessionId
-								? { targetAgentSessionId: capturedAgentSessionId }
-								: {};
-						if (code !== 0) {
-							// Non-zero exit is a failed consult (auth/usage/CLI error), even if the process
-							// printed something. Keep any text so the user still sees what the agent said,
-							// but stamp the error so it renders as a failure rather than a success-styled
-							// answer.
-							onChunk(
-								baseChunk({
-									chunk: text,
-									done: true,
-									error: error || consultExitError(target, code, text),
-								})
-							);
-						} else if (text) {
-							onChunk(baseChunk({ chunk: text, done: true, ...continuity }));
-						} else {
-							onChunk(
-								baseChunk({
-									chunk: '',
-									done: true,
-									error: `${target.name} produced no visible output (exit code ${code}).`,
-								})
-							);
-						}
-					} catch (err) {
-						// Reporting can outlive this synchronous terminal callback. Its
-						// failure must not replace the original consult error or escape.
-						const releaseDiagnostic = beginSupervisionActivity();
-						void captureException(err, {
-							operation: 'crossAgent:parseResponse',
-							requestId: request.requestId,
-							targetSessionId: request.targetSessionId,
-						}).then(releaseDiagnostic, releaseDiagnostic);
+			onActivity: () => {
+				if (!settled) watch.dog?.touch();
+			},
+			onSessionId: (agentSessionId) => {
+				if (agentSessionId) capturedAgentSessionId = agentSessionId;
+			},
+			onEnd: ({ exitCode, readText, error }) => {
+				if (settled) return;
+				settled = true;
+				release();
+				const code = (error && exitCode === 0 ? 1 : exitCode) ?? -1;
+				try {
+					const text = readText().trim();
+					// Only forward a captured provider session id on a SUCCESSFUL consult, so the
+					// caller never persists (and later resumes) a session id from a run that
+					// auth/usage/CLI-errored - matching Group Chat's recovery, which clears the id on
+					// failure to force a fresh session next time.
+					const continuity =
+						code === 0 && capturedAgentSessionId
+							? { targetAgentSessionId: capturedAgentSessionId }
+							: {};
+					if (code !== 0) {
+						// Non-zero exit is a failed consult (auth/usage/CLI error), even if the process
+						// printed something. Keep any text so the user still sees what the agent said,
+						// but stamp the error so it renders as a failure rather than a success-styled
+						// answer.
+						onChunk(
+							baseChunk({
+								chunk: text,
+								done: true,
+								error: error || consultExitError(target, code, text),
+							})
+						);
+					} else if (text) {
+						onChunk(baseChunk({ chunk: text, done: true, ...continuity }));
+					} else {
 						onChunk(
 							baseChunk({
 								chunk: '',
 								done: true,
-								error: err instanceof Error ? err.message : String(err),
+								error: `${target.name} produced no visible output (exit code ${code}).`,
 							})
 						);
 					}
-				}),
+				} catch (err) {
+					captureException(err, {
+						operation: 'crossAgent:parseResponse',
+						requestId: request.requestId,
+						targetSessionId: request.targetSessionId,
+					});
+					onChunk(
+						baseChunk({
+							chunk: '',
+							done: true,
+							error: err instanceof Error ? err.message : String(err),
+						})
+					);
+				}
+			},
 		};
 
 		/**
@@ -518,12 +457,8 @@ export function createConsultService(
 		 * failing to answer.
 		 */
 		const settleTerminated = (message: string, canceled = false): void => {
-			if (settled || releasing) return;
-			if (
-				pendingDisposals.has(registration) &&
-				activeConsults.get(request.requestId) !== registration
-			)
-				throw new Error('Cannot retry consult termination after its registration was replaced.');
+			if (settled) return;
+			settled = true;
 			release();
 			let partial = '';
 			try {
@@ -546,53 +481,24 @@ export function createConsultService(
 
 		// Safety net: never leave the process attached forever. The idle budget covers a wedged
 		// target; the hard ceiling covers one that chatters without finishing.
-		// Transfer preparation ownership before timer setup: partial initialization
-		// must remain blocked rather than being released by start's finalizer.
-		registration.supervisionStarted = true;
-		try {
-			watch.dog = createIdleWatchdog(
-				{
-					onCreate: (dog) => {
-						watch.dog = dog;
-					},
-					idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
-					maxMs: CROSS_AGENT_MAX_DURATION_MS,
-					onIdle: () =>
-						settleTerminated(
-							`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
-						),
-					onMax: () =>
-						settleTerminated(
-							`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
-						),
-				},
-				runActivity
-			);
-		} catch (error) {
-			// No runner was started. Keep disposal reachable if rollback also fails,
-			// and never replace the original initialization rejection with diagnostics.
-			settled = true;
-			registration.cancel = () => runActivity(release);
-			try {
-				release();
-			} catch (cleanupError) {
-				// Await diagnostics without allowing a reporter rejection to replace
-				// the initialization error that the caller must receive.
-				await Promise.allSettled([
-					captureException(cleanupError, {
-						operation: 'crossAgent:watchdogCleanup',
-						requestId: request.requestId,
-					}),
-				]);
-			}
-			throw error;
-		}
+		watch.dog = createIdleWatchdog({
+			idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
+			maxMs: CROSS_AGENT_MAX_DURATION_MS,
+			onIdle: () =>
+				settleTerminated(
+					`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+				),
+			onMax: () =>
+				settleTerminated(
+					`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+				),
+		});
 
 		// The real Stop path, now that there is something to tear down. A cancel that arrived while
 		// the target's binary was being resolved is settled here instead of spawning a process only
 		// to kill it a moment later.
 		registration.cancel = () => settleTerminated(`${target.name} was stopped by the user.`, true);
-		if (registration.cancelRequested) {
+		if (cancelRequested) {
 			registration.cancel();
 			return;
 		}
@@ -637,6 +543,7 @@ export function createConsultService(
 			// existed.
 			if (!spawnResult.success) {
 				if (!settled) {
+					settled = true;
 					release();
 					emitError(`${target.name} could not be started.`);
 				}
@@ -659,19 +566,15 @@ export function createConsultService(
 				transcriptEntries: request.transcript.length,
 			});
 		} catch (err) {
-			// Disposal failures are retryable supervision, not a second spawn failure.
-			if (releaseFailed) throw err;
 			// Spawn failed - tear down the supervision and surface a single error chunk.
 			if (!settled) {
+				settled = true;
 				release();
-				// Start still settles without waiting for diagnostics. Keep their
-				// activity independent of the request, native child and successor.
-				const releaseDiagnostic = beginSupervisionActivity();
-				void captureException(err, {
+				captureException(err, {
 					operation: 'crossAgent:spawn',
 					requestId: request.requestId,
 					targetSessionId: request.targetSessionId,
-				}).then(releaseDiagnostic, releaseDiagnostic);
+				});
 				emitError(err instanceof Error ? err.message : String(err));
 			}
 		}
@@ -696,7 +599,7 @@ export function createConsultService(
 		cancelForSource,
 		cancelAll,
 		parties,
-		activeCount: () => new Set([...activeConsults.values(), ...pendingDisposals]).size,
+		activeCount: () => activeConsults.size,
 	};
 }
 

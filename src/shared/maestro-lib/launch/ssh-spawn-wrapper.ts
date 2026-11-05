@@ -152,7 +152,6 @@ export interface SshSpawnWrapResult {
  * @param config The original spawn configuration
  * @param sshConfig Session-level SSH configuration (if any)
  * @param sshStore Store adapter for resolving SSH remote settings
- * @param builders Optional host adapters; defaults to standalone library builders
  * @returns Wrapped spawn configuration ready for ProcessManager
  *
  * @example
@@ -166,8 +165,7 @@ export interface SshSpawnWrapResult {
 export async function wrapSpawnWithSsh(
 	config: SshSpawnWrapConfig,
 	sshConfig: AgentSshRemoteConfig | undefined,
-	sshStore: SshRemoteSettingsStore,
-	builders = { buildSshCommand, buildSshCommandWithStdin }
+	sshStore: SshRemoteSettingsStore
 ): Promise<SshSpawnWrapResult> {
 	// Check if SSH is enabled for this session
 	if (!sshConfig?.enabled) {
@@ -230,7 +228,7 @@ export async function wrapSpawnWithSsh(
 			reason: 'avoid-command-line-length-limit',
 		});
 
-		const sshCommand = await builders.buildSshCommandWithStdin(sshResult.config, {
+		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 			command: remoteCommand,
 			args: [...config.args],
 			cwd: config.cwd,
@@ -265,7 +263,7 @@ export async function wrapSpawnWithSsh(
 	// launches inline: only a command that could not have started changes path.
 	const inlineSshCommand = config.launchViaStdinScript
 		? undefined
-		: await builders.buildSshCommand(sshResult.config, {
+		: await buildSshCommand(sshResult.config, {
 				command: remoteCommand,
 				args: sshArgs,
 				cwd: config.cwd,
@@ -290,7 +288,7 @@ export async function wrapSpawnWithSsh(
 	}
 
 	if (!inlineSshCommand || inlineTooLong) {
-		const sshCommand = await builders.buildSshCommandWithStdin(sshResult.config, {
+		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 			command: remoteCommand,
 			args: sshArgs,
 			cwd: config.cwd,
