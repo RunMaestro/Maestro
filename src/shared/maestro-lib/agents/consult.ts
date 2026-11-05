@@ -193,7 +193,11 @@ interface ActiveConsult {
 	cancel: () => void;
 }
 
-export function createConsultService() {
+export function createConsultService(
+	// A host can admit deferred dispatch before any state, timer or response work.
+	// The default keeps portable callers independent of desktop cleanup policy.
+	runActivity: <T>(operation: () => T) => T = (operation) => operation()
+) {
 	const activeConsults = new Map<string, ActiveConsult>();
 
 	/**
@@ -384,65 +388,69 @@ export function createConsultService() {
 		};
 
 		const observer: ConsultObserver = {
-			onActivity: () => {
-				if (!settled) watch.dog?.touch();
-			},
-			onSessionId: (agentSessionId) => {
-				if (agentSessionId) capturedAgentSessionId = agentSessionId;
-			},
-			onEnd: ({ exitCode, readText, error }) => {
-				if (settled) return;
-				settled = true;
-				release();
-				const code = (error && exitCode === 0 ? 1 : exitCode) ?? -1;
-				try {
-					const text = readText().trim();
-					// Only forward a captured provider session id on a SUCCESSFUL consult, so the
-					// caller never persists (and later resumes) a session id from a run that
-					// auth/usage/CLI-errored - matching Group Chat's recovery, which clears the id on
-					// failure to force a fresh session next time.
-					const continuity =
-						code === 0 && capturedAgentSessionId
-							? { targetAgentSessionId: capturedAgentSessionId }
-							: {};
-					if (code !== 0) {
-						// Non-zero exit is a failed consult (auth/usage/CLI error), even if the process
-						// printed something. Keep any text so the user still sees what the agent said,
-						// but stamp the error so it renders as a failure rather than a success-styled
-						// answer.
-						onChunk(
-							baseChunk({
-								chunk: text,
-								done: true,
-								error: error || consultExitError(target, code, text),
-							})
-						);
-					} else if (text) {
-						onChunk(baseChunk({ chunk: text, done: true, ...continuity }));
-					} else {
+			onActivity: () =>
+				runActivity(() => {
+					if (!settled) watch.dog?.touch();
+				}),
+			onSessionId: (agentSessionId) =>
+				runActivity(() => {
+					if (agentSessionId) capturedAgentSessionId = agentSessionId;
+				}),
+			onEnd: (end) =>
+				runActivity(() => {
+					const { exitCode, readText, error } = end;
+					if (settled) return;
+					settled = true;
+					release();
+					const code = (error && exitCode === 0 ? 1 : exitCode) ?? -1;
+					try {
+						const text = readText().trim();
+						// Only forward a captured provider session id on a SUCCESSFUL consult, so the
+						// caller never persists (and later resumes) a session id from a run that
+						// auth/usage/CLI-errored - matching Group Chat's recovery, which clears the id on
+						// failure to force a fresh session next time.
+						const continuity =
+							code === 0 && capturedAgentSessionId
+								? { targetAgentSessionId: capturedAgentSessionId }
+								: {};
+						if (code !== 0) {
+							// Non-zero exit is a failed consult (auth/usage/CLI error), even if the process
+							// printed something. Keep any text so the user still sees what the agent said,
+							// but stamp the error so it renders as a failure rather than a success-styled
+							// answer.
+							onChunk(
+								baseChunk({
+									chunk: text,
+									done: true,
+									error: error || consultExitError(target, code, text),
+								})
+							);
+						} else if (text) {
+							onChunk(baseChunk({ chunk: text, done: true, ...continuity }));
+						} else {
+							onChunk(
+								baseChunk({
+									chunk: '',
+									done: true,
+									error: `${target.name} produced no visible output (exit code ${code}).`,
+								})
+							);
+						}
+					} catch (err) {
+						captureException(err, {
+							operation: 'crossAgent:parseResponse',
+							requestId: request.requestId,
+							targetSessionId: request.targetSessionId,
+						});
 						onChunk(
 							baseChunk({
 								chunk: '',
 								done: true,
-								error: `${target.name} produced no visible output (exit code ${code}).`,
+								error: err instanceof Error ? err.message : String(err),
 							})
 						);
 					}
-				} catch (err) {
-					captureException(err, {
-						operation: 'crossAgent:parseResponse',
-						requestId: request.requestId,
-						targetSessionId: request.targetSessionId,
-					});
-					onChunk(
-						baseChunk({
-							chunk: '',
-							done: true,
-							error: err instanceof Error ? err.message : String(err),
-						})
-					);
-				}
-			},
+				}),
 		};
 
 		/**
@@ -481,18 +489,21 @@ export function createConsultService() {
 
 		// Safety net: never leave the process attached forever. The idle budget covers a wedged
 		// target; the hard ceiling covers one that chatters without finishing.
-		watch.dog = createIdleWatchdog({
-			idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
-			maxMs: CROSS_AGENT_MAX_DURATION_MS,
-			onIdle: () =>
-				settleTerminated(
-					`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
-				),
-			onMax: () =>
-				settleTerminated(
-					`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
-				),
-		});
+		watch.dog = createIdleWatchdog(
+			{
+				idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
+				maxMs: CROSS_AGENT_MAX_DURATION_MS,
+				onIdle: () =>
+					settleTerminated(
+						`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+					),
+				onMax: () =>
+					settleTerminated(
+						`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+					),
+			},
+			runActivity
+		);
 
 		// The real Stop path, now that there is something to tear down. A cancel that arrived while
 		// the target's binary was being resolved is settled here instead of spawning a process only

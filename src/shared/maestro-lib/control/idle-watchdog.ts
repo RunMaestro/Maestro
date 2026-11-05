@@ -65,7 +65,12 @@ export interface IdleWatchdog {
  * Start watching a supervised run. The idle budget is armed immediately, so the
  * caller does not need an initial `touch()`.
  */
-export function createIdleWatchdog(options: IdleWatchdogOptions): IdleWatchdog {
+export function createIdleWatchdog(
+	options: IdleWatchdogOptions,
+	// Admit timer dispatch before changing settlement state or clearing timers.
+	// Portable callers keep the original synchronous behavior by default.
+	runActivity: <T>(operation: () => T) => T = (operation) => operation()
+): IdleWatchdog {
 	const { idleMs, maxMs, onIdle, onMax } = options;
 
 	let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -92,11 +97,11 @@ export function createIdleWatchdog(options: IdleWatchdogOptions): IdleWatchdog {
 	const armIdle = (): void => {
 		if (settled) return;
 		if (idleTimer) clearTimeout(idleTimer);
-		idleTimer = setTimeout(() => settle(onIdle), idleMs);
+		idleTimer = setTimeout(() => runActivity(() => settle(onIdle)), idleMs);
 	};
 
 	if (maxMs !== undefined) {
-		maxTimer = setTimeout(() => settle(onMax ?? onIdle), maxMs);
+		maxTimer = setTimeout(() => runActivity(() => settle(onMax ?? onIdle)), maxMs);
 	}
 	armIdle();
 

@@ -37,7 +37,16 @@ import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
 export { CROSS_AGENT_SESSION_PREFIX, buildCrossAgentPrompt, serializeTranscript };
 export type { CrossAgentTargetSession };
 
-const consultService = createConsultService();
+const consultService = createConsultService((operation) => {
+	// Start settles before the service's observer/watchdog callbacks. Admit each
+	// deferred dispatch independently, before terminal state or recovery changes.
+	const release = beginGlobalWorktreeActivity();
+	try {
+		return operation();
+	} finally {
+		release();
+	}
+});
 
 /**
  * Stop every consult the given source agent still has in flight. Each is killed and settles
