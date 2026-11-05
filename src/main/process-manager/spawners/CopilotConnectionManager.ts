@@ -59,7 +59,7 @@ export class CopilotConnectionManager {
 	): Promise<CopilotConnectionLease> {
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.acquireAdmitted(config, handlers, observe)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -155,7 +155,7 @@ export class CopilotConnectionManager {
 	async close(lease: CopilotConnectionLease): Promise<void> {
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.closeAdmitted(lease)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -175,14 +175,14 @@ export class CopilotConnectionManager {
 						this.leases.clear();
 					})
 				),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
 	async closeAgent(agentId: string): Promise<void> {
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.closeAdmittedAgent(agentId)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 

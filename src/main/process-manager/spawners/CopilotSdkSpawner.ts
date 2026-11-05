@@ -74,7 +74,7 @@ export class CopilotSdkSpawner {
 				this.context.leasesBySession.clear();
 				return observe(this.context.connections.closeAll());
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -86,7 +86,7 @@ export class CopilotSdkSpawner {
 				}
 				observe(this.context.connections.closeAgent(agentId));
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -99,7 +99,7 @@ export class CopilotSdkSpawner {
 				observe(this.context.connections.close(lease));
 				return true;
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -107,7 +107,7 @@ export class CopilotSdkSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(_start, observe) => this.spawnAdmitted(config, observe),
-				(error) => void captureException(error)
+				(error) => captureException(error)
 			);
 		} catch (error) {
 			return { pid: -1, success: false, error: String(error) };
@@ -131,7 +131,11 @@ export class CopilotSdkSpawner {
 					error: `Copilot native mode could not start: ${String(error)}`,
 				};
 			}
-			void captureException(error);
+			observe(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -193,14 +197,8 @@ class CopilotTurn {
 			agentSessionId: config.agentSessionId,
 			skipCopilotShutdownWait: true,
 			sdkController: {
-				interrupt: () =>
-					this.withActivity((observe) => this.interrupt(observe)).catch(
-						(error) => void captureException(error)
-					),
-				kill: () =>
-					this.withActivity((observe) => this.close(observe)).catch(
-						(error) => void captureException(error)
-					),
+				interrupt: () => this.withActivity((observe) => this.interrupt(observe)).catch(() => {}),
+				kill: () => this.withActivity((observe) => this.close(observe)).catch(() => {}),
 			},
 			harnessControl: {
 				getCapabilities: () => this.capabilities,
@@ -259,9 +257,8 @@ class CopilotTurn {
 		this.managedProcess.agentSessionId = this.session.sessionId;
 		this.forwardLine(JSON.stringify({ type: 'acp.init', sessionId: this.session.sessionId }));
 		this.unsubscribe = this.session.on((event) => {
-			void this.withActivity(async () => this.onEvent(event)).catch(
-				(error) => void captureException(error)
-			);
+			// The admitted boundary reports failures; refusal must stay side-effect free.
+			void this.withActivity(async () => this.onEvent(event)).catch(() => {});
 		});
 		this.promptSent = true;
 		await this.session.send({ prompt: config.prompt ?? '', mode: 'enqueue' });
@@ -481,7 +478,11 @@ class CopilotTurn {
 			this.completion.resolve();
 			return;
 		}
-		void captureException(error);
+		this.observe(
+			Promise.resolve()
+				.then(() => captureException(error))
+				.catch(() => {})
+		);
 		this.emitAgentError(error);
 		void this.finish(1);
 	}
@@ -519,7 +520,7 @@ class CopilotTurn {
 		// SDK callbacks and retained controls can outlive the original turn hold.
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(operation(observe)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 

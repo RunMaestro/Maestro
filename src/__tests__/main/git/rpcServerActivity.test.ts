@@ -6169,6 +6169,33 @@ describe('Copilot connection manager activity with unavailable native observer',
 		}
 	);
 
+	it.each(['identity', 'close'] as const)(
+		'retains standalone manager %s diagnostics without replacing the failure',
+		async (stage) => {
+			const failure = new Error(`${stage} failure`);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const input = copilotConfig();
+			Object.defineProperty(input, 'tabId', {
+				get: () => {
+					throw failure;
+				},
+			});
+			client.forceStop.mockRejectedValueOnce(failure);
+			const result =
+				stage === 'identity'
+					? manager.acquire(input, handlers())
+					: manager.close({ client, closed: false } as unknown as CopilotConnectionLease);
+			await expect(result).rejects.toBe(failure);
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
 	it.each(['identity', 'runtime', 'env', 'constructor'])(
 		'releases a proven pre-start %s failure without SDK recovery',
 		async (stage) => {
@@ -6457,6 +6484,7 @@ describe('Copilot per-turn activity', () => {
 				expect(processes.size).toBe(0);
 				expect(connections.acquire).not.toHaveBeenCalled();
 				expect(fallback).not.toHaveBeenCalled();
+				expect(captureException).not.toHaveBeenCalled();
 			} finally {
 				hold.release();
 			}
@@ -6622,6 +6650,9 @@ describe('Copilot per-turn activity', () => {
 			expect(session.send).toHaveBeenCalledTimes(1);
 			expect(session.abort).not.toHaveBeenCalled();
 			expect(connections.close).not.toHaveBeenCalled();
+			listener({ type: 'session.idle' } as SessionEvent);
+			await drain();
+			expect(captureException).not.toHaveBeenCalled();
 		} finally {
 			hold.release();
 		}
@@ -6690,6 +6721,238 @@ describe('Copilot per-turn activity', () => {
 		await drain();
 		(await reserve()).release();
 	});
+	it.each(['setup', 'run'] as const)(
+		'retains %s diagnostics after fallback or turn completion for every reporter outcome',
+		async (stage) => {
+			for (const outcome of ['resolve', 'reject', 'throw'] as const) {
+				const failure = new Error(`${stage} failure`);
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockImplementationOnce(() => {
+					if (outcome === 'throw') throw new Error('report failed');
+					return reporting.promise;
+				});
+				if (stage === 'setup') {
+					vi.mocked(createOutputParser).mockImplementationOnce(() => {
+						throw failure;
+					});
+					expect(copilot.spawn(input({ permissionMode: 'full' }))).toMatchObject({
+						success: true,
+						pid: 999,
+					});
+					expect(fallback).toHaveBeenCalledTimes(1);
+					fallback.mockClear();
+				} else {
+					session.send.mockRejectedValueOnce(failure);
+					await start();
+					expect(probes.exit).toHaveBeenLastCalledWith('rpc-session', 1, expect.any(Object));
+				}
+				await drain();
+				expect(captureException).toHaveBeenLastCalledWith(failure);
+				if (outcome !== 'throw') {
+					await blocked();
+					if (outcome === 'resolve') reporting.resolve();
+					else reporting.reject(new Error('report failed'));
+				}
+				await drain();
+				(await reserve()).release();
+			}
+		}
+	);
+	it.each(['closeAll', 'closeAgent', 'closeSession'] as const)(
+		'retains %s diagnostics after the original shutdown outcome',
+		async (method) => {
+			await start();
+			await idle();
+			const failure = new Error('shutdown failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const fn = method === 'closeSession' ? connections.close : connections[method];
+			fn.mockRejectedValueOnce(failure);
+			if (method === 'closeAll') await expect(copilot.closeAll()).rejects.toBe(failure);
+			else if (method === 'closeAgent') expect(copilot.closeAgent('agent')).toBeUndefined();
+			else expect(copilot.closeSession('rpc-session')).toBe(true);
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['permission', 'question', 'elicitation', 'event', 'sdkKill', 'harnessClose'] as const)(
+		'retains admitted %s diagnostics and consumes reporter rejection exactly once',
+		async (kind) => {
+			const managed = await start();
+			const handlers = connections.acquire.mock.calls[0][1];
+			const failure = new Error('callback failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (kind === 'event') {
+				probes.output.mockImplementationOnce(() => {
+					throw failure;
+				});
+				listener({
+					type: 'assistant.message_delta',
+					data: { deltaContent: 'text' },
+				} as SessionEvent);
+			}
+			await idle();
+			if (kind === 'sdkKill' || kind === 'harnessClose') {
+				connections.close.mockRejectedValueOnce(failure);
+				if (kind === 'sdkKill')
+					await expect(managed.sdkController!.kill()).resolves.toBeUndefined();
+				else await expect(managed.harnessControl!.close()).rejects.toBe(failure);
+			} else if (kind !== 'event') {
+				probes.interaction.mockRejectedValueOnce(failure);
+				const answer =
+					kind === 'permission'
+						? handlers.onPermissionRequest({ kind: 'read' } as never, {
+								sessionId: 'copilot-provider',
+							})
+						: kind === 'question'
+							? handlers.onUserInputRequest({ question: 'Question' })
+							: handlers.onElicitationRequest({
+									message: 'Question',
+									requestedSchema: { type: 'object', properties: {} },
+								} as never);
+				await expect(answer).rejects.toBe(failure);
+			}
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(1);
+			(await reserve()).release();
+		}
+	);
+	it.each(['report', 'native'] as const)(
+		'keeps fallback native close independent when %s completes first',
+		async (first) => {
+			vi.mocked(createOutputParser).mockImplementationOnce(() => {
+				throw new Error('setup');
+			});
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			fallback.mockImplementationOnce(() =>
+				boundary.withWorktreeTurnActivity((start, observe) => {
+					observe(
+						start(
+							{ command: 'fallback', args: [], cwd: target, env: {} },
+							{},
+							{ keepStdinOpen: true, stopGraceMs: 1000 }
+						).done
+					);
+					return { success: true, pid: 12345 };
+				}, vi.fn())
+			);
+			expect(copilot.spawn(input({ permissionMode: 'full' }))).toMatchObject({
+				success: true,
+				pid: 12345,
+			});
+			await drain();
+			if (first === 'report') reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (first === 'report') await close();
+			else reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it('preserves a failed fallback verdict and independently retains both failure reports', async () => {
+		const original = new Error('setup');
+		const failure = new Error('fallback');
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(createOutputParser).mockImplementationOnce(() => {
+			throw original;
+		});
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		fallback.mockImplementationOnce(() => {
+			throw failure;
+		});
+		expect(copilot.spawn(input({ permissionMode: 'full' }))).toMatchObject({
+			success: false,
+			error: String(failure),
+		});
+		await drain();
+		expect(vi.mocked(captureException).mock.calls.map(([error]) => error)).toEqual(
+			expect.arrayContaining([original, failure])
+		);
+		first.resolve();
+		await drain();
+		await blocked();
+		second.reject(new Error('report failed'));
+		await drain();
+		(await reserve()).release();
+	});
+
+	it('keeps pending canonicalization blocked until setup diagnostics settle', async () => {
+		const resolving = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(resolving.promise);
+		const earlier = gate.reserveWorktreeCleanup(target);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		vi.mocked(createOutputParser).mockImplementationOnce(() => {
+			throw new Error('setup');
+		});
+		expect(copilot.spawn(input({ permissionMode: 'full' }))).toMatchObject({ success: true });
+		await drain();
+		resolving.resolve(target);
+		expect(await earlier).toMatchObject({ status: 'blocked' });
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('retains independent concurrent reports across a same-session successor', async () => {
+		await start();
+		const handlers = connections.acquire.mock.calls[0][1];
+		await idle();
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		probes.interaction
+			.mockRejectedValueOnce(new Error('first'))
+			.mockRejectedValueOnce(new Error('second'));
+		await expect(handlers.onUserInputRequest({ question: 'First' })).rejects.toThrow('first');
+		await expect(handlers.onUserInputRequest({ question: 'Second' })).rejects.toThrow('second');
+		const successor = await start();
+		await idle();
+		first.resolve();
+		await drain();
+		await blocked();
+		expect(processes.get('rpc-session')).toBe(successor);
+		second.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+	it('keeps failed logger recovery blocked without replacing or recursively reporting its error', async () => {
+		const failure = new Error('logger failed');
+		connections.acquire.mockRejectedValueOnce(new Error('setup failed'));
+		vi.mocked(logger.warn).mockImplementationOnce(() => {
+			throw failure;
+		});
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		const managed = await start({ permissionMode: 'full' });
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		expect(fallback).not.toHaveBeenCalled();
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		// Failed recovery has no completion proof; reporter settlement cannot end it.
+		await blocked();
+		expect(processes.get('rpc-session')).toBe(managed);
+		expect(captureException).toHaveBeenCalledTimes(1);
+	});
+
 	it('preserves actual manager unknown native ownership after idle and shutdown', async () => {
 		const { CopilotSdkSpawner } =
 			await import('../../../main/process-manager/spawners/CopilotSdkSpawner');
