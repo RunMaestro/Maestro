@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -50,6 +50,18 @@ import * as json from '../../../shared/canonicalJson';
 import { registerSessionCallbacks } from '../../../main/web-server/callbacks/sessionCallbacks';
 
 describe('host-private question observation authority', () => {
+	let relayDirectory: string;
+	beforeAll(async () => {
+		relayDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'r2-relay-'));
+		await permissionRelayServer.ensureStarted(relayDirectory);
+	});
+	// Like relay-core, keep the singleton listening across cases. stop() only
+	// requests an asynchronous close; immediately rebinding its Windows pipe
+	// races the previous listener even after the client sockets are destroyed.
+	afterAll(() => {
+		permissionRelayServer.stop();
+		fs.rmSync(relayDirectory, { recursive: true, force: true });
+	});
 	it.each(['unchanged', 'rules', 'targets', 'owner'] as const)(
 		'amortizes real store reads per native census and freshly fences final answer: %s',
 		async (mode) => {
@@ -284,7 +296,6 @@ describe('host-private question observation authority', () => {
 			} finally {
 				for (const cleanup of cleanups) cleanup();
 				for (const socket of sockets) socket.destroy();
-				permissionRelayServer.stop();
 				nativeCurrentTurns.setEnabled(false);
 				nativeCurrentTurns.setEnabled(true);
 				vi.mocked(registry.getPendingQuestionsSnapshot).mockRestore?.();

@@ -1935,11 +1935,6 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 			if (!snapshot || Array.isArray(snapshot)) throw new Error('Versioned snapshot required');
 			expect(snapshot.sessions[0].supervision?.busy).toBe(true);
 			if (mode === 'answer' || mode === 'unknown-receipt') {
-				expect(JSON.parse(await answerResponse)).toMatchObject({
-					type: 'permission-response',
-					requestId: 'bridge-request',
-					decision: { behavior: 'deny', message: 'Use count.' },
-				});
 				expect(replies).toHaveLength(1);
 				const record = store.readDecisions()[0];
 				if (mode === 'answer') {
@@ -1958,6 +1953,13 @@ describe('active native AskUserQuestion -> wire -> worker -> request response', 
 						deliveryStatus: 'admitted',
 						lifecycle: { delivery: 'unknown' },
 					});
+				// Diagnose a failed cycle before waiting for a response it never sent.
+				// This also lets finally clean the pending request before the next case.
+				expect(JSON.parse(await answerResponse)).toMatchObject({
+					type: 'permission-response',
+					requestId: 'bridge-request',
+					decision: { behavior: 'deny', message: 'Use count.' },
+				});
 			} else {
 				if (mode.startsWith('raw-')) {
 					expect(replies).toHaveLength(0);

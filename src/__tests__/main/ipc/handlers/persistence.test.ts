@@ -70,7 +70,7 @@ import type { QueuedItem } from '../../../../renderer/types';
  * IPC handlers for application data persistence.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { ipcMain, app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -179,7 +179,7 @@ import {
 } from '../../../../main/plugins/plugin-media-tools';
 
 describe('persistence IPC handlers', () => {
-	let handlers: Map<string, Function>;
+	let handlers: Map<string, (...args: any[]) => any>;
 	let persistence: PersistenceHandlers;
 	let mockSettingsStore: {
 		get: ReturnType<typeof vi.fn>;
@@ -999,313 +999,414 @@ describe('persistence IPC handlers', () => {
 			return { ...f, snapshot };
 		}
 
-		it.each([
-			'fresh',
-			'image-fresh',
-			'image-existing',
-			'existing',
-			'owner',
-			'row',
-			'hold',
-			'policy',
-			'unknown',
-			'unowned-publish',
-			'boundary',
-			'double-drain',
-		] as const)(
-			'captures the real plain renderer queue boundary and first question (%s)',
-			async (kind) => {
+		describe('plain renderer queue', () => {
+			beforeAll(async () => {
+				// Cold module transforms belong to fixture setup. In particular, a test
+				// timeout must not start teardown while renderer imports later resume
+				// and write into the already-removed queue receipt directory.
 				const { JSDOM } = await import('jsdom');
 				const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
 				vi.stubGlobal('window', dom.window);
 				vi.stubGlobal('document', dom.window.document);
 				vi.stubGlobal('navigator', dom.window.navigator);
-				vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-				const { newEmptyTranscript } = await import('../../../../shared/sessionTranscript');
-				const { createRoot } = await import('react-dom/client');
-				const { createElement, act } = await import('react');
-				const { useSessionTranscriptSync } =
-					await import('../../../../renderer/hooks/session/useSessionTranscriptSync');
-				const { useSessionStore, updateAiTab } =
-					await import('../../../../renderer/stores/sessionStore');
-				const { useAgentStore } = await import('../../../../renderer/stores/agentStore');
-				const { registerSessionPersistenceFlush } =
-					await import('../../../../renderer/services/sessionPersistenceFlush');
-				const { createMockSession } = await import('../../../helpers/mockSession');
-				const { createMockAITab } = await import('../../../helpers/mockTab');
-				const f = queueAdapter(true, false);
-				const imagePromptSpy = kind.startsWith('image-')
-					? vi
-							.spyOn(promptManager, 'getPrompt')
-							.mockReturnValue(
-								(await import('../../../../renderer/hooks/input/useInputProcessing'))
-									.DEFAULT_IMAGE_ONLY_PROMPT
-							)
-					: undefined;
-				if (kind.startsWith('image-')) {
-					f.input.prompt = '';
-					request.item.text = '';
-					f.input.images = ['maestro-image://synthetic.png'];
-					request.item.images = f.input.images;
-				}
-				const snapshot = f.deps.snapshot();
-				snapshot.tabs[0].agentSessionId = kind.endsWith('existing') ? 'provider-existing' : null;
-				current[0].aiTabs[0].agentSessionId = snapshot.tabs[0].agentSessionId;
-				f.deps.snapshot = () => snapshot;
-				const queuedReceipt = await f.adapter.runQueue(f.client, f.input, f.arm);
-				expect(queuedReceipt.receipt.outcome).toBe('queued');
-				snapshot.tabs[0].busy = false;
-				snapshot.tabs[0].cursorAvailable = true;
-				const owner = {
-					isDestroyed: () => false,
-					webContents: { id: 7, isDestroyed: () => false },
-				} as BrowserWindow;
-				persistence = registerPersistenceHandlers({ ...deps, getWindowForSession: () => owner });
-				const call = (channel: string, payload: unknown) => {
-					if (channel === 'sessions:publishTranscript' && kind === 'unowned-publish')
-						return handlers.get(channel)!({ sender: { id: 8 } }, payload);
-					if (channel === 'process:spawn') {
-						if (kind === 'boundary')
-							payload = { ...(payload as object), transcriptBoundaryId: 'foreign' };
-						if (kind === 'row') current[0].executionQueue[0].text = 'Replaced intent';
-						if (kind === 'hold') current[0].executionQueue[0].paused = true;
-						if (kind === 'policy') f.store.writeSupervisorTargets([]);
-						if (kind === 'owner')
-							return handlers.get(channel)!(
-								{ sender: { id: 8, isDestroyed: () => false } },
-								payload
-							);
-					}
-					return handlers.get(channel)!({ sender: owner.webContents }, payload);
-				};
-				const spawn = vi.fn((config) => {
-					if (kind === 'unknown') throw new Error('Native acknowledgement lost');
-					const tab = useSessionStore.getState().sessions[0].aiTabs[0];
-					expect(tab.logs.filter((row) => row.id === config.transcriptBoundaryId)).toHaveLength(1);
-					expect(tab.state).toBe('idle');
-					expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
-					nativeCurrentTurns.spawning(config.sessionId);
-					const run = f.capture.captureSpawn({
-						...config,
-						nativeTabSession: {
-							agentId: 'agent',
-							tabId: 'tab',
-							createdAt: 1,
-							initialSessionId: config.agentSessionId,
-						},
-					})!;
-					nativeCurrentTurns.begin(run, config.transcriptBoundaryId);
-					pianolaNewTabSpawns.captured(
-						config.sessionId,
-						run.id,
-						config.pianolaDispatchId,
-						config.pianolaQueueItemId
-					);
-					return { success: true, pid: 42 };
-				});
-				const manager = Object.assign(new EventEmitter(), {
-					spawn,
-					get: () => undefined,
-					getAll: () => [],
-				});
-				registerProcessHandlers({
-					getProcessManager: () => manager as never,
-					getAgentDetector: () =>
-						({
-							getAgent: async () => ({
-								...getAgentDefinition('codex'),
-								available: true,
-								path: '/fixture/codex',
-								capabilities: getAgentCapabilities('codex'),
-							}),
-						}) as never,
-					agentConfigsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
-					settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
-					sessionsStore: mockSessionsStore as never,
-					groupsStore: mockGroupsStore as never,
-					getMainWindow: () => null,
-					getWindowForSession: () => owner,
-					getWebServer: () =>
-						({
-							prepareQueueSpawnFromMain: (
-								...args: Parameters<typeof f.adapter.prepareQueueSpawn>
-							) => f.adapter.prepareQueueSpawn(...args),
-						}) as never,
-				});
-				Object.assign(window, {
-					maestro: {
-						process: { spawn: (payload: unknown) => call('process:spawn', payload) },
-						agents: { get: async () => ({ ...getAgentDefinition('codex'), available: true }) },
-						settings: { set: vi.fn() },
-						prompts: { get: async () => ({ success: true, content: '' }) },
-						sessions: {
-							onTranscriptSync: () => () => {},
-							publishTranscript: async (patch: unknown) =>
-								call('sessions:publishTranscript', patch),
-							setMany: save,
-						},
-					},
-				});
-				const callbacks: Record<string, () => unknown> = {};
-				registerSessionCallbacks(
-					new Proxy(
-						{},
-						{
-							get: (_target, key: string) => (fn: () => unknown) => {
-								callbacks[key] = fn;
-							},
-						}
-					) as WebServer,
-					{
-						sessionsStore: deps.sessionsStore,
-						groupsStore: deps.groupsStore,
-						getProcessManager: () => manager as never,
-					}
-				);
-				const census = () =>
-					pianolaScopeSnapshotFromDesktop({
-						success: true,
-						...(callbacks.setListDesktopSessionsCallback() as object),
-					});
-				const read = () =>
-					nativeCurrentTurns.read({
-						agentId: 'agent',
-						tabId: 'tab',
-						createdAt: 1,
-						provider: 'codex',
-						agentSessionId: kind.endsWith('existing') ? 'provider-existing' : null,
-						open: true,
-					});
-				const workerSpies = [
-					vi.spyOn(cliStorage, 'readSettingValue').mockReturnValue({ pianola: true }),
-					vi
-						.spyOn(workerStore, 'readPianolaSupervisorTargets')
-						.mockImplementation(f.store.readSupervisorTargets),
-					vi
-						.spyOn(workerStore, 'readPianolaScopeCheckpoint')
-						.mockImplementation(f.store.readScopeCheckpoint),
-					vi
-						.spyOn(workerStore, 'writePianolaScopeCheckpoint')
-						.mockImplementation(f.store.writeScopeCheckpoint),
-					vi.spyOn(workerStore, 'readPianolaDecisions').mockImplementation(f.store.readDecisions),
-					vi.spyOn(workerStore, 'appendPianolaDecision').mockImplementation(f.store.appendDecision),
-					vi.spyOn(workerStore, 'readPianolaRules').mockReturnValue([]),
-					vi.spyOn(workerStore, 'getPianolaProfile').mockReturnValue({ entry: undefined } as never),
-				];
-				const workerDeps = createPianolaScopeWorkerDeps({
-					sendCommand: async (message) => {
-						if (message.type === 'list_desktop_sessions')
-							return {
-								success: true,
-								...(callbacks.setListDesktopSessionsCallback() as object),
-							} as never;
-						expect(message.type).toBe('get_session_history');
-						const send = vi.fn();
-						handleGetSessionHistory(
-							{
-								send,
-								callbacks: { getSessionHistory: callbacks.setGetSessionHistoryCallback },
-							} as unknown as MessageHandlerContext,
-							{} as WebClient,
-							message as never
-						);
-						return send.mock.calls.at(-1)![1] as never;
-					},
-				});
-				const time = Date.now();
-				const clock = vi.spyOn(Date, 'now').mockReturnValue(time);
-				const ready = async () => {};
-				function Owner() {
-					useSessionTranscriptSync(ready);
-					return null;
-				}
-				const root = createRoot(document.getElementById('root')!);
-				nativeCurrentTurns.setEnabled(false);
-				nativeCurrentTurns.setEnabled(true);
-				useSessionStore.setState({ sessions: [], groups: [] });
-				await act(async () => root.render(createElement(Owner)));
-				registerSessionPersistenceFlush(async (rows) => {
-					await save(rows as unknown as StoredSession[]);
-				});
 				try {
-					nativeCurrentTurns.recordHostEmptyCreation({
-						agentId: 'agent',
-						tabId: 'tab',
-						createdAt: 1,
-						provider: 'codex',
-					})(true);
-					await act(async () =>
-						useSessionStore.setState({
-							sessions: [
-								createMockSession({
-									...current[0],
-									activeTabId: 'tab',
-									state: 'idle',
-									aiTabs: [
-										createMockAITab({
-											id: 'tab',
-											createdAt: 1,
-											state: 'idle',
-											logs: newEmptyTranscript(),
-											agentSessionId: kind.endsWith('existing') ? 'provider-existing' : null,
-										}),
-									],
-								} as never),
-							],
-						})
-					);
-					if (kind.endsWith('existing')) {
-						await act(async () =>
-							useSessionStore
-								.getState()
-								.addLogToTab(
-									'agent',
-									{ id: 'prior-user', source: 'user', text: 'Earlier turn' },
-									'tab'
+					await Promise.all([
+						import('react-dom/client'),
+						import('../../../../renderer/hooks/session/useSessionTranscriptSync'),
+						import('../../../../renderer/stores/agentStore'),
+						import('../../../../renderer/hooks/input/useInputProcessing'),
+						import('../../../helpers/mockSession'),
+						import('../../../helpers/mockTab'),
+					]);
+				} finally {
+					dom.window.close();
+					vi.unstubAllGlobals();
+				}
+			});
+
+			it.each([
+				'fresh',
+				'image-fresh',
+				'image-existing',
+				'existing',
+				'owner',
+				'row',
+				'hold',
+				'policy',
+				'unknown',
+				'unowned-publish',
+				'boundary',
+				'double-drain',
+			] as const)(
+				'captures the real plain renderer queue boundary and first question (%s)',
+				async (kind) => {
+					const { JSDOM } = await import('jsdom');
+					const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
+					vi.stubGlobal('window', dom.window);
+					vi.stubGlobal('document', dom.window.document);
+					vi.stubGlobal('navigator', dom.window.navigator);
+					vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+					const { newEmptyTranscript } = await import('../../../../shared/sessionTranscript');
+					const { createRoot } = await import('react-dom/client');
+					const { createElement, act } = await import('react');
+					const { useSessionTranscriptSync } =
+						await import('../../../../renderer/hooks/session/useSessionTranscriptSync');
+					const { useSessionStore, updateAiTab } =
+						await import('../../../../renderer/stores/sessionStore');
+					const { useAgentStore } = await import('../../../../renderer/stores/agentStore');
+					const { registerSessionPersistenceFlush } =
+						await import('../../../../renderer/services/sessionPersistenceFlush');
+					const { createMockSession } = await import('../../../helpers/mockSession');
+					const { createMockAITab } = await import('../../../helpers/mockTab');
+					const f = queueAdapter(true, false);
+					const imagePromptSpy = kind.startsWith('image-')
+						? vi
+								.spyOn(promptManager, 'getPrompt')
+								.mockReturnValue(
+									(await import('../../../../renderer/hooks/input/useInputProcessing'))
+										.DEFAULT_IMAGE_ONLY_PROMPT
 								)
+						: undefined;
+					if (kind.startsWith('image-')) {
+						f.input.prompt = '';
+						request.item.text = '';
+						f.input.images = ['maestro-image://synthetic.png'];
+						request.item.images = f.input.images;
+					}
+					const snapshot = f.deps.snapshot();
+					snapshot.tabs[0].agentSessionId = kind.endsWith('existing') ? 'provider-existing' : null;
+					current[0].aiTabs[0].agentSessionId = snapshot.tabs[0].agentSessionId;
+					f.deps.snapshot = () => snapshot;
+					const queuedReceipt = await f.adapter.runQueue(f.client, f.input, f.arm);
+					expect(queuedReceipt.receipt.outcome).toBe('queued');
+					snapshot.tabs[0].busy = false;
+					snapshot.tabs[0].cursorAvailable = true;
+					const owner = {
+						isDestroyed: () => false,
+						webContents: { id: 7, isDestroyed: () => false },
+					} as BrowserWindow;
+					persistence = registerPersistenceHandlers({ ...deps, getWindowForSession: () => owner });
+					const call = (channel: string, payload: unknown) => {
+						if (channel === 'sessions:publishTranscript' && kind === 'unowned-publish')
+							return handlers.get(channel)!({ sender: { id: 8 } }, payload);
+						if (channel === 'process:spawn') {
+							if (kind === 'boundary')
+								payload = { ...(payload as object), transcriptBoundaryId: 'foreign' };
+							if (kind === 'row') current[0].executionQueue[0].text = 'Replaced intent';
+							if (kind === 'hold') current[0].executionQueue[0].paused = true;
+							if (kind === 'policy') f.store.writeSupervisorTargets([]);
+							if (kind === 'owner')
+								return handlers.get(channel)!(
+									{ sender: { id: 8, isDestroyed: () => false } },
+									payload
+								);
+						}
+						return handlers.get(channel)!({ sender: owner.webContents }, payload);
+					};
+					const spawn = vi.fn((config) => {
+						if (kind === 'unknown') throw new Error('Native acknowledgement lost');
+						const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+						expect(tab.logs.filter((row) => row.id === config.transcriptBoundaryId)).toHaveLength(
+							1
 						);
-						const prior = f.capture.captureSpawn({
-							sessionId: 'agent-ai-tab',
-							toolType: 'codex',
-							cwd: '/project',
+						expect(tab.state).toBe('idle');
+						expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+						nativeCurrentTurns.spawning(config.sessionId);
+						const run = f.capture.captureSpawn({
+							...config,
 							nativeTabSession: {
 								agentId: 'agent',
 								tabId: 'tab',
 								createdAt: 1,
-								initialSessionId: 'provider-existing',
+								initialSessionId: config.agentSessionId,
 							},
 						})!;
-						nativeCurrentTurns.begin(prior, 'prior-user');
-						await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
-					}
-					f.deps.snapshot = census;
-					for (let job = 0; job < 2; job++) {
-						if (job) {
-							clock.mockReturnValue(time + 6000);
-							f.rendererQueue.splice(0);
-							f.restore();
-							f.input.dispatchId = generateUUID();
-							await f.adapter.runQueue(f.client, f.input, f.arm);
-							await act(async () =>
-								useSessionStore.getState().updateSession('agent', {
-									executionQueue: current[0].executionQueue as QueuedItem[],
-								})
-							);
+						nativeCurrentTurns.begin(run, config.transcriptBoundaryId);
+						pianolaNewTabSpawns.captured(
+							config.sessionId,
+							run.id,
+							config.pianolaDispatchId,
+							config.pianolaQueueItemId
+						);
+						return { success: true, pid: 42 };
+					});
+					const manager = Object.assign(new EventEmitter(), {
+						spawn,
+						get: () => undefined,
+						getAll: () => [],
+					});
+					registerProcessHandlers({
+						getProcessManager: () => manager as never,
+						getAgentDetector: () =>
+							({
+								getAgent: async () => ({
+									...getAgentDefinition('codex'),
+									available: true,
+									path: '/fixture/codex',
+									capabilities: getAgentCapabilities('codex'),
+								}),
+							}) as never,
+						agentConfigsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+						settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+						sessionsStore: mockSessionsStore as never,
+						groupsStore: mockGroupsStore as never,
+						getMainWindow: () => null,
+						getWindowForSession: () => owner,
+						getWebServer: () =>
+							({
+								prepareQueueSpawnFromMain: (
+									...args: Parameters<typeof f.adapter.prepareQueueSpawn>
+								) => f.adapter.prepareQueueSpawn(...args),
+							}) as never,
+					});
+					Object.assign(window, {
+						maestro: {
+							process: { spawn: (payload: unknown) => call('process:spawn', payload) },
+							agents: { get: async () => ({ ...getAgentDefinition('codex'), available: true }) },
+							settings: { set: vi.fn() },
+							prompts: { get: async () => ({ success: true, content: '' }) },
+							sessions: {
+								onTranscriptSync: () => () => {},
+								publishTranscript: async (patch: unknown) =>
+									call('sessions:publishTranscript', patch),
+								setMany: save,
+							},
+						},
+					});
+					const callbacks: Record<string, () => unknown> = {};
+					registerSessionCallbacks(
+						new Proxy(
+							{},
+							{
+								get: (_target, key: string) => (fn: () => unknown) => {
+									callbacks[key] = fn;
+								},
+							}
+						) as WebServer,
+						{
+							sessionsStore: deps.sessionsStore,
+							groupsStore: deps.groupsStore,
+							getProcessManager: () => manager as never,
 						}
-						f.revoke();
-						const item = useSessionStore.getState().sessions[0].executionQueue[0];
-						const drain = () =>
-							useAgentStore.getState().processQueuedItem('agent', item, {
-								conductorProfile: '',
-								customAICommands: [],
-								speckitCommands: [],
-								openspecCommands: [],
-							});
-						if (kind === 'double-drain') {
+					);
+					const census = () =>
+						pianolaScopeSnapshotFromDesktop({
+							success: true,
+							...(callbacks.setListDesktopSessionsCallback() as object),
+						});
+					const read = () =>
+						nativeCurrentTurns.read({
+							agentId: 'agent',
+							tabId: 'tab',
+							createdAt: 1,
+							provider: 'codex',
+							agentSessionId: kind.endsWith('existing') ? 'provider-existing' : null,
+							open: true,
+						});
+					const workerSpies = [
+						vi.spyOn(cliStorage, 'readSettingValue').mockReturnValue({ pianola: true }),
+						vi
+							.spyOn(workerStore, 'readPianolaSupervisorTargets')
+							.mockImplementation(f.store.readSupervisorTargets),
+						vi
+							.spyOn(workerStore, 'readPianolaScopeCheckpoint')
+							.mockImplementation(f.store.readScopeCheckpoint),
+						vi
+							.spyOn(workerStore, 'writePianolaScopeCheckpoint')
+							.mockImplementation(f.store.writeScopeCheckpoint),
+						vi.spyOn(workerStore, 'readPianolaDecisions').mockImplementation(f.store.readDecisions),
+						vi
+							.spyOn(workerStore, 'appendPianolaDecision')
+							.mockImplementation(f.store.appendDecision),
+						vi.spyOn(workerStore, 'readPianolaRules').mockReturnValue([]),
+						vi
+							.spyOn(workerStore, 'getPianolaProfile')
+							.mockReturnValue({ entry: undefined } as never),
+					];
+					const workerDeps = createPianolaScopeWorkerDeps({
+						sendCommand: async (message) => {
+							if (message.type === 'list_desktop_sessions')
+								return {
+									success: true,
+									...(callbacks.setListDesktopSessionsCallback() as object),
+								} as never;
+							expect(message.type).toBe('get_session_history');
+							const send = vi.fn();
+							handleGetSessionHistory(
+								{
+									send,
+									callbacks: { getSessionHistory: callbacks.setGetSessionHistoryCallback },
+								} as unknown as MessageHandlerContext,
+								{} as WebClient,
+								message as never
+							);
+							return send.mock.calls.at(-1)![1] as never;
+						},
+					});
+					const time = Date.now();
+					const clock = vi.spyOn(Date, 'now').mockReturnValue(time);
+					const ready = async () => {};
+					function Owner() {
+						useSessionTranscriptSync(ready);
+						return null;
+					}
+					const root = createRoot(document.getElementById('root')!);
+					nativeCurrentTurns.setEnabled(false);
+					nativeCurrentTurns.setEnabled(true);
+					useSessionStore.setState({ sessions: [], groups: [] });
+					await act(async () => root.render(createElement(Owner)));
+					registerSessionPersistenceFlush(async (rows) => {
+						await save(rows as unknown as StoredSession[]);
+					});
+					try {
+						nativeCurrentTurns.recordHostEmptyCreation({
+							agentId: 'agent',
+							tabId: 'tab',
+							createdAt: 1,
+							provider: 'codex',
+						})(true);
+						await act(async () =>
+							useSessionStore.setState({
+								sessions: [
+									createMockSession({
+										...current[0],
+										activeTabId: 'tab',
+										state: 'idle',
+										aiTabs: [
+											createMockAITab({
+												id: 'tab',
+												createdAt: 1,
+												state: 'idle',
+												logs: newEmptyTranscript(),
+												agentSessionId: kind.endsWith('existing') ? 'provider-existing' : null,
+											}),
+										],
+									} as never),
+								],
+							})
+						);
+						if (kind.endsWith('existing')) {
+							await act(async () =>
+								useSessionStore
+									.getState()
+									.addLogToTab(
+										'agent',
+										{ id: 'prior-user', source: 'user', text: 'Earlier turn' },
+										'tab'
+									)
+							);
+							const prior = f.capture.captureSpawn({
+								sessionId: 'agent-ai-tab',
+								toolType: 'codex',
+								cwd: '/project',
+								nativeTabSession: {
+									agentId: 'agent',
+									tabId: 'tab',
+									createdAt: 1,
+									initialSessionId: 'provider-existing',
+								},
+							})!;
+							nativeCurrentTurns.begin(prior, 'prior-user');
+							await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+						}
+						f.deps.snapshot = census;
+						for (let job = 0; job < 2; job++) {
+							if (job) {
+								clock.mockReturnValue(time + 6000);
+								f.rendererQueue.splice(0);
+								f.restore();
+								f.input.dispatchId = generateUUID();
+								await f.adapter.runQueue(f.client, f.input, f.arm);
+								await act(async () =>
+									useSessionStore.getState().updateSession('agent', {
+										executionQueue: current[0].executionQueue as QueuedItem[],
+									})
+								);
+							}
+							f.revoke();
+							const item = useSessionStore.getState().sessions[0].executionQueue[0];
+							const drain = () =>
+								useAgentStore.getState().processQueuedItem('agent', item, {
+									conductorProfile: '',
+									customAICommands: [],
+									speckitCommands: [],
+									openspecCommands: [],
+								});
+							if (kind === 'double-drain') {
+								await act(async () => {
+									await Promise.allSettled([drain(), drain()]);
+								});
+								expect(spawn).toHaveBeenCalledOnce();
+								expect(
+									useSessionStore
+										.getState()
+										.sessions[0].aiTabs[0].logs.filter(
+											(row) => row.source === 'user' && row.queuedItemId === item.id
+										)
+								).toHaveLength(1);
+								return;
+							}
+							if (!['fresh', 'existing', 'image-fresh', 'image-existing'].includes(kind)) {
+								await act(async () => {
+									await expect(drain()).rejects.toThrow();
+								});
+								expect(spawn).toHaveBeenCalledTimes(kind === 'unknown' ? 1 : 0);
+								const boundary = useSessionStore
+									.getState()
+									.sessions[0].aiTabs[0].logs.find(
+										(row) => row.source === 'user' && row.queuedItemId === item.id
+									)!.id;
+								await act(async () => {
+									await drain().catch(() => {});
+								});
+								expect(spawn).toHaveBeenCalledTimes(kind === 'unknown' ? 1 : 0);
+								expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+								expect(
+									useSessionStore
+										.getState()
+										.sessions[0].aiTabs[0].logs.filter(
+											(row) => row.source === 'user' && row.queuedItemId === item.id
+										)
+										.map((row) => row.id)
+								).toEqual([boundary]);
+								return;
+							}
 							await act(async () => {
-								await Promise.allSettled([drain(), drain()]);
+								await useAgentStore.getState().processQueuedItem('agent', item, {
+									conductorProfile: '',
+									customAICommands: [],
+									speckitCommands: [],
+									openspecCommands: [],
+								});
 							});
-							expect(spawn).toHaveBeenCalledOnce();
+							expect(read()).toMatchObject({
+								status: 'complete',
+								cursor: { turnId: spawn.mock.calls[job][0].transcriptBoundaryId },
+							});
+							await act(async () => {
+								useSessionStore.getState().addLogToTab(
+									'agent',
+									{
+										id: `question-${job}`,
+										source: 'ai',
+										text: job
+											? 'Should I call it value or amount?'
+											: 'Should I call it count or total?',
+									},
+									'tab'
+								);
+							});
+							await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
+							manager.emit('exit', 'agent-ai-tab', 0);
+							await new Promise((resolve) => setImmediate(resolve));
+							f.deps.snapshot = census;
+							const cycle = await runPianolaScopeCycle(f.scopeId, workerDeps, { dryRun: true });
+							expect(cycle.issues).toEqual([]);
+							expect(cycle.iterations, `${kind} job ${job}`).toHaveLength(1);
+							expect(cycle.iterations[0].result.classification).toMatchObject({
+								kind: 'question',
+								evidence: { messageId: `question-${job}` },
+							});
 							expect(
 								useSessionStore
 									.getState()
@@ -1313,110 +1414,41 @@ describe('persistence IPC handlers', () => {
 										(row) => row.source === 'user' && row.queuedItemId === item.id
 									)
 							).toHaveLength(1);
-							return;
-						}
-						if (!['fresh', 'existing', 'image-fresh', 'image-existing'].includes(kind)) {
-							await act(async () => {
-								await expect(drain()).rejects.toThrow();
-							});
-							expect(spawn).toHaveBeenCalledTimes(kind === 'unknown' ? 1 : 0);
-							const boundary = useSessionStore
-								.getState()
-								.sessions[0].aiTabs[0].logs.find(
-									(row) => row.source === 'user' && row.queuedItemId === item.id
-								)!.id;
-							await act(async () => {
-								await drain().catch(() => {});
-							});
-							expect(spawn).toHaveBeenCalledTimes(kind === 'unknown' ? 1 : 0);
-							expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
-							expect(
-								useSessionStore
-									.getState()
-									.sessions[0].aiTabs[0].logs.filter(
-										(row) => row.source === 'user' && row.queuedItemId === item.id
-									)
-									.map((row) => row.id)
-							).toEqual([boundary]);
-							return;
-						}
-						await act(async () => {
-							await useAgentStore.getState().processQueuedItem('agent', item, {
-								conductorProfile: '',
-								customAICommands: [],
-								speckitCommands: [],
-								openspecCommands: [],
-							});
-						});
-						expect(read()).toMatchObject({
-							status: 'complete',
-							cursor: { turnId: spawn.mock.calls[job][0].transcriptBoundaryId },
-						});
-						await act(async () => {
-							useSessionStore.getState().addLogToTab(
-								'agent',
-								{
-									id: `question-${job}`,
-									source: 'ai',
-									text: job
-										? 'Should I call it value or amount?'
-										: 'Should I call it count or total?',
-								},
-								'tab'
+							await act(async () =>
+								updateAiTab('agent', 'tab', (tab) => ({ ...tab, state: 'idle' }))
 							);
-						});
-						await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 0 });
-						manager.emit('exit', 'agent-ai-tab', 0);
-						await new Promise((resolve) => setImmediate(resolve));
-						f.deps.snapshot = census;
-						const cycle = await runPianolaScopeCycle(f.scopeId, workerDeps, { dryRun: true });
-						expect(cycle.issues).toEqual([]);
-						expect(cycle.iterations, `${kind} job ${job}`).toHaveLength(1);
-						expect(cycle.iterations[0].result.classification).toMatchObject({
-							kind: 'question',
-							evidence: { messageId: `question-${job}` },
-						});
-						expect(
-							useSessionStore
-								.getState()
-								.sessions[0].aiTabs[0].logs.filter(
-									(row) => row.source === 'user' && row.queuedItemId === item.id
-								)
-						).toHaveLength(1);
-						await act(async () =>
-							updateAiTab('agent', 'tab', (tab) => ({ ...tab, state: 'idle' }))
+						}
+						expect(spawn).toHaveBeenCalledTimes(2);
+						expect(spawn.mock.calls[0][0].transcriptBoundaryId).not.toBe(
+							spawn.mock.calls[1][0].transcriptBoundaryId
 						);
+					} finally {
+						if (
+							f.deps
+								.readNativeRuns()
+								.some((run) => run.sessionId === 'agent-ai-tab' && run.status === 'running')
+						) {
+							await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 1 });
+							manager.emit('exit', 'agent-ai-tab', 1);
+							await new Promise((resolve) => setImmediate(resolve));
+						}
+						registerSessionPersistenceFlush(null);
+						pianolaNewTabSpawns.started(
+							'agent-ai-tab',
+							undefined,
+							f.input.dispatchId,
+							f.input.dispatchId
+						);
+						clock.mockRestore();
+						imagePromptSpy?.mockRestore();
+						workerSpies.forEach((spy) => spy.mockRestore());
+						await act(async () => root.unmount());
+						dom.window.close();
+						vi.unstubAllGlobals();
 					}
-					expect(spawn).toHaveBeenCalledTimes(2);
-					expect(spawn.mock.calls[0][0].transcriptBoundaryId).not.toBe(
-						spawn.mock.calls[1][0].transcriptBoundaryId
-					);
-				} finally {
-					if (
-						f.deps
-							.readNativeRuns()
-							.some((run) => run.sessionId === 'agent-ai-tab' && run.status === 'running')
-					) {
-						await f.capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 1 });
-						manager.emit('exit', 'agent-ai-tab', 1);
-						await new Promise((resolve) => setImmediate(resolve));
-					}
-					registerSessionPersistenceFlush(null);
-					pianolaNewTabSpawns.started(
-						'agent-ai-tab',
-						undefined,
-						f.input.dispatchId,
-						f.input.dispatchId
-					);
-					clock.mockRestore();
-					imagePromptSpy?.mockRestore();
-					workerSpies.forEach((spy) => spy.mockRestore());
-					await act(async () => root.unmount());
-					dom.window.close();
-					vi.unstubAllGlobals();
 				}
-			}
-		);
+			);
+		});
 
 		async function managedLocalFixture(
 			mode: boolean | 'handoff' | 'consult-first' | 'only' = true,
