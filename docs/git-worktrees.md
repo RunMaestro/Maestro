@@ -195,6 +195,25 @@ the form (or press Escape) and the request keeps going. While it does, the
 where the request got to. When it lands you get a toast with a link to the new
 PR, and if it fails, the error waits for you both in a toast and in the form.
 
+### Pull Request Status and Merge
+
+For a worktree sub-agent, the sidebar shows the pull request and CI status for
+its current branch. Select **Details** for the PR, checks, local divergence and
+manual refresh. Maestro refreshes the status periodically and after a checkout
+or successful push. A failed refresh can leave the last result marked stale;
+unknown or missing checks are not a passing result.
+
+In the details, **Check merge readiness** checks the current PR and checkout
+against GitHub. If eligible, choose an allowed merge method or add the PR to the
+repository's required merge queue. Maestro rechecks before the action and
+reports an unknown outcome when it cannot confirm the result. GitHub remains
+responsible for enforcing branch protections and merge requirements.
+
+Discovery and manual merge currently support local worktrees with a GitHub.com
+`origin` and an authenticated `gh`; SSH worktrees are not supported. Automatic
+post-merge worktree cleanup is not available. Merging does not remove the
+checkout; use the explicit removal controls below when appropriate.
+
 ### Removing Worktrees
 
 When removing a worktree, you have two options:
