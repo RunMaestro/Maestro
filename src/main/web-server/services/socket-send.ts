@@ -6,6 +6,7 @@ export const WEB_CLIENT_CHUNK_WINDOW_BYTES = 256 * 1024;
 const CHUNK_ACK_TIMEOUT_MS = 30_000;
 const closing = new WeakSet<WebSocket>();
 const FRAGMENT_CHARACTERS = 256 * 1024;
+const FRAGMENT_BURST = 16;
 interface PendingMessage {
 	data: string;
 	bytes: number;
@@ -24,6 +25,8 @@ interface FragmentedOutput {
 	queue: PendingMessage[];
 	queuedBytes: number;
 	writePending?: boolean;
+	continuation?: ReturnType<typeof setImmediate>;
+	burst: number;
 	acknowledgedOffset: number;
 	unacknowledged: UnacknowledgedChunk[];
 	unacknowledgedBytes: number;
@@ -66,11 +69,22 @@ function sendFragment(socket: WebSocket, output: FragmentedOutput): void {
 	const current = output.current;
 	if (
 		!current ||
+		fragmented.get(socket) !== output ||
 		socket.readyState !== WebSocket.OPEN ||
 		closing.has(socket) ||
-		output.writePending
+		output.writePending ||
+		output.continuation
 	)
 		return;
+	// ACKs and write completions share one continuation; neither may bypass it.
+	if (output.burst >= FRAGMENT_BURST) {
+		output.continuation = setImmediate(() => {
+			output.continuation = undefined;
+			output.burst = 0;
+			if (fragmented.get(socket) === output) sendFragment(socket, output);
+		});
+		return;
+	}
 	if (current.finished) {
 		if (output.unacknowledged.length > 0) return;
 		output.current = output.queue.shift();
@@ -120,6 +134,7 @@ function sendFragment(socket: WebSocket, output: FragmentedOutput): void {
 	current.offset = end;
 	current.finished = fin;
 	output.writePending = true;
+	output.burst++;
 	if (applicationChunks) {
 		output.unacknowledged.push({ end, bytes: wireBytes, sentAt: Date.now() });
 		output.unacknowledgedBytes += wireBytes;
@@ -143,6 +158,7 @@ function disconnectSlowClient(socket: WebSocket): void {
 	if (closing.has(socket)) return;
 	closing.add(socket);
 	clearTimeout(fragmented.get(socket)?.ackDeadline);
+	clearImmediate(fragmented.get(socket)?.continuation);
 	fragmented.delete(socket);
 	try {
 		socket.close(1013, 'Client output backlog exceeded; reconnect to resynchronize');
@@ -182,6 +198,7 @@ export function sendBounded(
 		if (!output) {
 			output = {
 				queue: [],
+				burst: 0,
 				queuedBytes: 0,
 				acknowledgedOffset: 0,
 				unacknowledged: [],
@@ -190,6 +207,7 @@ export function sendBounded(
 			fragmented.set(socket, output);
 			socket.once('close', () => {
 				clearTimeout(fragmented.get(socket)?.ackDeadline);
+				clearImmediate(fragmented.get(socket)?.continuation);
 				fragmented.delete(socket);
 			});
 		}
