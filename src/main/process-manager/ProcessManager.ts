@@ -883,20 +883,24 @@ export class ProcessManager extends EventEmitter {
 				const scheduled = Promise.withResolvers<void>();
 				observe(scheduled.promise);
 				let timer: ReturnType<typeof setTimeout> | undefined;
-				const finish = (): void => {
-					clearTimeout(timer);
-					child.removeListener('exit', finish);
-					scheduled.resolve();
-				};
+				const finish = (): void =>
+					withWorktreeCallbackActivity(() => {
+						clearTimeout(timer);
+						child.removeListener('exit', finish);
+						scheduled.resolve();
+					}, captureException);
 				try {
 					timer = setTimeout(() => {
-						try {
-							if (child.exitCode === null && child.signalCode === null) {
-								this.signalRemote(sessionId, proc, 'terminate');
+						// Retained callbacks need fresh admission even after cancellation.
+						withWorktreeCallbackActivity(() => {
+							try {
+								if (child.exitCode === null && child.signalCode === null) {
+									this.signalRemote(sessionId, proc, 'terminate');
+								}
+							} finally {
+								finish();
 							}
-						} finally {
-							finish();
-						}
+						}, captureException);
 					}, INTERACTIVE_STOP_GRACE_MS);
 					child.once('exit', finish);
 				} catch (error) {

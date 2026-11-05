@@ -338,6 +338,148 @@ describe('delayed remote termination activity', () => {
 		expect(vi.getTimerCount()).toBe(0);
 		(await reserve()).release();
 	});
+
+	describe('retained remote termination callbacks', () => {
+		async function retainedCallbacks(settle: 'exit' | 'timer' = 'exit') {
+			const timers = vi.spyOn(globalThis, 'setTimeout');
+			schedule();
+			const timer = timers.mock.calls.at(-1)![0] as () => void;
+			const exit = child.listeners('exit')[0] as () => void;
+			if (settle === 'exit') child.emit('exit');
+			else await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+			await vi.advanceTimersByTimeAsync(0);
+			(await reserve()).release();
+			signal.mockClear();
+			vi.mocked(sentry.captureException).mockClear();
+			return { timer, exit };
+		}
+
+		it.each([
+			['exit', 'timer'],
+			['exit', 'exit'],
+			['timer', 'timer'],
+			['timer', 'exit'],
+		] as const)('refuses retained %s-settled %s before any effects', async (settle, source) => {
+			const callbacks = await retainedCallbacks(settle);
+			const lookup = vi.fn(() => null);
+			Object.defineProperty(child, 'exitCode', { get: lookup, configurable: true });
+			const cancel = vi.spyOn(globalThis, 'clearTimeout');
+			const remove = vi.spyOn(child, 'removeListener');
+			for (const root of [target, path.join(target, 'child'), path.resolve('unrelated')]) {
+				const hold = await reserve(root);
+				try {
+					expect(callbacks[source]).toThrow(/reserved/);
+					for (const probe of [lookup, cancel, remove, signal, sentry.captureException])
+						expect(probe).not.toHaveBeenCalled();
+				} finally {
+					hold.release();
+				}
+			}
+		});
+
+		it.each(['timer', 'exit'] as const)(
+			'admits retained %s before pending canonicalization and holds diagnostics through rejection',
+			async (source) => {
+				const callbacks = await retainedCallbacks();
+				const failure = new Error('late callback failed');
+				if (source === 'timer')
+					Object.defineProperty(child, 'exitCode', {
+						get: () => {
+							throw failure;
+						},
+						configurable: true,
+					});
+				else
+					vi.spyOn(child, 'removeListener').mockImplementationOnce(() => {
+						throw failure;
+					});
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(sentry.captureException).mockReturnValue(reporting.promise);
+				const canonical = Promise.withResolvers<string>();
+				vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+				const pending = reserveWorktreeCleanup(target);
+				expect(callbacks[source]).toThrow(failure);
+				canonical.resolve(target);
+				const result = await pending;
+				if (result.status === 'reserved-partially') result.release();
+				expect(result.status).toBe('blocked');
+				expect(sentry.captureException).toHaveBeenCalledExactlyOnceWith(failure);
+				reporting.reject(new Error('diagnostics failed'));
+				await vi.advanceTimersByTimeAsync(0);
+				(await reserve()).release();
+			}
+		);
+
+		it.each([
+			['timer', 'resolve'],
+			['timer', 'reject'],
+			['timer', 'throw'],
+			['exit', 'resolve'],
+			['exit', 'reject'],
+			['exit', 'throw'],
+		] as const)('retains %s diagnostics until reporter %s', async (source, outcome) => {
+			const callbacks = await retainedCallbacks('timer');
+			const failure = new Error('retained callback failure');
+			if (source === 'timer')
+				signal.mockImplementationOnce(() => {
+					throw failure;
+				});
+			else
+				vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce(() => {
+					throw failure;
+				});
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(sentry.captureException).mockImplementation(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			expect(callbacks[source]).toThrow(failure);
+			expect(sentry.captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') await blocked();
+			if (outcome === 'reject') reporting.reject(new Error('reporter rejected'));
+			else reporting.resolve();
+			await vi.advanceTimersByTimeAsync(0);
+			(await reserve()).release();
+		});
+
+		it.each([false, true])(
+			'keeps native, successor and late reporting independent (diagnostics first: %s)',
+			async (diagnosticsFirst) => {
+				const { timer } = await retainedCallbacks();
+				const entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+				entries.set(config.sessionId, proc);
+				child.emit('close');
+				entries.delete(config.sessionId);
+				const releaseNative = beginGlobalWorktreeActivity();
+				releases.push(releaseNative);
+				child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null });
+				proc = { ...proc, sshRemotePidFile: 'successor.pid' };
+				entries.set(config.sessionId, proc);
+				schedule();
+				const failure = new Error('retained predecessor signal failed');
+				signal.mockImplementationOnce(() => {
+					throw failure;
+				});
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(sentry.captureException).mockReturnValue(reporting.promise);
+				expect(timer).toThrow(failure);
+				if (diagnosticsFirst) {
+					reporting.resolve();
+					await vi.advanceTimersByTimeAsync(0);
+					await blocked();
+				}
+				child.emit('exit');
+				releaseNative();
+				await vi.advanceTimersByTimeAsync(0);
+				if (!diagnosticsFirst) {
+					await blocked();
+					reporting.resolve();
+					await vi.advanceTimersByTimeAsync(0);
+				}
+				(await reserve()).release();
+			}
+		);
+	});
 });
 
 describe('direct manager stop-ladder callbacks', () => {
