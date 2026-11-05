@@ -45,6 +45,7 @@ const mockGetSessionById = vi.fn();
 const mockResolveAgentId = vi.fn();
 const mockReadSessions = vi.fn();
 const mockReadSettingValue = vi.fn(() => ({ board: true, maestroCue: true }));
+const beforeBoardCommand = vi.fn();
 
 vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: (id: string) => mockGetSessionById(id),
@@ -114,8 +115,10 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../cli/services/maestro-client')>()),
 	withMaestroClient: async (action: (connection: unknown) => Promise<unknown>) =>
 		action({
-			sendCommand: (message: Record<string, unknown>) =>
-				answerBoardCommand(message, executeBoardCommand),
+			sendCommand: (message: Record<string, unknown>) => {
+				beforeBoardCommand(message);
+				return answerBoardCommand(message, executeBoardCommand);
+			},
 		}),
 }));
 
@@ -1275,9 +1278,7 @@ describe('maestro-cli board', () => {
 		configureBoardRuntimeHost(() => owner);
 	}
 
-	// `board watch` is a loop, so every test here drives exactly one iteration and
-	// then stops it: SIGINT both sets the stop flag and wakes the interval sleep,
-	// so no fake timers (and no 30-second test) are needed.
+	// SIGINT stops the watcher and wakes its interval sleep.
 	describe('board watch', () => {
 		beforeEach(() => {
 			mockReadSessions.mockReturnValue([]);
@@ -1464,6 +1465,66 @@ describe('maestro-cli board', () => {
 			);
 			return board;
 		}
+
+		it('uses the initial revision once and refreshes it after an accepted watch tick', async () => {
+			const board = seedBoard();
+			const revision = loadBoards(repoRoot)[0].storage!.expectedRevision!;
+			const watching = boardWatch({
+				agent: 'Alpha',
+				board: board.id,
+				revision: String(revision),
+				interval: '5',
+				json: true,
+			});
+			await vi.waitFor(
+				() =>
+					expect(logSpy.mock.calls.filter((c) => String(c[0]).includes('watch-tick')).length).toBe(
+						2
+					),
+				{ timeout: 8000 }
+			);
+			process.emit('SIGINT');
+			await watching;
+			const ticks = logSpy.mock.calls
+				.filter((c) => String(c[0]).includes('watch-tick'))
+				.map((c) => JSON.parse(String(c[0])));
+			expect(ticks[0].boards[0].accepted).toBe(1);
+			expect(loadBoards(repoRoot)[0].storage!.expectedRevision).toBeGreaterThan(revision);
+			expect(exitSpy).not.toHaveBeenCalled();
+		}, 10000);
+
+		it('rejects a stale initial revision and a concurrent change after a later query', async () => {
+			const board = seedBoard();
+			const revision = loadBoards(repoRoot)[0].storage!.expectedRevision!;
+			await boardWatch({
+				agent: 'Alpha',
+				board: board.id,
+				revision: String(revision - 1),
+				interval: '5',
+				json: true,
+			});
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(mockSpawnAgent).not.toHaveBeenCalled();
+			exitSpy.mockClear();
+			let ticks = 0;
+			beforeBoardCommand.mockImplementation((message) => {
+				if (message.action === 'tick' && ++ticks === 2)
+					addCard(repoRoot, board.id, card('concurrent'));
+			});
+			await boardWatch({
+				agent: 'Alpha',
+				board: board.id,
+				revision: String(revision),
+				interval: '5',
+				json: true,
+			});
+			expect(ticks).toBe(2);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(logSpy.mock.calls.filter((c) => String(c[0]).includes('stale-revision'))).toHaveLength(
+				2
+			);
+			beforeBoardCommand.mockReset();
+		}, 10000);
 
 		it('creates the worktree and spawns the agent inside it', async () => {
 			const branch = 'board/tick/c1';

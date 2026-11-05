@@ -1039,9 +1039,18 @@ export async function boardWatch(options: BoardWatchOptions): Promise<void> {
 	}
 
 	try {
+		let tickOptions = options;
 		while (!stopped) {
 			try {
-				const summaries = await tickBoardsOnce(projectRoot, options.board, options.json, options);
+				const summaries = await tickBoardsOnce(
+					projectRoot,
+					options.board,
+					options.json,
+					tickOptions
+				);
+				// The explicit revision fences the initial pass. Each subsequent pass
+				// queries a fresh snapshot, whose revision still fences its host command.
+				tickOptions = { ...options, revision: undefined };
 				printWatchTick(summaries, options.json);
 			} catch (error) {
 				return reportError(error, options.json);
