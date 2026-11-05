@@ -1,3 +1,4 @@
+import { sweepQueueConsultReleases } from './pianola-queue-routing';
 /**
  * Pianola supervised daemon.
  *
@@ -251,6 +252,7 @@ export class PianolaSupervisor {
 	 * spawns nothing.
 	 */
 	reconcile(): void {
+		sweepQueueConsultReleases();
 		if (!this.deps.isEnabled()) {
 			this.killAll();
 			return;
@@ -349,6 +351,7 @@ export class PianolaSupervisor {
 
 	/** Per-target health for the dashboard. Returns fresh objects (no internal refs). */
 	getHealth(): PianolaSupervisorHealth[] {
+		sweepQueueConsultReleases();
 		const out: PianolaSupervisorHealth[] = [];
 		for (const entry of this.children.values()) {
 			const health: PianolaSupervisorHealth = {
@@ -369,6 +372,7 @@ export class PianolaSupervisor {
 
 	/** Kill all children and tear down the watcher (app quit). Idempotent. */
 	stopAll(): void {
+		sweepQueueConsultReleases(true);
 		if (this.watcher) {
 			this.watcher.close();
 			this.watcher = null;

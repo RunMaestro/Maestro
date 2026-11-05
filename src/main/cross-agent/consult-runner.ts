@@ -12,6 +12,7 @@
  * every listener is removed once the consult ends, is stopped, or fails to start.
  */
 
+import { captureException } from '../utils/sentry';
 import type { ProcessManager } from '../process-manager';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
@@ -69,7 +70,15 @@ export function createDesktopConsultRunner(
 				if (sid !== sessionId) return;
 				run.detach();
 				runs.delete(sessionId);
-				nativeAdmission?.ended?.(sessionId);
+				try {
+					nativeAdmission?.ended?.(sessionId);
+				} catch (error) {
+					run.error ??= 'Native consult terminal admission failed';
+					void captureException(error, {
+						operation: 'crossAgent:endedJournal',
+						processId: sessionId,
+					});
+				}
 				observer.onEnd({
 					exitCode: code,
 					error: run.error,
@@ -97,7 +106,19 @@ export function createDesktopConsultRunner(
 					...toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore }),
 					beforeSpawn: nativeAdmission?.beforeSpawn,
 				});
-				if (result.success) nativeAdmission?.started(sessionId, result.pid);
+				if (result.success) {
+					// Admission persistence is not a spawn failure. Keep listeners and the
+					// service's Stop/watchdog ownership after the native child exists.
+					try {
+						nativeAdmission?.started(sessionId, result.pid);
+					} catch (error) {
+						run.error ??= 'Native consult start admission failed';
+						void captureException(error, {
+							operation: 'crossAgent:startedJournal',
+							processId: sessionId,
+						});
+					}
+				}
 				if (!result.success) {
 					run.detach();
 					runs.delete(sessionId);

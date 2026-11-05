@@ -50,6 +50,42 @@ describe('desktop consult listener lifecycle', () => {
 		expect(emitter.eventNames()).toEqual([]);
 	});
 
+	it('retains listeners and Stop ownership when post-spawn admission throws', async () => {
+		const emitter = Object.assign(new EventEmitter(), { kill: vi.fn() });
+		const runner = createDesktopConsultRunner(emitter as unknown as ProcessManager, null, {
+			beforeSpawn() {},
+			started() {
+				throw new Error('ENOSPC');
+			},
+		});
+		const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
+		await expect(runner.start(spawn, observer)).resolves.toMatchObject({ success: true });
+		emitter.emit('data', spawn.processId, 'Owned output');
+		emitter.emit('activity', spawn.processId);
+		expect(emitter.listenerCount('exit')).toBe(1);
+		expect(runner.stop(spawn.processId)).toBe('Owned output');
+		expect(emitter.kill).toHaveBeenCalledExactlyOnceWith(spawn.processId);
+		expect(emitter.eventNames()).toEqual([]);
+	});
+
+	it('reports native end-hook failure without losing the service terminal notification', async () => {
+		const emitter = new EventEmitter();
+		const runner = createDesktopConsultRunner(emitter as ProcessManager, null, {
+			beforeSpawn() {},
+			started() {},
+			ended() {
+				throw new Error('EACCES');
+			},
+		});
+		const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
+		await runner.start(spawn, observer);
+		expect(() => emitter.emit('exit', spawn.processId, 0)).not.toThrow();
+		expect(observer.onEnd).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ error: 'Native consult terminal admission failed' })
+		);
+		expect(emitter.eventNames()).toEqual([]);
+	});
+
 	it('detaches on stop', async () => {
 		const emitter = Object.assign(new EventEmitter(), { kill: vi.fn() });
 		const runner = createDesktopConsultRunner(emitter as unknown as ProcessManager, null);

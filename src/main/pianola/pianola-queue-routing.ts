@@ -116,6 +116,8 @@ const consultReleases = new Map<
 		sourceAgentId: string;
 		sourceTabId: string;
 		generation: string;
+		guard(): void;
+		revoke(): void;
 		start(
 			targetAgentId: string,
 			opts: Omit<
@@ -130,6 +132,13 @@ export function bindQueueConsultRelease(
 	dispatchId: string,
 	release: NonNullable<ReturnType<typeof consultReleases.get>>
 ): void {
+	sweepQueueConsultReleases();
+	release.guard();
+	forgetQueueConsultRelease(dispatchId);
+	// Fail closed under pressure: eviction removes only future send authority,
+	// never the ConsultService's supervision of already claimed children.
+	while (consultReleases.size >= 256)
+		forgetQueueConsultRelease(consultReleases.keys().next().value!);
 	consultReleases.set(dispatchId, release);
 }
 
@@ -143,6 +152,7 @@ export function startReleasedQueueConsult(
 		'nativeAdmission'
 	>
 ): Promise<{ requestId: string }> {
+	sweepQueueConsultReleases();
 	const release = consultReleases.get(locator.dispatchId);
 	if (
 		!release ||
@@ -155,5 +165,23 @@ export function startReleasedQueueConsult(
 }
 
 export function forgetQueueConsultRelease(dispatchId: string): void {
+	const release = consultReleases.get(dispatchId);
 	consultReleases.delete(dispatchId);
+	release?.revoke();
+}
+
+/** Called by existing supervisor health/reconcile/stop boundaries; no new timer.
+ * Expired, cancelled or invalid policy releases cannot retain service closures. */
+export function sweepQueueConsultReleases(dispose = false): void {
+	for (const [id, release] of consultReleases) {
+		if (dispose) {
+			forgetQueueConsultRelease(id);
+			continue;
+		}
+		try {
+			release.guard();
+		} catch {
+			forgetQueueConsultRelease(id);
+		}
+	}
 }

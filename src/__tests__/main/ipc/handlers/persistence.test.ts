@@ -1,5 +1,10 @@
 import { registerCrossAgentHandlers } from '../../../../main/ipc/handlers/cross-agent';
-import { startReleasedQueueConsult } from '../../../../main/pianola/pianola-queue-routing';
+import { cancelCrossAgentRequestsForSource } from '../../../../main/cross-agent/cross-agent-router';
+import {
+	bindQueueConsultRelease,
+	sweepQueueConsultReleases,
+	startReleasedQueueConsult,
+} from '../../../../main/pianola/pianola-queue-routing';
 import * as systemPromptService from '../../../../main/utils/maestro-system-prompt';
 import type { StartCrossAgentRequestOptions } from '../../../../main/cross-agent/cross-agent-router';
 import Conf from 'conf';
@@ -759,17 +764,20 @@ describe('persistence IPC handlers', () => {
 			});
 		});
 		afterEach(async () => {
+			cancelCrossAgentRequestsForSource('agent', 'tab');
+			sweepQueueConsultReleases(true);
+			vi.useRealTimers();
 			pianolaNewTabSpawns.cancelHold('agent', 'tab');
 			await realFs.rm(directory, { recursive: true, force: true });
 		});
 
 		/** Reuse B01's real writer/reader instead of inventing a Boolean receipt. */
-		function queueAdapter(busy = false, mentions = false) {
+		function queueAdapter(busy = false, mentions: boolean | 'handoff' = false) {
 			if (mentions)
 				Object.assign(request.item, {
 					text: 'Check @PeerA and @PeerB',
 					crossAgentMention: true,
-					mentionRouting: 'parallel',
+					mentionRouting: mentions === 'handoff' ? 'handoff' : 'parallel',
 				});
 			const store = createPianolaFsStore({
 				resolveDir: () => path.join(directory, 'pianola'),
@@ -829,8 +837,8 @@ describe('persistence IPC handlers', () => {
 						? {
 								createdAt: 1,
 								peerAgents: [
-									{ sessionId: 'peer-a', read: true, write: false },
-									{ sessionId: 'peer-b', read: true, write: false },
+									{ sessionId: 'peer-a', read: true, write: mentions === 'handoff' },
+									{ sessionId: 'peer-b', read: true, write: mentions === 'handoff' },
 								],
 							}
 						: {}),
@@ -938,7 +946,7 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 		}
-		async function readyQueue(mentions = false) {
+		async function readyQueue(mentions: boolean | 'handoff' = false) {
 			const f = queueAdapter(true, mentions);
 			await f.adapter.runQueue(f.client, f.input, f.arm);
 			const snapshot = f.deps.snapshot();
@@ -987,6 +995,241 @@ describe('persistence IPC handlers', () => {
 				);
 			return { ...f, generation, manager, opts, start, chunks };
 		}
+
+		it.each(['ENOSPC', 'EACCES'])(
+			'keeps a positive native spawn supervised after %s start-journal failure until Stop',
+			async (code) => {
+				const f = await managedConsultFixture();
+				const write = f.store.writeDispatchAdmission.bind(f.store);
+				vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+					if (record.queueRouting?.steps.some((s) => s.status === 'started'))
+						throw Object.assign(new Error(code), { code });
+					write(record);
+				});
+				const { requestId } = await f.start();
+				expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+				expect(f.manager.listenerCount('exit')).toBeGreaterThan(0);
+				expect(f.chunks).toEqual([]);
+				const step = () =>
+					f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0];
+				expect(step()).toMatchObject({ status: 'unknown' });
+				expect(step().terminal).toBeUndefined();
+				await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
+				expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(1);
+				expect(f.manager.kill).toHaveBeenCalledExactlyOnceWith(`cross-agent-${requestId}`);
+				expect(f.manager.eventNames()).toEqual([]);
+				expect(f.chunks).toEqual([
+					expect.objectContaining({
+						done: true,
+						canceled: true,
+						error: 'DispatchRoutingJournalUnknown',
+					}),
+				]);
+				expect(step().terminal).toBeUndefined();
+			}
+		);
+
+		it('keeps a real child through natural exit after start-journal failure without claiming success', async () => {
+			const f = await managedConsultFixture();
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				if (record.queueRouting?.steps.some((s) => s.status === 'started'))
+					throw new Error('EACCES');
+				write(record);
+			});
+			const { requestId } = await f.start();
+			f.manager.emit('session-id', `cross-agent-${requestId}`, 'actual-provider-session');
+			f.manager.emit('data', `cross-agent-${requestId}`, 'Actual output');
+			f.manager.emit('exit', `cross-agent-${requestId}`, 0);
+			expect(f.manager.eventNames()).toEqual([]);
+			expect(f.chunks).toEqual([
+				expect.objectContaining({
+					done: true,
+					chunk: '',
+					error: 'DispatchRoutingJournalUnknown',
+					targetAgentSessionId: undefined,
+				}),
+			]);
+			expect(
+				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0]
+			).toMatchObject({ status: 'unknown' });
+			await expect(f.start()).rejects.toThrow();
+			expect(cancelCrossAgentRequestsForSource('agent', 'tab')).toBe(0);
+		});
+
+		it('retains watchdog ownership after a start-journal failure', async () => {
+			const f = await managedConsultFixture();
+			vi.useFakeTimers();
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				if (record.queueRouting?.steps.some((s) => s.status === 'started'))
+					throw new Error('ENOSPC');
+				write(record);
+			});
+			const { requestId } = await f.start();
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+			expect(f.manager.kill).toHaveBeenCalledExactlyOnceWith(`cross-agent-${requestId}`);
+			expect(f.manager.eventNames()).toEqual([]);
+			expect(f.chunks).toEqual([
+				expect.objectContaining({ done: true, error: 'DispatchRoutingJournalUnknown' }),
+			]);
+			await expect(f.start()).rejects.toThrow();
+			expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps a failed terminal journal uncertain without emitting success or resending', async () => {
+			const f = await managedConsultFixture();
+			const { requestId } = await f.start();
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				if (record.queueRouting?.steps.some((s) => s.terminal)) throw new Error('EACCES');
+				write(record);
+			});
+			f.manager.emit('data', `cross-agent-${requestId}`, 'Actual native answer');
+			expect(() => f.manager.emit('exit', `cross-agent-${requestId}`, 0)).not.toThrow();
+			expect(f.manager.eventNames()).toEqual([]);
+			expect(f.chunks).toEqual([
+				expect.objectContaining({ done: true, chunk: '', error: 'DispatchRoutingJournalUnknown' }),
+			]);
+			expect(
+				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal
+			).toBeUndefined();
+			await expect(f.start()).rejects.toThrow();
+			expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('records a real fast exit before spawn acknowledgement without a later started write', async () => {
+			const f = await managedConsultFixture();
+			const requestId = f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0]
+				.requestId;
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				if (record.queueRouting?.steps.some((s) => s.pid))
+					throw new Error('ENOSPC late start journal');
+				write(record);
+			});
+			f.manager.spawn.mockImplementationOnce(() => {
+				f.manager.emit('data', `cross-agent-${requestId}`, 'Fast native answer');
+				f.manager.emit('exit', `cross-agent-${requestId}`, 0);
+				return { success: true, pid: 4242 };
+			});
+			await f.start();
+			expect(
+				f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0]
+			).toMatchObject({ status: 'settled', terminal: { text: 'Fast native answer' } });
+			expect(f.manager.eventNames()).toEqual([]);
+			expect(f.chunks).toHaveLength(1);
+			await expect(f.start()).rejects.toThrow();
+			expect(f.manager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it.each(['cancel', 'expiry', 'policy', 'dispose', 'stop'] as const)(
+			'revokes %s release authority while preserving a live child and its terminal',
+			async (reason) => {
+				const f = await managedConsultFixture();
+				const { requestId } = await f.start();
+				if (reason === 'cancel') f.adapter.cancelQueueItem('agent', 'tab', f.input.dispatchId);
+				if (reason === 'expiry') {
+					vi.useFakeTimers();
+					vi.setSystemTime(Date.now() + 86_400_001);
+				}
+				if (reason === 'policy') f.store.writeSupervisorTargets([]);
+				if (reason === 'dispose') f.adapter.admission.dispose();
+				const supervisor = new PianolaSupervisor({
+					isEnabled: () => false,
+					getPianolaAgentId: () => undefined,
+				});
+				if (reason === 'stop') supervisor.stopAll();
+				supervisor.getHealth();
+				await expect(f.start('peer-b')).rejects.toThrow('ReleaseUnavailable');
+				expect(f.manager.kill).not.toHaveBeenCalled();
+				f.manager.emit('data', `cross-agent-${requestId}`, 'Owned child after revocation');
+				f.manager.emit('exit', `cross-agent-${requestId}`, 0);
+				expect(
+					f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal
+				).toMatchObject({ text: 'Owned child after revocation' });
+				expect(f.manager.eventNames()).toEqual([]);
+			}
+		);
+
+		it('revokes a pending branch during native preparation before it may create a child', async () => {
+			const f = await managedConsultFixture();
+			vi.mocked(systemPromptService.buildMaestroSystemPromptForSession).mockImplementationOnce(
+				async () => {
+					sweepQueueConsultReleases(true);
+					return undefined;
+				}
+			);
+			await f.start();
+			expect(f.manager.spawn).not.toHaveBeenCalled();
+			expect(f.manager.eventNames()).toEqual([]);
+			await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
+		});
+
+		it('rechecks revocation after synchronous native intent persistence hooks', async () => {
+			const f = await managedConsultFixture();
+			const write = f.store.writeDispatchAdmission.bind(f.store);
+			vi.spyOn(f.store, 'writeDispatchAdmission').mockImplementation((record) => {
+				write(record);
+				if (record.queueRouting?.steps.some((s) => s.status === 'unknown'))
+					sweepQueueConsultReleases(true);
+			});
+			await f.start();
+			expect(f.manager.spawn).not.toHaveBeenCalled();
+			expect(f.manager.eventNames()).toEqual([]);
+			await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
+		});
+
+		it('does not register consult release closures for handoff-only routing', async () => {
+			const f = await readyQueue('handoff');
+			const release = await f.adapter.prepareQueueSpawn(
+				'agent',
+				'tab',
+				f.input.dispatchId,
+				() => {}
+			);
+			await expect(
+				startReleasedQueueConsult(
+					{ dispatchId: f.input.dispatchId, generation: release.generation },
+					'agent',
+					'tab',
+					'peer-a',
+					{} as never
+				)
+			).rejects.toThrow('ReleaseUnavailable');
+			await expect(
+				f.adapter.admission.startQueueConsult(
+					f.input.dispatchId,
+					release.generation,
+					'peer-a',
+					{} as never
+				)
+			).rejects.toThrow('ReleaseUnavailable');
+		});
+
+		it('bounds unused release retention and disposes both registries without creating send rights', async () => {
+			const f = await managedConsultFixture();
+			const revoke = vi.fn();
+			const start = vi.fn();
+			const ids = Array.from({ length: 260 }, () => generateUUID());
+			for (const id of ids)
+				bindQueueConsultRelease(id, {
+					sourceAgentId: 'x',
+					sourceTabId: 'y',
+					generation: 'g',
+					guard() {},
+					revoke,
+					start,
+				});
+			expect(revoke).toHaveBeenCalledTimes(4);
+			await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
+			await expect(
+				f.adapter.admission.startQueueConsult(f.input.dispatchId, f.generation, 'peer-a', f.opts)
+			).rejects.toThrow('ReleaseUnavailable');
+			sweepQueueConsultReleases(true);
+			expect(revoke).toHaveBeenCalledTimes(260);
+			expect(start).not.toHaveBeenCalled();
+		});
 
 		it('runs native managed consult branches after caller end and journals only their own terminal evidence', async () => {
 			const f = await managedConsultFixture();

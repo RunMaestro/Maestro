@@ -1,3 +1,4 @@
+import { forgetQueueConsultRelease } from './pianola-queue-routing';
 import { getDispatchCallbackRegistry, type DispatchCallbackRegistry } from '../dispatch-callbacks';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { isPianolaScopeId, resolvePianolaScopeOwnership } from '../../shared/pianola/pianola-scope';
@@ -157,6 +158,7 @@ export function cancelPianolaQueueItem(
 		record.phase === 'settled'
 	)
 		return;
+	forgetQueueConsultRelease(itemId);
 	record.queueCancelled = true;
 	if (!record.queueRelease) {
 		record.phase = 'settled';

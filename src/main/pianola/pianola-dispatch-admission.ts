@@ -1,3 +1,4 @@
+import { captureException } from '../utils/sentry';
 import {
 	prepareQueueRouting,
 	assertQueueRouting,
@@ -80,7 +81,15 @@ const hash = (value: unknown) => createHash('sha256').update(canonicalJson(value
 export class PianolaDispatchAdmissionService {
 	private readonly queue = createKeyedWriteQueue();
 	private readonly routingReleases = new Map<string, { generation: string; guard(): void }>();
+	private disposed = false;
 	constructor(private readonly deps: PianolaDispatchAdmissionDeps) {}
+
+	/** Revoke future starts; live ConsultService children keep their own ownership. */
+	dispose(): void {
+		this.disposed = true;
+		for (const id of this.routingReleases.keys()) forgetQueueConsultRelease(id);
+		this.routingReleases.clear();
+	}
 
 	private caller(client: Client): HostCallerRun {
 		const caller = (this.deps.callers ?? hostCallerRuns).resolve(client);
@@ -471,6 +480,7 @@ export class PianolaDispatchAdmissionService {
 			);
 			this.checkPolicy(record, auth);
 			const guard = () => {
+				if (this.disposed) throw new Error('DispatchAdmissionDisposed');
 				const current = this.deps.store.readDispatchAdmission(dispatchId);
 				if (
 					!current ||
@@ -580,15 +590,18 @@ export class PianolaDispatchAdmissionService {
 					return { generation: record.queueRelease.generation, guard };
 				}
 			);
-			if (record.queueRouting) this.routingReleases.set(dispatchId, release);
-			if (record.queueRouting)
+			if (record.queueRouting?.steps.some((s) => s.kind === 'consult')) {
 				bindQueueConsultRelease(dispatchId, {
 					sourceAgentId: record.targetAgentId,
 					sourceTabId: record.targetTabId!,
 					generation: release.generation,
+					guard: release.guard,
+					revoke: () => this.routingReleases.delete(dispatchId),
 					start: (target, opts) =>
 						this.startQueueConsult(dispatchId, release.generation, target, opts),
 				});
+				this.routingReleases.set(dispatchId, release);
+			}
 			return { receipt: this.receipt(record), ...release };
 		});
 	}
@@ -641,6 +654,31 @@ export class PianolaDispatchAdmissionService {
 			});
 			let nativeClaimed = false;
 			let nativeEndObserved = false;
+			let journalUncertain = false;
+			const journalFailure = (error: unknown) => {
+				journalUncertain = true;
+				forgetQueueConsultRelease(dispatchId);
+				void captureException(error, {
+					operation: 'pianola:consultJournal',
+					dispatchId,
+					requestId,
+				});
+				// Best effort only: failed persistence may have landed, so retain
+				// any authentic terminal already on disk and never reset for retry.
+				try {
+					update((s) => {
+						if (s.terminal) return;
+						s.status = 'unknown';
+						s.startError = 'DispatchRoutingJournalUnknown';
+					});
+				} catch (commitError) {
+					void captureException(commitError, {
+						operation: 'pianola:consultUncertaintyJournal',
+						dispatchId,
+						requestId,
+					});
+				}
+			};
 			const { startCrossAgentRequest } = await import('../cross-agent/cross-agent-router');
 			await startCrossAgentRequest(
 				{
@@ -660,6 +698,8 @@ export class PianolaDispatchAdmissionService {
 					nativeAdmission: {
 						beforeSpawn: () => {
 							if (nativeClaimed) throw new Error('DispatchRoutingAlreadyStarting');
+							if (this.routingReleases.get(dispatchId) !== release)
+								throw new Error('DispatchRoutingReleaseUnavailable');
 							opts.assertNativeOwner?.();
 							release.guard();
 							update((s) => {
@@ -669,18 +709,27 @@ export class PianolaDispatchAdmissionService {
 							// A synchronous journal write may invoke host persistence hooks.
 							opts.assertNativeOwner?.();
 							release.guard();
+							if (this.routingReleases.get(dispatchId) !== release)
+								throw new Error('DispatchRoutingReleaseUnavailable');
 							nativeClaimed = true;
 						},
 						ended: () => {
 							nativeEndObserved = true;
 						},
-						started: (processId, pid) =>
-							update((s) => {
-								if (!nativeClaimed) throw new Error('DispatchRoutingNativeClaimMissing');
-								s.processId = processId;
-								if (pid !== undefined) s.pid = pid;
-								if (s.status !== 'settled') s.status = 'started';
-							}),
+						started: (processId, pid) => {
+							// A fast real exit may already have committed terminal evidence.
+							if (nativeEndObserved || journalUncertain) return;
+							try {
+								update((s) => {
+									if (!nativeClaimed) throw new Error('DispatchRoutingNativeClaimMissing');
+									s.processId = processId;
+									if (pid !== undefined) s.pid = pid;
+									if (s.status !== 'settled') s.status = 'started';
+								});
+							} catch (error) {
+								journalFailure(error);
+							}
+						},
 					},
 					onChunk: (chunk) => {
 						if (
@@ -690,23 +739,38 @@ export class PianolaDispatchAdmissionService {
 							chunk.targetSessionId !== targetAgentId
 						)
 							return;
-						if (chunk.done)
-							update((s) => {
-								if (s.terminal) return;
-								if (nativeClaimed && !nativeEndObserved && !s.processId) {
-									s.status = 'unknown';
-									s.startError = chunk.error ?? 'Native start acknowledgement unavailable';
-									return;
-								}
-								s.status = 'settled';
-								s.terminal = {
-									text: chunk.chunk,
-									...(chunk.error ? { error: chunk.error } : {}),
-									...(chunk.canceled ? { canceled: true } : {}),
-								};
-								if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
-							});
-						opts.onChunk(chunk);
+						try {
+							if (chunk.done && !journalUncertain)
+								update((s) => {
+									if (s.terminal) return;
+									if (nativeClaimed && !nativeEndObserved && !s.processId) {
+										s.status = 'unknown';
+										s.startError = chunk.error ?? 'Native start acknowledgement unavailable';
+										return;
+									}
+									s.status = 'settled';
+									s.terminal = {
+										text: chunk.chunk,
+										...(chunk.error ? { error: chunk.error } : {}),
+										...(chunk.canceled ? { canceled: true } : {}),
+									};
+									if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
+								});
+						} catch (error) {
+							journalFailure(error);
+						}
+						// A persistence failure cannot be promoted to a successful terminal
+						// or retried. Durable nonterminal evidence remains non-repeatable.
+						opts.onChunk(
+							journalUncertain
+								? {
+										...chunk,
+										chunk: '',
+										targetAgentSessionId: undefined,
+										error: 'DispatchRoutingJournalUnknown',
+									}
+								: chunk
+						);
 					},
 				}
 			);
