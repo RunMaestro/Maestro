@@ -24,6 +24,7 @@ const flags = vi.hoisted(() => ({ pianola: true, sessions: [] as unknown[] }));
 vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({ get: () => flags }),
 	getSessionsStore: () => ({ get: () => flags.sessions }),
+	getLiveSessions: () => flags.sessions,
 	getGroupsStore: () => ({ get: () => [] }),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));

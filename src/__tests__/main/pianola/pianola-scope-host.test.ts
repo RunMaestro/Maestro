@@ -219,6 +219,28 @@ afterEach(async () => {
 });
 
 describe('owner scope configuration through production adapters', () => {
+	it('describes a legacy scope when asking the owner to approve its replacement', async () => {
+		store.writeSupervisorTargets([
+			{
+				...target(),
+				selection: {
+					label: 'Legacy project',
+					mode: 'project',
+					projectRoots: ['/project'],
+					ownerRoots: { agent: '/project' },
+					includeWorktrees: true,
+					excludedAgentIds: [],
+				},
+			},
+		]);
+		await cli({ id: scopeId, requestOwnerApproval: true });
+		expect(lastOutput().success).toBe(true);
+		expect(confirm).toHaveBeenCalledTimes(1);
+		expect(confirm.mock.calls[0][1]).toContain('Legacy scope: project');
+		expect(confirm.mock.calls[0][1]).toContain('Project roots: /project');
+		expect(confirm.mock.calls[0][1]).toContain('Agents: agent');
+	});
+
 	it('configures the first scope through CLI, bridge and one native confirmation, then reconciles silently', async () => {
 		await cli({ requestOwnerApproval: true, futureLocalAgents: true });
 		expect(lastOutput().success).toBe(true);

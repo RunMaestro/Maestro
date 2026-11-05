@@ -729,16 +729,27 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
 				const existing = readSupervisorTargets().find((entry) => entry.id === candidate.id);
-				const describe = (scope: PianolaSupervisedTarget): string =>
-					[
+				const describe = (scope: PianolaSupervisedTarget): string => {
+					const selection = scope.selection;
+					return [
 						`Scope: ${scope.selection?.label ?? scope.id}`,
 						`Manager: ${scope.managerAgentId ?? 'None'}`,
-						`Agents: ${scope.selection?.agentIds.join(', ') || 'None'}`,
-						`Groups (including future members): ${scope.selection?.groupIds.join(', ') || 'None'}`,
-						`Excluded agents: ${scope.selection?.excludedAgentIds.join(', ') || 'None'}`,
-						`Future local agents: ${scope.selection?.futureLocalAgents ? 'Included' : 'Not included'}`,
+						...(selection?.mode === 'agents-and-groups'
+							? [
+									`Agents: ${selection.agentIds.join(', ') || 'None'}`,
+									`Groups (including future members): ${selection.groupIds.join(', ') || 'None'}`,
+									`Future local agents: ${selection.futureLocalAgents ? 'Included' : 'Not included'}`,
+								]
+							: selection
+								? [
+										`Legacy scope: ${selection.mode}`,
+										`Project roots: ${selection.projectRoots.join(', ') || 'None'}`,
+									]
+								: []),
+						`Excluded agents: ${selection?.excludedAgentIds.join(', ') || 'None'}`,
 						`Supervision: ${scope.enabled ? 'Enabled' : 'Paused'}`,
 					].join('\n');
+				};
 				const detail = [
 					existing ? `Current configuration:\n${describe(existing)}` : 'New supervision scope',
 					`Proposed configuration:\n${describe(existing ? { ...candidate, enabled: existing.enabled } : candidate)}`,

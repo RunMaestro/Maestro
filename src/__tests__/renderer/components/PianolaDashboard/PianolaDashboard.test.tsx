@@ -216,7 +216,7 @@ describe('PianolaDashboard data mapping', () => {
 		expect(screen.getByText('Watched by Pianola')).toBeInTheDocument();
 		expect(screen.getByText('Watch an agent')).toBeInTheDocument();
 		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: '+ Add selection' })).toBeInTheDocument();
+		expect(screen.getAllByRole('button', { name: '+ Add selection' }).length).toBeGreaterThan(0);
 		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
 		expect(screen.getByText('Agent 0')).toBeInTheDocument();
 		expect(screen.getByText('Agent 5')).toBeInTheDocument();
@@ -245,20 +245,16 @@ describe('PianolaDashboard data mapping', () => {
 		expect(screen.getByRole('status')).toHaveTextContent('2 failing');
 	});
 
-	it('offers the automatic watch setting in the dashboard', () => {
-		const setAutoWatchNewAgents = vi.fn();
-		supervisorMock.usePianolaSupervisor.mockReturnValue({
-			...supervisorMock.usePianolaSupervisor(),
-			setAutoWatchNewAgents,
-		});
+	it('opens standing policy configuration for future local agents', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 		selectWorkspaceTab('Watched');
 		fireEvent.click(
 			screen.getByRole('checkbox', {
-				name: 'Automatically watch new agents (legacy initial chat only)',
+				name: 'Automatically watch future local agents (all chats and worktree children)',
 			})
 		);
-		expect(setAutoWatchNewAgents).toHaveBeenCalledWith(true);
+		expect(screen.getByDisplayValue('Future local agents')).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Select manager' })).toBeInTheDocument();
 	});
 	it('renders each status bucket and the agents in it', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);

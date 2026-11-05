@@ -189,7 +189,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// into the source agent's transcript (Phase 03).
 	registerCrossAgentHandlers({
 		getWebServer: deps.getWebServer,
-		getWindowForSession: deps.getWindowForSession,
+		getWindowForSession: (sessionId) => resolveSessionWindow(sessionId, deps),
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		sessionsStore: deps.sessionsStore,

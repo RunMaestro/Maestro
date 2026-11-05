@@ -77,7 +77,9 @@ export function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispat
 				Promise.resolve({ durable: false, reason: 'store-unavailable' }),
 			routingSnapshot: () => ({
 				agents: getLiveSessions() as AgentRecord[],
-				groups: getGroupsStore().get('groups', []),
+				groups: getGroupsStore()
+					.get('groups', [])
+					.map((group) => ({ ...group })),
 			}),
 			queueItem: async (request) => {
 				const sessions = getSessionsStore().get('sessions', []) as AgentRecord[];
