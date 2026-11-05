@@ -10,13 +10,16 @@ const TTL_MS = 30_000;
 const MAX_ENTRIES = 100;
 const entries = new Map<
 	string,
-	{ expires: number | null; promise: Promise<WorktreePullRequestSnapshot> }
+	{ expires: number | null; promise: Promise<WorktreePullRequestSnapshot>; invalidated: boolean }
 >();
 
 /** Invalidate all identities for a checkout, including requests already in flight. */
 export function invalidateWorktreePullRequest(worktreePath: string): void {
-	for (const key of entries.keys()) {
-		if (JSON.parse(key)[0] === worktreePath) entries.delete(key);
+	for (const [key, entry] of entries) {
+		if (JSON.parse(key)[0] === worktreePath) {
+			entry.invalidated = true;
+			entries.delete(key);
+		}
 	}
 }
 
@@ -84,7 +87,7 @@ export async function refreshWorktreePullRequest(
 			}
 			return { discovery, ...details };
 		})();
-		entry = { expires: null, promise };
+		entry = { expires: null, promise, invalidated: false };
 		entries.set(key, entry);
 	}
 	let snapshot: WorktreePullRequestSnapshot;
@@ -95,7 +98,7 @@ export async function refreshWorktreePullRequest(
 		throw error;
 	}
 	const after = await checkout(request);
-	if (entries.get(key) !== entry || before !== after) {
+	if (entry.invalidated || before !== after) {
 		if (entries.get(key) === entry) entries.delete(key);
 		return {
 			discovery: {
@@ -106,8 +109,8 @@ export async function refreshWorktreePullRequest(
 		};
 	}
 	// Errors should be retryable immediately, not cached as authoritative results.
-	if (snapshot.discovery.status === 'unavailable' || snapshot.ci?.status === 'unavailable')
-		entries.delete(key);
-	else entry.expires ??= Date.now() + TTL_MS;
+	if (snapshot.discovery.status === 'unavailable' || snapshot.ci?.status === 'unavailable') {
+		if (entries.get(key) === entry) entries.delete(key);
+	} else entry.expires ??= Date.now() + TTL_MS;
 	return snapshot;
 }

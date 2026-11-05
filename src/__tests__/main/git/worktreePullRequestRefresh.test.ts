@@ -6,7 +6,10 @@ vi.mock('../../../main/git/worktreePullRequests', () => ({
 	readWorktreePullRequestCi: vi.fn(),
 }));
 import { execGitReadOnly } from '../../../main/utils/remote-git';
-import { discoverWorktreePullRequest } from '../../../main/git/worktreePullRequests';
+import {
+	discoverWorktreePullRequest,
+	readWorktreePullRequestCi,
+} from '../../../main/git/worktreePullRequests';
 import {
 	invalidateWorktreePullRequest,
 	refreshWorktreePullRequest,
@@ -54,6 +57,81 @@ describe('worktree PR refresh', () => {
 			(await Promise.all(sessions)).every((snapshot) => snapshot.discovery.status === 'detached')
 		).toBe(true);
 		expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(1);
+	});
+	it.each(['discovery', 'ci'] as const)(
+		'preserves the original unavailable %s result for every concurrent caller',
+		async (stage) => {
+			const unavailable = {
+				status: 'unavailable' as const,
+				reason: 'gh' as const,
+				message: 'Authentication expired',
+			};
+			if (stage === 'discovery') {
+				vi.mocked(discoverWorktreePullRequest).mockResolvedValue(unavailable);
+			} else {
+				const repository = { host: 'github.com', owner: 'owner', name: 'repo' };
+				vi.mocked(discoverWorktreePullRequest).mockResolvedValue({
+					status: 'found',
+					head: { branch: 'first', localSha: 'sha', repository },
+					pullRequest: {
+						identity: { number: 1, repository },
+						title: 'Change',
+						url: 'https://github.com/owner/repo/pull/1',
+						state: 'OPEN',
+						isDraft: false,
+						headRepository: repository,
+						headBranch: 'first',
+						headSha: 'sha',
+						baseBranch: 'rc',
+					},
+				});
+				vi.mocked(readWorktreePullRequestCi).mockResolvedValue({
+					ci: { status: 'unavailable', message: unavailable.message },
+				});
+			}
+			const results = await Promise.all(
+				Array.from({ length: 8 }, () => refreshWorktreePullRequest(request))
+			);
+			for (const snapshot of results) {
+				if (stage === 'discovery') expect(snapshot.discovery).toEqual(unavailable);
+				else expect(snapshot.ci).toEqual({ status: 'unavailable', message: unavailable.message });
+			}
+			expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(1);
+			await refreshWorktreePullRequest(request);
+			expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(2);
+		}
+	);
+	it('does not let a delayed unavailable caller evict a newer successful retry', async () => {
+		let headReads = 0;
+		let releaseHead!: () => void;
+		const headGate = new Promise<void>((resolve) => {
+			releaseHead = resolve;
+		});
+		vi.mocked(execGitReadOnly).mockImplementation(async (args) => {
+			if (args[0] === 'rev-parse' && ++headReads === 4) await headGate;
+			return {
+				stdout: args[0] === 'symbolic-ref' ? branch : args[0] === 'remote' ? 'origin' : 'sha',
+				stderr: '',
+				exitCode: 0,
+			};
+		});
+		const unavailable = {
+			status: 'unavailable' as const,
+			reason: 'gh' as const,
+			message: 'Offline',
+		};
+		vi.mocked(discoverWorktreePullRequest)
+			.mockResolvedValueOnce(unavailable)
+			.mockResolvedValue({ status: 'detached', localSha: 'sha' });
+		const first = refreshWorktreePullRequest(request);
+		const delayed = refreshWorktreePullRequest(request);
+		expect((await first).discovery).toEqual(unavailable);
+		await vi.waitFor(() => expect(headReads).toBe(4));
+		expect((await refreshWorktreePullRequest(request)).discovery.status).toBe('detached');
+		releaseHead();
+		expect((await delayed).discovery).toEqual(unavailable);
+		await refreshWorktreePullRequest(request);
+		expect(discoverWorktreePullRequest).toHaveBeenCalledTimes(2);
 	});
 	it('retains a slow pending refresh and starts the cache TTL when it completes', async () => {
 		let now = 0;
