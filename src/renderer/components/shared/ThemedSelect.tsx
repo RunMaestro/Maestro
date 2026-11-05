@@ -227,10 +227,17 @@ export function ThemedSelect({
 			{open && !disabled && (
 				<div
 					ref={menuRef}
+					data-select-escape=""
 					role="listbox"
 					tabIndex={-1}
 					aria-activedescendant={activeIndex >= 0 ? `${instanceId}-opt-${activeIndex}` : undefined}
-					onKeyDown={filterable ? undefined : handleNavKeyDown}
+					onKeyDown={
+						filterable
+							? (e) => {
+									if (e.key === 'Escape') handleNavKeyDown(e);
+								}
+							: handleNavKeyDown
+					}
 					style={{
 						position: 'absolute',
 						left: 0,
@@ -248,9 +255,6 @@ export function ThemedSelect({
 				>
 					{filterable && (
 						<div
-							onKeyDown={(e) => {
-								if (e.key === 'Escape') handleNavKeyDown(e);
-							}}
 							style={{
 								display: 'flex',
 								alignItems: 'center',

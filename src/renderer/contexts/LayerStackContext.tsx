@@ -33,6 +33,9 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 	useEffect(() => {
 		const handleEscape = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
+				// A focused select popup owns its first Escape. Let its keyboard
+				// handler close the popup and restore focus before closing the modal.
+				if (e.target instanceof Element && e.target.closest('[data-select-escape]')) return;
 				const stack = layerStackRef.current;
 				const topLayer = stack.getTopLayer();
 				if (topLayer) {
