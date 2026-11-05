@@ -13,6 +13,7 @@ import type { NdJsonConnection } from '../../../shared/maestro-lib/harness/rpc/c
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Event } from '@opencode-ai/sdk';
 import type { SessionEvent } from '@github/copilot-sdk';
+import { ndJsonStream as acpNdJsonStream } from '@agentclientprotocol/sdk';
 import type {
 	CopilotConnectionManager,
 	CopilotConnectionLease,
@@ -1826,9 +1827,16 @@ describe('standalone ACP activity', () => {
 	beforeEach(async () => {
 		app.onRequest.mockReturnValue(app);
 		app.onNotification.mockReturnValue(app);
-		app.connect.mockReturnValue({
-			agent: { request: probes.request, notify: probes.notify },
-			close: probes.close,
+		app.connect.mockImplementation(() => {
+			const closed = Promise.withResolvers<void>();
+			return {
+				agent: { request: probes.request, notify: probes.notify },
+				closed: closed.promise,
+				close: () => {
+					closed.resolve();
+					return probes.close();
+				},
+			};
 		});
 		probes.acpClient.mockReturnValue(app);
 		probes.request.mockImplementation(async (method: string) => replies[method]);
@@ -1836,6 +1844,236 @@ describe('standalone ACP activity', () => {
 		const { AcpServerSpawner } =
 			await import('../../../main/process-manager/spawners/AcpServerSpawner');
 		acp = new AcpServerSpawner(processes, new EventEmitter(), {} as DataBufferManager, fallback);
+	});
+	describe('ACP protocol connection ownership', () => {
+		let protocol: ReturnType<typeof Promise.withResolvers<void>>;
+		beforeEach(() => {
+			protocol = Promise.withResolvers<void>();
+			// Fault-injected rejection must stay handled even on prior production.
+			void protocol.promise.catch(() => {});
+			app.connect.mockReturnValue({
+				agent: { request: probes.request, notify: probes.notify },
+				closed: protocol.promise,
+				close: probes.close,
+			});
+		});
+		it.each(['result', 'exit', 'error', 'interrupt', 'kill'] as const)(
+			'keeps protocol ownership after %s and child close until protocol acknowledges closure',
+			async (event) => {
+				acp.spawn(input());
+				await drain();
+				if (event === 'exit') native.emit('exit', 0, null);
+				if (event === 'error') native.emit('error', new Error('native failed'));
+				if (event === 'interrupt' || event === 'kill')
+					await processes.get('rpc-session')!.sdkController![event]();
+				await close();
+				expect(probes.close).toHaveBeenCalledOnce();
+				processes.clear();
+				await blocked();
+				protocol.resolve();
+				await drain();
+				(await reserve()).release();
+			}
+		);
+		it('keeps native ownership when protocol closes before its child', async () => {
+			acp.spawn(input());
+			protocol.resolve();
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		});
+		it.each([
+			'connect',
+			'missing',
+			'invalid',
+			'getter',
+			'then',
+			'reentrant-throw',
+			'rejected',
+		] as const)(
+			'keeps unknown protocol ownership after %s observer failure and settled reporting',
+			async (failure) => {
+				const error = new Error('protocol observer failed');
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				const connection = {
+					agent: { request: probes.request, notify: probes.notify },
+					close: probes.close,
+					get closed(): unknown {
+						if (failure === 'getter') throw error;
+						if (failure === 'missing') return undefined;
+						if (failure === 'invalid') return 1;
+						if (failure === 'then' || failure === 'reentrant-throw')
+							return {
+								then: (acknowledge: () => void) => {
+									if (failure === 'reentrant-throw') acknowledge();
+									throw error;
+								},
+							};
+						return protocol.promise;
+					},
+				};
+				app.connect.mockImplementationOnce(() => {
+					if (failure === 'connect') throw error;
+					return connection;
+				});
+				if (failure === 'rejected') protocol.reject(error);
+				expect(acp.spawn(input()).success).toBe(true);
+				await drain();
+				await close();
+				if (failure !== 'connect') {
+					expect(probes.request).toHaveBeenCalledWith('prompt', expect.anything());
+					expect(probes.exit).toHaveBeenCalledWith('rpc-session', 0, expect.anything());
+				}
+				expect(fallback).not.toHaveBeenCalled();
+				expect(captureException).toHaveBeenCalledOnce();
+				if (failure !== 'missing' && failure !== 'invalid')
+					expect(captureException).toHaveBeenCalledWith(error);
+				await blocked();
+				reporting.reject(new Error('diagnostic failed'));
+				await drain();
+				expect(captureException).toHaveBeenCalledOnce();
+				await blocked();
+			}
+		);
+		it('keeps late acknowledgement blocked after observer registration throws', async () => {
+			let acknowledge!: () => void;
+			app.connect.mockReturnValueOnce({
+				agent: { request: probes.request, notify: probes.notify },
+				close: probes.close,
+				closed: {
+					then: (done: () => void) => {
+						acknowledge = done;
+						throw new Error('registration failed');
+					},
+				},
+			});
+			acp.spawn(input());
+			await drain();
+			await close();
+			acknowledge();
+			await drain();
+			await blocked();
+		});
+		it.each(['ndjson', 'client', 'request-handler', 'notification-handler'] as const)(
+			'keeps uncertain SDK setup after %s throws without changing fallback',
+			async (stage) => {
+				const error = new Error('SDK setup failed');
+				const fail = () => {
+					throw error;
+				};
+				if (stage === 'ndjson') vi.mocked(acpNdJsonStream).mockImplementationOnce(fail);
+				if (stage === 'client') probes.acpClient.mockImplementationOnce(fail);
+				if (stage === 'request-handler') app.onRequest.mockImplementationOnce(fail);
+				if (stage === 'notification-handler') app.onNotification.mockImplementationOnce(fail);
+				expect(acp.spawn(input({ permissionMode: 'full' })).success).toBe(true);
+				await drain();
+				expect(fallback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ cwd: target }));
+				expect(app.connect).not.toHaveBeenCalled();
+				await close();
+				await blocked();
+			}
+		);
+		it('keeps throw-before-close unknown until the independent protocol acknowledgement', async () => {
+			const error = new Error('close failed');
+			acp.spawn(input());
+			await drain();
+			probes.close.mockImplementationOnce(() => {
+				throw error;
+			});
+			await close();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(error);
+			await blocked();
+			protocol.resolve();
+			await drain();
+			(await reserve()).release();
+		});
+		it.each([false, true])(
+			'keeps protocol and async close diagnostics independent (report first: %s)',
+			async (reportFirst) => {
+				const error = new Error('close failed');
+				const reporting = Promise.withResolvers<void>();
+				acp.spawn(input());
+				await drain();
+				probes.close.mockImplementationOnce(() => {
+					throw error;
+				});
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				await close();
+				if (reportFirst) reporting.resolve();
+				else protocol.resolve();
+				await drain();
+				await blocked();
+				if (reportFirst) protocol.resolve();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(error);
+				(await reserve()).release();
+			}
+		);
+		it('composes independent protocol connections after both native children close', async () => {
+			acp.spawn(input());
+			await drain();
+			const first = native;
+			native = makeNative();
+			const second = Promise.withResolvers<void>();
+			app.connect.mockReturnValueOnce({
+				agent: { request: probes.request, notify: probes.notify },
+				closed: second.promise,
+				close: probes.close,
+			});
+			acp.spawn(input());
+			await drain();
+			await close(first);
+			await close();
+			await blocked();
+			protocol.resolve();
+			await drain();
+			await blocked();
+			first.emit('close', 0, null);
+			await drain();
+			await blocked();
+			second.resolve();
+			await drain();
+			(await reserve()).release();
+		});
+		it('blocks a pending canonical reservation while only the protocol remains active', async () => {
+			acp.spawn(input());
+			await drain();
+			await close();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const pending = gate.reserveWorktreeCleanup(target);
+			canonical.resolve(target);
+			expect(await pending).toMatchObject({ status: 'blocked' });
+			protocol.resolve();
+			await drain();
+			(await reserve()).release();
+		});
+		it('refuses before SDK setup or recovery under a reservation and succeeds on retry', async () => {
+			const hold = await reserve();
+			try {
+				expect(acp.spawn(input({ permissionMode: 'full' })).success).toBe(false);
+				for (const probe of [
+					acpNdJsonStream,
+					probes.acpClient,
+					app.connect,
+					fallback,
+					captureException,
+				])
+					expect(probe).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			expect(acp.spawn(input()).success).toBe(true);
+			await drain();
+			await close();
+			await blocked();
+			protocol.resolve();
+			await drain();
+			(await reserve()).release();
+		});
 	});
 	describe('retained ACP client callbacks', () => {
 		let ask: (request: { params: RequestPermissionRequest }) => Promise<RequestPermissionResponse>;
@@ -6999,9 +7237,16 @@ describe.each(retainedStopTransports)('retained %s stop controller activity', (t
 			const app = { onRequest: vi.fn(), onNotification: vi.fn(), connect: vi.fn() };
 			app.onRequest.mockReturnValue(app);
 			app.onNotification.mockReturnValue(app);
-			app.connect.mockReturnValue({
-				agent: { request: probes.request, notify: probes.notify },
-				close: probes.close,
+			app.connect.mockImplementation(() => {
+				const closed = Promise.withResolvers<void>();
+				return {
+					agent: { request: probes.request, notify: probes.notify },
+					closed: closed.promise,
+					close: () => {
+						closed.resolve();
+						return probes.close();
+					},
+				};
 			});
 			probes.acpClient.mockReturnValue(app);
 			const replies: Record<string, unknown> = {

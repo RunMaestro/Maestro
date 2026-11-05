@@ -240,6 +240,10 @@ class AcpTurn {
 		const child = this.turn.child;
 		if (!child.stdin || !child.stdout) throw new Error('ACP child requires stdin and stdout');
 		const stream = acpStdioStream(child);
+		// NDJSON setup starts SDK readers before connect returns. A failed setup
+		// or unavailable closure observer cannot prove protocol ownership ended.
+		const protocolClosed = Promise.withResolvers<void>();
+		this.observeCompletion(protocolClosed.promise);
 		const connectionStream = acp.ndJsonStream(stream.writable, stream.readable);
 		// Retained SDK callbacks need fresh admission after run/child ownership ends.
 		// The SDK's subsequent response serialization/write is a separate boundary.
@@ -287,6 +291,24 @@ class AcpTurn {
 				)
 			);
 		this.connection = app.connect(connectionStream);
+		// ACP 2.0.2 closed acknowledges protocol abort, not reader cancellation,
+		// queued writes or response serialization draining. Those remain uncovered.
+		let observationReady = false;
+		let acknowledged = false;
+		try {
+			this.observeCompletion(
+				this.connection.closed.then(() => {
+					acknowledged = true;
+					if (observationReady) protocolClosed.resolve();
+				})
+			);
+			// A reentrant observer must finish registering before it can release.
+			observationReady = true;
+			if (acknowledged) protocolClosed.resolve();
+		} catch (error) {
+			// Keep uncertain ownership without replacing the original turn outcome.
+			this.observeCompletion(Promise.reject(error));
+		}
 		const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
 			protocolVersion: acp.PROTOCOL_VERSION,
 			clientCapabilities: {
