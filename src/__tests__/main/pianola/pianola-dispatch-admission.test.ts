@@ -465,9 +465,13 @@ describe('host Pianola dispatch admission', () => {
 		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
 	});
 
-	it.each(['unchanged', 'new-consumer', 'journal-change', 'directory-change', 'second-compactor'])(
-		'bounds metadata batches and revalidates %s between unlocked event-loop turns',
-		async (change) => {
+	it.each(
+		['unchanged', 'new-consumer', 'journal-change', 'directory-change', 'second-compactor'].flatMap(
+			(change) => ['obsolete-first', 'mixed'].map((order) => ({ change, order }))
+		)
+	)(
+		'bounds metadata batches and revalidates $change between unlocked event-loop turns ($order)',
+		async ({ change, order }) => {
 			const f = await payloadFixture();
 			f.record.queueRouting!.completed = true;
 			f.store.writeDispatchAdmission(f.record);
@@ -487,11 +491,43 @@ describe('host Pianola dispatch admission', () => {
 				fs.utimesSync(file, new Date(1), new Date(1));
 				return file;
 			});
+			// The budget counts examined names, including referenced or young files.
+			// Replay real directory entries in two legal orders, independent of filesystem order.
+			const referenced = fs
+				.readdirSync(f.dir)
+				.filter(
+					(name) => name.endsWith('.artifact.json') && !obsolete.includes(path.join(f.dir, name))
+				);
+			expect(referenced).toHaveLength(3);
+			const obsoleteNames = obsolete.map((file) => path.basename(file));
+			const enumeration =
+				order === 'mixed'
+					? [...referenced.slice(0, 2), ...obsoleteNames, ...referenced.slice(2)]
+					: [...obsoleteNames, ...referenced];
+			const expectedFirstBatch = enumeration
+				.slice(0, 16)
+				.map((name) => path.join(f.dir, name))
+				.filter((file) => obsolete.includes(file));
+			expect(expectedFirstBatch).toHaveLength(order === 'mixed' ? 14 : 16);
+			const rank = new Map(enumeration.map((name, index) => [name, index]));
+			const opendir = fs.promises.opendir.bind(fs.promises);
+			vi.spyOn(fs.promises, 'opendir').mockImplementation(async (...args) => {
+				const directory = await opendir(...args);
+				const entries: fs.Dirent[] = [];
+				for await (const entry of directory) entries.push(entry);
+				entries.sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
+				return Object.assign(directory, {
+					async *[Symbol.asyncIterator]() {
+						yield* entries;
+					},
+				});
+			});
 			const unlink = fs.unlinkSync;
 			const remove = fs.rmSync;
 			let inTurn = 0;
 			const turns: number[] = [];
 			let progressed = false;
+			let atYield: { locked: boolean; deleted: string[] } | undefined;
 			let progress: Promise<void> | undefined;
 			let otherCompaction: Promise<void> | undefined;
 			vi.spyOn(fs, 'rmSync').mockImplementation((file, options) => {
@@ -507,10 +543,10 @@ describe('host Pianola dispatch admission', () => {
 					if (!progress) {
 						progress = yieldToEventLoop().then(() => {
 							progressed = true;
-							expect(fs.existsSync(f.journal + '.lock')).toBe(false);
-							expect(obsolete.filter((name) => !fs.existsSync(name)).length).toBeLessThanOrEqual(
-								16
-							);
+							atYield = {
+								locked: fs.existsSync(f.journal + '.lock'),
+								deleted: obsolete.filter((name) => !fs.existsSync(name)),
+							};
 							if (change === 'new-consumer' || change === 'journal-change') {
 								delete f.record.queueRouting!.completed;
 								f.store.writeDispatchAdmission(f.record);
@@ -527,9 +563,13 @@ describe('host Pianola dispatch admission', () => {
 			await progress;
 			await otherCompaction;
 			expect(progressed).toBe(true);
+			expect(atYield).toEqual({ locked: false, deleted: expectedFirstBatch });
 			expect(Math.max(...turns)).toBeLessThanOrEqual(16);
-			const deleted = obsolete.filter((name) => !fs.existsSync(name)).length;
-			expect(deleted).toBe(['unchanged', 'second-compactor'].includes(change) ? 80 : 16);
+			const deleted = obsolete.filter((name) => !fs.existsSync(name));
+			expect(deleted).toEqual(
+				['unchanged', 'second-compactor'].includes(change) ? obsolete : expectedFirstBatch
+			);
+			for (const name of referenced) expect(fs.existsSync(path.join(f.dir, name))).toBe(true);
 			if (change !== 'directory-change')
 				expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
 		}
