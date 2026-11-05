@@ -349,6 +349,7 @@ function sameCursor(a: PianolaScopeCursor | null, b: PianolaScopeCursor | null):
 			a.textLength === b.textLength &&
 			a.contentRevision === b.contentRevision &&
 			a.contentSignature === b.contentSignature &&
+			canonicalJson(a.questionSignatures ?? null) === canonicalJson(b.questionSignatures ?? null) &&
 			a.orderMutationRevision === b.orderMutationRevision &&
 			sameCurrentTurnCursor(a.native, b.native))
 	);
@@ -366,6 +367,10 @@ function freshNativeStream(saved: PianolaScopeCheckpointTab, cursor: PianolaScop
 		typeof base.contentSignature === 'string' &&
 		typeof cursor.contentSignature === 'string' &&
 		base.contentSignature !== cursor.contentSignature &&
+		Array.isArray(base.questionSignatures) &&
+		Array.isArray(cursor.questionSignatures) &&
+		cursor.questionSignatures.length === 1 &&
+		!base.questionSignatures.includes(cursor.questionSignatures[0]) &&
 		sameCurrentTurnCursor({ ...base.native, revision: cursor.native.revision }, cursor.native) &&
 		Number.isSafeInteger(cursor.contentRevision) &&
 		cursor.contentRevision! > base.native.revision &&
@@ -1290,7 +1295,7 @@ export function validatePianolaScopeDelivery(
 		checkpoint.configurationFingerprint !== guard.configurationFingerprint ||
 		snapshot.capturedAt < (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt) ||
 		!saved ||
-		(requireIntent &&
+		((requireIntent || !!guard.cursor.native) &&
 			!saved.baselineBusy &&
 			!freshNativeStream(saved, guard.cursor) &&
 			saved.baseline !== null &&

@@ -628,6 +628,24 @@ describe('native current-turn delta and final spawn revision fence', () => {
 		expect(f.read().lastEntry!.orderMutationRevision).toBeGreaterThan(base.cursor.revision);
 	});
 
+	it('pins host question evidence at the final delivery fence, including submitted replies', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('stream', 'Should I name it count or total?')]);
+		const base = f.read();
+		const proof = base.lastEntry!.questionSignatures!;
+		expect(proof).toHaveLength(1);
+		const changed = ['a'.repeat(64)];
+		expect(() => f.index.assertDelivery(base.cursor, 2, undefined, 'Use count.', changed)).toThrow(
+			'Native question evidence changed'
+		);
+		f.commit([row('submitted', 'Use count.', 'user')]);
+		expect(f.index.assertDelivery(base.cursor, 2, 'submitted', 'Use count.', proof)).toBe(true);
+		expect(() =>
+			f.index.assertDelivery(base.cursor, 2, 'submitted', 'Use count.', changed)
+		).toThrow('Native question evidence changed');
+	});
+
 	it('reconstructs append and same-length replacement deltas without losing earlier risk', () => {
 		const f = fixture();
 		f.begin('user');

@@ -33,6 +33,8 @@ export interface CurrentTurnRead {
 		textLength: number;
 		contentRevision?: number;
 		contentSignature?: string;
+		/** Host-derived bounded question identities; null means ambiguous/unsupported. */
+		questionSignatures?: string[] | null;
 		orderMutationRevision?: number;
 	};
 	mode?: 'full' | 'delta';

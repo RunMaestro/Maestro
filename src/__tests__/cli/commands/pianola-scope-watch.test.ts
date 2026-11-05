@@ -203,6 +203,19 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		'stream-late-rewrite',
 		'stream-late-human',
 		'stream-unchanged',
+		'stream-historical-prefix',
+		'stream-historical-inline-prefix',
+		'stream-historical-whitespace',
+		'stream-historical-metadata',
+		'stream-historical-suffix',
+		'stream-historical-format',
+		'stream-new-question',
+		'stream-new-question-restart',
+		'stream-historical-restart',
+		'stream-historical-earlier',
+		'stream-ambiguous-baseline',
+		'stream-overflow-baseline',
+		'stream-legacy-proof',
 		'stream-timestamp',
 		'stream-restore',
 		'stream-risk',
@@ -424,20 +437,29 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			const streaming = mode.startsWith('stream-');
 			if (streaming) {
 				if (mode === 'stream-prefix-risk') f.commit([f.row('prefix', 'Inspecting files.')]);
-				f.commit([
-					f.row(
-						'question',
-						[
-							'stream-unchanged',
-							'stream-timestamp',
-							'stream-restore',
-							'stream-tool',
-							'stream-source',
-						].includes(mode)
-							? 'Should I name it count or total?'
-							: 'Working.'
-					),
-				]);
+				let baselineText = [
+					'stream-unchanged',
+					'stream-historical-prefix',
+					'stream-historical-inline-prefix',
+					'stream-historical-whitespace',
+					'stream-historical-metadata',
+					'stream-historical-suffix',
+					'stream-historical-format',
+					'stream-new-question',
+					'stream-new-question-restart',
+					'stream-historical-restart',
+					'stream-timestamp',
+					'stream-restore',
+					'stream-tool',
+					'stream-source',
+				].includes(mode)
+					? 'Should I name it count or total?'
+					: 'Working.';
+				if (mode === 'stream-ambiguous-baseline') baselineText = 'Ready?';
+				if (mode === 'stream-overflow-baseline') baselineText = 'Should I run tests? '.repeat(33);
+				if (mode === 'stream-historical-earlier')
+					baselineText = 'Should I name it count or total? Should I name it amount or sum?';
+				f.commit([f.row('question', baselineText)]);
 				busy = true;
 			}
 			if (mode === 'historical-busy') {
@@ -445,8 +467,20 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				busy = true;
 			}
 			await cycle(); // Native current-turn enrollment barrier.
+			if (streaming) expect(sendCommand).not.toHaveBeenCalled(); // Worker never reads baseline prose.
 			expect(sendCommand).not.toHaveBeenCalled();
 			busy = false;
+			if (mode.endsWith('-restart')) {
+				deps.readTranscript = createPianolaScopeWorkerDeps({ sendCommand } as unknown as Pick<
+					MaestroClient,
+					'sendCommand'
+				>).readTranscript;
+			}
+			if (mode === 'stream-legacy-proof') {
+				const checkpoint = store.readScopeCheckpoint(scopeId)!;
+				delete checkpoint.tabs[0].baseline!.questionSignatures;
+				store.writeScopeCheckpoint(checkpoint);
+			}
 			const orderRegression = [
 				'ordered-append',
 				'append-reorder',
@@ -489,16 +523,25 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			if (mode === 'stream-prefix-risk')
 				f.commit([f.row('prefix', 'I will DROP DATABASE production.')]);
 			if (mode === 'stream-restore') f.commit([f.row('question', 'Working again.')]);
+			const questionUpdates: Record<string, string> = {
+				'stream-historical-inline-prefix': 'Progress complete: Should I name it count or total?',
+				'stream-historical-whitespace': '  Should I name it  count\n or total?  ',
+				'stream-historical-prefix': 'Progress complete. Should I name it count or total?',
+				'stream-historical-restart': 'Progress complete. Should I name it count or total?',
+				'stream-historical-suffix': 'Should I name it count or total? Progress complete.',
+				'stream-historical-format': '**Should I** name it  count\n or `total`?  ',
+				'stream-new-question': 'Should I name it amount or sum?',
+				'stream-new-question-restart': 'Should I name it amount or sum?',
+				'stream-risk': 'Delete production data. Should I name it count or total?',
+			};
 			f.commit([
 				{
-					...f.row(
-						'question',
-						mode === 'stream-risk'
-							? 'Delete production data. Should I name it count or total?'
-							: 'Should I name it count or total?'
-					),
+					...f.row('question', questionUpdates[mode] ?? 'Should I name it count or total?'),
 					...(mode === 'stream-timestamp' ? { timestamp: 999999 } : {}),
 					...(mode === 'stream-source' ? { source: 'stdout' } : {}),
+					...(mode === 'stream-historical-metadata'
+						? { metadata: { toolUpdate: 'complete' } }
+						: {}),
 				},
 			]);
 			if (mode === 'stream-tool') f.commit([f.row('tool-update', 'Completed', 'tool')]);
@@ -509,6 +552,8 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			expect(sends).toHaveBeenCalledTimes(
 				mode === 'answer' ||
 					mode === 'stream-answer' ||
+					mode === 'stream-new-question' ||
+					mode === 'stream-new-question-restart' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
 					mode === 'stale-receipt'
@@ -531,6 +576,8 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			expect(sends).toHaveBeenCalledTimes(
 				mode === 'answer' ||
 					mode === 'stream-answer' ||
+					mode === 'stream-new-question' ||
+					mode === 'stream-new-question-restart' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
 					mode === 'stale-receipt'

@@ -128,7 +128,8 @@ async function sendClaimedDecision(
 						destination.agentId === record.agentId && destination.tabId === record.tabId
 							? boundaryId
 							: undefined,
-						command
+						command,
+						guard.cursor.questionSignatures
 					);
 					if (appended) {
 						const tab = snapshot.tabs.find(

@@ -98,6 +98,32 @@ function extractPrompt(content: string): string | undefined {
 	return prompt.length > 200 ? `${prompt.slice(0, 197)}...` : prompt;
 }
 
+/** Bounded question cores for native enrollment, never a general text revision.
+ * Reuse the detector's decision intent. Ambiguous or oversized asks cannot earn
+ * same-row streaming authority. Formatting, progress prose and metadata are not
+ * part of a question's identity; full unmodified text still determines risk.
+ */
+export function extractQuestionCores(content: string): string[] | null {
+	const normalized = content
+		.replace(/[`*_~>#]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.toLowerCase();
+	const questions = normalized.match(/[^.!?]*\?/g) ?? [];
+	if (questions.length > 32) return null;
+	if (!questions.length)
+		return detectAwaitingInput(content) || looksLikeAsking(content) ? null : [];
+	const cores: string[] = [];
+	for (const question of questions) {
+		const start = question.search(QUESTION_INTENT_RE);
+		if (start < 0) return null;
+		const core = question.slice(start).trim();
+		if (core.length > 2048) return null;
+		cores.push(core);
+	}
+	return [...new Set(cores)];
+}
+
 /** Build a signal, omitting an empty options array. */
 function signal(
 	kind: AwaitingInputSignal['kind'],

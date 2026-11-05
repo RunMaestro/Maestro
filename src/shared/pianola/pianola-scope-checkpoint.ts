@@ -11,6 +11,8 @@ export interface PianolaScopeCursor {
 	textLength: number;
 	contentRevision?: number;
 	contentSignature?: string;
+	/** Native question cores at this exact cursor, independent of surrounding prose. */
+	questionSignatures?: string[] | null;
 	orderMutationRevision?: number;
 	native?: import('../currentTurn').CurrentTurnCursor;
 }
@@ -117,6 +119,13 @@ export function isPianolaScopeCursor(value: unknown): value is PianolaScopeCurso
 			(value.contentRevision === undefined || nonnegativeInteger(value.contentRevision)) &&
 			(value.contentSignature === undefined ||
 				(typeof value.contentSignature === 'string' && FINGERPRINT.test(value.contentSignature))) &&
+			(value.questionSignatures === undefined ||
+				value.questionSignatures === null ||
+				(Array.isArray(value.questionSignatures) &&
+					value.questionSignatures.length <= 32 &&
+					value.questionSignatures.every(
+						(item) => typeof item === 'string' && FINGERPRINT.test(item)
+					))) &&
 			(value.orderMutationRevision === undefined ||
 				nonnegativeInteger(value.orderMutationRevision)) &&
 			(value.native === undefined || isCurrentTurnCursor(value.native)))

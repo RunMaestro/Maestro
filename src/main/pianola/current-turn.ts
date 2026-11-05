@@ -9,6 +9,7 @@ import type {
 } from '../../shared/currentTurn';
 import { resolveAgentRunProvider, type AgentRun } from '../../shared/agent-run';
 import { nativeTabSession } from './pianola-queue-session';
+import { extractQuestionCores } from '../../shared/pianola/pianola-awaiting-detector';
 
 type State = {
 	cursor: CurrentTurnCursor;
@@ -19,6 +20,7 @@ type State = {
 	/** Prose changes only; timestamps, metadata and order never confer freshness. */
 	contentRevisions: Map<string, number>;
 	contentSignatures: Map<string, string>;
+	questionSignatures: Map<string, string[] | null>;
 	rowBytes: Map<string, number>;
 	rows: Map<string, CurrentTurnMessage>;
 	order: string[];
@@ -180,6 +182,7 @@ export class NativeCurrentTurns {
 				rowRevisions: new Map(),
 				contentRevisions: new Map(),
 				contentSignatures: new Map(),
+				questionSignatures: new Map(),
 				rowBytes: new Map(),
 				order: [],
 				orderMutationRevision: 0,
@@ -217,6 +220,7 @@ export class NativeCurrentTurns {
 			state.rowRevisions.clear();
 			state.contentRevisions.clear();
 			state.contentSignatures.clear();
+			state.questionSignatures.clear();
 			state.rowBytes.clear();
 			state.order = [];
 			state.bytes = 0;
@@ -228,6 +232,7 @@ export class NativeCurrentTurns {
 			state.rowRevisions.delete(id);
 			state.contentRevisions.delete(id);
 			state.contentSignatures.delete(id);
+			state.questionSignatures.delete(id);
 			state.rowBytes.delete(id);
 			state.order = state.order.filter((entry) => entry !== id);
 		}
@@ -249,8 +254,20 @@ export class NativeCurrentTurns {
 				serialized.includes('[tool output omitted:')
 			)
 				state.reason = 'native-tool-output-truncated';
-			const bytes = Buffer.byteLength(serialized);
+			const serializedBytes = Buffer.byteLength(serialized);
 			const old = state.rows.get(row.id);
+			const proseChanged = !old || old.text !== value.text || old.source !== value.source;
+			const cores =
+				proseChanged &&
+				serializedBytes <= this.limits.bytes &&
+				['ai', 'stdout'].includes(value.source)
+					? extractQuestionCores(value.text)
+					: null;
+			// Count retained question evidence against the same per-tab/fleet byte budgets.
+			const questionCount = proseChanged
+				? (cores?.length ?? 0)
+				: (state.questionSignatures.get(row.id)?.length ?? 0);
+			const bytes = serializedBytes + questionCount * 64;
 			if (old && old.source !== value.source) state.reason = 'native-row-source-changed';
 			if (!old && row.source === 'user' && (!patch.snapshot || !replaced))
 				state.freshBoundaryId = row.id;
@@ -264,17 +281,22 @@ export class NativeCurrentTurns {
 				state.rowRevisions.clear();
 				state.contentRevisions.clear();
 				state.contentSignatures.clear();
+				state.questionSignatures.clear();
 				state.rowBytes.clear();
 				state.order = [];
 				state.bytes = 0;
 				break;
 			}
-			if (!old || old.text !== value.text || old.source !== value.source) {
+			if (proseChanged) {
 				state.contentRevisions.set(row.id, state.cursor.revision);
 				// Hash only changed, size-checked prose at the native commit boundary.
 				state.contentSignatures.set(
 					row.id,
 					createHash('sha256').update(value.source).update('\0').update(value.text).digest('hex')
+				);
+				state.questionSignatures.set(
+					row.id,
+					cores?.map((core) => createHash('sha256').update(core).digest('hex')) ?? null
 				);
 			}
 			state.rows.set(row.id, value);
@@ -308,6 +330,7 @@ export class NativeCurrentTurns {
 					state.rowRevisions.delete(id);
 					state.contentRevisions.delete(id);
 					state.contentSignatures.delete(id);
+					state.questionSignatures.delete(id);
 					state.rowBytes.delete(id);
 				}
 				state.order = state.order.slice(user);
@@ -410,6 +433,7 @@ export class NativeCurrentTurns {
 			state.rowRevisions = new Map([[boundaryId!, state.cursor.revision]]);
 			state.contentRevisions = new Map([[boundaryId!, state.cursor.revision]]);
 			state.contentSignatures = new Map([[boundaryId!, state.contentSignatures.get(boundaryId!)!]]);
+			state.questionSignatures = new Map([[boundaryId!, null]]);
 			state.order = [boundaryId!];
 			const bytes = state.rowBytes.get(boundaryId!)!;
 			state.rowBytes = new Map([[boundaryId!, bytes]]);
@@ -424,24 +448,34 @@ export class NativeCurrentTurns {
 		cursor: CurrentTurnCursor,
 		count: number,
 		boundaryId: string | undefined,
-		text: string
+		text: string,
+		questionSignatures?: string[] | null
 	): boolean {
 		const state = this.states.get(this.key(cursor.agentId, cursor.tabId));
 		if (!state) throw new Error('Native delivery base lost');
-		if (canonicalJson(state.cursor) === canonicalJson(cursor) && !state.reason) return false;
+
+		const unchanged = canonicalJson(state.cursor) === canonicalJson(cursor) && !state.reason;
 		if (
-			!boundaryId ||
-			state.reason !== 'new-user-boundary' ||
-			canonicalJson({ ...state.cursor, revision: cursor.revision }) !== canonicalJson(cursor) ||
-			state.orderMutationRevision > cursor.revision ||
-			state.order.length !== count + 1 ||
-			state.order.at(-1) !== boundaryId ||
-			state.order
-				.slice(0, count)
-				.some((id) => (state.rowRevisions.get(id) ?? Infinity) > cursor.revision)
+			!unchanged &&
+			(!boundaryId ||
+				state.reason !== 'new-user-boundary' ||
+				canonicalJson({ ...state.cursor, revision: cursor.revision }) !== canonicalJson(cursor) ||
+				state.orderMutationRevision > cursor.revision ||
+				state.order.length !== count + 1 ||
+				state.order.at(-1) !== boundaryId ||
+				state.order
+					.slice(0, count)
+					.some((id) => (state.rowRevisions.get(id) ?? Infinity) > cursor.revision))
 		)
 			throw new Error('Native turn changed during delivery');
-		const reply = state.rows.get(boundaryId);
+		if (
+			questionSignatures !== undefined &&
+			canonicalJson(questionSignatures) !==
+				canonicalJson(state.questionSignatures.get(state.order[count - 1]) ?? null)
+		)
+			throw new Error('Native question evidence changed during delivery');
+		if (unchanged) return false;
+		const reply = state.rows.get(boundaryId!);
 		if (reply?.source !== 'user' || reply.text !== text)
 			throw new Error('Native reply boundary mismatch');
 		return true;
@@ -541,6 +575,7 @@ export class NativeCurrentTurns {
 						textLength: state.rows.get(state.order.at(-1)!)!.text.length,
 						contentRevision: state.contentRevisions.get(state.order.at(-1)!),
 						contentSignature: state.contentSignatures.get(state.order.at(-1)!),
+						questionSignatures: state.questionSignatures.get(state.order.at(-1)!)?.slice() ?? null,
 						orderMutationRevision: state.orderMutationRevision,
 					}
 				: undefined,
