@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const performanceDependencies = Object.freeze([
 	'scripts/board-performance-prepare.cjs',
+	'scripts/board-performance-parent.cjs',
 	'scripts/board-performance-profiles.cjs',
 	'src/main/board/board-isolation.ts',
 	'src/main/board/board-db.ts',

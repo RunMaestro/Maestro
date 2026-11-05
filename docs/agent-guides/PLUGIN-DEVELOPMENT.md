@@ -669,7 +669,7 @@ Board topics (host-API 1.15.0) let a plugin follow a task DAG without reading `b
 | `board.cardBlocked`       | `{ boardId, cardId, cardTitle, attempt?, workerAgentId?, outcome?, projectPath? }`             |
 | `board.decomposed`        | `{ boardId, triageCardCount, projectPath? }`                                                   |
 
-`cardTitle` is the only human-authored string on these topics. Run summaries, prompt bodies, and block reasons never ship: `board.cardBlocked` carries the run `outcome` classification (`error` / `blocked` / ...) instead of the reason text.
+`cardTitle` is the only content-bearing title field on these topics and may be model-generated. Run summaries, prompt bodies, and block reasons never ship: `board.cardBlocked` carries the run `outcome` classification (`error` / `blocked` / ...) instead of the reason text.
 
 `session.activated` fires when the focused agent changes (opaque ids only, debounced to at most one event per ~100ms, and never re-fired for the session that is already focused). Use it to highlight whichever agent the user is looking at. Requires `minHostApi: '1.16.0'`.
 

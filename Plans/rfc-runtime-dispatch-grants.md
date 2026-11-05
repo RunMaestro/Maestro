@@ -16,6 +16,8 @@ related:
 
 # RFC: Runtime Dispatch Grants
 
+> Historical proposal from 2026-07-22. Board now uses central SQLite and a central worker registry; legacy `boardWorker` selectors and project YAML are historical migration inputs, not active dispatch or storage authority. Any future grant design must use current host admission and source boundaries; see [the current Board guide](../docs/board.md).
+
 Status: proposed, unscheduled. Implementation is explicitly OUT OF SCOPE for this
 document. This specifies the seam; a separate plan would build it.
 

@@ -93,6 +93,13 @@ describe('maestro-cli command tree', () => {
 		).toBe('Registered source project root for selecting a project');
 	});
 
+	it('requires an exact worker ID for worker options', () => {
+		const options = findCommand('maestro-cli board worker-options')!.options;
+		expect(options.find((option) => option.flags.startsWith('-a, --agent'))?.flags).toBe(
+			'-a, --agent <id>'
+		);
+	});
+
 	it('keeps one explicit batch fence option per required identity', () => {
 		const batch = findCommand('maestro-cli board remove-cards')!;
 		for (const flag of ['--source', '--collection', '--revision', '--cards']) {

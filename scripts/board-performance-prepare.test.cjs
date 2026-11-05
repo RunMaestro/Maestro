@@ -2,8 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('node:child_process');
 const fs = require('node:fs');
+const { ensurePerformanceParent } = require('./board-performance-parent.cjs');
 const path = require('node:path');
 const checkout = path.resolve(__dirname, '..');
+ensurePerformanceParent(path.join(checkout, 'isolated'));
 const runWithEnv = (env, ...args) =>
 	cp.spawnSync(process.execPath, ['scripts/board-performance-prepare.cjs', ...args], {
 		cwd: checkout,
@@ -61,4 +63,15 @@ test(
 test('rejects invalid sizes before creating a fixture', () => {
 	assert.notEqual(run('1').status, 0);
 	assert.notEqual(run().status, 0);
+});
+
+test('creates a fresh private parent and keeps fixture roots exclusive', (t) => {
+	const owned = fs.mkdtempSync(path.join(checkout, 'isolated', 'parent-test-'));
+	t.after(() => fs.rmSync(owned, { recursive: true, force: true }));
+	const parent = path.join(owned, 'missing', 'isolated');
+	ensurePerformanceParent(parent);
+	if (process.platform !== 'win32') assert.equal(fs.statSync(parent).mode & 0o777, 0o700);
+	const root = path.join(parent, 'fixture');
+	fs.mkdirSync(root);
+	assert.throws(() => fs.mkdirSync(root), { code: 'EEXIST' });
 });

@@ -12,6 +12,8 @@ related:
 
 # Board 10x - Final Summary
 
+> Historical summary from 2026-07-22. Its proposed PR description and architecture describe the earlier YAML implementation; current Board state uses central SQLite and an authenticated host with a central worker registry. See [the current Board guide](../docs/board.md).
+
 Branch `build/board-profiles-fullaccess`, pushed to the `origin` fork. Base is `upstream/rc`.
 Feature docs: `docs/board.md` (users), `docs/agent-guides/BOARD.md` (agents/devs).
 

@@ -311,9 +311,9 @@ import { mcpServe } from './commands/mcp';
 import { CARD_STATUSES } from '../shared/board/types';
 
 // Derived from the single source of truth (`src/shared/board/types.ts`) so the
-// `board set-status` help text can never drift from what the command accepts.
+// `board set-status` help text lists ordinary host-authorized transitions.
 const CARD_STATUS_LIST = CARD_STATUSES.filter(
-	(status) => status !== 'ready' && status !== 'running'
+	(status) => !['ready', 'running', 'review', 'ready-for-human', 'done'].includes(status)
 ).join('|');
 
 import {
@@ -1778,7 +1778,7 @@ board
 board
 	.command('worker-options')
 	.description('Read or update a registered worker’s local execution overrides')
-	.requiredOption('-a, --agent <id-or-name>', 'Registered worker agent')
+	.requiredOption('-a, --agent <id>', 'Exact registered worker agent ID')
 	.option(
 		'--set <json>',
 		'Patch customModel, customEffort, appendSystemPrompt or customArgs; null clears an override'

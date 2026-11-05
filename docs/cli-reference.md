@@ -1543,7 +1543,7 @@ Atomically delete cards from one explicitly identified collection snapshot
 
 ## `maestro-cli board set-status <cardId> <status>`
 
-Request a card status (triage|todo|review|ready-for-human|blocked|done); final completion requires an explicit human decision in the UI
+Request a card status (triage|todo|blocked); final completion requires an explicit human decision in the UI
 
 | Option                     | Description                                                         | Default |
 | -------------------------- | ------------------------------------------------------------------- | ------- |
@@ -1662,11 +1662,11 @@ Assign or remove one exact role for a registered worker
 
 Read or update a registered worker’s local execution overrides
 
-| Option                     | Description                                                                                | Default |
-| -------------------------- | ------------------------------------------------------------------------------------------ | ------- |
-| `-a, --agent <id-or-name>` | Registered worker agent                                                                    | -       |
-| `--set <json>`             | Patch customModel, customEffort, appendSystemPrompt or customArgs; null clears an override | -       |
-| `--json`                   | Output errors as JSON                                                                      | -       |
+| Option             | Description                                                                                | Default |
+| ------------------ | ------------------------------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Exact registered worker agent ID                                                           | -       |
+| `--set <json>`     | Patch customModel, customEffort, appendSystemPrompt or customArgs; null clears an override | -       |
+| `--json`           | Output errors as JSON                                                                      | -       |
 
 ## `maestro-cli board worker-list`
 

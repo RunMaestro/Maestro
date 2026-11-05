@@ -1,6 +1,7 @@
 // Isolated fixture preparation only; this process starts no desktop, Cue, or worker.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { ensurePerformanceParent } = require('./board-performance-parent.cjs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const cp = require('node:child_process');
@@ -47,6 +48,7 @@ admission.assertBoardIsolationRegistrations(contract, {
 	sources: profile.sources,
 });
 // Exclusive root creation prevents reuse of an existing fixture.
+ensurePerformanceParent(path.dirname(root));
 fs.mkdirSync(root);
 for (const dir of [
 	contract.userData,
