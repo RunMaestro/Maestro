@@ -506,12 +506,15 @@ describe('persistence IPC handlers', () => {
 				},
 			];
 			mockSessionsStore.get.mockReturnValue(sessions);
-			const callbacks: Record<string, Function> = {};
+			const callbacks = {} as {
+				setGetSessionHistoryCallback: Parameters<WebServer['setGetSessionHistoryCallback']>[0];
+				setListDesktopSessionsCallback: Parameters<WebServer['setListDesktopSessionsCallback']>[0];
+			};
 			const server = new Proxy(
 				{},
 				{
-					get: (_target, key: string) => (callback: Function) => {
-						callbacks[key] = callback;
+					get: (_target, key: string) => (callback: unknown) => {
+						Reflect.set(callbacks, key, callback);
 					},
 				}
 			);
@@ -578,6 +581,31 @@ describe('persistence IPC handlers', () => {
 				messages: [],
 			});
 			expect(request({ expectedCursor: {} })).toHaveProperty('code', 'INVALID_CURSOR');
+			for (const field of ['expectedCursor', 'deltaBase']) {
+				for (const invalid of [
+					null,
+					[],
+					{},
+					...[
+						'generation',
+						'sourceGeneration',
+						'agentId',
+						'tabId',
+						'provider',
+						'agentSessionId',
+						'runId',
+						'turnId',
+					].map((key) => ({
+						...read.currentTurn.cursor,
+						[key]: '',
+					})),
+				]) {
+					expect(request({ [field]: invalid })).toHaveProperty('code', 'INVALID_CURSOR');
+				}
+			}
+			expect(request({ deltaBase: request().currentTurn.cursor }).currentTurn.status).toBe(
+				'complete'
+			);
 			// Join the actual owner-validated IPC producer to BridgeConnection's
 			// frame callback and the production worker/cycle/store consumer.
 			vi.useFakeTimers();
@@ -1147,27 +1175,29 @@ describe('persistence IPC handlers', () => {
 		it.each(['pause', 'peer', 'owner', 'row', 'fifo', 'generation', 'enrollment'] as const)(
 			'refuses LOCAL %s changes during async native preparation',
 			async (mutation) => {
-				let f: Awaited<ReturnType<typeof managedLocalFixture>>;
-				f = await managedLocalFixture(true, () => {
-					if (mutation === 'pause') f.snapshot.tabs[0].paused = true;
-					if (mutation === 'peer') current[0].peerAgents = [];
-					if (mutation === 'owner')
-						f.processDeps.getWindowForSession = () => ({ webContents: { id: 8 } }) as never;
-					if (mutation === 'row') current[0].executionQueue[0].text = 'Replaced';
-					if (mutation === 'fifo')
-						current[0].executionQueue.unshift({
-							id: 'human',
-							type: 'message',
-							text: 'Human turn',
-							tabId: 'tab',
-						});
-					if (mutation === 'generation') f.snapshot.tabs[0].createdAt++;
-					if (mutation === 'enrollment') {
-						const checkpoint = f.store.readScopeCheckpoint(f.scopeId)!;
-						checkpoint.status = 'suspended';
-						f.store.writeScopeCheckpoint(checkpoint);
+				const f: Awaited<ReturnType<typeof managedLocalFixture>> = await managedLocalFixture(
+					true,
+					() => {
+						if (mutation === 'pause') f.snapshot.tabs[0].paused = true;
+						if (mutation === 'peer') current[0].peerAgents = [];
+						if (mutation === 'owner')
+							f.processDeps.getWindowForSession = () => ({ webContents: { id: 8 } }) as never;
+						if (mutation === 'row') current[0].executionQueue[0].text = 'Replaced';
+						if (mutation === 'fifo')
+							current[0].executionQueue.unshift({
+								id: 'human',
+								type: 'message',
+								text: 'Human turn',
+								tabId: 'tab',
+							});
+						if (mutation === 'generation') f.snapshot.tabs[0].createdAt++;
+						if (mutation === 'enrollment') {
+							const checkpoint = f.store.readScopeCheckpoint(f.scopeId)!;
+							checkpoint.status = 'suspended';
+							f.store.writeScopeCheckpoint(checkpoint);
+						}
 					}
-				});
+				);
 				try {
 					await expect(f.start()).rejects.toThrow(/Dispatch|Pianola/);
 					expect(f.spawn).not.toHaveBeenCalled();
@@ -3322,7 +3352,7 @@ describe('persistence IPC handlers', () => {
 					tabId: 'manager-tab',
 					createdAt: 7,
 				});
-				let registry = new DispatchCallbackRegistry({ onFire: vi.fn() });
+				const registry = new DispatchCallbackRegistry({ onFire: vi.fn() });
 				const deps = { ...f.deps, snapshot: () => snapshot, callbackRegistry: () => registry };
 				const adapter = new PianolaNewTabDispatch(deps);
 				const result = await adapter.runQueue(

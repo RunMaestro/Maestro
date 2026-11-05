@@ -68,7 +68,7 @@ export function isCurrentTurnCursor(value: unknown): value is CurrentTurnCursor 
 			(key) => Number.isSafeInteger(row[key]) && (row[key] as number) >= 0
 		) &&
 		['agentSessionId', 'runId', 'turnId'].every(
-			(key) => row[key] === null || typeof row[key] === 'string'
+			(key) => row[key] === null || (typeof row[key] === 'string' && !!row[key])
 		)
 	);
 }

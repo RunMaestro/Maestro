@@ -8,6 +8,7 @@
  */
 
 import { AGENT_IDS } from '../../../../shared/agentIds';
+import { isCurrentTurnCursor, type CurrentTurnCursor } from '../../../../shared/currentTurn';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
 import type { CreateSessionConfig } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -573,24 +574,12 @@ export function handleGetSessionHistory(
 			: undefined;
 
 	const currentTurn = message.currentTurn === true;
-	let expectedCursor: import('../../../../shared/currentTurn').CurrentTurnCursor | undefined;
-	let deltaBase: typeof expectedCursor;
+	let expectedCursor: CurrentTurnCursor | undefined;
+	let deltaBase: CurrentTurnCursor | undefined;
 	for (const field of ['expectedCursor', 'deltaBase'] as const) {
-		if (message[field] === undefined) continue;
-		const value = message[field] as Record<string, unknown> | null;
-		const valid =
-			value &&
-			typeof value === 'object' &&
-			['generation', 'sourceGeneration', 'agentId', 'tabId', 'provider'].every(
-				(key) => typeof value[key] === 'string'
-			) &&
-			['createdAt', 'revision'].every(
-				(key) => Number.isSafeInteger(value[key]) && (value[key] as number) >= 0
-			) &&
-			['agentSessionId', 'runId', 'turnId'].every(
-				(key) => value[key] === null || typeof value[key] === 'string'
-			);
-		if (!currentTurn || !valid) {
+		const value = message[field];
+		if (value === undefined) continue;
+		if (!currentTurn || !isCurrentTurnCursor(value)) {
 			ctx.send(client, {
 				type: 'session_history_result',
 				success: false,
@@ -599,10 +588,8 @@ export function handleGetSessionHistory(
 			});
 			return;
 		}
-		if (field === 'expectedCursor')
-			expectedCursor =
-				value as unknown as import('../../../../shared/currentTurn').CurrentTurnCursor;
-		else deltaBase = value as unknown as import('../../../../shared/currentTurn').CurrentTurnCursor;
+		if (field === 'expectedCursor') expectedCursor = value;
+		else deltaBase = value;
 	}
 	const result = ctx.callbacks.getSessionHistory(
 		tabId,
