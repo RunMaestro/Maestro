@@ -3,7 +3,7 @@ import path from 'path';
 import { EventEmitter } from 'events';
 import { PassThrough, Writable } from 'stream';
 import type { ChildProcess } from 'child_process';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '../../../shared/maestro-lib/host';
 
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
@@ -18,7 +18,7 @@ let stdin: EventEmitter & {
 	destroy: ReturnType<typeof vi.fn>;
 	closed: boolean;
 };
-let stdout: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+let stdout: EventEmitter & { destroy: ReturnType<typeof vi.fn>; closed: boolean };
 let child: ChildProcess;
 const bytes = new TextEncoder().encode('permission response\n');
 const drain = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -47,11 +47,13 @@ beforeEach(async () => {
 		destroy: vi.fn(),
 		closed: false,
 	});
-	stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+	stdout = Object.assign(new EventEmitter(), { destroy: vi.fn(), closed: false });
 	child = Object.assign(new EventEmitter(), { stdin, stdout }) as unknown as ChildProcess;
 	gate = await import('../../../main/git/worktreeActivity');
 	bridge = await import('../../../main/process-manager/spawners/acp-stdio');
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('ACP stdio writable activity', () => {
 	it.each([target, path.join(target, 'descendant'), `${target}-unrelated`])(
@@ -85,7 +87,7 @@ describe('ACP stdio writable activity', () => {
 		(await reserve()).release();
 	});
 
-	it('preserves UTF-8 and byte reads without claiming child or readable lifetime coverage', async () => {
+	it('preserves UTF-8 and byte reads without claiming child or listener lifetime coverage', async () => {
 		const stream = bridge.acpStdioStream(child);
 		const reader = stream.readable.getReader();
 		const text = reader.read();
@@ -279,6 +281,212 @@ describe('ACP stdio writable activity', () => {
 		await second;
 		await closing;
 		expect(nativeInput.writableFinished).toBe(true);
+		await drain();
+		(await reserve()).release();
+	});
+});
+
+describe('ACP stdio readable callback and cancellation activity', () => {
+	it.each(['data', 'end', 'error'] as const)(
+		'refuses a retained %s callback before encoding, controller access or reporting',
+		async (event) => {
+			const stream = bridge.acpStdioStream(child);
+			const reader = stream.readable.getReader();
+			const dispatch = stdout.listeners(event)[0];
+			child.emit('close', 0);
+			const hold = await reserve();
+			const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+			const enqueue = vi.spyOn(ReadableStreamDefaultController.prototype, 'enqueue');
+			const close = vi.spyOn(ReadableStreamDefaultController.prototype, 'close');
+			const error = vi.spyOn(ReadableStreamDefaultController.prototype, 'error');
+			const failure = new Error('source failure');
+			expect(() => dispatch(event === 'data' ? 'Grüße' : failure)).toThrow('reserved');
+			for (const effect of [encode, enqueue, close, error, captureException])
+				expect(effect).not.toHaveBeenCalled();
+			hold.release();
+			// Refusal must not poison the controller or replace a later native error.
+			dispatch(event === 'data' ? 'Grüße' : failure);
+			if (event === 'data')
+				expect((await reader.read()).value).toEqual(new TextEncoder().encode('Grüße'));
+			else if (event === 'end') expect((await reader.read()).done).toBe(true);
+			else await expect(reader.read()).rejects.toBe(failure);
+			(await reserve()).release();
+		}
+	);
+
+	it('preserves encoding failures as the original readable rejection', async () => {
+		const reader = bridge.acpStdioStream(child).readable.getReader();
+		const failure = new Error('encode failed');
+		vi.spyOn(TextEncoder.prototype, 'encode').mockImplementationOnce(() => {
+			throw failure;
+		});
+		stdout.emit('data', 'text');
+		await expect(reader.read()).rejects.toBe(failure);
+		expect(captureException).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'retains late controller failure reporting until %s without replacing its throw',
+		async (outcome) => {
+			bridge.acpStdioStream(child);
+			const end = stdout.listeners('end')[0];
+			stdout.emit('end');
+			child.emit('close', 0);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementation(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			const failure = new Error('controller already closed');
+			vi.spyOn(ReadableStreamDefaultController.prototype, 'close').mockImplementation(() => {
+				throw failure;
+			});
+			expect(end).toThrow(failure);
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('reporter rejected'));
+				await drain();
+			}
+			(await reserve()).release();
+			expect(captureException).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it('retains independent late callback diagnostics across concurrent reports and pending reservation', async () => {
+		bridge.acpStdioStream(child);
+		const end = stdout.listeners('end')[0];
+		stdout.emit('end');
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		expect(end).toThrow();
+		expect(end).toThrow();
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		first.resolve();
+		await drain();
+		await blocked();
+		second.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+
+	it('refuses cancellation before native lookup, close observer, destroy or reporting', async () => {
+		const stream = bridge.acpStdioStream(child);
+		const hold = await reserve();
+		const closed = vi.fn(() => false);
+		Object.defineProperty(stdout, 'closed', { get: closed });
+		const observe = vi.spyOn(stdout, 'once');
+		await expect(stream.readable.cancel()).rejects.toThrow('reserved');
+		for (const effect of [closed, observe, stdout.destroy, captureException])
+			expect(effect).not.toHaveBeenCalled();
+		hold.release();
+	});
+
+	it('holds cancellation until stdout close independently of child or stdin close', async () => {
+		const stream = bridge.acpStdioStream(child);
+		let settled = false;
+		const cancelling = stream.readable.cancel().then(() => {
+			settled = true;
+		});
+		expect(stdout.destroy).toHaveBeenCalledOnce();
+		child.emit('close', 0);
+		stdin.emit('close');
+		await blocked();
+		expect(settled).toBe(false);
+		stdout.emit('close');
+		await cancelling;
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'preserves a thrown destroy with %s reporting and unknown native completion',
+		async (outcome) => {
+			const stream = bridge.acpStdioStream(child);
+			const failure = new Error('destroy may have started');
+			stdout.destroy.mockImplementation(() => {
+				throw failure;
+			});
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementation(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			await expect(stream.readable.cancel()).rejects.toBe(failure);
+			if (outcome === 'resolve') reporting.resolve();
+			else if (outcome === 'reject') reporting.reject(new Error('reporter rejected'));
+			await drain();
+			child.emit('close', 0);
+			await blocked();
+			stdout.emit('close');
+			await drain();
+			(await reserve()).release();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		}
+	);
+
+	it('keeps cancellation diagnostics after native completion and a successor setup', async () => {
+		const stream = bridge.acpStdioStream(child);
+		const failure = new Error('destroy failed');
+		stdout.destroy.mockImplementation(() => {
+			stdout.emit('close');
+			throw failure;
+		});
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		await expect(stream.readable.cancel()).rejects.toBe(failure);
+		bridge.acpStdioStream(child);
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each([false, true])(
+		'handles synchronous destroy-close and already-closed=%s',
+		async (closed) => {
+			stdout.closed = closed;
+			if (!closed) stdout.destroy.mockImplementationOnce(() => stdout.emit('close'));
+			await bridge.acpStdioStream(child).readable.cancel();
+			expect(stdout.destroy).toHaveBeenCalledOnce();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it('tracks concurrent cancellations independently across sources', async () => {
+		const first = bridge.acpStdioStream(child).readable.cancel();
+		const other = Object.assign(new EventEmitter(), { destroy: vi.fn(), closed: false });
+		const second = bridge.acpStdioStream(Object.assign(child, { stdout: other })).readable.cancel();
+		stdout.emit('close');
+		await first;
+		await blocked();
+		other.emit('close');
+		await second;
+		await drain();
+		(await reserve()).release();
+	});
+
+	it('preserves a real PassThrough read and waits for actual cancellation close', async () => {
+		const output = new PassThrough();
+		output.setEncoding('utf8');
+		const reader = bridge
+			.acpStdioStream(Object.assign(child, { stdout: output }))
+			.readable.getReader();
+		const reading = reader.read();
+		output.write('Grüße');
+		expect((await reading).value).toEqual(new TextEncoder().encode('Grüße'));
+		await reader.cancel();
+		expect(output.closed).toBe(true);
 		await drain();
 		(await reserve()).release();
 	});

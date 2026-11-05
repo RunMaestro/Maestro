@@ -11,9 +11,9 @@ export interface AcpByteStream {
  * Bridge startTurn's UTF-8 Node streams to ACP's byte-oriented web streams.
  * `startTurn` calls setEncoding('utf8'), so Readable.toWeb alone would feed
  * strings into ACP's Uint8Array line buffer and fail on the first frame.
- * Setup and retained writes share conservative global activity. Completion of
- * a write/end/destroy covers that stream operation, not the child, descendants,
- * retained read callbacks or another process hosting its own activity registry.
+ * Setup and retained stream callbacks share conservative global activity.
+ * Completion of a write/end/destroy covers that stream operation, not retained
+ * listeners, SDK continuations, descendants or another process's registry.
  */
 export function acpStdioStream(child: ChildProcess): AcpByteStream {
 	return withWorktreeTurnActivity(() => {
@@ -23,23 +23,33 @@ export function acpStdioStream(child: ChildProcess): AcpByteStream {
 		const encoder = new TextEncoder();
 		const readable = new ReadableStream<Uint8Array>({
 			start(controller) {
-				const onData = (chunk: unknown) => {
-					try {
-						controller.enqueue(
-							typeof chunk === 'string' ? encoder.encode(chunk) : (chunk as Uint8Array)
-						);
-					} catch (error) {
-						controller.error(error);
-					}
-				};
-				const onEnd = () => controller.close();
-				const onError = (error: Error) => controller.error(error);
+				const onData = (chunk: unknown) =>
+					withWorktreeTurnActivity(() => {
+						try {
+							controller.enqueue(
+								typeof chunk === 'string' ? encoder.encode(chunk) : (chunk as Uint8Array)
+							);
+						} catch (error) {
+							controller.error(error);
+						}
+					}, captureException);
+				const onEnd = () => withWorktreeTurnActivity(() => controller.close(), captureException);
+				const onError = (error: Error) =>
+					withWorktreeTurnActivity(() => controller.error(error), captureException);
 				stdout.on('data', onData);
 				stdout.once('end', onEnd);
 				stdout.once('error', onError);
 			},
 			cancel() {
-				stdout.destroy();
+				return withWorktreeTurnActivity((_start, observe) => {
+					const { promise, resolve } = Promise.withResolvers<void>();
+					observe(promise);
+					// Child close and destroy returning cannot prove stdout teardown.
+					if (stdout.closed) resolve();
+					else stdout.once('close', resolve);
+					stdout.destroy();
+					return promise;
+				}, captureException);
 			},
 		});
 		const writable = new WritableStream<Uint8Array>({
