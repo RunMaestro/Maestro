@@ -62,7 +62,10 @@ function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
 		(!cursor.native && history.messages.at(-1)?.content.length !== cursor.textLength)
 	)
 		throw new Error('Requesting transcript no longer matches the pending ask');
-	const classification = classifyMessages(enrichWithAwaitingInput(history.messages));
+	const classification = classifyMessages(
+		enrichWithAwaitingInput(history.messages),
+		cursor.native ? (history.currentTurn?.observedRisk ?? 'high') : undefined
+	);
 	if (
 		classification.kind === 'none' ||
 		classification.evidence.messageId !== record.classification.evidence.messageId ||
@@ -129,7 +132,8 @@ async function sendClaimedDecision(
 							? boundaryId
 							: undefined,
 						command,
-						guard.cursor.questionSignatures
+						guard.cursor.questionSignatures,
+						record.classification.risk
 					);
 					if (appended) {
 						const tab = snapshot.tabs.find(

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { maxRisk, rateRisk } from '../../shared/pianola/pianola-risk';
+import type { PianolaRisk } from '../../shared/pianola/types';
 import { generateUUID } from '../../shared/uuid';
 import { canonicalJson } from '../../shared/canonicalJson';
 import type { SessionTranscriptPatch } from '../../shared/sessionTranscript';
@@ -27,6 +29,8 @@ type State = {
 	/** Last commit that changed an existing ordered prefix, including reorder-and-restore. */
 	orderMutationRevision: number;
 	bytes: number;
+	/** Monotone native evidence; reset only by a verified new user/run boundary. */
+	observedRisk: PianolaRisk;
 	reason?: string;
 	freshBoundaryId?: string;
 	pendingAnnouncement?: string;
@@ -187,6 +191,7 @@ export class NativeCurrentTurns {
 				order: [],
 				orderMutationRevision: 0,
 				bytes: 0,
+				observedRisk: 'low',
 				reason: replaced ? 'renderer-or-binding-reset' : 'missing-native-boundary',
 			};
 			this.states.delete(key);
@@ -287,6 +292,14 @@ export class NativeCurrentTurns {
 				state.bytes = 0;
 				break;
 			}
+			// Evaluate only size-checked native commits, never passive reads. Include
+			// structured payloads and the unescaped prose, even inside quotes/code.
+			// Saturation retains no versions and avoids further risk scans at high.
+			if (value.source !== 'user' && state.observedRisk !== 'high')
+				state.observedRisk = maxRisk(
+					state.observedRisk,
+					maxRisk(rateRisk(value.text), rateRisk(serialized))
+				);
 			if (proseChanged) {
 				state.contentRevisions.set(row.id, state.cursor.revision);
 				// Hash only changed, size-checked prose at the native commit boundary.
@@ -428,6 +441,7 @@ export class NativeCurrentTurns {
 		};
 		state.reason = valid ? undefined : 'missing-native-boundary';
 		if (valid) {
+			state.observedRisk = 'low';
 			state.freshBoundaryId = undefined;
 			state.rows = new Map([[boundaryId!, boundary]]);
 			state.rowRevisions = new Map([[boundaryId!, state.cursor.revision]]);
@@ -449,7 +463,8 @@ export class NativeCurrentTurns {
 		count: number,
 		boundaryId: string | undefined,
 		text: string,
-		questionSignatures?: string[] | null
+		questionSignatures?: string[] | null,
+		classifiedRisk?: PianolaRisk
 	): boolean {
 		const state = this.states.get(this.key(cursor.agentId, cursor.tabId));
 		if (!state) throw new Error('Native delivery base lost');
@@ -474,6 +489,11 @@ export class NativeCurrentTurns {
 				canonicalJson(state.questionSignatures.get(state.order[count - 1]) ?? null)
 		)
 			throw new Error('Native question evidence changed during delivery');
+		if (
+			classifiedRisk !== undefined &&
+			maxRisk(classifiedRisk, state.observedRisk) !== classifiedRisk
+		)
+			throw new Error('Native turn risk increased during delivery');
 		if (unchanged) return false;
 		const reply = state.rows.get(boundaryId!);
 		if (reply?.source !== 'user' || reply.text !== text)
@@ -567,6 +587,7 @@ export class NativeCurrentTurns {
 			version: 1,
 			cursor,
 			status: 'complete',
+			observedRisk: state.observedRisk,
 			...(state.enrollment && { enrollment: { ...state.enrollment } }),
 			entryCount: state.order.length,
 			lastEntry: state.order.length

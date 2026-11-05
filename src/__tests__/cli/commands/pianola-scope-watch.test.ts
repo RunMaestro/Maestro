@@ -6,7 +6,7 @@ import { createPianolaScopeWorkerDeps } from '../../../cli/commands/pianola-scop
 import type { MaestroClient } from '../../../cli/services/maestro-client';
 import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { handleGetSessionHistory } from '../../../main/web-server/handlers/messageHandlers/sessions';
-import { composeCurrentTurn } from '../../../shared/currentTurn';
+import { composeCurrentTurn, type CurrentTurnRead } from '../../../shared/currentTurn';
 import type { AgentRun } from '../../../shared/agent-run';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 
@@ -220,6 +220,15 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 		'stream-restore',
 		'stream-risk',
 		'stream-prefix-risk',
+		'stream-risk-removed-before-read',
+		'stream-tool-risk-removed-before-read',
+		'stream-risk-removed-between-reads',
+		'stream-risk-removed-restart',
+		'stream-risk-missing-proof',
+		'stream-risk-removed-quote',
+		'stream-risk-removed-new-turn',
+		'stream-risk-removed-renderer-boundary',
+		'stream-risk-removed-after-classification',
 		'stream-handover',
 		'stream-resume',
 		'stream-renew',
@@ -362,6 +371,8 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 				{} as never,
 				message as never
 			);
+			if (mode === 'stream-risk-missing-proof')
+				delete (result as { currentTurn?: CurrentTurnRead }).currentTurn?.observedRisk;
 			return result;
 		});
 		const deps = createPianolaScopeWorkerDeps({ sendCommand } as unknown as Pick<
@@ -396,6 +407,10 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			dispatchId
 		) => {
 			// Exercise the same native claim and late revalidation as handleProcessSpawn.
+			if (mode === 'stream-risk-removed-after-classification') {
+				f.commit([f.row('prefix', 'I will DROP DATABASE production.')]);
+				f.commit([f.row('prefix', 'Inspecting files.')]);
+			}
 			if (mode === 'disable') settings.enabled = false;
 			if (mode === 'rule-revoked') store.writeRules([]);
 			if (mode === 'late-human' || mode === 'stream-late-human')
@@ -436,6 +451,16 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			const cycle = () => runPianolaScopeCycle(scopeId, deps, { dryRun: false });
 			const streaming = mode.startsWith('stream-');
 			if (streaming) {
+				if (mode.includes('risk-removed') && mode !== 'stream-risk-removed-after-classification')
+					f.commit([
+						f.row(
+							'prefix',
+							mode === 'stream-risk-removed-quote'
+								? '> `I will DROP DATABASE production.`'
+								: 'I will DROP DATABASE production.',
+							mode === 'stream-tool-risk-removed-before-read' ? 'tool' : 'ai'
+						),
+					]);
 				if (mode === 'stream-prefix-risk') f.commit([f.row('prefix', 'Inspecting files.')]);
 				let baselineText = [
 					'stream-unchanged',
@@ -475,6 +500,23 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 					MaestroClient,
 					'sendCommand'
 				>).readTranscript;
+			}
+			if (
+				mode === 'stream-risk-removed-new-turn' ||
+				mode === 'stream-risk-removed-renderer-boundary'
+			) {
+				f.commit([f.row('new-user', 'Inspect the next task', 'user')]);
+				if (mode === 'stream-risk-removed-new-turn')
+					f.index.begin(
+						{
+							id: 'new-run',
+							provider: 'codex',
+							sessionId: 'agent-ai-tab',
+							tabId: 'tab',
+							metadata: { nativeTabSession: { agentId: 'agent', tabId: 'tab', createdAt: 7 } },
+						} as unknown as AgentRun,
+						'new-user'
+					);
 			}
 			if (mode === 'stream-legacy-proof') {
 				const checkpoint = store.readScopeCheckpoint(scopeId)!;
@@ -520,6 +562,25 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 						provider: 'codex',
 					},
 				});
+			if (
+				mode.includes('risk-removed') &&
+				mode !== 'stream-risk-removed-after-classification' &&
+				!mode.endsWith('-new-turn') &&
+				!mode.endsWith('-renderer-boundary')
+			) {
+				if (mode === 'stream-risk-removed-between-reads')
+					await deps.readTranscript(
+						{ agentId: 'agent', tabId: 'tab', projectPath: '/project' },
+						f.read().cursor
+					);
+				f.commit([
+					f.row(
+						'prefix',
+						'Inspecting files.',
+						mode === 'stream-tool-risk-removed-before-read' ? 'tool' : 'ai'
+					),
+				]);
+			}
 			if (mode === 'stream-prefix-risk')
 				f.commit([f.row('prefix', 'I will DROP DATABASE production.')]);
 			if (mode === 'stream-restore') f.commit([f.row('question', 'Working again.')]);
@@ -536,7 +597,10 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			};
 			f.commit([
 				{
-					...f.row('question', questionUpdates[mode] ?? 'Should I name it count or total?'),
+					...f.row(
+						mode === 'stream-risk-removed-new-turn' ? 'new-question' : 'question',
+						questionUpdates[mode] ?? 'Should I name it count or total?'
+					),
 					...(mode === 'stream-timestamp' ? { timestamp: 999999 } : {}),
 					...(mode === 'stream-source' ? { source: 'stdout' } : {}),
 					...(mode === 'stream-historical-metadata'
@@ -554,6 +618,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 					mode === 'stream-answer' ||
 					mode === 'stream-new-question' ||
 					mode === 'stream-new-question-restart' ||
+					mode === 'stream-risk-removed-new-turn' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
 					mode === 'stale-receipt'
@@ -578,6 +643,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 					mode === 'stream-answer' ||
 					mode === 'stream-new-question' ||
 					mode === 'stream-new-question-restart' ||
+					mode === 'stream-risk-removed-new-turn' ||
 					mode === 'ordered-append' ||
 					mode === 'unknown' ||
 					mode === 'stale-receipt'

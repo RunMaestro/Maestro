@@ -646,6 +646,65 @@ describe('native current-turn delta and final spawn revision fence', () => {
 		).toThrow('Native question evidence changed');
 	});
 
+	it.each(['ai', 'stdout', 'tool', 'system'])(
+		'retains native %s risk through full and delta rewrites',
+		(source) => {
+			const f = fixture();
+			f.begin('user');
+			f.commit([row('prefix', 'I will DROP DATABASE production.', source)]);
+			const base = f.read();
+			expect(base.observedRisk).toBe('high');
+			f.commit([row('prefix', 'Inspecting files.', source)]);
+			f.commit([row('question', 'Should I name it count or total?')]);
+			const delta = f.index.read(binding, undefined, true, base.cursor);
+			expect(composeCurrentTurn(delta, base).observedRisk).toBe('high');
+			expect(f.read().messages[1].text).toBe('Inspecting files.');
+			expect(f.read().messages).toHaveLength(3); // No invented historical rows.
+			expect(() =>
+				f.index.assertDelivery(f.read().cursor, 3, undefined, '', undefined, 'low')
+			).toThrow('risk increased');
+			expect(f.index.assertDelivery(f.read().cursor, 3, undefined, '', undefined, 'high')).toBe(
+				false
+			);
+		}
+	);
+
+	it('keeps medium risk monotone, and resets only at a verified new native turn', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([row('prefix', 'Refactor the module.')]);
+		f.commit([row('prefix', 'Inspecting files.')]);
+		expect(f.read().observedRisk).toBe('medium');
+		f.commit([row('next-user', 'Inspect the next task', 'user')]);
+		expect(f.read().status).toBe('incomplete');
+		f.begin('next-user');
+		expect(f.read().observedRisk).toBe('low');
+		f.commit([row('question', 'Should I name it count or total?')]);
+		expect(f.read().status).toBe('complete');
+		expect(f.read().observedRisk).toBe('low');
+	});
+
+	it('retains structured tool risk through metadata-only replacement', () => {
+		const f = fixture();
+		f.begin('user');
+		f.commit([
+			{
+				...row('tool', 'Inspecting files.', 'tool'),
+				toolInput: { command: 'DROP DATABASE production' },
+			},
+		]);
+		f.commit([row('tool', 'Inspecting files.', 'tool')]);
+		expect(f.read().observedRisk).toBe('high');
+	});
+
+	it('rejects malformed native risk proof instead of treating it as low', () => {
+		const f = fixture();
+		f.begin('user');
+		expect(() => composeCurrentTurn({ ...f.read(), observedRisk: 'safe' as never })).toThrow(
+			'risk evidence'
+		);
+	});
+
 	it('reconstructs append and same-length replacement deltas without losing earlier risk', () => {
 		const f = fixture();
 		f.begin('user');

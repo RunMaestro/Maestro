@@ -1,5 +1,5 @@
 import { canonicalJson } from './canonicalJson';
-import type { PianolaMessage } from './pianola/types';
+import type { PianolaMessage, PianolaRisk } from './pianola/types';
 import type { LogEntryRecord } from './maestro-lib/store/transcript';
 
 /** Additive v1 desktop observation protocol. A revision is meaningful only in its host generation. */
@@ -28,6 +28,8 @@ export interface CurrentTurnRead {
 	enrollment?: CurrentTurnCursor;
 	reason?: string;
 	entryCount?: number;
+	/** Host-derived monotone maximum for this native turn, including overwritten rows. */
+	observedRisk?: PianolaRisk;
 	lastEntry?: {
 		id: string;
 		textLength: number;
@@ -84,6 +86,8 @@ export function composeCurrentTurn(read: CurrentTurnRead, base?: CurrentTurnRead
 	if (read.version !== 1 || !isCurrentTurnCursor(read.cursor))
 		throw new Error('Invalid native turn cursor');
 	if (read.status !== 'complete') throw new Error('Incomplete current turn: ' + read.status);
+	if (read.observedRisk !== undefined && !['low', 'medium', 'high'].includes(read.observedRisk))
+		throw new Error('Invalid native turn risk evidence');
 	let messages = read.messages;
 	if (read.mode === 'delta') {
 		if (

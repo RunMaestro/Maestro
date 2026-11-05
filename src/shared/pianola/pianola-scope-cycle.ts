@@ -1124,7 +1124,13 @@ export async function runPianolaScopeCycle(
 								deliveryOutcome(await deps.requestJudgment!(request, await guard()))
 						: undefined,
 				},
-				{ ...options, canActOnMessage: (messageId) => actionableIds.has(messageId) }
+				{
+					...options,
+					canActOnMessage: (messageId) => actionableIds.has(messageId),
+					observedRisk: tab.cursor?.native
+						? (history.currentTurn?.observedRisk ?? 'high')
+						: undefined,
+				}
 			);
 			if (iteration.result.record?.error) {
 				saved.coverage = {

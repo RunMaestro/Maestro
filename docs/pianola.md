@@ -388,6 +388,17 @@ Other spawn paths without that boundary, pre-existing turns after host restart,
 missing commits, transcript trimming/reset, provider replacement, snoozed tabs,
 and upstream truncated tool output cannot produce a complete risk context.
 
+Each complete full or delta read also carries `observedRisk`, the highest risk
+seen in size-checked native row commits during that turn. Replacing assistant,
+system, or tool prose or structured payloads cannot lower it, even before the
+worker's first read. The worker folds it into classification, native admission
+reclassifies with the host's value, and the final delivery fence refuses an
+answer classified below the retained risk. Only a new submitted user boundary
+with matching native AgentRun capture resets it. Missing older-host evidence
+is treated as high risk. This retains one severity per tab, without synthetic
+transcript rows or a list of text versions. Risk scans stop once high is reached;
+quotes and code receive the same conservative treatment as other turn content.
+
 The host returns `incomplete`, `gap`, `reset`, or `unknown` with a concrete reason
 and no actionable message subset when that proof is unavailable. Clients must
 refresh or suspend observation in those cases. A supplied cursor must match

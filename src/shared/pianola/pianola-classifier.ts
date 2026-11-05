@@ -215,7 +215,10 @@ export function noneClassification(reason: string): PianolaClassification {
  * Classify the tail of a transcript. Messages must be in chronological order
  * (oldest first), matching `maestro-cli session show --json`.
  */
-export function classifyMessages(messages: readonly PianolaMessage[]): PianolaClassification {
+export function classifyMessages(
+	messages: readonly PianolaMessage[],
+	observedRisk: PianolaRisk = 'low'
+): PianolaClassification {
 	if (messages.length === 0) {
 		return noneClassification('empty transcript');
 	}
@@ -250,6 +253,6 @@ export function classifyMessages(messages: readonly PianolaMessage[]): PianolaCl
 		...(questionBytes !== null && questionBytes <= PIANOLA_DECISION_RECORD_MAX_BYTES / 8
 			? { questionText: assistant.content }
 			: {}),
-		risk: maxRisk(classification.risk, currentTurnMaxRisk(messages)),
+		risk: maxRisk(observedRisk, maxRisk(classification.risk, currentTurnMaxRisk(messages))),
 	};
 }
