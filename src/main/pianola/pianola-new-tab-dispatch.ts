@@ -14,7 +14,10 @@ import {
 	pianolaScopeBindingFingerprint,
 	type PianolaScopeSnapshot,
 } from '../../shared/pianola/pianola-scope-cycle';
-import type { PianolaDispatchReceipt } from '../../shared/pianola/pianola-dispatch';
+import {
+	boundPianolaQueueTerminal,
+	type PianolaDispatchReceipt,
+} from '../../shared/pianola/pianola-dispatch';
 import type { ExecuteCommandCallback } from '../web-server/types';
 import type { NewAITabWithPromptCallback } from '../../shared/pianola/pianola-dispatch';
 import {
@@ -36,17 +39,17 @@ class NewTabSpawnFences {
 			captured?: (runId: string) => void | boolean;
 			notStarted?: () => void;
 			beforeSpawn?: () => void;
-			runUpdated?: (run: AgentRun) => void;
+			runUpdated?: (run: AgentRun, terminalOutput?: string) => void;
 		}
 	>();
 	// Only confirmed native children retain observers; terminal capture (including
 	// supersession) removes them. Neither a wire locator nor restart restores these.
-	private readonly running = new Map<string, (run: AgentRun) => void>();
-	observeRun(run: AgentRun) {
+	private readonly running = new Map<string, (run: AgentRun, terminalOutput?: string) => void>();
+	observeRun(run: AgentRun, terminalOutput?: string) {
 		const listener = this.running.get(run.id);
 		if (!listener) return;
 		if (isTerminalAgentRunStatus(run.status)) this.running.delete(run.id);
-		listener(run);
+		listener(run, terminalOutput);
 	}
 	hold(agentId: string, tabId: string) {
 		const key = `${agentId}-ai-${tabId}`;
@@ -70,7 +73,7 @@ class NewTabSpawnFences {
 			notStarted(): void;
 			queueOnly?: boolean;
 			beforeSpawn?(): void;
-			runUpdated?(run: AgentRun): void;
+			runUpdated?(run: AgentRun, terminalOutput?: string): void;
 		}
 	) {
 		const entry = this.held.get(`${agentId}-ai-${tabId}`);
@@ -874,7 +877,7 @@ export class PianolaNewTabDispatch {
 				mutate(step, current);
 				this.deps.store.writeDispatchAdmission(current);
 			};
-			const observeLocal = (run: AgentRun) => {
+			const observeLocal = (run: AgentRun, terminalOutput?: string) => {
 				if (!local || uncertain) return;
 				try {
 					const identity = nativeTabSession(run);
@@ -899,14 +902,21 @@ export class PianolaNewTabDispatch {
 						current.outcome = 'accepted';
 						current.phase = 'settled';
 						if (isTerminalAgentRunStatus(run.status))
-							step.terminal = {
-								text: typeof run.metadata?.answerTail === 'string' ? run.metadata.answerTail : '',
+							step.terminal = boundPianolaQueueTerminal({
+								text:
+									terminalOutput ??
+									(typeof run.metadata?.answerTail === 'string' ? run.metadata.answerTail : ''),
 								...(run.status !== 'completed' ? { error: `Native local run ${run.status}` } : {}),
 								...(run.status === 'cancelled' ? { canceled: true } : {}),
-							};
+							});
 					});
 					if (!nativeLocalBound || isTerminalAgentRunStatus(run.status)) {
-						this.admission.noteQueueLocalCapture(itemId, released.generation, run.id);
+						this.admission.noteQueueLocalCapture(
+							itemId,
+							released.generation,
+							run.id,
+							terminalOutput
+						);
 						nativeLocalBound = true;
 					}
 				} catch (error) {

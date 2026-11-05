@@ -14,7 +14,7 @@ import {
 import type { StartCrossAgentRequestOptions } from '../cross-agent/cross-agent-router';
 /** Host-only pre-start boundary. Adapters prepare a held target, then bind/enroll/release.
  * One service per host; no watcher, timer, plugin activation or answer permission. */
-import { isTerminalAgentRunStatus } from '../../shared/agent-run';
+import { isTerminalAgentRunStatus, redactAnswerTail } from '../../shared/agent-run';
 import { readAgentRuns } from '../../cli/services/agent-run-store';
 import {
 	initialQueueSession,
@@ -41,10 +41,11 @@ import {
 } from '../../shared/pianola/pianola-scope-cycle';
 import { initialWatchState } from '../../shared/pianola/pianola-watcher';
 import { isPianolaScopeId } from '../../shared/pianola/pianola-scope';
-import type {
-	PianolaDispatchAdmission,
-	PianolaDispatchReceipt,
-	PianolaDispatchOutcome,
+import {
+	boundPianolaQueueTerminal,
+	type PianolaDispatchAdmission,
+	type PianolaDispatchReceipt,
+	type PianolaDispatchOutcome,
 } from '../../shared/pianola/pianola-dispatch';
 
 export interface PianolaDispatchRequest {
@@ -809,7 +810,12 @@ export class PianolaDispatchAdmissionService {
 	}
 
 	/** Called only by the existing native capture observer, never by a wire caller. */
-	noteQueueLocalCapture(dispatchId: string, generation: string, runId: string): void {
+	noteQueueLocalCapture(
+		dispatchId: string,
+		generation: string,
+		runId: string,
+		terminalOutput?: string
+	): void {
 		const release = this.routingReleases.get(dispatchId);
 		const record = this.deps.store.readDispatchAdmission(dispatchId);
 		const local = record?.queueRouting?.steps.find((s) => s.kind === 'local' && s.runId === runId);
@@ -834,11 +840,13 @@ export class PianolaDispatchAdmissionService {
 		release.localRunId = runId;
 		const run = (this.deps.readNativeRuns ?? readAgentRuns)().find((r) => r.id === runId);
 		if (run && isTerminalAgentRunStatus(run.status)) {
-			const expected = {
-				text: typeof run.metadata?.answerTail === 'string' ? run.metadata.answerTail : '',
+			const expected = boundPianolaQueueTerminal({
+				text:
+					terminalOutput ??
+					(typeof run.metadata?.answerTail === 'string' ? run.metadata.answerTail : ''),
 				...(run.status !== 'completed' ? { error: `Native local run ${run.status}` } : {}),
 				...(run.status === 'cancelled' ? { canceled: true } : {}),
-			};
+			});
 			if (local.status !== 'settled' || canonicalJson(local.terminal) !== canonicalJson(expected))
 				throw new Error('DispatchRoutingLocalOutputChanged');
 			release.terminals.set(local.requestId, canonicalJson(local));
@@ -1059,10 +1067,10 @@ export class PianolaDispatchAdmissionService {
 					local.terminal.canceled ||
 					typeof run.metadata?.answerTail !== 'string' ||
 					!run.metadata.answerTail.trim() ||
-					local.terminal.text !== run.metadata.answerTail
+					redactAnswerTail(local.terminal.text) !== run.metadata.answerTail
 				)
 					throw new Error('DispatchRoutingLocalOutputUnavailable');
-				return run.metadata.answerTail;
+				return local.terminal.text;
 			};
 			const answer = handoffAnswer();
 			const requestId = step.requestId;
@@ -1180,7 +1188,20 @@ export class PianolaDispatchAdmissionService {
 							}
 						},
 					},
-					onChunk: (chunk) => {
+					onChunk: (nativeChunk) => {
+						const terminal = boundPianolaQueueTerminal({
+							text: nativeChunk.chunk,
+							...(nativeChunk.error ? { error: nativeChunk.error } : {}),
+							...(nativeChunk.canceled ? { canceled: true } : {}),
+						});
+						const chunk = nativeChunk.done
+							? {
+									...nativeChunk,
+									chunk: terminal.text,
+									error: terminal.error,
+									canceled: terminal.canceled,
+								}
+							: nativeChunk;
 						if (
 							chunk.requestId !== requestId ||
 							chunk.sourceSessionId !== record.targetAgentId ||

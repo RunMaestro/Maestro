@@ -26,6 +26,7 @@ import {
 	deriveTerminalStatus,
 	redactPrompt,
 	redactAnswerTail,
+	redactSecrets,
 	type AgentRun,
 	type AgentRunEvent,
 	type AgentRunStatus,
@@ -68,7 +69,9 @@ export interface CaptureExitInput {
 export interface CaptureServiceDeps {
 	resolveNativeTabSession?: (input: CaptureSpawnInput) => NativeTabSession | undefined;
 	getAgentRun: (runId: string) => AgentRun | undefined;
-	upsertAgentRun: (run: AgentRun) => AgentRun;
+	/** Persist the run first, then pass ephemeral redacted output to native observers.
+	 * The output must never be merged into the run ledger or a wire payload. */
+	upsertAgentRun: (run: AgentRun, terminalOutput?: string) => AgentRun;
 	appendAgentRunEvent: (event: AgentRunEvent) => AgentRunEvent;
 	/** Find the live (non-terminal) run for a session, if any. */
 	findActiveRunBySession: (sessionId: string) => AgentRun | undefined;
@@ -273,6 +276,7 @@ export class AgentRunCaptureService {
 			assertTransition(current.status, target);
 
 			const durationMs = Math.max(0, ts - existing.createdAt);
+			const { nativeAnswer, ...settlement } = input.settlement ?? {};
 			const next: AgentRun = {
 				...merged,
 				status: target,
@@ -282,7 +286,7 @@ export class AgentRunCaptureService {
 					...(current.metadata ?? {}),
 					exitCode: input.exitCode,
 					...(input.signal ? { signal: input.signal } : {}),
-					...(input.settlement ? input.settlement : {}),
+					...settlement,
 					...(input.settlement?.answerTail
 						? { answerTail: redactAnswerTail(input.settlement.answerTail) }
 						: {}),
@@ -290,7 +294,14 @@ export class AgentRunCaptureService {
 					completedAt: ts,
 				},
 			};
-			const saved = this.deps.upsertAgentRun(next);
+			const saved = this.deps.upsertAgentRun(
+				next,
+				nativeAnswer !== undefined
+					? redactSecrets(nativeAnswer)
+					: input.settlement?.answerTail === undefined
+						? undefined
+						: redactSecrets(input.settlement.answerTail)
+			);
 			this.emit(runId, 'status_change', ts, target, `run ${target} (exit ${input.exitCode})`);
 			return saved;
 		} catch (error) {

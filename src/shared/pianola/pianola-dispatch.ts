@@ -1,3 +1,4 @@
+import { serializedJsonByteLength } from '../jsonUtils';
 import type { MentionRouting } from '../crossAgentContext';
 import { isPianolaScopeCursor, type PianolaScopeCursor } from './pianola-scope-checkpoint';
 /** Dispatch receipts and the host-only admission journal. Queue prepares retain the exact held row. */
@@ -57,6 +58,19 @@ export interface PianolaQueueRouting {
 		agentSessionId?: string;
 		terminal?: { text: string; error?: string; canceled?: boolean };
 	}[];
+}
+/** Full successful output is preserved. Oversized native output is an explicit
+ * terminal failure, never a successful truncated answer or a retryable start. */
+export function boundPianolaQueueTerminal(
+	terminal: NonNullable<PianolaQueueRouting['steps'][number]['terminal']>
+): NonNullable<PianolaQueueRouting['steps'][number]['terminal']> {
+	const bytes = serializedJsonByteLength(terminal);
+	if (bytes !== null && bytes <= 1024 * 1024) return terminal;
+	return {
+		text: '',
+		error: `DispatchRoutingOutputTooLarge: ${bytes} JSON UTF-8 bytes exceeds 1048576; review the native child output manually.`,
+		...(terminal.canceled ? { canceled: true } : {}),
+	};
 }
 export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 	scopeId: string;

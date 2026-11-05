@@ -844,12 +844,12 @@ describe('persistence IPC handlers', () => {
 			const ledgerPath = path.join(directory, 'native-runs.json');
 			const readNativeRuns = (): AgentRun[] =>
 				existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, 'utf8')) : [];
-			const upsertNativeRun = (run: AgentRun) => {
+			const upsertNativeRun = (run: AgentRun, terminalOutput?: string) => {
 				writeFileSync(
 					ledgerPath,
 					JSON.stringify([...readNativeRuns().filter((r) => r.id !== run.id), run])
 				);
-				pianolaNewTabSpawns.observeRun(run);
+				pianolaNewTabSpawns.observeRun(run, terminalOutput);
 				return run;
 			};
 			const capture = new AgentRunCaptureService({
@@ -1875,6 +1875,9 @@ describe('persistence IPC handlers', () => {
 			(['parallel', 'only', 'consult-first', 'handoff'] as const).flatMap((mode) =>
 				[
 					'normal',
+					'long-output',
+					'long-unicode',
+					'oversized-reply',
 					'setup-both-fail',
 					'setup-one-fail',
 					'setup-cancel',
@@ -1914,6 +1917,7 @@ describe('persistence IPC handlers', () => {
 								'local-unknown',
 								'local-cancel',
 								'empty-output',
+								'oversized-local',
 								'output-tamper',
 							]
 						: []),
@@ -1933,6 +1937,21 @@ describe('persistence IPC handlers', () => {
 			'composes the real renderer queue, native $mode branches and aggregate callback: $scenario',
 			async ({ mode, scenario }) => {
 				const f = await managedLocalFixture(mode === 'parallel' ? true : mode);
+				const longOutput = scenario === 'long-output' || scenario === 'long-unicode';
+				const nativeReply =
+					scenario === 'oversized-reply'
+						? '😀'.repeat(300000)
+						: longOutput
+							? 'BEGIN-OUTPUT' +
+								(scenario === 'long-unicode' ? '😀\"\n' : 'x').repeat(20000) +
+								'END-OUTPUT'
+							: 'Native reply';
+				const localOutput =
+					scenario === 'oversized-local'
+						? '😀'.repeat(300000)
+						: longOutput
+							? nativeReply
+							: 'Local native output';
 				const fires = vi.fn();
 				const registry = new DispatchCallbackRegistry({ onFire: fires });
 				const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
@@ -2124,7 +2143,11 @@ describe('persistence IPC handlers', () => {
 							await f.capture.captureExit({
 								sessionId: 'agent-ai-tab',
 								exitCode: 0,
-								settlement: { outcome: 'completed', answerTail: 'Local native output' } as never,
+								settlement: {
+									outcome: 'completed',
+									answerTail: localOutput.slice(-4000),
+									nativeAnswer: localOutput,
+								} as never,
 							});
 							f.events.emit('exit', 'agent-ai-tab', 0);
 							await continuation;
@@ -2174,7 +2197,7 @@ describe('persistence IPC handlers', () => {
 					);
 					if (
 						!((mode === 'only' || mode === 'handoff') && scenario === 'fast') &&
-						!['local-cancel', 'empty-output'].includes(scenario)
+						!['local-cancel', 'empty-output', 'oversized-local'].includes(scenario)
 					)
 						expect(fires).not.toHaveBeenCalled();
 					const journal = f.store.readDispatchAdmission(f.input.dispatchId)!;
@@ -2210,7 +2233,11 @@ describe('persistence IPC handlers', () => {
 						await f.capture.captureExit({
 							sessionId: 'agent-ai-tab',
 							exitCode: 0,
-							settlement: { outcome: 'completed', answerTail: 'Local native output' } as never,
+							settlement: {
+								outcome: 'completed',
+								answerTail: localOutput.slice(-4000),
+								nativeAnswer: localOutput,
+							} as never,
 						});
 						f.events.emit('exit', 'agent-ai-tab', 0);
 						registry.noteSpawn('agent-ai-tab');
@@ -2254,7 +2281,8 @@ describe('persistence IPC handlers', () => {
 							exitCode: scenario === 'local-cancel' ? 1 : 0,
 							settlement: {
 								outcome: scenario === 'local-cancel' ? 'cancelled' : 'completed',
-								answerTail: scenario === 'empty-output' ? '' : 'Local native output',
+								answerTail: scenario === 'empty-output' ? '' : localOutput.slice(-4000),
+								nativeAnswer: scenario === 'empty-output' ? '' : localOutput,
 							} as never,
 						});
 						f.events.emit('exit', 'agent-ai-tab', 0);
@@ -2290,14 +2318,14 @@ describe('persistence IPC handlers', () => {
 					peerManager.emit('exit', 'cross-agent-foreign', 0);
 					if (
 						!((mode === 'only' || mode === 'handoff') && scenario === 'fast') &&
-						!['local-cancel', 'empty-output'].includes(scenario)
+						!['local-cancel', 'empty-output', 'oversized-local'].includes(scenario)
 					)
 						expect(fires).not.toHaveBeenCalled();
 					const consults = journal.queueRouting!.steps.filter(
 						(s) => s.kind === (mode === 'handoff' ? 'handoff' : 'consult')
 					);
 					for (const [index, step] of consults.entries()) {
-						peerManager.emit('data', `cross-agent-${step.requestId}`, 'Native reply');
+						peerManager.emit('data', `cross-agent-${step.requestId}`, nativeReply);
 						peerManager.emit(
 							'exit',
 							`cross-agent-${step.requestId}`,
@@ -2306,7 +2334,7 @@ describe('persistence IPC handlers', () => {
 						if (
 							index === 0 &&
 							scenario !== 'fast' &&
-							!['local-cancel', 'empty-output'].includes(scenario)
+							!['local-cancel', 'empty-output', 'oversized-local'].includes(scenario)
 						)
 							expect(fires).not.toHaveBeenCalled();
 					}
@@ -2352,7 +2380,10 @@ describe('persistence IPC handlers', () => {
 						await expect(drain()).resolves.toBe(false);
 						return;
 					}
-					if ((mode === 'parallel' || mode === 'consult-first') && scenario !== 'failed') {
+					if (
+						(mode === 'parallel' || mode === 'consult-first') &&
+						!['failed', 'oversized-reply'].includes(scenario)
+					) {
 						expect(fires).not.toHaveBeenCalled();
 						if (scenario === 'local-unknown') {
 							f.unknown();
@@ -2370,12 +2401,10 @@ describe('persistence IPC handlers', () => {
 						expect(f.spawn).toHaveBeenCalledTimes(mode === 'parallel' ? 2 : 1);
 						const replyConfig = f.spawn.mock.calls[mode === 'parallel' ? 1 : 0][0];
 						expect(replyConfig.prompt).toContain('Check @PeerA and @PeerB');
-						expect(replyConfig.prompt).toContain(
-							scenario === 'fast' ? 'Fast reply' : 'Native reply'
-						);
+						expect(replyConfig.prompt).toContain(scenario === 'fast' ? 'Fast reply' : nativeReply);
 						if (mode === 'parallel')
 							expect(replyConfig.prompt).toContain(
-								scenario === 'local-last' ? 'Last local output' : 'Local native output'
+								scenario === 'local-last' ? 'Last local output' : localOutput
 							);
 						await f.capture.captureExit({
 							sessionId: 'agent-ai-tab',
@@ -2386,25 +2415,44 @@ describe('persistence IPC handlers', () => {
 							} as never,
 						});
 					}
-					if (mode === 'handoff' && !['local-cancel', 'empty-output'].includes(scenario)) {
+					if (
+						mode === 'handoff' &&
+						!['local-cancel', 'empty-output', 'oversized-local'].includes(scenario)
+					) {
 						for (const [config] of peerManager.spawn.mock.calls)
 							expect(config).toMatchObject({
-								prompt: expect.stringContaining('Local native output'),
+								prompt: expect.stringContaining(localOutput),
 							});
 						expect(
 							useSessionStore.getState().sessions[0].aiTabs[0].pendingMentionHandoff
 						).toBeUndefined();
 					}
+					if (scenario === 'oversized-reply' || scenario === 'oversized-local') {
+						const saved = f.store.readDispatchAdmission(f.input.dispatchId)!;
+						expect(
+							saved.queueRouting!.steps.some((step) =>
+								step.terminal?.error?.startsWith('DispatchRoutingOutputTooLarge')
+							)
+						).toBe(true);
+					}
 					expect(fires).toHaveBeenCalledTimes(1);
 					expect(fires.mock.calls[0][0]).toMatchObject({
-						status: ['failed', 'local-cancel', 'empty-output'].includes(scenario)
+						status: [
+							'failed',
+							'oversized-reply',
+							'local-cancel',
+							'empty-output',
+							'oversized-local',
+						].includes(scenario)
 							? 'failed'
 							: 'completed',
 						entry: { pendingAdmissionId: f.input.dispatchId },
 					});
 					expect(settled).toHaveBeenCalledTimes(
-						((mode === 'parallel' || mode === 'consult-first') && scenario !== 'failed') ||
-							(mode === 'handoff' && !['local-cancel', 'empty-output'].includes(scenario))
+						((mode === 'parallel' || mode === 'consult-first') &&
+							!['failed', 'oversized-reply'].includes(scenario)) ||
+							(mode === 'handoff' &&
+								!['local-cancel', 'empty-output', 'oversized-local'].includes(scenario))
 							? 2
 							: 1
 					);
@@ -2417,7 +2465,10 @@ describe('persistence IPC handlers', () => {
 						})
 					).rejects.toThrow();
 					expect(peerManager.spawn).toHaveBeenCalledTimes(
-						mode === 'handoff' && ['local-cancel', 'empty-output'].includes(scenario) ? 0 : 2
+						mode === 'handoff' &&
+							['local-cancel', 'empty-output', 'oversized-local'].includes(scenario)
+							? 0
+							: 2
 					);
 					expect(
 						useSessionStore

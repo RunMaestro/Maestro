@@ -941,6 +941,88 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		if (!isPianolaScopeId(dispatchId)) throw new Error('Invalid Pianola dispatch ID');
 		return `maestro-pianola-dispatch-${dispatchId}.json`;
 	}
+	// Payloads remain host-only. No wire path or renderer-supplied reference is accepted.
+	type AdmissionArtifactRef = { version: 1; sha256: string; bytes: number };
+	type StoredAdmission = PianolaDispatchAdmission & {
+		storageVersion?: 1;
+		payloads?: { prepare?: AdmissionArtifactRef; terminals: Record<string, AdmissionArtifactRef> };
+	};
+	const artifactMaxBytes = 8 * 1024 * 1024;
+	function artifactName(dispatchId: string, hash: string): string {
+		admissionName(dispatchId);
+		if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid Pianola artifact hash');
+		return `maestro-pianola-dispatch-${dispatchId}-${hash}.artifact.json`;
+	}
+	function artifactBinding(record: PianolaDispatchAdmission, requestId?: string): string {
+		const step = requestId && record.queueRouting?.steps.find((s) => s.requestId === requestId);
+		if (requestId && !step) throw new Error('Invalid Pianola artifact request');
+		return canonicalJson({
+			dispatchId: record.dispatchId,
+			scopeId: record.scopeId,
+			caller: record.caller,
+			intent: record.intentFingerprint,
+			targetAgentId: record.targetAgentId,
+			targetTabId: record.targetTabId,
+			...(step
+				? {
+						generation: record.queueRelease?.generation,
+						requestId,
+						kind: step.kind,
+						stage: step.stage,
+						target: step.targetAgentId,
+						runId: step.runId,
+						processId: step.processId,
+					}
+				: { slot: 'prepare' }),
+		});
+	}
+	function readAdmissionArtifact(
+		record: PianolaDispatchAdmission,
+		ref: AdmissionArtifactRef,
+		requestId?: string
+	): unknown {
+		if (
+			!ref ||
+			ref.version !== 1 ||
+			!Number.isSafeInteger(ref.bytes) ||
+			ref.bytes < 1 ||
+			ref.bytes > artifactMaxBytes
+		)
+			throw new Error('Invalid Pianola artifact reference');
+		const file = filePath(artifactName(record.dispatchId, ref.sha256));
+		// Missing payload is corruption, never a missing/new admission.
+		const stat = fs.lstatSync(file);
+		if (!stat.isFile() || stat.size !== ref.bytes) throw new Error('Invalid Pianola artifact size');
+		const body = fs.readFileSync(file, 'utf8');
+		if (
+			Buffer.byteLength(body, 'utf8') !== ref.bytes ||
+			createHash('sha256').update(body).digest('hex') !== ref.sha256
+		)
+			throw new Error('Invalid Pianola artifact content');
+		const envelope = JSON.parse(body);
+		if (envelope.version !== 1 || envelope.binding !== artifactBinding(record, requestId))
+			throw new Error('Invalid Pianola artifact binding');
+		return envelope.value;
+	}
+	function writeAdmissionArtifact(
+		record: PianolaDispatchAdmission,
+		value: unknown,
+		requestId?: string
+	): AdmissionArtifactRef {
+		const envelope = { version: 1, binding: artifactBinding(record, requestId), value };
+		const body = JSON.stringify(envelope, null, indent) + (trailingNewline ? '\n' : '');
+		const bytes = Buffer.byteLength(body, 'utf8');
+		if (bytes > artifactMaxBytes) throw new Error('Pianola admission payload too large');
+		const ref: AdmissionArtifactRef = {
+			version: 1,
+			sha256: createHash('sha256').update(body).digest('hex'),
+			bytes,
+		};
+		const name = artifactName(record.dispatchId, ref.sha256);
+		if (fs.existsSync(filePath(name))) readAdmissionArtifact(record, ref, requestId);
+		else writeJsonAtomic(name, envelope, true);
+		return ref;
+	}
 	function readDispatchAdmission(dispatchId: string): PianolaDispatchAdmission | null {
 		let body: string;
 		try {
@@ -951,15 +1033,85 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
 			throw error;
 		}
-		const value = validatePianolaDispatchAdmission(JSON.parse(body));
+		const stored = JSON.parse(body) as StoredAdmission;
+		if (stored.storageVersion !== undefined) {
+			if (
+				stored.storageVersion !== 1 ||
+				!stored.payloads ||
+				!stored.payloads.terminals ||
+				stored.dispatchId !== dispatchId
+			)
+				throw new Error('Invalid Pianola admission storage');
+			if (stored.payloads.prepare) {
+				if (stored.queuePrepare) throw new Error('Ambiguous Pianola prepare');
+				stored.queuePrepare = readAdmissionArtifact(
+					stored,
+					stored.payloads.prepare
+				) as PianolaDispatchAdmission['queuePrepare'];
+			}
+			for (const [requestId, ref] of Object.entries(stored.payloads.terminals)) {
+				const step = stored.queueRouting?.steps.find((s) => s.requestId === requestId);
+				if (!step || step.terminal) throw new Error('Invalid Pianola terminal reference');
+				step.terminal = readAdmissionArtifact(stored, ref, requestId) as typeof step.terminal;
+			}
+			delete stored.storageVersion;
+			delete stored.payloads;
+		} else if (stored.payloads) throw new Error('Invalid Pianola admission storage');
+		const value = validatePianolaDispatchAdmission(stored);
 		if (!value || value.dispatchId !== dispatchId) throw new Error('Invalid Pianola admission');
 		return value;
 	}
-	function writeDispatchAdmission(admission: PianolaDispatchAdmission): void {
+	function persistDispatchAdmission(admission: PianolaDispatchAdmission): void {
 		if (!validatePianolaDispatchAdmission(admission)) throw new Error('Invalid Pianola admission');
-		if (Buffer.byteLength(JSON.stringify(admission, null, indent), 'utf8') + 1 > 16384)
+		const stored: StoredAdmission = JSON.parse(canonicalJson(admission));
+		stored.storageVersion = 1;
+		stored.payloads = { terminals: {} };
+		if (stored.queuePrepare) {
+			stored.payloads.prepare = writeAdmissionArtifact(admission, stored.queuePrepare);
+			delete stored.queuePrepare;
+		}
+		for (const step of stored.queueRouting?.steps ?? []) {
+			if (!step.terminal) continue;
+			stored.payloads.terminals[step.requestId] = writeAdmissionArtifact(
+				admission,
+				step.terminal,
+				step.requestId
+			);
+			delete step.terminal;
+		}
+		if (Buffer.byteLength(JSON.stringify(stored, null, indent), 'utf8') + 1 > 16384)
 			throw new Error('Pianola admission too large');
-		writeJsonAtomic(admissionName(admission.dispatchId), admission, true);
+		// Every payload is fsynced before the journal can reference it. Read/ack
+		// failures retain the existing unknown/no-resend handling at the host.
+		writeJsonAtomic(admissionName(admission.dispatchId), stored, true);
+		// Compact with the journal under the existing store lock. Only current
+		// payloads survive; failed-write or replaced prepare artifacts do not
+		// become a second history store. No timer or separate retention service.
+		const retained = new Set([
+			...(stored.payloads.prepare
+				? [artifactName(admission.dispatchId, stored.payloads.prepare.sha256)]
+				: []),
+			...Object.values(stored.payloads.terminals).map((ref) =>
+				artifactName(admission.dispatchId, ref.sha256)
+			),
+		]);
+		const prefix = `maestro-pianola-dispatch-${admission.dispatchId}-`;
+		for (const name of fs.readdirSync(resolveDir())) {
+			if (
+				name.startsWith(prefix) &&
+				/^[a-f0-9]{64}\.artifact\.json$/.test(name.slice(prefix.length)) &&
+				!retained.has(name)
+			)
+				fs.rmSync(filePath(name), { force: true });
+		}
+	}
+	function writeDispatchAdmission(admission: PianolaDispatchAdmission): void {
+		withFileLock(
+			admissionName(admission.dispatchId),
+			'dispatch admission',
+			() => persistDispatchAdmission(admission),
+			true
+		);
 	}
 
 	function checkpointName(scopeId: string): string {

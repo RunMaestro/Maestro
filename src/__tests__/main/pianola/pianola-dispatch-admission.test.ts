@@ -130,6 +130,147 @@ function fixture() {
 }
 
 describe('host Pianola dispatch admission', () => {
+	async function payloadFixture() {
+		const f = fixture();
+		await f.service.prepare(f.client, f.request);
+		await f.service.bind(f.client, dispatchId, 'target', 'row');
+		const record = f.store.readDispatchAdmission(dispatchId)!;
+		record.phase = 'settled';
+		record.outcome = 'accepted';
+		record.queuePrepare = {
+			phase: 'durable',
+			item: {
+				id: 'row',
+				tabId: 'target',
+				pendingAdmissionId: dispatchId,
+				type: 'message',
+				timestamp: 100,
+				text: 'PROMPT-BEGIN' + '😀\n\"'.repeat(20000) + 'PROMPT-END',
+				crossAgentMention: true,
+			},
+		};
+		record.queueAuthority = {
+			acceptedAt: 100,
+			expiresAt: 1000,
+			bindingFingerprint: 'a'.repeat(64),
+			createdAt: 90,
+		};
+		record.queueRelease = { generation: '44444444-4444-4444-8444-444444444444', baseline: null };
+		record.queueRouting = {
+			routing: 'only',
+			targets: [
+				{ agentId: 'peer-a', fingerprint: 'b'.repeat(64) },
+				{ agentId: 'peer-b', fingerprint: 'c'.repeat(64) },
+			],
+			steps: ['55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666'].map(
+				(requestId, index) => ({
+					kind: 'consult',
+					requestId,
+					targetAgentId: index === 0 ? 'peer-a' : 'peer-b',
+					status: 'settled',
+					processId: 'cross-agent-' + requestId,
+					runId: 'run-' + index,
+					terminal: { text: 'BEGIN-' + index + '😀\n\"'.repeat(20000) + 'END-' + index },
+				})
+			),
+		};
+		f.store.writeDispatchAdmission(record);
+		const journal = path.join(f.dir, `maestro-pianola-dispatch-${dispatchId}.json`);
+		const disk = () => JSON.parse(fs.readFileSync(journal, 'utf8'));
+		const artifact = (ref: { sha256: string }) =>
+			path.join(f.dir, `maestro-pianola-dispatch-${dispatchId}-${ref.sha256}.artifact.json`);
+		return { ...f, record, journal, disk, artifact };
+	}
+
+	it('keeps the control journal bounded and restores complete Unicode prompts and multiple replies after restart', async () => {
+		const f = await payloadFixture();
+		expect(fs.statSync(f.journal).size).toBeLessThanOrEqual(16384);
+		expect(fs.readFileSync(f.journal, 'utf8')).not.toContain('PROMPT-BEGIN');
+		const reopened = createPianolaFsStore({
+			resolveDir: () => f.dir,
+			indent: '\t',
+			trailingNewline: false,
+		});
+		expect(reopened.readDispatchAdmission(dispatchId)).toEqual(f.record);
+		for (let i = 0; i < 8; i++) {
+			f.record.queuePrepare!.callbackId = 'callback-' + i;
+			f.store.writeDispatchAdmission(f.record);
+		}
+		expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toHaveLength(3);
+		expect(reopened.readDispatchAdmission(dispatchId)).toEqual(f.record);
+	});
+
+	it.each([
+		'missing',
+		'tamper',
+		'foreign-reply',
+		'generation',
+		'run',
+		'intent',
+		'target',
+		'version',
+		'length',
+		'path',
+		'symlink',
+	])('refuses %s artifacts without treating them as new admissions', async (fault) => {
+		const f = await payloadFixture();
+		const disk = f.disk();
+		const [a, b] = disk.queueRouting.steps;
+		const ref = disk.payloads.terminals[a.requestId];
+		const file = f.artifact(ref);
+		if (fault === 'missing') fs.rmSync(file);
+		if (fault === 'tamper')
+			fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('BEGIN-0', 'OTHER-0'));
+		if (fault === 'foreign-reply')
+			disk.payloads.terminals[a.requestId] = disk.payloads.terminals[b.requestId];
+		if (fault === 'generation')
+			disk.queueRelease.generation = '77777777-7777-4777-8777-777777777777';
+		if (fault === 'run') a.runId = 'foreign-run';
+		if (fault === 'intent') disk.intentFingerprint = 'd'.repeat(64);
+		if (fault === 'target') a.targetAgentId = 'peer-b';
+		if (fault === 'version') ref.version = 2;
+		if (fault === 'length') ref.bytes++;
+		if (fault === 'path') ref.sha256 = '../foreign';
+		if (fault === 'symlink') {
+			fs.rmSync(file);
+			fs.symlinkSync(f.artifact(disk.payloads.terminals[b.requestId]), file);
+		}
+		fs.writeFileSync(f.journal, JSON.stringify(disk));
+		expect(() => f.store.readDispatchAdmission(dispatchId)).toThrow();
+	});
+
+	it.each(['artifact-enospc', 'artifact-ack', 'journal-ack'])(
+		'preserves durable evidence and write-before-reference on %s',
+		async (fault) => {
+			const f = await payloadFixture();
+			const before = f.store.readDispatchAdmission(dispatchId);
+			f.record.queueRouting!.steps[0].terminal!.text = 'NEW-BEGIN' + 'z'.repeat(20000) + 'NEW-END';
+			const rename = fs.renameSync;
+			vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+				const artifact = String(to).endsWith('.artifact.json');
+				if (!artifact) {
+					const pending = JSON.parse(fs.readFileSync(from, 'utf8'));
+					for (const ref of Object.values(pending.payloads.terminals) as { sha256: string }[])
+						expect(fs.existsSync(f.artifact(ref))).toBe(true);
+				}
+				if (artifact && fault === 'artifact-enospc')
+					throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+				rename(from, to);
+				if ((artifact && fault === 'artifact-ack') || (!artifact && fault === 'journal-ack'))
+					throw new Error('Write acknowledgement lost');
+			});
+			expect(() => f.store.writeDispatchAdmission(f.record)).toThrow();
+			expect(f.store.readDispatchAdmission(dispatchId)).toEqual(
+				fault === 'journal-ack' ? f.record : before
+			);
+			vi.restoreAllMocks();
+			f.store.writeDispatchAdmission(f.store.readDispatchAdmission(dispatchId)!);
+			expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toHaveLength(
+				3
+			);
+		}
+	);
+
 	it.each(['new-tab', 'existing-tab', 'queue'] as const)(
 		'requires fresh owner policy for %s and never adopts old tasks',
 		async (placement) => {
