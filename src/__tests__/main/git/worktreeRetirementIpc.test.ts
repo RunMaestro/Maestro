@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	from: vi.fn(),
 	prepare: vi.fn(),
 	abort: vi.fn(),
+	remove: vi.fn(),
 	request: vi.fn(),
 	recoveries: vi.fn(),
 	cancel: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('../../../main/git/worktreeRetirementHost', () => ({
 	WorktreeRetirementHost: class {
 		prepare = mocks.prepare;
 		abort = mocks.abort;
+		remove = mocks.remove;
 		recover = mocks.recover;
 	},
 }));
@@ -56,6 +58,7 @@ describe('retirement Git IPC adapter', () => {
 	it.each([
 		'prepareWorktreeRetirement',
 		'abortWorktreeRetirement',
+		'removeWorktreeRetirement',
 		'getWorktreeRetirementRecoveries',
 		'cancelWorktreeRetirementRecovery',
 		'completeWorktreeRetirementRecovery',
@@ -63,6 +66,27 @@ describe('retirement Git IPC adapter', () => {
 		'retirementRendererRelease',
 	])('marks %s desktop-only at registration', (name) => {
 		expect(isDesktopOnlyChannel(`git:${name}`)).toBe(true);
+	});
+	it('commits only an opaque preparation owned by the actual desktop main-frame sender', async () => {
+		const event = sender();
+		mocks.from.mockReturnValue({});
+		mocks.remove.mockResolvedValue({ status: 'removed' });
+		expect(await invoke('removeWorktreeRetirement', event, 'opaque', { path: '/forged' })).toEqual({
+			status: 'removed',
+		});
+		expect(mocks.remove).toHaveBeenCalledWith('opaque', event.sender);
+		for (const invalid of ['', undefined, { token: 'opaque' }])
+			expect(await invoke('removeWorktreeRetirement', event, invalid)).toMatchObject({
+				status: 'blocked',
+			});
+		expect(
+			await invoke('removeWorktreeRetirement', { ...event, senderFrame: {} }, 'opaque')
+		).toMatchObject({ status: 'blocked' });
+		mocks.from.mockReturnValue(null);
+		expect(await invoke('removeWorktreeRetirement', event, 'opaque')).toMatchObject({
+			status: 'blocked',
+		});
+		expect(mocks.remove).toHaveBeenCalledOnce();
 	});
 	it('reads recovery ids and binds cancellation to the actual desktop sender', async () => {
 		const event = sender();

@@ -606,12 +606,14 @@ describe('retirement desktop preload protocol', () => {
 		const api = createGitApi();
 		await api.prepareWorktreeRetirement('child');
 		await api.abortWorktreeRetirement('opaque');
+		await api.removeWorktreeRetirement('opaque');
 		await api.getWorktreeRetirementRecoveries();
 		await api.cancelWorktreeRetirementRecovery('archive');
 		await api.completeWorktreeRetirementRecovery('archive');
 		expect(mockInvoke.mock.calls).toEqual([
 			['git:prepareWorktreeRetirement', 'child'],
 			['git:abortWorktreeRetirement', 'opaque'],
+			['git:removeWorktreeRetirement', 'opaque'],
 			['git:getWorktreeRetirementRecoveries'],
 			['git:cancelWorktreeRetirementRecovery', 'archive'],
 			['git:completeWorktreeRetirementRecovery', 'archive'],

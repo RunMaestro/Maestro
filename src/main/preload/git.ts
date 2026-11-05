@@ -473,6 +473,10 @@ export function createGitApi() {
 		/** Prepare a desktop renderer reservation; this does not remove the checkout. */
 		prepareWorktreeRetirement: (sessionId: string): Promise<RetirementPreparationResult> =>
 			ipcRenderer.invoke('git:prepareWorktreeRetirement', sessionId),
+		removeWorktreeRetirement: (
+			token: string
+		): Promise<import('../../shared/worktreeRetirement').RetirementRemovalResult> =>
+			ipcRenderer.invoke('git:removeWorktreeRetirement', token),
 		abortWorktreeRetirement: (token: string): Promise<boolean> =>
 			ipcRenderer.invoke('git:abortWorktreeRetirement', token),
 		getWorktreeRetirementRecoveries: (): Promise<

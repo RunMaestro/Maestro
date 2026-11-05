@@ -224,19 +224,23 @@ Discovery and manual merge currently support local worktrees with a GitHub.com
 post-merge worktree cleanup is not available. Merging does not remove the
 checkout; use the explicit removal controls below when appropriate.
 
-The cleanup implementation is still in progress. Its renderer preparation now
+The PR details now offer **Prepare worktree cleanup**, followed by explicit
+**Confirm worktree removal** or **Keep checkout**. Preparation temporarily
 fences child and parent session updates, queued work, Auto Run starts, composer
 drafts and editor entry points before inspecting live state. Saved idle chat is
-preserved. The first supported cleanup path will require file tabs and editing
+preserved. The supported local primary-renderer CLI path requires file tabs and editing
 dialogs to be closed; renderer paths alone cannot exclude symlink aliases into
 the checkout. Desktop preparation now binds an opaque ID and renderer revision
 to Main's trusted reservation and sole primary window. Timeout or renderer loss
 aborts preparation; an in-flight removal stays fenced. The layer stack also
 blocks preparation while other overlays are open. Preparation does not authorize
-removal. The checked removal transaction remains internal. Saved chat is retained
+removal without a separate confirmation. Main independently requires the exact
+merged PR head and refuses changed, untracked or ignored data. Saved chat is retained
 before Git runs, startup restores journal reservations, and desktop recovery
 checks disk and Git administration without repeating deletion.
-Uncertain outcomes remain reserved. The internal transaction now drains local
+Uncertain outcomes remain reserved, with a same-token settlement retry in the
+details even after the child registration disappears. A lost success reply can
+be replayed to its original sender without another Git removal. The transaction drains local
 worktree watcher probes/scans and cancels target discovery timers before Git;
 late discovery/removal events cannot recreate the retiring session. Parent
 watching continues for unrelated worktrees. Failed watcher closes block removal.
@@ -246,9 +250,14 @@ loaded sole primary renderer. It freezes the stale or already-absent child and i
 surviving parent, reuses the original journal/archive identity, settles watchers
 and durable registration state, and then releases the parent. Failed writes or
 lost replies retain the fence for retry; reloads require a fresh token and
-revision. Recovery never repeats Git deletion. Cleanup commit exposure and the
-explicit cleanup policy/result/archive UI still need integration before cleanup
-is available.
+revision. Recovery never repeats Git deletion. A primary document lost during
+an active removal cannot adopt that runner: the result explicitly requires
+restart recovery and the fence stays held. Owner loss during durable intent
+persistence stops before Git starts.
+
+Cleanup currently keeps the checkout by default and asks for each removal.
+Automatic opt-in policy, recovery/archive browsing UI and policy persistence
+remain in progress. Neither merging nor status polling triggers removal.
 
 ### Removing Worktrees
 

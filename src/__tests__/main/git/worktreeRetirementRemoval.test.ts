@@ -199,6 +199,7 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 		fence,
 		host,
 		identity,
+		client,
 		remote,
 		archive,
 		journal,
@@ -598,25 +599,24 @@ describe('checked worktree removal with real local Git fixtures', () => {
 		expect(restarted.admit([removed.parent]).ok).toBe(false);
 		expect(removed.journal[0].phase).toBe('removing');
 	});
-	it('makes the original archive durable before Git and keeps owner loss fenced during that write', async () => {
+	it('keeps the original durable intent fenced after owner loss during its write, without starting Git', async () => {
 		const f = await setup();
 		const write = f.writeIntent.getMockImplementation()!;
 		f.writeIntent.mockImplementationOnce(async (intent) => {
 			expect(f.fence.state(f.root)).toBe('removing');
 			f.invalidate();
 			expect(f.host.abort(f.token, f.identity)).toBe(false);
-			expect(adapter.beforeRemove).not.toHaveBeenCalled();
 			await write(intent);
 		});
-		adapter.beforeRemove.mockImplementationOnce(async () => {
-			expect(f.journal[0]).toMatchObject({
-				phase: 'removing',
-				checkout: { head: f.head },
-				archive: { session: { name: 'Saved child' } },
-			});
-			expect(f.archive).toHaveLength(0);
+		expect(await f.remove()).toMatchObject({ status: 'pending', recovery: 'restart-required' });
+		expect(f.journal[0]).toMatchObject({
+			phase: 'removing',
+			checkout: { head: f.head },
+			archive: { session: { name: 'Saved child' } },
 		});
-		expect(await f.remove()).toEqual({ status: 'removed' });
+		expect(existsSync(f.root)).toBe(true);
+		expect(adapter.beforeRemove).not.toHaveBeenCalled();
+		expect(f.fence.admit([f.parent]).ok).toBe(false);
 	});
 	it('never starts Git after a failed intent flush, even when the cache already contains it', async () => {
 		const f = await setup();
@@ -881,7 +881,31 @@ describe('checked worktree removal with real local Git fixtures', () => {
 		expect(f.host.abort(f.token, f.identity)).toBe(false);
 		expect(f.fence.admit([f.parent]).ok).toBe(false);
 		finish();
-		expect(await pending).toEqual({ status: 'removed' });
+		expect(await pending).toMatchObject({ status: 'pending', recovery: 'restart-required' });
+		expect(f.fence.admit([f.parent]).ok).toBe(false);
+		expect(f.release).not.toHaveBeenCalled();
+		expect((await f.remove()).status).toBe('pending');
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('replays a completed commit receipt for its original sender without removing again', async () => {
+		const f = await setup();
+		expect(await f.remove()).toEqual({ status: 'removed' });
+		expect(await f.remove()).toEqual({ status: 'removed' });
+		expect((await f.host.remove(f.token, {})).status).toBe('blocked');
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+		expect(f.archive).toHaveLength(1);
+	});
+	it('requires restart recovery after same-sender document reload without an adapter callback', async () => {
+		const f = await setup();
+		adapter.beforeRemove.mockImplementationOnce(async () => {
+			f.client.invalidate();
+			f.client.loaded(f.identity);
+		});
+		expect(await f.remove()).toMatchObject({ status: 'pending', recovery: 'restart-required' });
+		expect(existsSync(f.root)).toBe(false);
+		expect(f.fence.state(f.root)).toBe('removing');
+		expect(f.request.mock.calls.filter(([command]) => command.kind === 'complete')).toHaveLength(0);
+		expect(await f.remove()).toMatchObject({ status: 'pending', recovery: 'restart-required' });
 		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
 	});
 	it('keeps Git refusal fenced without force or retrying the destructive command', async () => {

@@ -25,4 +25,5 @@ export type RetirementRecoveryCancellation = { ok: true } | { ok: false; reason:
 
 export type RetirementRemovalResult =
 	| { status: 'removed' }
-	| { status: 'blocked' | 'pending'; reason: string };
+	| { status: 'blocked'; reason: string }
+	| { status: 'pending'; reason: string; recovery?: 'restart-required' };

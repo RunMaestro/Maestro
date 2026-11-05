@@ -44,6 +44,7 @@ type Entry = {
 	discoveryEpoch?: number;
 	token?: RetirementToken;
 	owner?: object;
+	ownerRevision?: number;
 	intent?: RetirementIntent;
 	recovered?: boolean;
 	recoveryClaim?: object;
@@ -502,8 +503,28 @@ export class WorktreeRetirement {
 				reason: 'one loaded primary renderer required; additional clients unsupported',
 			};
 		const prepared = this.reserve(checkout);
-		if (prepared.ok) this.owned(prepared.token)!.owner = owner;
+		if (prepared.ok) {
+			const entry = this.owned(prepared.token)!;
+			entry.owner = owner;
+			entry.ownerRevision = client.revision;
+		}
 		return prepared;
+	}
+
+	/** Removal retains the ORIGINAL primary document; a reload cannot adopt its
+	 * live runner. Restart recovery uses the durable journal after it has settled.
+	 */
+	ownsRendererDocument(token: RetirementToken, renderer: object): boolean {
+		const entry = this.owned(token);
+		const client = entry?.owner && this.clients.get(entry.owner);
+		return !!(
+			entry &&
+			client &&
+			this.clients.size === 1 &&
+			client.kind === 'primary' &&
+			client.renderer === renderer &&
+			client.revision === entry.ownerRevision
+		);
 	}
 
 	/**

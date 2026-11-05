@@ -21,6 +21,7 @@ export function registerRetirementHandlers(): void {
 	for (const channel of [
 		'git:prepareWorktreeRetirement',
 		'git:abortWorktreeRetirement',
+		'git:removeWorktreeRetirement',
 		'git:getWorktreeRetirementRecoveries',
 		'git:cancelWorktreeRetirementRecovery',
 		'git:completeWorktreeRetirementRecovery',
@@ -104,6 +105,22 @@ export function registerRetirementHandlers(): void {
 				}
 			)
 		);
+	ipcMain.handle(
+		'git:removeWorktreeRetirement',
+		withErrorLogging(
+			handlerOpts('removeWorktreeRetirement'),
+			async (event: Electron.IpcMainInvokeEvent, token: string) => {
+				if (
+					!BrowserWindow.fromWebContents(event.sender) ||
+					event.senderFrame !== event.sender.mainFrame ||
+					typeof token !== 'string' ||
+					!token
+				)
+					return { status: 'blocked', reason: 'desktop main frame and preparation required' };
+				return host.remove(token, event.sender);
+			}
+		)
+	);
 	ipcMain.handle(
 		'git:abortWorktreeRetirement',
 		withErrorLogging(

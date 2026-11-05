@@ -1016,6 +1016,7 @@ describe('Pianola memory over the bridge', () => {
 it.each([
 	'git:prepareWorktreeRetirement',
 	'git:abortWorktreeRetirement',
+	'git:removeWorktreeRetirement',
 	'git:getWorktreeRetirementRecoveries',
 	'git:cancelWorktreeRetirementRecovery',
 	'git:completeWorktreeRetirementRecovery',

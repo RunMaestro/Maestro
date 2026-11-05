@@ -37,6 +37,7 @@ type Prepared = {
  * A lease can abort preparation only; removing remains fenced until settlement.
  */
 export class WorktreeRetirementHost {
+	private readonly receipts = new WeakMap<object, Map<string, RemovalResult>>();
 	private readonly prepared = new Map<string, Prepared>();
 	private readonly recoveries = new Map<
 		string,
@@ -128,7 +129,7 @@ export class WorktreeRetirementHost {
 		return { ok: true as const, token: entry.token, expected: entry.expected };
 	}
 
-	/** Internal only until durable restart recovery and policy are wired. The
+	/** Desktop commit of an explicitly confirmed preparation. The
 	 * caller must settle feature-owned watchers before releasing this reservation.
 	 * Concurrent calls share one runner. Once Git starts, abort/expiry/owner loss
 	 * cannot unlock it; retries settle persistence/renderer without removing twice.
@@ -140,7 +141,12 @@ export class WorktreeRetirementHost {
 	): Promise<RemovalResult> {
 		const entry = this.prepared.get(id);
 		if (!entry || entry.renderer.identity !== renderer)
-			return Promise.resolve({ status: 'blocked', reason: 'unknown renderer preparation' });
+			return Promise.resolve(
+				this.receipts.get(renderer)?.get(id) ?? {
+					status: 'blocked',
+					reason: 'unknown renderer preparation',
+				}
+			);
 		if (entry.removal) return entry.removal;
 		const operation = async (): Promise<RemovalResult> => {
 			try {
@@ -158,21 +164,39 @@ export class WorktreeRetirementHost {
 					if (!current.ok) throw new Error(current.reason);
 					await verifyRetirementClean(current.expected);
 					await this.fence.beginRemoval(entry.token);
+					if (!this.fence.ownsRendererDocument(entry.token, renderer))
+						throw new Error('Original primary document lost; restart recovery required');
 					await removeRetirementCheckout(current.expected);
 					entry.diskRemoved = true;
 				}
 				if (!entry.diskRemoved) throw new Error('Removal outcome requires recovery');
 				if (!settleWatchers) throw new Error('Watcher settlement unavailable');
 				await settleWatchers(entry.expected);
+				if (!this.fence.ownsRendererDocument(entry.token, renderer))
+					throw new Error('Original primary document lost; restart recovery required');
 				const reconciled = await this.reconcileRenderer(id, renderer);
 				if (!reconciled.ok) throw new Error(reconciled.reason);
-				await this.fence.settleRemoval(entry.token);
+				await this.fence.settleRemoval(entry.token, () =>
+					this.fence.ownsRendererDocument(entry.token, renderer)
+				);
+				if (!this.fence.ownsRendererDocument(entry.token, renderer))
+					throw new Error('Original primary document lost; restart recovery required');
 				if (!this.fence.complete(entry.token)) throw new Error('Removal settlement lost ownership');
+				const receipts = this.receipts.get(renderer) ?? new Map<string, RemovalResult>();
+				receipts.set(id, { status: 'removed' });
+				if (receipts.size > 64) receipts.delete(receipts.keys().next().value!);
+				this.receipts.set(renderer, receipts);
 				this.release(id, entry);
 				return { status: 'removed' };
 			} catch (error) {
 				const removing = this.fence.tokenState(entry.token) === 'removing';
 				if (!removing) this.abort(id, renderer);
+				if (removing && !this.fence.ownsRendererDocument(entry.token, renderer))
+					return {
+						status: 'pending',
+						reason: 'Original primary document lost; restart recovery required',
+						recovery: 'restart-required',
+					};
 				return {
 					status: removing ? 'pending' : 'blocked',
 					reason: error instanceof Error ? error.message : 'Removal unavailable',
@@ -331,11 +355,17 @@ export class WorktreeRetirementHost {
 			!entry ||
 			entry.renderer.identity !== renderer ||
 			entry.revision === undefined ||
-			this.fence.tokenState(entry.token) !== 'removing'
+			this.fence.tokenState(entry.token) !== 'removing' ||
+			!this.fence.ownsRendererDocument(entry.token, renderer)
 		)
 			return { ok: false as const, reason: 'owned removal required' };
 		const persisted = await this.fence.reconcileRemovedRegistration(entry.token);
 		if (!persisted.ok) return persisted;
+		if (!this.fence.ownsRendererDocument(entry.token, renderer))
+			return {
+				ok: false as const,
+				reason: 'Original primary document lost; restart recovery required',
+			};
 		try {
 			const reply = await entry.renderer.request({
 				kind: 'complete',
@@ -347,7 +377,8 @@ export class WorktreeRetirementHost {
 				!reply.ok ||
 				reply.token !== id ||
 				reply.revision !== entry.revision ||
-				this.prepared.get(id) !== entry
+				this.prepared.get(id) !== entry ||
+				!this.fence.ownsRendererDocument(entry.token, renderer)
 			)
 				return { ok: false as const, reason: 'renderer completion pending' };
 			// The transaction still owns watcher settlement and final fence completion.
