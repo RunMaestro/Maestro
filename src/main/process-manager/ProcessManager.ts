@@ -185,7 +185,13 @@ export class ProcessManager extends EventEmitter {
 		const release = trackHeadlessAgentActivity(workerId);
 		// Attach to the actual child before returning. Caller stop/kill may remove
 		// the process-table row before the OS confirms termination.
-		const result = this.spawnManaged(config);
+		let result: SpawnResult;
+		try {
+			result = this.spawnManaged(config);
+		} catch (error) {
+			release();
+			throw error;
+		}
 		const process = this.processes.get(config.sessionId);
 		if (!result.success) {
 			release();

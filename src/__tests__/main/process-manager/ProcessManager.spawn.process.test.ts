@@ -25,6 +25,10 @@ vi.mock('../../../main/coworking/coworking-socket-path', () => ({
 
 import { ProcessManager } from '../../../main/process-manager';
 import type { ProcessConfig } from '../../../main/process-manager/types';
+import {
+	getHeadlessAgentActivity,
+	trackHeadlessAgentActivity,
+} from '../../../main/utils/headless-agent-activity';
 import { CAPTURED_RECORDINGS, CAPTURED_OPENCODE_SESSION_ID } from './recordings/captured';
 import {
 	FAKE_AGENT_PATH,
@@ -112,6 +116,86 @@ function untilExit(heard: Heard[], timeoutMs = 8000): Promise<void> {
 const types = (heard: Heard[]): string[] => heard.map((entry) => entry.type);
 
 describe('ProcessManager.spawn against a real process', () => {
+	it('releases only the refused duplicate activity when the real owner exits', async () => {
+		const manager = new ProcessManager();
+		managers.push(manager);
+		const heard = listen(manager);
+		const other = trackHeadlessAgentActivity('agent-1');
+		try {
+			spawnFakeAgent(
+				manager,
+				fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal']),
+				{ hold: true }
+			);
+			const child = manager.get(SESSION_ID)!.childProcess!;
+			expect(getHeadlessAgentActivity().counts['agent-1']).toBe(2);
+			expect(() =>
+				spawnFakeAgent(
+					manager,
+					fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal'])
+				)
+			).toThrow();
+			expect(getHeadlessAgentActivity().counts['agent-1']).toBe(2);
+			child.kill();
+			await untilExit(heard);
+			expect(getHeadlessAgentActivity().counts['agent-1']).toBe(1);
+			child.emit('close', 0, null);
+			expect(getHeadlessAgentActivity().counts['agent-1']).toBe(1);
+		} finally {
+			other();
+		}
+		expect(getHeadlessAgentActivity().counts['agent-1']).toBeUndefined();
+	});
+
+	it('releases the new activity and preserves the original synchronous error', () => {
+		const manager = new ProcessManager();
+		const failure = new Error('synchronous failure');
+		const other = trackHeadlessAgentActivity('throw-worker');
+		const spy = vi.spyOn(manager as never, 'spawnManaged' as never).mockImplementation(() => {
+			throw failure;
+		});
+		try {
+			expect(() =>
+				manager.spawn({
+					sessionId: 'throw-tab',
+					originWorkerId: 'throw-worker',
+					toolType: 'opencode',
+					cwd: scratch.dir,
+				})
+			).toThrow(failure);
+			expect(getHeadlessAgentActivity().counts['throw-worker']).toBe(1);
+		} finally {
+			spy.mockRestore();
+			other();
+		}
+		expect(getHeadlessAgentActivity().counts['throw-worker']).toBeUndefined();
+	});
+
+	posixIt('keeps SSH activity after uncertain child termination', async () => {
+		const manager = new ProcessManager();
+		managers.push(manager);
+		const heard = listen(manager);
+		manager.spawn({
+			sessionId: SESSION_ID,
+			originWorkerId: 'ssh-worker',
+			toolType: 'opencode',
+			cwd: scratch.dir,
+			command: process.execPath,
+			args: [FAKE_AGENT_PATH],
+			sshStdinScript: 'script',
+			customEnvVars: {
+				FAKE_AGENT_RECORDING: writeFakeTurn(
+					scratch.dir,
+					fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal'])
+				),
+				FAKE_AGENT_HOLD: '1',
+			},
+		});
+		const child = manager.get(SESSION_ID)!.childProcess!;
+		child.kill();
+		await untilExit(heard);
+		expect(getHeadlessAgentActivity().counts['ssh-worker']).toBe(1);
+	});
 	it('streams a real OpenCode turn to the renderer and settles it as completed', async () => {
 		const manager = new ProcessManager();
 		managers.push(manager);
