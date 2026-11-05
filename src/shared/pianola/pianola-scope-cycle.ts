@@ -5,7 +5,7 @@
  * unguarded fallback, including for a delayed manager reply.
  */
 import { createHash } from 'crypto';
-import { sameCurrentTurnCursor, type CurrentTurnRead } from '../currentTurn';
+import { isCurrentTurnCursor, sameCurrentTurnCursor, type CurrentTurnRead } from '../currentTurn';
 import { canonicalJson } from '../canonicalJson';
 import type { DesktopSessionsSnapshot } from '../desktopTabs';
 import type { PianolaFsStore } from './fs-store';
@@ -46,6 +46,7 @@ export interface PianolaScopeSnapshotTab extends PianolaScopeTab {
 	/** Host creation time, never the provider session's creation time. */
 	createdAt: number;
 	busy: boolean;
+	enrollment?: CurrentTurnRead['cursor'];
 	cursorAvailable: boolean;
 	cursor: PianolaScopeCursor | null;
 }
@@ -204,6 +205,10 @@ function assertSnapshot(snapshot: PianolaScopeSnapshot): void {
 				typeof tab.ephemeral !== 'boolean' ||
 				typeof tab.busy !== 'boolean' ||
 				typeof tab.cursorAvailable !== 'boolean' ||
+				(tab.enrollment !== undefined &&
+					(!isCurrentTurnCursor(tab.enrollment) ||
+						tab.enrollment.runId !== null ||
+						tab.enrollment.turnId !== null)) ||
 				!isPianolaScopeCursor(tab.cursor)
 		) ||
 		new Set(snapshot.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))).size !==
@@ -279,8 +284,10 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 			busy: info.busy,
 			consult: info.consult,
 			ephemeral: info.ephemeral,
+			enrollment: info.currentTurn?.enrollment,
 			cursorAvailable: info.currentTurn
-				? info.currentTurn.status === 'complete' && !!info.currentTurn.lastEntry
+				? info.currentTurn.status === 'empty-enrollment' ||
+					(info.currentTurn.status === 'complete' && !!info.currentTurn.lastEntry)
 				: info.cursorAvailable,
 			cursor: info.currentTurn
 				? info.currentTurn.status === 'complete' && info.currentTurn.lastEntry
@@ -559,6 +566,18 @@ export async function runPianolaScopeCycle(
 			}
 			continue;
 		}
+		const firstNativeTurn =
+			!!saved?.emptyEnrollment &&
+			!!tab.enrollment &&
+			canonicalJson(saved.emptyEnrollment) === canonicalJson(tab.enrollment) &&
+			!tab.paused &&
+			!resume &&
+			!configurationChanged &&
+			!firstActivation;
+		if (!tab.enrollment || tab.paused) {
+			if (saved) delete saved.emptyEnrollment;
+		}
+		if (!tab.cursorAvailable && firstNativeTurn) continue;
 		if (!tab.cursorAvailable) {
 			// Persist even first-enrollment failures: otherwise a missing cursor
 			// disappears from the status API entirely.
@@ -610,7 +629,8 @@ export async function runPianolaScopeCycle(
 			resume ||
 			saved?.status !== 'active' ||
 			saved.bindingFingerprint !== binding ||
-			(!!tab.cursor?.native &&
+			(!firstNativeTurn &&
+				!!tab.cursor?.native &&
 				(!saved?.lastSeen?.native ||
 					canonicalJson({
 						...saved.lastSeen.native,
@@ -640,6 +660,7 @@ export async function runPianolaScopeCycle(
 				agentId: tab.agentId,
 				tabId: tab.tabId,
 				bindingFingerprint: binding,
+				emptyEnrollment: tab.enrollment,
 				baseline: createdAfterActivation && !tab.paused ? null : tab.cursor,
 				baselineBusy: !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover,
 				lastSeen: createdAfterActivation && !tab.paused ? null : tab.cursor,
@@ -656,6 +677,7 @@ export async function runPianolaScopeCycle(
 			checkpoint.tabs.push(saved);
 			savedByKey.set(key, saved);
 		} else if (needsBaseline || tab.paused) {
+			saved.emptyEnrollment = tab.enrollment;
 			saved.baseline = tab.cursor;
 			saved.baselineBusy = !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover;
 			saved.lastSeen = tab.cursor;

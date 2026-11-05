@@ -23,7 +23,9 @@ export type CurrentTurnMessage = LogEntryRecord;
 export interface CurrentTurnRead {
 	version: 1;
 	cursor: CurrentTurnCursor;
-	status: 'complete' | 'incomplete' | 'gap' | 'reset' | 'unknown';
+	status: 'empty-enrollment' | 'complete' | 'incomplete' | 'gap' | 'reset' | 'unknown';
+	/** Creation-only baseline. Never implies a complete or actionable turn. */
+	enrollment?: CurrentTurnCursor;
 	reason?: string;
 	entryCount?: number;
 	lastEntry?: { id: string; textLength: number };
@@ -41,6 +43,8 @@ export interface TranscriptObservation {
 	createdAt: number;
 	provider: string;
 	closed?: boolean;
+	/** Only the native creator may attest this, on its first empty snapshot. */
+	emptyCreation?: boolean;
 }
 
 export function isCurrentTurnCursor(value: unknown): value is CurrentTurnCursor {

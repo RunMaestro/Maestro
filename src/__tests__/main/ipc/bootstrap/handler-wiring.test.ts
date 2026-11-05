@@ -70,6 +70,14 @@ describe('IPC handler wiring parity', () => {
 		expect(missing).toEqual([]);
 	});
 
+	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
+		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
+		expect(source).toContain(
+			'onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor)'
+		);
+		expect(source).toContain("from './pianola-persistence'");
+	});
+
 	it('wires the Context Timeline handlers into the live bootstrap path', () => {
 		expect(invokedRegistrars(BOOTSTRAP_INDEX)).toContain('registerContextTimelineHandlers');
 	});

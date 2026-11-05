@@ -1,3 +1,4 @@
+import { pianolaPersistenceConsumer } from './pianola-persistence';
 /**
  * Single-entry orchestrator for all IPC handler registrations plus a handful
  * of inline wiring blocks (group-chat mention/session callbacks, the
@@ -84,8 +85,6 @@ import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
-import { captureException } from '../../utils/sentry';
-import { logger } from '../../utils/logger';
 import { MAX_ENTRIES_PER_SESSION, resolveHistoryEntryLimit } from '../../../shared/history';
 import {
 	setGetSessionsCallback,
@@ -271,14 +270,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
-		onSessionsPersisted: async (added, current, removedIds) => {
-			try {
-				await deps.getPianolaSupervisor()?.autoWatchNewSessions(added, current, removedIds);
-			} catch (error) {
-				logger.error('Could not register new Pianola watches', '[Pianola]', error);
-				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
-			}
-		},
+		onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor),
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.

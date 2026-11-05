@@ -1,3 +1,4 @@
+import { newEmptyTranscript } from '../../../shared/sessionTranscript';
 // Tab helper functions for AI multi-tab support
 // These helpers manage AITab state within Maestro sessions
 
@@ -1188,7 +1189,7 @@ export function createTab(
 	const {
 		origin,
 		agentSessionId = null,
-		logs = [],
+		logs = newEmptyTranscript<LogEntry>(),
 		name = null,
 		starred = false,
 		usageStats,

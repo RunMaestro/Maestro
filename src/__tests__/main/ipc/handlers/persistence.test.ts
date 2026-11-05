@@ -1,3 +1,15 @@
+import { pianolaPersistenceConsumer } from '../../../../main/ipc/bootstrap/pianola-persistence';
+import { PianolaSupervisor } from '../../../../main/pianola/pianola-supervisor';
+import { configurePianolaScope } from '../../../../main/pianola/pianola-legacy-migration';
+import {
+	pianolaScopeSnapshotFromDesktop,
+	runPianolaScopeCycle,
+	type PianolaScopeCycleDeps,
+} from '../../../../shared/pianola/pianola-scope-cycle';
+import { currentTurnMessages } from '../../../../shared/currentTurn';
+vi.mock('../../../../main/cue/cue-cli-executor', () => ({
+	resolveMaestroCliScriptPath: () => '/fixture/cli.js',
+}));
 import { pianolaWatchScope } from '../../../../cli/commands/pianola-scope-watch';
 import { MaestroClient } from '../../../../cli/services/maestro-client';
 import * as workerStore from '../../../../cli/services/pianola-store';
@@ -3623,6 +3635,313 @@ describe('persistence IPC handlers', () => {
 			const newcomer = { ...baseSession, id: 's2' };
 			await handlers.get('sessions:setMany')!({} as any, [newcomer], ['s1']);
 			expect(onSessionsPersisted).toHaveBeenCalledWith([newcomer], [newcomer], ['s1']);
+		});
+
+		it('composes durable persistence, bootstrap consumer, owner enrollment, native census and the first real question', async () => {
+			const root = path.resolve('.maestro/pianola-agent-supervision-20261104/Working');
+			mkdirSync(root, { recursive: true });
+			const directory = mkdtempSync(path.join(root, 'm01-adapter-'));
+			vi.stubEnv('MAESTRO_USER_DATA', directory);
+			const store = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const scopeId = generateUUID();
+			const agentId = generateUUID();
+			const tabId = generateUUID();
+			const make = (id: string, tab: string, extra = {}) => ({
+				...baseSession,
+				id,
+				cwd: directory,
+				toolType: 'codex',
+				groupId: null,
+				aiTabs: [{ id: tab, createdAt: 10, state: 'idle', logs: [] }],
+				...extra,
+			});
+			const agent = make(agentId, tabId);
+			let sessions = [make('manager', 'manager-tab', { isPianola: true })];
+			const file = path.join(directory, 'sessions.json');
+			writeFileSync(file, JSON.stringify(sessions));
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? sessions : fallback
+			);
+			mockSessionsStore.set.mockImplementation((key, value) => {
+				if (key === 'sessions') sessions = value;
+			});
+			mockFlushSessionWrites.mockImplementation(async () =>
+				writeFileSync(file, JSON.stringify(sessions))
+			);
+			let enabled = true;
+			const spawn = vi.fn(() =>
+				Object.assign(new EventEmitter(), { pid: undefined, exitCode: 0, signalCode: null })
+			);
+			const supervisor = new PianolaSupervisor({
+				isEnabled: () => enabled,
+				getPianolaAgentId: () => 'manager',
+				spawnChild: spawn as never,
+			});
+			const consumer = vi.fn(pianolaPersistenceConsumer(() => supervisor));
+			const owner = {
+				isDestroyed: () => false,
+				webContents: { id: 42, isDestroyed: () => false },
+			} as BrowserWindow;
+			registerPersistenceHandlers({
+				...deps,
+				getWindowForSession: () => owner,
+				onSessionsPersisted: consumer,
+			});
+			const callbacks: Record<string, () => Record<string, unknown>> = {};
+			registerSessionCallbacks(
+				new Proxy(
+					{},
+					{
+						get: (_target, key: string) => (fn: () => Record<string, unknown>) => {
+							callbacks[key] = fn;
+						},
+					}
+				) as WebServer,
+				{
+					sessionsStore: deps.sessionsStore,
+					groupsStore: deps.groupsStore,
+					settingsStore: { get: () => ({ pianola: true }) } as never,
+					getProcessManager: () => ({ get: () => undefined }) as never,
+				}
+			);
+			const census = () =>
+				pianolaScopeSnapshotFromDesktop({
+					success: true,
+					...callbacks.setListDesktopSessionsCallback(),
+				});
+			let sequence = 0;
+			const publish = (
+				rows: Array<{ id: string; source: string; text: string; timestamp: number }>,
+				order: string[],
+				empty = false,
+				sender = 42
+			) =>
+				handlers.get('sessions:publishTranscript')!(
+					{ sender: { id: sender } },
+					{
+						sessionId: agentId,
+						tabId,
+						field: 'logs',
+						upserts: rows,
+						orderIds: order,
+						removedIds: [],
+						...(empty && { snapshot: true }),
+						runtime: { state: 'idle' },
+						observation: {
+							sourceGeneration: agentId,
+							sequence: sender === 42 ? ++sequence : 1,
+							createdAt: 10,
+							provider: 'codex',
+							emptyCreation: empty,
+						},
+					}
+				);
+			const configure = () =>
+				configurePianolaScope(
+					{
+						id: scopeId,
+						kind: 'watch-scope',
+						enabled: true,
+						createdAt: 1,
+						managerAgentId: 'manager',
+						selection: {
+							mode: 'agents-and-groups',
+							label: 'Whole agent',
+							agentIds: [agentId],
+							groupIds: [],
+							excludedAgentIds: [],
+						},
+					},
+					{
+						store,
+						snapshot: census,
+						canFence: () => false,
+						featureEnabled: () => true,
+						ownerAuthorized: () => true,
+						readRules: store.readRulesResult,
+					}
+				);
+			const watch: PianolaScopeCycleDeps['watch'] = {
+				readRules: () => [],
+				recordDecision: store.appendDecision,
+				now: () => new Date().toISOString(),
+				genId: generateUUID,
+				log: vi.fn(),
+				notify: vi.fn(),
+			};
+			const readTranscript = vi.fn(async () => {
+				const currentTurn = nativeCurrentTurns.read({
+					agentId,
+					tabId,
+					createdAt: 10,
+					provider: 'codex',
+					agentSessionId: null,
+					open: true,
+				});
+				return { agentId, tabId, currentTurn, messages: currentTurnMessages(currentTurn) };
+			});
+			const requestJudgment = vi.fn(async () => ({ status: 'accepted' as const }));
+			const cycle = () =>
+				runPianolaScopeCycle(
+					scopeId,
+					{
+						store,
+						readSnapshot: async () => census(),
+						readTranscript,
+						watch,
+						dispatch: async () => ({ status: 'accepted' }),
+						requestJudgment,
+					},
+					{ dryRun: false }
+				);
+			try {
+				expect(await handlers.get('sessions:setMany')!({}, [agent], [])).toBe(true);
+				expect(
+					JSON.parse(readFileSync(file, 'utf8')).map((row: { id: string }) => row.id)
+				).toContain(agentId);
+				expect(consumer).toHaveBeenCalledOnce();
+				expect(spawn).not.toHaveBeenCalled();
+				// An unknown empty disk window and a non-owner publisher cannot enroll.
+				expect(census().tabs.find((tab) => tab.tabId === tabId)?.cursorAvailable).toBe(false);
+				publish([], [], true, 99);
+				await expect(configure()).rejects.toThrow('Migration cursor unavailable');
+				publish([], [], true);
+				expect(census().tabs.find((tab) => tab.tabId === tabId)).toMatchObject({
+					cursorAvailable: true,
+					cursor: null,
+				});
+				expect(await configure()).toMatchObject({ status: 'registered' });
+				expect(store.readScopeCheckpoint(scopeId)?.tabs[0]).toMatchObject({
+					baseline: null,
+					emptyEnrollment: { runId: null, turnId: null },
+				});
+				await cycle();
+				expect(readTranscript).not.toHaveBeenCalled();
+				expect(requestJudgment).not.toHaveBeenCalled();
+				// Duplicate durable notifications reconcile one scope, never initial tab watches.
+				await handlers.get('sessions:setMany')!({}, [agent], []);
+				await handlers.get('sessions:setMany')!({}, [agent], []);
+				expect(spawn).toHaveBeenCalledOnce();
+				expect(store.readSupervisorTargets().every((target) => target.kind === 'watch-scope')).toBe(
+					true
+				);
+				const user = { id: 'first-user', source: 'user', text: 'Inspect naming', timestamp: 11 };
+				publish([user], [user.id]);
+				await cycle(); // First user row is not yet a captured turn.
+				expect(requestJudgment).not.toHaveBeenCalled();
+				const capture = new AgentRunCaptureService({
+					getAgentRun: () => undefined,
+					upsertAgentRun: (r) => r,
+					appendAgentRunEvent: (e) => e,
+					findActiveRunBySession: () => undefined,
+				});
+				const run = capture.captureSpawn({
+					sessionId: `${agentId}-ai-${tabId}`,
+					toolType: 'codex',
+					cwd: directory,
+					transcriptBoundaryId: user.id,
+					nativeTabSession: { agentId, tabId, createdAt: 10 },
+				})!;
+				nativeCurrentTurns.begin(run, user.id);
+				const question = {
+					id: 'first-question',
+					source: 'ai',
+					text: 'Should I name it count or total?',
+					timestamp: 12,
+				};
+				publish([question], [user.id, question.id]);
+				const result = await cycle();
+				expect(result.issues).toEqual([]);
+				expect(readTranscript).toHaveBeenCalledOnce();
+				expect(
+					store
+						.readDecisions()
+						.some((decision) => decision.classification.evidence.messageId === question.id)
+				).toBe(true);
+				// Later sibling and worktree inventory uses the same persisted owner census.
+				const sibling = { id: generateUUID(), createdAt: 20, state: 'idle', logs: [] };
+				const child = make(generateUUID(), generateUUID(), { parentSessionId: agentId });
+				const updated = { ...agent, aiTabs: [...agent.aiTabs, sibling] };
+				await handlers.get('sessions:setMany')!({}, [updated, child], []);
+				for (const [id, tab] of [
+					[agentId, sibling],
+					[child.id, child.aiTabs[0]],
+				] as const) {
+					await handlers.get('sessions:publishTranscript')!(
+						{ sender: { id: 42 } },
+						{
+							sessionId: id,
+							tabId: tab.id,
+							field: 'logs',
+							snapshot: true,
+							upserts: [],
+							removedIds: [],
+							orderIds: [],
+							runtime: { state: 'idle' },
+							observation: {
+								sourceGeneration: id + tab.id,
+								sequence: 1,
+								createdAt: tab.createdAt,
+								provider: 'codex',
+								emptyCreation: true,
+							},
+						}
+					);
+				}
+				await cycle();
+				expect(store.readScopeCheckpoint(scopeId)?.tabs).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({ agentId, tabId: sibling.id, baseline: null }),
+						expect.objectContaining({
+							agentId: child.id,
+							tabId: child.aiTabs[0].id,
+							baseline: null,
+						}),
+					])
+				);
+				expect(spawn).toHaveBeenCalledOnce();
+				// Paused tabs stay nonactionable; exclusion removes ownership on the next census.
+				await handlers.get('sessions:setMany')!({}, [{ ...updated, agentErrorPaused: true }], []);
+				await cycle();
+				expect(
+					store.readScopeCheckpoint(scopeId)?.tabs.find((tab) => tab.tabId === sibling.id)?.status
+				).toBe('suspended');
+				const targets = store.readSupervisorTargets();
+				targets[0].selection!.excludedAgentIds.push(child.id);
+				store.writeSupervisorTargets(targets);
+				await cycle();
+				expect(
+					store.readScopeCheckpoint(scopeId)?.tabs.find((tab) => tab.agentId === child.id)?.coverage
+						?.status
+				).toBe('excluded');
+				const before = consumer.mock.calls.length;
+				mockFlushSessionWrites.mockRejectedValueOnce(
+					Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+				);
+				expect(
+					await handlers.get('sessions:setMany')!({}, [make('failed', 'failed-tab')], [])
+				).toBe(false);
+				expect(consumer).toHaveBeenCalledTimes(before);
+				await handlers.get('sessions:setMany')!({}, [], [agentId]);
+				await cycle();
+				expect(store.readScopeCheckpoint(scopeId)?.tabs[0].status).toBe('closed');
+				// Feature-off persistence cannot start a watcher or retain a native empty baseline.
+				enabled = false;
+				nativeCurrentTurns.setEnabled(false);
+				await handlers.get('sessions:setMany')!({}, [make('off-agent', 'off-tab')], []);
+				expect(spawn).toHaveBeenCalledOnce();
+				expect(store.readScopeCheckpoint(scopeId)?.status).toBe('suspended');
+				expect(census().tabs.find((tab) => tab.tabId === 'off-tab')?.cursorAvailable).toBe(false);
+			} finally {
+				supervisor.stopAll();
+				nativeCurrentTurns.setEnabled(true);
+				vi.unstubAllEnvs();
+				rmSync(directory, { recursive: true, force: true });
+			}
 		});
 
 		it('writes the merged sessions array to the store', async () => {

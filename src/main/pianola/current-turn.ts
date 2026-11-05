@@ -11,6 +11,7 @@ import { nativeTabSession } from './pianola-queue-session';
 
 type State = {
 	cursor: CurrentTurnCursor;
+	enrollment?: CurrentTurnCursor;
 	source: string;
 	sequence: number;
 	rowRevisions: Map<string, number>;
@@ -113,6 +114,7 @@ export class NativeCurrentTurns {
 		)
 			return;
 		let state = this.states.get(key);
+		const initial = !state;
 		if (state && meta.sourceGeneration === state.source && meta.sequence <= state.sequence) return;
 		const previousBytes = state?.bytes ?? 0;
 		const replaced =
@@ -166,7 +168,9 @@ export class NativeCurrentTurns {
 			state.cursor.agentSessionId = null;
 		}
 		// A snapshot during a captured turn is a replacement, not proof that dropped risk never existed.
-		if (patch.snapshot && state.cursor.runId) state.reason = 'transcript-reset';
+		if (patch.snapshot && (state.cursor.runId || state.enrollment))
+			state.reason = 'transcript-reset';
+		if (patch.removedIds.length && state.enrollment) state.reason = 'current-turn-trimmed';
 		if (patch.removedIds.some((id) => state!.rows.has(id))) state.reason = 'current-turn-trimmed';
 		if (patch.snapshot) {
 			state.rows.clear();
@@ -252,6 +256,31 @@ export class NativeCurrentTurns {
 				state.order = state.order.slice(user);
 			}
 		}
+		if (
+			initial &&
+			!replaced &&
+			meta.sequence === 1 &&
+			meta.emptyCreation === true &&
+			patch.snapshot &&
+			!meta.closed &&
+			!patch.upserts.length &&
+			!patch.orderIds.length &&
+			!patch.removedIds.length &&
+			!state.cursor.agentSessionId &&
+			patch.runtime?.state === 'idle' &&
+			!patch.runtime?.pid &&
+			!patch.runtime?.awaitingSessionId &&
+			state.reason === 'missing-native-boundary'
+		) {
+			state.enrollment = { ...state.cursor };
+		}
+		if (
+			state.reason &&
+			!['missing-native-boundary', 'native-spawn-unbound', 'new-user-boundary'].includes(
+				state.reason
+			)
+		)
+			delete state.enrollment;
 		this.retainedBytes += state.bytes - previousBytes;
 		while (this.states.size > this.limits.tabs || this.retainedBytes > this.limits.totalBytes) {
 			const first = this.states.keys().next().value!;
@@ -275,8 +304,10 @@ export class NativeCurrentTurns {
 		for (const state of this.states.values()) {
 			if (`${state.cursor.agentId}-ai-${state.cursor.tabId}` !== processSessionId) continue;
 			if (state.cursor.agentSessionId === providerSessionId) continue;
-			if (state.cursor.agentSessionId) state.reason = 'provider-session-reset';
-			else state.pendingAnnouncement = providerSessionId;
+			if (state.cursor.agentSessionId) {
+				state.reason = 'provider-session-reset';
+				delete state.enrollment;
+			} else state.pendingAnnouncement = providerSessionId;
 			state.cursor.agentSessionId = providerSessionId;
 			state.cursor.revision = ++this.revision;
 		}
@@ -298,6 +329,7 @@ export class NativeCurrentTurns {
 			(native.initialSessionId ?? null) === state.cursor.agentSessionId &&
 			!native.conflicted &&
 			run.provider === resolveAgentRunProvider(state.cursor.provider);
+		if (state.cursor.runId || !valid) delete state.enrollment;
 		state.cursor = {
 			...state.cursor,
 			revision: ++this.revision,
@@ -380,6 +412,7 @@ export class NativeCurrentTurns {
 			cursor,
 			status,
 			reason,
+			...(status === 'incomplete' && state?.enrollment && { enrollment: { ...state.enrollment } }),
 			messages: [],
 		});
 		if (!state) return result('unknown', 'native-transcript-unavailable-or-evicted');
@@ -390,13 +423,17 @@ export class NativeCurrentTurns {
 		) {
 			if (state.reason !== 'native-binding-changed') state.cursor.revision = ++this.revision;
 			state.reason = 'native-binding-changed';
+			delete state.enrollment;
 			cursor.revision = state.cursor.revision;
 			return result('reset', state.reason);
 		}
 		// Disk metadata can lag the first native provider announcement. Never read
 		// across that mismatch, but let the confirmed commit become readable when it catches up.
 		if (binding.agentSessionId !== cursor.agentSessionId)
-			return result('reset', 'native-provider-binding-pending');
+			return result(
+				state.enrollment && state.pendingAnnouncement ? 'incomplete' : 'reset',
+				'native-provider-binding-pending'
+			);
 		if (expected && canonicalJson(expected) !== canonicalJson(cursor))
 			return result(
 				expected.generation !== cursor.generation ||
@@ -406,6 +443,14 @@ export class NativeCurrentTurns {
 					: 'gap',
 				'expected-cursor-changed'
 			);
+		if (
+			state.enrollment &&
+			!state.order.length &&
+			!cursor.runId &&
+			!cursor.agentSessionId &&
+			!state.pendingAnnouncement
+		)
+			return { ...result('empty-enrollment'), enrollment: { ...state.enrollment }, entryCount: 0 };
 		if (state.pendingAnnouncement)
 			return result('incomplete', 'native-provider-announcement-unconfirmed');
 		if (state.reason || !cursor.runId || !cursor.turnId)
@@ -419,6 +464,7 @@ export class NativeCurrentTurns {
 			version: 1,
 			cursor,
 			status: 'complete',
+			...(state.enrollment && { enrollment: { ...state.enrollment } }),
 			entryCount: state.order.length,
 			lastEntry: state.order.length
 				? { id: state.order.at(-1)!, textLength: state.rows.get(state.order.at(-1)!)!.text.length }

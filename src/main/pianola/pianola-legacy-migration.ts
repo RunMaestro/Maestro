@@ -344,6 +344,7 @@ export async function migratePianolaLegacyWatches(
 					agentId: tab.agentId,
 					tabId: tab.tabId,
 					bindingFingerprint: pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners),
+					emptyEnrollment: tab.enrollment,
 					baseline: tab.cursor,
 					baselineBusy: false,
 					lastSeen: tab.cursor,

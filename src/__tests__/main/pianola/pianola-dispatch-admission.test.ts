@@ -1,3 +1,4 @@
+import { NativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -116,6 +117,43 @@ function fixture() {
 }
 
 describe('host Pianola dispatch admission', () => {
+	it('preserves the native empty-creation barrier in pre-start dispatch enrollment', async () => {
+		const f = fixture();
+		const native = new NativeCurrentTurns();
+		native.commit({
+			sessionId: 'worker',
+			tabId: 'target',
+			field: 'logs',
+			snapshot: true,
+			upserts: [],
+			removedIds: [],
+			orderIds: [],
+			runtime: { state: 'idle' },
+			observation: {
+				sourceGeneration: 'creator',
+				sequence: 1,
+				createdAt: 90,
+				provider: 'codex',
+				emptyCreation: true,
+			},
+		});
+		const read = native.read({
+			agentId: 'worker',
+			tabId: 'target',
+			createdAt: 90,
+			provider: 'codex',
+			agentSessionId: null,
+			open: true,
+		});
+		expect(read.status).toBe('empty-enrollment');
+		f.snapshot.tabs[0].enrollment = read.enrollment;
+		await f.enroll();
+		expect(f.store.readScopeCheckpoint(scopeId)?.tabs[0]).toMatchObject({
+			baseline: null,
+			emptyEnrollment: read.enrollment,
+		});
+	});
+
 	it('persists enrollment before release and observes a fast first question through the real scope cycle', async () => {
 		const f = fixture();
 		await f.enroll();

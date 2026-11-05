@@ -9,6 +9,7 @@ import { captureException } from '../../utils/sentry';
 import { isExpectedBridgeError } from '../../../shared/bridgeError';
 import {
 	applySessionTranscriptPatch,
+	consumeEmptyTranscriptCreation,
 	type SessionTranscriptPatch,
 	type SessionRuntimeSnapshot,
 } from '../../../shared/sessionTranscript';
@@ -243,6 +244,10 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 							sequence: (sequences.get(tabId) ?? 0) + 1,
 							createdAt: (row as AITab).createdAt,
 							provider: session.toolType,
+							...(!previous &&
+								!logs.length &&
+								!(row as AITab).agentSessionId &&
+								consumeEmptyTranscriptCreation(logs) && { emptyCreation: true }),
 						},
 						...(!previous && { snapshot: true }),
 					}),

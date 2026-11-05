@@ -268,6 +268,7 @@ export class PianolaDispatchAdmissionService {
 				tabId: tab.tabId,
 				bindingFingerprint,
 				dispatchEnrollmentId: record.dispatchId,
+				emptyEnrollment: tab.enrollment,
 				baseline: tab.cursor,
 				baselineBusy: false,
 				lastSeen: tab.cursor,

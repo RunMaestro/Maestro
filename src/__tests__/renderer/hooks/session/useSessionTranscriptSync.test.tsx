@@ -1,3 +1,4 @@
+import { buildNewAgentRecord } from '../../../../shared/newAgentRecord';
 import * as permissionRegistry from '../../../../main/permission-relay/registry';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -635,5 +636,29 @@ describe('real permission relay runtime producer', () => {
 			delete (window.maestro.process as any).getPendingPermissions;
 			delete (window.maestro.process as any).onPendingPermissionsChanged;
 		}
+	});
+});
+
+describe('new empty enrollment provenance', () => {
+	it('publishes creation evidence once and never reconstructs it from hydration', async () => {
+		renderHook(() => useSessionTranscriptSync(ready));
+		const record = buildNewAgentRecord(
+			{ id: 'created', name: 'New', toolType: 'codex', cwd: '/project' },
+			{
+				generateId: (() => {
+					let id = 0;
+					return () => `new-${++id}`;
+				})(),
+			}
+		);
+		const created = createMockSession({ ...record, toolType: 'codex' });
+		act(() => useSessionStore.setState({ sessions: [created] }));
+		expect(published.find((patch) => patch.tabId)?.observation?.emptyCreation).toBe(true);
+		published = [];
+		act(() => useSessionStore.setState({ sessions: [] }));
+		act(() => useSessionStore.setState({ sessions: [structuredClone(created)] }));
+		expect(
+			published.filter((patch) => patch.tabId).every((patch) => !patch.observation?.emptyCreation)
+		).toBe(true);
 	});
 });

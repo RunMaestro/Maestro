@@ -56,6 +56,7 @@ export interface PianolaScopeCheckpointTab {
 	/** Pre-start admission survives a concurrent worker census missing this tab. */
 	dispatchEnrollmentId?: string;
 	coverage?: PianolaScopeTabCoverage;
+	emptyEnrollment?: import('../currentTurn').CurrentTurnCursor;
 	baseline: PianolaScopeCursor | null;
 	/** Only a live stream at enrollment may complete within the baseline entry. */
 	baselineBusy?: boolean;
@@ -178,6 +179,7 @@ export function validatePianolaScopeCheckpoint(
 			(tab.dispatchEnrollmentId !== undefined &&
 				(typeof tab.dispatchEnrollmentId !== 'string' ||
 					!isPianolaScopeId(tab.dispatchEnrollmentId))) ||
+			(tab.emptyEnrollment !== undefined && !isCurrentTurnCursor(tab.emptyEnrollment)) ||
 			!isPianolaScopeCursor(tab.baseline) ||
 			(tab.baselineBusy !== undefined && typeof tab.baselineBusy !== 'boolean') ||
 			!isPianolaScopeCursor(tab.lastSeen) ||

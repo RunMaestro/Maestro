@@ -377,3 +377,23 @@ explicitly unavailable, never successful truncated reads. Completed turns remain
 readable until a new native turn or those bounds require eviction. These limits
 bound retained payloads; they are not measured process RSS limits or a claim of
 live provider acceptance.
+
+### Enrolling a newly created empty chat
+
+A new idle chat can join its owner's scope before its first spawn. Its native
+creator publishes a one-time empty-creation attestation with its first ordered
+owner snapshot. The host exposes `empty-enrollment`, with a null transcript
+baseline and no run or turn ID. This authorizes enrollment only. It cannot be
+composed as a current turn, classified, or used as an answer guard.
+
+The existing owner-authorized scope configuration and durable persistence
+consumer use that same census. The first question becomes eligible only after a
+new submitted user row, matching native AgentRun capture and a complete turn.
+An intervening incomplete first submission keeps the enrollment barrier without
+reading or classifying partial history. Pause, scope changes and unknown native
+continuity retain the usual fresh-baseline behavior.
+
+Creation evidence is held in memory by the creator and consumed once. Disk
+hydration, unknown empty windows, renderer or host restart, eviction, commit
+gaps, trims and transcript resets cannot reconstruct it. These remain blocked
+until a later genuine native turn establishes a safe baseline.

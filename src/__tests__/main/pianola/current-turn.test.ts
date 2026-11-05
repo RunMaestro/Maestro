@@ -68,6 +68,158 @@ function fixture(index = new NativeCurrentTurns()) {
 }
 
 describe('native current-turn revision and completeness', () => {
+	it('admits an owner-created empty enrollment without fabricating a turn', () => {
+		const index = new NativeCurrentTurns();
+		const patch: SessionTranscriptPatch = {
+			sessionId: 'agent',
+			tabId: 'tab',
+			field: 'logs',
+			snapshot: true,
+			upserts: [],
+			removedIds: [],
+			orderIds: [],
+			runtime: { state: 'idle' },
+			observation: {
+				sourceGeneration: 'creator',
+				sequence: 1,
+				createdAt: 7,
+				provider: 'codex',
+				emptyCreation: true,
+			},
+		};
+		index.commit(patch);
+		const empty = index.read(binding);
+		expect(empty).toMatchObject({
+			status: 'empty-enrollment',
+			entryCount: 0,
+			cursor: { runId: null, turnId: null },
+			enrollment: { sourceGeneration: 'creator' },
+		});
+		expect(() => composeCurrentTurn(empty)).toThrow('Incomplete');
+		// A later replacement, even another empty snapshot, cannot restore creation proof.
+		index.commit({ ...patch, observation: { ...patch.observation!, sequence: 2 } });
+		expect(index.read(binding)).toMatchObject({ status: 'incomplete', reason: 'transcript-reset' });
+		expect(index.read(binding).enrollment).toBeUndefined();
+	});
+
+	it('keeps creation enrollment across the first native provider announcement but never a replacement', () => {
+		const index = new NativeCurrentTurns();
+		const patch: SessionTranscriptPatch = {
+			sessionId: 'agent',
+			tabId: 'tab',
+			field: 'logs',
+			snapshot: true,
+			upserts: [],
+			removedIds: [],
+			orderIds: [],
+			runtime: { state: 'idle' },
+			observation: {
+				sourceGeneration: 'creator',
+				sequence: 1,
+				createdAt: 7,
+				provider: 'codex',
+				emptyCreation: true,
+			},
+		};
+		index.commit(patch);
+		const enrollment = index.read(binding).enrollment;
+		index.announce('agent-ai-tab', 'first-native-session');
+		expect(index.read(binding)).toMatchObject({ status: 'incomplete', enrollment });
+		index.commit({
+			...patch,
+			snapshot: false,
+			runtime: { agentSessionId: 'first-native-session' },
+			observation: { ...patch.observation!, sequence: 2 },
+		});
+		expect(index.read({ ...binding, agentSessionId: 'first-native-session' }).enrollment).toEqual(
+			enrollment
+		);
+		index.announce('agent-ai-tab', 'replacement');
+		expect(index.read(binding).status).toBe('reset');
+		expect(index.read(binding).enrollment).toBeUndefined();
+	});
+
+	it.each(['evicted', 'disabled', 'overflow'])(
+		'discards empty enrollment after %s instead of reconstructing it',
+		(mode) => {
+			const index = new NativeCurrentTurns({ tabs: 1, messages: 1, bytes: 100, totalBytes: 1000 });
+			const patch: SessionTranscriptPatch = {
+				sessionId: 'agent',
+				tabId: 'tab',
+				field: 'logs',
+				snapshot: true,
+				upserts: [],
+				removedIds: [],
+				orderIds: [],
+				runtime: { state: 'idle' },
+				observation: {
+					sourceGeneration: 'creator',
+					sequence: 1,
+					createdAt: 7,
+					provider: 'codex',
+					emptyCreation: true,
+				},
+			};
+			index.commit(patch);
+			expect(index.read(binding).status).toBe('empty-enrollment');
+			if (mode === 'disabled') {
+				index.setEnabled(false);
+				index.setEnabled(true);
+			}
+			if (mode === 'evicted') index.commit({ ...patch, tabId: 'other' });
+			index.commit({
+				...patch,
+				snapshot: false,
+				upserts: mode === 'overflow' ? [row('huge', 'x'.repeat(101))] : [],
+				orderIds: mode === 'overflow' ? ['huge'] : [],
+				observation: { ...patch.observation!, sequence: 2 },
+			});
+			expect(index.read(binding).status).not.toBe('empty-enrollment');
+			expect(index.read(binding).enrollment).toBeUndefined();
+		}
+	);
+
+	it.each(['unknown', 'historical', 'gap', 'busy', 'provider', 'closed', 'restart', 'trim'])(
+		'does not infer empty enrollment from %s',
+		(mode) => {
+			const index = new NativeCurrentTurns();
+			const patch: SessionTranscriptPatch = {
+				sessionId: 'agent',
+				tabId: 'tab',
+				field: 'logs',
+				snapshot: true,
+				upserts: [],
+				removedIds: [],
+				orderIds: [],
+				runtime: { state: 'idle' },
+				observation: {
+					sourceGeneration: 'creator',
+					sequence: 1,
+					createdAt: 7,
+					provider: 'codex',
+					emptyCreation: true,
+				},
+			};
+			if (mode === 'unknown') delete patch.observation!.emptyCreation;
+			if (mode === 'historical') {
+				patch.upserts = [row('old')];
+				patch.orderIds = ['old'];
+			}
+			if (mode === 'gap') patch.observation!.sequence = 2;
+			if (mode === 'busy') patch.runtime = { state: 'busy' };
+			if (mode === 'provider') patch.runtime = { state: 'idle', agentSessionId: 'old' };
+			if (mode === 'closed') patch.observation!.closed = true;
+			if (mode === 'trim') patch.removedIds = ['removed'];
+			if (mode === 'restart') {
+				index.commit({ ...patch, observation: { ...patch.observation!, emptyCreation: false } });
+				patch.observation!.sourceGeneration = 'restarted';
+			}
+			index.commit(patch);
+			expect(index.read(binding).status).not.toBe('empty-enrollment');
+			expect(index.read(binding).enrollment).toBeUndefined();
+		}
+	);
+
 	it('retains all 2000 entries and native tool inputs across terminal capture', async () => {
 		const f = fixture();
 		const run = f.begin('user');
