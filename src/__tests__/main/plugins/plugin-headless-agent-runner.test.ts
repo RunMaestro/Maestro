@@ -1,9 +1,6 @@
 import { acquireProviderSessionWriter } from '../../../main/utils/provider-session-writer';
 import { describe, expect, it, vi } from 'vitest';
-import {
-	HEADLESS_RUN_TIMEOUT_MS,
-	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
-} from '../../../shared/plugins/headless-agent-timeouts';
+import { HEADLESS_RUN_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
@@ -1074,8 +1071,10 @@ it.each([
 	try {
 		const pending = run(agent.id, 'hello', undefined, controller.signal);
 		await vi.advanceTimersByTimeAsync(0);
-		if (stop === 'cancel') controller.abort();
-		else await vi.advanceTimersByTimeAsync(6 * 60 * 60_000);
+		if (stop === 'cancel') {
+			controller.abort();
+			await vi.advanceTimersByTimeAsync(0);
+		} else await vi.advanceTimersByTimeAsync(6 * 60 * 60_000);
 		const result = await Promise.race([
 			pending,
 			Promise.resolve().then(() => Promise.resolve('still waiting')),

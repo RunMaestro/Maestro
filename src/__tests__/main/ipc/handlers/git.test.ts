@@ -1,3 +1,5 @@
+import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { worktreeRetirement } from '../../../../main/git/worktreeRetirement';
 /**
  * Tests for the Git IPC handlers
  *
@@ -1376,6 +1378,140 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 		});
 	});
 
+	describe('worktree retirement admission', () => {
+		let fixture: string;
+		let checkout: { path: string; head: string; generation: number };
+		let token: object | undefined;
+		beforeEach(() => {
+			fixture = mkdtempSync(path.join(process.cwd(), '.git-admission-'));
+			checkout = { path: path.join(fixture, 'checkout'), head: 'abc', generation: 1 };
+			mkdirSync(checkout.path);
+			expect(worktreeRetirement.register(checkout)).toBe(true);
+		});
+		afterEach(() => {
+			if (token) worktreeRetirement.abort(token);
+			token = undefined;
+			rmSync(fixture, { recursive: true, force: true });
+		});
+
+		it.each([
+			['git:init', (root: string) => [root]],
+			['git:commitAll', (root: string) => [root, 'checkpoint']],
+			['git:switch', (root: string) => [root, 'feature']],
+			['git:checkoutBranch', (root: string) => [root, 'feature']],
+			['git:worktreeSetup', (root: string) => [fixture, root, 'feature']],
+			['git:worktreeSetup', (root: string) => [root, fixture, 'feature']],
+			[
+				'git:worktreeRunSetup',
+				(root: string) => [
+					'echo ready',
+					{ worktreePath: root, mainRepoPath: fixture, branchName: 'feature' },
+				],
+			],
+			['git:worktreeCheckout', (root: string) => [root, 'feature', false]],
+			['git:removeWorktree', (root: string) => [root, false]],
+		] as const)('refuses %s before async Git or filesystem work', async (channel, args) => {
+			const prepared = worktreeRetirement.prepare(checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			token = prepared.token;
+			await expect(handlers.get(channel)!({}, ...args(checkout.path))).rejects.toThrow(
+				'Worktree retirement: worktree is preparing'
+			);
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			expect(mockBranchSwitchBlocker).not.toHaveBeenCalled();
+		});
+
+		it.each(['push', 'pull', 'fetch'] as const)(
+			'blocks reserved %s before branch/PATH preparation',
+			async (operation) => {
+				const prepared = worktreeRetirement.prepare(checkout);
+				if (!prepared.ok) throw new Error(prepared.reason);
+				token = prepared.token;
+				await expect(
+					handlers.get('git:runCommand')!(
+						{},
+						{
+							runId: 'reserved',
+							cwd: checkout.path,
+							operation,
+							setUpstream: true,
+						}
+					)
+				).resolves.toMatchObject({
+					success: false,
+					error: 'Worktree retirement: worktree is preparing',
+				});
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				expect(execFile.execFileStreaming).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['success', 'failure'] as const)(
+			'holds a pending commit through %s and releases on settlement',
+			async (outcome) => {
+				let finish!: () => void;
+				vi.mocked(execFile.execFileNoThrow).mockImplementationOnce(async () => {
+					await new Promise<void>((resolve) => {
+						finish = resolve;
+					});
+					return { exitCode: outcome === 'success' ? 0 : 1, stdout: '', stderr: 'fixture failure' };
+				});
+				vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: '',
+					stderr: '',
+				});
+				const pending = handlers.get('git:commitAll')!({}, checkout.path, 'checkpoint');
+				expect(worktreeRetirement.prepare(checkout).ok).toBe(false);
+				finish();
+				await pending;
+				const prepared = worktreeRetirement.prepare(checkout);
+				expect(prepared.ok).toBe(true);
+				if (prepared.ok) token = prepared.token;
+			}
+		);
+
+		it('holds a push before upstream discovery and after cancel until pipes close', async () => {
+			let close!: () => void;
+			let branch!: (value: { exitCode: number; stdout: string; stderr: string }) => void;
+			let exit!: (value: { exitCode: number | string; stdout: string; stderr: string }) => void;
+			vi.mocked(execFile.execFileNoThrow).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						branch = resolve;
+					})
+			);
+			const cancel = vi.fn();
+			vi.mocked(execFile.execFileStreaming).mockReturnValue({
+				cancel,
+				closed: new Promise<void>((resolve) => {
+					close = resolve;
+				}),
+				result: new Promise((resolve) => {
+					exit = resolve;
+				}),
+			});
+			const pending = handlers.get('git:runCommand')!(
+				{},
+				{ runId: 'pending-admission', cwd: checkout.path, operation: 'push', setUpstream: true }
+			);
+			expect(worktreeRetirement.prepare(checkout).ok).toBe(false);
+			branch({ exitCode: 0, stdout: 'feature', stderr: '' });
+			await new Promise(setImmediate);
+			await handlers.get('git:cancelCommand')!({}, 'pending-admission');
+			expect(cancel).toHaveBeenCalledOnce();
+			expect(worktreeRetirement.prepare(checkout).ok).toBe(false);
+			exit({ exitCode: 'SIGTERM', stdout: '', stderr: '' });
+			await pending;
+			expect(worktreeRetirement.prepare(checkout).ok).toBe(false);
+			close();
+			await new Promise(setImmediate);
+			const prepared = worktreeRetirement.prepare(checkout);
+			expect(prepared.ok).toBe(true);
+			if (prepared.ok) token = prepared.token;
+		});
+	});
+
 	describe('git:runCommand', () => {
 		/** Fake streaming handle: emits chunks, then resolves with the result. */
 		function mockStreaming(
@@ -1387,6 +1523,7 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 					options.onChunk(chunk, stream);
 				}
 				return {
+					closed: Promise.resolve(),
 					result: Promise.resolve({
 						stdout: result.stdout ?? '',
 						stderr: result.stderr ?? '',
@@ -1606,6 +1743,7 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			const cancel = vi.fn();
 			let resolveRun: (value: any) => void = () => {};
 			vi.mocked(execFile.execFileStreaming).mockImplementation(() => ({
+				closed: Promise.resolve(),
 				result: new Promise((resolve) => {
 					resolveRun = resolve;
 				}),
@@ -1632,6 +1770,7 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			const cancel = vi.fn();
 			let resolveRun: (value: any) => void = () => {};
 			vi.mocked(execFile.execFileStreaming).mockImplementation(() => ({
+				closed: Promise.resolve(),
 				result: new Promise((resolve) => {
 					resolveRun = resolve;
 				}),
