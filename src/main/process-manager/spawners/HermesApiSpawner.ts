@@ -34,7 +34,10 @@ import type {
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
 import { resolveHermesGatewayLaunch } from '../../../shared/maestro-lib/providers/hermes-launch';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import {
+	withWorktreeCallbackActivity,
+	withWorktreeTurnActivity,
+} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'HermesGateway';
 
@@ -733,7 +736,8 @@ class HermesTurn {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId: this.config.sessionId,
 						label: 'interrupt',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -761,7 +765,8 @@ class HermesTurn {
 						blocking: options?.sync,
 						sessionId: this.config.sessionId,
 						label: 'kill',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -809,7 +814,8 @@ class HermesTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'fallback',
-				}
+				},
+				(operation) => withWorktreeCallbackActivity(operation, captureException)
 			);
 			this.finished = true;
 			if (this.ctx.processes.get(this.config.sessionId) === this.managedProcess) {
@@ -825,7 +831,8 @@ class HermesTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			}
+			},
+			(operation) => withWorktreeCallbackActivity(operation, captureException)
 		);
 		this.observeCompletion(
 			Promise.resolve()

@@ -30,7 +30,10 @@ import type { HarnessControlCapabilities } from '../../../shared/harness-control
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
 import { ANTIGRAVITY_SDK_SIDECAR } from './antigravitySdkSidecar';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import {
+	withWorktreeCallbackActivity,
+	withWorktreeTurnActivity,
+} from '../../git/worktreeTurnActivity';
 
 const LOG_CONTEXT = 'AntigravitySdk';
 
@@ -333,7 +336,8 @@ class AntigravityTurn {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId: this.config.sessionId,
 						label: 'interrupt',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -352,7 +356,8 @@ class AntigravityTurn {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId: this.config.sessionId,
 						label: 'close',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			},
 			(error) => captureException(error)
@@ -368,7 +373,8 @@ class AntigravityTurn {
 				graceMs: INTERACTIVE_STOP_GRACE_MS,
 				sessionId: this.config.sessionId,
 				label: 'error',
-			}
+			},
+			(operation) => withWorktreeCallbackActivity(operation, captureException)
 		);
 		this.observeCompletion(
 			Promise.resolve()
