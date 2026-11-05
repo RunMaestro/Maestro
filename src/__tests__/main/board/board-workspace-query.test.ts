@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { configureIsolatedBoardSourceHost } from '../../../main/board/board-source-host';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
 import {
@@ -39,19 +40,22 @@ vi.mock('../../../main/utils/logger', () => ({
 import { registerBoardHandlers } from '../../../main/ipc/handlers/board';
 import { createBoardApi } from '../../../main/preload/board';
 
+const fixture = createBoardIsolationFixture();
+beforeAll(() => {
+	fixture.install();
+	configureIsolatedBoardSourceHost(fixture.contract);
+});
+afterAll(async () => fixture.cleanup());
+
 let dir: string;
 let db: ReturnType<typeof openBoardDb>;
 let facade: BoardStorageFacade;
 let roots: string[];
 let sources: string[];
 beforeEach(() => {
-	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-query-'));
-	roots = ['a', 'b'].map((name) => {
-		const root = path.join(dir, name);
-		fs.mkdirSync(root);
-		return root;
-	});
-	db = openBoardDb(path.join(dir, 'board.sqlite'));
+	dir = fs.mkdtempSync(path.join(fixture.contract.root, 'maestro-board-query-'));
+	roots = [fixture.sources.one, fixture.sources.two];
+	db = openBoardDb(fixture.contract.db);
 	sources = roots.map((root) => {
 		const plan = planBoardMigration({
 			source: { location: { kind: 'local' }, path: fs.realpathSync(root) },
@@ -88,11 +92,12 @@ beforeEach(() => {
 	registerBoardHandlers({ getCueEngine: () => null });
 });
 afterEach(() => {
-	configureBoardStorage(null);
 	configureBoardCaptureHost(() => ({ agents: [], groups: [] }));
 	configureBoardReadinessHost(() => null);
 	db.close();
 	fs.rmSync(dir, { recursive: true, force: true });
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(fixture.contract.db + suffix, { force: true });
 });
 
 describe('central Board query with real SQLite and preload/IPC transport', () => {
@@ -204,7 +209,7 @@ describe('central Board query with real SQLite and preload/IPC transport', () =>
 		).toEqual(changed);
 		expect(facade.read(roots[1], 'same-board').cards[0].title).toBe(roots[1]);
 		db.close();
-		db = openBoardDb(path.join(dir, 'board.sqlite'));
+		db = openBoardDb(fixture.contract.db);
 		facade = new BoardStorageFacade(db);
 		configureBoardStorage(facade);
 		expect((await api.queryWorkspace()).ok).toBe(true);
@@ -253,7 +258,7 @@ it('returns persisted source locations after all source sessions disappear', asy
 		[...roots].sort()
 	);
 	db.close();
-	db = openBoardDb(path.join(dir, 'board.sqlite'));
+	db = openBoardDb(fixture.contract.db);
 	configureBoardStorage(new BoardStorageFacade(db));
 	expect(await createBoardApi().queryWorkspace()).toEqual(first);
 });
