@@ -8,8 +8,9 @@ export interface RendererRetirementRequest {
 }
 export type RetirementRendererCommand =
 	| { kind: 'prepare'; request: RendererRetirementRequest }
-	| { kind: 'check'; sessionId: string; token: string; revision: number };
+	| { kind: 'check'; sessionId: string; token: string; revision: number }
+	| { kind: 'complete'; sessionId: string; token: string; revision: number };
 export type RetirementRendererReply =
-	| { ok: true; token: string; revision: number }
+	| { ok: true; token: string; revision: number; snapshots?: unknown[] }
 	| { ok: false; reason: string };
 export type RetirementPreparationResult = RetirementRendererReply;

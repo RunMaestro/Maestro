@@ -256,6 +256,24 @@ export function registerPersistenceHandlers(
 		read: () => sessionsStore.get('sessions', []),
 		generation: () => registrationGeneration,
 		enqueue: (operation) => sessionWriteQueue.enqueue('sessions', operation),
+		persistPrepared: async (input, isCurrent) => {
+			const { sessions: relocated } = await relocateSessionImages(input);
+			if (!isCurrent()) throw new Error('Retirement preparation expired before snapshot save');
+			const previous = sessionsStore.get('sessions', []);
+			const updates = new Map(relocated.map((session) => [session.id, session]));
+			const current = previous.map((saved) => {
+				const update = updates.get(saved.id);
+				return update
+					? compactSessionToolOutputs(
+							normalizeStoredClosedTabs(mergeDeferredSessionContent(update, saved))
+						).session
+					: saved;
+			});
+			registrationGeneration++;
+			sessionsStore.set('sessions', current);
+			await flushSessionWrites();
+			await onSessionsPersisted?.(relocated, current, []);
+		},
 		reconcileRetired: async (record, parent) => {
 			// Called internally in this SAME lane with a Main-owned removing token.
 			// Never accept a renderer's replacement document or a separate IPC bypass.

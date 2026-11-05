@@ -54,6 +54,10 @@ function setup() {
 				? { ok: true }
 				: { ok: false, reason: 'owner invalidated' }
 		);
+	const persist = vi
+		.spyOn(fence, 'persistPreparedRegistration')
+		.mockResolvedValue({ ok: true, expected: checkout });
+	const reconcile = vi.spyOn(fence, 'reconcileRemovedRegistration').mockResolvedValue({ ok: true });
 	let invalidated = () => {};
 	let wire = '';
 	const renderer: RetirementRenderer = {
@@ -81,6 +85,8 @@ function setup() {
 		renderer,
 		client,
 		revalidate,
+		persist,
+		reconcile,
 		wire: () => wire,
 		invalidate: () => {
 			client.invalidate();
@@ -222,6 +228,54 @@ describe('Main-owned renderer retirement protocol', () => {
 		expect(f.fence.state(f.root)).toBe('removing');
 		expect(f.renderer.release).not.toHaveBeenCalled();
 		expect(f.fence.admit([f.parent]).ok).toBe(false);
+	});
+	it('does not acknowledge preparation until frozen snapshots are durable', async () => {
+		const f = setup();
+		let finish!: () => void;
+		f.persist.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = () =>
+						resolve({ ok: true, expected: { path: f.root, head: 'a'.repeat(40), generation: 2 } });
+				})
+		);
+		const pending = f.host.prepare('child', f.renderer);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(f.revalidate).not.toHaveBeenCalled();
+		expect(f.fence.admit([f.root]).ok).toBe(false);
+		finish();
+		expect((await pending).ok).toBe(true);
+	});
+	it('aborts a failed snapshot save without authorizing removal', async () => {
+		const f = setup();
+		f.persist.mockResolvedValueOnce({ ok: false, reason: 'disk full' });
+		expect(await f.host.prepare('child', f.renderer)).toEqual({ ok: false, reason: 'disk full' });
+		expect(f.fence.state(f.root)).toBe('available');
+		expect(f.revalidate).not.toHaveBeenCalled();
+	});
+	it('retains removal across failed durable settlement and lost completion replies, and retries with the same identity', async () => {
+		const f = setup();
+		await f.host.prepare('child', f.renderer);
+		const verified = await f.host.validate(f.wire(), f.identity);
+		if (!verified.ok) throw new Error(verified.reason);
+		expect((await f.host.reconcileRenderer(f.wire(), f.identity)).ok).toBe(false);
+		f.fence.commit(verified.token);
+		expect((await f.host.reconcileRenderer(f.wire(), {})).ok).toBe(false);
+		f.reconcile.mockResolvedValueOnce({ ok: false, reason: 'durable settlement pending' });
+		expect((await f.host.reconcileRenderer(f.wire(), f.identity)).ok).toBe(false);
+		vi.mocked(f.renderer.request).mockRejectedValueOnce(new Error('reply lost'));
+		expect((await f.host.reconcileRenderer(f.wire(), f.identity)).ok).toBe(false);
+		expect(f.fence.state(f.root)).toBe('removing');
+		expect(f.host.abort(f.wire(), f.identity)).toBe(false);
+		expect(await f.host.reconcileRenderer(f.wire(), f.identity)).toEqual({ ok: true });
+		expect(f.renderer.request).toHaveBeenLastCalledWith({
+			kind: 'complete',
+			sessionId: 'child',
+			token: f.wire(),
+			revision: 7,
+		});
+		expect(f.renderer.release).not.toHaveBeenCalled();
+		expect(f.fence.state(f.root)).toBe('removing');
 	});
 	it('rejects changed trusted registration after the renderer has prepared', async () => {
 		const f = setup();

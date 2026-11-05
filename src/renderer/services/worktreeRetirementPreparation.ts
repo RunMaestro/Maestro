@@ -8,9 +8,24 @@ import { retirementSessionBlocker } from './worktreeRetirementInspection';
 import { WorktreeRetirementFreeze } from './worktreeRetirementFreeze';
 import { hasRetirementDialogs, registerRetirementStoreGuard } from './worktreeRetirementStoreGuard';
 
+import {
+	prepareSessionForPersistence,
+	SESSION_PERSISTENCE_BASELINE_EVENT,
+} from '../hooks/utils/useDebouncedPersistence';
+
 import type { RendererRetirementRequest } from '../../shared/worktreeRetirement';
 const freeze = new WorktreeRetirementFreeze();
-const preparations = new Map<string, { token: string; release: () => void }>();
+const preparations = new Map<
+	string,
+	{
+		token: string;
+		release: () => void;
+		parentSessionId: string;
+		path: string;
+		completed?: boolean;
+	}
+>();
+let completion: SessionStore | undefined;
 function fail(reason: string): never {
 	throw new Error(`Worktree retirement: ${reason}`);
 }
@@ -46,6 +61,7 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 		if (!freeze.isFrozen(request.sessionId)) return;
 		switch (kind) {
 			case 'sessions': {
+				if (next === completion) return;
 				const before = previous as SessionStore;
 				const after = next as SessionStore;
 				if (
@@ -148,10 +164,26 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 			}
 			return undefined;
 		});
-		if (result.ok) preparations.set(request.sessionId, { token: request.token, release });
+		if (result.ok)
+			preparations.set(request.sessionId, {
+				token: request.token,
+				release,
+				parentSessionId: request.parentSessionId,
+				path: request.path,
+			});
 		else release();
+		if (result.ok) {
+			const state = useSessionStore.getState();
+			return {
+				...result,
+				snapshots: state.sessions
+					.filter((s) => protectedIds.has(s.id))
+					.map(prepareSessionForPersistence),
+			};
+		}
 		return result;
 	} catch (error) {
+		cancelRendererRetirement(request.sessionId, request.token);
 		release();
 		throw error;
 	}
@@ -159,6 +191,44 @@ export function prepareRendererRetirement(request: RendererRetirementRequest) {
 
 export function isRendererRetirementCurrent(sessionId: string, token: string, revision: number) {
 	return freeze.isCurrent(sessionId, token, revision);
+}
+
+/** Main sends this only after its archive and registration removal are durable.
+ * Apply exactly one owned store replacement; never release the guard to call
+ * ordinary setters. Duplicate replies are safe after transport uncertainty.
+ */
+export function completeRendererRetirement(
+	sessionId: string,
+	token: string,
+	revision: number
+): boolean {
+	const preparation = preparations.get(sessionId);
+	if (!preparation || !freeze.isCurrent(sessionId, token, revision)) return false;
+	if (preparation.completed) return true;
+	const state = useSessionStore.getState();
+	if (!state.sessions.some((s) => s.id === preparation.parentSessionId)) return false;
+	const sessions = state.sessions.filter((s) => s.id !== sessionId);
+	completion = {
+		...state,
+		sessions,
+		activeSessionId:
+			state.activeSessionId === sessionId ? preparation.parentSessionId : state.activeSessionId,
+		removedWorktreePaths: new Set([...state.removedWorktreePaths, preparation.path]),
+	};
+	try {
+		useSessionStore.setState(completion, true);
+	} finally {
+		completion = undefined;
+	}
+	// The durable target snapshot is archived in Main. Preserve pending edits to
+	// unrelated sessions while retiring this id from the debounce baseline.
+	window.dispatchEvent(
+		new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, {
+			detail: { sessions: [], removedIds: [sessionId] },
+		})
+	);
+	preparation.completed = true;
+	return true;
 }
 
 /** Only Main's matching abort/completion may thaw an acknowledged preparation. */

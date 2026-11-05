@@ -13,6 +13,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useRetirementDialogState } from '../../../renderer/hooks/worktree/useRetirementDialogState';
 import {
 	prepareRendererRetirement,
+	completeRendererRetirement,
 	cancelRendererRetirement,
 	isRendererRetirementCurrent,
 } from '../../../renderer/services/worktreeRetirementPreparation';
@@ -123,6 +124,43 @@ describe('authoritative retirement store admission', () => {
 		expect(useSessionStore.getState().sessions).toBe(state.sessions);
 	});
 
+	it.each(['child', 'other'])(
+		'completes the matching revision while focused on %s without discarding unrelated edits',
+		(focused) => {
+			useSessionStore.setState({ activeSessionId: focused });
+			const result = prepare();
+			useSessionStore.getState().updateSession('other', { name: 'pending unrelated edit' });
+			expect(completeRendererRetirement('child', 'foreign', result.revision)).toBe(false);
+			expect(completeRendererRetirement('child', 'opaque', result.revision + 1)).toBe(false);
+			expect(child()).toBeDefined();
+			const listener = vi.fn();
+			window.addEventListener('maestro:session-persistence-baseline', listener);
+			try {
+				expect(completeRendererRetirement('child', 'opaque', result.revision)).toBe(true);
+				const state = useSessionStore.getState();
+				expect(state.sessions.map((s) => s.id)).toEqual(['parent', 'other']);
+				expect(state.activeSessionId).toBe(focused === 'child' ? 'parent' : 'other');
+				expect(state.removedWorktreePaths.has('/child')).toBe(true);
+				expect(state.sessions[1].name).toBe('pending unrelated edit');
+				expect(listener).toHaveBeenCalledOnce();
+				expect(completeRendererRetirement('child', 'opaque', result.revision)).toBe(true);
+				expect(listener).toHaveBeenCalledOnce();
+				expect(() => state.updateSession('parent', { name: 'still frozen' })).toThrow('frozen');
+				expect(() => state.addSession(createMockSession({ id: 'child' }))).toThrow('frozen');
+				cancelRendererRetirement('child', 'opaque');
+				expect(completeRendererRetirement('child', 'opaque', result.revision)).toBe(false);
+			} finally {
+				window.removeEventListener('maestro:session-persistence-baseline', listener);
+			}
+		}
+	);
+	it('sends detached durable snapshots of the final idle chat and PR state', () => {
+		const result = prepareRendererRetirement(request);
+		if (!result.ok) throw new Error(result.reason);
+		expect(result.snapshots?.map((s) => s.id)).toEqual(['child', 'parent']);
+		expect(result.snapshots?.[0].aiTabs[0].logs[0].text).toBe('saved');
+		expect(result.snapshots?.[0]).not.toBe(child());
+	});
 	it('fences the surviving parent, new registrations, recovery and alias moves', () => {
 		prepare();
 		expect(() => useSessionStore.getState().updateSession('parent', { cwd: '/moved' })).toThrow(
@@ -306,7 +344,7 @@ describe('app-owned retirement IPC listener', () => {
 			if (!reply.ok) throw new Error(reply.reason);
 			expect(
 				handler({ kind: 'check', sessionId: 'child', token: 'opaque', revision: reply.revision })
-			).toEqual(reply);
+			).toMatchObject({ ok: true, token: reply.token, revision: reply.revision });
 			expect(
 				handler({
 					kind: 'check',

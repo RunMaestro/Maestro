@@ -150,6 +150,67 @@ export class WorktreeRetirement {
 		}
 	}
 
+	/** Save the frozen primary's latest idle chats before it can acknowledge preparation.
+	 * Ordinary persistence stays fenced; this capability cannot move registrations.
+	 */
+	async persistPreparedRegistration(token: RetirementToken, snapshots: unknown) {
+		const entry = this.owned(token);
+		const registration = entry?.registration;
+		const source = registration?.source;
+		if (
+			!entry ||
+			entry.state !== 'preparing' ||
+			!registration ||
+			!source?.persistPrepared ||
+			source !== this.registrationSource
+		)
+			return { ok: false as const, reason: 'trusted preparing registration required' };
+		const isCurrent = () =>
+			this.owned(token) === entry &&
+			entry.state === 'preparing' &&
+			this.registrationSource === source;
+		try {
+			// Clone at entry; no caller may mutate a queued payload after validation.
+			const updates = JSON.parse(canonicalJson(snapshots)) as StoredSession[];
+			if (!Array.isArray(updates) || updates.length !== 2)
+				throw new Error('Frozen child and parent snapshots required');
+			for (const saved of [registration.child, registration.parent]) {
+				const matches = updates.filter((s) => s && s.id === saved.id);
+				if (matches.length !== 1) throw new Error('Frozen snapshot identity mismatch');
+				for (const key of [
+					'id',
+					'cwd',
+					'projectRoot',
+					'fullPath',
+					'parentSessionId',
+					'worktreeBranch',
+					'sshRemoteId',
+					'sessionSshRemoteConfig',
+					'toolType',
+				])
+					if (canonicalJson(matches[0][key] ?? null) !== canonicalJson(saved[key] ?? null))
+						throw new Error('Frozen snapshot cannot change checkout identity');
+			}
+			return await source.enqueue(async () => {
+				if (!isCurrent() || source.generation() !== entry.identity.generation)
+					return { ok: false as const, reason: 'preparation changed before persistence' };
+				await source.persistPrepared!(updates, isCurrent);
+				if (!isCurrent())
+					return { ok: false as const, reason: 'preparation lost during persistence' };
+				const pair = retirementRegistrationPair(source.read(), registration.child.id);
+				registration.child = JSON.parse(canonicalJson(pair.child)) as StoredSession;
+				registration.parent = JSON.parse(canonicalJson(pair.parent)) as StoredSession;
+				entry.identity.generation = source.generation();
+				return { ok: true as const, expected: Object.freeze({ ...entry.identity }) };
+			});
+		} catch (error) {
+			return {
+				ok: false as const,
+				reason: error instanceof Error ? error.message : 'snapshot persistence failed',
+			};
+		}
+	}
+
 	/** Recheck under the still-held fence immediately before the eventual commit.
 	 * A failed check leaves preparation owned by its caller, who must abort it.
 	 */

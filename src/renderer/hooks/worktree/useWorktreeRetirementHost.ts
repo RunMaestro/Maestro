@@ -2,6 +2,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { useEffect } from 'react';
 import {
 	cancelRendererRetirement,
+	completeRendererRetirement,
 	isRendererRetirementCurrent,
 	prepareRendererRetirement,
 } from '../../services/worktreeRetirementPreparation';
@@ -33,6 +34,11 @@ export function useWorktreeRetirementHost(): void {
 				if (result.ok) tokens.set(command.request.sessionId, result.token);
 				return result;
 			}
+			if (
+				command.kind === 'complete' &&
+				completeRendererRetirement(command.sessionId, command.token, command.revision)
+			)
+				return { ok: true, token: command.token, revision: command.revision };
 			if (
 				command.kind === 'check' &&
 				isRendererRetirementCurrent(command.sessionId, command.token, command.revision)

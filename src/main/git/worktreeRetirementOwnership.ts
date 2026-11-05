@@ -11,6 +11,8 @@ export interface RetirementRegistrationSource {
 	read(): readonly StoredSession[];
 	generation(): number;
 	enqueue<T>(operation: () => Promise<T>): Promise<T>;
+	/** Called only in the owned preparation lane; preserve the trusted identities. */
+	persistPrepared?(sessions: StoredSession[], isCurrent: () => boolean): Promise<void>;
 	/** Internal token-owned caller already holds the sessions lane and removal fence. */
 	reconcileRetired?(record: StoredRetiredWorktree, parent: StoredSession): Promise<void>;
 }

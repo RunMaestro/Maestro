@@ -17,6 +17,7 @@ import {
 	type RetirementToken,
 } from '../../../../main/git/worktreeRetirement';
 import * as remoteGit from '../../../../main/utils/remote-git';
+import * as imageStore from '../../../../main/storage/session-image-store';
 import {
 	configureImageStore,
 	__resetImageStoreCacheForTests,
@@ -301,6 +302,85 @@ describe('persistence IPC handlers', () => {
 				if (!prepared.ok) throw new Error(prepared.reason);
 				return { fence, token: prepared.token, document, source, client, onSessionsPersisted };
 			}
+			it('durably saves the final frozen chat and PR snapshot before archiving it', async () => {
+				const f = await prepareRemoval();
+				const snapshots = structuredClone(f.document.sessions);
+				snapshots[0].aiTabs[0].logs.push({ id: 'final', text: 'Last idle message' });
+				snapshots[0].worktreePullRequest = { number: 123, state: 'merged', headSha: 'latest' };
+				expect(await f.fence.persistPreparedRegistration(f.token, snapshots)).toMatchObject({
+					ok: true,
+				});
+				expect(await f.fence.revalidateRegistered(f.token)).toEqual({ ok: true });
+				expect(f.fence.commit(f.token)).toBe(true);
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				expect(f.document.retiredWorktrees?.[0].session.aiTabs[0].logs.at(-1).text).toBe(
+					'Last idle message'
+				);
+				expect(f.document.retiredWorktrees?.[0].session.worktreePullRequest.headSha).toBe('latest');
+			});
+			it.each([
+				'cwd',
+				'projectRoot',
+				'parentSessionId',
+				'worktreeBranch',
+				'toolType',
+				'sshRemoteId',
+			])('rejects a frozen snapshot changing %s', async (field) => {
+				const f = await prepareRemoval();
+				const snapshots = structuredClone(f.document.sessions);
+				snapshots[0][field] = 'forged';
+				expect((await f.fence.persistPreparedRegistration(f.token, snapshots)).ok).toBe(false);
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+			});
+			it('keeps snapshot admission fenced through durable settlement and clones queued payloads', async () => {
+				const f = await prepareRemoval();
+				const snapshots = structuredClone(f.document.sessions);
+				snapshots[0].name = 'Frozen snapshot';
+				let finish!: () => void;
+				mockFlushSessionWrites.mockImplementationOnce(
+					() =>
+						new Promise<void>((resolve) => {
+							finish = resolve;
+						})
+				);
+				const pending = f.fence.persistPreparedRegistration(f.token, snapshots);
+				snapshots[0].name = 'Mutated after submission';
+				await vi.waitFor(() => expect(finish).toBeDefined());
+				expect(f.fence.admit([target.path]).ok).toBe(false);
+				expect(f.document.sessions[0].name).toBe('Frozen snapshot');
+				f.fence.abort(f.token);
+				finish();
+				expect((await pending).ok).toBe(false);
+			});
+			it('does not acknowledge a failed durable snapshot write or permit it after commit', async () => {
+				const f = await prepareRemoval();
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('ENOSPC'));
+				expect(
+					await f.fence.persistPreparedRegistration(f.token, structuredClone(f.document.sessions))
+				).toMatchObject({ ok: false, reason: 'ENOSPC' });
+				expect(f.fence.tokenState(f.token)).toBe('preparing');
+				f.fence.commit(f.token);
+				expect((await f.fence.persistPreparedRegistration(f.token, f.document.sessions)).ok).toBe(
+					false
+				);
+			});
+			it('expiry during asynchronous image relocation prevents a late snapshot write', async () => {
+				const f = await prepareRemoval();
+				const images = vi.spyOn(imageStore, 'relocateSessionImages');
+				let finish!: () => void;
+				images.mockImplementationOnce(
+					(sessions) =>
+						new Promise((resolve) => {
+							finish = () => resolve({ sessions, relocated: 0 });
+						})
+				);
+				const pending = f.fence.persistPreparedRegistration(f.token, f.document.sessions);
+				await vi.waitFor(() => expect(finish).toBeDefined());
+				f.fence.abort(f.token);
+				finish();
+				expect((await pending).ok).toBe(false);
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+			});
 			it('archives saved chat and PR identity atomically, preserves unrelated changes and selects the parent', async () => {
 				const f = await prepareRemoval();
 				const child = structuredClone(f.document.sessions[0]);

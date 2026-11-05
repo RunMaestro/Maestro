@@ -70,6 +70,9 @@ export class WorktreeRetirementHost {
 			if (reply.token !== id || !Number.isSafeInteger(reply.revision) || reply.revision < 1)
 				throw new Error('renderer preparation identity mismatch');
 			entry.revision = reply.revision;
+			const persisted = await this.fence.persistPreparedRegistration(entry.token, reply.snapshots);
+			if (!persisted.ok) throw new Error(persisted.reason);
+			entry.expected = persisted.expected;
 			const verified = await this.validate(id, renderer.identity);
 			if (!verified.ok) throw new Error(verified.reason);
 			return { ok: true, token: id, revision: reply.revision };
@@ -99,6 +102,41 @@ export class WorktreeRetirementHost {
 		if (this.prepared.get(id) !== entry)
 			return { ok: false as const, reason: 'preparation expired or owner lost' };
 		return { ok: true as const, token: entry.token, expected: entry.expected };
+	}
+
+	/** Called internally only after checked removal and durable reconciliation.
+	 * A failed/lost renderer reply keeps removing owned for same-token retry.
+	 */
+	async reconcileRenderer(id: string, renderer: object) {
+		const entry = this.prepared.get(id);
+		if (
+			!entry ||
+			entry.renderer.identity !== renderer ||
+			entry.revision === undefined ||
+			this.fence.tokenState(entry.token) !== 'removing'
+		)
+			return { ok: false as const, reason: 'owned removal required' };
+		const persisted = await this.fence.reconcileRemovedRegistration(entry.token);
+		if (!persisted.ok) return persisted;
+		try {
+			const reply = await entry.renderer.request({
+				kind: 'complete',
+				sessionId: entry.sessionId,
+				token: id,
+				revision: entry.revision,
+			});
+			if (
+				!reply.ok ||
+				reply.token !== id ||
+				reply.revision !== entry.revision ||
+				this.prepared.get(id) !== entry
+			)
+				return { ok: false as const, reason: 'renderer completion pending' };
+			// The transaction still owns watcher settlement and final fence completion.
+			return { ok: true as const };
+		} catch {
+			return { ok: false as const, reason: 'renderer completion unavailable' };
+		}
 	}
 
 	abort(id: string, renderer: object): boolean {
