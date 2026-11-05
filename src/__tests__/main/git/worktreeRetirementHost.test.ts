@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorktreeRetirement } from '../../../main/git/worktreeRetirement';
+import { foldPathCase } from '../../../main/utils/real-path-containment';
 import {
 	WorktreeRetirementHost,
 	type RetirementRenderer,
@@ -37,7 +38,7 @@ function setup() {
 		ownership: {
 			sessionId: 'child',
 			parentSessionId: 'parent',
-			parentPath: parent,
+			parentPath: foldPathCase(parent),
 			commonDir: join(parent, '.git'),
 			gitDir: join(parent, '.git/worktrees/child'),
 			branch: 'feature',

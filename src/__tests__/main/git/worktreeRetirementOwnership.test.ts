@@ -115,7 +115,11 @@ describe('trusted retirement ownership', () => {
 	});
 	it('accepts physical aliases and NUL-delimited paths with spaces/newlines', async () => {
 		const f = setup();
-		const alias = join(f.dir, 'alias with space\nand newline');
+		// Windows forbids newline characters in directory entry names.
+		const alias = join(
+			f.dir,
+			process.platform === 'win32' ? 'alias with space' : 'alias with space\nand newline'
+		);
 		symlinkSync(f.root, alias, 'junction');
 		f.child.cwd = f.child.projectRoot = alias;
 		f.answers.set(

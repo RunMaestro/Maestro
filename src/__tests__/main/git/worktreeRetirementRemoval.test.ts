@@ -11,6 +11,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RetirementIntent } from '../../../main/git/worktreeRetirementRecovery';
 import { inspectRetirementOutcome } from '../../../main/git/worktreeRetirementRecovery';
+import { foldPathCase } from '../../../main/utils/real-path-containment';
 import type { StoredRetiredWorktree, StoredSession } from '../../../main/stores/types';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 
@@ -760,8 +761,8 @@ describe('checked worktree removal with real local Git fixtures', () => {
 			expect(f.fence.state(f.root)).toBe('removed');
 			expect(f.fence.admit([f.parent]).ok).toBe(true);
 			expect(adapter.beforeRemove).toHaveBeenCalledExactlyOnceWith(
-				['worktree', 'remove', '--', f.root],
-				f.parent
+				['worktree', 'remove', '--', foldPathCase(f.root)],
+				foldPathCase(f.parent)
 			);
 		}
 	);
