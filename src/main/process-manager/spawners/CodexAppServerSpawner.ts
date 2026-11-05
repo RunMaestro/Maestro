@@ -47,7 +47,10 @@ import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { isWindows } from '../../../shared/platformDetection';
 import type { startTurn, TurnExit, TurnHandle } from '../../../shared/maestro-lib/run/start-turn';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import {
+	withWorktreeTurnActivity,
+	withWorktreeCallbackActivity,
+} from '../../git/worktreeTurnActivity';
 import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
@@ -805,7 +808,8 @@ class CodexAppServerTurn {
 									graceMs: INTERACTIVE_STOP_GRACE_MS,
 									sessionId: this.config.sessionId,
 									label: 'codex-app-server',
-								}
+								},
+								(operation) => withWorktreeCallbackActivity(operation, captureException)
 							);
 						} finally {
 							finish();
@@ -851,7 +855,8 @@ class CodexAppServerTurn {
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'interrupt',
-				}
+				},
+				(operation) => withWorktreeCallbackActivity(operation, captureException)
 			);
 			return;
 		}
@@ -885,7 +890,8 @@ class CodexAppServerTurn {
 				includeDescendants: !options.shutdown,
 				sessionId: this.config.sessionId,
 				label: 'kill',
-			}
+			},
+			(operation) => withWorktreeCallbackActivity(operation, captureException)
 		);
 	}
 
@@ -964,7 +970,8 @@ class CodexAppServerTurn {
 			this.signalRemote('terminate');
 			stopProcess(
 				{ child: this.turn.child },
-				{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, sessionId, label: 'fallback' }
+				{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, sessionId, label: 'fallback' },
+				(operation) => withWorktreeCallbackActivity(operation, captureException)
 			);
 		}
 		// Reclaim the slot only if it is still ours: a respawn that already took

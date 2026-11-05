@@ -3007,6 +3007,232 @@ describe('standalone Codex app-server activity', () => {
 			}
 		});
 	});
+	describe('Codex direct stop ladder activity', () => {
+		let platform: typeof import('../../../shared/platformDetection');
+		let trees: typeof import('../../../shared/maestro-lib/control/process-tree');
+		let host: typeof import('../../../shared/maestro-lib/host');
+		let taskkills: EventEmitter[];
+		const handles = () =>
+			vi
+				.mocked(stopProcess)
+				.mock.results.flatMap((result) =>
+					result.type === 'return' && result.value ? [result.value] : []
+				);
+		const resultCallback = () =>
+			vi.mocked(execFile).mock.calls.at(-1)![2] as (error?: Error) => void;
+		const running = () => Object.assign(native, { signalCode: null, kill: vi.fn(() => true) });
+		async function exitTarget() {
+			Object.assign(native, { exitCode: 0 });
+			native.emit('exit', 0, null);
+			await close();
+			processes.clear();
+		}
+		async function stop(route: 'interrupt' | 'kill' | 'grace' | 'fallback' = 'kill') {
+			const setup = Promise.withResolvers<unknown>();
+			if (route === 'interrupt') probes.request.mockReturnValueOnce(setup.promise);
+			if (route === 'fallback')
+				probes.request.mockRejectedValueOnce(new Error('initialize failed'));
+			expect(
+				codex.spawn(input({ permissionMode: route === 'fallback' ? 'full' : 'standard' })).success
+			).toBe(true);
+			const managed = processes.get('rpc-session')!;
+			if (route === 'interrupt') {
+				managed.sdkController!.interrupt();
+				setup.resolve({});
+			}
+			await drain();
+			if (route === 'kill') managed.sdkController!.kill();
+			if (route === 'grace') {
+				line('turn/completed', { threadId: 'thread', turn: { id: 'turn', status: 'completed' } });
+				expect(stopProcess).not.toHaveBeenCalled();
+				await vi.advanceTimersByTimeAsync(1000);
+			}
+			await drain();
+		}
+		beforeEach(async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+			platform = await import('../../../shared/platformDetection');
+			trees = await import('../../../shared/maestro-lib/control/process-tree');
+			host = await import('../../../shared/maestro-lib/host');
+			host.setMaestroLibErrorReporter({ captureException, captureMessage: vi.fn() });
+			vi.spyOn(platform, 'isWindows').mockReturnValue(false);
+			const actual = await vi.importActual<
+				typeof import('../../../shared/maestro-lib/control/termination')
+			>('../../../shared/maestro-lib/control/termination');
+			vi.mocked(stopProcess).mockImplementation(actual.stopProcess);
+			running();
+			taskkills = [];
+			vi.mocked(execFile).mockImplementation(() => {
+				const child = new EventEmitter();
+				taskkills.push(child);
+				return child as ReturnType<typeof execFile>;
+			});
+		});
+		afterEach(() => {
+			for (const handle of handles()) handle.dispose();
+			host.setMaestroLibErrorReporter({ captureException: () => {}, captureMessage: () => {} });
+			vi.useRealTimers();
+		});
+		it.each(['interrupt', 'kill', 'grace', 'fallback'] as const)(
+			'guards Codex %s without changing signals or fallback order',
+			async (route) => {
+				await stop(route);
+				expect(stopProcess).toHaveBeenLastCalledWith(
+					{ child: native },
+					expect.objectContaining({
+						from: route === 'interrupt' ? 'interrupt' : 'terminate',
+						graceMs: 1000,
+						sessionId: 'rpc-session',
+						label: route === 'grace' ? 'codex-app-server' : route,
+					}),
+					expect.any(Function)
+				);
+				expect(Reflect.get(native, 'kill')).toHaveBeenCalledWith(
+					route === 'interrupt' ? 'SIGINT' : 'SIGTERM'
+				);
+				if (route === 'fallback') {
+					expect(fallback).toHaveBeenCalledOnce();
+					expect(vi.mocked(stopProcess).mock.invocationCallOrder[0]).toBeLessThan(
+						fallback.mock.invocationCallOrder[0]
+					);
+				}
+				await exitTarget();
+				(await reserve()).release();
+			}
+		);
+		it.each(['timer', 'exit', 'stage', 'dispose'] as const)(
+			'refuses a retained Codex ladder %s before effects after close/removal',
+			async (source) => {
+				const schedule = vi.spyOn(globalThis, 'setTimeout');
+				await stop();
+				const callback =
+					source === 'timer'
+						? (schedule.mock.calls.at(-1)![0] as () => void)
+						: source === 'exit'
+							? native.listeners('exit').at(-1)!
+							: () => handles()[0][source]();
+				await exitTarget();
+				for (const root of [target, path.join(target, 'child'), path.resolve('unrelated')]) {
+					const hold = await reserve(root);
+					try {
+						expect(() => callback()).toThrow('reserved');
+					} finally {
+						hold.release();
+					}
+				}
+				expect(Reflect.get(native, 'kill')).toHaveBeenCalledOnce();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+		it.each(['resolve', 'reject'] as const)(
+			'owns a pending Codex tree refresh through exit/replacement until %s',
+			async (outcome) => {
+				vi.mocked(trees.snapshotProcessTree).mockReturnValue({ owned: true, descendants: [] });
+				const refresh = Promise.withResolvers<ReturnType<typeof trees.snapshotProcessTree>>();
+				vi.mocked(trees.refreshProcessTree).mockReturnValueOnce(refresh.promise);
+				await stop();
+				await vi.advanceTimersByTimeAsync(250);
+				expect(trees.refreshProcessTree).toHaveBeenCalledOnce();
+				await exitTarget();
+				native = makeNative();
+				running();
+				expect(codex.spawn(input()).success).toBe(true);
+				await drain();
+				await exitTarget();
+				await blocked();
+				if (outcome === 'reject') refresh.reject(new Error('refresh failed'));
+				else refresh.resolve({ owned: true, descendants: [] });
+				await drain();
+				(await reserve()).release();
+			}
+		);
+		it('owns a Codex escalation taskkill admitted during pending canonicalization', async () => {
+			const schedule = vi.spyOn(globalThis, 'setTimeout');
+			await stop('interrupt');
+			const callback = schedule.mock.calls.at(-1)![0] as () => void;
+			await close();
+			vi.mocked(platform.isWindows).mockReturnValue(true);
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			callback();
+			canonical.resolve(target);
+			const result = await reservation;
+			if (result.status === 'reserved-partially') result.release();
+			expect(result.status).toBe('blocked');
+			expect(execFile).toHaveBeenCalledWith(
+				'taskkill',
+				['/pid', '12345', '/t', '/f'],
+				expect.any(Function)
+			);
+			resultCallback()();
+			await exitTarget();
+			await blocked();
+			taskkills[0].emit('close');
+			await drain();
+			(await reserve()).release();
+		});
+		it.each(['resolve', 'reject', 'throw'] as const)(
+			'owns Codex taskkill and %s diagnostics independently of target close',
+			async (outcome) => {
+				vi.mocked(platform.isWindows).mockReturnValue(true);
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockImplementation(() => {
+					if (outcome === 'throw') throw new Error('report failed');
+					return reporting.promise;
+				});
+				await stop();
+				resultCallback()(new Error('taskkill failed'));
+				await exitTarget();
+				await blocked();
+				taskkills[0].emit('close');
+				await drain();
+				if (outcome !== 'throw') await blocked();
+				if (outcome === 'reject') reporting.reject(new Error('report rejected'));
+				else reporting.resolve();
+				await drain();
+				(await reserve()).release();
+			}
+		);
+		it.each(['result', 'close'] as const)(
+			'refuses retained Codex taskkill %s after all native activity drains',
+			async (source) => {
+				vi.mocked(platform.isWindows).mockReturnValue(true);
+				await stop();
+				const callback =
+					source === 'result'
+						? () => resultCallback()(new Error('late failure'))
+						: taskkills[0].listeners('close')[0];
+				taskkills[0].emit('close');
+				await exitTarget();
+				const hold = await reserve();
+				try {
+					expect(() => callback()).toThrow('reserved');
+				} finally {
+					hold.release();
+				}
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+		it('keeps concurrent Codex taskkill generations owned after disposal', async () => {
+			vi.mocked(platform.isWindows).mockReturnValue(true);
+			await stop();
+			const first = taskkills[0];
+			await exitTarget();
+			native = makeNative();
+			running();
+			await stop();
+			await exitTarget();
+			for (const handle of handles()) handle.dispose();
+			await blocked();
+			taskkills[1].emit('close');
+			await drain();
+			await blocked();
+			first.emit('close');
+			await drain();
+			(await reserve()).release();
+		});
+	});
 	describe('Codex SSH signal adapter ownership', () => {
 		let signals: EventEmitter[];
 		let releases: Array<() => void>;
@@ -3863,7 +4089,8 @@ describe('standalone Codex app-server activity', () => {
 					blocking: true,
 					upTo: 'terminate',
 					includeDescendants: false,
-				})
+				}),
+				expect.any(Function)
 			);
 			await vi.advanceTimersByTimeAsync(1000);
 			expect(stopProcess).toHaveBeenCalledOnce();

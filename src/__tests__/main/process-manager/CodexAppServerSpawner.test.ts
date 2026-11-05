@@ -486,7 +486,8 @@ describe('CodexAppServerSpawner', () => {
 		h.processes.get(h.sessionId)!.sdkController!.kill({ sync: true });
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate', upTo: 'kill', blocking: true })
+			expect.objectContaining({ from: 'terminate', upTo: 'kill', blocking: true }),
+			expect.any(Function)
 		);
 	});
 
@@ -558,7 +559,8 @@ describe('CodexAppServerSpawner', () => {
 		expect(h.processes.has(h.sessionId)).toBe(false);
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate' })
+			expect.objectContaining({ from: 'terminate' }),
+			expect.any(Function)
 		);
 		expect(h.errors).toEqual([]);
 		// The abandoned child's exit reports nothing: exec owns the turn now.
@@ -700,7 +702,8 @@ describe('CodexAppServerSpawner on an SSH remote', () => {
 		);
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate' })
+			expect.objectContaining({ from: 'terminate' }),
+			expect.any(Function)
 		);
 	});
 
@@ -777,7 +780,8 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 		expect(h.processes.has(h.sessionId)).toBe(false);
 		expect(mockStopProcess).toHaveBeenCalledWith(
 			{ child: server },
-			expect.objectContaining({ from: 'terminate', label: 'fallback' })
+			expect.objectContaining({ from: 'terminate', label: 'fallback' }),
+			expect.any(Function)
 		);
 		// The abandoned child's exit reports nothing: exec owns the turn.
 		server.exit(1);
@@ -880,7 +884,8 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 			const server = await stopDuringSetup();
 			expect(mockStopProcess).toHaveBeenCalledWith(
 				{ child: server },
-				expect.objectContaining({ from: 'terminate', label: 'interrupt' })
+				expect.objectContaining({ from: 'terminate', label: 'interrupt' }),
+				expect.any(Function)
 			);
 		});
 
@@ -889,7 +894,8 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 			const server = await stopDuringSetup();
 			expect(mockStopProcess).toHaveBeenCalledWith(
 				{ child: server },
-				expect.objectContaining({ from: 'interrupt', label: 'interrupt' })
+				expect.objectContaining({ from: 'interrupt', label: 'interrupt' }),
+				expect.any(Function)
 			);
 		});
 
@@ -914,7 +920,8 @@ describe('CodexAppServerSpawner fallback and safety', () => {
 			vi.advanceTimersByTime(CODEX_APP_SERVER_EXIT_GRACE_MS);
 			expect(mockStopProcess).toHaveBeenCalledWith(
 				{ child: server },
-				expect.objectContaining({ from: 'terminate', label: 'codex-app-server' })
+				expect.objectContaining({ from: 'terminate', label: 'codex-app-server' }),
+				expect.any(Function)
 			);
 		});
 	});
