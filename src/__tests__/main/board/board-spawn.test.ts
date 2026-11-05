@@ -12,6 +12,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import * as boardReview from '../../../main/board/board-review';
 
 const executeCuePrompt = vi.fn();
@@ -100,6 +102,85 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('spawnBoardCard worktree isolation', () => {
+	it('refuses a historical retry without a baseline and preserves committed work with a recorded base', async () => {
+		const fixtureRoot = fs.mkdtempSync(path.resolve('board-legacy-'));
+		const cwd = path.join(fixtureRoot, 'repo');
+		fs.mkdirSync(cwd);
+		const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+		try {
+			git('init', '-q');
+			git('config', 'user.email', 'board-test@example.invalid');
+			git('config', 'user.name', 'Board test');
+			fs.writeFileSync(path.join(cwd, 'work.txt'), 'before\n');
+			git('add', 'work.txt');
+			git('commit', '-qm', 'baseline');
+			const base = git('rev-parse', 'HEAD');
+			fs.writeFileSync(path.join(cwd, 'work.txt'), 'original work\n');
+			git('commit', '-qam', 'historical work');
+			const current = await boardReview.readBoardRunArtifact(cwd);
+			expect(current).not.toBeNull();
+			const launch = vi.fn(() => true);
+			executeCuePrompt.mockImplementation(async (options) => {
+				if (!(await options.prepareLaunch()))
+					return {
+						stdout: '',
+						exitCode: null,
+						executionStarted: false,
+						terminationConfirmed: true,
+					};
+				options.beforeLaunch();
+				return {
+					stdout: 'checks passed',
+					exitCode: 0,
+					executionStarted: true,
+					terminationConfirmed: true,
+				};
+			});
+			const run = async (recordedBase: boolean) =>
+				spawnBoardCard(
+					cwd,
+					{
+						card: card({
+							workflow: {
+								version: 1,
+								corrections: 0,
+								workRunId: 'old',
+								evidenceIncomplete: { runId: 'old', missing: ['artifact'] },
+							},
+							runs: [
+								{
+									runId: 'old',
+									attempt: 1,
+									startedAt: '2026-11-05',
+									outcome: 'done',
+									...(recordedBase ? { artifactBase: { ...current!, commit: base } } : {}),
+								},
+							],
+						}),
+						overrides: {},
+						agentId: 'agent-1',
+						lifecycle: {
+							runId: 'retry',
+							canPrepare: () => true,
+							beforeLaunch: launch,
+							onStarted: vi.fn(),
+						},
+					},
+					context(),
+					'b1'
+				);
+			const refused = await run(false);
+			expect(refused.executionStarted).toBe(false);
+			expect(refused.error).toMatch(/Legacy run.*baseline/);
+			expect(launch).not.toHaveBeenCalled();
+			const recovered = await run(true);
+			expect(launch).toHaveBeenCalledOnce();
+			expect(recovered.artifact?.diff?.baseCommit).toBe(base);
+			expect(recovered.artifact?.diff?.stat).toContain('work.txt');
+		} finally {
+			fs.rmSync(fixtureRoot, { recursive: true, force: true });
+		}
+	});
 	it.each(['same', 'other-branch', 'other-checkout'] as const)(
 		'retains the original evidence-repair baseline and rejects %s checkout mismatches',
 		async (location) => {

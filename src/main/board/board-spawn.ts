@@ -535,12 +535,20 @@ async function runCardPrompt(
 
 	let baseCommit: string | undefined;
 	let artifactBase: CardSpawnResult['artifactBase'];
+	let preparationError: string | undefined;
 	const result = await executeCuePrompt({
 		runId,
 		signal: run?.controller.signal,
 		beforeLaunch: lifecycle?.beforeLaunch,
 		prepareLaunch: lifecycle
 			? async () => {
+					const incomplete = card.workflow?.evidenceIncomplete;
+					const previous = incomplete && card.runs?.find((run) => run.runId === incomplete.runId);
+					if (incomplete && !previous?.artifactBase && !previous?.artifact?.diff) {
+						preparationError =
+							'Legacy run has no recorded review baseline; recover its original evidence before retrying';
+						return false;
+					}
 					if (location.kind !== 'local') return !card.reviewHandoff;
 					const artifact = await readBoardRunArtifact(
 						runCwd,
@@ -551,8 +559,6 @@ async function runCardPrompt(
 							!!artifact && canonicalJson(artifact) === canonicalJson(card.reviewHandoff.artifact)
 						);
 					if (artifact) {
-						const incomplete = card.workflow?.evidenceIncomplete;
-						const previous = incomplete && card.runs?.find((run) => run.runId === incomplete.runId);
 						const originalBase =
 							previous?.artifactBase ??
 							(previous?.artifact?.diff
@@ -651,6 +657,7 @@ async function runCardPrompt(
 		...(artifactBase ? { artifactBase } : {}),
 		output: result.stdout,
 		exitCode: result.exitCode,
+		...(preparationError ? { error: preparationError } : {}),
 		...(lifecycle
 			? {
 					executionStarted: result.executionStarted,
