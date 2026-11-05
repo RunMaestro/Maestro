@@ -36,7 +36,6 @@ describe('deferred desktop consult service admission', () => {
 	let clearScheduledTimeout: typeof clearTimeout;
 	let releases: Array<() => void>;
 	let active: number;
-	let expectedUncertainty: boolean;
 	const request = (id = 'request'): CrossAgentRequest => ({
 		requestId: id,
 		sourceSessionId: 'source',
@@ -88,7 +87,6 @@ describe('deferred desktop consult service admission', () => {
 		vi.useFakeTimers();
 		releases = [];
 		active = 0;
-		expectedUncertainty = false;
 		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 		gate = await import('../../../main/git/worktreeActivity');
 		const begin = gate.beginGlobalWorktreeActivity;
@@ -101,8 +99,6 @@ describe('deferred desktop consult service admission', () => {
 				released = true;
 				release();
 			};
-			// Dispose deliberately uncertain holds only in fixture teardown.
-			if (expectedUncertainty) releases.push(trackedRelease);
 			return trackedRelease;
 		});
 		runner = {
@@ -620,8 +616,7 @@ describe('deferred desktop consult service admission', () => {
 			await reserve();
 		});
 
-		it.each([1, 2])('retains uncertain supervision when timer setup %i fails', async (nth) => {
-			expectedUncertainty = true;
+		it.each([1, 2])('rolls back timer setup %i without replacing its rejection', async (nth) => {
 			const schedule = scheduleTimeout;
 			let count = 0;
 			const failure = new Error('timer setup failed');
@@ -631,15 +626,15 @@ describe('deferred desktop consult service admission', () => {
 				return schedule(...args);
 			});
 			await expect(start()).rejects.toBe(failure);
-			expect(active).toBe(1);
+			expect(active).toBe(0);
+			expect(vi.getTimerCount()).toBe(0);
 			expect(runner.start).not.toHaveBeenCalled();
-			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
-			expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
-			expect(active).toBe(1); // a cancellation flag cannot prove timer cleanup
+			expect(router.getCrossAgentConsultParties('request')).toBeNull();
+			for (const effect of [runner.stop, onChunk, report]) expect(effect).not.toHaveBeenCalled();
+			await reserve();
 		});
 
 		it.each([1, 2])('retains the registration when timer disarm %i throws', async (nth) => {
-			expectedUncertainty = true;
 			await start();
 			const clear = clearScheduledTimeout;
 			let count = 0;
@@ -653,6 +648,194 @@ describe('deferred desktop consult service admission', () => {
 			expect(active).toBe(1);
 			expect(onChunk).not.toHaveBeenCalled();
 			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			observer.onEnd(end());
+			expect(vi.getTimerCount()).toBe(0);
+			expect(onChunk).toHaveBeenCalledOnce();
+			expect(active).toBe(0);
+			await reserve();
+		});
+
+		it.each(['normal', 'throw', 'replace'] as const)(
+			'keeps failed setup cleanup reachable when diagnostics %s',
+			async (reporting) => {
+				const setupError = new Error('idle timer setup failed');
+				const cleanupError = new Error('rollback failed');
+				timers.mockImplementationOnce(scheduleTimeout).mockImplementationOnce(() => {
+					throw setupError;
+				});
+				clears.mockImplementation(() => {
+					throw cleanupError;
+				});
+				let replacement: Promise<ConsultObserver> | undefined;
+				report.mockImplementation(() => {
+					expect(active).toBe(2);
+					if (reporting === 'throw') throw new Error('reporting failed');
+					if (reporting === 'replace') replacement = start();
+				});
+				await expect(start()).rejects.toBe(setupError);
+				await replacement;
+				expect(report).toHaveBeenCalledWith(
+					cleanupError,
+					expect.objectContaining({
+						operation: 'crossAgent:watchdogCleanup',
+					})
+				);
+				expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+				// Re-deliver the retained timer after native clearing becomes available.
+				// Its obsolete terminal action must not stop/report a successor.
+				clears.mockImplementation(clearScheduledTimeout);
+				timer(maxMs)();
+				expect(runner.stop).not.toHaveBeenCalled();
+				expect(onChunk).not.toHaveBeenCalled();
+				if (reporting === 'replace') {
+					observer.onEnd(end());
+					expect(active).toBe(1); // old disposal remains independent
+				}
+				expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
+				expect(active).toBe(0);
+				expect(vi.getTimerCount()).toBe(0);
+				await reserve();
+			}
+		);
+
+		it.each(['cancel', 'idle', 'max'] as const)(
+			'retries failed %s timer disposal before stopping or reporting once',
+			async (kind) => {
+				await start();
+				const failure = new Error('disarm failed');
+				clears.mockImplementationOnce(() => {
+					throw failure;
+				});
+				const terminate = () =>
+					kind === 'cancel'
+						? router.cancelCrossAgentRequestsForSource('source')
+						: timer(kind === 'idle' ? idleMs : maxMs)();
+				expect(terminate).toThrow(failure);
+				for (const effect of [runner.stop, onChunk, report, warn])
+					expect(effect).not.toHaveBeenCalled();
+				expect(active).toBe(1);
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+				expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
+				expect(runner.stop).toHaveBeenCalledOnce();
+				expect(onChunk).toHaveBeenCalledOnce();
+				expect(onChunk).toHaveBeenCalledWith(expect.objectContaining({ canceled: true }));
+				observer.onEnd(end());
+				expect(onChunk).toHaveBeenCalledOnce();
+				expect(vi.getTimerCount()).toBe(0);
+				await reserve();
+			}
+		);
+
+		it('retains the outer request and native hold during asynchronous cleanup diagnostics', async () => {
+			const releaseNative = gate.beginGlobalWorktreeActivity();
+			releases.push(releaseNative);
+			const diagnostics = Promise.withResolvers<void>();
+			const failure = new Error('timer setup failed');
+			timers.mockImplementationOnce(scheduleTimeout).mockImplementationOnce(() => {
+				throw failure;
+			});
+			clears.mockImplementationOnce(() => {
+				throw new Error('rollback failed');
+			});
+			report.mockImplementationOnce(() => diagnostics.promise);
+			const pending = start();
+			const result = expect(pending).rejects.toBe(failure);
+			await vi.waitFor(() => expect(report).toHaveBeenCalledOnce());
+			expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
+			expect(active).toBe(2); // native and outer request remain independent
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			diagnostics.reject(new Error('asynchronous reporter failed'));
+			await result;
+			expect(active).toBe(1);
+			releaseNative();
+			await reserve();
+		});
+
+		it.each(['cancel', 'cancelAll'] as const)(
+			'reaches replaced failed disposals through portable %s',
+			async (method) => {
+				const service = library.createConsultService(undefined, gate.beginGlobalWorktreeActivity);
+				const opts = {
+					...options(),
+					runner,
+					resolveAgent: async () =>
+						({
+							id: 'claude-code',
+							command: 'claude',
+							args: [],
+							available: true,
+						}) as never,
+				};
+				timers.mockImplementationOnce(scheduleTimeout).mockImplementationOnce(() => {
+					throw new Error('setup failed');
+				});
+				clears.mockImplementationOnce(() => {
+					throw new Error('rollback failed');
+				});
+				await expect(service.start(request(), opts)).rejects.toThrow('setup failed');
+				await service.start({ ...request(), sourceTabId: 'successor-tab' }, opts);
+				expect(service.activeCount()).toBe(2);
+				expect(service[method]('request')).toBeTruthy();
+				expect(service.activeCount()).toBe(0);
+				expect(runner.stop).toHaveBeenCalledOnce();
+				expect(onChunk).toHaveBeenCalledOnce();
+				expect(vi.getTimerCount()).toBe(0);
+				await reserve();
+			}
+		);
+
+		it('does not reenter terminal delivery while disarming timers', async () => {
+			await start();
+			clears.mockImplementationOnce((handle) => {
+				observer.onActivity();
+				observer.onEnd(end());
+				router.cancelCrossAgentRequestsForSource('source');
+				clearScheduledTimeout(handle);
+			});
+			observer.onEnd(end());
+			expect(onChunk).toHaveBeenCalledOnce();
+			expect(runner.stop).not.toHaveBeenCalled();
+			expect(vi.getTimerCount()).toBe(0);
+			await reserve();
+		});
+
+		it('recovers an old disarm without removing or stopping its successor', async () => {
+			const first = await start();
+			clears.mockImplementationOnce(() => {
+				throw new Error('clear failed');
+			});
+			expect(() => first.onEnd(end())).toThrow('clear failed');
+			await router.startCrossAgentRequest({ ...request(), sourceTabId: 'successor' }, options());
+			expect(router.cancelCrossAgentRequestsForSource('source', 'tab')).toBe(1);
+			expect(runner.stop).not.toHaveBeenCalled();
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(active).toBe(1);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			observer.onEnd(end());
+			expect(active).toBe(0);
+			await reserve();
+		});
+
+		it('refuses uncertain termination recovery after replacement until the old native end', async () => {
+			const first = await start();
+			clears.mockImplementationOnce(() => {
+				throw new Error('disarm failed');
+			});
+			expect(() => router.cancelCrossAgentRequestsForSource('source')).toThrow('disarm failed');
+			await router.startCrossAgentRequest({ ...request(), sourceTabId: 'successor' }, options());
+			clears.mockClear();
+			expect(() => router.cancelCrossAgentRequestsForSource('source', 'tab')).toThrow(/replaced/);
+			expect(clears).not.toHaveBeenCalled();
+			expect(runner.stop).not.toHaveBeenCalled();
+			expect(onChunk).not.toHaveBeenCalled();
+			expect(active).toBe(2);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			first.onEnd(end());
+			expect(active).toBe(1);
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			observer.onEnd(end());
+			await reserve();
 		});
 
 		it('does not release a concurrent request after terminal reporting throws', async () => {

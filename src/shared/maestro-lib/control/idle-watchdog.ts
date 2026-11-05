@@ -44,6 +44,8 @@ export interface IdleWatchdogOptions {
 	 * that treats the two the same does not have to pass the handler twice.
 	 */
 	onMax?: () => void;
+	/** Retain a disposal handle before timer setup, including when setup throws. */
+	onCreate?: (watchdog: IdleWatchdog) => void;
 }
 
 export interface IdleWatchdog {
@@ -81,10 +83,14 @@ export function createIdleWatchdog(
 	let settled = false;
 
 	const clearTimers = (): void => {
-		if (idleTimer) clearTimeout(idleTimer);
-		if (maxTimer) clearTimeout(maxTimer);
-		idleTimer = undefined;
-		maxTimer = undefined;
+		if (idleTimer !== undefined) {
+			clearTimeout(idleTimer);
+			idleTimer = undefined;
+		}
+		if (maxTimer !== undefined) {
+			clearTimeout(maxTimer);
+			maxTimer = undefined;
+		}
 	};
 
 	const settle = (fire: () => void): void => {
@@ -100,16 +106,17 @@ export function createIdleWatchdog(
 		idleTimer = setTimeout(() => runActivity(() => settle(onIdle)), idleMs);
 	};
 
-	if (maxMs !== undefined) {
-		maxTimer = setTimeout(() => runActivity(() => settle(onMax ?? onIdle)), maxMs);
-	}
-	armIdle();
-
-	return {
+	const watchdog: IdleWatchdog = {
 		touch: armIdle,
 		disarm: (): void => {
 			settled = true;
 			clearTimers();
 		},
 	};
+	options.onCreate?.(watchdog);
+	if (!settled && maxMs !== undefined) {
+		maxTimer = setTimeout(() => runActivity(() => settle(onMax ?? onIdle)), maxMs);
+	}
+	armIdle();
+	return watchdog;
 }

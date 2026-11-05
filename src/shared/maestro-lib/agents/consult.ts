@@ -183,6 +183,7 @@ export interface ConsultStartOptions {
  * request already being spawned. The service holds the authoritative list.
  */
 interface ActiveConsult {
+	requestId: string;
 	/** The agent the mention was typed in - what Stop is addressed to. */
 	sourceSessionId: string;
 	/** The tab whose turn asked - what a Stop aimed at one tab is addressed to. */
@@ -206,6 +207,8 @@ export function createConsultService(
 	beginSupervisionActivity: () => () => void = () => () => {}
 ) {
 	const activeConsults = new Map<string, ActiveConsult>();
+	// A successor may replace the public registration while older disposal fails.
+	const pendingDisposals = new Set<ActiveConsult>();
 
 	/**
 	 * Stop every consult the given source agent still has in flight.
@@ -223,7 +226,7 @@ export function createConsultService(
 	 */
 	function cancelForSource(sourceSessionId: string, sourceTabId?: string): number {
 		// Snapshot first: `cancel()` deletes from the map it is iterating.
-		const doomed = [...activeConsults.values()].filter(
+		const doomed = [...new Set([...activeConsults.values(), ...pendingDisposals])].filter(
 			(c) =>
 				c.sourceSessionId === sourceSessionId && (!sourceTabId || c.sourceTabId === sourceTabId)
 		);
@@ -238,7 +241,7 @@ export function createConsultService(
 	 * @returns How many consults were cancelled.
 	 */
 	function cancelAll(): number {
-		const doomed = [...activeConsults.values()];
+		const doomed = [...new Set([...activeConsults.values(), ...pendingDisposals])];
 		for (const consult of doomed) consult.cancel();
 		return doomed.length;
 	}
@@ -251,10 +254,11 @@ export function createConsultService(
 	 * @returns Whether a consult with that id was in flight.
 	 */
 	function cancel(requestId: string): boolean {
-		const consult = activeConsults.get(requestId);
-		if (!consult) return false;
-		consult.cancel();
-		return true;
+		const doomed = [...new Set([...activeConsults.values(), ...pendingDisposals])].filter(
+			(consult) => consult.requestId === requestId
+		);
+		for (const consult of doomed) consult.cancel();
+		return doomed.length > 0;
 	}
 
 	/**
@@ -270,6 +274,7 @@ export function createConsultService(
 		// Stop can arrive before a process exists. Record it during preparation;
 		// the terminal cancellation path takes over once supervision is armed.
 		const registration: ActiveConsult = {
+			requestId,
 			sourceSessionId: request.sourceSessionId,
 			sourceTabId: request.sourceTabId,
 			targetSessionId: request.targetSessionId,
@@ -398,6 +403,8 @@ export function createConsultService(
 		const sessionId = `${CROSS_AGENT_SESSION_PREFIX}${request.requestId}`;
 
 		let settled = false;
+		let releasing = false;
+		let releaseFailed = false;
 		// The target's own provider session id, captured from its output stream. Forwarded on the
 		// terminal chunk so the caller stores it on the consult tab and resumes it on the next
 		// mention from this source tab.
@@ -408,8 +415,20 @@ export function createConsultService(
 
 		const release = (): void => {
 			// A failed disarm leaves supervision uncertain. Keep both the owned
-			// registration and its hold rather than declaring cleanup safe.
-			watch.dog?.disarm();
+			// registration and its hold so terminal delivery or Stop can retry.
+			releasing = true;
+			try {
+				watch.dog?.disarm();
+				releaseFailed = false;
+			} catch (error) {
+				releaseFailed = true;
+				pendingDisposals.add(registration);
+				throw error;
+			} finally {
+				releasing = false;
+			}
+			settled = true;
+			pendingDisposals.delete(registration);
 			if (activeConsults.get(request.requestId) === registration)
 				activeConsults.delete(request.requestId);
 			watch.releaseActivity?.();
@@ -419,7 +438,7 @@ export function createConsultService(
 		const observer: ConsultObserver = {
 			onActivity: () =>
 				runActivity(() => {
-					if (!settled) watch.dog?.touch();
+					if (!settled && !releasing) watch.dog?.touch();
 				}),
 			onSessionId: (agentSessionId) =>
 				runActivity(() => {
@@ -428,8 +447,10 @@ export function createConsultService(
 			onEnd: (end) =>
 				runActivity(() => {
 					const { exitCode, readText, error } = end;
-					if (settled) return;
-					settled = true;
+					if (settled || releasing) return;
+					// Retry the observed completion rather than stopping a later process
+					// that may have reused this request's native process id.
+					registration.cancel = () => observer.onEnd(end);
 					release();
 					const code = (error && exitCode === 0 ? 1 : exitCode) ?? -1;
 					try {
@@ -494,8 +515,12 @@ export function createConsultService(
 		 * failing to answer.
 		 */
 		const settleTerminated = (message: string, canceled = false): void => {
-			if (settled) return;
-			settled = true;
+			if (settled || releasing) return;
+			if (
+				pendingDisposals.has(registration) &&
+				activeConsults.get(request.requestId) !== registration
+			)
+				throw new Error('Cannot retry consult termination after its registration was replaced.');
 			release();
 			let partial = '';
 			try {
@@ -521,21 +546,44 @@ export function createConsultService(
 		// Transfer preparation ownership before timer setup: partial initialization
 		// must remain blocked rather than being released by start's finalizer.
 		registration.supervisionStarted = true;
-		watch.dog = createIdleWatchdog(
-			{
-				idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
-				maxMs: CROSS_AGENT_MAX_DURATION_MS,
-				onIdle: () =>
-					settleTerminated(
-						`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
-					),
-				onMax: () =>
-					settleTerminated(
-						`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
-					),
-			},
-			runActivity
-		);
+		try {
+			watch.dog = createIdleWatchdog(
+				{
+					onCreate: (dog) => {
+						watch.dog = dog;
+					},
+					idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
+					maxMs: CROSS_AGENT_MAX_DURATION_MS,
+					onIdle: () =>
+						settleTerminated(
+							`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+						),
+					onMax: () =>
+						settleTerminated(
+							`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+						),
+				},
+				runActivity
+			);
+		} catch (error) {
+			// No runner was started. Keep disposal reachable if rollback also fails,
+			// and never replace the original initialization rejection with diagnostics.
+			settled = true;
+			registration.cancel = () => runActivity(release);
+			try {
+				release();
+			} catch (cleanupError) {
+				// Await diagnostics without allowing a reporter rejection to replace
+				// the initialization error that the caller must receive.
+				await Promise.allSettled([
+					captureException(cleanupError, {
+						operation: 'crossAgent:watchdogCleanup',
+						requestId: request.requestId,
+					}),
+				]);
+			}
+			throw error;
+		}
 
 		// The real Stop path, now that there is something to tear down. A cancel that arrived while
 		// the target's binary was being resolved is settled here instead of spawning a process only
@@ -586,7 +634,6 @@ export function createConsultService(
 			// existed.
 			if (!spawnResult.success) {
 				if (!settled) {
-					settled = true;
 					release();
 					emitError(`${target.name} could not be started.`);
 				}
@@ -609,9 +656,10 @@ export function createConsultService(
 				transcriptEntries: request.transcript.length,
 			});
 		} catch (err) {
+			// Disposal failures are retryable supervision, not a second spawn failure.
+			if (releaseFailed) throw err;
 			// Spawn failed - tear down the supervision and surface a single error chunk.
 			if (!settled) {
-				settled = true;
 				release();
 				captureException(err, {
 					operation: 'crossAgent:spawn',
@@ -642,7 +690,7 @@ export function createConsultService(
 		cancelForSource,
 		cancelAll,
 		parties,
-		activeCount: () => activeConsults.size,
+		activeCount: () => new Set([...activeConsults.values(), ...pendingDisposals]).size,
 	};
 }
 
