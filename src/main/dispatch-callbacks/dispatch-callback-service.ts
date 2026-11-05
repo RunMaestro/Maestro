@@ -36,6 +36,8 @@ export interface DispatchCallbackServiceDeps {
 		agentId: string,
 		since: number
 	) => Promise<string | undefined> | string | undefined;
+	/** Called only after the parent queue/new-tab accepted delivery. */
+	onDelivered?: (fire: DispatchCallbackFire) => void | Promise<void>;
 	/** Display name lookup for {{DISPATCH_TARGET_NAME}} at fire time. */
 	logger?: {
 		info: (msg: string, context?: string) => void;
@@ -151,6 +153,7 @@ async function deliverCallback(
 			);
 			return;
 		}
+		await deps.onDelivered?.(fire);
 		deps.logger?.info(
 			`Callback ${entry.callbackId} delivered to ${entry.callerAgentId} (status=${fire.status})`,
 			LOG_CONTEXT

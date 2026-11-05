@@ -123,6 +123,7 @@ export class DispatchCallbackRegistry {
 		const timeoutMs = Math.min(Math.max(requestedTimeoutMs, 1000), MAX_CALLBACK_TIMEOUT_MS);
 		const entry: DispatchCallbackEntry = {
 			...registration,
+			admissionId: registration.pendingAdmissionId,
 			timeoutMs,
 			callbackId: this.generateId(),
 			processSessionId: buildProcessSessionId(registration.targetAgentId, registration.targetTabId),

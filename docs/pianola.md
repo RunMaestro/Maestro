@@ -248,6 +248,14 @@ The original accepted intent and live host release bind every delayed continuati
 
 Supervisor health, reconciliation and shutdown discard expired or revoked live releases in all four modes, including handoffs waiting for their local turn. These entries share the existing bounded host registry; a handoff entry carries no consult start capability. Removing a future release also drops its aggregate callback, while already running native children retain their process supervision and terminal journal. Cleanup never reconstructs a release from disk or retries an unknown start.
 
+### Managed dispatch payload retention
+
+The desktop keeps the complete prompts and outputs for the most recent 32 safely completed managed queue dispatches. A dispatch qualifies only after native routing is complete, every child is settled with terminal evidence, and any requested parent callback has been accepted by its destination queue or new tab. A timeout, callback firing, or persisted child terminal alone does not qualify it. Active, unknown, unreconciled and unconfirmed callback records retain their payloads, including across restart.
+
+Older qualifying dispatches become explicit payload-retired tombstones. Their receipt, caller, target and immutable intent remain available for reconciliation and prevent resending the dispatch; their full payload is no longer available. Stale writes cannot restore retired payloads. Tombstones themselves are retained.
+
+Cleanup runs asynchronously after desktop journal writes (including failed writes) and at supervisor startup, using the existing admission lock. It commits and fsyncs the tombstone before deleting payloads and rechecks the journal under that lock. Unreferenced artifacts from failed writes are reclaimed without another write to that dispatch. An artifact with no journal gets a 24-hour grace period and is reclaimed on a later lifecycle cleanup. There is no background polling timer. Legacy or non-routing records without sufficient native completion evidence remain protected; the limit applies to safely completed payload sets, not all evidence on disk.
+
 ### Combining Cue, dispatch and watchers
 
 Use Cue for triggers and technical monitoring, dispatch callbacks for worker return, Pianola watchers for waiting questions, and explicit acceptance evidence for dependency release. A heartbeat can detect stale runs and missing callbacks; deduplicate it against the controller and avoid answering the same question concurrently with a watcher. Completion callbacks report execution ending and are not acceptance evidence.

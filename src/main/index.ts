@@ -1342,6 +1342,11 @@ app
 		// execution queue (or in a new tab when it has none), not as a fresh
 		// headless process.
 		initDispatchCallbacks({
+			onDelivered: async ({ entry, status }) => {
+				if (!entry.admissionId || !['completed', 'failed'].includes(status)) return;
+				const { confirmDispatchCallback } = await import('./pianola/pianola-store-main');
+				confirmDispatchCallback(entry.admissionId, entry.callbackId);
+			},
 			enqueue: async (agentId, prompt, tabId) => {
 				const server = webServer;
 				if (!server) return { success: false, error: 'Desktop web server unavailable' };

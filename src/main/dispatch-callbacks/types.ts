@@ -76,6 +76,8 @@ export interface DispatchCallbackRegistration {
 
 export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	callbackId: string;
+	/** Immutable queue identity survives release of the pending spawn fence. */
+	admissionId?: string;
 	/**
 	 * Composite process session id the exit listener sees for this tab:
 	 * `{agentId}-ai-{tabId}`. This is the correlation key - completions from

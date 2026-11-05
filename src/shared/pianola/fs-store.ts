@@ -162,6 +162,9 @@ export interface PianolaFsStore {
 	/** Corrupt admission records must never be treated as a new dispatch. */
 	readDispatchAdmission(dispatchId: string): PianolaDispatchAdmission | null;
 	writeDispatchAdmission(admission: PianolaDispatchAdmission): void;
+	/** Async housekeeping; retains 32 completed payload sets and all unresolved evidence. */
+	compactDispatchArtifacts(): Promise<void>;
+	confirmDispatchCallback(dispatchId: string, callbackId: string): void;
 	/** A missing checkpoint is a first enrollment; a corrupt one throws. */
 	readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null;
 	writeScopeCheckpoint(
@@ -1063,6 +1066,18 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	}
 	function persistDispatchAdmission(admission: PianolaDispatchAdmission): void {
 		if (!validatePianolaDispatchAdmission(admission)) throw new Error('Invalid Pianola admission');
+		const previousBody = readMutationContent(admissionName(admission.dispatchId));
+		const previous = previousBody ? (JSON.parse(previousBody) as StoredAdmission) : null;
+		if (
+			previous?.payloadRetiredAt &&
+			canonicalJson(readDispatchAdmission(admission.dispatchId)) !== canonicalJson(admission)
+		)
+			throw new Error('Pianola dispatch payload retired; no mutation admitted');
+		if (previous?.callbackDeliveredAt)
+			admission = {
+				...admission,
+				callbackDeliveredAt: readDispatchAdmission(admission.dispatchId)!.callbackDeliveredAt,
+			};
 		const stored: StoredAdmission = JSON.parse(canonicalJson(admission));
 		stored.storageVersion = 1;
 		stored.payloads = { terminals: {} };
@@ -1084,27 +1099,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		// Every payload is fsynced before the journal can reference it. Read/ack
 		// failures retain the existing unknown/no-resend handling at the host.
 		writeJsonAtomic(admissionName(admission.dispatchId), stored, true);
-		// Compact with the journal under the existing store lock. Only current
-		// payloads survive; failed-write or replaced prepare artifacts do not
-		// become a second history store. No timer or separate retention service.
-		const retained = new Set([
-			...(stored.payloads.prepare
-				? [artifactName(admission.dispatchId, stored.payloads.prepare.sha256)]
-				: []),
-			...Object.values(stored.payloads.terminals).map((ref) =>
-				artifactName(admission.dispatchId, ref.sha256)
-			),
-		]);
-		const prefix = `maestro-pianola-dispatch-${admission.dispatchId}-`;
-		for (const name of fs.readdirSync(resolveDir())) {
-			if (
-				name.startsWith(prefix) &&
-				/^[a-f0-9]{64}\.artifact\.json$/.test(name.slice(prefix.length)) &&
-				!retained.has(name)
-			)
-				fs.rmSync(filePath(name), { force: true });
-		}
 	}
+
 	function writeDispatchAdmission(admission: PianolaDispatchAdmission): void {
 		withFileLock(
 			admissionName(admission.dispatchId),
@@ -1112,6 +1108,180 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			() => persistDispatchAdmission(admission),
 			true
 		);
+	}
+
+	function confirmDispatchCallback(dispatchId: string, callbackId: string): void {
+		withFileLock(
+			admissionName(dispatchId),
+			'dispatch admission',
+			() => {
+				const record = readDispatchAdmission(dispatchId);
+				if (!record || record.payloadRetiredAt || record.queuePrepare?.callbackId !== callbackId)
+					throw new Error('Pianola callback admission mismatch');
+				persistDispatchAdmission({ ...record, callbackDeliveredAt: Date.now() });
+			},
+			true
+		);
+	}
+	let compaction: Promise<void> | undefined;
+	function compactDispatchArtifacts(): Promise<void> {
+		// Coalesce callers, including failure cleanup and startup. Never run a directory
+		// scan in the synchronous journal commit. Capture one directory for this pass.
+		if (compaction) return compaction;
+		const dir = resolveDir();
+		compaction = compactArtifactsInDirectory(dir).finally(() => {
+			compaction = undefined;
+		});
+		return compaction;
+	}
+	async function compactArtifactsInDirectory(dir: string): Promise<void> {
+		const groups = new Map<string, string[]>();
+		try {
+			const entries = await fs.promises.opendir(dir);
+			for await (const entry of entries) {
+				const match =
+					/^maestro-pianola-dispatch-([a-f0-9-]{36})(?:-([a-f0-9]{64})\.artifact)?\.json$/.exec(
+						entry.name
+					);
+				if (!match?.[2] || !isPianolaScopeId(match[1])) continue;
+				const names = groups.get(match[1]) ?? [];
+				names.push(entry.name);
+				groups.set(match[1], names);
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			throw error;
+		}
+		const eligible: { id: string; body: string; mtime: number }[] = [];
+		// Read asynchronously. The locked mutation below must revalidate exact bytes;
+		// these snapshots are selection hints, never authority for deleting a payload.
+		for (const id of groups.keys()) {
+			try {
+				const file = path.join(dir, admissionName(id));
+				const stat = await fs.promises.stat(file);
+				if (stat.size > 16384) continue;
+				const body = await fs.promises.readFile(file, 'utf8');
+				const record = JSON.parse(body) as StoredAdmission;
+				let callbackRequired =
+					!!record.queuePrepare?.callbackId || !!record.queuePrepare?.callbackProof;
+				if (record.payloads?.prepare) {
+					const prepareFile = path.join(dir, artifactName(id, record.payloads.prepare.sha256));
+					if ((await fs.promises.stat(prepareFile)).size > artifactMaxBytes) continue;
+					const prepare = JSON.parse(
+						await fs.promises.readFile(
+							path.join(dir, artifactName(id, record.payloads.prepare.sha256)),
+							'utf8'
+						)
+					);
+					callbackRequired = !!prepare.value?.callbackId || !!prepare.value?.callbackProof;
+				}
+				if (
+					record.phase === 'settled' &&
+					record.outcome === 'accepted' &&
+					record.queueRouting?.completed &&
+					record.queueRouting.steps.every(
+						(s) =>
+							s.status === 'settled' &&
+							(!!s.terminal || !!record.payloads?.terminals[s.requestId]) &&
+							!s.startError
+					) &&
+					(!callbackRequired || record.callbackDeliveredAt)
+				)
+					eligible.push({ id, body, mtime: stat.mtimeMs });
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError))
+					throw error;
+			}
+		}
+		eligible.sort((a, b) => b.mtime - a.mtime || a.id.localeCompare(b.id));
+		const retire = new Map(eligible.slice(32).map((r) => [r.id, r.body]));
+		for (const [id, names] of groups) {
+			// Most active records have no garbage. Avoid acquiring their admission
+			// lock at all; native synchronous sends must not contend with a scan.
+			if (!retire.has(id)) {
+				try {
+					const file = path.join(dir, admissionName(id));
+					if ((await fs.promises.stat(file)).size > 16384) continue;
+					const raw = JSON.parse(await fs.promises.readFile(file, 'utf8')) as StoredAdmission;
+					const hashes = new Set([
+						...(raw.payloads?.prepare ? [raw.payloads.prepare.sha256] : []),
+						...Object.values(raw.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+					]);
+					if (names.every((name) => hashes.has(/-([a-f0-9]{64})\.artifact\.json$/.exec(name)![1])))
+						continue;
+				} catch (error) {
+					if (error instanceof SyntaxError || error instanceof TypeError) continue;
+					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				}
+			}
+			// A changed storage location cannot redirect an in-flight cleanup.
+			if (resolveDir() !== dir) return;
+			await withFileLockAsync(
+				admissionName(id),
+				'dispatch admission',
+				async () => {
+					if (resolveDir() !== dir) return;
+					try {
+						if (fs.statSync(path.join(dir, admissionName(id))).size > 16384) return;
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+					}
+					const snapshot = readMutationContent(admissionName(id));
+					let record: PianolaDispatchAdmission | null = null;
+					if (snapshot) {
+						// Preserve corrupt/unconfirmed evidence. Full hashes and bindings are
+						// checked before retirement; no cache grants deletion authority.
+						try {
+							record = readDispatchAdmission(id);
+							// An earlier rename may have lost its fsync/ack. Re-establish
+							// durable tombstone authority before reclaiming its old files.
+							if (record?.payloadRetiredAt) persistDispatchAdmission(record);
+						} catch (error) {
+							if (
+								(error as NodeJS.ErrnoException).code === 'ENOENT' ||
+								error instanceof SyntaxError ||
+								error instanceof TypeError ||
+								(error instanceof Error &&
+									/^(Invalid Pianola|Pianola admission too large)/.test(error.message))
+							)
+								return;
+							throw error;
+						}
+						if (retire.get(id) === snapshot && record) {
+							const tombstone = { ...record, payloadRetiredAt: Date.now() };
+							delete tombstone.queuePrepare;
+							delete tombstone.queueRouting;
+							delete tombstone.queueRelease;
+							delete tombstone.queueAuthority;
+							// Fsync the tombstone before removing any referenced artifact.
+							persistDispatchAdmission(tombstone);
+						}
+					}
+					const current = readMutationContent(admissionName(id));
+					const stored = current ? (JSON.parse(current) as StoredAdmission) : null;
+					const refs = new Set([
+						...(stored?.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
+						...Object.values(stored?.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+					]);
+					for (const name of names) {
+						const hash = /-([a-f0-9]{64})\.artifact\.json$/.exec(name)?.[1];
+						if (!hash || refs.has(hash)) continue;
+						const file = path.join(dir, name);
+						// A first-write crash can leave no journal. Give such evidence a
+						// day before reclaiming; a live writer holds this same lock.
+						try {
+							if (!stored && Date.now() - (await fs.promises.lstat(file)).mtimeMs < 86400000)
+								continue;
+							await fs.promises.unlink(file);
+						} catch (error) {
+							if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+						}
+					}
+				},
+				false,
+				true
+			);
+		}
 	}
 
 	function checkpointName(scopeId: string): string {
@@ -1333,6 +1503,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		updateSupervisorTargets,
 		upsertSupervisorTarget,
 		removeSupervisorTarget,
+		compactDispatchArtifacts,
+		confirmDispatchCallback,
 		readDispatchAdmission,
 		writeDispatchAdmission,
 		readScopeCheckpoint,

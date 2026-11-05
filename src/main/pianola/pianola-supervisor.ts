@@ -33,6 +33,7 @@ import {
 	BACKGROUND_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
 import {
+	compactDispatchArtifacts,
 	readSupervisorTargets,
 	readSupervisorTarget,
 	removeSupervisorTargetAsync,
@@ -222,6 +223,9 @@ export class PianolaSupervisor {
 	async start(): Promise<void> {
 		if (this.started) return;
 		this.started = true;
+		void compactDispatchArtifacts().catch((error) => {
+			void captureException(error, { operation: 'pianola:startupArtifactCleanup' });
+		});
 		if (this.deps.getStoredSessions) {
 			try {
 				const storedIds = new Set(this.deps.getStoredSessions().map((session) => session.id));

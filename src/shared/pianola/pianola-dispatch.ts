@@ -79,6 +79,10 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 	intentFingerprint: string;
 	policyFingerprint: string;
 	phase: 'prepared' | 'bound' | 'enrolled' | 'released' | 'settled';
+	/** Host queue accepted the parent notification; expiry/firing is insufficient. */
+	callbackDeliveredAt?: number;
+	/** Payloads retired; receipt and immutable no-resend identity remain. */
+	payloadRetiredAt?: number;
 	/** Minted only while the original caller proof is active. Exact target and
 	 * policy pinned for at most 24 hours; older journals without it stay held. */
 	queueAuthority?: {
@@ -108,6 +112,16 @@ export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchA
 	const id = (v: unknown) => typeof v === 'string' && v.trim().length > 0 && v.length <= 500;
 	if (
 		r.version !== 1 ||
+		[r.callbackDeliveredAt, r.payloadRetiredAt].some(
+			(v) => v !== undefined && (!Number.isSafeInteger(v) || v < 1)
+		) ||
+		(r.payloadRetiredAt !== undefined &&
+			(r.phase !== 'settled' ||
+				r.outcome !== 'accepted' ||
+				!!r.queuePrepare ||
+				!!r.queueRouting ||
+				!!r.queueAuthority ||
+				!!r.queueRelease)) ||
 		(r.queueCancelled !== undefined && r.queueCancelled !== true) ||
 		!isPianolaScopeId(r.dispatchId) ||
 		!isPianolaScopeId(r.scopeId) ||

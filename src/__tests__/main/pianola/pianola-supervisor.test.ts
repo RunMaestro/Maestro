@@ -18,6 +18,7 @@ import type { ChildProcess } from 'child_process';
 // The store read/path are stubbed so reconcile/relaunch work off a controllable
 // target list without touching electron, fs, or a real watcher.
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
+	compactDispatchArtifacts: vi.fn(async () => {}),
 	readSupervisorTargets: vi.fn(() => []),
 	readSupervisorTarget: vi.fn(),
 	removeSupervisorTargetAsync: vi.fn(async () => []),

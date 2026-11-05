@@ -10,6 +10,7 @@
  */
 
 import { app } from 'electron';
+import { captureException } from '../utils/sentry';
 import { settledDecisionPairs } from '../../shared/pianola/transcript-mining';
 import type { PianolaDecisionRecord } from '../../shared/pianola/storage';
 import * as path from 'path';
@@ -128,4 +129,41 @@ export const upsertSupervisorTargetAsync = store.upsertSupervisorTargetAsync;
 export const removeSupervisorTargetAsync = store.removeSupervisorTargetAsync;
 
 export const readDispatchAdmission = store.readDispatchAdmission;
-export const writeDispatchAdmission = store.writeDispatchAdmission;
+// Coalesce housekeeping outside the synchronous final admission boundary. No poller.
+let artifactCleanupScheduled = false;
+let artifactCleanupRequested = false;
+export function compactDispatchArtifacts(): Promise<void> {
+	return store.compactDispatchArtifacts();
+}
+function scheduleArtifactCleanup(): void {
+	artifactCleanupRequested = true;
+	if (artifactCleanupScheduled) return;
+	artifactCleanupScheduled = true;
+	setImmediate(() => {
+		void (async () => {
+			try {
+				do {
+					artifactCleanupRequested = false;
+					await compactDispatchArtifacts();
+				} while (artifactCleanupRequested);
+			} catch (error) {
+				void captureException(error, { operation: 'pianola:compactDispatchArtifacts' });
+			} finally {
+				artifactCleanupScheduled = false;
+			}
+		})();
+	});
+}
+export function writeDispatchAdmission(
+	admission: Parameters<typeof store.writeDispatchAdmission>[0]
+): void {
+	try {
+		store.writeDispatchAdmission(admission);
+	} finally {
+		scheduleArtifactCleanup();
+	}
+}
+export function confirmDispatchCallback(dispatchId: string, callbackId: string): void {
+	store.confirmDispatchCallback(dispatchId, callbackId);
+	scheduleArtifactCleanup();
+}
