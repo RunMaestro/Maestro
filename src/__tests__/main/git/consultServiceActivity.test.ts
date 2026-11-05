@@ -7,6 +7,7 @@ import type {
 	ConsultRunner,
 } from '../../../shared/maestro-lib/agents/consult';
 import type { CrossAgentRequest } from '../../../shared/crossAgentTypes';
+import type { StartCrossAgentRequestOptions } from '../../../main/cross-agent/cross-agent-router';
 
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
 vi.mock('../../../main/cross-agent/consult-runner', () => ({
@@ -332,6 +333,198 @@ describe('deferred desktop consult service admission', () => {
 		expect(portable.activeCount()).toBe(0);
 		hold.release();
 		await reserve();
+	});
+
+	describe('preparation recovery', () => {
+		it.each(['target', 'provider', 'prompt', 'config', 'args', 'overrides'] as const)(
+			'releases only its owned registration after %s preparation throws',
+			async (stage) => {
+				const failure = new Error(stage);
+				const fail = vi.fn(() => {
+					throw failure;
+				});
+				const opts: StartCrossAgentRequestOptions = options();
+				if (stage === 'target') opts.getTargetSession = fail;
+				if (stage === 'provider') opts.agentDetector = { getAgent: fail } as never;
+				if (stage === 'config') opts.getAgentConfig = fail;
+				if (stage === 'prompt') {
+					const prompts = await import('../../../shared/maestro-lib/agents/consult-prompt');
+					vi.spyOn(prompts, 'buildCrossAgentPrompt').mockImplementation(fail);
+				}
+				if (stage === 'args' || stage === 'overrides') {
+					const args = await import('../../../shared/maestro-lib/launch/agent-args');
+					vi.spyOn(
+						args,
+						stage === 'args' ? 'buildAgentArgs' : 'applyAgentConfigOverrides'
+					).mockImplementation(fail);
+				}
+				await expect(router.startCrossAgentRequest(request(), opts)).rejects.toBe(failure);
+				expect(fail).toHaveBeenCalledOnce();
+				expect(router.getCrossAgentConsultParties('request')).toBeNull();
+				expect(router.cancelCrossAgentRequestsForSource('source')).toBe(0);
+				expect(runner.start).not.toHaveBeenCalled();
+				expect(runner.stop).not.toHaveBeenCalled();
+				expect(vi.getTimerCount()).toBe(0);
+				expect(onChunk).not.toHaveBeenCalled();
+				await reserve();
+			}
+		);
+
+		it.each(['target', 'ssh', 'provider'] as const)(
+			'cleans an early %s refusal even when logging or delivery throws',
+			async (stage) => {
+				for (const reporting of [warn, onChunk]) {
+					const opts: StartCrossAgentRequestOptions = options();
+					if (stage === 'target') opts.getTargetSession = () => null;
+					if (stage === 'ssh')
+						opts.getTargetSession = () => ({
+							...target,
+							sshRemoteConfig: { enabled: true, remoteId: 'remote' },
+						});
+					if (stage === 'provider') opts.agentDetector = { getAgent: async () => null } as never;
+					const failure = new Error('reporting failed');
+					reporting.mockImplementationOnce(() => {
+						expect(active).toBe(2);
+						throw failure;
+					});
+					await expect(router.startCrossAgentRequest(request(), opts)).rejects.toBe(failure);
+					expect(router.getCrossAgentConsultParties('request')).toBeNull();
+					expect(active).toBe(0);
+					const hold = await reserve();
+					hold.release();
+				}
+				expect(runner.start).not.toHaveBeenCalled();
+				expect(vi.getTimerCount()).toBe(0);
+			}
+		);
+
+		it.each(['success', 'failure'] as const)(
+			'keeps pending cancellation recoverable when provider resolution ends in %s',
+			async (outcome) => {
+				const detection = Promise.withResolvers<never>();
+				const opts = {
+					...options(),
+					agentDetector: { getAgent: () => detection.promise } as never,
+				};
+				const pending = router.startCrossAgentRequest(request(), opts);
+				const failure = new Error('resolution failed');
+				const result = outcome === 'failure' ? expect(pending).rejects.toBe(failure) : pending;
+				const pendingActivity = active;
+				expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
+				expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+				if (outcome === 'failure') detection.reject(failure);
+				else detection.resolve({ command: 'claude', args: [], available: true } as never);
+				await result;
+				expect(pendingActivity).toBe(2);
+				expect(router.getCrossAgentConsultParties('request')).toBeNull();
+				expect(runner.start).not.toHaveBeenCalled();
+				expect(runner.stop).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0);
+				expect(onChunk).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0);
+				if (outcome === 'success')
+					expect(onChunk).toHaveBeenCalledWith(expect.objectContaining({ canceled: true }));
+				expect(vi.getTimerCount()).toBe(0);
+				await reserve();
+			}
+		);
+
+		it('preserves a supervised successor when older preparation rejects', async () => {
+			const detection = Promise.withResolvers<never>();
+			const pending = router.startCrossAgentRequest(request(), {
+				...options(),
+				agentDetector: { getAgent: () => detection.promise } as never,
+			});
+			const failure = new Error('old resolution failed');
+			const result = expect(pending).rejects.toBe(failure);
+			await start();
+			const overlappingActivity = active;
+			detection.reject(failure);
+			await result;
+			expect(overlappingActivity).toBe(3);
+			expect(active).toBe(1);
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			observer.onEnd(end());
+			await reserve();
+		});
+
+		it('preserves a replacement started reentrantly by failing early reporting', async () => {
+			const failure = new Error('logger failed');
+			let replacement: Promise<ConsultObserver> | undefined;
+			warn.mockImplementationOnce(() => {
+				expect(active).toBe(2);
+				replacement = start();
+				throw failure;
+			});
+			await expect(
+				router.startCrossAgentRequest(request(), { ...options(), getTargetSession: () => null })
+			).rejects.toBe(failure);
+			await replacement;
+			expect(active).toBe(1);
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			observer.onEnd(end());
+			await reserve();
+		});
+
+		it('never releases an independent native hold after preparation failure', async () => {
+			const releaseNative = gate.beginGlobalWorktreeActivity();
+			releases.push(releaseNative);
+			const failure = new Error('provider failed');
+			await expect(
+				router.startCrossAgentRequest(request(), {
+					...options(),
+					agentDetector: {
+						getAgent: async () => {
+							throw failure;
+						},
+					} as never,
+				})
+			).rejects.toBe(failure);
+			expect(router.getCrossAgentConsultParties('request')).toBeNull();
+			expect(active).toBe(1);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			releaseNative();
+			await reserve();
+		});
+
+		it('admits standalone host preparation before target access and retains it while resolving', async () => {
+			const service = library.createConsultService(undefined, gate.beginGlobalWorktreeActivity);
+			const detection = Promise.withResolvers<never>();
+			let preparationActivity = 0;
+			const pending = service.start(request(), {
+				...options(),
+				runner,
+				getTargetSession: () => {
+					preparationActivity = active;
+					return target;
+				},
+				resolveAgent: () => detection.promise,
+			});
+			const failure = new Error('resolution failed');
+			const result = expect(pending).rejects.toBe(failure);
+			const reservation = await gate.reserveWorktreeCleanup(root);
+			if (reservation.status === 'reserved-partially') releases.push(reservation.release);
+			detection.reject(failure);
+			await result;
+			expect(preparationActivity).toBe(1);
+			expect(reservation).toMatchObject({ status: 'blocked' });
+			expect(service.activeCount()).toBe(0);
+			expect(runner.start).not.toHaveBeenCalled();
+			await reserve();
+		});
+
+		it('refuses standalone host admission before options, registration or recovery', async () => {
+			const service = library.createConsultService(undefined, gate.beginGlobalWorktreeActivity);
+			const inspect = vi.fn(() => {
+				throw new Error('Unexpected option access');
+			});
+			const opts = new Proxy({} as never, { get: inspect });
+			await reserve();
+			await expect(service.start(request(), opts)).rejects.toThrow(/reserved/);
+			expect(inspect).not.toHaveBeenCalled();
+			expect(service.activeCount()).toBe(0);
+			for (const effect of [runner.start, runner.stop, onChunk, warn, report])
+				expect(effect).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('retained supervision', () => {

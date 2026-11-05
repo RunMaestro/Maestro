@@ -189,6 +189,10 @@ interface ActiveConsult {
 	sourceTabId: string;
 	/** The agent that is answering. */
 	targetSessionId: string;
+	/** Stop may arrive while provider/argument preparation is still pending. */
+	cancelRequested: boolean;
+	/** Timer setup has begun; a partial setup must retain its activity. */
+	supervisionStarted: boolean;
 	/** Terminate this consult and emit its terminal chunk. Idempotent. */
 	cancel: () => void;
 }
@@ -197,7 +201,7 @@ export function createConsultService(
 	// A host can admit deferred dispatch before any state, timer or response work.
 	// The default keeps portable callers independent of desktop cleanup policy.
 	runActivity: <T>(operation: () => T) => T = (operation) => operation(),
-	// Retained supervision outlives start and the individual callback scopes.
+	// Own preparation and retain supervision beyond the individual callback scopes.
 	// Hosts without cleanup reservations need no lifetime tracking.
 	beginSupervisionActivity: () => () => void = () => () => {}
 ) {
@@ -262,6 +266,39 @@ export function createConsultService(
 	 * an error chunk instead of silently running locally.
 	 */
 	async function start(request: CrossAgentRequest, opts: ConsultStartOptions): Promise<void> {
+		const requestId = request.requestId;
+		// Stop can arrive before a process exists. Record it during preparation;
+		// the terminal cancellation path takes over once supervision is armed.
+		const registration: ActiveConsult = {
+			sourceSessionId: request.sourceSessionId,
+			sourceTabId: request.sourceTabId,
+			targetSessionId: request.targetSessionId,
+			cancelRequested: false,
+			supervisionStarted: false,
+			cancel: () => {
+				registration.cancelRequested = true;
+			},
+		};
+		// Own preparation before publishing a cancellable registration. A failed
+		// setup has no watchdog to release it, but must not strand that entry.
+		const releaseActivity = beginSupervisionActivity();
+		activeConsults.set(requestId, registration);
+		try {
+			await startRegistered(request, opts, registration, releaseActivity);
+		} finally {
+			if (!registration.supervisionStarted) {
+				if (activeConsults.get(requestId) === registration) activeConsults.delete(requestId);
+				releaseActivity();
+			}
+		}
+	}
+
+	async function startRegistered(
+		request: CrossAgentRequest,
+		opts: ConsultStartOptions,
+		registration: ActiveConsult,
+		releaseActivity: () => void
+	): Promise<void> {
 		const { runner, sshStore, getTargetSession, onChunk } = opts;
 		const writable = opts.writable ?? false;
 
@@ -291,23 +328,6 @@ export function createConsultService(
 				activeConsults.delete(request.requestId);
 			onChunk(baseChunk({ chunk: '', done: true, error: message }));
 		};
-
-		/**
-		 * Stop can land before the process exists: resolving the target agent's binary is async,
-		 * and the spawn itself is awaited. Register a cancel that only raises this flag now (it is
-		 * swapped for the real terminal path once the supervision is armed), and re-check it around
-		 * the spawn so a consult cancelled in that window is never left running.
-		 */
-		let cancelRequested = false;
-		const registration: ActiveConsult = {
-			sourceSessionId: request.sourceSessionId,
-			sourceTabId: request.sourceTabId,
-			targetSessionId: request.targetSessionId,
-			cancel: () => {
-				cancelRequested = true;
-			},
-		};
-		activeConsults.set(request.requestId, registration);
 
 		if (!target) {
 			emitError(`Target agent not found for session ${request.targetSessionId}`);
@@ -384,7 +404,7 @@ export function createConsultService(
 		let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
 		// Assigned once the consult is actually under way (see below). Held on a const object so
 		// `release` can close over it without a `let` that trips prefer-const.
-		const watch: { dog?: IdleWatchdog; releaseActivity?: () => void } = {};
+		const watch: { dog?: IdleWatchdog; releaseActivity?: () => void } = { releaseActivity };
 
 		const release = (): void => {
 			// A failed disarm leaves supervision uncertain. Keep both the owned
@@ -498,8 +518,9 @@ export function createConsultService(
 
 		// Safety net: never leave the process attached forever. The idle budget covers a wedged
 		// target; the hard ceiling covers one that chatters without finishing.
-		// Acquire before timer setup: partial initialization must remain blocked.
-		watch.releaseActivity = beginSupervisionActivity();
+		// Transfer preparation ownership before timer setup: partial initialization
+		// must remain blocked rather than being released by start's finalizer.
+		registration.supervisionStarted = true;
 		watch.dog = createIdleWatchdog(
 			{
 				idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
@@ -520,7 +541,7 @@ export function createConsultService(
 		// the target's binary was being resolved is settled here instead of spawning a process only
 		// to kill it a moment later.
 		registration.cancel = () => settleTerminated(`${target.name} was stopped by the user.`, true);
-		if (cancelRequested) {
+		if (registration.cancelRequested) {
 			registration.cancel();
 			return;
 		}
