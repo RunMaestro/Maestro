@@ -1,6 +1,15 @@
 import { expect, it } from 'vitest';
 import { nodeSqliteBetterSqlite3Mock } from './nodeSqlite';
 
+it('exposes the exact constructor filename as the database name', () => {
+	const db = new (nodeSqliteBetterSqlite3Mock().default)(':memory:');
+	try {
+		expect(db.name).toBe(':memory:');
+	} finally {
+		db.close();
+	}
+});
+
 it('models IMMEDIATE writes and nested rollback with SQLite savepoints', () => {
 	const db = new (nodeSqliteBetterSqlite3Mock().default)(':memory:');
 	try {

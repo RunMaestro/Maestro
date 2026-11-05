@@ -46,6 +46,7 @@ export function canLoadNodeSqlite(): boolean {
  */
 class NodeSqliteDatabaseShim {
 	private readonly db: DatabaseSync;
+	readonly name: string;
 	private savepoint = 0;
 
 	/**
@@ -58,6 +59,7 @@ class NodeSqliteDatabaseShim {
 		filename: string,
 		options: { readonly?: boolean; fileMustExist?: boolean; timeout?: number } = {}
 	) {
+		this.name = filename;
 		const inMemory = filename === '' || filename === ':memory:';
 		if (options.fileMustExist && !inMemory && !existsSync(filename)) {
 			throw Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' });
