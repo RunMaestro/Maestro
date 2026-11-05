@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { buildConsultFirstContext, buildConsultReplyContext } from '../../shared/crossAgentContext';
 import { getPrompt } from '../prompt-manager';
 import { captureException } from '../utils/sentry';
@@ -100,8 +101,9 @@ export class PianolaDispatchAdmissionService {
 			localPrompt(): string;
 			terminals: Map<string, string>;
 			localRunId?: string;
-			onSettled?: (failed: boolean, continuationStepId?: string) => void;
+			onSettled?: (progress: ManagedQueueRoutingProgress) => void;
 			replyNotified?: boolean;
+			handoffNotified?: boolean;
 		}
 	>();
 	private disposed = false;
@@ -475,10 +477,7 @@ export class PianolaDispatchAdmissionService {
 	 * task was authorized at prepare; caller completion is irrelevant, policy
 	 * revocation, target replacement and expiry are not. Uncertain release is
 	 * terminal for retries, including after restart or a lost acknowledgment. */
-	releaseQueue(
-		dispatchId: string,
-		onSettled?: (failed: boolean, continuationStepId?: string) => void
-	) {
+	releaseQueue(dispatchId: string, onSettled?: (progress: ManagedQueueRoutingProgress) => void) {
 		return this.queue.enqueue('admissions', async () => {
 			const record = this.deps.store.readDispatchAdmission(dispatchId);
 			if (
@@ -835,7 +834,14 @@ export class PianolaDispatchAdmissionService {
 		const record = this.deps.store.readDispatchAdmission(dispatchId);
 		if (!release?.onSettled || !record?.queueRouting) return;
 		const reply = record.queueRouting.steps.find((s) => s.stage === 'reply');
-		const initial = record.queueRouting.steps.filter((s) => !s.stage);
+		const mode = record.queueRouting.routing;
+		const initial = record.queueRouting.steps.filter((s) =>
+			mode === 'consult-first'
+				? s.kind === 'consult'
+				: mode === 'handoff'
+					? s.kind === 'local'
+					: !s.stage
+		);
 		if (
 			initial.some(
 				(s) =>
@@ -846,12 +852,55 @@ export class PianolaDispatchAdmissionService {
 			)
 		)
 			return;
-		const failed = initial.some((s) => s.terminal?.error || s.terminal?.canceled);
+		const failed =
+			initial.some((s) => s.terminal?.error || s.terminal?.canceled) ||
+			(mode === 'handoff' && !initial[0]?.terminal?.text.trim());
+		if (mode === 'consult-first' && !failed) {
+			const local = record.queueRouting.steps.find((s) => s.kind === 'local')!;
+			if (local.status === 'prepared' && !release.replyNotified) {
+				release.localPrompt();
+				release.replyNotified = true;
+				release.onSettled({ failed: false, continuationStepId: local.requestId });
+				return;
+			}
+			if (
+				local.status !== 'settled' ||
+				!local.terminal ||
+				local.startError ||
+				release.terminals.get(local.requestId) !== canonicalJson(local)
+			)
+				return;
+		}
+		if (mode === 'handoff' && !failed) {
+			if (!release.handoffNotified) {
+				release.guard();
+				release.handoffNotified = true;
+				release.onSettled({
+					failed: false,
+					handoff: {
+						generation: release.generation,
+						targetSessionIds: record.queueRouting.targets.map((t) => t.agentId),
+					},
+				});
+				return;
+			}
+			if (
+				record.queueRouting.steps.some(
+					(s) =>
+						s.kind === 'handoff' &&
+						(s.status !== 'settled' ||
+							!s.terminal ||
+							s.startError ||
+							release.terminals.get(s.requestId) !== canonicalJson(s))
+				)
+			)
+				return;
+		}
 		if (reply && !failed) {
 			if (reply.status === 'prepared' && !release.replyNotified) {
 				release.localPrompt();
 				release.replyNotified = true;
-				release.onSettled(false, reply.requestId);
+				release.onSettled({ failed: false, continuationStepId: reply.requestId });
 				return;
 			}
 			if (
@@ -874,11 +923,22 @@ export class PianolaDispatchAdmissionService {
 		// Drop the capability before notification, including reentrant callbacks.
 		this.routingReleases.delete(dispatchId);
 		forgetQueueConsultRelease(dispatchId);
-		release.onSettled(failed || !!reply?.terminal?.error || !!reply?.terminal?.canceled);
+		release.onSettled({
+			failed:
+				failed ||
+				record.queueRouting.steps.some((s) => !!s.terminal?.error || !!s.terminal?.canceled),
+		});
 	}
 
 	hasQueueRoutingConsumer(dispatchId: string): boolean {
 		return !!this.routingReleases.get(dispatchId)?.onSettled;
+	}
+
+	/** Revoke the live local/handoff release too; it has no consult transport entry. */
+	revokeQueueRouting(dispatchId: string): boolean {
+		const live = this.routingReleases.delete(dispatchId);
+		forgetQueueConsultRelease(dispatchId);
+		return live;
 	}
 
 	/** Only a live host release can authorize delayed LOCAL; disk IDs cannot restore it. */
@@ -887,7 +947,17 @@ export class PianolaDispatchAdmissionService {
 		if (!release) throw new Error('DispatchRoutingReleaseUnavailable');
 		const routing = this.deps.store.readDispatchAdmission(dispatchId)?.queueRouting;
 		if (
-			routing?.routing === 'parallel' &&
+			routing?.routing === 'consult-first' &&
+			routing.rendererConsumer &&
+			(!release.replyNotified ||
+				!stepId ||
+				!routing.steps.some(
+					(s) => s.kind === 'local' && s.requestId === stepId && s.status === 'prepared'
+				))
+		)
+			throw new Error('DispatchRoutingRepliesUnavailable');
+		if (
+			(routing?.routing === 'parallel' || routing?.routing === 'handoff') &&
 			(!!stepId !== !!release.replyNotified ||
 				(stepId &&
 					!routing.steps.some(
@@ -895,19 +965,13 @@ export class PianolaDispatchAdmissionService {
 					)))
 		)
 			throw new Error('DispatchRoutingRepliesUnavailable');
-		if (
-			this.deps.store.readDispatchAdmission(dispatchId)?.queueRouting?.routing === 'parallel' &&
-			!release.replyNotified
-		)
+		if (['parallel', 'handoff'].includes(routing?.routing ?? '') && !release.replyNotified)
 			release.guard();
 		else release.localPrompt();
 		return {
 			generation: release.generation,
 			guard: () => {
-				if (
-					this.deps.store.readDispatchAdmission(dispatchId)?.queueRouting?.routing === 'parallel' &&
-					!release.replyNotified
-				)
+				if (['parallel', 'handoff'].includes(routing?.routing ?? '') && !release.replyNotified)
 					release.guard();
 				else release.localPrompt();
 			},
@@ -948,6 +1012,8 @@ export class PianolaDispatchAdmissionService {
 				throw new Error('DispatchRoutingReleaseUnavailable');
 			release.guard();
 			const record = this.deps.store.readDispatchAdmission(dispatchId);
+			if (kind === 'handoff' && record?.queueRouting?.rendererConsumer && !release.handoffNotified)
+				throw new Error('DispatchRoutingLocalOutputUnavailable');
 			if ((record?.queueRouting?.routing === 'handoff') !== (kind === 'handoff'))
 				throw new Error('DispatchRoutingReleaseUnavailable');
 			const step = record?.queueRouting?.steps.find(

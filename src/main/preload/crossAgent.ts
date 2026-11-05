@@ -1,3 +1,5 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 /**
  * Preload API for cross-agent `@mention` dispatch (Phase 03).
  *
@@ -22,16 +24,16 @@ export function createCrossAgentApi() {
 			sourceSessionId: string;
 			sourceTabId: string;
 			dispatchId: string;
-		}): Promise<{ generation: string; routing: 'parallel' | 'only'; targetSessionIds: string[] }> =>
+		}): Promise<{ generation: string; routing: MentionRouting; targetSessionIds: string[] }> =>
 			ipcRenderer.invoke('cross-agent:prepare-queue', input),
 		onQueueSettled: (
-			handler: (result: {
-				sourceSessionId: string;
-				sourceTabId: string;
-				dispatchId: string;
-				failed: boolean;
-				continuationStepId?: string;
-			}) => void
+			handler: (
+				result: ManagedQueueRoutingProgress & {
+					sourceSessionId: string;
+					sourceTabId: string;
+					dispatchId: string;
+				}
+			) => void
 		): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, result: Parameters<typeof handler>[0]) =>
 				handler(result);

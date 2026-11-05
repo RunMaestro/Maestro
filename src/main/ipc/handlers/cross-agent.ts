@@ -154,13 +154,12 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					input.dispatchId,
 					assertOwner,
 					{
-						onSettled: (failed, continuationStepId) =>
+						onSettled: (progress) =>
 							safeSend('cross-agent:queue-settled', {
 								sourceSessionId: input.sourceSessionId,
 								sourceTabId: input.sourceTabId,
 								dispatchId: input.dispatchId,
-								failed,
-								...(continuationStepId ? { continuationStepId } : {}),
+								...progress,
 							}),
 					}
 				);
@@ -220,7 +219,22 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					) {
 						throw new Error('DispatchRoutingContextUnavailable');
 					}
-					return startReleasedQueueConsult(
+					const server = deps.getWebServer?.();
+					const start = payload.managedQueue.handoff
+						? server?.startQueueHandoffFromMain.bind(server)
+						: undefined;
+					if (payload.managedQueue.handoff && !start)
+						throw new Error('DispatchRoutingReleaseUnavailable');
+					const nativeStart = start
+						? (
+								locator: { dispatchId: string; generation: string },
+								source: string,
+								tab: string,
+								target: string,
+								opts: Parameters<typeof startReleasedQueueConsult>[4]
+							) => start(source, tab, locator, target, opts)
+						: startReleasedQueueConsult;
+					return nativeStart(
 						payload.managedQueue,
 						payload.sourceSessionId,
 						payload.sourceTabId,

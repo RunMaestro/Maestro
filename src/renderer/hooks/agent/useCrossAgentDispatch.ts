@@ -111,7 +111,7 @@ export interface SendCrossAgentRequestOptions {
 	 * transcript BEFORE that turn, so the answer is not sent twice.
 	 */
 	handoffAnswer?: string;
-	managedQueue?: { dispatchId: string; generation: string };
+	managedQueue?: { dispatchId: string; generation: string; handoff?: boolean };
 	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI

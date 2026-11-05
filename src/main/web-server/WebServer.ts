@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
 	ConfirmQueueItem,
@@ -722,12 +723,20 @@ export class WebServer {
 		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
 	}
 
+	startQueueHandoffFromMain(
+		...args: Parameters<
+			import('../pianola/pianola-new-tab-dispatch').PianolaNewTabDispatch['startQueueHandoff']
+		>
+	) {
+		return this.messageHandler.startQueueHandoffFromMain(...args);
+	}
+
 	prepareQueueSpawnFromMain(
 		agentId: string,
 		tabId: string,
 		itemId: string,
 		assertOwner: () => void,
-		routingConsumer?: { onSettled(failed: boolean, continuationStepId?: string): void },
+		routingConsumer?: { onSettled(progress: ManagedQueueRoutingProgress): void },
 		stepId?: string
 	) {
 		return this.messageHandler.prepareQueueSpawnFromMain(

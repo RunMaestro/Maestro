@@ -567,7 +567,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
 				);
 				await Promise.all(starts);
-				if (prepared.routing === 'only') return true; // no local AgentRun, retry snapshot or spawn
+				if (prepared.routing === 'only' || prepared.routing === 'consult-first') return true; // no local AgentRun, retry snapshot or spawn
 			}
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);

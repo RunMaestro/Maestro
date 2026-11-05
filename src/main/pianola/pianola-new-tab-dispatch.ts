@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { generateUUID } from '../../shared/uuid';
 import { readAgentRuns } from '../../cli/services/agent-run-store';
 import { nativeTabSession } from './pianola-queue-session';
@@ -172,7 +173,8 @@ export function cancelPianolaQueueItem(
 	registry: DispatchCallbackRegistry | null | undefined,
 	agentId: string,
 	tabId: string,
-	itemId: string
+	itemId: string,
+	routingRevoked = false
 ) {
 	if (!isPianolaScopeId(itemId)) return;
 	const record = store.readDispatchAdmission(itemId);
@@ -183,7 +185,7 @@ export function cancelPianolaQueueItem(
 		((record.runId || record.phase === 'settled') && !record.queueRouting?.rendererConsumer)
 	)
 		return;
-	const liveRouting = forgetQueueConsultRelease(itemId);
+	const liveRouting = forgetQueueConsultRelease(itemId) || routingRevoked;
 	// Completion fields on disk are outcomes, never live send/cancel authority.
 	if ((record.runId || record.phase === 'settled') && !liveRouting) return;
 	record.queueCancelled = true;
@@ -543,7 +545,31 @@ export class PianolaNewTabDispatch {
 	}
 
 	cancelQueueItem(agentId: string, tabId: string, itemId: string) {
-		cancelPianolaQueueItem(this.deps.store, this.registry(), agentId, tabId, itemId);
+		const record = this.deps.store.readDispatchAdmission(itemId);
+		if (record?.targetAgentId !== agentId || record.targetTabId !== tabId) return;
+		const revoked = this.admission.revokeQueueRouting(itemId);
+		cancelPianolaQueueItem(this.deps.store, this.registry(), agentId, tabId, itemId, revoked);
+	}
+
+	startQueueHandoff(
+		sourceAgentId: string,
+		sourceTabId: string,
+		locator: { dispatchId: string; generation: string },
+		targetAgentId: string,
+		opts: Omit<
+			import('../cross-agent/cross-agent-router').StartCrossAgentRequestOptions,
+			'nativeAdmission'
+		>
+	) {
+		const record = this.deps.store.readDispatchAdmission(locator.dispatchId);
+		if (record?.targetAgentId !== sourceAgentId || record.targetTabId !== sourceTabId)
+			throw new Error('DispatchTargetMismatch');
+		return this.admission.startQueueHandoff(
+			locator.dispatchId,
+			locator.generation,
+			targetAgentId,
+			opts
+		);
 	}
 
 	private registry() {
@@ -588,7 +614,7 @@ export class PianolaNewTabDispatch {
 		tabId: string,
 		itemId: string,
 		assertOwner: () => void,
-		routingConsumer?: { onSettled(failed: boolean, continuationStepId?: string): void },
+		routingConsumer?: { onSettled(progress: ManagedQueueRoutingProgress): void },
 		stepId?: string
 	) {
 		return this.queue.enqueue(itemId, async () => {
@@ -605,13 +631,13 @@ export class PianolaNewTabDispatch {
 				return { reconciled: true as const, runId: record.runId };
 			if (record.queueCancelled) throw new Error('DispatchQueueCancelled');
 			if (record.outcome === 'rejected') throw new Error('DispatchQueueNotStarted');
-			if (routingConsumer && !['parallel', 'only'].includes(record.queueRouting?.routing ?? ''))
+			if (routingConsumer && !record.queueRouting)
 				throw new Error('DispatchQueueRoutingUnsupported');
 			const delayedLocal =
-				record.queueRouting?.routing === 'consult-first' ||
-				(!routingConsumer &&
-					record.queueRouting?.routing === 'parallel' &&
-					this.admission.hasQueueRoutingConsumer(itemId));
+				!routingConsumer &&
+				(record.queueRouting?.routing === 'consult-first' ||
+					(['parallel', 'handoff'].includes(record.queueRouting?.routing ?? '') &&
+						this.admission.hasQueueRoutingConsumer(itemId)));
 			if (
 				delayedLocal
 					? !['released', ...(stepId ? ['settled'] : [])].includes(record.phase) ||
@@ -623,7 +649,11 @@ export class PianolaNewTabDispatch {
 				throw new Error('DispatchQueueAuthorityUnavailable');
 			const local = record.queueRouting?.steps.find(
 				(s) =>
-					s.kind === 'local' && (stepId ? s.requestId === stepId && s.stage === 'reply' : !s.stage)
+					s.kind === 'local' &&
+					(stepId
+						? s.requestId === stepId &&
+							(s.stage === 'reply' || record.queueRouting?.routing === 'consult-first')
+						: !s.stage)
 			);
 			if (stepId && !local) throw new Error('DispatchRoutingStepChanged');
 			if (
@@ -733,12 +763,12 @@ export class PianolaNewTabDispatch {
 				: await this.admission.releaseQueue(
 						itemId,
 						routingConsumer
-							? (failed, continuationStepId) => {
+							? (progress) => {
 									assertOwner();
 									callbackGuard();
-									if (callbackId && !continuationStepId)
-										registry!.completeQueueAdmission(callbackId, itemId, failed);
-									routingConsumer.onSettled(failed, continuationStepId);
+									if (callbackId && !progress.continuationStepId && !progress.handoff)
+										registry!.completeQueueAdmission(callbackId, itemId, progress.failed);
+									routingConsumer.onSettled(progress);
 								}
 							: undefined
 					);
@@ -753,7 +783,7 @@ export class PianolaNewTabDispatch {
 				return {
 					reconciled: false as const,
 					generation: released.generation,
-					routing: record.queueRouting!.routing as 'parallel' | 'only',
+					routing: record.queueRouting!.routing,
 					targetSessionIds: record.queueRouting!.targets.map((t) => t.agentId),
 				};
 			if (pianolaNewTabSpawns.isHeld(agentId, tabId)) throw new Error('DispatchTargetHeld');

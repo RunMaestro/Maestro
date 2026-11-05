@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import {
 	formatConsultedAgentNames,
 	buildConsultPendingNote,
@@ -349,12 +350,21 @@ export function settleConsultHold(settlement: ConsultSettlement): void {
 
 /** The host's native aggregate releases the original managed queue barrier.
  * Consult chunks never convert it to an unmanaged agentContext continuation. */
-export async function settleManagedQueue(result: {
-	sourceSessionId: string;
-	sourceTabId: string;
-	dispatchId: string;
-	continuationStepId?: string;
-}): Promise<void> {
+export async function settleManagedQueue(
+	result: ManagedQueueRoutingProgress & {
+		sourceSessionId: string;
+		sourceTabId: string;
+		dispatchId: string;
+	}
+): Promise<void> {
+	if (result.handoff) {
+		const { releaseMentionHandoff } = await import('./crossAgentHandoff');
+		await releaseMentionHandoff(result.sourceSessionId, result.sourceTabId, {
+			failed: result.failed,
+			managedQueue: { dispatchId: result.dispatchId, ...result.handoff },
+		});
+		return;
+	}
 	if (result.continuationStepId) {
 		const item = useSessionStore
 			.getState()

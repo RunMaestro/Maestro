@@ -209,10 +209,8 @@ export function dispatchCrossAgentMentions(
 	managedQueue?: { dispatchId: string; generation: string; starts: Promise<void>[] }
 ): CrossAgentMentionDispatch {
 	const targets = resolveConsultTargets(plan.targetSessionIds);
-	if (managedQueue && !['parallel', 'only'].includes(plan.routing))
-		throw new Error('DispatchQueueRoutingUnsupported');
 	if (plan.routing === 'handoff') {
-		armMentionHandoff(sourceSession.id, sourceTabId, { targets, message });
+		if (!managedQueue) armMentionHandoff(sourceSession.id, sourceTabId, { targets, message });
 		return { consultTargets: [], handoffTargets: targets };
 	}
 
@@ -220,7 +218,7 @@ export function dispatchCrossAgentMentions(
 	// that no longer exists) still finds the hold waiting to record it.
 	if (!managedQueue && plan.routing === 'parallel') {
 		holdTurnForConsults(sourceSession.id, sourceTabId, targets);
-	} else if (plan.routing === 'consult-first') {
+	} else if (!managedQueue && plan.routing === 'consult-first') {
 		holdTurnForConsults(sourceSession.id, sourceTabId, targets, {
 			message,
 			...(images && images.length > 0 && { images: [...images] }),
