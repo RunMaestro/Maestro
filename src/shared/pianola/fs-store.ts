@@ -996,7 +996,14 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		// Missing payload is corruption, never a missing/new admission.
 		const stat = fs.lstatSync(file);
 		if (!stat.isFile() || stat.size !== ref.bytes) throw new Error('Invalid Pianola artifact size');
-		const body = fs.readFileSync(file, 'utf8');
+		return decodeAdmissionArtifact(record, ref, fs.readFileSync(file, 'utf8'), requestId);
+	}
+	function decodeAdmissionArtifact(
+		record: PianolaDispatchAdmission,
+		ref: AdmissionArtifactRef,
+		body: string,
+		requestId?: string
+	): unknown {
 		if (
 			Buffer.byteLength(body, 'utf8') !== ref.bytes ||
 			createHash('sha256').update(body).digest('hex') !== ref.sha256
@@ -1036,6 +1043,13 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
 			throw error;
 		}
+		return decodeDispatchAdmission(dispatchId, body, readAdmissionArtifact);
+	}
+	function decodeDispatchAdmission(
+		dispatchId: string,
+		body: string,
+		readArtifact: typeof readAdmissionArtifact
+	): PianolaDispatchAdmission {
 		const stored = JSON.parse(body) as StoredAdmission;
 		if (stored.storageVersion !== undefined) {
 			if (
@@ -1047,7 +1061,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				throw new Error('Invalid Pianola admission storage');
 			if (stored.payloads.prepare) {
 				if (stored.queuePrepare) throw new Error('Ambiguous Pianola prepare');
-				stored.queuePrepare = readAdmissionArtifact(
+				stored.queuePrepare = readArtifact(
 					stored,
 					stored.payloads.prepare
 				) as PianolaDispatchAdmission['queuePrepare'];
@@ -1055,7 +1069,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			for (const [requestId, ref] of Object.entries(stored.payloads.terminals)) {
 				const step = stored.queueRouting?.steps.find((s) => s.requestId === requestId);
 				if (!step || step.terminal) throw new Error('Invalid Pianola terminal reference');
-				step.terminal = readAdmissionArtifact(stored, ref, requestId) as typeof step.terminal;
+				step.terminal = readArtifact(stored, ref, requestId) as typeof step.terminal;
 			}
 			delete stored.storageVersion;
 			delete stored.payloads;
@@ -1073,7 +1087,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			canonicalJson(readDispatchAdmission(admission.dispatchId)) !== canonicalJson(admission)
 		)
 			throw new Error('Pianola dispatch payload retired; no mutation admitted');
-		if (previous?.callbackDeliveredAt)
+		if (
+			previous?.callbackDeliveredAt &&
+			previous.callbackDeliveredAt !== admission.callbackDeliveredAt
+		)
 			admission = {
 				...admission,
 				callbackDeliveredAt: readDispatchAdmission(admission.dispatchId)!.callbackDeliveredAt,
@@ -1152,135 +1169,155 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
 			throw error;
 		}
-		const eligible: { id: string; body: string; mtime: number }[] = [];
-		// Read asynchronously. The locked mutation below must revalidate exact bytes;
-		// these snapshots are selection hints, never authority for deleting a payload.
+		const eligible: { id: string; mtime: number }[] = [];
+		const snapshots = new Map<string, { body: string; record: PianolaDispatchAdmission }>();
+		// Payloads are immutable, content-addressed files. Validate them asynchronously
+		// before taking a lock; exact journal bytes bind that evidence to the mutation.
 		for (const id of groups.keys()) {
 			try {
 				const file = path.join(dir, admissionName(id));
 				const stat = await fs.promises.stat(file);
 				if (stat.size > 16384) continue;
 				const body = await fs.promises.readFile(file, 'utf8');
-				const record = JSON.parse(body) as StoredAdmission;
-				let callbackRequired =
-					!!record.queuePrepare?.callbackId || !!record.queuePrepare?.callbackProof;
-				if (record.payloads?.prepare) {
-					const prepareFile = path.join(dir, artifactName(id, record.payloads.prepare.sha256));
-					if ((await fs.promises.stat(prepareFile)).size > artifactMaxBytes) continue;
-					const prepare = JSON.parse(
-						await fs.promises.readFile(
-							path.join(dir, artifactName(id, record.payloads.prepare.sha256)),
-							'utf8'
+				const raw = JSON.parse(body) as StoredAdmission;
+				// Active, unknown and unreconciled admissions retain even obsolete
+				// artifacts. Housekeeping must never compete with their native finishes.
+				if (
+					!raw.payloadRetiredAt &&
+					(raw.phase !== 'settled' ||
+						raw.outcome !== 'accepted' ||
+						!raw.queueRouting?.completed ||
+						raw.queueRouting.steps.some((s) => s.status !== 'settled' || !!s.startError))
+				)
+					continue;
+				const values = new Map<AdmissionArtifactRef, unknown>();
+				const refs: [AdmissionArtifactRef, string?][] = [
+					...(raw.payloads?.prepare ? [[raw.payloads.prepare] as [AdmissionArtifactRef]] : []),
+					...Object.entries(raw.payloads?.terminals ?? {}).map(
+						([requestId, ref]) => [ref, requestId] as [AdmissionArtifactRef, string]
+					),
+				];
+				for (const [ref, requestId] of refs) {
+					if (
+						ref.version !== 1 ||
+						!Number.isSafeInteger(ref.bytes) ||
+						ref.bytes < 1 ||
+						ref.bytes > artifactMaxBytes
+					)
+						throw new Error('Invalid Pianola artifact reference');
+					const artifact = path.join(dir, artifactName(id, ref.sha256));
+					const stat = await fs.promises.lstat(artifact);
+					if (!stat.isFile() || stat.size !== ref.bytes)
+						throw new Error('Invalid Pianola artifact size');
+					values.set(
+						ref,
+						decodeAdmissionArtifact(
+							raw,
+							ref,
+							await fs.promises.readFile(artifact, 'utf8'),
+							requestId
 						)
 					);
-					callbackRequired = !!prepare.value?.callbackId || !!prepare.value?.callbackProof;
 				}
+				// Hydrate using only the payloads validated for this exact journal.
+				const record = decodeDispatchAdmission(id, body, (_record, ref) => {
+					const match = refs.find(([candidate]) => candidate.sha256 === ref.sha256);
+					if (!match) throw new Error('Invalid Pianola artifact reference');
+					return values.get(match[0]);
+				});
 				if (
-					record.phase === 'settled' &&
-					record.outcome === 'accepted' &&
-					record.queueRouting?.completed &&
-					record.queueRouting.steps.every(
-						(s) =>
-							s.status === 'settled' &&
-							(!!s.terminal || !!record.payloads?.terminals[s.requestId]) &&
-							!s.startError
-					) &&
-					(!callbackRequired || record.callbackDeliveredAt)
+					!record.payloadRetiredAt &&
+					(!record.queueRouting?.steps.every((s) => !!s.terminal) ||
+						((record.queuePrepare?.callbackId || record.queuePrepare?.callbackProof) &&
+							!record.callbackDeliveredAt))
 				)
-					eligible.push({ id, body, mtime: stat.mtimeMs });
+					continue;
+				if (!record.payloadRetiredAt) eligible.push({ id, mtime: stat.mtimeMs });
+				// Keep only the validated receipt, not every historical output, in memory.
+				delete record.queuePrepare;
+				delete record.queueRouting;
+				delete record.queueRelease;
+				delete record.queueAuthority;
+				snapshots.set(id, { body, record });
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError))
-					throw error;
+				if (
+					(error as NodeJS.ErrnoException).code === 'ENOENT' ||
+					error instanceof SyntaxError ||
+					error instanceof TypeError ||
+					(error instanceof Error &&
+						/^(Invalid Pianola|Pianola admission too large)/.test(error.message))
+				)
+					continue;
+				throw error;
 			}
 		}
 		eligible.sort((a, b) => b.mtime - a.mtime || a.id.localeCompare(b.id));
-		const retire = new Map(eligible.slice(32).map((r) => [r.id, r.body]));
+		const retire = new Set(eligible.slice(32).map((r) => r.id));
 		for (const [id, names] of groups) {
-			// Most active records have no garbage. Avoid acquiring their admission
-			// lock at all; native synchronous sends must not contend with a scan.
-			if (!retire.has(id)) {
+			if (resolveDir() !== dir) return;
+			const candidate = snapshots.get(id);
+			// Only a missing journal or a fully validated completed lifecycle can
+			// authorize collection. Invalid/unconfirmed records preserve all evidence.
+			if (!candidate) {
 				try {
-					const file = path.join(dir, admissionName(id));
-					if ((await fs.promises.stat(file)).size > 16384) continue;
-					const raw = JSON.parse(await fs.promises.readFile(file, 'utf8')) as StoredAdmission;
-					const hashes = new Set([
-						...(raw.payloads?.prepare ? [raw.payloads.prepare.sha256] : []),
-						...Object.values(raw.payloads?.terminals ?? {}).map((ref) => ref.sha256),
-					]);
-					if (names.every((name) => hashes.has(/-([a-f0-9]{64})\.artifact\.json$/.exec(name)![1])))
-						continue;
+					await fs.promises.lstat(path.join(dir, admissionName(id)));
+					continue;
 				} catch (error) {
-					if (error instanceof SyntaxError || error instanceof TypeError) continue;
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
 			}
-			// A changed storage location cannot redirect an in-flight cleanup.
-			if (resolveDir() !== dir) return;
-			await withFileLockAsync(
-				admissionName(id),
-				'dispatch admission',
-				async () => {
-					if (resolveDir() !== dir) return;
+			if (candidate && !retire.has(id) && !candidate.record.payloadRetiredAt) {
+				const stored = JSON.parse(candidate.body) as StoredAdmission;
+				const hashes = new Set([
+					...(stored.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
+					...Object.values(stored.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+				]);
+				if (names.every((name) => hashes.has(/-([a-f0-9]{64})\.artifact\.json$/.exec(name)![1])))
+					continue;
+			}
+			await withFileLockAsync(admissionName(id), 'dispatch admission', () => {
+				if (resolveDir() !== dir) return;
+				const journal = path.join(dir, admissionName(id));
+				try {
+					if (fs.statSync(journal).size > 16384) return;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				}
+				const current = readMutationContent(admissionName(id));
+				if (current !== (candidate?.body ?? null)) return;
+				let record = candidate?.record;
+				if (record && (record.payloadRetiredAt || retire.has(id))) {
+					record = { ...record, payloadRetiredAt: record.payloadRetiredAt ?? Date.now() };
+					delete record.queuePrepare;
+					delete record.queueRouting;
+					delete record.queueRelease;
+					delete record.queueAuthority;
+					// Re-establish durability even after a prior lost retirement ack.
+					persistDispatchAdmission(record);
+				}
+				const stored = current ? (JSON.parse(current) as StoredAdmission) : null;
+				const refs = new Set(
+					record?.payloadRetiredAt
+						? []
+						: [
+								...(stored?.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
+								...Object.values(stored?.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+							]
+				);
+				for (const name of names) {
+					const hash = /-([a-f0-9]{64})\.artifact\.json$/.exec(name)?.[1];
+					if (!hash || refs.has(hash)) continue;
 					try {
-						if (fs.statSync(path.join(dir, admissionName(id))).size > 16384) return;
+						const file = path.join(dir, name);
+						if (!stored && Date.now() - fs.lstatSync(file).mtimeMs < 86400000) continue;
+						// This metadata-only mutation stays in one turn. Never yield with
+						// a native admission lock held, nor unlink later from stale refs.
+						fs.unlinkSync(file);
 					} catch (error) {
 						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 					}
-					const snapshot = readMutationContent(admissionName(id));
-					let record: PianolaDispatchAdmission | null = null;
-					if (snapshot) {
-						// Preserve corrupt/unconfirmed evidence. Full hashes and bindings are
-						// checked before retirement; no cache grants deletion authority.
-						try {
-							record = readDispatchAdmission(id);
-							// An earlier rename may have lost its fsync/ack. Re-establish
-							// durable tombstone authority before reclaiming its old files.
-							if (record?.payloadRetiredAt) persistDispatchAdmission(record);
-						} catch (error) {
-							if (
-								(error as NodeJS.ErrnoException).code === 'ENOENT' ||
-								error instanceof SyntaxError ||
-								error instanceof TypeError ||
-								(error instanceof Error &&
-									/^(Invalid Pianola|Pianola admission too large)/.test(error.message))
-							)
-								return;
-							throw error;
-						}
-						if (retire.get(id) === snapshot && record) {
-							const tombstone = { ...record, payloadRetiredAt: Date.now() };
-							delete tombstone.queuePrepare;
-							delete tombstone.queueRouting;
-							delete tombstone.queueRelease;
-							delete tombstone.queueAuthority;
-							// Fsync the tombstone before removing any referenced artifact.
-							persistDispatchAdmission(tombstone);
-						}
-					}
-					const current = readMutationContent(admissionName(id));
-					const stored = current ? (JSON.parse(current) as StoredAdmission) : null;
-					const refs = new Set([
-						...(stored?.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
-						...Object.values(stored?.payloads?.terminals ?? {}).map((ref) => ref.sha256),
-					]);
-					for (const name of names) {
-						const hash = /-([a-f0-9]{64})\.artifact\.json$/.exec(name)?.[1];
-						if (!hash || refs.has(hash)) continue;
-						const file = path.join(dir, name);
-						// A first-write crash can leave no journal. Give such evidence a
-						// day before reclaiming; a live writer holds this same lock.
-						try {
-							if (!stored && Date.now() - (await fs.promises.lstat(file)).mtimeMs < 86400000)
-								continue;
-							await fs.promises.unlink(file);
-						} catch (error) {
-							if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-						}
-					}
-				},
-				false,
-				true
-			);
+				}
+			});
 		}
 	}
 

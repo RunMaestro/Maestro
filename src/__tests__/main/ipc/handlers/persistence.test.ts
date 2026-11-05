@@ -41,6 +41,7 @@ import { registerSessionCallbacks } from '../../../../main/web-server/callbacks/
 import { handleGetSessionHistory } from '../../../../main/web-server/handlers/messageHandlers/sessions';
 import { classifyMessages } from '../../../../shared/pianola/pianola-classifier';
 import type { CurrentTurnRead } from '../../../../shared/currentTurn';
+import * as nativeFs from 'node:fs';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import type { AgentRun } from '../../../../shared/agent-run';
 import { handleEnqueueCommand } from '../../../../main/web-server/handlers/messageHandlers/queue';
@@ -824,6 +825,7 @@ describe('persistence IPC handlers', () => {
 				resolveDir: () => path.join(directory, 'pianola'),
 				indent: 2,
 				trailingNewline: true,
+				decisionLockMode: 'try',
 			});
 			const scopeId = generateUUID();
 			store.writeSupervisorTargets([
@@ -1956,7 +1958,7 @@ describe('persistence IPC handlers', () => {
 					'callback-reset',
 					'restart',
 					...(mode === 'parallel'
-						? ['local-last', 'local-output-tamper', 'reply-peer-revoke']
+						? ['local-last', 'local-output-tamper', 'reply-peer-revoke', 'cleanup-io']
 						: []),
 					...(mode === 'consult-first'
 						? [
@@ -1997,7 +1999,7 @@ describe('persistence IPC handlers', () => {
 			'composes the real renderer queue, native $mode branches and aggregate callback: $scenario',
 			async ({ mode, scenario }) => {
 				const f = await managedLocalFixture(mode === 'parallel' ? true : mode);
-				const longOutput = scenario === 'long-output' || scenario === 'long-unicode';
+				const longOutput = ['long-output', 'long-unicode', 'cleanup-io'].includes(scenario);
 				const nativeReply =
 					scenario === 'oversized-reply'
 						? '😀'.repeat(300000)
@@ -2013,7 +2015,13 @@ describe('persistence IPC handlers', () => {
 							? nativeReply
 							: 'Local native output';
 				const fires = vi.fn();
-				const registry = new DispatchCallbackRegistry({ onFire: fires });
+				const registry = new DispatchCallbackRegistry({
+					onFire: (fire) => {
+						fires(fire);
+						if (scenario === 'cleanup-io')
+							f.store.confirmDispatchCallback(fire.entry.admissionId!, fire.entry.callbackId);
+					},
+				});
 				const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
 				const callback = registry.register({
 					targetAgentId: 'agent',
@@ -2114,6 +2122,8 @@ describe('persistence IPC handlers', () => {
 						},
 					},
 				});
+				let resumeCleanup: (() => void) | undefined;
+				let cleanup: Promise<void> | undefined;
 				try {
 					const { useAgentStore } = await import('../../../../renderer/stores/agentStore');
 					const { useSessionStore } = await import('../../../../renderer/stores/sessionStore');
@@ -2384,6 +2394,26 @@ describe('persistence IPC handlers', () => {
 							return write(value);
 						});
 					}
+					if (scenario === 'cleanup-io') {
+						const read = nativeFs.promises.readFile.bind(nativeFs.promises);
+						const paused = Promise.withResolvers<void>();
+						const resume = Promise.withResolvers<void>();
+						resumeCleanup = () => resume.resolve();
+						let held = false;
+						vi.spyOn(nativeFs.promises, 'readFile').mockImplementation(
+							async (...args: Parameters<typeof nativeFs.promises.readFile>) => {
+								const result = await read(...args);
+								if (!held && String(args[0]).endsWith(`dispatch-${f.input.dispatchId}.json`)) {
+									held = true;
+									paused.resolve();
+									await resume.promise;
+								}
+								return result;
+							}
+						);
+						cleanup = f.store.compactDispatchArtifacts();
+						await paused.promise;
+					}
 					peerManager.emit('exit', 'cross-agent-foreign', 0);
 					if (
 						!((mode === 'only' || mode === 'handoff') && scenario === 'fast') &&
@@ -2603,8 +2633,19 @@ describe('persistence IPC handlers', () => {
 					).toHaveLength(1);
 					for (const step of consults) peerManager.emit('exit', `cross-agent-${step.requestId}`, 0);
 					expect(fires).toHaveBeenCalledTimes(1);
+					if (scenario === 'cleanup-io') {
+						const saved = f.store.readDispatchAdmission(f.input.dispatchId)!;
+						for (const step of saved.queueRouting!.steps.filter((s) => s.kind === 'consult'))
+							expect(step.terminal?.text).toBe(nativeReply);
+						expect(saved.callbackDeliveredAt).toBeTypeOf('number');
+						expect(fires).toHaveBeenCalledTimes(1);
+						resumeCleanup!();
+						await cleanup;
+					}
 					registerSessionPersistenceFlush(null);
 				} finally {
+					resumeCleanup?.();
+					await cleanup;
 					vi.useRealTimers();
 					cancelCrossAgentRequestsForSource('agent', 'tab');
 					for (const [config] of peerManager.spawn.mock.calls)

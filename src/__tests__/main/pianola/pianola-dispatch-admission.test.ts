@@ -182,7 +182,7 @@ describe('host Pianola dispatch admission', () => {
 		return { ...f, record, journal, disk, artifact };
 	}
 
-	it('keeps the control journal bounded and restores complete Unicode prompts and multiple replies after restart', async () => {
+	it('keeps the control journal bounded and preserves unreconciled artifacts and complete Unicode replies after restart', async () => {
 		const f = await payloadFixture();
 		expect(fs.statSync(f.journal).size).toBeLessThanOrEqual(16384);
 		expect(fs.readFileSync(f.journal, 'utf8')).not.toContain('PROMPT-BEGIN');
@@ -197,7 +197,9 @@ describe('host Pianola dispatch admission', () => {
 			f.store.writeDispatchAdmission(f.record);
 		}
 		await f.store.compactDispatchArtifacts();
-		expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toHaveLength(3);
+		expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toHaveLength(
+			11
+		);
 		expect(reopened.readDispatchAdmission(dispatchId)).toEqual(f.record);
 	});
 
@@ -356,6 +358,116 @@ describe('host Pianola dispatch admission', () => {
 		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
 	});
 
+	it('never takes an active admission lock to reclaim an obsolete prepare hash during a terminal write', async () => {
+		const f = await payloadFixture();
+		f.record.queueRouting!.steps[0].status = 'started';
+		delete f.record.queueRouting!.steps[0].terminal;
+		f.store.writeDispatchAdmission(f.record);
+		f.record.queuePrepare!.phase = 'unknown';
+		f.store.writeDispatchAdmission(f.record);
+		const terminal = () => {
+			f.record.queueRouting!.steps[0].status = 'settled';
+			f.record.queueRouting!.steps[0].terminal = { text: 'Authentic terminal output' };
+			f.store.writeDispatchAdmission(f.record);
+		};
+		const unlink = fs.promises.unlink.bind(fs.promises);
+		vi.spyOn(fs.promises, 'unlink').mockImplementation(async (file) => {
+			terminal(); // Original regression: synchronous host write while cleanup owns the lock.
+			await unlink(file);
+		});
+		const writes = vi.spyOn(fs, 'writeFileSync');
+		const artifacts = fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'));
+		const reads = vi.spyOn(fs, 'readFileSync');
+		await f.store.compactDispatchArtifacts();
+		expect(writes.mock.calls.some(([file]) => String(file).endsWith('.lock'))).toBe(false);
+		expect(
+			reads.mock.calls.filter(([file]) => String(file).endsWith('.artifact.json'))
+		).toHaveLength(0);
+		expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toEqual(
+			artifacts
+		);
+		terminal();
+		expect(f.store.readDispatchAdmission(dispatchId)!.queueRouting!.steps[0].terminal?.text).toBe(
+			'Authentic terminal output'
+		);
+	});
+
+	it('reads completed historical payloads asynchronously and keeps a hash reused during selection', async () => {
+		const f = await payloadFixture();
+		f.record.queueRouting!.completed = true;
+		f.store.writeDispatchAdmission(f.record);
+		const original = structuredClone(f.record);
+		f.record.queuePrepare!.phase = 'unknown';
+		f.store.writeDispatchAdmission(f.record);
+		const read = fs.promises.readFile.bind(fs.promises);
+		let reused = false;
+		vi.spyOn(fs.promises, 'readFile').mockImplementation(
+			async (...args: Parameters<typeof fs.promises.readFile>) => {
+				const result = await read(...args);
+				if (!reused && String(args[0]).endsWith('.artifact.json')) {
+					reused = true;
+					f.store.writeDispatchAdmission(original);
+				}
+				return result;
+			}
+		);
+		await f.store.compactDispatchArtifacts();
+		expect(reused).toBe(true);
+		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(original);
+		vi.restoreAllMocks();
+		const syncReads = vi.spyOn(fs, 'readFileSync');
+		const asyncReads = vi.spyOn(fs.promises, 'readFile');
+		await f.store.compactDispatchArtifacts();
+		expect(
+			syncReads.mock.calls.filter(([file]) => String(file).endsWith('.artifact.json'))
+		).toHaveLength(0);
+		expect(
+			asyncReads.mock.calls.filter(([file]) => String(file).endsWith('.artifact.json'))
+		).toHaveLength(3);
+	});
+
+	it('revalidates a new journal consumer before reclaiming old orphan artifacts', async () => {
+		const f = await payloadFixture();
+		fs.rmSync(f.journal);
+		for (const name of fs.readdirSync(f.dir).filter((n) => n.endsWith('.artifact.json')))
+			fs.utimesSync(path.join(f.dir, name), new Date(1), new Date(1));
+		const lstat = fs.promises.lstat.bind(fs.promises);
+		let restored = false;
+		vi.spyOn(fs.promises, 'lstat').mockImplementation(
+			async (...args: Parameters<typeof fs.promises.lstat>) => {
+				try {
+					return await lstat(...args);
+				} catch (error) {
+					if (!restored && String(args[0]) === f.journal) {
+						restored = true;
+						f.store.writeDispatchAdmission(f.record);
+					}
+					throw error;
+				}
+			}
+		);
+		await f.store.compactDispatchArtifacts();
+		expect(restored).toBe(true);
+		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
+	});
+
+	it('keeps current references after a failed obsolete-file removal and retries safely', async () => {
+		const f = await payloadFixture();
+		f.record.queueRouting!.completed = true;
+		f.store.writeDispatchAdmission(f.record);
+		f.record.queuePrepare!.phase = 'unknown';
+		f.store.writeDispatchAdmission(f.record);
+		const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+			throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+		});
+		await expect(f.store.compactDispatchArtifacts()).rejects.toThrow('EACCES');
+		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
+		unlink.mockRestore();
+		await f.store.compactDispatchArtifacts();
+		expect(f.store.readDispatchAdmission(dispatchId)).toEqual(f.record);
+		expect(fs.readdirSync(f.dir).filter((n) => n.endsWith('.artifact.json'))).toHaveLength(3);
+	});
+
 	it('serializes independent store compactors without dangling references or duplicate deletion errors', async () => {
 		const f = await completedFixture(34);
 		const other = createPianolaFsStore({
@@ -440,7 +552,7 @@ describe('host Pianola dispatch admission', () => {
 			vi.restoreAllMocks();
 			await f.store.compactDispatchArtifacts();
 			expect(fs.readdirSync(f.dir).filter((name) => name.endsWith('.artifact.json'))).toHaveLength(
-				3
+				fault === 'artifact-enospc' ? 3 : 4
 			);
 		}
 	);
