@@ -24,11 +24,12 @@ vi.mock('../../../main/coworking/coworking-socket-path', () => ({
 }));
 
 import { ProcessManager } from '../../../main/process-manager';
-import type { ProcessConfig } from '../../../main/process-manager/types';
+import type { ProcessConfig, SpawnResult } from '../../../main/process-manager/types';
 import {
 	getHeadlessAgentActivity,
 	trackHeadlessAgentActivity,
 } from '../../../main/utils/headless-agent-activity';
+import { isAgentBusy } from '../../../main/utils/agent-busy';
 import { CAPTURED_RECORDINGS, CAPTURED_OPENCODE_SESSION_ID } from './recordings/captured';
 import {
 	FAKE_AGENT_PATH,
@@ -62,7 +63,7 @@ interface Heard {
 }
 
 /** Everything the renderer would be told about the session, in order. */
-function listen(manager: ProcessManager): Heard[] {
+function listen(manager: ProcessManager, sessionId = SESSION_ID): Heard[] {
 	const heard: Heard[] = [];
 	for (const type of [
 		'raw-stdout',
@@ -76,7 +77,7 @@ function listen(manager: ProcessManager): Heard[] {
 		'exit',
 	]) {
 		manager.on(type, (...args: unknown[]) => {
-			if (args[0] === SESSION_ID) heard.push({ type, args: args.slice(1) });
+			if (args[0] === sessionId) heard.push({ type, args: args.slice(1) });
 		});
 	}
 	return heard;
@@ -85,18 +86,33 @@ function listen(manager: ProcessManager): Heard[] {
 function spawnFakeAgent(
 	manager: ProcessManager,
 	turn: FakeTurn,
-	options: { hold?: boolean; command?: string; prompt?: string } = {}
+	options: { hold?: boolean; command?: string; prompt?: string } & Partial<
+		Pick<
+			ProcessConfig,
+			| 'sessionId'
+			| 'originWorkerId'
+			| 'sshStdinScript'
+			| 'sshRemoteCommand'
+			| 'sshRemoteId'
+			| 'querySource'
+		>
+	> = {}
 ) {
 	const env: Record<string, string> = { FAKE_AGENT_RECORDING: writeFakeTurn(scratch.dir, turn) };
 	if (options.hold) env.FAKE_AGENT_HOLD = '1';
 	const config: ProcessConfig = {
-		sessionId: SESSION_ID,
+		sessionId: options.sessionId ?? SESSION_ID,
+		originWorkerId: options.originWorkerId,
 		toolType: 'opencode',
 		cwd: scratch.dir,
 		command: options.command ?? process.execPath,
 		args: options.command ? [] : [FAKE_AGENT_PATH],
 		prompt: options.prompt ?? 'What is the capital of France?',
 		customEnvVars: env,
+		sshStdinScript: options.sshStdinScript,
+		sshRemoteCommand: options.sshRemoteCommand,
+		sshRemoteId: options.sshRemoteId,
+		querySource: options.querySource,
 	};
 	return manager.spawn(config);
 }
@@ -151,9 +167,14 @@ describe('ProcessManager.spawn against a real process', () => {
 		const manager = new ProcessManager();
 		const failure = new Error('synchronous failure');
 		const other = trackHeadlessAgentActivity('throw-worker');
-		const spy = vi.spyOn(manager as never, 'spawnManaged' as never).mockImplementation(() => {
-			throw failure;
-		});
+		const spy = vi
+			.spyOn(
+				manager as unknown as { spawnManaged(config: ProcessConfig): SpawnResult },
+				'spawnManaged'
+			)
+			.mockImplementation(() => {
+				throw failure;
+			});
 		try {
 			expect(() =>
 				manager.spawn({
@@ -161,6 +182,8 @@ describe('ProcessManager.spawn against a real process', () => {
 					originWorkerId: 'throw-worker',
 					toolType: 'opencode',
 					cwd: scratch.dir,
+					command: process.execPath,
+					args: [FAKE_AGENT_PATH],
 				})
 			).toThrow(failure);
 			expect(getHeadlessAgentActivity().counts['throw-worker']).toBe(1);
@@ -171,30 +194,131 @@ describe('ProcessManager.spawn against a real process', () => {
 		expect(getHeadlessAgentActivity().counts['throw-worker']).toBeUndefined();
 	});
 
-	posixIt('keeps SSH activity after uncertain child termination', async () => {
+	posixIt.each(['board', 'desktop'] as const)(
+		'keeps %s SSH activity after uncertain child termination',
+		async (scope) => {
+			const manager = new ProcessManager();
+			managers.push(manager);
+			const sessionId = `ssh-${scope}-signal-ai-tab-1`;
+			const workerId = scope === 'board' ? 'ssh-worker' : 'ssh-desktop-signal';
+			const heard = listen(manager, sessionId);
+			spawnFakeAgent(
+				manager,
+				fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal']),
+				{
+					sessionId,
+					originWorkerId: scope === 'board' ? workerId : undefined,
+					sshStdinScript: 'script',
+					hold: true,
+				}
+			);
+			const child = manager.get(sessionId)!.childProcess!;
+			child.kill();
+			await untilExit(heard);
+			expect(manager.get(sessionId)).toBeUndefined();
+			expect(getHeadlessAgentActivity().counts[workerId]).toBe(1);
+			expect(isAgentBusy({ id: workerId }, manager, new Set())).toBe(true);
+		}
+	);
+
+	it.each([
+		{ sshStdinScript: 'script' },
+		{ sshRemoteCommand: 'remote command' },
+		{ sshRemoteId: 'remote-id' },
+	])('releases only the clean desktop SSH turn: %j', async (sshConfig) => {
 		const manager = new ProcessManager();
 		managers.push(manager);
 		const heard = listen(manager);
-		manager.spawn({
-			sessionId: SESSION_ID,
-			originWorkerId: 'ssh-worker',
-			toolType: 'opencode',
-			cwd: scratch.dir,
-			command: process.execPath,
-			args: [FAKE_AGENT_PATH],
-			sshStdinScript: 'script',
-			customEnvVars: {
-				FAKE_AGENT_RECORDING: writeFakeTurn(
-					scratch.dir,
-					fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal'])
-				),
-				FAKE_AGENT_HOLD: '1',
-			},
+		const recording = fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal']);
+		const other = trackHeadlessAgentActivity('agent-1');
+		try {
+			expect(spawnFakeAgent(manager, recording, sshConfig).success).toBe(true);
+			expect(getHeadlessAgentActivity().counts['agent-1']).toBe(2);
+			await untilExit(heard);
+			expect(heard.find((entry) => entry.type === 'exit')?.args[0]).toBe(0);
+			expect(getHeadlessAgentActivity().counts['agent-1']).toBe(1);
+			expect(isAgentBusy({ id: 'agent-1' }, manager, new Set())).toBe(true);
+		} finally {
+			other();
+		}
+		expect(isAgentBusy({ id: 'agent-1' }, manager, new Set())).toBe(false);
+	});
+
+	describe.each(['board', 'desktop'] as const)('%s SSH activity', (scope) => {
+		it.each([1, 255])('retains an unverified exit %i, even with a final answer', async (code) => {
+			const manager = new ProcessManager();
+			managers.push(manager);
+			const agentId = `ssh-${scope}-exit-${code}`;
+			const sessionId = `${agentId}-ai-tab-1`;
+			const workerId = scope === 'board' ? `${agentId}-worker` : agentId;
+			const heard = listen(manager, sessionId);
+			const recording = fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal']);
+			expect(
+				spawnFakeAgent(
+					manager,
+					{ ...recording, close: { code, signal: null } },
+					{
+						sessionId,
+						originWorkerId: scope === 'board' ? workerId : undefined,
+						sshStdinScript: 'script',
+						querySource: 'user',
+					}
+				).success
+			).toBe(true);
+			await untilExit(heard);
+			expect(heard.find((entry) => entry.type === 'exit')?.args[0]).toBe(code);
+			expect(types(heard)).toContain('query-complete');
+			expect(
+				heard
+					.filter((entry) => entry.type === 'data')
+					.map((entry) => String(entry.args[0]))
+					.join('')
+			).toContain('The capital of France is Paris.');
+			expect(manager.get(sessionId)).toBeUndefined();
+			expect(getHeadlessAgentActivity().counts[workerId]).toBe(1);
+			expect(isAgentBusy({ id: workerId }, manager, new Set())).toBe(true);
+
+			// A later successful transport is a different attempt, not proof that
+			// the previous remote attempt ended. Its cleanup must leave that entry.
+			const nextHeard = listen(manager, sessionId);
+			expect(
+				spawnFakeAgent(manager, recording, {
+					sessionId,
+					originWorkerId: scope === 'board' ? workerId : undefined,
+					sshStdinScript: 'script',
+				}).success
+			).toBe(true);
+			await untilExit(nextHeard);
+			expect(nextHeard.find((entry) => entry.type === 'exit')?.args[0]).toBe(0);
+			expect(getHeadlessAgentActivity().counts[workerId]).toBe(1);
+			expect(isAgentBusy({ id: workerId }, manager, new Set())).toBe(true);
 		});
+	});
+
+	it('late clean SSH events cannot clear a successor on the same desktop tab', async () => {
+		const manager = new ProcessManager();
+		managers.push(manager);
+		const heard = listen(manager);
+		const recording = fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal']);
+		spawnFakeAgent(manager, recording, { sshStdinScript: 'script' });
 		const child = manager.get(SESSION_ID)!.childProcess!;
-		child.kill();
 		await untilExit(heard);
-		expect(getHeadlessAgentActivity().counts['ssh-worker']).toBe(1);
+		expect(getHeadlessAgentActivity().counts['agent-1']).toBeUndefined();
+
+		const nextHeard = listen(manager);
+		spawnFakeAgent(manager, recording, { hold: true });
+		const nextChild = manager.get(SESSION_ID)!.childProcess!;
+		expect(getHeadlessAgentActivity().counts['agent-1']).toBe(1);
+		const revision = getHeadlessAgentActivity().revision;
+		child.emit('exit', 0, null);
+		child.emit('close', 0, null);
+		expect(getHeadlessAgentActivity().revision).toBe(revision);
+		expect(getHeadlessAgentActivity().counts['agent-1']).toBe(1);
+		expect(manager.get(SESSION_ID)?.childProcess).toBe(nextChild);
+		nextChild.kill();
+		await untilExit(nextHeard);
+		expect(getHeadlessAgentActivity().counts['agent-1']).toBeUndefined();
+		expect(isAgentBusy({ id: 'agent-1' }, manager, new Set())).toBe(false);
 	});
 	it('streams a real OpenCode turn to the renderer and settles it as completed', async () => {
 		const manager = new ProcessManager();

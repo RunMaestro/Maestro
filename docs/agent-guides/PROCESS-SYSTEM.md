@@ -163,6 +163,47 @@ Both runners keep a `sessionId -> kill` registry of in-flight commands so `cance
 
 **ProcessManagerEvents** - TypeScript interface documenting all emitted events.
 
+### SSH activity ownership and unresolved recovery
+
+`ProcessManager.spawn()` registers each non-terminal turn with
+`trackHeadlessAgentActivity()`. Board-origin spawns use `originWorkerId`; ordinary
+desktop AI tabs use `resolveOwningMaestroSessionId(sessionId)`. Consumers of
+`isAgentBusy()` include web session state, cross-agent mentions and provider
+translation, so an activity entry can keep an agent busy after its local process
+table entry disappears. Per-tab `isAiTabProcessActive()` only checks that table.
+
+For child-process SSH launches (`sshStdinScript`, `sshRemoteCommand` or
+`sshRemoteId`), the existing supported completion seam releases the registration
+on a native child `exit`/`close` with code 0 and no signal. A failed spawn releases
+only its own registration. Each release closes over a unique registry token and
+is idempotent: duplicate events must not clear another tab, attempt or successor.
+
+An SSH client exit with a nonzero code or signal cannot establish whether the
+remote agent stopped. Both Board-origin and ordinary desktop registrations stay
+retained in that case, including when a final answer and `query-complete` were
+emitted. A later clean turn releases its own token only. Board's durable
+reservation and uncertain remote occupancy must also remain fenced; see
+[[board]] for the Board lifecycle contract. Cue's transport cleanup has a
+different durable-reservation contract and is not a desktop recovery seam.
+
+**Open contract:** there is currently no supported desktop recovery callback
+that proves termination of the exact uncertain remote attempt. `signalRemoteAgent()`
+returns whether signal dispatch started, not a remote termination receipt. Its
+script can exit successfully for an absent or unreadable PID record and does not
+verify process-group death after SIGKILL. Parsed provider completion, local
+process-table removal and Copilot transcript reconciliation likewise do not
+prove remote termination. Do not add an unconditional release to these paths.
+
+A future recovery seam needs host-verified remote lifecycle evidence bound to
+the original launch (remote identity, PID/start identity and attempt/generation),
+including any surviving work that can conflict, and the original activity
+token. Missing records, failed probes and connection loss must leave occupancy
+uncertain. Until that contract exists, ordinary desktop activity can remain busy
+for the main-process lifetime after an uncertain SSH exit. An app restart is
+not proof of remote termination. The fake-process regressions in
+`ProcessManager.spawn.process.test.ts` verify this safe residual state and clean
+completion ownership; they do not qualify real SSH execution or recovery.
+
 ---
 
 ## 2. Process Listeners
