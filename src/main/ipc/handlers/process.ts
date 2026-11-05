@@ -222,7 +222,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle(
 		'process:spawn',
-		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
+		withProcessActivity(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
 			handleProcessSpawn(config, {
 				getProcessManager,
 				getAgentDetector,

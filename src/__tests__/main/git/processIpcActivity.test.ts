@@ -16,7 +16,9 @@ vi.mock('../../../main/utils/sentry', () => ({}));
 vi.mock('../../../main/utils/safe-send', () => ({}));
 vi.mock('../../../main/process-manager/utils/childProcessInfo', () => ({}));
 vi.mock('../../../main/concerto-html', () => ({}));
-vi.mock('../../../main/ipc/handlers/process/handle-spawn', () => ({}));
+vi.mock('../../../main/ipc/handlers/process/handle-spawn', () => ({
+	handleProcessSpawn: vi.fn(),
+}));
 vi.mock('../../../main/permission-relay', () => ({ initPermissionRelay: vi.fn() }));
 vi.mock('../../../main/harness-control/integration', () => ({ initHarnessControl: vi.fn() }));
 vi.mock('../../../main/utils/logger', () => ({
@@ -31,6 +33,8 @@ vi.mock('../../../main/process-manager/utils/commandKill', () => ({
 }));
 
 import { resolveSshPath } from '../../../main/utils/cliDetection';
+import { handleProcessSpawn } from '../../../main/ipc/handlers/process/handle-spawn';
+import { logger } from '../../../main/utils/logger';
 
 const target = path.resolve('ipc-cleanup-target');
 const remote = {
@@ -42,7 +46,7 @@ const remote = {
 	port: 22,
 	privateKeyPath: '',
 };
-const operations = ['spawnTerminalTab', 'runCommand'] as const;
+const operations = ['spawnTerminalTab', 'runCommand', 'spawn'] as const;
 type Operation = (typeof operations)[number];
 type Handler = (event: unknown, config: Record<string, unknown>) => Promise<unknown>;
 let gate: typeof import('../../../main/git/worktreeActivity');
@@ -61,6 +65,7 @@ beforeEach(async () => {
 	vi.resetAllMocks();
 	vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 	vi.mocked(resolveSshPath).mockResolvedValue('ssh');
+	vi.mocked(handleProcessSpawn).mockResolvedValue({ success: true, pid: 123 });
 	manager = {
 		spawn: vi.fn(() => ({ success: true, pid: 123 })),
 		spawnTerminalTab: vi.fn(() => ({ success: true, pid: 123 })),
@@ -114,7 +119,7 @@ async function blocked() {
 
 const sshConfig = { sessionSshRemoteConfig: { enabled: true, remoteId: remote.id } };
 
-describe.each(operations)('%s outer IPC activity', (operation) => {
+describe.each(['spawnTerminalTab', 'runCommand'] as const)('%s outer IPC activity', (operation) => {
 	it.each([target, path.join(target, 'child'), path.resolve('ipc-unrelated')])(
 		'refuses before settings, environment, SSH or manager setup for reservation %s',
 		async (root) => {
@@ -172,6 +177,210 @@ describe.each(operations)('%s outer IPC activity', (operation) => {
 		await expect(run(operation, {}, { clientId: 'web-client' })).rejects.toThrow('reserved');
 		expect(settings.get).not.toHaveBeenCalled();
 		hold.release();
+	});
+});
+
+describe('AI spawn outer IPC activity', () => {
+	let active: number;
+	beforeEach(() => {
+		active = 0;
+		const begin = gate.beginGlobalWorktreeActivity;
+		vi.spyOn(gate, 'beginGlobalWorktreeActivity').mockImplementation(() => {
+			const release = begin();
+			active++;
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				active--;
+				release();
+			};
+		});
+	});
+	it.each([target, path.join(target, 'child'), path.resolve('ipc-unrelated')])(
+		'refuses before outer dependency setup or diagnostics for reservation %s',
+		async (root) => {
+			const dependency = vi.fn(() => {
+				throw Error('dependency accessed');
+			});
+			Object.defineProperty(deps, 'sessionsStore', { get: dependency });
+			const hold = await reserve(root);
+			await expect(run('spawn', sshConfig)).rejects.toThrow('reserved');
+			expect(dependency).not.toHaveBeenCalled();
+			expect(handleProcessSpawn).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+			hold.release();
+			(await reserve()).release();
+		}
+	);
+
+	it.each([null, { clientId: 'web-client' }])(
+		'refuses before payload inspection for invocation %j',
+		async (event) => {
+			const payload = new Proxy(
+				{},
+				{
+					get: vi.fn(() => {
+						throw Error('payload accessed');
+					}),
+				}
+			);
+			const hold = await reserve();
+			await expect(handlers.get('process:spawn')!(event, payload)).rejects.toThrow('reserved');
+			expect(handleProcessSpawn).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+			hold.release();
+		}
+	);
+
+	it.each(['resolve', 'reject'] as const)(
+		'owns pending setup through %s without relying on inner admission',
+		async (outcome) => {
+			const setup = Promise.withResolvers<Awaited<ReturnType<typeof handleProcessSpawn>>>();
+			vi.mocked(handleProcessSpawn).mockReturnValueOnce(setup.promise);
+			const pending = run('spawn', { cwd: '~/remote-only', ...sshConfig });
+			await blocked();
+			expect(handleProcessSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({ cwd: '~/remote-only', ...sshConfig }),
+				expect.objectContaining({ sessionsStore: deps.sessionsStore })
+			);
+			expect(fs.realpath).toHaveBeenCalledExactlyOnceWith(target);
+			await handlers.get('process:cancelCommand')!(null, { sessionId: 'session' });
+			await blocked();
+			if (outcome === 'resolve') {
+				const result = { success: true, pid: 321 };
+				setup.resolve(result);
+				await expect(pending).resolves.toBe(result);
+			} else {
+				const error = Error('spawn failed');
+				setup.reject(error);
+				await expect(pending).rejects.toBe(error);
+			}
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['dependency', 'synchronous spawn', 'asynchronous spawn'] as const)(
+		'owns serialization and logging after %s failure',
+		async (site) => {
+			const observed: number[] = [];
+			const error = Error('original failure');
+			Object.defineProperty(error, 'diagnostic', {
+				enumerable: true,
+				get: () => {
+					observed.push(active);
+					return 'detail';
+				},
+			});
+			if (site === 'dependency') {
+				Object.defineProperty(deps, 'sessionsStore', {
+					get: () => {
+						throw error;
+					},
+				});
+			} else if (site === 'synchronous spawn') {
+				vi.mocked(handleProcessSpawn).mockImplementationOnce(() => {
+					throw error;
+				});
+			} else {
+				vi.mocked(handleProcessSpawn).mockRejectedValueOnce(error);
+			}
+			vi.mocked(logger.error).mockImplementationOnce(() => {
+				observed.push(active);
+			});
+			await expect(run('spawn')).rejects.toBe(error);
+			expect(observed).toEqual([1, 1]);
+			expect(active).toBe(0);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['serialization', 'logging'] as const)(
+		'releases outer activity even when %s throws',
+		async (site) => {
+			const diagnosticError = Error('diagnostic failure');
+			const original = Error('spawn failed');
+			let observed: number | undefined;
+			const fail = () => {
+				observed = active;
+				throw diagnosticError;
+			};
+			if (site === 'serialization')
+				Object.defineProperty(original, 'diagnostic', { enumerable: true, get: fail });
+			else vi.mocked(logger.error).mockImplementationOnce(fail);
+			vi.mocked(handleProcessSpawn).mockRejectedValueOnce(original);
+			await expect(run('spawn')).rejects.toBe(diagnosticError);
+			expect(observed).toBe(1);
+			expect(active).toBe(0);
+			(await reserve()).release();
+		}
+	);
+
+	it('retains a same-session successor started reentrantly during diagnostics', async () => {
+		const setup = Promise.withResolvers<Awaited<ReturnType<typeof handleProcessSpawn>>>();
+		const original = Error('first failed');
+		vi.mocked(handleProcessSpawn)
+			.mockRejectedValueOnce(original)
+			.mockReturnValueOnce(setup.promise);
+		let successor!: Promise<unknown>;
+		vi.mocked(logger.error).mockImplementationOnce(() => {
+			successor = run('spawn');
+		});
+		await expect(run('spawn')).rejects.toBe(original);
+		await blocked();
+		setup.resolve({ success: false, pid: -1, error: 'successor refused' });
+		await expect(successor).resolves.toEqual({
+			success: false,
+			pid: -1,
+			error: 'successor refused',
+		});
+		(await reserve()).release();
+	});
+
+	it('does not release another pending request when the first settles', async () => {
+		const first = Promise.withResolvers<Awaited<ReturnType<typeof handleProcessSpawn>>>();
+		const second = Promise.withResolvers<Awaited<ReturnType<typeof handleProcessSpawn>>>();
+		vi.mocked(handleProcessSpawn)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		const a = run('spawn');
+		const b = run('spawn', { sessionId: 'other-session' });
+		await blocked();
+		first.resolve({ success: true, pid: 123 });
+		await a;
+		await blocked();
+		second.resolve({ success: true, pid: 456 });
+		await b;
+		(await reserve()).release();
+	});
+
+	it('preserves an independently admitted native lifetime after the IPC reply', async () => {
+		let releaseNative!: () => void;
+		vi.mocked(handleProcessSpawn).mockImplementationOnce(async () => {
+			releaseNative = gate.beginGlobalWorktreeActivity();
+			return { success: true, pid: 123 };
+		});
+		await run('spawn');
+		await blocked();
+		releaseNative();
+		(await reserve()).release();
+	});
+
+	it('admits before a resolving reservation can exclude pending spawn setup', async () => {
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const reservation = gate.reserveWorktreeCleanup(target);
+		const setup = Promise.withResolvers<Awaited<ReturnType<typeof handleProcessSpawn>>>();
+		vi.mocked(handleProcessSpawn).mockReturnValueOnce(setup.promise);
+		const pending = run('spawn');
+		canonical.resolve(target);
+		expect(await reservation).toMatchObject({
+			status: 'blocked',
+			blockers: [{ code: 'mutation-busy' }],
+		});
+		setup.resolve({ success: true, pid: 123 });
+		await pending;
+		(await reserve()).release();
 	});
 });
 
