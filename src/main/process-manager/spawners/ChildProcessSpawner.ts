@@ -683,30 +683,34 @@ export class ChildProcessSpawner {
 			let supervisionFailure: string | undefined;
 			const supervision =
 				toolType === 'codex' && (isBatchMode || stdinText !== undefined)
-					? superviseAgentProcess(childProcess, {
-							startupMs: CODEX_STARTUP_TIMEOUT_MS,
-							idle: HEADLESS_IDLE_PROFILE,
-							onStop: (reason) =>
-								withWorktreeTurnActivity(() => {
-									supervisionFailed = true;
-									if (isSuperseded()) return;
-									if (sshRemotePidFile)
-										signalRemoteAgent(
-											{
-												sshCommand: command,
-												sshArgs: finalArgs,
-												pidFile: sshRemotePidFile,
-												sessionId,
-											},
-											'terminate'
-										);
-									// Record failure now, but let termination drain its last bytes.
-									// Suppress generic exit classification without suppressing text.
-									supervisionFailure = reason;
-									managedProcess.errorEmitted = true;
-								}, captureException),
-							onForcedStop: () => withWorktreeTurnActivity(forceCompletion, captureException),
-						})
+					? superviseAgentProcess(
+							childProcess,
+							{
+								startupMs: CODEX_STARTUP_TIMEOUT_MS,
+								idle: HEADLESS_IDLE_PROFILE,
+								onStop: (reason) =>
+									withWorktreeTurnActivity(() => {
+										supervisionFailed = true;
+										if (isSuperseded()) return;
+										if (sshRemotePidFile)
+											signalRemoteAgent(
+												{
+													sshCommand: command,
+													sshArgs: finalArgs,
+													pidFile: sshRemotePidFile,
+													sessionId,
+												},
+												'terminate'
+											);
+										// Record failure now, but let termination drain its last bytes.
+										// Suppress generic exit classification without suppressing text.
+										supervisionFailure = reason;
+										managedProcess.errorEmitted = true;
+									}, captureException),
+								onForcedStop: () => withWorktreeTurnActivity(forceCompletion, captureException),
+							},
+							(operation) => withWorktreeTurnActivity(operation, captureException)
+						)
 					: undefined;
 			// The existing channel includes whole lines, error envelopes and final
 			// unterminated lines. Generation and identity keep a predecessor from

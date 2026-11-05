@@ -1326,3 +1326,278 @@ describe('retained shared stdio watchdog callbacks', () => {
 		(await reserve()).release();
 	});
 });
+
+describe('retained shared process supervisor callbacks', () => {
+	const sources = [
+		'exit',
+		'close',
+		'error',
+		'abort',
+		'startup',
+		'lifetime',
+		'warning',
+		'silence',
+		'drain',
+		'force',
+		'model',
+		'observe',
+		'dispose',
+	] as const;
+	const fallible = sources.filter((source) => source !== 'close');
+	beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+	afterEach(() => vi.useRealTimers());
+
+	async function retain(source: (typeof sources)[number]) {
+		expect(spawner.spawn(config({ toolType: 'codex', prompt: 'fixture' })).success).toBe(true);
+		const runActivity = vi.mocked(superviseAgentProcess).mock.calls.at(-1)![2];
+		expect(runActivity).toBeTypeOf('function');
+		const actual = await vi.importActual<
+			typeof import('../../../shared/maestro-lib/control/agent-process-supervisor')
+		>('../../../shared/maestro-lib/control/agent-process-supervisor');
+		const child = makeNative(24680);
+		const streams = [child.stdout, child.stderr].map((stream) =>
+			Object.assign(stream, { destroy: vi.fn() })
+		);
+		const controller = new AbortController();
+		const listen = vi.spyOn(controller.signal, 'addEventListener');
+		const schedule = vi.spyOn(globalThis, 'setTimeout');
+		const cancel = vi.spyOn(globalThis, 'clearTimeout');
+		const status = vi.fn();
+		const stopped = vi.fn();
+		const forced = vi.fn();
+		const remove = vi.spyOn(child, 'removeListener');
+		const supervision = actual.superviseAgentProcess(
+			child as unknown as Parameters<typeof actual.superviseAgentProcess>[0],
+			{
+				startupMs: 10,
+				timeoutMs: 20,
+				idle: { warnMs: 30, idleMs: 40, toolMs: 50 },
+				signal: controller.signal,
+				onStatus: status,
+				onStop: stopped,
+				onForcedStop: forced,
+			},
+			runActivity
+		);
+		const exit = child.listeners('exit')[0] as () => void;
+		const closed = child.listeners('close')[0] as () => void;
+		const error = child.listeners('error')[0] as () => void;
+		const abort = listen.mock.calls[0][1] as () => void;
+		const timers = schedule.mock.calls.map((call) => call[0] as () => void);
+		if (source === 'drain') exit();
+		if (source === 'force') abort();
+		const event = { type: 'text' as const, text: 'new model output', raw: {} };
+		const callback =
+			source === 'exit'
+				? exit
+				: source === 'close'
+					? closed
+					: source === 'error'
+						? error
+						: source === 'abort'
+							? abort
+							: source === 'model'
+								? supervision.modelActivity
+								: source === 'observe'
+									? () => supervision.observe(event)
+									: source === 'dispose'
+										? supervision.dispose
+										: source === 'drain' || source === 'force'
+											? (schedule.mock.calls.at(-1)![0] as () => void)
+											: timers[['startup', 'lifetime', 'warning', 'silence'].indexOf(source)];
+		const fail = (failure: Error) => {
+			const throws = () => {
+				throw failure;
+			};
+			if (source === 'error')
+				Object.defineProperty(child, 'pid', { get: throws, configurable: true });
+			else if (source === 'observe')
+				Object.defineProperty(event, 'raw', { get: throws, configurable: true });
+			else {
+				const effect =
+					source === 'exit'
+						? schedule
+						: source === 'dispose'
+							? remove
+							: source === 'force'
+								? streams[0].destroy
+								: source === 'warning'
+									? status
+									: cancel;
+				effect.mockImplementationOnce(throws);
+			}
+		};
+		return {
+			callback,
+			fail,
+			supervision,
+			child,
+			streams,
+			schedule,
+			cancel,
+			status,
+			stopped,
+			forced,
+			remove,
+			exit,
+		};
+	}
+
+	it.each(
+		sources.flatMap((source) =>
+			[target, path.join(target, 'child'), path.resolve('elsewhere')].map((root) => ({
+				source,
+				root,
+			}))
+		)
+	)('refuses $source before supervisor effects under $root', async ({ source, root }) => {
+		const retained = await retain(source);
+		await close();
+		for (const probe of [
+			retained.schedule,
+			retained.cancel,
+			retained.status,
+			retained.stopped,
+			retained.forced,
+			retained.remove,
+			stopProcess,
+		])
+			vi.mocked(probe).mockClear();
+		const inspect = vi.fn(() => 24680);
+		Object.defineProperty(retained.child, 'pid', { get: inspect, configurable: true });
+		const hold = await reserve(root);
+		expect(() => retained.callback()).toThrow(/reserved/);
+		for (const probe of [
+			retained.schedule,
+			retained.cancel,
+			retained.status,
+			retained.stopped,
+			retained.forced,
+			retained.remove,
+			stopProcess,
+			inspect,
+			captureException,
+			...retained.streams.map((stream) => stream.destroy),
+		])
+			expect(probe).not.toHaveBeenCalled();
+		hold.release();
+		expect(retained.callback()).toBeUndefined();
+		if (source === 'exit') expect(retained.schedule).toHaveBeenCalled();
+		if (source === 'force' || source === 'drain')
+			for (const stream of retained.streams) expect(stream.destroy).toHaveBeenCalledOnce();
+		retained.supervision.dispose();
+		const stale = await reserve(root);
+		expect(() => retained.callback()).toThrow(/reserved/);
+		stale.release();
+		(await reserve()).release();
+	});
+
+	it.each(
+		fallible.flatMap((source) =>
+			['resolve', 'reject', 'throw'].map((outcome) => ({ source, outcome }))
+		)
+	)('owns late $source failure through diagnostic $outcome', async ({ source, outcome }) => {
+		const retained = await retain(source);
+		await close();
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockImplementation(() => {
+			if (outcome === 'throw') throw new Error('reporter threw');
+			return reporting.promise;
+		});
+		const failure = new Error('supervisor effect failed');
+		retained.fail(failure);
+		expect(() => retained.callback()).toThrow(failure);
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		if (outcome !== 'throw') {
+			await blocked();
+			if (outcome === 'resolve') reporting.resolve();
+			else reporting.reject(new Error('reporter rejected'));
+			await drain();
+		}
+		(await reserve()).release();
+	});
+
+	it.each(fallible)('blocks pending canonicalization during $0 diagnostic', async (source) => {
+		const retained = await retain(source);
+		await close();
+		const canonical = Promise.withResolvers<string>();
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		const failure = new Error('failed during canonicalization');
+		retained.fail(failure);
+		expect(() => retained.callback()).toThrow(failure);
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(['native', 'report'])(
+		'retains independent native and supervisor diagnostic ownership with %s first',
+		async (first) => {
+			const retained = await retain('observe');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			const failure = new Error('observation failed');
+			retained.fail(failure);
+			expect(() => retained.callback()).toThrow(failure);
+			if (first === 'native') await close();
+			else {
+				reporting.resolve();
+				await drain();
+			}
+			await blocked();
+			if (first === 'native') {
+				reporting.reject(new Error('late rejection'));
+				await drain();
+			} else await close();
+			(await reserve()).release();
+		}
+	);
+
+	it('retains concurrent predecessor diagnostics independently of a successor', async () => {
+		const retained = await retain('observe');
+		await close();
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		const failure = new Error('retained observation failed');
+		retained.fail(failure);
+		for (let i = 0; i < 2; i++) expect(() => retained.callback()).toThrow(failure);
+		native = makeNative(34567);
+		expect(spawner.spawn(config()).success).toBe(true);
+		first.resolve();
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		second.reject(new Error('late reporter rejection'));
+		await drain();
+		expect(captureException).toHaveBeenCalledTimes(2);
+		(await reserve()).release();
+	});
+
+	it('does not confirm native exit from refused close/error callbacks', async () => {
+		for (const source of ['close', 'error'] as const) {
+			const retained = await retain(source);
+			await close();
+			Object.defineProperty(retained.child, 'pid', { value: undefined, configurable: true });
+			const exited = vi.fn();
+			void retained.supervision.processExited.then(exited);
+			const hold = await reserve();
+			expect(() => retained.callback()).toThrow(/reserved/);
+			await drain();
+			expect(exited).not.toHaveBeenCalled();
+			hold.release();
+			retained.callback();
+			await drain();
+			expect(exited).toHaveBeenCalledOnce();
+			retained.supervision.dispose();
+		}
+	});
+});
