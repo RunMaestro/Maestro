@@ -307,6 +307,20 @@ ownership or owner loss refuses validation; failures require explicit abort. Par
 admission resumes after completed removal, while an in-flight removal remains
 fenced. These internal APIs do not expose cleanup or prove PR merge/renderer freeze.
 
+`WorktreeRetirementHost.remove()` is the internal checked transaction over that
+reservation. It independently rediscovers the PR and confirms its merged REST
+detail, repository, branch, base and exact original head; merge, squash and rebase
+are supported without requiring the original head to be an ancestor of the base.
+After revalidating the renderer and Git ownership it refuses tracked, untracked,
+ignored, assume-unchanged/skip-worktree and submodule data. The only destructive
+command is `git worktree remove -- <path>` from the surviving primary parent.
+Concurrent commits share one runner, with no force or recursive fallback. Failure
+after Git starts retains the fence; settlement retries never rerun removal. The
+watcher callback, durable archive and renderer completion must all succeed before
+the parent is released. Real local Git fixtures exercise these paths with mocked
+GitHub responses. This transaction is not exposed through IPC yet: durable crash
+recovery, concrete watcher settlement and policy/UI admission remain prerequisites.
+
 ### Security Hardening
 
 - **Window open handler**: All popup/new-window requests are denied

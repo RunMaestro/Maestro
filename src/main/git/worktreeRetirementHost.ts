@@ -5,6 +5,13 @@ import type {
 	RetirementRendererReply,
 } from '../../shared/worktreeRetirement';
 import type { ManagedCheckout, RetirementToken, WorktreeRetirement } from './worktreeRetirement';
+import {
+	removeRetirementCheckout,
+	verifyRetirementClean,
+	verifyRetirementMerge,
+} from './worktreeRetirementRemoval';
+
+type RemovalResult = { status: 'removed' } | { status: 'blocked' | 'pending'; reason: string };
 
 /** Adapter owns the actual IPC sender and its primary-window lifetime. */
 export interface RetirementRenderer {
@@ -21,6 +28,8 @@ type Prepared = {
 	revision?: number;
 	timer?: ReturnType<typeof setTimeout>;
 	detach?: () => void;
+	removal?: Promise<RemovalResult>;
+	diskRemoved?: boolean;
 };
 
 /** Opaque wire ids never substitute for Main-owned reservation objects.
@@ -82,7 +91,7 @@ export class WorktreeRetirementHost {
 		}
 	}
 
-	/** Used by the future removal transaction, never exposed as an IPC token getter.
+	/** Used by the internal removal transaction, never exposed as an IPC token getter.
 	 * Validate after awaits; owner loss or expiration must win over a late reply.
 	 */
 	async validate(id: string, renderer: object) {
@@ -102,6 +111,56 @@ export class WorktreeRetirementHost {
 		if (this.prepared.get(id) !== entry)
 			return { ok: false as const, reason: 'preparation expired or owner lost' };
 		return { ok: true as const, token: entry.token, expected: entry.expected };
+	}
+
+	/** Internal only until durable restart recovery and policy are wired. The
+	 * caller must settle feature-owned watchers before releasing this reservation.
+	 * Concurrent calls share one runner. Once Git starts, abort/expiry/owner loss
+	 * cannot unlock it; retries settle persistence/renderer without removing twice.
+	 */
+	remove(
+		id: string,
+		renderer: object,
+		settleWatchers: (checkout: Readonly<ManagedCheckout>) => Promise<void>
+	): Promise<RemovalResult> {
+		const entry = this.prepared.get(id);
+		if (!entry || entry.renderer.identity !== renderer)
+			return Promise.resolve({ status: 'blocked', reason: 'unknown renderer preparation' });
+		if (entry.removal) return entry.removal;
+		const operation = async (): Promise<RemovalResult> => {
+			try {
+				if (this.fence.tokenState(entry.token) === 'preparing') {
+					const initial = await this.validate(id, renderer);
+					if (!initial.ok) throw new Error(initial.reason);
+					await verifyRetirementMerge(initial.expected);
+					// GitHub reads can outlive a registration, lease, or primary owner.
+					const current = await this.validate(id, renderer);
+					if (!current.ok) throw new Error(current.reason);
+					await verifyRetirementClean(current.expected);
+					if (!this.fence.commit(entry.token)) throw new Error('preparation expired or owner lost');
+					await removeRetirementCheckout(current.expected);
+					entry.diskRemoved = true;
+				}
+				if (!entry.diskRemoved) throw new Error('Removal outcome requires recovery');
+				await settleWatchers(entry.expected);
+				const reconciled = await this.reconcileRenderer(id, renderer);
+				if (!reconciled.ok) throw new Error(reconciled.reason);
+				if (!this.fence.complete(entry.token)) throw new Error('Removal settlement lost ownership');
+				this.release(id, entry);
+				return { status: 'removed' };
+			} catch (error) {
+				const removing = this.fence.tokenState(entry.token) === 'removing';
+				if (!removing) this.abort(id, renderer);
+				return {
+					status: removing ? 'pending' : 'blocked',
+					reason: error instanceof Error ? error.message : 'Removal unavailable',
+				};
+			}
+		};
+		entry.removal = operation().finally(() => {
+			delete entry.removal;
+		});
+		return entry.removal;
 	}
 
 	/** Called internally only after checked removal and durable reconciliation.
@@ -146,6 +205,11 @@ export class WorktreeRetirementHost {
 		// an active removal, even when its renderer disappears or lease expires.
 		if (!this.fence.abort(entry.token) && this.fence.tokenState(entry.token) !== undefined)
 			return false;
+		this.release(id, entry);
+		return true;
+	}
+
+	private release(id: string, entry: Prepared): void {
 		this.prepared.delete(id);
 		clearTimeout(entry.timer);
 		entry.detach?.();
@@ -154,6 +218,5 @@ export class WorktreeRetirementHost {
 		} catch {
 			/* renderer already gone */
 		}
-		return true;
 	}
 }
