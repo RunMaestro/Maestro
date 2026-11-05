@@ -21,6 +21,7 @@ import React, { useState, useCallback } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { FolderX, Plus, X, Check, FileText } from 'lucide-react';
 import type { Theme } from '../../types';
+import { isImeComposing } from '../../utils/ime';
 
 export interface IgnorePatternsSectionProps {
 	/** Theme object for styling */
@@ -98,7 +99,7 @@ export function IgnorePatternsSection({
 	// Handle key down in input (Enter to add)
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				handleAddPattern();
 			}

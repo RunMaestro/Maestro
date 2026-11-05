@@ -48,6 +48,7 @@ import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { isImeComposing } from '../utils/ime';
 
 // Social media icons as SVG components
 const GithubIcon = ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -835,7 +836,13 @@ export function LeaderboardRegistrationModal({
 	// Handle Enter key for form submission
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			if (e.key === 'Enter' && !e.shiftKey && isFormValid && submitState === 'idle') {
+			if (
+				e.key === 'Enter' &&
+				!e.shiftKey &&
+				!isImeComposing(e) &&
+				isFormValid &&
+				submitState === 'idle'
+			) {
 				e.preventDefault();
 				handleSubmit();
 			}

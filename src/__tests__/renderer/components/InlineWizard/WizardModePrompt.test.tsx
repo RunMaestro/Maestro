@@ -330,6 +330,30 @@ describe('WizardModePrompt', () => {
 			expect(onSetGoal).toHaveBeenCalledWith('Add auth');
 		});
 
+		it('leaves Enter in the goal field to the input method during an IME composition', async () => {
+			const onSelectMode = vi.fn();
+			const onSetGoal = vi.fn();
+
+			renderWithLayerStack(
+				<WizardModePrompt {...defaultProps} onSelectMode={onSelectMode} onSetGoal={onSetGoal} />
+			);
+
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
+
+			const input = screen.getByTestId('wizard-mode-goal-input');
+			fireEvent.change(input, { target: { value: 'Add auth' } });
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				expect(fireEvent.keyDown(input, { key: 'Enter', ...ime })).toBe(true);
+			}
+
+			expect(onSelectMode).not.toHaveBeenCalled();
+			expect(onSetGoal).not.toHaveBeenCalled();
+		});
+
 		it('does not submit on Enter when goal is empty', async () => {
 			const onSelectMode = vi.fn();
 

@@ -715,6 +715,22 @@ describe('SendToAgentModal', () => {
 			expect(screen.getByRole('button', { name: /send to session/i })).toBeInTheDocument();
 		});
 
+		it('leaves Enter to the input method during an IME composition, and sends on a normal Enter', async () => {
+			renderModal();
+			fireEvent.click(screen.getByText('Codex Session').closest('button')!);
+			const dialog = screen.getByRole('dialog');
+
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				expect(fireEvent.keyDown(dialog, { key: 'Enter', ...ime })).toBe(true);
+			}
+			expect(mockOnSend).not.toHaveBeenCalled();
+
+			expect(fireEvent.keyDown(dialog, { key: 'Enter' })).toBe(false);
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledTimes(1);
+			});
+		});
+
 		it('force sends on the Forced Parallel Send chord', async () => {
 			useSettingsStore.setState({ forcedParallelExecution: true });
 			renderModal();
