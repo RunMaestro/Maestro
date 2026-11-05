@@ -121,7 +121,7 @@ export class OpencodeServerSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(_start, observe) => this.spawnAdmitted(config, observe),
-				(error) => void captureException(error)
+				(error) => captureException(error)
 			);
 		} catch (error) {
 			return { pid: -1, success: false, error: String(error) };
@@ -236,7 +236,11 @@ export class OpencodeServerSpawner {
 		// agent-error for streaming failures). This catch is a last-resort net.
 		observe(
 			this.run(config, managedProcess, streamAbort, lifecycle, observe).catch((err) => {
-				void captureException(err);
+				observe(
+					Promise.resolve()
+						.then(() => captureException(err))
+						.catch(() => {})
+				);
 				if (!lifecycle.isFinished()) {
 					this.emitAgentError(managedProcess, err);
 					lifecycle.finish(1);
@@ -339,7 +343,7 @@ export class OpencodeServerSpawner {
 		// Acquire fresh admission before reading the client or starting HTTP work.
 		withWorktreeTurnActivity(
 			(_start, observe) => this.abortAdmittedSession(managedProcess, observe),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -461,7 +465,11 @@ export class OpencodeServerSpawner {
 					this.fallbackToCli(config);
 					return;
 				} catch (fallbackErr) {
-					void captureException(fallbackErr);
+					observe(
+						Promise.resolve()
+							.then(() => captureException(fallbackErr))
+							.catch(() => {})
+					);
 				}
 			}
 			this.emitAgentError(managedProcess, setupErr);

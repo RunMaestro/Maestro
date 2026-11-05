@@ -193,7 +193,9 @@ async function reserve(root = target) {
 	return hold;
 }
 async function blocked() {
-	expect(await gate.reserveWorktreeCleanup(target)).toMatchObject({
+	const result = await gate.reserveWorktreeCleanup(target);
+	if (result.status === 'reserved-partially') result.release();
+	expect(result).toMatchObject({
 		status: 'blocked',
 		blockers: [{ code: 'mutation-busy' }],
 	});
@@ -6260,6 +6262,177 @@ describe('OpenCode per-turn activity', () => {
 		ending.resolve();
 		await close();
 	}
+
+	it.each(
+		(['setup', 'run', 'completion', 'fallback', 'control'] as const).flatMap((stage) =>
+			(['resolve', 'reject', 'throw'] as const).map((outcome) => ({ stage, outcome }))
+		)
+	)(
+		'owns OpenCode $stage diagnostics when the reporter will $outcome',
+		async ({ stage, outcome }) => {
+			const failure = new Error(`OpenCode ${stage} ${outcome}`);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('reporter failed');
+				return reporting.promise;
+			});
+			if (stage === 'setup') {
+				vi.mocked(createOutputParser).mockImplementationOnce(() => {
+					throw failure;
+				});
+				expect(oc.spawn(cfg())).toMatchObject({ success: false, error: String(failure) });
+				expect(fallback).not.toHaveBeenCalled();
+			} else if (stage === 'run') {
+				const args: string[] = [];
+				vi.spyOn(args, 'indexOf').mockImplementation(() => {
+					throw failure;
+				});
+				expect(oc.spawn(cfg({ args }))).toMatchObject({ success: true });
+			} else if (stage === 'fallback') {
+				client.session.create.mockRejectedValueOnce(new Error('setup failed'));
+				fallback.mockImplementationOnce(() => {
+					throw failure;
+				});
+				await start();
+				expect(fallback).toHaveBeenLastCalledWith(cfg());
+				await close();
+			} else {
+				if (stage === 'completion') {
+					probes.exit.mockRejectedValueOnce(new Error('exit reporting failed'));
+					vi.mocked(logger.error).mockImplementationOnce(() => {
+						throw failure;
+					});
+				}
+				const managed = await start();
+				await end();
+				if (stage === 'control') {
+					Object.defineProperty(managed, 'opencodeClient', {
+						get: () => {
+							throw failure;
+						},
+					});
+					expect(() => managed.sdkController!.interrupt()).toThrow(failure);
+				}
+			}
+			await drain();
+			expect(captureException).toHaveBeenLastCalledWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('reporter rejected'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'keeps OpenCode fallback diagnostics independent of server close (report first: %s)',
+		async (reportFirst) => {
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			client.session.create.mockRejectedValueOnce(new Error('setup'));
+			fallback.mockImplementationOnce(() => {
+				throw new Error('fallback');
+			});
+			await start();
+			if (reportFirst) reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (reportFirst) await close();
+			else reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+	it.each(['sdk-interrupt', 'sdk-kill', 'harness-interrupt', 'harness-close'] as const)(
+		'owns OpenCode late %s diagnostics and refuses before client lookup/reporting',
+		async (action) => {
+			const managed = await start();
+			await end();
+			const failure = new Error('late client lookup');
+			const lookup = vi.fn(() => {
+				throw failure;
+			});
+			Object.defineProperty(managed, 'opencodeClient', { get: lookup });
+			const call = () => {
+				switch (action) {
+					case 'sdk-interrupt':
+						return managed.sdkController!.interrupt();
+					case 'sdk-kill':
+						return managed.sdkController!.kill();
+					case 'harness-interrupt':
+						return managed.harnessControl!.interrupt();
+					case 'harness-close':
+						return managed.harnessControl!.close();
+				}
+			};
+			const hold = await reserve(path.join(target, 'descendant'));
+			try {
+				await expect(Promise.resolve().then(call)).rejects.toThrow('reserved');
+				expect(lookup).not.toHaveBeenCalled();
+				expect(captureException).not.toHaveBeenCalled();
+			} finally {
+				hold.release();
+			}
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			await expect(Promise.resolve().then(call)).rejects.toBe(failure);
+			await blocked();
+			reporting.reject(new Error('diagnostics failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			(await reserve()).release();
+		}
+	);
+	it('keeps OpenCode concurrent reports and successor activity independently owned', async () => {
+		const managed = await start();
+		await end();
+		Object.defineProperty(managed, 'opencodeClient', {
+			get: () => {
+				throw new Error('lookup');
+			},
+		});
+		const reports = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+		vi.mocked(captureException)
+			.mockReturnValueOnce(reports[0].promise)
+			.mockReturnValueOnce(reports[1].promise);
+		expect(() => managed.sdkController!.interrupt()).toThrow('lookup');
+		expect(() => managed.sdkController!.kill()).toThrow('lookup');
+		reports[0].resolve();
+		await drain();
+		await blocked();
+		const releaseSuccessor = gate.beginGlobalWorktreeActivity();
+		reports[1].reject(new Error('diagnostics failed'));
+		await drain();
+		await blocked();
+		releaseSuccessor();
+		(await reserve()).release();
+		expect(captureException).toHaveBeenCalledTimes(2);
+	});
+	it('blocks pending canonicalization when OpenCode late diagnostics acquire admission', async () => {
+		const managed = await start();
+		await end();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		Object.defineProperty(managed, 'opencodeClient', {
+			get: () => {
+				throw new Error('lookup');
+			},
+		});
+		expect(() => managed.sdkController!.interrupt()).toThrow('lookup');
+		canonical.resolve(target);
+		const result = await pending;
+		if (result.status === 'reserved-partially') result.release();
+		expect(result.status).toBe('blocked');
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
 	it.each([target, path.join(target, 'descendant'), path.resolve('unrelated')])(
 		'refuses standalone setup before parser/map/server/fallback under %s reservation',
 		async (root) => {
