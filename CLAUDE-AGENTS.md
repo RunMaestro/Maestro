@@ -200,7 +200,7 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **Read-only:** `--approval-mode plan` (`readOnlyCliEnforced: true` in definitions)
 - **YOLO Mode:** `-y`
 - **Working Directory:** `--include-directories <dir>`
-- **Known Inconsistencies:** `capabilities.ts` sets `supportsReadOnlyMode: false` ("prompt-only enforcement via -y") while `definitions.ts` wires `--approval-mode plan` with `readOnlyCliEnforced: true`; and `AGENT_LOGIN_COMMANDS` names the login binary `qwen3-coder` while the definition's `binaryName` is `qwen`. The two sites disagree; this doc records both
+- **Login:** bare `qwen`, then `/auth` (the binary in `AGENT_LOGIN_COMMANDS` must equal the definition's `binaryName`; `definitions.test.ts` enforces that and the read-only parity for every agent)
 
 ### Hermes
 

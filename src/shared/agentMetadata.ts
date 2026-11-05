@@ -269,7 +269,7 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	'claude-code': { binary: 'claude', args: '/login' },
 	codex: { binary: 'codex', args: 'login', remoteArgs: 'login --device-auth' },
 	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
-	'qwen3-coder': { binary: 'qwen3-coder', args: '', followUp: '/auth' },
+	'qwen3-coder': { binary: 'qwen', args: '', followUp: '/auth' },
 	opencode: { binary: 'opencode', args: 'auth login' },
 	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
 	'copilot-cli': { binary: 'copilot', args: 'login' },

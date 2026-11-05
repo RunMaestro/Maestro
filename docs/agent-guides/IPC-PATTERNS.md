@@ -136,18 +136,20 @@ export function registerMyFeatureHandlers(deps: MyFeatureHandlerDependencies): v
 }
 ```
 
-### Step 2: Register in the handler index
+### Step 2: Register in the live bootstrap
 
-Edit `src/main/ipc/handlers/index.ts`:
+Edit `src/main/ipc/bootstrap/index.ts` and call the registrar from `setupIpcHandlers()`, which `main/index.ts` invokes at app-ready. This is the ONLY registration that runs:
 
 ```typescript
-import { registerMyFeatureHandlers, MyFeatureHandlerDependencies } from './myFeature';
+import { registerMyFeatureHandlers } from '../handlers/myFeature';
 
-// Add to registerAllHandlers():
+// Inside setupIpcHandlers(deps: IpcBootstrapDependencies):
 registerMyFeatureHandlers({
 	getMainWindow: deps.getMainWindow,
 });
 ```
+
+`src/main/ipc/handlers/index.ts` also exports `registerAllHandlers()`, which reads like the registration list but is dead: nothing calls it. It is kept as a manifest, and `src/__tests__/main/ipc/bootstrap/handler-wiring.test.ts` fails if a registrar invoked there is missing from `setupIpcHandlers()`. A registrar added to the dead list alone is never registered in a shipped build (that is how `contextTimeline:*` shipped unhandled), so add it to the bootstrap first and to the manifest second, or to the bootstrap only. If the registrar needs a dependency the bootstrap does not have yet, add it to `IpcBootstrapDependencies` in `src/main/ipc/bootstrap/types.ts` and pass it from `main/index.ts`.
 
 ### Step 3: Create the preload bridge
 
@@ -310,28 +312,11 @@ if (session.sshRemoteConfig?.enabled) {
 
 ## Handler Registration Architecture
 
-All handlers are registered in `registerAllHandlers()` in `src/main/ipc/handlers/index.ts`. Dependencies are injected via the `HandlerDependencies` interface:
-
-```typescript
-interface HandlerDependencies {
-	mainWindow: BrowserWindow | null;
-	getMainWindow: () => BrowserWindow | null;
-	app: App;
-	getAgentDetector: () => AgentDetector | null;
-	agentConfigsStore: Store<AgentConfigsData>;
-	getProcessManager: () => ProcessManager | null;
-	settingsStore: Store<MaestroSettings>;
-	sessionsStore: Store<SessionsData>;
-	groupsStore: Store<GroupsData>;
-	getWebServer: () => WebServer | null;
-	tunnelManager: TunnelManagerType;
-	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
-}
-```
+All handlers are registered by `setupIpcHandlers()` in `src/main/ipc/bootstrap/index.ts`, called once from `main/index.ts` at app-ready. Dependencies are injected via `IpcBootstrapDependencies` (`src/main/ipc/bootstrap/types.ts`): getters for the mutable singletons that stay declared in `main/index.ts` (`getMainWindow`, `getProcessManager`, `getWebServer`, `getAgentDetector`, `getCueEngine`, ...) plus the stores and managers each registrar needs. The bootstrap also holds a handful of inline wiring blocks (group-chat mention and session callbacks, the coworking bridge startup, window-registry persistence) that are not registrars.
 
 Each handler module exports a `register*Handlers(deps)` function and a `*HandlerDependencies` interface specifying which subset of dependencies it needs.
 
-**Note:** `registerWebHandlers` is NOT called from `registerAllHandlers()` because it requires module-level webServer state management. It's registered separately in `setupIpcHandlers()` (`src/main/ipc/bootstrap/index.ts`), which has the webServer accessor in its deps object.
+`registerAllHandlers()` in `src/main/ipc/handlers/index.ts` is a dead manifest, not a second registration path: nothing invokes it, and `handler-wiring.test.ts` only uses it to assert that every registrar named there is also invoked by `setupIpcHandlers()`. Do not "fix" a missing handler by adding it there.
 
 ---
 
