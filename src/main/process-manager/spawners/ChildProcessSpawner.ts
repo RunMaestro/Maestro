@@ -520,10 +520,11 @@ export class ChildProcessSpawner {
 							},
 							(error) => captureException(error)
 						),
-					onStderr: (stderrData) => {
-						if (isSuperseded()) return;
-						this.stderrHandler.handleData(sessionId, stderrData);
-					},
+					onStderr: (stderrData) =>
+						withWorktreeTurnActivity(() => {
+							if (isSuperseded()) return;
+							this.stderrHandler.handleData(sessionId, stderrData);
+						}, captureException),
 				},
 				{
 					// The desktop stops through ProcessManager.interrupt() / kill(),
@@ -544,34 +545,42 @@ export class ChildProcessSpawner {
 			// A stream error with no listener is an uncaught exception. stdin's is
 			// the common one: EPIPE, from a prompt written to a process that has
 			// already gone; the exit that follows reports what happened.
-			childProcess.stdin?.on('error', (err) => {
-				const errorCode = (err as NodeJS.ErrnoException).code;
-				if (errorCode === 'EPIPE') {
-					logger.debug(
-						'[ProcessManager] stdin EPIPE - process closed before write completed',
-						'ProcessManager',
-						{ sessionId }
-					);
-				} else {
-					logger.error('[ProcessManager] stdin error', 'ProcessManager', {
+			// These listeners may be retained beyond close. Each callback owns its
+			// effects and diagnostics independently of the original native lifetime.
+			childProcess.stdin?.on('error', (err) =>
+				withWorktreeTurnActivity(() => {
+					const errorCode = (err as NodeJS.ErrnoException).code;
+					if (errorCode === 'EPIPE') {
+						logger.debug(
+							'[ProcessManager] stdin EPIPE - process closed before write completed',
+							'ProcessManager',
+							{ sessionId }
+						);
+					} else {
+						logger.error('[ProcessManager] stdin error', 'ProcessManager', {
+							sessionId,
+							error: String(err),
+							code: errorCode,
+						});
+					}
+				}, captureException)
+			);
+			childProcess.stdout?.on('error', (err) =>
+				withWorktreeTurnActivity(() => {
+					logger.error('[ProcessManager] stdout error', 'ProcessManager', {
 						sessionId,
 						error: String(err),
-						code: errorCode,
 					});
-				}
-			});
-			childProcess.stdout?.on('error', (err) => {
-				logger.error('[ProcessManager] stdout error', 'ProcessManager', {
-					sessionId,
-					error: String(err),
-				});
-			});
-			childProcess.stderr?.on('error', (err) => {
-				logger.error('[ProcessManager] stderr error', 'ProcessManager', {
-					sessionId,
-					error: String(err),
-				});
-			});
+				}, captureException)
+			);
+			childProcess.stderr?.on('error', (err) =>
+				withWorktreeTurnActivity(() => {
+					logger.error('[ProcessManager] stderr error', 'ProcessManager', {
+						sessionId,
+						error: String(err),
+					});
+				}, captureException)
+			);
 
 			logger.debug('[ProcessManager] Child process spawned', 'ProcessManager', {
 				sessionId,

@@ -25,7 +25,7 @@ vi.mock('../../../main/process-manager/handlers/StdoutHandler', () => ({
 }));
 vi.mock('../../../main/process-manager/handlers/StderrHandler', () => ({
 	StderrHandler: class {
-		handleData = vi.fn();
+		handleData = (...args: unknown[]) => reports.stderr(...args);
 	},
 }));
 vi.mock('../../../main/process-manager/handlers/ExitHandler', () => ({
@@ -64,7 +64,12 @@ import { captureException } from '../../../main/utils/sentry';
 import { logger } from '../../../main/utils/logger';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
 
-const reports = vi.hoisted(() => ({ exit: vi.fn(), error: vi.fn(), flush: vi.fn() }));
+const reports = vi.hoisted(() => ({
+	exit: vi.fn(),
+	error: vi.fn(),
+	flush: vi.fn(),
+	stderr: vi.fn(),
+}));
 const target = path.resolve('child-cleanup-target');
 let gate: typeof import('../../../main/git/worktreeActivity');
 let spawner: import('../../../main/process-manager/spawners/ChildProcessSpawner').ChildProcessSpawner;
@@ -629,3 +634,220 @@ it.each(['reject', 'throw'])(
 		(await reserve()).release();
 	}
 );
+
+describe('retained stderr and stream-error activity', () => {
+	const sources = [
+		'stderr-data',
+		'stdin-EPIPE',
+		'stdin-error',
+		'stdout-error',
+		'stderr-error',
+	] as const;
+
+	function retainCallback(source: (typeof sources)[number], error = new Error('stream error')) {
+		if (source === 'stderr-data') {
+			const callback = native.stderr.listeners('data')[0];
+			return () => callback('fixture stderr');
+		}
+		const stream = source.startsWith('stdin')
+			? native.stdin
+			: source === 'stdout-error'
+				? native.stdout
+				: native.stderr;
+		const callback = stream.listeners('error').at(-1)!;
+		if (source === 'stdin-EPIPE') Object.assign(error, { code: 'EPIPE' });
+		return () => callback(error);
+	}
+
+	function failCallback(source: (typeof sources)[number], failure: Error) {
+		const effect =
+			source === 'stderr-data'
+				? reports.stderr
+				: source === 'stdin-EPIPE'
+					? logger.debug
+					: logger.error;
+		vi.mocked(effect).mockImplementationOnce(() => {
+			throw failure;
+		});
+	}
+
+	it.each(
+		sources.flatMap((source) =>
+			[target, path.join(target, 'child'), path.resolve('other')].map((root) => ({ source, root }))
+		)
+	)(
+		'refuses $source before inspection, handler or logging under $root after close',
+		async ({ source, root }) => {
+			expect(spawner.spawn(config()).success).toBe(true);
+			const error = new Error('late stream');
+			const callback = retainCallback(source, error);
+			await close();
+			processes.clear();
+			const inspect = vi.fn(() => 'EPIPE');
+			Object.defineProperty(error, 'code', { get: inspect });
+			error.toString = inspect;
+			vi.mocked(logger.debug).mockClear();
+			vi.mocked(logger.error).mockClear();
+			const hold = await reserve(root);
+			expect(() => callback()).toThrow(/reserved/);
+			for (const probe of [inspect, reports.stderr, logger.debug, logger.error, captureException])
+				expect(probe).not.toHaveBeenCalled();
+			hold.release();
+			callback();
+			expect(
+				source === 'stderr-data'
+					? reports.stderr
+					: source.startsWith('stdin')
+						? logger.debug
+						: logger.error
+			).toHaveBeenCalled();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(
+		sources.flatMap((source) =>
+			['resolve', 'reject', 'throw'].map((outcome) => ({ source, outcome }))
+		)
+	)(
+		'preserves $source failure and owns its diagnostic through $outcome after close',
+		async ({ source, outcome }) => {
+			expect(spawner.spawn(config()).success).toBe(true);
+			const callback = retainCallback(source);
+			await close();
+			processes.clear();
+			const failure = new Error('callback failure');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			failCallback(source, failure);
+			expect(() => callback()).toThrow(failure);
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('reporter rejected'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledTimes(1);
+			(await reserve()).release();
+		}
+	);
+
+	it.each(sources)(
+		'blocks pending canonicalization from $0 callback diagnostics',
+		async (source) => {
+			expect(spawner.spawn(config()).success).toBe(true);
+			const callback = retainCallback(source);
+			await close();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const pending = gate.reserveWorktreeCleanup(target);
+			const failure = new Error('late callback failure');
+			failCallback(source, failure);
+			expect(() => callback()).toThrow(failure);
+			canonical.resolve(target);
+			expect(await pending).toMatchObject({ status: 'blocked' });
+			await blocked();
+			reporting.resolve();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(sources)(
+		'does not release the native child when $0 diagnostics settle first',
+		async (source) => {
+			expect(spawner.spawn(config()).success).toBe(true);
+			const callback = retainCallback(source);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			const failure = new Error('callback failure');
+			failCallback(source, failure);
+			expect(() => callback()).toThrow(failure);
+			reporting.resolve();
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(sources)('preserves healthy $0 routing and a synchronous return', async (source) => {
+		expect(spawner.spawn(config()).success).toBe(true);
+		const error = new Error('stream error');
+		const callback = retainCallback(source, error);
+		vi.mocked(logger.debug).mockClear();
+		vi.mocked(logger.error).mockClear();
+		expect(callback()).toBeUndefined();
+		if (source === 'stderr-data')
+			expect(reports.stderr).toHaveBeenCalledExactlyOnceWith('child-session', 'fixture stderr');
+		else if (source === 'stdin-EPIPE') {
+			expect(logger.debug).toHaveBeenCalledWith(
+				expect.stringContaining('stdin EPIPE'),
+				'ProcessManager',
+				{ sessionId: 'child-session' }
+			);
+			expect(logger.error).not.toHaveBeenCalled();
+		} else {
+			expect(logger.error).toHaveBeenCalledWith(
+				expect.stringContaining(source.split('-')[0] + ' error'),
+				'ProcessManager',
+				expect.objectContaining({ sessionId: 'child-session', error: String(error) })
+			);
+		}
+		expect(captureException).not.toHaveBeenCalled();
+		await close();
+		(await reserve()).release();
+	});
+
+	it('admits before filtering a superseded stderr callback and never routes it to the successor', async () => {
+		expect(spawner.spawn(config()).success).toBe(true);
+		const callback = retainCallback('stderr-data');
+		const old = native;
+		native = makeNative(23456);
+		expect(spawner.spawn(config()).success).toBe(true);
+		await close(old);
+		await close();
+		const hold = await reserve();
+		expect(() => callback()).toThrow(/reserved/);
+		expect(reports.stderr).not.toHaveBeenCalled();
+		hold.release();
+		expect(callback()).toBeUndefined();
+		expect(reports.stderr).not.toHaveBeenCalled();
+		(await reserve()).release();
+	});
+
+	it('keeps concurrent callback diagnostics and a successor independently owned', async () => {
+		expect(spawner.spawn(config()).success).toBe(true);
+		const stderr = retainCallback('stderr-data');
+		const stream = retainCallback('stdout-error');
+		const old = native;
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		vi.mocked(captureException)
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+		const failure = new Error('callback failure');
+		failCallback('stderr-data', failure);
+		expect(() => stderr()).toThrow(failure);
+		failCallback('stdout-error', failure);
+		expect(() => stream()).toThrow(failure);
+		native = makeNative(23456);
+		expect(spawner.spawn(config()).success).toBe(true);
+		await close(old);
+		first.resolve();
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		second.reject(new Error('late reporter rejection'));
+		await drain();
+		expect(captureException).toHaveBeenCalledTimes(2);
+		(await reserve()).release();
+	});
+});
