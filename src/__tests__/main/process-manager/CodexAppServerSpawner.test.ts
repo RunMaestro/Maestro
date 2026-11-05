@@ -42,9 +42,8 @@ vi.mock('../../../shared/maestro-lib/control/termination', async (importOriginal
 });
 
 const mockSignalRemoteAgent = vi.fn(() => true);
-vi.mock('../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => {
-	const actual =
-		await importOriginal<typeof import('../../../shared/maestro-lib/control/ssh-remote-signal')>();
+vi.mock('../../../main/utils/ssh-remote-signal', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/utils/ssh-remote-signal')>();
 	return {
 		...actual,
 		signalRemoteAgent: (...args: unknown[]) => mockSignalRemoteAgent(...(args as [])),

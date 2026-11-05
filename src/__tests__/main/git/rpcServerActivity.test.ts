@@ -2741,6 +2741,239 @@ describe('standalone Codex app-server activity', () => {
 		emitter = new EventEmitter();
 		codex = new CodexAppServerSpawner(processes, emitter, {} as DataBufferManager, fallback);
 	});
+	describe('Codex SSH signal adapter ownership', () => {
+		let signals: EventEmitter[];
+		let releases: Array<() => void>;
+		let libraryLogger: typeof import('../../../shared/maestro-lib/host').logger;
+		function makeSignal() {
+			const child = Object.assign(makeNative(), { kill: vi.fn(), unref: vi.fn() });
+			signals.push(child);
+			return child;
+		}
+		beforeEach(async () => {
+			signals = [];
+			releases = [];
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			({ logger: libraryLogger } = await import('../../../shared/maestro-lib/host'));
+			vi.spyOn(libraryLogger, 'info').mockImplementation(() => {});
+			vi.spyOn(libraryLogger, 'warn').mockImplementation(() => {});
+		});
+		afterEach(async () => {
+			for (const release of releases) release();
+			vi.restoreAllMocks();
+			for (const child of signals) child.emit('close', 0, null);
+			Object.assign(native, { exitCode: 0 });
+			await close();
+			vi.useRealTimers();
+		});
+		async function inspect(expected: 'blocked' | 'reserved-partially', root = target) {
+			const result = await gate.reserveWorktreeCleanup(root);
+			if (result.status === 'reserved-partially') releases.push(result.release);
+			expect(result.status).toBe(expected);
+			if (result.status === 'blocked') expect(result.blockers[0].code).toBe('mutation-busy');
+			else
+				expect(result.blockers.map((b) => b.message).join(' ')).toMatch(/native.*registration.*OS/);
+			return result;
+		}
+		async function launch(
+			action: 'kill' | 'interrupt' | 'fallback' = 'kill',
+			child = makeSignal()
+		) {
+			vi.mocked(spawn)
+				.mockReturnValueOnce(native as unknown as ReturnType<typeof spawn>)
+				.mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+			if (action === 'fallback') probes.request.mockRejectedValueOnce(new Error('setup failed'));
+			expect(
+				codex.spawn(
+					input({
+						permissionMode: action === 'fallback' ? 'full' : 'standard',
+						sshRemoteId: 'remote',
+						codexAppServerSsh: {
+							command: '/fixture/ssh',
+							args: ['-o', 'BatchMode=yes', 'me@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+							stdinScript: 'exec codex app-server\n',
+							remoteCommandLine: 'codex app-server',
+							execArgs: ['exec', '--json'],
+							cwd: '/remote/project',
+							prompt: 'fixture',
+						},
+					})
+				).success
+			).toBe(true);
+			const managed = processes.get('rpc-session')!;
+			await drain();
+			if (action !== 'fallback') managed.sdkController![action]();
+			if (action === 'interrupt') vi.advanceTimersByTime(1000);
+			await drain();
+			expect(spawn).toHaveBeenCalledTimes(2);
+			return { managed, child };
+		}
+		async function finishServer() {
+			Object.assign(native, { exitCode: 0 });
+			await close();
+			processes.clear();
+		}
+		it.each(['kill', 'interrupt', 'fallback'] as const)(
+			'retains the independent signal child after %s and app-server close',
+			async (action) => {
+				const { child, managed } = await launch(action);
+				expect(spawn).toHaveBeenLastCalledWith(
+					'/fixture/ssh',
+					['-o', 'BatchMode=yes', 'me@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					{ detached: true, stdio: ['pipe', 'ignore', 'ignore'] }
+				);
+				const { buildRemoteSignalScript } = await import('../../../main/utils/ssh-remote-signal');
+				expect(child.stdin.end).toHaveBeenCalledWith(
+					buildRemoteSignalScript(managed.sshRemotePidFile!, 'terminate')
+				);
+				if (action === 'fallback') expect(fallback).toHaveBeenCalledOnce();
+				else expect(fallback).not.toHaveBeenCalled();
+				await finishServer();
+				await inspect('blocked');
+				await close(child);
+				await inspect('reserved-partially');
+			}
+		);
+		it.each(['exit', 'error', 'timeout'] as const)(
+			'does not treat signal %s as native close',
+			async (event) => {
+				const { child } = await launch();
+				await finishServer();
+				if (event === 'timeout') vi.advanceTimersByTime(30_000);
+				else child.emit(event, event === 'error' ? new Error('signal failed') : 0);
+				await drain();
+				await inspect('blocked');
+				await close(child);
+				await inspect('reserved-partially');
+			}
+		);
+		it('keeps server ownership after the signal closes first', async () => {
+			const { child } = await launch();
+			await close(child);
+			await inspect('blocked');
+			await finishServer();
+			await inspect('reserved-partially');
+		});
+		it.each(['resolve', 'reject'] as const)(
+			'keeps a cancellation signal owned when pending app-server setup ends with %s',
+			async (outcome) => {
+				const setup = Promise.withResolvers<unknown>();
+				probes.request.mockReturnValueOnce(setup.promise);
+				const { child } = await launch('interrupt');
+				await finishServer();
+				if (outcome === 'reject') setup.reject(new Error('cancelled setup failed'));
+				else setup.resolve({});
+				await drain();
+				expect(fallback).not.toHaveBeenCalled();
+				await inspect('blocked');
+				await close(child);
+				await inspect('reserved-partially');
+			}
+		);
+		it('retains a partially initialized signal child despite the false signal result', async () => {
+			const child = makeSignal();
+			child.stdin.end.mockImplementationOnce(() => {
+				throw new Error('stdin setup failed');
+			});
+			await launch('kill', child);
+			await finishServer();
+			await inspect('blocked');
+			await close(child);
+			await inspect('reserved-partially');
+		});
+		it.each(['close', 'exit', 'error', 'stdin-error', 'timeout'] as const)(
+			'refuses retained signal %s before native effects, bookkeeping or reporting',
+			async (event) => {
+				const timer = vi.spyOn(globalThis, 'setTimeout');
+				const { child } = await launch();
+				const timeout = timer.mock.calls.find((call) => call[1] === 30_000)![0] as () => void;
+				await finishServer();
+				await close(child);
+				const hold = await inspect('reserved-partially', path.join(target, 'descendant'));
+				vi.clearAllMocks();
+				const clear = vi.spyOn(globalThis, 'clearTimeout');
+				const callback = () => {
+					if (event === 'timeout') timeout();
+					else if (event === 'stdin-error') child.stdin.emit('error', new Error('late'));
+					else child.emit(event, event === 'error' ? new Error('late') : 0);
+				};
+				expect(callback).toThrow('reserved');
+				for (const probe of [
+					clear,
+					child.kill,
+					libraryLogger.info,
+					libraryLogger.warn,
+					captureException,
+					spawn,
+					fallback,
+				])
+					expect(probe).not.toHaveBeenCalled();
+				if (hold.status === 'reserved-partially') hold.release();
+				callback();
+				await drain();
+				await inspect('reserved-partially');
+			}
+		);
+		it.each(['resolve', 'reject'] as const)(
+			'owns late asynchronous signal diagnostics through %s after native close',
+			async (outcome) => {
+				const { child } = await launch();
+				await finishServer();
+				await close(child);
+				const original = new Error('signal diagnostic failed');
+				vi.mocked(libraryLogger.info).mockImplementationOnce(() => {
+					throw original;
+				});
+				const reporting = Promise.withResolvers<void>();
+				vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+				expect(() => child.emit('exit', 0)).toThrow(original);
+				await inspect('blocked');
+				child.emit('close', 0);
+				await drain();
+				await inspect('blocked');
+				if (outcome === 'reject') reporting.reject(new Error('report failed'));
+				else reporting.resolve();
+				await drain();
+				expect(captureException).toHaveBeenCalledExactlyOnceWith(original);
+				await inspect('reserved-partially');
+			}
+		);
+		it('blocks an in-progress reservation when a retained signal diagnostic is admitted', async () => {
+			const { child } = await launch();
+			await finishServer();
+			await close(child);
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = inspect('blocked');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			vi.mocked(libraryLogger.info).mockImplementationOnce(() => {
+				throw new Error('late');
+			});
+			expect(() => child.emit('exit', 0)).toThrow('late');
+			canonical.resolve(target);
+			await reservation;
+			reporting.resolve();
+			await drain();
+			await inspect('reserved-partially');
+		});
+		it('keeps concurrent signals owned across a successor server and earlier closes', async () => {
+			const { child, managed } = await launch();
+			const second = makeSignal();
+			vi.mocked(spawn).mockReturnValueOnce(second as unknown as ReturnType<typeof spawn>);
+			managed.sdkController!.kill();
+			await finishServer();
+			await close(child);
+			native = makeNative();
+			vi.mocked(spawn).mockReturnValueOnce(native as unknown as ReturnType<typeof spawn>);
+			codex.spawn(input());
+			await drain();
+			await finishServer();
+			await inspect('blocked');
+			await close(second);
+			await inspect('reserved-partially');
+		});
+	});
 	describe('retained Codex protocol callbacks', () => {
 		beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
 		afterEach(() => vi.useRealTimers());

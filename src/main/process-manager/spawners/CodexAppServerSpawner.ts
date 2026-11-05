@@ -58,7 +58,7 @@ import {
 	sshConnectionArgs,
 	withRemotePidRecord,
 	type RemoteSignalMode,
-} from '../../../shared/maestro-lib/control/ssh-remote-signal';
+} from '../../utils/ssh-remote-signal';
 import {
 	CodexAppServerEventTranslator,
 	type CodexExecLine,
