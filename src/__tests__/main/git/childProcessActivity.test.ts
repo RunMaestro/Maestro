@@ -77,7 +77,10 @@ import { captureException } from '../../../main/utils/sentry';
 import { logger } from '../../../main/utils/logger';
 import { armStdioCloseWatchdog } from '../../../main/process-manager/utils/stdioCloseWatchdog';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
-import { killSurvivors } from '../../../shared/maestro-lib/control/process-tree';
+import {
+	killSurvivors,
+	refreshProcessTree,
+} from '../../../shared/maestro-lib/control/process-tree';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
 import { armStdioCloseWatchdog as armSharedWatchdog } from '../../../shared/maestro-lib/control/stdio-close-watchdog';
 
@@ -1915,6 +1918,222 @@ describe('retained shared synchronous stop-ladder callbacks', () => {
 		expect(vi.mocked(stopProcess).mock.calls.at(-1)![2]).toBe(activity);
 		supervision.dispose();
 		await close();
+		(await reserve()).release();
+	});
+});
+
+describe('retained stop-ladder process-tree refresh activity', () => {
+	beforeEach(() =>
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+	);
+	afterEach(() => vi.useRealTimers());
+
+	async function retain(portableFirst = false) {
+		expect(spawner.spawn(config({ toolType: 'codex', prompt: 'fixture' })).success).toBe(true);
+		const activity = vi.mocked(superviseAgentProcess).mock.calls.at(-1)![2]!;
+		const actual = await vi.importActual<
+			typeof import('../../../shared/maestro-lib/control/termination')
+		>('../../../shared/maestro-lib/control/termination');
+		const child = Object.assign(makeNative(24680), { signalCode: null });
+		const schedule = vi.spyOn(globalThis, 'setInterval');
+		const options = { from: 'interrupt' as const, graceMs: 1000 };
+		const targetChild = {
+			child: child as unknown as Parameters<typeof actual.stopProcess>[0]['child'],
+		};
+		let failure: Error | undefined;
+		const guarded: typeof activity = (operation) =>
+			activity(() => {
+				if (failure) throw failure;
+				return operation();
+			});
+		const handle = actual.stopProcess(targetChild, options, portableFirst ? undefined : guarded);
+		const callback = schedule.mock.calls.at(-1)![0] as () => void;
+		if (portableFirst) expect(actual.stopProcess(targetChild, options, guarded)).toBe(handle);
+		return {
+			handle,
+			callback,
+			child,
+			fail: (error?: Error) => (failure = error),
+			exit: () => child.emit('exit', 0, null),
+		};
+	}
+
+	it.each(
+		[target, path.join(target, 'child'), path.resolve('elsewhere')].flatMap((root) =>
+			[false, true].map((portableFirst) => ({ root, portableFirst }))
+		)
+	)('refuses refresh before state effects under $root, upgraded=$portableFirst', async (input) => {
+		const retained = await retain(input.portableFirst);
+		await close();
+		processes.clear();
+		const hold = await reserve(input.root);
+		expect(() => retained.callback()).toThrow(/reserved/);
+		expect(refreshProcessTree).not.toHaveBeenCalled();
+		hold.release();
+		retained.callback();
+		expect(refreshProcessTree).toHaveBeenCalledOnce();
+		await drain();
+		retained.handle.dispose();
+		const stale = await reserve(input.root);
+		expect(() => retained.callback()).toThrow(/reserved/);
+		stale.release();
+	});
+
+	it('blocks pending canonicalization until a refresh settles after disposal', async () => {
+		const retained = await retain();
+		await close();
+		const refresh = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+		vi.mocked(refreshProcessTree).mockReturnValueOnce(refresh.promise);
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		retained.callback();
+		retained.handle.dispose();
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await blocked();
+		refresh.resolve({ owned: true, descendants: [] });
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(
+		['resolve', 'reject'].flatMap((outcome) =>
+			['exit', 'dispose'].flatMap((finish) =>
+				['native', 'refresh'].map((first) => ({ outcome, finish, first }))
+			)
+		)
+	)('owns refresh $outcome after $finish with $first first', async ({ outcome, finish, first }) => {
+		const retained = await retain();
+		const refresh = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+		vi.mocked(refreshProcessTree).mockReturnValueOnce(refresh.promise);
+		retained.callback();
+		retained.callback();
+		expect(refreshProcessTree).toHaveBeenCalledOnce();
+		if (finish === 'exit') retained.exit();
+		else retained.handle.dispose();
+		const settle = async () => {
+			if (outcome === 'reject') refresh.reject(new Error('process table unavailable'));
+			else refresh.resolve({ owned: true, descendants: [{ pid: 56789, startedAt: 'late' }] });
+			await drain();
+		};
+		if (first === 'native') await close();
+		else await settle();
+		await blocked();
+		if (first === 'native') await settle();
+		else await close();
+		(await reserve()).release();
+		if (finish === 'exit') {
+			retained.exit();
+			expect(killSurvivors).toHaveBeenCalledExactlyOnceWith(
+				[{ pid: 45678, startedAt: 'fixture' }],
+				expect.any(Object)
+			);
+		}
+		expect(captureException).not.toHaveBeenCalled();
+	});
+
+	it('retains refreshed descendants and permits retry after a failed table read', async () => {
+		const retained = await retain();
+		const refresh = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+		vi.mocked(refreshProcessTree).mockReturnValueOnce(refresh.promise);
+		retained.callback();
+		refresh.reject(new Error('process table unavailable'));
+		await drain();
+		const descendants = [{ pid: 56789, startedAt: 'late' }];
+		vi.mocked(refreshProcessTree).mockResolvedValueOnce({ owned: true, descendants });
+		retained.callback();
+		await drain();
+		retained.exit();
+		expect(killSurvivors).toHaveBeenCalledExactlyOnceWith(descendants, expect.any(Object));
+		await close();
+		(await reserve()).release();
+	});
+
+	it.each(
+		['resolve', 'reject'].flatMap((outcome) =>
+			['resolve', 'reject', 'throw'].map((report) => ({ outcome, report }))
+		)
+	)(
+		'owns $outcome continuation failures through diagnostic $report',
+		async ({ outcome, report }) => {
+			const retained = await retain();
+			const refresh = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+			vi.mocked(refreshProcessTree).mockReturnValueOnce(refresh.promise);
+			retained.callback();
+			retained.handle.dispose();
+			await close();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementation(() => {
+				if (report === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			const failure = new Error('refresh continuation failed');
+			retained.fail(failure);
+			if (outcome === 'resolve') refresh.resolve({ owned: true, descendants: [] });
+			else refresh.reject(new Error('process table unavailable'));
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(failure);
+			if (report !== 'throw') {
+				await blocked();
+				if (report === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('reporter rejected'));
+				await drain();
+			}
+			retained.fail();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(['native', 'report'])(
+		'keeps refresh diagnostics and native ownership with %s first',
+		async (first) => {
+			const retained = await retain();
+			const refresh = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+			vi.mocked(refreshProcessTree).mockReturnValueOnce(refresh.promise);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValue(reporting.promise);
+			retained.callback();
+			retained.handle.dispose();
+			retained.fail(new Error('late refresh continuation failed'));
+			refresh.resolve({ owned: true, descendants: [] });
+			await drain();
+			expect(captureException).toHaveBeenCalled();
+			if (first === 'native') await close();
+			else {
+				reporting.resolve();
+				await drain();
+			}
+			await blocked();
+			if (first === 'native') {
+				reporting.reject(new Error('late diagnostic rejected'));
+				await drain();
+			} else await close();
+			retained.fail();
+			(await reserve()).release();
+		}
+	);
+
+	it('keeps predecessor refreshes and a successor native lifetime independent', async () => {
+		const first = await retain();
+		const second = await retain();
+		const a = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+		const b = Promise.withResolvers<Awaited<ReturnType<typeof refreshProcessTree>>>();
+		vi.mocked(refreshProcessTree).mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+		first.callback();
+		second.callback();
+		first.handle.dispose();
+		second.handle.dispose();
+		await close();
+		native = makeNative(34567);
+		expect(spawner.spawn(config()).success).toBe(true);
+		a.resolve({ owned: true, descendants: [] });
+		await drain();
+		await blocked();
+		await close();
+		await blocked();
+		b.reject(new Error('late table failure'));
+		await drain();
 		(await reserve()).release();
 	});
 });

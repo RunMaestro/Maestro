@@ -709,7 +709,12 @@ export class ChildProcessSpawner {
 									}, captureException),
 								onForcedStop: () => withWorktreeTurnActivity(forceCompletion, captureException),
 							},
-							(operation) => withWorktreeTurnActivity(operation, captureException)
+							(operation) =>
+								withWorktreeTurnActivity((_start, observe) => {
+									const result = operation();
+									if (result instanceof Promise) observe(result);
+									return result;
+								}, captureException)
 						)
 					: undefined;
 			// The existing channel includes whole lines, error envelopes and final

@@ -131,9 +131,10 @@ const ladders = new WeakMap<object, Ladder>();
  * - A tree is only killed when the pid is provably a running child of this
  *   process. Anything else gets the signal through its own handle and no more.
  *
- * Optional host activity guards synchronous requests, escalation, exit and
- * handle callbacks. Async tree refresh/taskkill work needs separate ownership;
- * this injection alone does not establish a drained tree or safe cleanup.
+ * Optional host activity guards requests and retained callbacks. Hosts must
+ * observe returned promises to retain tree refresh work through settlement.
+ * Taskkill/native tree ownership still needs separate coverage; this injection
+ * alone does not establish a drained tree or safe cleanup.
  */
 export function stopProcess(
 	target: StopTarget,
@@ -222,19 +223,23 @@ function createLadder(
 	// winding down can still start a tool after that, so the record is re-read
 	// until the process exits or the last stage has run.
 	const refreshTree = (): void => {
-		const current = tree;
-		if (refreshing || !current?.owned || !hasPid) return;
-		refreshing = true;
-		void refreshProcessTree(pid, current).then(
-			(next) => {
-				refreshing = false;
-				// An exit or a sweep in the meantime owns the record; leave it.
-				if (tree === current) tree = next;
-			},
-			() => {
-				refreshing = false;
-			}
-		);
+		void runActivity(() => {
+			const current = tree;
+			if (refreshing || !current?.owned || !hasPid) return;
+			refreshing = true;
+			return refreshProcessTree(pid, current).then(
+				(next) =>
+					runActivity(() => {
+						refreshing = false;
+						// An exit or a sweep in the meantime owns the record; leave it.
+						if (tree === current) tree = next;
+					}),
+				() =>
+					runActivity(() => {
+						refreshing = false;
+					})
+			);
+		});
 	};
 
 	const keepTreeFresh = (): void => {
