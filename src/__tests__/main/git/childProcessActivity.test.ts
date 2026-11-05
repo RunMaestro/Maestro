@@ -82,6 +82,7 @@ import { logger } from '../../../main/utils/logger';
 import { armStdioCloseWatchdog } from '../../../main/process-manager/utils/stdioCloseWatchdog';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 import {
+	killProcessTreeNow,
 	killSurvivors,
 	refreshProcessTree,
 } from '../../../shared/maestro-lib/control/process-tree';
@@ -1107,7 +1108,8 @@ describe('retained child supervision adapters', () => {
 		expect(callback()).toBeUndefined();
 		expect(stopProcess).toHaveBeenCalledExactlyOnceWith(
 			{ child: native },
-			{ from: 'terminate', graceMs: expect.any(Number), immediate: true }
+			{ from: 'terminate', graceMs: expect.any(Number), immediate: true },
+			expect.any(Function)
 		);
 		expect(supervision.dispose).toHaveBeenCalledOnce();
 		(await reserve()).release();
@@ -2460,4 +2462,250 @@ describe('Windows taskkill native and retained callback activity', () => {
 		await drain();
 		(await reserve()).release();
 	});
+});
+
+describe('direct failed-predecessor supersession stop activity', () => {
+	beforeEach(async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+		const host = await import('../../../shared/maestro-lib/host');
+		host.setMaestroLibLogger(logger);
+		host.setMaestroLibErrorReporter({ captureException, captureMessage: vi.fn() });
+	});
+	afterEach(() => vi.useRealTimers());
+
+	async function retain(upgrade = false, windows = true) {
+		const platform = await import('../../../shared/platformDetection');
+		vi.spyOn(platform, 'isWindows').mockReturnValue(windows);
+		const actual = await vi.importActual<
+			typeof import('../../../shared/maestro-lib/control/termination')
+		>('../../../shared/maestro-lib/control/termination');
+		vi.mocked(stopProcess).mockImplementation(actual.stopProcess);
+		Object.assign(native, { signalCode: null });
+		expect(spawner.spawn(config({ toolType: 'codex', prompt: 'fixture' })).success).toBe(true);
+		const supervision = vi.mocked(superviseAgentProcess).mock.calls.at(-1)![1];
+		const supersede = spawner['supervisions'].get('child-session')!;
+		supervision.onStop('fixture timeout');
+		const schedule = vi.spyOn(globalThis, 'setTimeout');
+		const interval = vi.spyOn(globalThis, 'setInterval');
+		if (upgrade)
+			actual.stopProcess(
+				{ child: native as unknown as Parameters<typeof actual.stopProcess>[0]['child'] },
+				{ from: 'interrupt', graceMs: 1000 }
+			);
+		const exit = native.listeners('exit').at(-1) as () => void;
+		const timer = schedule.mock.calls.at(-1)?.[0] as () => void;
+		const refresh = interval.mock.calls.at(-1)?.[0] as () => void;
+		const killer = new EventEmitter();
+		vi.mocked(execFile).mockReturnValueOnce(killer as ReturnType<typeof execFile>);
+		supersede();
+		const handle = vi.mocked(stopProcess).mock.results.at(-1)!.value as ReturnType<
+			typeof stopProcess
+		>;
+		return {
+			handle,
+			killer,
+			exit,
+			timer,
+			refresh,
+			result: vi.mocked(execFile).mock.calls.at(-1)?.[2] as (error: Error | null) => void,
+			onClose: killer.listeners('close')[0] as () => void,
+		};
+	}
+
+	it('injects callback observation without changing immediate stop options', async () => {
+		const retained = await retain();
+		expect(stopProcess).toHaveBeenLastCalledWith(
+			{ child: native },
+			{ from: 'terminate', graceMs: 2000, immediate: true },
+			expect.any(Function)
+		);
+		await close();
+		retained.killer.emit('close', 0);
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(
+		[false, true].flatMap((upgrade) =>
+			['result', 'close', 'stage', 'dispose'].flatMap((source) =>
+				[target, path.join(target, 'child'), path.resolve('elsewhere')].map((root) => ({
+					upgrade,
+					source,
+					root,
+				}))
+			)
+		)
+	)(
+		'refuses retained $source under $root after immediate stop (upgrade=$upgrade)',
+		async ({ upgrade, source, root }) => {
+			const retained = await retain(upgrade);
+			await close();
+			processes.clear();
+			retained.killer.emit('close', 0);
+			await drain();
+			const inspect = vi.fn(() => null);
+			Object.defineProperty(native, 'exitCode', { get: inspect, configurable: true });
+			native.kill.mockClear();
+			vi.mocked(logger.warn).mockClear();
+			vi.mocked(logger.debug).mockClear();
+			const callback =
+				source === 'result'
+					? () => retained.result(new Error('late taskkill failure'))
+					: source === 'close'
+						? retained.onClose
+						: source === 'stage'
+							? retained.handle.stage
+							: retained.handle.dispose;
+			const hold = await reserve(root);
+			expect(callback).toThrow(/reserved/);
+			for (const probe of [inspect, native.kill, logger.warn, logger.debug, captureException])
+				expect(probe).not.toHaveBeenCalled();
+			hold.release();
+			callback();
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it.each([false, true])(
+		'keeps taskkill through predecessor close/removal and successor close (upgrade=%s)',
+		async (upgrade) => {
+			const retained = await retain(upgrade);
+			expect(execFile).toHaveBeenCalledExactlyOnceWith(
+				'taskkill',
+				['/pid', '12345', '/t', '/f'],
+				expect.any(Function)
+			);
+			await close();
+			processes.clear();
+			retained.result(null);
+			retained.killer.emit('exit', 0);
+			await blocked();
+			native = makeNative(34567);
+			expect(spawner.spawn(config()).success).toBe(true);
+			retained.killer.emit('close', 0);
+			await drain();
+			await blocked();
+			await close();
+			(await reserve()).release();
+		}
+	);
+
+	it('retains two generations of immediate taskkill independently', async () => {
+		const first = await retain();
+		await close();
+		processes.clear();
+		native = makeNative(34567);
+		const second = await retain();
+		await close();
+		processes.clear();
+		first.result(null);
+		second.result(null);
+		first.killer.emit('close', 0);
+		await drain();
+		await blocked();
+		second.killer.emit('close', 0);
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(['native', 'target'])(
+		'owns immediate taskkill independently with %s closing first',
+		async (first) => {
+			const retained = await retain();
+			if (first === 'native') retained.killer.emit('close', 0);
+			else await close();
+			await drain();
+			await blocked();
+			if (first === 'native') await close();
+			else retained.killer.emit('close', 0);
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it.each(
+		['resolve', 'reject', 'throw'].flatMap((outcome) =>
+			['native', 'report'].map((first) => ({ outcome, first }))
+		)
+	)(
+		'owns taskkill and diagnostic $outcome with $first settling first',
+		async ({ outcome, first }) => {
+			const retained = await retain();
+			await close();
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementation(() => {
+				if (outcome === 'throw') throw new Error('reporter threw');
+				return reporting.promise;
+			});
+			const failure = new Error('taskkill failed');
+			retained.result(failure);
+			expect(native.kill).toHaveBeenCalledExactlyOnceWith();
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure, {
+				operation: 'termination:taskkill',
+				pid: 12345,
+			});
+			const settle = async () => {
+				if (outcome === 'reject') reporting.reject(new Error('report rejected'));
+				else reporting.resolve();
+				await drain();
+			};
+			if (first === 'native') retained.killer.emit('close', 1);
+			else await settle();
+			await drain();
+			if (outcome !== 'throw' || first !== 'native') await blocked();
+			if (first === 'native') await settle();
+			else retained.killer.emit('close', 1);
+			await drain();
+			(await reserve()).release();
+		}
+	);
+
+	it('blocks canonicalization racing a late taskkill diagnostic after native close', async () => {
+		const retained = await retain();
+		await close();
+		processes.clear();
+		retained.killer.emit('close', 0);
+		await drain();
+		const canonical = Promise.withResolvers<string>();
+		vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+		const pending = gate.reserveWorktreeCleanup(target);
+		const reporting = Promise.withResolvers<void>();
+		vi.mocked(captureException).mockReturnValue(reporting.promise);
+		retained.result(new Error('late diagnostic'));
+		canonical.resolve(target);
+		expect(await pending).toMatchObject({ status: 'blocked' });
+		await blocked();
+		reporting.resolve();
+		await drain();
+		(await reserve()).release();
+	});
+
+	it.each(['timer', 'exit', 'refresh', 'stage', 'dispose'] as const)(
+		'upgrades portable retained %s before immediate POSIX disposal',
+		async (source) => {
+			const retained = await retain(true, false);
+			expect(native.kill).toHaveBeenNthCalledWith(1, 'SIGINT');
+			expect(native.kill).toHaveBeenNthCalledWith(2, 'SIGTERM');
+			expect(killProcessTreeNow).toHaveBeenCalledExactlyOnceWith(12345, expect.any(Object));
+			expect(vi.mocked(killProcessTreeNow).mock.invocationCallOrder[0]).toBeGreaterThan(
+				native.kill.mock.invocationCallOrder[1]
+			);
+			expect(execFile).not.toHaveBeenCalled();
+			await close();
+			const callback =
+				source === 'stage'
+					? retained.handle.stage
+					: source === 'dispose'
+						? retained.handle.dispose
+						: retained[source];
+			const hold = await reserve();
+			expect(callback).toThrow(/reserved/);
+			hold.release();
+			callback();
+			await drain();
+			(await reserve()).release();
+		}
+	);
 });

@@ -740,7 +740,8 @@ export class ChildProcessSpawner {
 					if (supervisionFailed)
 						stopProcess(
 							{ child: childProcess },
-							{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
+							{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true },
+							(operation) => withWorktreeCallbackActivity(operation, captureException)
 						);
 					disposeSupervision();
 					forceCompletion();
