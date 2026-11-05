@@ -116,6 +116,10 @@ export function sshConnectionArgs(args: readonly string[]): string[] | null {
  * Signal an SSH-hosted agent on its remote host. Fire-and-forget: it never
  * throws, the one-shot ssh is detached so it finishes even if the app is
  * quitting, and it is killed if it outlives {@link SIGNAL_SSH_TIMEOUT_MS}.
+ * Returns only whether dispatch started. Neither this boolean nor script exit 0,
+ * PID-record removal or an absent process group proves remote work terminated:
+ * a descendant can detach into a different session. Never use these as an
+ * activity-release receipt (see ProcessManager's private SSH activity host).
  */
 export function signalRemoteAgent(
 	target: { sshCommand: string; sshArgs: readonly string[]; pidFile: string; sessionId: string },

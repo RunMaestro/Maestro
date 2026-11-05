@@ -222,6 +222,37 @@ The actual `ProcessManager`/local fake-child cases in
 refusals. Injected host identities/proofs are tests, not authenticated remote
 execution or functional remote recovery acceptance.
 
+**Adapter capability blocker:** Neither stdin-script launches nor the native
+Codex app-server SSH launch creates a supervised remote containment boundary.
+Both use `withRemotePidRecord()` (PID and `ps lstart` only). The optional
+`superviseAgentProcess()` observes and stops the local SSH child; its
+`processExited` promise is not remote-boundary evidence. Reconnecting with the
+same SSH arguments does not supply an original host-key/boundary attestation.
+The Linux `scripts/pianola-sandbox/sandbox_runner.py` validator requires a
+provisioned local user manager/bubblewrap and validates sealed artifacts under
+an explicit trusted root. It is not an SSH agent launch or reconciliation
+service and cannot be substituted for ordinary remote execution.
+
+`ssh-remote-signal.process.test.ts` runs the actual signal script against owned
+local processes. A cooperative group terminates, but a detached descendant can
+survive after the leader and its entire group disappear, the PID record is
+deleted and the script (including a retry) exits 0. Missing records and PID-start
+mismatches also exit 0 with work still running. These are local counterexamples,
+not authenticated SSH acceptance or a supported recovery path.
+
+Safe recovery therefore remains **OPEN**. Before wiring an adapter, a trusted
+remote supervisor must create a non-escapable per-attempt boundary before any
+agent/tool starts and attest its original host identity, launch nonce,
+PID/start identity and boundary generation. Its bounded authenticated query must
+retain a matching terminal receipt only after all work in that boundary is
+terminated and cannot re-enter it; lost/missing/reused identities remain
+`unknown`. A future adapter must freeze that launch attestation, strictly bound
+and parse one settlement query, then issue the private authority proof only for
+an exact original match. No such boundary/receipt service is currently part of
+these SSH launch paths, so no always-unknown adapter or PID-based release is
+installed. Provisioning and integrating that boundary is required for functional
+recovery; uncertain desktop and Board occupancy remain retained.
+
 ---
 
 ## 2. Process Listeners
