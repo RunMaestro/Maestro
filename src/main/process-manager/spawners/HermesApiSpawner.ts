@@ -70,9 +70,13 @@ export class HermesApiSpawner {
 		try {
 			return withWorktreeTurnActivity(
 				(start, observe) => this.spawnAdmitted(config, start, observe),
-				(error) => {
-					void captureException(error);
-					logger.error('[HermesTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+				async (error) => {
+					const reporting = Promise.resolve().then(() => captureException(error));
+					try {
+						logger.error('[HermesTurn] Completion failed', LOG_CONTEXT, { error: String(error) });
+					} finally {
+						await reporting;
+					}
 				}
 			);
 		} catch (error) {
@@ -109,7 +113,11 @@ export class HermesApiSpawner {
 					error: `Hermes native mode could not start: ${String(error)}`,
 				};
 			}
-			void captureException(error);
+			observeCompletion(
+				Promise.resolve()
+					.then(() => captureException(error))
+					.catch(() => {})
+			);
 			return this.fallbackToCli(config);
 		}
 	}
@@ -311,7 +319,7 @@ class HermesTurn {
 		// Retained transport callbacks can outlive the original start observer.
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.onNotificationAdmitted(record)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -472,7 +480,7 @@ class HermesTurn {
 	private async steer(request: { id: string; text: string }): Promise<SteeringResultFrame> {
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.steerAdmitted(request)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -522,7 +530,7 @@ class HermesTurn {
 	): Promise<void> {
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.onGatewayInteractionAdmitted(method, params, observe)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -583,7 +591,7 @@ class HermesTurn {
 		// turn and its observer have settled. Refuse before broker or record access.
 		return withWorktreeTurnActivity(
 			(_start, observe) => observe(this.onServerRequestAdmitted(record)),
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -728,7 +736,7 @@ class HermesTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -756,7 +764,7 @@ class HermesTurn {
 					}
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 
@@ -819,7 +827,11 @@ class HermesTurn {
 				label: 'error',
 			}
 		);
-		void captureException(error);
+		this.observeCompletion(
+			Promise.resolve()
+				.then(() => captureException(error))
+				.catch(() => {})
+		);
 		this.emitAgentError(error);
 		this.finish(1);
 	}
@@ -866,7 +878,7 @@ class HermesTurn {
 						})
 				);
 			},
-			(error) => void captureException(error)
+			(error) => captureException(error)
 		);
 	}
 

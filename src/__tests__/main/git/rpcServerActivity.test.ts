@@ -4911,6 +4911,259 @@ describe('standalone Hermes gateway activity', () => {
 		await close();
 		(await reserve()).release();
 	});
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'owns async Hermes setup diagnostics on %s and preserves CLI fallback',
+		async (outcome) => {
+			const failure = new Error('Hermes setup failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(planSpawnShell).mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('report failed');
+				return reporting.promise;
+			});
+			expect(hermes.spawn(input({ permissionMode: 'full' }))).toEqual({ success: true, pid: 999 });
+			expect(fallback).toHaveBeenCalledOnce();
+			expect(spawn).not.toHaveBeenCalled();
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async Hermes outer diagnostics despite logger failure: %s',
+		async (loggerFails) => {
+			const failure = new Error('fallback failed');
+			const reporting = Promise.withResolvers<void>();
+			fallback.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+			expect(hermes.spawn(input({ permissionMode: 'readonly' }))).toEqual({
+				success: false,
+				pid: -1,
+				error: String(failure),
+			});
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async Hermes run diagnostics independently of native close (report first: %s)',
+		async (reportFirst) => {
+			const failure = new Error('session creation failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.request.mockRejectedValueOnce(failure);
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			expect(hermes.spawn(input()).success).toBe(true);
+			await drain();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			expect(probes.exit).toHaveBeenCalledOnce();
+			expect(probes.exit.mock.calls[0][1]).toBe(1);
+			if (reportFirst) reporting.resolve();
+			else await close();
+			await drain();
+			await blocked();
+			if (reportFirst) await close();
+			else reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each([false, true])(
+		'owns async Hermes native completion diagnostics despite logger failure: %s',
+		async (loggerFails) => {
+			hermes.spawn(input());
+			await drain();
+			const failure = new Error('connection close failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.close.mockImplementationOnce(() => {
+				throw failure;
+			});
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (loggerFails)
+				vi.mocked(logger.error).mockImplementationOnce(() => {
+					throw new Error('logger');
+				});
+			await close();
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			await blocked();
+			reporting.reject(new Error('report failed'));
+			await drain();
+			expect(captureException).toHaveBeenCalledOnce();
+			(await reserve()).release();
+		}
+	);
+	it.each(['notification', 'request', 'steer', 'interrupt', 'kill'] as const)(
+		'owns async Hermes late %s diagnostics across pending reservation and successor activity',
+		async (action) => {
+			hermes.spawn(input());
+			await drain();
+			const managed = processes.get('rpc-session')!;
+			const callbacks = connection();
+			await close();
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const reservation = gate.reserveWorktreeCleanup(target);
+			const failure = new Error('Hermes callback failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+			if (action === 'notification') {
+				callbacks.onNotification!({
+					get method(): never {
+						throw failure;
+					},
+				});
+			} else if (action === 'request') {
+				await expect(
+					callbacks.onServerRequest!({
+						get method(): never {
+							throw failure;
+						},
+					})
+				).rejects.toBe(failure);
+			} else if (action === 'steer') {
+				await expect(
+					managed.harnessControl!.steer({
+						get id(): never {
+							throw failure;
+						},
+						text: 'late',
+					})
+				).rejects.toBe(failure);
+			} else {
+				vi.mocked(stopProcess).mockImplementationOnce(() => {
+					throw failure;
+				});
+				await expect(managed.sdkController![action]()).rejects.toBe(failure);
+			}
+			canonical.resolve(target);
+			expect(await reservation).toMatchObject({ status: 'blocked' });
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(failure);
+			const reports = vi.mocked(captureException).mock.calls.length;
+			await blocked();
+			processes.clear();
+			const successor = Promise.withResolvers<void>();
+			boundary.withWorktreeTurnActivity((_start, observe) => observe(successor.promise), vi.fn());
+			reporting.reject(new Error('report failed'));
+			await drain();
+			await blocked();
+			successor.resolve();
+			await drain();
+			expect(captureException).toHaveBeenCalledTimes(reports);
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'preserves Hermes run failure and exit when its diagnostic reporter will %s',
+		async (outcome) => {
+			const failure = new Error('session failed');
+			const reporting = Promise.withResolvers<void>();
+			probes.request.mockRejectedValueOnce(failure);
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('report failed');
+				return reporting.promise;
+			});
+			hermes.spawn(input());
+			await drain();
+			expect(probes.exit).toHaveBeenCalledOnce();
+			expect(probes.exit.mock.calls[0][1]).toBe(1);
+			await close();
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+			(await reserve()).release();
+		}
+	);
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'owns async Hermes gateway diagnostics until reporters %s',
+		async (outcome) => {
+			hermes.spawn(input());
+			await drain();
+			const callbacks = connection();
+			await close();
+			const failure = new Error('gateway params failed');
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('report failed');
+				return reporting.promise;
+			});
+			callbacks.onNotification!({
+				method: 'approval.request',
+				params: {
+					get request_id(): never {
+						throw failure;
+					},
+				},
+			});
+			await drain();
+			expect(captureException).toHaveBeenCalledWith(failure);
+			const reports = vi.mocked(captureException).mock.calls.length;
+			if (outcome !== 'throw') {
+				await blocked();
+				if (outcome === 'resolve') reporting.resolve();
+				else reporting.reject(new Error('report failed'));
+				await drain();
+			}
+			expect(captureException).toHaveBeenCalledTimes(reports);
+			(await reserve()).release();
+		}
+	);
+	it('owns async Hermes exit diagnostics when exit logging throws after native close', async () => {
+		hermes.spawn(input());
+		await drain();
+		const failure = new Error('exit logger failed');
+		const reporting = Promise.withResolvers<void>();
+		probes.exit.mockRejectedValueOnce(new Error('exit failed'));
+		vi.mocked(logger.error).mockImplementationOnce(() => {
+			throw failure;
+		});
+		vi.mocked(captureException).mockReturnValueOnce(reporting.promise);
+		await close();
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(failure);
+		await blocked();
+		reporting.reject(new Error('report failed'));
+		await drain();
+		expect(captureException).toHaveBeenCalledOnce();
+		(await reserve()).release();
+	});
+	it('refuses Hermes setup before lookup, recovery and async reporting under reservation', async () => {
+		const hold = await reserve(path.join(target, 'descendant'));
+		const lookup = vi.fn(() => 'hermes' as const);
+		const request = Object.defineProperty(input(), 'toolType', { get: lookup });
+		vi.mocked(captureException).mockReturnValue(Promise.resolve());
+		try {
+			expect(hermes.spawn(request).success).toBe(false);
+			expect(lookup).not.toHaveBeenCalled();
+			expect(fallback).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+		} finally {
+			hold.release();
+		}
+	});
 });
 
 describe('Claude SDK native activity', () => {
