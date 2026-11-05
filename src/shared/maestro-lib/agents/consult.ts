@@ -196,7 +196,10 @@ interface ActiveConsult {
 export function createConsultService(
 	// A host can admit deferred dispatch before any state, timer or response work.
 	// The default keeps portable callers independent of desktop cleanup policy.
-	runActivity: <T>(operation: () => T) => T = (operation) => operation()
+	runActivity: <T>(operation: () => T) => T = (operation) => operation(),
+	// Retained supervision outlives start and the individual callback scopes.
+	// Hosts without cleanup reservations need no lifetime tracking.
+	beginSupervisionActivity: () => () => void = () => () => {}
 ) {
 	const activeConsults = new Map<string, ActiveConsult>();
 
@@ -284,7 +287,8 @@ export function createConsultService(
 				requestId: request.requestId,
 				targetSessionId: request.targetSessionId,
 			});
-			activeConsults.delete(request.requestId);
+			if (activeConsults.get(request.requestId) === registration)
+				activeConsults.delete(request.requestId);
 			onChunk(baseChunk({ chunk: '', done: true, error: message }));
 		};
 
@@ -380,11 +384,16 @@ export function createConsultService(
 		let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
 		// Assigned once the consult is actually under way (see below). Held on a const object so
 		// `release` can close over it without a `let` that trips prefer-const.
-		const watch: { dog?: IdleWatchdog } = {};
+		const watch: { dog?: IdleWatchdog; releaseActivity?: () => void } = {};
 
 		const release = (): void => {
-			activeConsults.delete(request.requestId);
+			// A failed disarm leaves supervision uncertain. Keep both the owned
+			// registration and its hold rather than declaring cleanup safe.
 			watch.dog?.disarm();
+			if (activeConsults.get(request.requestId) === registration)
+				activeConsults.delete(request.requestId);
+			watch.releaseActivity?.();
+			watch.releaseActivity = undefined;
 		};
 
 		const observer: ConsultObserver = {
@@ -489,6 +498,8 @@ export function createConsultService(
 
 		// Safety net: never leave the process attached forever. The idle budget covers a wedged
 		// target; the hard ceiling covers one that chatters without finishing.
+		// Acquire before timer setup: partial initialization must remain blocked.
+		watch.releaseActivity = beginSupervisionActivity();
 		watch.dog = createIdleWatchdog(
 			{
 				idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,

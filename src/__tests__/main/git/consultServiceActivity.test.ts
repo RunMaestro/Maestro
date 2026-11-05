@@ -31,8 +31,11 @@ describe('deferred desktop consult service admission', () => {
 	let warn: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
 	let timers: MockInstance<typeof setTimeout>;
 	let clears: MockInstance<typeof clearTimeout>;
+	let scheduleTimeout: typeof setTimeout;
+	let clearScheduledTimeout: typeof clearTimeout;
 	let releases: Array<() => void>;
 	let active: number;
+	let expectedUncertainty: boolean;
 	const request = (id = 'request'): CrossAgentRequest => ({
 		requestId: id,
 		sourceSessionId: 'source',
@@ -84,6 +87,7 @@ describe('deferred desktop consult service admission', () => {
 		vi.useFakeTimers();
 		releases = [];
 		active = 0;
+		expectedUncertainty = false;
 		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
 		gate = await import('../../../main/git/worktreeActivity');
 		const begin = gate.beginGlobalWorktreeActivity;
@@ -91,11 +95,14 @@ describe('deferred desktop consult service admission', () => {
 			const release = begin();
 			active++;
 			let released = false;
-			return () => {
+			const trackedRelease = () => {
 				if (!released) active--;
 				released = true;
 				release();
 			};
+			// Dispose deliberately uncertain holds only in fixture teardown.
+			if (expectedUncertainty) releases.push(trackedRelease);
+			return trackedRelease;
 		});
 		runner = {
 			start: vi.fn(async (_spawn, next) => {
@@ -113,6 +120,8 @@ describe('deferred desktop consult service admission', () => {
 		host.setMaestroLibErrorReporter({ captureException: report, captureMessage: vi.fn() });
 		library = await import('../../../shared/maestro-lib/agents/consult');
 		router = await import('../../../main/cross-agent/cross-agent-router');
+		scheduleTimeout = globalThis.setTimeout;
+		clearScheduledTimeout = globalThis.clearTimeout;
 		timers = vi.spyOn(globalThis, 'setTimeout');
 		clears = vi.spyOn(globalThis, 'clearTimeout');
 	});
@@ -128,9 +137,11 @@ describe('deferred desktop consult service admission', () => {
 	});
 
 	it.each(['activity', 'session', 'end'] as const)(
-		'refuses a late %s callback before service effects',
+		'refuses a settled late %s callback before service effects',
 		async (kind) => {
 			await start();
+			observer.onEnd(end());
+			onChunk.mockClear();
 			const hold = await reserve();
 			const read = vi.fn(() => {
 				throw new Error('Unexpected result inspection');
@@ -150,22 +161,21 @@ describe('deferred desktop consult service admission', () => {
 			expect(timers.mock.calls).toHaveLength(before);
 			for (const effect of [onChunk, runner.stop, report, warn])
 				expect(effect).not.toHaveBeenCalled();
-			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(router.getCrossAgentConsultParties('request')).toBeNull();
 			hold.release();
 			observer.onEnd(end());
-			expect(onChunk).toHaveBeenCalledWith(
-				expect.objectContaining({ chunk: 'answer', done: true })
-			);
-			expect(onChunk.mock.calls[0][0]).not.toHaveProperty('targetAgentSessionId');
+			expect(onChunk).not.toHaveBeenCalled();
 			await reserve();
 		}
 	);
 
 	it.each([idleMs, maxMs])(
-		'refuses the %i timer before settlement, cancellation or target lookup',
+		'refuses a settled %i timer before cancellation or target lookup',
 		async (ms) => {
 			await start();
 			const fire = timer(ms);
+			observer.onEnd(end());
+			onChunk.mockClear();
 			const hold = await reserve();
 			const name = vi.spyOn(target, 'name', 'get');
 			clears.mockClear();
@@ -174,16 +184,13 @@ describe('deferred desktop consult service admission', () => {
 			expect(clears).not.toHaveBeenCalled();
 			expect(runner.stop).not.toHaveBeenCalled();
 			expect(onChunk).not.toHaveBeenCalled();
-			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(router.getCrossAgentConsultParties('request')).toBeNull();
 			hold.release();
 			fire();
-			expect(runner.stop).toHaveBeenCalledOnce();
-			expect(onChunk).toHaveBeenCalledWith(
-				expect.objectContaining({ done: true, chunk: 'partial', error: expect.any(String) })
-			);
+			expect(runner.stop).not.toHaveBeenCalled();
 			expect(router.getCrossAgentConsultParties('request')).toBeNull();
 			fire();
-			expect(onChunk).toHaveBeenCalledOnce();
+			expect(onChunk).not.toHaveBeenCalled();
 			await reserve();
 		}
 	);
@@ -191,7 +198,7 @@ describe('deferred desktop consult service admission', () => {
 	it('holds activity across watchdog touch, session continuity, parsing and terminal delivery', async () => {
 		await start();
 		timers.mockImplementationOnce(() => {
-			expect(active).toBe(1);
+			expect(active).toBe(2);
 			return vi.fn() as never;
 		});
 		observer.onActivity();
@@ -325,5 +332,149 @@ describe('deferred desktop consult service admission', () => {
 		expect(portable.activeCount()).toBe(0);
 		hold.release();
 		await reserve();
+	});
+
+	describe('retained supervision', () => {
+		it.each([root, path.join(root, 'child'), path.resolve('other-repository')])(
+			'blocks %s between callbacks after start has settled',
+			async (candidate) => {
+				await start();
+				expect(active).toBe(1);
+				observer.onActivity();
+				observer.onSessionId('continuity');
+				expect(await gate.reserveWorktreeCleanup(candidate)).toMatchObject({
+					status: 'blocked',
+					blockers: [{ code: 'mutation-busy' }],
+				});
+				observer.onEnd(end());
+				await reserve();
+			}
+		);
+
+		it.each(['end', 'cancel', 'idle', 'max', 'refused', 'throw'] as const)(
+			'releases its own supervision after %s with no residual timers',
+			async (kind) => {
+				if (kind === 'refused') vi.mocked(runner.start).mockResolvedValue({ success: false });
+				if (kind === 'throw') vi.mocked(runner.start).mockRejectedValue(new Error('spawn failed'));
+				await start();
+				if (kind !== 'refused' && kind !== 'throw') expect(active).toBe(1);
+				if (kind === 'end') observer.onEnd(end());
+				if (kind === 'cancel') router.cancelCrossAgentRequestsForSource('source');
+				if (kind === 'idle') timer(idleMs)();
+				if (kind === 'max') timer(maxMs)();
+				expect(active).toBe(0);
+				expect(vi.getTimerCount()).toBe(0);
+				expect(router.getCrossAgentConsultParties('request')).toBeNull();
+				expect(onChunk).toHaveBeenCalledOnce();
+				await reserve();
+			}
+		);
+
+		it('keeps concurrent requests independent when cancellation selects one tab', async () => {
+			const first = await start('first');
+			await router.startCrossAgentRequest(
+				{ ...request('second'), sourceTabId: 'other-tab' },
+				options()
+			);
+			const second = observer;
+			expect(active).toBe(2);
+			expect(router.cancelCrossAgentRequestsForSource('source', 'tab')).toBe(1);
+			expect(active).toBe(1);
+			first.onEnd(end());
+			expect(active).toBe(1);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			second.onEnd(end());
+			await reserve();
+		});
+
+		it('cannot delete a successor registration when an older request ends', async () => {
+			const first = await start();
+			await start();
+			first.onEnd(end());
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(active).toBe(1);
+			expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
+			expect(active).toBe(0);
+			await reserve();
+		});
+
+		it('keeps a replacement registered when an older pending spawn is refused', async () => {
+			const spawn = Promise.withResolvers<{ success: boolean }>();
+			vi.mocked(runner.start).mockReturnValueOnce(spawn.promise);
+			const pending = router.startCrossAgentRequest(request(), options());
+			await vi.waitFor(() => expect(runner.start).toHaveBeenCalledOnce());
+			await start();
+			spawn.resolve({ success: false });
+			await pending;
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(active).toBe(1);
+			observer.onEnd(end());
+			await reserve();
+		});
+
+		it('retains supervision while a terminal observer starts a replacement request', async () => {
+			const first = await start();
+			let pending: Promise<void> | undefined;
+			onChunk.mockImplementationOnce(() => {
+				expect(active).toBe(1); // independent callback scope
+				pending = router.startCrossAgentRequest(request(), options());
+			});
+			first.onEnd(end());
+			await pending;
+			expect(active).toBe(1);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			observer.onEnd(end());
+			await reserve();
+		});
+
+		it.each([1, 2])('retains uncertain supervision when timer setup %i fails', async (nth) => {
+			expectedUncertainty = true;
+			const schedule = scheduleTimeout;
+			let count = 0;
+			const failure = new Error('timer setup failed');
+			timers.mockImplementation((...args) => {
+				expect(active).toBe(2); // request setup and retained supervision
+				if (++count === nth) throw failure;
+				return schedule(...args);
+			});
+			await expect(start()).rejects.toBe(failure);
+			expect(active).toBe(1);
+			expect(runner.start).not.toHaveBeenCalled();
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			expect(router.cancelCrossAgentRequestsForSource('source')).toBe(1);
+			expect(active).toBe(1); // a cancellation flag cannot prove timer cleanup
+		});
+
+		it.each([1, 2])('retains the registration when timer disarm %i throws', async (nth) => {
+			expectedUncertainty = true;
+			await start();
+			const clear = clearScheduledTimeout;
+			let count = 0;
+			const failure = new Error('timer clear failed');
+			clears.mockImplementation((handle) => {
+				if (++count === nth) throw failure;
+				clear(handle);
+			});
+			expect(() => observer.onEnd(end())).toThrow(failure);
+			expect(router.getCrossAgentConsultParties('request')).not.toBeNull();
+			expect(active).toBe(1);
+			expect(onChunk).not.toHaveBeenCalled();
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+		});
+
+		it('does not release a concurrent request after terminal reporting throws', async () => {
+			const first = await start('first');
+			await start('second');
+			const failure = new Error('delivery failed');
+			onChunk.mockImplementation(() => {
+				throw failure;
+			});
+			expect(() => first.onEnd(end())).toThrow(failure);
+			expect(active).toBe(1);
+			expect(await gate.reserveWorktreeCleanup(root)).toMatchObject({ status: 'blocked' });
+			onChunk.mockReset();
+			observer.onEnd(end());
+			await reserve();
+		});
 	});
 });

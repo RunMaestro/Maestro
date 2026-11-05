@@ -38,15 +38,15 @@ export { CROSS_AGENT_SESSION_PREFIX, buildCrossAgentPrompt, serializeTranscript 
 export type { CrossAgentTargetSession };
 
 const consultService = createConsultService((operation) => {
-	// Start settles before the service's observer/watchdog callbacks. Admit each
-	// deferred dispatch independently, before terminal state or recovery changes.
+	// Admit deferred dispatch independently of retained supervision, request
+	// preparation and the runner's listener/native lifetimes.
 	const release = beginGlobalWorktreeActivity();
 	try {
 		return operation();
 	} finally {
 		release();
 	}
-});
+}, beginGlobalWorktreeActivity);
 
 /**
  * Stop every consult the given source agent still has in flight. Each is killed and settles
