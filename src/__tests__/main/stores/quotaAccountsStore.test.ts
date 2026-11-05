@@ -182,7 +182,9 @@ describe('quotaAccountsStore', () => {
 				if (name.endsWith('.claude-gone')) {
 					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
 				}
-				if (name.endsWith('.claude-file')) {
+				// A regular file sitting where a parent directory should be: access()
+				// on anything beneath it fails with ENOTDIR, so match the whole path.
+				if (name.includes('.claude-file')) {
 					throw Object.assign(new Error('not a dir'), { code: 'ENOTDIR' });
 				}
 				if (name.endsWith('.claude-locked')) {
