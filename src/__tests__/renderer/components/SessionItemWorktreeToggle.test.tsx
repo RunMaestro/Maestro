@@ -282,7 +282,9 @@ describe('worktree PR summary', () => {
 				discovery: {
 					status: 'found',
 					pullRequest: {
-						identity: { number: 42 },
+						identity: { number: 42, repository: { owner: 'a', name: 'b' } },
+						headBranch: 'feat/x',
+						headSha: 'a'.repeat(40),
 						title: 'Example',
 						url: 'https://github.com/a/b/pull/42',
 						state: 'OPEN',
@@ -362,7 +364,9 @@ describe('worktree PR summary', () => {
 				discovery: {
 					status: 'found',
 					pullRequest: {
-						identity: { number: 42 },
+						identity: { number: 42, repository: { owner: 'a', name: 'b' } },
+						headBranch: 'feat/x',
+						headSha: 'a'.repeat(40),
 						title: 'Example',
 						url: 'https://github.com/a/b/pull/42',
 						state: 'OPEN',
