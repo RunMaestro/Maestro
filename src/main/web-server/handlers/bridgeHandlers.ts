@@ -15,6 +15,7 @@
  */
 
 import { ipcMain } from 'electron';
+import { hostCallerRuns } from '../../agent-run/caller-identity';
 import { logger } from '../../utils/logger';
 import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
@@ -166,7 +167,7 @@ export function isBridgeSessionOwner(clientId: string, sessionId: string): boole
  */
 export async function handleBridgeInvoke<
 	TClient extends Pick<WebClient, 'id' | 'user' | 'cli'> &
-		Partial<Pick<WebClient, 'socket' | 'isAuthorized'>>,
+		Partial<Pick<WebClient, 'socket' | 'isAuthorized' | 'cliAuthenticated'>>,
 >(
 	client: TClient,
 	message: InvokeMessage,
@@ -180,7 +181,16 @@ export async function handleBridgeInvoke<
 		clientId: client.id,
 		cli: client.cli === true,
 		// Host closure, never a bridge argument. Rechecked after native consent.
-		isCallerActive: () => client.socket?.readyState === 1 && client.isAuthorized?.() === true,
+		isCallerActive: () => {
+			if (client.socket?.readyState !== 1 || client.isAuthorized?.() !== true) return false;
+			// Run-client membership survives removal of its revoked binding. Never
+			// reinterpret an expired agent connection as an ordinary human CLI.
+			if (!hostCallerRuns.isRunClient(client)) return true;
+			const caller = hostCallerRuns.resolve(client);
+			if (!caller) return false;
+			caller.assertActive();
+			return true;
+		},
 	};
 
 	if (typeof channel !== 'string' || !channel) {

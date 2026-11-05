@@ -33,7 +33,7 @@ function fixture() {
 		setActiveSessionId: (id) => store.set('activeSessionId', id),
 		getSupervisor: () => ({ autoWatchNewSessions }),
 	});
-	return { store, flush, autoWatchNewSessions, adapter };
+	return { store, flush, autoWatchNewSessions, adapter, directory };
 }
 
 describe('production plugin session lifecycle', () => {
@@ -50,7 +50,7 @@ describe('production plugin session lifecycle', () => {
 			id: 'same',
 			title: 'Original',
 			agentId: 'codex',
-			projectPath: '/project',
+			projectPath: path.join(f.directory, 'project'),
 		});
 		const disk = readFileSync(f.store.path, 'utf8');
 		await expect(f.adapter.create({ id: 'same', title: 'Duplicate' })).rejects.toThrow(
@@ -64,7 +64,7 @@ describe('production plugin session lifecycle', () => {
 			id: 'same',
 			title: 'Original',
 			agentId: 'codex',
-			projectPath: '/project',
+			projectPath: path.join(f.directory, 'project'),
 			status: 'idle',
 		});
 		expect(f.autoWatchNewSessions).toHaveBeenCalledOnce();

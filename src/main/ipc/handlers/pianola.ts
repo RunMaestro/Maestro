@@ -523,7 +523,10 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 				candidate.id = generateUUID();
 			}
 			if (typeof candidate.createdAt !== 'number') candidate.createdAt = Date.now();
-			if (candidate.enabled === undefined) candidate.enabled = true;
+			if (candidate.enabled === undefined)
+				candidate.enabled =
+					readSupervisorTargets().find((entry) => entry.id === candidate.id)?.enabled ??
+					candidate.kind !== 'watch-scope';
 			const target = validatePianolaSupervisedTarget(candidate);
 			if (!target) throw new Error('InvalidSupervisedTarget');
 			if (target.kind === 'watch-scope') {
@@ -687,7 +690,11 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 				id: isRecord(target) && target.id ? target.id : generateUUID(),
 				createdAt:
 					isRecord(target) && target.createdAt !== undefined ? target.createdAt : Date.now(),
-				enabled: isRecord(target) && target.enabled !== undefined ? target.enabled : true,
+				enabled:
+					isRecord(target) && target.enabled !== undefined
+						? target.enabled
+						: (readSupervisorTargets().find((entry) => isRecord(target) && entry.id === target.id)
+								?.enabled ?? false),
 			});
 			if (
 				!candidate ||
@@ -721,12 +728,21 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			const deadline = Date.now() + 60_000;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
-				const detail = canonicalJson({
-					operation: 'Configure Pianola supervision',
-					target: candidate,
-					previousTargets: JSON.parse(previous),
-					previousEnrollmentRevision: enrollmentRevision,
-				});
+				const existing = readSupervisorTargets().find((entry) => entry.id === candidate.id);
+				const describe = (scope: PianolaSupervisedTarget): string =>
+					[
+						`Scope: ${scope.selection?.label ?? scope.id}`,
+						`Manager: ${scope.managerAgentId ?? 'None'}`,
+						`Agents: ${scope.selection?.agentIds.join(', ') || 'None'}`,
+						`Groups (including future members): ${scope.selection?.groupIds.join(', ') || 'None'}`,
+						`Excluded agents: ${scope.selection?.excludedAgentIds.join(', ') || 'None'}`,
+						`Future local agents: ${scope.selection?.futureLocalAgents ? 'Included' : 'Not included'}`,
+						`Supervision: ${scope.enabled ? 'Enabled' : 'Paused'}`,
+					].join('\n');
+				const detail = [
+					existing ? `Current configuration:\n${describe(existing)}` : 'New supervision scope',
+					`Proposed configuration:\n${describe(existing ? { ...candidate, enabled: existing.enabled } : candidate)}`,
+				].join('\n\n');
 				const confirm =
 					deps.confirmScopeConfiguration ??
 					(async (parent, text, signal) => {

@@ -1,6 +1,10 @@
 /** Real CLI connection, bridge dispatch, IPC owner adapter and locked fixture registry. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import fs from 'node:fs';
+import * as fs from 'fs';
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return { ...actual, lstatSync: vi.fn(actual.lstatSync) };
+});
 import path from 'node:path';
 import { once, EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -50,6 +54,7 @@ import {
 	registerPianolaHandlers,
 	type PianolaSupervisorSnapshot,
 } from '../../../main/ipc/handlers/pianola';
+import { HostCallerRuns, hostCallerRuns } from '../../../main/agent-run/caller-identity';
 import { handleBridgeInvoke } from '../../../main/web-server/handlers/bridgeHandlers';
 import {
 	pianolaSuperviseList,
@@ -67,6 +72,8 @@ let confirm: ReturnType<
 	typeof vi.fn<(window: unknown, detail: string, signal: AbortSignal) => Promise<boolean>>
 >;
 let callerActive: boolean;
+let callers: HostCallerRuns;
+let boundClient: { cliAuthenticated: boolean } | undefined;
 let clientUser: { id: string; username: string; displayName: string } | undefined;
 let logs: ReturnType<typeof vi.spyOn>;
 const scopeId = '11111111-1111-4111-8111-111111111111';
@@ -110,6 +117,12 @@ beforeEach(async () => {
 	desktopOwner = true;
 	fence = true;
 	callerActive = true;
+	callers = new HostCallerRuns();
+	boundClient = undefined;
+	vi.spyOn(hostCallerRuns, 'isRunClient').mockImplementation((client) =>
+		callers.isRunClient(client)
+	);
+	vi.spyOn(hostCallerRuns, 'resolve').mockImplementation((client) => callers.resolve(client));
 	confirm = vi.fn(async () => true);
 	clientUser = undefined;
 	process.exitCode = 0;
@@ -162,18 +175,23 @@ beforeEach(async () => {
 	});
 	server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
 	await once(server, 'listening');
-	server.on('connection', (socket) => {
+	server.on('connection', (socket, request) => {
+		const client = {
+			id: 'fixture-cli',
+			cli: true,
+			cliAuthenticated: request.headers['x-maestro-cli-secret'] === 'fixture-secret',
+			user: clientUser,
+			socket,
+			isAuthorized: () => callerActive,
+		};
+		const proof = request.headers['x-maestro-caller-run-proof'];
+		if (proof) {
+			callers.bind(client, proof);
+			boundClient = client;
+		}
 		socket.on('message', (bytes) => {
-			void handleBridgeInvoke(
-				{
-					id: 'fixture-cli',
-					cli: true,
-					user: clientUser,
-					socket,
-					isAuthorized: () => callerActive,
-				},
-				JSON.parse(String(bytes)),
-				(_client, reply) => socket.send(JSON.stringify(reply))
+			void handleBridgeInvoke(client, JSON.parse(String(bytes)), (_client, reply) =>
+				socket.send(JSON.stringify(reply))
 			);
 		});
 	});
@@ -184,12 +202,14 @@ beforeEach(async () => {
 		JSON.stringify({
 			port: address.port,
 			token: 'fixture',
+			cliSecret: 'fixture-secret',
 			pid: process.pid,
 			startedAt: Date.now(),
 		})
 	);
 });
 afterEach(async () => {
+	callers?.stop();
 	server?.clients.forEach((socket) => socket.terminate());
 	if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
 	fs.rmSync(directory, { recursive: true, force: true });
@@ -205,11 +225,30 @@ describe('owner scope configuration through production adapters', () => {
 		expect(confirm).toHaveBeenCalledTimes(1);
 		const saved = store.readSupervisorTargets()[0];
 		expect(saved.selection).toMatchObject({ futureAgentBaselineIds: ['agent', 'manager'] });
-		expect(JSON.parse(confirm.mock.calls[0][1]).target.managerAgentId).toBe('manager');
+		expect(saved.enabled).toBe(false);
+		expect(confirm.mock.calls[0][1]).toContain('Manager: manager');
+		expect(confirm.mock.calls[0][1]).toContain('Future local agents: Included');
+		expect(confirm.mock.calls[0][1]).toContain('Supervision: Paused');
+		expect(confirm.mock.calls[0][1]).not.toMatch(
+			/enrollmentRevision|previousTargets|delegationPolicy/
+		);
 		await cli({ id: saved.id, futureLocalAgents: true, requestOwnerApproval: true });
 		expect(lastOutput().success).toBe(true);
 		expect(confirm).toHaveBeenCalledTimes(1);
 		expect(store.readSupervisorTargets()).toHaveLength(1);
+	});
+
+	it('starts a native first scope paused when enabled is omitted', async () => {
+		const result = (await handlers.get('pianola:supervisor-add')!(
+			{ sender: native.sender, senderFrame: native.sender.mainFrame },
+			{ ...target(), enabled: undefined }
+		)) as PianolaSupervisorSnapshot;
+		expect(result.migration?.status).toBe('registered');
+		expect(store.readSupervisorTargets()[0].enabled).toBe(false);
+		await cli({ id: scopeId, requestOwnerApproval: true });
+		expect(lastOutput().success).toBe(true);
+		expect(confirm).not.toHaveBeenCalled();
+		expect(store.readSupervisorTargets()[0].enabled).toBe(false);
 	});
 
 	it('approves selection and manager changes through the same locked service', async () => {
@@ -225,6 +264,96 @@ describe('owner scope configuration through production adapters', () => {
 		expect(confirm).toHaveBeenCalledTimes(1);
 		expect(store.readSupervisorTargets()[0].managerAgentId).toBe('manager2');
 		expect(store.readSupervisorTargets()[0].delegationPolicy?.managerAgentId).toBe('manager2');
+		expect(store.readSupervisorTargets()[0].enabled).toBe(true);
+		expect(confirm.mock.calls[0][1]).toContain('Manager: manager2');
+		expect(confirm.mock.calls[0][1]).toContain('Agents: agent, manager');
+	});
+
+	it
+		.skipIf(!['linux', 'darwin'].includes(process.platform))
+		.each(['active', 'ended', 'revoked', 'binding-removed'])(
+		'revalidates a real bound CLI run after pending native approval: %s',
+		async (kind) => {
+			// As in plugin-tool-proof-storage tests, isolate private storage metadata
+			// from group-writable developer checkout ancestors. Proof IO stays real.
+			const ancestors = new Set<string>();
+			for (let ancestor = path.dirname(directory); ; ancestor = path.dirname(ancestor)) {
+				ancestors.add(ancestor);
+				if (path.dirname(ancestor) === ancestor) break;
+			}
+			const actualLstat = (await vi.importActual<typeof import('fs')>('fs')).lstatSync;
+			vi.mocked(fs.lstatSync).mockImplementation(((target: fs.PathLike) => {
+				const stat = actualLstat(target);
+				return ancestors.has(String(target))
+					? Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, {
+							mode: stat.mode & ~0o022,
+						})
+					: stat;
+			}) as typeof fs.lstatSync);
+			const controller = new AbortController();
+			let active = true;
+			const proof = callers.issue(
+				{ agentId: 'manager', tabId: 'caller-tab', spawnGeneration: 'generation' },
+				{
+					signal: controller.signal,
+					assertActive: () => {
+						if (!active) throw new Error('Run ended');
+					},
+				},
+				directory
+			);
+			vi.stubEnv('MAESTRO_CALLER_RUN_PROOF_FILE', proof.runTokenFile);
+			let approve!: (value: boolean) => void;
+			let entered!: () => void;
+			const waiting = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			confirm.mockImplementation(
+				() =>
+					new Promise<boolean>((resolve) => {
+						approve = resolve;
+						entered();
+					})
+			);
+			const pending = cli({ id: scopeId, requestOwnerApproval: true });
+			await waiting;
+			expect(boundClient).toBeDefined();
+			expect(callers.resolve(boundClient!)).toBeDefined();
+			const before = store.readSupervisorTargets();
+			const checkpoint = store.readScopeCheckpoint(scopeId);
+			if (kind === 'ended') active = false;
+			if (kind === 'revoked' || kind === 'binding-removed') proof.dispose();
+			if (kind === 'binding-removed') {
+				expect(callers.resolve(boundClient!)).toBeUndefined();
+				expect(callers.isRunClient(boundClient!)).toBe(true);
+			}
+			expect(callerActive).toBe(true);
+			expect([...server.clients].every((socket) => socket.readyState === 1)).toBe(true);
+			approve(true);
+			await pending;
+			expect(lastOutput().success).toBe(kind === 'active');
+			if (kind !== 'active') {
+				expect(store.readSupervisorTargets()).toEqual(before);
+				expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
+			} else {
+				expect(store.readSupervisorTargets()[0]).toMatchObject({ enabled: false });
+				expect(store.readSupervisorTargets()[0].delegationPolicy).toBeDefined();
+			}
+			proof.dispose();
+		}
+	);
+
+	it('preserves an existing paused scope when CLI changes its manager', async () => {
+		await nativeSave({ ...target(), enabled: false });
+		census.owners.push({ ...census.owners[1], id: 'manager2' });
+		await cli({ id: scopeId, manager: 'manager2', requestOwnerApproval: true });
+		expect(lastOutput().success).toBe(true);
+		expect(store.readSupervisorTargets()[0]).toMatchObject({
+			enabled: false,
+			managerAgentId: 'manager2',
+		});
+		expect(confirm.mock.calls[0][1]).toContain('Current configuration:');
+		expect(confirm.mock.calls[0][1]).toContain('Proposed configuration:');
 	});
 
 	it.each(['cancel', 'registry', 'revoke', 'identity', 'window', 'unknown', 'rules', 'off'])(
