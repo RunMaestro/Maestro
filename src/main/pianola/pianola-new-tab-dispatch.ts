@@ -596,7 +596,12 @@ export class PianolaNewTabDispatch {
 				return { reconciled: true as const, runId: record.runId };
 			if (record.queueCancelled) throw new Error('DispatchQueueCancelled');
 			if (record.outcome === 'rejected') throw new Error('DispatchQueueNotStarted');
-			if (record.phase !== 'bound' || record.queueRelease)
+			const delayedLocal = record.queueRouting?.routing === 'consult-first';
+			if (
+				delayedLocal
+					? record.phase !== 'released' || !record.queueRelease
+					: record.phase !== 'bound' || record.queueRelease
+			)
 				throw new Error('DispatchQueueReleaseUncertain');
 			if (!record.queueAuthority || Date.now() >= record.queueAuthority.expiresAt)
 				throw new Error('DispatchQueueAuthorityUnavailable');
@@ -604,7 +609,7 @@ export class PianolaNewTabDispatch {
 			if (
 				record.queueRouting &&
 				(!local ||
-					!['parallel', 'handoff'].includes(record.queueRouting.routing) ||
+					!['parallel', 'handoff', 'consult-first'].includes(record.queueRouting.routing) ||
 					local.status !== 'prepared')
 			)
 				throw new Error('DispatchQueueLocalUnavailable');
@@ -686,7 +691,9 @@ export class PianolaNewTabDispatch {
 			}
 			callbackGuard();
 			// Do not hold a busy predecessor. Only D01 can establish FIFO/idle eligibility.
-			const released = await this.admission.releaseQueue(itemId);
+			const released = delayedLocal
+				? this.admission.queueLocalRelease(itemId)
+				: await this.admission.releaseQueue(itemId);
 			assertOwner();
 			callbackGuard();
 			if (pianolaNewTabSpawns.isHeld(agentId, tabId)) throw new Error('DispatchTargetHeld');
@@ -715,6 +722,7 @@ export class PianolaNewTabDispatch {
 				(t) => t.agentId === agentId && t.tabId === tabId
 			)?.agentSessionId;
 			let capturedRunId: string | undefined;
+			let nativeLocalBound = false;
 			let uncertain = false;
 			const updateLocal = (
 				mutate: (step: NonNullable<typeof local>, current: NonNullable<typeof record>) => void
@@ -764,6 +772,10 @@ export class PianolaNewTabDispatch {
 								...(run.status === 'cancelled' ? { canceled: true } : {}),
 							};
 					});
+					if (!nativeLocalBound) {
+						this.admission.noteQueueLocalCapture(itemId, released.generation, run.id);
+						nativeLocalBound = true;
+					}
 				} catch (error) {
 					uncertain = true;
 					forgetQueueConsultRelease(itemId);

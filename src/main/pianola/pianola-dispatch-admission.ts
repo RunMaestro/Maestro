@@ -1,6 +1,9 @@
+import { buildConsultFirstContext } from '../../shared/crossAgentContext';
+import { getPrompt } from '../prompt-manager';
 import { captureException } from '../utils/sentry';
 import {
 	prepareQueueRouting,
+	queueRoutingEpoch,
 	assertQueueRouting,
 	bindQueueConsultRelease,
 	forgetQueueConsultRelease,
@@ -88,7 +91,16 @@ const hash = (value: unknown) => createHash('sha256').update(canonicalJson(value
 
 export class PianolaDispatchAdmissionService {
 	private readonly queue = createKeyedWriteQueue();
-	private readonly routingReleases = new Map<string, { generation: string; guard(): void }>();
+	private readonly routingReleases = new Map<
+		string,
+		{
+			generation: string;
+			guard(): void;
+			localPrompt(): string;
+			terminals: Map<string, string>;
+			localRunId?: string;
+		}
+	>();
 	private disposed = false;
 	constructor(private readonly deps: PianolaDispatchAdmissionDeps) {}
 
@@ -629,8 +641,44 @@ export class PianolaDispatchAdmissionService {
 					return { generation: record.queueRelease.generation, guard };
 				}
 			);
+			const nativeFrontier = new Set(
+				(this.deps.readNativeRuns ?? readAgentRuns)()
+					.filter((r) => r.sessionId === `${record.targetAgentId}-ai-${record.targetTabId}`)
+					.map((r) => r.id)
+			);
+			const routingIdentity = (value: PianolaDispatchAdmission) =>
+				canonicalJson({
+					item: value.queuePrepare?.item,
+					callbackProof: value.queuePrepare?.callbackProof,
+					routing: value.queueRouting && {
+						routing: value.queueRouting.routing,
+						targets: value.queueRouting.targets,
+						steps: value.queueRouting.steps.map(({ kind, targetAgentId, requestId }) => ({
+							kind,
+							targetAgentId,
+							requestId,
+						})),
+					},
+				});
+			const pinnedRouting = routingIdentity(record);
+			const releaseEpoch = queueRoutingEpoch;
 			const routingGuard = () => {
+				if (releaseEpoch !== queueRoutingEpoch)
+					throw new Error('DispatchRoutingReleaseUnavailable');
 				const current = this.deps.store.readDispatchAdmission(dispatchId);
+				if (!current || routingIdentity(current) !== pinnedRouting)
+					throw new Error('DispatchRoutingAdmissionChanged');
+				if (current.runId && this.routingReleases.get(dispatchId)?.localRunId !== current.runId)
+					throw new Error('DispatchRoutingOwnCaptureUnavailable');
+				if (
+					!current.runId &&
+					(this.deps.readNativeRuns ?? readAgentRuns)().some(
+						(r) =>
+							r.sessionId === `${record.targetAgentId}-ai-${record.targetTabId}` &&
+							!nativeFrontier.has(r.id)
+					)
+				)
+					throw new Error('DispatchRoutingSourceSuperseded');
 				if (
 					current?.runId &&
 					current.queueRouting?.steps.some((s) => s.kind === 'local' && s.runId === current.runId)
@@ -638,45 +686,169 @@ export class PianolaDispatchAdmissionService {
 					guard(true);
 				else release.guard();
 			};
-			if (record.queueRouting?.steps.some((s) => s.kind === 'consult')) {
-				bindQueueConsultRelease(dispatchId, {
-					sourceAgentId: record.targetAgentId,
-					sourceTabId: record.targetTabId!,
-					generation: release.generation,
-					guard: routingGuard,
-					revoke: () => this.routingReleases.delete(dispatchId),
-					start: (target, opts) =>
-						this.startQueueConsult(dispatchId, release.generation, target, opts),
-				});
+			for (const [id, entry] of this.routingReleases) {
+				try {
+					entry.guard();
+				} catch {
+					this.routingReleases.delete(id);
+					forgetQueueConsultRelease(id);
+				}
+			}
+			while (this.routingReleases.size >= 256) {
+				const id = this.routingReleases.keys().next().value!;
+				this.routingReleases.delete(id);
+				forgetQueueConsultRelease(id);
+			}
+			if (record.queueRouting) {
+				const terminals = new Map<string, string>();
+				const localPrompt = () => {
+					routingGuard();
+					const current = this.deps.store.readDispatchAdmission(dispatchId)!;
+					if (current.queueRouting?.routing !== 'consult-first')
+						throw new Error('DispatchQueueLocalUnavailable');
+					const consults = current.queueRouting.steps.filter((s) => s.kind === 'consult');
+					if (
+						!consults.length ||
+						consults.some(
+							(s) =>
+								s.status !== 'settled' ||
+								!s.terminal ||
+								s.terminal.error ||
+								s.terminal.canceled ||
+								terminals.get(s.requestId) !== canonicalJson(s)
+						)
+					)
+						throw new Error('DispatchRoutingRepliesUnavailable');
+					return buildConsultFirstContext(
+						getPrompt('cross-agent-consult-first'),
+						consults.map((s) => ({
+							targetAgentName: this.deps.routingSnapshot!().agents.find(
+								(a) => a.id === s.targetAgentId
+							)!.name,
+							text: s.terminal!.text,
+						})),
+						current.queuePrepare!.item.text
+					);
+				};
 				this.routingReleases.set(dispatchId, {
 					generation: release.generation,
 					guard: routingGuard,
+					localPrompt,
+					terminals,
 				});
+				if (record.queueRouting.steps.some((s) => s.kind === 'consult'))
+					bindQueueConsultRelease(dispatchId, {
+						sourceAgentId: record.targetAgentId,
+						sourceTabId: record.targetTabId!,
+						generation: release.generation,
+						guard: routingGuard,
+						localPrompt,
+						revoke: () => this.routingReleases.delete(dispatchId),
+						start: (target, opts) =>
+							this.startQueueConsult(dispatchId, release.generation, target, opts),
+					});
 			}
+
 			return { receipt: this.receipt(record), ...release };
 		});
 	}
 
+	/** Called only by the existing native capture observer, never by a wire caller. */
+	noteQueueLocalCapture(dispatchId: string, generation: string, runId: string): void {
+		const release = this.routingReleases.get(dispatchId);
+		const record = this.deps.store.readDispatchAdmission(dispatchId);
+		const local = record?.queueRouting?.steps.find((s) => s.kind === 'local');
+		if (
+			!release ||
+			release.generation !== generation ||
+			record?.runId !== runId ||
+			local?.runId !== runId ||
+			(release.localRunId && release.localRunId !== runId)
+		)
+			throw new Error('DispatchRoutingOwnCaptureUnavailable');
+		release.localRunId = runId;
+	}
+
+	/** Only a live host release can authorize delayed LOCAL; disk IDs cannot restore it. */
+	queueLocalRelease(dispatchId: string) {
+		const release = this.routingReleases.get(dispatchId);
+		if (!release) throw new Error('DispatchRoutingReleaseUnavailable');
+		release.localPrompt();
+		return {
+			generation: release.generation,
+			guard: () => {
+				release.localPrompt();
+			},
+		};
+	}
+
+	startQueueHandoff(
+		dispatchId: string,
+		generation: string,
+		targetAgentId: string,
+		opts: Omit<StartCrossAgentRequestOptions, 'nativeAdmission'>
+	) {
+		return this.startQueueBranch(dispatchId, generation, targetAgentId, opts, 'handoff');
+	}
+
 	/** Only the native queue release may reach this consumer. A journal/readback
 	 * ID is not a capability: the live release closure is deliberately not restored
-	 * after restart. Local continuation and handoff completion belong to the owning queue lifecycle. */
+	 * after restart. Continuation and handoff reuse the same guarded native lifecycle. */
 	startQueueConsult(
 		dispatchId: string,
 		generation: string,
 		targetAgentId: string,
 		opts: Omit<StartCrossAgentRequestOptions, 'nativeAdmission'>
 	): Promise<{ requestId: string }> {
+		return this.startQueueBranch(dispatchId, generation, targetAgentId, opts, 'consult');
+	}
+
+	private startQueueBranch(
+		dispatchId: string,
+		generation: string,
+		targetAgentId: string,
+		opts: Omit<StartCrossAgentRequestOptions, 'nativeAdmission'>,
+		kind: 'consult' | 'handoff'
+	) {
 		return this.queue.enqueue('admissions', async () => {
 			const release = this.routingReleases.get(dispatchId);
 			if (!release || release.generation !== generation)
 				throw new Error('DispatchRoutingReleaseUnavailable');
 			release.guard();
 			const record = this.deps.store.readDispatchAdmission(dispatchId);
+			if ((record?.queueRouting?.routing === 'handoff') !== (kind === 'handoff'))
+				throw new Error('DispatchRoutingReleaseUnavailable');
 			const step = record?.queueRouting?.steps.find(
-				(s) => s.kind === 'consult' && s.targetAgentId === targetAgentId
+				(s) => s.kind === kind && s.targetAgentId === targetAgentId
 			);
 			if (!record || !step || step.status !== 'prepared')
 				throw new Error('DispatchRoutingAlreadyClaimedOrUnavailable');
+			const handoffAnswer = () => {
+				if (kind !== 'handoff') return undefined;
+				release.guard();
+				const current = this.deps.store.readDispatchAdmission(dispatchId)!;
+				const local = current.queueRouting?.steps.find((s) => s.kind === 'local');
+				const run = (this.deps.readNativeRuns ?? readAgentRuns)().find(
+					(r) => r.id === current.runId
+				);
+				if (
+					current.queueRouting?.routing !== 'handoff' ||
+					current.phase !== 'settled' ||
+					!run ||
+					run.status !== 'completed' ||
+					local?.status !== 'settled' ||
+					local.runId !== run.id ||
+					!local.terminal ||
+					local.terminal.error ||
+					local.terminal.canceled ||
+					typeof run.metadata?.answerTail !== 'string' ||
+					!run.metadata.answerTail.trim() ||
+					local.terminal.text !== run.metadata.answerTail
+				)
+					throw new Error('DispatchRoutingLocalOutputUnavailable');
+				return run.metadata.answerTail;
+			};
+			const answer = handoffAnswer();
 			const requestId = step.requestId;
 			const source = this.deps
 				.routingSnapshot?.()
@@ -684,15 +856,15 @@ export class PianolaDispatchAdmissionService {
 			const update = (mutate: (s: NonNullable<typeof step>) => void) => {
 				const current = this.deps.store.readDispatchAdmission(dispatchId);
 				const saved = current?.queueRouting?.steps.find(
-					(s) =>
-						s.requestId === requestId && s.kind === 'consult' && s.targetAgentId === targetAgentId
+					(s) => s.requestId === requestId && s.kind === kind && s.targetAgentId === targetAgentId
 				);
 				if (!current || !saved || current.queueRelease?.generation !== generation)
 					throw new Error('DispatchRoutingStepChanged');
 				mutate(saved);
 				this.deps.store.writeDispatchAdmission(current);
 				if (
-					current.queueRouting!.steps.filter((s) => s.kind === 'consult').every((s) => s.terminal)
+					current.queueRouting!.routing !== 'consult-first' &&
+					current.queueRouting!.steps.every((s) => s.terminal)
 				) {
 					this.routingReleases.delete(dispatchId);
 					forgetQueueConsultRelease(dispatchId);
@@ -709,6 +881,7 @@ export class PianolaDispatchAdmissionService {
 			const journalFailure = (error: unknown) => {
 				journalUncertain = true;
 				forgetQueueConsultRelease(dispatchId);
+				this.routingReleases.delete(dispatchId);
 				void captureException(error, {
 					operation: 'pianola:consultJournal',
 					dispatchId,
@@ -740,15 +913,18 @@ export class PianolaDispatchAdmissionService {
 					sourceTabId: record.targetTabId!,
 					targetSessionId: targetAgentId,
 					userPrompt: record.queuePrepare!.item.text,
+					handoffAnswer: answer,
 					transcript: [],
 					strategy: { kind: 'full' },
 					createdAt: (this.deps.now ?? Date.now)(),
 				},
 				{
 					...opts,
+					writable: kind === 'handoff',
 					nativeAdmission: {
 						beforeSpawn: () => {
 							if (nativeClaimed) throw new Error('DispatchRoutingAlreadyStarting');
+							if (handoffAnswer() !== answer) throw new Error('DispatchRoutingLocalOutputChanged');
 							if (this.routingReleases.get(dispatchId) !== release)
 								throw new Error('DispatchRoutingReleaseUnavailable');
 							opts.assertNativeOwner?.();
@@ -758,6 +934,7 @@ export class PianolaDispatchAdmissionService {
 								s.status = 'unknown';
 							});
 							// A synchronous journal write may invoke host persistence hooks.
+							if (handoffAnswer() !== answer) throw new Error('DispatchRoutingLocalOutputChanged');
 							opts.assertNativeOwner?.();
 							release.guard();
 							if (this.routingReleases.get(dispatchId) !== release)
@@ -807,6 +984,23 @@ export class PianolaDispatchAdmissionService {
 									};
 									if (chunk.targetAgentSessionId) s.agentSessionId = chunk.targetAgentSessionId;
 								});
+							if (chunk.done && nativeClaimed && nativeEndObserved && !journalUncertain) {
+								const saved = this.deps.store
+									.readDispatchAdmission(dispatchId)
+									?.queueRouting?.steps.find((s) => s.requestId === requestId);
+								if (
+									saved?.terminal &&
+									saved.status === 'settled' &&
+									!release.terminals.has(requestId) &&
+									canonicalJson(saved.terminal) ===
+										canonicalJson({
+											text: chunk.chunk,
+											...(chunk.error ? { error: chunk.error } : {}),
+											...(chunk.canceled ? { canceled: true } : {}),
+										})
+								)
+									release.terminals.set(requestId, canonicalJson(saved));
+							}
 						} catch (error) {
 							journalFailure(error);
 						}

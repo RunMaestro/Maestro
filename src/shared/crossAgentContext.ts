@@ -472,3 +472,48 @@ export function buildConsultPendingNote(template: string, names: string[]): stri
 export function buildHandoffPendingNote(template: string, names: string[]): string {
 	return template.split('{{HANDOFF_AGENTS}}').join(formatConsultedAgentNames(names));
 }
+
+/** Every reply, verbatim, under a heading naming who said it. */
+export function formatConsultReplies(
+	replies: { targetAgentName: string; text: string; error?: string }[]
+): string {
+	return replies
+		.map((reply) => {
+			if (!reply.error) return `### Reply from ${reply.targetAgentName}\n\n${reply.text}`;
+			const partial = reply.text ? `\n\nPartial reply before it stopped:\n\n${reply.text}` : '';
+			return `### ${reply.targetAgentName} could not respond\n\n${reply.error}${partial}`;
+		})
+		.join('\n\n');
+}
+
+/** The agent-only context a released hold carries into its spawn. */
+export function buildConsultReplyContext(
+	template: string,
+	replies: { targetAgentName: string; text: string; error?: string }[]
+): string {
+	const body = formatConsultReplies(replies);
+	if (!template) return body;
+	return template.split('{{CONSULT_REPLIES}}').join(body);
+}
+
+/**
+ * The agent-only context a released CONSULT-FIRST hold carries: the replies,
+ * then the user's message the agent has not seen yet. Without a template (not
+ * loaded) the message still rides along, so the turn can answer it.
+ */
+export function buildConsultFirstContext(
+	template: string,
+	replies: { targetAgentName: string; text: string; error?: string }[],
+	message: string
+): string {
+	const body = formatConsultReplies(replies);
+	if (!template) return `${body}\n\n${message}`;
+	const names = formatConsultedAgentNames(replies.map((r) => r.targetAgentName));
+	return template
+		.split('{{CONSULTED_AGENTS}}')
+		.join(names)
+		.split('{{CONSULT_REPLIES}}')
+		.join(body)
+		.split('{{USER_MESSAGE}}')
+		.join(message);
+}

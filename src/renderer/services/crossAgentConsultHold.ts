@@ -2,11 +2,16 @@ import {
 	formatConsultedAgentNames,
 	buildConsultPendingNote,
 	buildHandoffPendingNote,
+	buildConsultReplyContext,
+	buildConsultFirstContext,
 } from '../../shared/crossAgentContext';
 export {
+	formatConsultReplies,
 	formatConsultedAgentNames,
 	buildConsultPendingNote,
 	buildHandoffPendingNote,
+	buildConsultReplyContext,
+	buildConsultFirstContext,
 } from '../../shared/crossAgentContext';
 /**
  * crossAgentConsultHold - a turn that consults another agent does not finish
@@ -127,46 +132,6 @@ export function withHandoffPendingNote(prompt: string, targets: ConsultHoldTarge
 		targets.map((t) => t.targetAgentName)
 	);
 	return `${prompt}\n\n---\n\n${note}`;
-}
-
-/** Every reply, verbatim, under a heading naming who said it. */
-export function formatConsultReplies(replies: ConsultHoldReply[]): string {
-	return replies
-		.map((reply) => {
-			if (!reply.error) return `### Reply from ${reply.targetAgentName}\n\n${reply.text}`;
-			const partial = reply.text ? `\n\nPartial reply before it stopped:\n\n${reply.text}` : '';
-			return `### ${reply.targetAgentName} could not respond\n\n${reply.error}${partial}`;
-		})
-		.join('\n\n');
-}
-
-/** The agent-only context a released hold carries into its spawn. */
-export function buildConsultReplyContext(template: string, replies: ConsultHoldReply[]): string {
-	const body = formatConsultReplies(replies);
-	if (!template) return body;
-	return template.split('{{CONSULT_REPLIES}}').join(body);
-}
-
-/**
- * The agent-only context a released CONSULT-FIRST hold carries: the replies,
- * then the user's message the agent has not seen yet. Without a template (not
- * loaded) the message still rides along, so the turn can answer it.
- */
-export function buildConsultFirstContext(
-	template: string,
-	replies: ConsultHoldReply[],
-	message: string
-): string {
-	const body = formatConsultReplies(replies);
-	if (!template) return `${body}\n\n${message}`;
-	const names = formatConsultedAgentNames(replies.map((r) => r.targetAgentName));
-	return template
-		.split('{{CONSULTED_AGENTS}}')
-		.join(names)
-		.split('{{CONSULT_REPLIES}}')
-		.join(body)
-		.split('{{USER_MESSAGE}}')
-		.join(message);
 }
 
 /** What the hold reads as in the queue while it waits. */

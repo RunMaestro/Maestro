@@ -111,7 +111,7 @@ export function assertQueueRouting(
 	}
 }
 
-/** Derive only the immediate local branch. Delayed continuation is a separate capability. */
+/** Immediate notes or a live host-derived consult-first continuation; wire context grants nothing. */
 export function queueLocalPrompt(
 	item: PianolaQueueItem,
 	sourceAgentId: string,
@@ -120,6 +120,12 @@ export function queueLocalPrompt(
 	if ('agentContext' in item && item.agentContext)
 		throw new Error('DispatchQueueRoutingUnsupported');
 	const plan = prepareQueueRouting(item, sourceAgentId, snapshot, false);
+	if (plan?.routing === 'consult-first') {
+		const release = consultReleases.get(item.id);
+		if (!release || release.sourceAgentId !== sourceAgentId || release.sourceTabId !== item.tabId)
+			throw new Error('DispatchRoutingReleaseUnavailable');
+		return release.localPrompt();
+	}
 	if (!plan || !['parallel', 'handoff'].includes(plan.routing))
 		throw new Error('DispatchQueueLocalUnavailable');
 	const names = plan.targets.map((t) => snapshot.agents.find((a) => a.id === t.agentId)!.name);
@@ -139,6 +145,7 @@ const consultReleases = new Map<
 		sourceTabId: string;
 		generation: string;
 		guard(): void;
+		localPrompt(): string;
 		revoke(): void;
 		start(
 			targetAgentId: string,
@@ -194,7 +201,12 @@ export function forgetQueueConsultRelease(dispatchId: string): void {
 
 /** Called by existing supervisor health/reconcile/stop boundaries; no new timer.
  * Expired, cancelled or invalid policy releases cannot retain service closures. */
+// Existing supervisor stopAll invalidates delayed native releases too, without
+// registering non-consult closures in the consult transport registry.
+export let queueRoutingEpoch = 0;
+
 export function sweepQueueConsultReleases(dispose = false): void {
+	if (dispose) queueRoutingEpoch++;
 	for (const [id, release] of consultReleases) {
 		if (dispose) {
 			forgetQueueConsultRelease(id);

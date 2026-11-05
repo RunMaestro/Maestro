@@ -777,12 +777,12 @@ describe('persistence IPC handlers', () => {
 		});
 
 		/** Reuse B01's real writer/reader instead of inventing a Boolean receipt. */
-		function queueAdapter(busy = false, mentions: boolean | 'handoff' = false) {
+		function queueAdapter(busy = false, mentions: boolean | 'handoff' | 'consult-first' = false) {
 			if (mentions)
 				Object.assign(request.item, {
 					text: 'Check @PeerA and @PeerB',
 					crossAgentMention: true,
-					mentionRouting: mentions === 'handoff' ? 'handoff' : 'parallel',
+					mentionRouting: typeof mentions === 'string' ? mentions : 'parallel',
 				});
 			const store = createPianolaFsStore({
 				resolveDir: () => path.join(directory, 'pianola'),
@@ -952,7 +952,7 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 		}
-		async function readyQueue(mentions: boolean | 'handoff' = false) {
+		async function readyQueue(mentions: boolean | 'handoff' | 'consult-first' = false) {
 			const f = queueAdapter(true, mentions);
 			await f.adapter.runQueue(f.client, f.input, f.arm);
 			const snapshot = f.deps.snapshot();
@@ -962,7 +962,10 @@ describe('persistence IPC handlers', () => {
 			return { ...f, snapshot };
 		}
 
-		async function managedLocalFixture(mode: boolean | 'handoff' = true, mutation?: () => void) {
+		async function managedLocalFixture(
+			mode: boolean | 'handoff' | 'consult-first' = true,
+			mutation?: () => void
+		) {
 			request.item = { ...request.item, turnSettings: { model: 'host-model', effort: 'high' } };
 			const f = await readyQueue(mode);
 			f.revoke();
@@ -1378,15 +1381,19 @@ describe('persistence IPC handlers', () => {
 			}
 		);
 
-		async function managedConsultFixture() {
-			const f = await readyQueue(true);
+		async function managedConsultFixture(
+			mode: boolean | 'handoff' | 'consult-first' = true,
+			existing?: Awaited<ReturnType<typeof managedLocalFixture>>
+		) {
+			const f = existing ?? (await readyQueue(mode));
 			f.revoke(); // The original caller turn is no longer alive.
-			const { generation } = await f.adapter.prepareQueueSpawn(
-				'agent',
-				'tab',
-				f.input.dispatchId,
-				() => {}
-			);
+			const generation =
+				existing && mode === 'handoff'
+					? f.store.readDispatchAdmission(f.input.dispatchId)!.queueRelease!.generation
+					: mode === 'consult-first'
+						? (await f.adapter.admission.releaseQueue(f.input.dispatchId)).generation
+						: (await f.adapter.prepareQueueSpawn('agent', 'tab', f.input.dispatchId, () => {}))
+								.generation;
 			const manager = Object.assign(new EventEmitter(), {
 				spawn: vi.fn((_config: unknown) => ({ success: true, pid: 4242 })),
 				kill: vi.fn(),
@@ -1408,15 +1415,274 @@ describe('persistence IPC handlers', () => {
 				onChunk: (c) => chunks.push(c),
 			};
 			const start = (target = 'peer-a', gen = generation, id = f.input.dispatchId) =>
-				startReleasedQueueConsult(
-					{ dispatchId: id, generation: gen },
-					'agent',
-					'tab',
-					target,
-					opts
-				);
+				mode === 'handoff'
+					? f.adapter.admission.startQueueHandoff(id, gen!, target, opts)
+					: startReleasedQueueConsult(
+							{ dispatchId: id, generation: gen! },
+							'agent',
+							'tab',
+							target,
+							opts
+						);
 			return { ...f, generation, manager, opts, start, chunks };
 		}
+
+		it('hands off only real own native terminal output to two pinned recipients exactly once', async () => {
+			const local = await managedLocalFixture('handoff');
+			try {
+				await local.start();
+				const f = await managedConsultFixture('handoff', local);
+				await expect(f.start()).rejects.toThrow('LocalOutputUnavailable');
+				await local.capture.captureExit({
+					sessionId: 'agent-ai-tab',
+					exitCode: 0,
+					settlement: { outcome: 'completed', answerTail: 'Authentic local answer' } as never,
+				});
+				// The original row is gone and the source is still marked busy by its own run.
+				current[0].executionQueue = [];
+				const a = await f.start();
+				const b = await f.start('peer-b');
+				expect(f.manager.spawn).toHaveBeenCalledTimes(2);
+				for (const [config] of f.manager.spawn.mock.calls) {
+					expect(JSON.stringify(config)).toContain('Authentic local answer');
+					expect(JSON.stringify(config)).not.toContain('Renderer tamper');
+				}
+				await expect(f.start()).rejects.toThrow('AlreadyClaimed');
+				for (const r of [a, b]) {
+					f.manager.emit('data', `cross-agent-${r.requestId}`, 'Received');
+					f.manager.emit('exit', `cross-agent-${r.requestId}`, 0);
+				}
+				const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+				expect(
+					record.queueRouting!.steps.filter((s) => s.kind === 'handoff').map((s) => s.terminal)
+				).toEqual([{ text: 'Received' }, { text: 'Received' }]);
+				await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
+			} finally {
+				local.cleanup();
+			}
+		});
+
+		it.each([
+			'output',
+			'peer',
+			'reset',
+			'human',
+			'deleted',
+			'intent',
+			'generation',
+			'stop',
+		] as const)(
+			'blocks handoff after %s changes without permitting a new native branch',
+			async (change) => {
+				const local = await managedLocalFixture('handoff');
+				try {
+					await local.start();
+					await local.capture.captureExit({
+						sessionId: 'agent-ai-tab',
+						exitCode: 0,
+						settlement: { outcome: 'completed', answerTail: 'Native answer' } as never,
+					});
+					const f = await managedConsultFixture('handoff', local);
+					const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+					if (change === 'output') {
+						record.queueRouting!.steps.find((s) => s.kind === 'local')!.terminal!.text =
+							'Forged answer';
+						f.store.writeDispatchAdmission(record);
+					}
+					if (change === 'peer') current[0].peerAgents![0].write = false;
+					if (change === 'stop') sweepQueueConsultReleases(true);
+					if (change === 'reset') f.snapshot.tabs[0].createdAt++;
+					if (change === 'deleted') current.splice(1, 1);
+					if (change === 'intent') {
+						record.queuePrepare!.item.text = 'Different task';
+						f.store.writeDispatchAdmission(record);
+					}
+					if (change === 'generation') {
+						record.queueRelease!.generation = generateUUID();
+						f.store.writeDispatchAdmission(record);
+					}
+					if (change === 'human') {
+						const old = f.deps.readNativeRuns()[0];
+						f.upsertNativeRun({ ...old, id: 'intervening-human', createdAt: old.createdAt + 1 });
+					}
+					await expect(f.start()).rejects.toThrow();
+					expect(f.manager.spawn).not.toHaveBeenCalled();
+				} finally {
+					local.cleanup();
+				}
+			}
+		);
+
+		it.each([false, true])(
+			'waits for both native consult replies then starts one host-derived continuation through owner IPC (fast=%s)',
+			async (fast) => {
+				const local = await managedLocalFixture('consult-first');
+				try {
+					const f = await managedConsultFixture('consult-first', local);
+					if (fast)
+						f.manager.spawn.mockImplementationOnce((config) => {
+							const id = (config as { sessionId: string }).sessionId;
+							f.manager.emit('data', id, 'Actual A');
+							f.manager.emit('exit', id, 0);
+							return { success: true, pid: 4242 };
+						});
+					await expect(local.start()).rejects.toThrow('RepliesUnavailable');
+					const a = await f.start();
+					const b = await f.start('peer-b');
+					f.manager.emit('data', 'cross-agent-foreign', 'Foreign output');
+					f.manager.emit('exit', 'cross-agent-foreign', 0);
+					f.manager.emit('data', `cross-agent-${a.requestId}`, 'Actual A');
+					f.manager.emit('exit', `cross-agent-${a.requestId}`, 0);
+					await expect(local.start()).rejects.toThrow('RepliesUnavailable');
+					f.manager.emit('data', `cross-agent-${b.requestId}`, 'Actual B');
+					f.manager.emit('exit', `cross-agent-${b.requestId}`, 0);
+					vi.mocked(promptManager.getPrompt).mockImplementation((id) =>
+						id === 'cross-agent-consult-first' ? '{{USER_MESSAGE}}\n{{CONSULT_REPLIES}}' : id
+					);
+					const result = await local.start();
+					expect(result.success).toBe(true);
+					expect(local.spawn).toHaveBeenCalledOnce();
+					const prompt = local.spawn.mock.calls[0][0].prompt;
+					expect(prompt).toContain('Actual A');
+					expect(prompt).toContain('Actual B');
+					expect(prompt).toContain('Check @PeerA and @PeerB');
+					expect(prompt).not.toContain('Arbitrary continuation');
+					expect(prompt).not.toContain('Foreign output');
+					await local.start();
+					expect(local.spawn).toHaveBeenCalledOnce();
+					await local.capture.captureExit({
+						sessionId: 'agent-ai-tab',
+						exitCode: 0,
+						settlement: { outcome: 'completed', answerTail: 'Synthesis' } as never,
+					});
+					expect(
+						f.store
+							.readDispatchAdmission(f.input.dispatchId)!
+							.queueRouting!.steps.find((s) => s.kind === 'local')!.terminal?.text
+					).toBe('Synthesis');
+				} finally {
+					local.cleanup();
+				}
+			}
+		);
+
+		it.each(['error', 'cancel', 'unknown', 'tamper', 'peer', 'human', 'restart'] as const)(
+			'does not release a consult-first continuation after %s',
+			async (change) => {
+				const local = await managedLocalFixture('consult-first');
+				try {
+					const f = await managedConsultFixture('consult-first', local);
+					const a = await f.start();
+					const b = await f.start('peer-b');
+					f.manager.emit('data', `cross-agent-${a.requestId}`, 'A');
+					f.manager.emit('exit', `cross-agent-${a.requestId}`, 0);
+					if (change === 'cancel') cancelCrossAgentRequestsForSource('agent', 'tab');
+					else if (change !== 'unknown') {
+						f.manager.emit('data', `cross-agent-${b.requestId}`, 'B');
+						f.manager.emit('exit', `cross-agent-${b.requestId}`, change === 'error' ? 1 : 0);
+					}
+					if (change === 'tamper') {
+						const r = f.store.readDispatchAdmission(f.input.dispatchId)!;
+						r.queueRouting!.steps[0].terminal!.text = 'Foreign reply';
+						f.store.writeDispatchAdmission(r);
+					}
+					if (change === 'peer') current[0].peerAgents![0].read = false;
+					if (change === 'human') {
+						local.capture.captureSpawn({
+							sessionId: 'agent-ai-tab',
+							toolType: 'codex',
+							cwd: directory,
+							tabId: 'tab',
+							prompt: 'Human intervening turn',
+							nativeTabSession: { agentId: 'agent', tabId: 'tab', createdAt: 1 },
+						});
+						f.snapshot.tabs[0].busy = false;
+					}
+					if (change === 'restart') {
+						f.adapter.admission.dispose();
+					}
+					await expect(local.start()).rejects.toThrow();
+					expect(local.spawn).not.toHaveBeenCalled();
+					await expect(f.start()).rejects.toThrow();
+					expect(f.manager.spawn).toHaveBeenCalledTimes(2);
+				} finally {
+					local.cleanup();
+				}
+			}
+		);
+
+		it('preserves partial handoff Unknown across disposal without repeating either target', async () => {
+			const local = await managedLocalFixture('handoff');
+			try {
+				await local.start();
+				await local.capture.captureExit({
+					sessionId: 'agent-ai-tab',
+					exitCode: 0,
+					settlement: { outcome: 'completed', answerTail: 'Real output' } as never,
+				});
+				const f = await managedConsultFixture('handoff', local);
+				const a = await f.start();
+				f.manager.spawn.mockImplementationOnce(() => {
+					throw new Error('Lost native acknowledgement');
+				});
+				await f.start('peer-b');
+				const record = f.store.readDispatchAdmission(f.input.dispatchId)!;
+				expect(record.queueRouting!.steps.find((s) => s.targetAgentId === 'peer-b')).toMatchObject({
+					status: 'unknown',
+				});
+				await expect(f.start('peer-b')).rejects.toThrow('AlreadyClaimed');
+				f.adapter.admission.dispose();
+				await expect(f.start()).rejects.toThrow('ReleaseUnavailable');
+				await expect(f.start('peer-b')).rejects.toThrow('ReleaseUnavailable');
+				// A legitimate already-started child still owns its terminal.
+				f.manager.emit('data', `cross-agent-${a.requestId}`, 'Delivered A');
+				f.manager.emit('exit', `cross-agent-${a.requestId}`, 0);
+				expect(
+					f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal?.text
+				).toBe('Delivered A');
+				expect(f.manager.spawn).toHaveBeenCalledTimes(2);
+			} finally {
+				local.cleanup();
+			}
+		});
+
+		it.each(['peer', 'pause', 'output'] as const)(
+			'revalidates handoff %s after asynchronous native preparation',
+			async (change) => {
+				const local = await managedLocalFixture('handoff');
+				try {
+					await local.start();
+					await local.capture.captureExit({
+						sessionId: 'agent-ai-tab',
+						exitCode: 0,
+						settlement: { outcome: 'completed', answerTail: 'Real output' } as never,
+					});
+					const f = await managedConsultFixture('handoff', local);
+					vi.mocked(systemPromptService.buildMaestroSystemPromptForSession).mockImplementation(
+						async () => {
+							if (change === 'peer') current[0].peerAgents![0].write = false;
+							if (change === 'pause') f.snapshot.tabs[0].paused = true;
+							if (change === 'output') {
+								const r = f.store.readDispatchAdmission(f.input.dispatchId)!;
+								r.queueRouting!.steps.find((s) => s.kind === 'local')!.terminal!.text =
+									'Tampered during await';
+								f.store.writeDispatchAdmission(r);
+							}
+							return undefined;
+						}
+					);
+					await f.start();
+					expect(f.manager.spawn).not.toHaveBeenCalled();
+					expect(
+						f.store.readDispatchAdmission(f.input.dispatchId)!.queueRouting!.steps[0].terminal
+							?.error
+					).toBeTruthy();
+					await expect(f.start()).rejects.toThrow();
+				} finally {
+					local.cleanup();
+				}
+			}
+		);
 
 		it.each(['ENOSPC', 'EACCES'])(
 			'keeps a positive native spawn supervised after %s start-journal failure until Stop',
@@ -1640,6 +1906,7 @@ describe('persistence IPC handlers', () => {
 					sourceTabId: 'y',
 					generation: 'g',
 					guard() {},
+					localPrompt: () => '',
 					revoke,
 					start,
 				});
