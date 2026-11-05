@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { execFile } from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
 	ProcessConfig,
@@ -10,6 +11,19 @@ import type {
 
 vi.mock('fs/promises', () => ({ default: { realpath: vi.fn() } }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
+vi.mock('child_process', async (original) => ({
+	...(await original<typeof import('child_process')>()),
+	execFile: vi.fn(),
+}));
+vi.mock('../../../shared/platformDetection', async (original) => ({
+	...(await original<typeof import('../../../shared/platformDetection')>()),
+}));
+vi.mock('../../../shared/maestro-lib/control/process-tree', () => ({
+	snapshotProcessTree: vi.fn(() => ({ owned: false, descendants: [] })),
+	refreshProcessTree: vi.fn(),
+	killSurvivors: vi.fn(),
+	killProcessTreeNow: vi.fn(),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -49,7 +63,16 @@ import { sendSteeringRequest } from '../../../main/process-manager/steering-clie
 import { steerCodexAppServerTurn } from '../../../main/codex-app-server/steering';
 import type { HarnessControlRegistry } from '../../../main/harness-control/HarnessControlRegistry';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
-import { INTERACTIVE_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
+import * as platform from '../../../shared/platformDetection';
+import { setMaestroLibErrorReporter } from '../../../shared/maestro-lib/host';
+import {
+	snapshotProcessTree,
+	refreshProcessTree,
+} from '../../../shared/maestro-lib/control/process-tree';
+import {
+	TREE_REFRESH_MS,
+	INTERACTIVE_STOP_GRACE_MS,
+} from '../../../shared/maestro-lib/control/termination';
 import {
 	beginGlobalWorktreeActivity,
 	reserveWorktreeCleanup,
@@ -315,6 +338,240 @@ describe('delayed remote termination activity', () => {
 		expect(vi.getTimerCount()).toBe(0);
 		(await reserve()).release();
 	});
+});
+
+describe('direct manager stop-ladder callbacks', () => {
+	const routes = ['interrupt-child', 'kill-child', 'kill-pty'] as const;
+	let entries: Map<string, ManagedProcess>;
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+		vi.mocked(snapshotProcessTree).mockReturnValue({ owned: false, descendants: [] });
+		vi.spyOn(platform, 'isWindows').mockReturnValue(false);
+		setMaestroLibErrorReporter({
+			captureException: (...args) => sentry.captureException(...args),
+			captureMessage: () => {},
+		});
+		entries = Reflect.get(manager, 'processes') as Map<string, ManagedProcess>;
+	});
+
+	afterEach(() => vi.useRealTimers());
+
+	function fixture(route: (typeof routes)[number]) {
+		const native = Object.assign(new EventEmitter(), {
+			pid: 98765,
+			exitCode: null as number | null,
+			signalCode: null,
+			kill: vi.fn(),
+			stdin: { write: vi.fn() },
+		});
+		const exits: Array<() => void> = [];
+		const proc = {
+			sessionId: config.sessionId,
+			toolType: 'claude-code',
+			pid: native.pid,
+			isTerminal: route === 'kill-pty',
+			...(route === 'kill-pty'
+				? {
+						ptyProcess: {
+							pid: native.pid,
+							kill: native.kill,
+							onExit: (callback: () => void) => {
+								exits.push(callback);
+								return { dispose: vi.fn() };
+							},
+						},
+					}
+				: { childProcess: native }),
+		} as unknown as ManagedProcess;
+		entries.set(config.sessionId, proc);
+		return {
+			native,
+			proc,
+			stop: () =>
+				route === 'interrupt-child'
+					? manager.interrupt(config.sessionId)
+					: manager.kill(config.sessionId),
+			exit: () => {
+				native.exitCode = 0;
+				if (route === 'kill-pty') exits[0]();
+				else native.emit('exit', 0, null);
+			},
+			exitCallback: () => exits[0] ?? (native.listeners('exit')[0] as () => void),
+		};
+	}
+
+	it.each(
+		routes.flatMap((route) =>
+			['target', 'descendant', 'unrelated'].map((root) => [route, root] as const)
+		)
+	)('refuses retained %s timer and exit callbacks under %s reservation', async (route, root) => {
+		const timer = vi.spyOn(globalThis, 'setTimeout');
+		const f = fixture(route);
+		expect(f.stop()).toBe(true);
+		const callback = timer.mock.calls[0][0] as () => void;
+		const onExit = f.exitCallback();
+		const sent = f.native.kill.mock.calls.length;
+		const hold = await reserve(
+			root === 'target'
+				? target
+				: root === 'descendant'
+					? path.join(target, 'child')
+					: path.resolve(root)
+		);
+		expect(callback).toThrow(/reserved/);
+		expect(onExit).toThrow(/reserved/);
+		expect(f.native.kill).toHaveBeenCalledTimes(sent);
+		hold.release();
+		callback();
+		expect(f.native.kill).toHaveBeenCalledTimes(sent + 1);
+		f.exit();
+		(await reserve()).release();
+	});
+
+	it.each(
+		routes.flatMap((route) => ['resolve', 'reject'].map((outcome) => [route, outcome] as const))
+	)('owns %s tree refresh through %s after exit and successor reuse', async (route, outcome) => {
+		const refreshing = Promise.withResolvers<ReturnType<typeof snapshotProcessTree>>();
+		vi.mocked(snapshotProcessTree).mockReturnValue({ owned: true, descendants: [] });
+		vi.mocked(refreshProcessTree).mockReturnValueOnce(refreshing.promise);
+		const f = fixture(route);
+		try {
+			expect(f.stop()).toBe(true);
+			await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS);
+			expect(refreshProcessTree).toHaveBeenCalledOnce();
+			f.exit();
+			entries.set(config.sessionId, { sessionId: config.sessionId } as ManagedProcess);
+			await blocked();
+			if (outcome === 'resolve') refreshing.resolve({ owned: true, descendants: [] });
+			else refreshing.reject(new Error('refresh failed'));
+			await vi.waitFor(async () => (await reserve()).release());
+		} finally {
+			refreshing.resolve({ owned: false, descendants: [] });
+		}
+	});
+
+	it.each(routes)(
+		'owns %s Windows taskkill native close and child diagnostics independently of target exit',
+		async (route) => {
+			vi.mocked(platform.isWindows).mockReturnValue(true);
+			const killer = new EventEmitter();
+			vi.mocked(execFile).mockReturnValue(killer as ReturnType<typeof execFile>);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(sentry.captureException).mockReturnValueOnce(reporting.promise);
+			const f = fixture(route);
+			try {
+				expect(f.stop()).toBe(true);
+				if (route === 'interrupt-child')
+					await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+				expect(execFile).toHaveBeenCalledExactlyOnceWith(
+					'taskkill',
+					['/pid', '98765', '/t', '/f'],
+					expect.any(Function)
+				);
+				const result = vi.mocked(execFile).mock.calls[0][2] as (error: Error) => void;
+				result(new Error('taskkill failed'));
+				// A PTY cannot prove it is still running, so taskkill failure is benign.
+				if (route !== 'kill-pty')
+					await vi.waitFor(() => expect(sentry.captureException).toHaveBeenCalledOnce());
+				else expect(sentry.captureException).not.toHaveBeenCalled();
+				f.exit();
+				entries.set(config.sessionId, { sessionId: config.sessionId } as ManagedProcess);
+				await blocked();
+				killer.emit('close', 1);
+				if (route !== 'kill-pty') await blocked();
+				reporting.resolve();
+				await vi.waitFor(async () => (await reserve()).release());
+			} finally {
+				killer.emit('close', 1);
+				reporting.resolve();
+			}
+		}
+	);
+
+	it('keeps old taskkill children and a same-session successor independently owned', async () => {
+		vi.mocked(platform.isWindows).mockReturnValue(true);
+		const killers = [new EventEmitter(), new EventEmitter(), new EventEmitter()];
+		for (const killer of killers)
+			vi.mocked(execFile).mockReturnValueOnce(killer as ReturnType<typeof execFile>);
+		try {
+			for (let i = 0; i < killers.length; i++) {
+				const f = fixture('kill-child');
+				expect(f.stop()).toBe(true);
+				f.exit();
+			}
+			killers[1].emit('close', 0);
+			await blocked();
+			killers[0].emit('close', 0);
+			await blocked();
+			killers[2].emit('close', 0);
+			await vi.waitFor(async () => (await reserve()).release());
+		} finally {
+			for (const killer of killers) killer.emit('close', 0);
+		}
+	});
+
+	it.each(['resolve', 'reject', 'throw'] as const)(
+		'retains taskkill after diagnostic %s and pending reservation canonicalization',
+		async (outcome) => {
+			vi.mocked(platform.isWindows).mockReturnValue(true);
+			const killer = new EventEmitter();
+			vi.mocked(execFile).mockReturnValue(killer as ReturnType<typeof execFile>);
+			const reporting = Promise.withResolvers<void>();
+			vi.mocked(sentry.captureException).mockImplementationOnce(() => {
+				if (outcome === 'throw') throw new Error('reporter failed');
+				return reporting.promise;
+			});
+			const canonical = Promise.withResolvers<string>();
+			vi.mocked(fs.realpath).mockReturnValueOnce(canonical.promise);
+			const pending = reserveWorktreeCleanup(target);
+			const f = fixture('kill-child');
+			try {
+				expect(f.stop()).toBe(true);
+				canonical.resolve(target);
+				const hold = await pending;
+				if (hold.status === 'reserved-partially') releases.push(hold.release);
+				expect(hold).toMatchObject({ status: 'blocked' });
+				const result = vi.mocked(execFile).mock.calls[0][2] as (error: Error) => void;
+				result(new Error('taskkill failed'));
+				if (outcome === 'reject') reporting.reject(new Error('report failed'));
+				else reporting.resolve();
+				await vi.waitFor(() => expect(sentry.captureException).toHaveBeenCalledOnce());
+				f.exit();
+				await blocked();
+				killer.emit('close', 1);
+				await vi.waitFor(async () => (await reserve()).release());
+			} finally {
+				canonical.resolve(target);
+				killer.emit('close', 1);
+				reporting.resolve();
+			}
+		}
+	);
+
+	it.each(routes)(
+		'refuses retained %s taskkill result and close callbacks after native completion',
+		async (route) => {
+			vi.mocked(platform.isWindows).mockReturnValue(true);
+			const killer = new EventEmitter();
+			vi.mocked(execFile).mockReturnValue(killer as ReturnType<typeof execFile>);
+			const f = fixture(route);
+			expect(f.stop()).toBe(true);
+			if (route === 'interrupt-child') await vi.advanceTimersByTimeAsync(INTERACTIVE_STOP_GRACE_MS);
+			const result = vi.mocked(execFile).mock.calls[0][2] as (error: Error) => void;
+			const close = killer.listeners('close')[0] as () => void;
+			f.exit();
+			killer.emit('close', 0);
+			const hold = await vi.waitFor(() => reserve());
+			expect(() => result(new Error('late taskkill failure'))).toThrow(/reserved/);
+			expect(close).toThrow(/reserved/);
+			expect(sentry.captureException).not.toHaveBeenCalled();
+			hold.release();
+			result(new Error('already exited'));
+			close();
+			(await reserve()).release();
+		}
+	);
 });
 
 describe('direct manager activity admission', () => {

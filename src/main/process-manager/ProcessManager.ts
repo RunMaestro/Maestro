@@ -52,7 +52,10 @@ import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-si
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
 import { beginGlobalWorktreeActivity } from '../git/worktreeActivity';
-import { withWorktreeTurnActivity } from '../git/worktreeTurnActivity';
+import {
+	withWorktreeCallbackActivity,
+	withWorktreeTurnActivity,
+} from '../git/worktreeTurnActivity';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -705,7 +708,8 @@ export class ProcessManager extends EventEmitter {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						sessionId,
 						label: 'interrupt',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 				// The local child of an SSH spawn is only the ssh client; the agent on
 				// the remote host never sees its signals. Ask the host to deliver them:
@@ -806,7 +810,8 @@ export class ProcessManager extends EventEmitter {
 						includeDescendants: !shutdown && proc.toolType !== 'terminal',
 						sessionId,
 						label: 'kill',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			} else if (proc.childProcess) {
 				this.signalRemote(sessionId, proc, 'terminate');
@@ -821,7 +826,8 @@ export class ProcessManager extends EventEmitter {
 						includeDescendants: !shutdown,
 						sessionId,
 						label: 'kill',
-					}
+					},
+					(operation) => withWorktreeCallbackActivity(operation, captureException)
 				);
 			}
 			this.processes.delete(sessionId);

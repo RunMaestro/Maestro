@@ -40,7 +40,10 @@ import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/wind
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import type { startTurn } from '../../../shared/maestro-lib/run/start-turn';
-import { withWorktreeTurnActivity } from '../../git/worktreeTurnActivity';
+import {
+	withWorktreeCallbackActivity,
+	withWorktreeTurnActivity,
+} from '../../git/worktreeTurnActivity';
 import {
 	INTERACTIVE_STOP_GRACE_MS,
 	stopProcess,
@@ -709,12 +712,7 @@ export class ChildProcessSpawner {
 									}, captureException),
 								onForcedStop: () => withWorktreeTurnActivity(forceCompletion, captureException),
 							},
-							(operation) =>
-								withWorktreeTurnActivity((_start, observe) => {
-									const result = operation();
-									if (result instanceof Promise) observe(result);
-									return result;
-								}, captureException)
+							(operation) => withWorktreeCallbackActivity(operation, captureException)
 						)
 					: undefined;
 			// The existing channel includes whole lines, error envelopes and final

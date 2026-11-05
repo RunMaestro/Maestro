@@ -13,6 +13,18 @@ export type WorktreeChildSpawner = (
 	options: SpawnOptionsWithoutStdio
 ) => ChildProcessWithoutNullStreams;
 
+/** Admit a retained portable callback and observe a returned native Promise. */
+export function withWorktreeCallbackActivity<T>(
+	operation: () => T,
+	reportError: (error: unknown) => void | Promise<void>
+): T {
+	return withWorktreeTurnActivity((_start, observe) => {
+		const result = operation();
+		if (result instanceof Promise) observe(result);
+		return result;
+	}, reportError);
+}
+
 /**
  * Run one synchronous native-turn setup under conservative global admission.
  * Retain activity until setup, independently observed child close and all
