@@ -1,3 +1,4 @@
+import { useRetirementDialogState } from '../../../hooks/worktree/useRetirementDialogState';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Session, Theme } from '../../../types';
 import type { FileNode } from '../../../types/fileTree';
@@ -127,7 +128,7 @@ export function useFileContextMenu({
 	sshRemoteId,
 }: UseFileContextMenuArgs): UseFileContextMenuResult {
 	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-	const [multiDeleteModal, setMultiDeleteModal] = useState<MultiDeleteModalState | null>(null);
+	const [multiDeleteModal, setMultiDeleteModal] = useRetirementDialogState<MultiDeleteModalState>();
 	const [isMultiDeleting, setIsMultiDeleting] = useState(false);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
 	const contextMenuPos = useContextMenuPosition(

@@ -13,7 +13,10 @@
  * Can be used outside React via useSessionStore.getState() / useSessionStore.setState().
  */
 
-import { create } from 'zustand';
+import {
+	createRetirementStore,
+	assertRetirementStoreUpdate,
+} from '../services/worktreeRetirementStoreGuard';
 import type { Session, Group, LogEntry, AITab, FilePreviewTab } from '../types';
 import type { BrowserTab } from '../../shared/browserPage';
 import { generateId } from '../utils/ids';
@@ -195,7 +198,7 @@ function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 // Store Implementation
 // ============================================================================
 
-export const useSessionStore = create<SessionStore>()((set, get) => ({
+export const useSessionStore = createRetirementStore<SessionStore>('sessions')((set, get) => ({
 	// --- State ---
 	sessions: [],
 	groups: [],
@@ -218,6 +221,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 			const newSessions = resolve(v, s.sessions);
 			// Skip if same reference (no-op update)
 			if (newSessions === s.sessions) return s;
+			assertRetirementStoreUpdate('sessions', s, { ...s, sessions: newSessions });
 			// Most delete flows (single-agent, group delete) filter the array and
 			// call setSessions directly rather than removeSession, so prune the
 			// context-timeline buffers of any agent that disappeared here. Guard on
@@ -241,6 +245,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 			const filtered = s.sessions.filter((session) => session.id !== id);
 			// Skip if nothing was removed
 			if (filtered.length === s.sessions.length) return s;
+			assertRetirementStoreUpdate('sessions', s, { ...s, sessions: filtered });
 			// Drop the deleted agent's context-timeline buffer so it doesn't leak,
 			// and main's raw capture log with it.
 			useContextTimelineStore.getState().removeSession(id);

@@ -12,7 +12,7 @@
  * Can be used outside React via getBatchState().
  */
 
-import { create } from 'zustand';
+import { createRetirementStore } from '../services/worktreeRetirementStoreGuard';
 import type { BatchRunState } from '../types';
 import type { AutoRunTreeNode } from '../hooks/batch/useAutoRunHandlers';
 import { batchReducer, type BatchAction } from '../hooks/batch/batchReducer';
@@ -129,7 +129,7 @@ export function selectActiveBatchSessionIds(s: BatchStoreState): string[] {
 // Store
 // ============================================================================
 
-export const useBatchStore = create<BatchStore>()((set) => ({
+export const useBatchStore = createRetirementStore<BatchStore>('batch')((set) => ({
 	// --- State ---
 	documentList: [],
 	documentTree: [],

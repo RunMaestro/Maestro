@@ -224,6 +224,15 @@ Discovery and manual merge currently support local worktrees with a GitHub.com
 post-merge worktree cleanup is not available. Merging does not remove the
 checkout; use the explicit removal controls below when appropriate.
 
+The cleanup implementation is still in progress. Its renderer preparation now
+fences child and parent session updates, queued work, Auto Run starts, composer
+drafts and editor entry points before inspecting live state. Saved idle chat is
+preserved. The first supported cleanup path will require file tabs and editing
+dialogs to be closed; renderer paths alone cannot exclude symlink aliases into
+the checkout. Preparation does not authorize removal: Main's transaction,
+acknowledgement binding, persistence reconciliation and cleanup policy are not
+yet connected.
+
 ### Removing Worktrees
 
 When removing a worktree, you have two options:

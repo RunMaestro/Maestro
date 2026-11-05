@@ -10,7 +10,7 @@
  * Can be used outside React via useUIStore.getState() / useUIStore.setState().
  */
 
-import { create } from 'zustand';
+import { createRetirementStore } from '../services/worktreeRetirementStoreGuard';
 import type { FocusArea, RightPanelTab, UnifiedTabRef, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
 import { isNarrowViewportNow } from '../hooks/ui/useViewportBreakpoint';
@@ -416,7 +416,7 @@ function persistHiddenPluginPanels(value: string[]): void {
 	window.maestro?.settings?.set('hiddenPluginPanels', value);
 }
 
-export const useUIStore = create<UIStore>()((set) => ({
+export const useUIStore = createRetirementStore<UIStore>('ui')((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
 	leftSidebarHidden: false,
