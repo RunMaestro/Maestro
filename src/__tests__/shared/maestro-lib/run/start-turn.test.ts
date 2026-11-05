@@ -550,6 +550,69 @@ describe('stopping a turn', () => {
 	});
 });
 
+describe('a turn in its own process group', () => {
+	// An agent that, on SIGTERM, starts a tool and exits in the same tick: no
+	// re-read of the descendant record can see the tool before the agent is
+	// gone and the tool is reparented (#1689). The tool's pid goes to a file,
+	// written synchronously, because a pipe write may not land before exit.
+	function lateToolAgent(pidFile: string): TurnProcessSpec {
+		const source = `
+			const { spawn } = require('child_process');
+			const fs = require('fs');
+			process.on('SIGTERM', () => {
+				const tool = spawn('sleep', ['60'], { stdio: 'ignore' });
+				fs.writeFileSync(${JSON.stringify(pidFile)}, String(tool.pid));
+				process.exit(0);
+			});
+			setInterval(() => {}, 1000);
+			console.log('ready');
+		`;
+		return { command: process.execPath, args: ['-e', source] };
+	}
+
+	function isAlive(pid: number): boolean {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	async function waitUntilGone(pid: number, timeoutMs: number): Promise<boolean> {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			if (!isAlive(pid)) return true;
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		return !isAlive(pid);
+	}
+
+	posixIt('stops a tool the agent started just before it exited', async () => {
+		const pidFile = path.join(scratch.dir, 'late-tool.pid');
+		let ready!: () => void;
+		const started = new Promise<void>((resolve) => {
+			ready = resolve;
+		});
+		const turn = startTurn(
+			lateToolAgent(pidFile),
+			{ onLine: (line) => line === 'ready' && ready() },
+			{ ...OPTIONS, processGroup: true }
+		);
+		await started;
+
+		turn.terminate();
+		const exit = await turn.done;
+		const toolPid = Number(fs.readFileSync(pidFile, 'utf8'));
+		try {
+			expect(exit.interrupted).toBe(true);
+			expect(await waitUntilGone(toolPid, 2000)).toBe(true);
+		} finally {
+			if (isAlive(toolPid)) process.kill(toolPid, 'SIGKILL');
+		}
+	});
+});
+
 describe('turnProcessSpecFromPlan', () => {
 	it('carries the plan command, arguments, directory, environment and stdin', () => {
 		const plan: LocalLaunchPlan = {

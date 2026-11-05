@@ -12,7 +12,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
 
-import { stopProcess } from '../../../../shared/maestro-lib/control/termination';
+import {
+	markProcessGroupLeader,
+	stopProcess,
+} from '../../../../shared/maestro-lib/control/termination';
 
 const GRACE_MS = 200;
 const posixOnly = describe.skipIf(process.platform === 'win32');
@@ -29,8 +32,12 @@ interface FakeAgent {
 const started: ChildProcess[] = [];
 const strayPids: number[] = [];
 
-function startAgent(source: string): FakeAgent {
-	const child = spawn(process.execPath, ['-e', source], { stdio: ['pipe', 'pipe', 'pipe'] });
+function startAgent(source: string, options: { processGroup?: boolean } = {}): FakeAgent {
+	const child = spawn(process.execPath, ['-e', source], {
+		stdio: ['pipe', 'pipe', 'pipe'],
+		detached: options.processGroup === true,
+	});
+	if (options.processGroup) markProcessGroupLeader(child);
 	started.push(child);
 
 	const ready = new Promise<string>((resolve, reject) => {
@@ -167,6 +174,48 @@ posixOnly('stopProcess against real processes', () => {
 		expect(await agent.exit).toEqual({ code: null, signal: 'SIGKILL' });
 		expect(await waitUntilGone(toolPid, 2000)).toBe(true);
 		await agent.close;
+	});
+
+	it('stops a tool started too late to be recorded when the agent leads its own group', async () => {
+		// On SIGTERM the agent starts a tool and exits in the same tick, so the
+		// tool is never in the descendant record. Only the group still finds it.
+		const agent = startAgent(
+			`process.on('SIGTERM', () => {
+				const tool = require('child_process').spawn('sleep', ['60'], { stdio: 'ignore' });
+				process.stderr.write(String(tool.pid) + '\\n', () => process.exit(0));
+			});
+			${STAY_ALIVE}`,
+			{ processGroup: true }
+		);
+		await agent.ready;
+		const toolPid = new Promise<number>((resolve) => {
+			agent.child.stderr!.setEncoding('utf8');
+			agent.child.stderr!.once('data', (chunk: string) => resolve(Number(chunk.trim())));
+		});
+
+		stopProcess({ child: agent.child }, { from: 'terminate', graceMs: GRACE_MS });
+
+		expect(await agent.exit).toEqual({ code: 0, signal: null });
+		const pid = await toolPid;
+		strayPids.push(pid);
+		expect(await waitUntilGone(pid, 2000)).toBe(true);
+	});
+
+	it('leaves the group alone when asked to leave what the process started', async () => {
+		const agent = startAgent(`process.on('SIGTERM', () => process.exit(0)); ${START_TOOL}`, {
+			processGroup: true,
+		});
+		const toolPid = Number(await agent.ready);
+		strayPids.push(toolPid);
+
+		stopProcess(
+			{ child: agent.child },
+			{ from: 'terminate', graceMs: GRACE_MS, includeDescendants: false }
+		);
+
+		await agent.exit;
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(isAlive(toolPid)).toBe(true);
 	});
 
 	it('leaves what the process started alone when asked to', async () => {
