@@ -51,6 +51,7 @@ import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
+import { worktreeRetirement } from '../git/worktreeRetirement';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -922,10 +923,17 @@ export class ProcessManager extends EventEmitter {
 		shellEnvVars?: Record<string, string>,
 		sshRemoteConfig?: SshRemoteConfig | null
 	): Promise<CommandResult> {
-		if (sshRemoteConfig) {
-			return this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars);
+		const admission = worktreeRetirement.admit(sshRemoteConfig ? null : [expandTilde(cwd)]);
+		if (!admission.ok) return Promise.reject(new Error(admission.reason));
+		try {
+			const run = sshRemoteConfig
+				? this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars)
+				: this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
+			return run.finally(admission.release);
+		} catch (error) {
+			admission.release();
+			throw error;
 		}
-		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
 	}
 
 	/**
