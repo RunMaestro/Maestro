@@ -85,6 +85,33 @@ export class WorktreeRetirement {
 		};
 	}
 
+	/** Hold local filesystem endpoints before any async work, through settlement.
+	 * An empty list means the operation has no local endpoints (remote-only I/O).
+	 */
+	async runFilesystemMutation<T>(
+		paths: readonly string[],
+		operation: () => Promise<T>
+	): Promise<T> {
+		if (paths.length === 0) return operation();
+		const endpoints = paths.flatMap((p) => {
+			try {
+				// Renaming/deleting a symlink changes its directory entry as well as
+				// potentially accessing its target. Preserve both ownership scopes.
+				return fs.lstatSync(p).isSymbolicLink() ? [p, path.dirname(p)] : [p];
+			} catch {
+				// Missing/unknown paths still fail closed in admit().
+				return [p];
+			}
+		});
+		const admission = this.admit(endpoints);
+		if (!admission.ok) throw new Error(`Worktree retirement: ${admission.reason}`);
+		try {
+			return await operation();
+		} finally {
+			admission.release();
+		}
+	}
+
 	prepare(checkout: ManagedCheckout): Preparation {
 		const root = canonical(checkout.path);
 		const entry = root && this.entries.get(root);

@@ -6,17 +6,17 @@ import {
 } from '../../../../shared/parquet/preview';
 
 // Track registered handlers
-const registeredHandlers = new Map<string, Function>();
+const registeredHandlers = new Map<string, (...args: any[]) => any>();
 // Track fire-and-forget `ipcMain.on` listeners (e.g. fs:startDragOut)
-const registeredListeners = new Map<string, Function>();
+const registeredListeners = new Map<string, (...args: any[]) => any>();
 
 // Mock ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
-		handle: vi.fn((channel: string, handler: Function) => {
+		handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
 			registeredHandlers.set(channel, handler);
 		}),
-		on: vi.fn((channel: string, handler: Function) => {
+		on: vi.fn((channel: string, handler: (...args: any[]) => any) => {
 			registeredListeners.set(channel, handler);
 		}),
 	},
@@ -32,7 +32,8 @@ vi.mock('../../../../main/utils/drag-out-icon', () => ({
 }));
 
 // Mock synchronous fs (existsSync) used by the drag-out handler's path filter.
-vi.mock('fs', () => {
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
 	const existsSync = vi.fn(() => true);
 	// The compress handler streams an archive to disk; a stub stream that fires
 	// 'close' on the next tick stands in for the real write.
@@ -41,7 +42,12 @@ vi.mock('fs', () => {
 			if (event === 'close') setTimeout(cb, 0);
 		},
 	}));
-	return { existsSync, createWriteStream, default: { existsSync, createWriteStream } };
+	return {
+		...actual,
+		existsSync,
+		createWriteStream,
+		default: { ...actual, existsSync, createWriteStream },
+	};
 });
 
 // Mock archiver - the compress handler only needs pipe/directory/finalize.
@@ -50,6 +56,7 @@ const archiveMock = {
 	pipe: vi.fn(),
 	directory: vi.fn(),
 	finalize: vi.fn().mockResolvedValue(undefined),
+	abort: vi.fn(),
 };
 vi.mock('archiver', () => ({
 	default: vi.fn(() => archiveMock),
@@ -126,7 +133,8 @@ import {
 	existsRemote,
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
-import { existsSync } from 'fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, createWriteStream } from 'fs';
+import { WorktreeRetirement, worktreeRetirement } from '../../../../main/git/worktreeRetirement';
 import path from 'path';
 
 describe('filesystem handlers', () => {
@@ -139,6 +147,200 @@ describe('filesystem handlers', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+	});
+
+	describe('worktree retirement races', () => {
+		let root: string;
+		let checkout: { path: string; head: string; generation: number };
+		let fence: WorktreeRetirement;
+		beforeEach(() => {
+			root = mkdtempSync(path.join(process.cwd(), '.filesystem-retirement-'));
+			checkout = { path: path.join(root, 'checkout'), head: 'abc', generation: 1 };
+			mkdirSync(checkout.path);
+			mkdirSync(path.join(root, 'other'));
+			fence = new WorktreeRetirement();
+			expect(fence.register(checkout)).toBe(true);
+			vi.spyOn(worktreeRetirement, 'admit').mockImplementation(fence.admit.bind(fence));
+		});
+		afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+		it('holds a save from synchronous admission through rejection, then permits retry', async () => {
+			let reject!: (error: Error) => void;
+			vi.mocked(fs.writeFile).mockImplementationOnce(
+				() =>
+					new Promise((_, fail) => {
+						reject = fail;
+					})
+			);
+			const saving = registeredHandlers.get('fs:writeFile')!({}, checkout.path, 'content');
+			expect(fence.prepare(checkout).ok).toBe(false);
+			reject(new Error('disk full'));
+			await expect(saving).rejects.toThrow('disk full');
+			expect(fence.prepare(checkout).ok).toBe(true);
+		});
+
+		it.each(['fs:copyPath', 'fs:rename'])(
+			'retains both endpoints while %s is pending',
+			async (channel) => {
+				let finish!: () => void;
+				const operation = channel === 'fs:copyPath' ? fs.cp : fs.rename;
+				vi.mocked(operation).mockImplementationOnce(
+					() =>
+						new Promise<void>((resolve) => {
+							finish = resolve;
+						})
+				);
+				const other = { ...checkout, path: path.join(root, 'other') };
+				expect(fence.register(other)).toBe(true);
+				const pending = registeredHandlers.get(channel)!({}, checkout.path, other.path);
+				expect(fence.prepare(checkout).ok).toBe(false);
+				expect(fence.prepare(other).ok).toBe(false);
+				finish();
+				await pending;
+				expect(fence.prepare(checkout).ok).toBe(true);
+				expect(fence.prepare(other).ok).toBe(true);
+			}
+		);
+
+		it('retains a bulk delete until its last pending file settles', async () => {
+			let finish!: () => void;
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(fs.unlink).mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					})
+			);
+			const pending = registeredHandlers.get('fs:deleteMany')!({}, [checkout.path]);
+			expect(fence.prepare(checkout).ok).toBe(false);
+			// stat resolves before unlink starts; the admission spans both phases.
+			await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+			finish();
+			await pending;
+			expect(fence.prepare(checkout).ok).toBe(true);
+		});
+
+		it('holds archive readers through finalization even when output closes first', async () => {
+			let close!: () => void;
+			let finish!: () => void;
+			archiveMock.finalize.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					})
+			);
+			vi.mocked(existsSync).mockReturnValue(false);
+			vi.mocked(createWriteStream).mockImplementationOnce(
+				() =>
+					({
+						on: (event: string, callback: () => void) => {
+							if (event === 'close') close = callback;
+						},
+					}) as any
+			);
+			const pending = registeredHandlers.get('fs:compressFolder')!({}, checkout.path);
+			await vi.waitFor(() => expect(close).toBeTypeOf('function'));
+			expect(fence.prepare(checkout).ok).toBe(false);
+			close();
+			expect(fence.prepare(checkout).ok).toBe(false);
+			finish();
+			await pending;
+			expect(fence.prepare(checkout).ok).toBe(true);
+		});
+
+		it('keeps uncertain archive readers fenced after failure and output close', async () => {
+			let close!: () => void;
+			const destroy = vi.fn();
+			vi.mocked(existsSync).mockReturnValue(false);
+			vi.mocked(createWriteStream).mockImplementationOnce(
+				() =>
+					({
+						on: (event: string, callback: () => void) => {
+							if (event === 'close') close = callback;
+						},
+						destroy,
+					}) as any
+			);
+			archiveMock.finalize.mockRejectedValueOnce(new Error('archive reader failed'));
+			await expect(registeredHandlers.get('fs:compressFolder')!({}, checkout.path)).rejects.toThrow(
+				'archive reader failed'
+			);
+			expect(archiveMock.abort).toHaveBeenCalled();
+			expect(destroy).toHaveBeenCalled();
+			close();
+			expect(fence.prepare(checkout).ok).toBe(false);
+		});
+
+		it.each(['fs:copyPath', 'fs:rename'])(
+			'fences both endpoints of %s before I/O',
+			async (channel) => {
+				const reservation = fence.prepare(checkout);
+				expect(reservation.ok).toBe(true);
+				const other = path.join(root, 'other');
+				const handler = registeredHandlers.get(channel)!;
+				await expect(handler({}, checkout.path, other)).rejects.toThrow('preparing');
+				await expect(handler({}, other, checkout.path)).rejects.toThrow('preparing');
+				expect(fs.cp).not.toHaveBeenCalled();
+				expect(fs.rename).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['fs:writeFile', 'fs:writeImageFile', 'fs:mkdir', 'fs:delete', 'fs:deleteMany'])(
+			'%s refuses a reserved target',
+			async (channel) => {
+				expect(fence.prepare(checkout).ok).toBe(true);
+				const target = channel === 'fs:deleteMany' ? [checkout.path] : checkout.path;
+				await expect(
+					registeredHandlers.get(channel)!(
+						{},
+						target,
+						channel === 'fs:writeFile' || channel === 'fs:writeImageFile' ? 'content' : undefined
+					)
+				).rejects.toThrow('preparing');
+				expect(fs.writeFile).not.toHaveBeenCalled();
+				expect(fs.mkdir).not.toHaveBeenCalled();
+				expect(fs.stat).not.toHaveBeenCalled();
+			}
+		);
+
+		it('fences a symlink entry inside the checkout even when its target is elsewhere', async () => {
+			const link = path.join(checkout.path, 'outside');
+			symlinkSync(path.join(root, 'other'), link, 'dir');
+			expect(fence.prepare(checkout).ok).toBe(true);
+			await expect(
+				registeredHandlers.get('fs:rename')!({}, link, path.join(root, 'other'))
+			).rejects.toThrow('preparing');
+			expect(fs.rename).not.toHaveBeenCalled();
+		});
+
+		it('blocks a download before its remote read when the local destination is reserved', async () => {
+			expect(fence.prepare(checkout).ok).toBe(true);
+			await expect(
+				registeredHandlers.get('fs:downloadRemoteFile')!({}, '/remote/file', 'ssh', checkout.path)
+			).rejects.toThrow('preparing');
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('allows unrelated local saves and remote-only writes during preparation', async () => {
+			expect(fence.prepare(checkout).ok).toBe(true);
+			vi.mocked(fs.writeFile).mockResolvedValueOnce(undefined);
+			await expect(
+				registeredHandlers.get('fs:writeFile')!({}, path.join(root, 'other'), 'ok')
+			).resolves.toEqual({ success: true });
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'ssh' } as any);
+			vi.mocked(writeFileRemote).mockResolvedValueOnce({ success: true });
+			await expect(
+				registeredHandlers.get('fs:writeFile')!({}, checkout.path, 'remote', 'ssh')
+			).resolves.toEqual({ success: true });
+		});
+
+		it('blocks compression when either source or archive parent is reserved', async () => {
+			expect(fence.prepare(checkout).ok).toBe(true);
+			await expect(registeredHandlers.get('fs:compressFolder')!({}, checkout.path)).rejects.toThrow(
+				'preparing'
+			);
+			expect(archiveMock.finalize).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('handler registration', () => {
