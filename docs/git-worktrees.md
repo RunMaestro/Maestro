@@ -233,8 +233,11 @@ the checkout. Desktop preparation now binds an opaque ID and renderer revision
 to Main's trusted reservation and sole primary window. Timeout or renderer loss
 aborts preparation; an in-flight removal stays fenced. The layer stack also
 blocks preparation while other overlays are open. Preparation does not authorize
-removal: the cleanup transaction, persistence reconciliation and cleanup policy
-are not yet connected.
+removal. The checked removal transaction and recovery journal are internal:
+saved chat is retained before Git runs, startup restores pending reservations,
+and recovery checks disk and Git administration without repeating deletion.
+Uncertain outcomes remain reserved. Concrete watcher settlement, recovery controls
+and the explicit cleanup policy still need integration before cleanup is available.
 
 ### Removing Worktrees
 

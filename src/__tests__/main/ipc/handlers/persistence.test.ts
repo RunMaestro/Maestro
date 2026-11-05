@@ -302,6 +302,87 @@ describe('persistence IPC handlers', () => {
 				if (!prepared.ok) throw new Error(prepared.reason);
 				return { fence, token: prepared.token, document, source, client, onSessionsPersisted };
 			}
+			it('writes the original intent through the sessions lane before acknowledging removal', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				const saved = structuredClone(f.document.sessions);
+				let finish!: () => void;
+				let started!: () => void;
+				const reached = new Promise<void>((resolve) => {
+					started = resolve;
+				});
+				mockFlushSessionWrites.mockImplementationOnce(async () => {
+					started();
+					await new Promise<void>((resolve) => {
+						finish = resolve;
+					});
+				});
+				const pending = f.fence.beginRemoval(f.token);
+				await reached;
+				expect(f.document.sessions).toEqual(saved);
+				expect(f.document.worktreeRetirements).toHaveLength(1);
+				expect(f.document.worktreeRetirements![0]).toMatchObject({
+					version: 1,
+					phase: 'removing',
+					archive: { session: saved[0] },
+					parent: saved[1],
+				});
+				f.client.invalidate();
+				expect(f.fence.abort(f.token)).toBe(false);
+				expect(f.fence.complete(f.token)).toBe(false);
+				expect(f.fence.admit([other]).ok).toBe(false);
+				finish();
+				await pending;
+				const id = f.document.worktreeRetirements![0].archive.id;
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				expect(f.document.retiredWorktrees![0].id).toBe(id);
+				await f.fence.settleRemoval(f.token);
+				expect(f.document.worktreeRetirements![0].phase).toBe('settled');
+				expect(f.fence.complete(f.token)).toBe(true);
+			});
+			it.each(['sessions file', 'app data'])(
+				'rejects %s storage inside the disappearing checkout',
+				async (kind) => {
+					const f = await prepareRemoval();
+					mockSessionsStore.path = path.join(
+						kind === 'sessions file' ? target.path : dir,
+						'sessions.json'
+					);
+					const getPath = vi
+						.spyOn(app, 'getPath')
+						.mockReturnValue(kind === 'app data' ? target.path : dir);
+					try {
+						await expect(f.fence.beginRemoval(f.token)).rejects.toThrow('storage must survive');
+						expect(f.document.worktreeRetirements).toBeUndefined();
+						expect(f.fence.tokenState(f.token)).toBe('removing');
+					} finally {
+						getPath.mockReturnValue('/mock/user/data');
+					}
+				}
+			);
+			it('refuses a changed saved registration before writing a removal intent', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				f.document.sessions[0] = { ...f.document.sessions[0], name: 'Replaced' };
+				await expect(f.fence.beginRemoval(f.token)).rejects.toThrow('child changed');
+				expect(f.document.worktreeRetirements).toBeUndefined();
+			});
+			it('retains ownership across failed final flushes, retries the same journal id and prevents downgrade', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				await f.fence.beginRemoval(f.token);
+				const original = structuredClone(f.document.worktreeRetirements![0]);
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('disk full'));
+				await expect(f.fence.settleRemoval(f.token)).rejects.toThrow('disk full');
+				expect(f.document.worktreeRetirements![0].phase).toBe('settled');
+				expect(f.fence.complete(f.token)).toBe(false);
+				await f.fence.settleRemoval(f.token);
+				expect(f.document.worktreeRetirements).toHaveLength(1);
+				expect(f.document.worktreeRetirements![0].archive.id).toBe(original.archive.id);
+				await expect(f.source.writeRetirementIntent!(original)).rejects.toThrow('identity changed');
+				expect(f.fence.complete(f.token)).toBe(true);
+			});
 			it('durably saves the final frozen chat and PR snapshot before archiving it', async () => {
 				const f = await prepareRemoval();
 				const snapshots = structuredClone(f.document.sessions);

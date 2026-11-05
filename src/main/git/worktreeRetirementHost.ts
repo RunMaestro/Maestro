@@ -137,7 +137,7 @@ export class WorktreeRetirementHost {
 					const current = await this.validate(id, renderer);
 					if (!current.ok) throw new Error(current.reason);
 					await verifyRetirementClean(current.expected);
-					if (!this.fence.commit(entry.token)) throw new Error('preparation expired or owner lost');
+					await this.fence.beginRemoval(entry.token);
 					await removeRetirementCheckout(current.expected);
 					entry.diskRemoved = true;
 				}
@@ -145,6 +145,7 @@ export class WorktreeRetirementHost {
 				await settleWatchers(entry.expected);
 				const reconciled = await this.reconcileRenderer(id, renderer);
 				if (!reconciled.ok) throw new Error(reconciled.reason);
+				await this.fence.settleRemoval(entry.token);
 				if (!this.fence.complete(entry.token)) throw new Error('Removal settlement lost ownership');
 				this.release(id, entry);
 				return { status: 'removed' };

@@ -1,6 +1,16 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from 'fs';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RetirementIntent } from '../../../main/git/worktreeRetirementRecovery';
+import { inspectRetirementOutcome } from '../../../main/git/worktreeRetirementRecovery';
 import type { StoredRetiredWorktree, StoredSession } from '../../../main/stores/types';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 
@@ -121,6 +131,13 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 	let sessions = [child, parentSession];
 	let generation = 1;
 	const archive: StoredRetiredWorktree[] = [];
+	const journal: RetirementIntent[] = [];
+	const writeIntent = vi.fn(async (intent: RetirementIntent) => {
+		const copy = structuredClone(intent);
+		const index = journal.findIndex((entry) => entry.archive.id === copy.archive.id);
+		if (index < 0) journal.push(copy);
+		else journal[index] = copy;
+	});
 	const queue = createKeyedWriteQueue();
 	const fence = new WorktreeRetirement();
 	const persist = vi.fn(async (updates: StoredSession[]) => {
@@ -128,17 +145,19 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 		generation++;
 	});
 	const reconcile = vi.fn(async (record: StoredRetiredWorktree) => {
-		archive.push(record);
+		if (!archive.some((saved) => saved.id === record.id)) archive.push(record);
 		sessions = sessions.filter((s) => s.id !== record.session.id);
 		generation++;
 	});
-	fence.bindRegistrationSource({
+	const source = {
 		read: () => sessions,
 		generation: () => generation,
-		enqueue: (operation) => queue.enqueue('sessions', operation),
+		enqueue: <T>(operation: () => Promise<T>) => queue.enqueue('sessions', operation),
 		persistPrepared: persist,
 		reconcileRetired: reconcile,
-	});
+		writeRetirementIntent: writeIntent,
+	};
+	fence.bindRegistrationSource(source);
 	const identity = {};
 	const client = fence.admitClient('primary');
 	if (!client.ok) throw new Error(client.reason);
@@ -177,6 +196,9 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 		identity,
 		remote,
 		archive,
+		journal,
+		writeIntent,
+		source,
 		reconcile,
 		release,
 		request,
@@ -191,6 +213,149 @@ async function setup(method: 'merge' | 'squash' | 'rebase' = 'merge', withSubmod
 }
 
 describe('checked worktree removal with real local Git fixtures', () => {
+	it('makes the original archive durable before Git and keeps owner loss fenced during that write', async () => {
+		const f = await setup();
+		const write = f.writeIntent.getMockImplementation()!;
+		f.writeIntent.mockImplementationOnce(async (intent) => {
+			expect(f.fence.state(f.root)).toBe('removing');
+			f.invalidate();
+			expect(f.host.abort(f.token, f.identity)).toBe(false);
+			expect(adapter.beforeRemove).not.toHaveBeenCalled();
+			await write(intent);
+		});
+		adapter.beforeRemove.mockImplementationOnce(async () => {
+			expect(f.journal[0]).toMatchObject({
+				phase: 'removing',
+				checkout: { head: f.head },
+				archive: { session: { name: 'Saved child' } },
+			});
+			expect(f.archive).toHaveLength(0);
+		});
+		expect(await f.remove()).toEqual({ status: 'removed' });
+	});
+	it('never starts Git after a failed intent flush, even when the cache already contains it', async () => {
+		const f = await setup();
+		const write = f.writeIntent.getMockImplementation()!;
+		f.writeIntent.mockImplementationOnce(async (intent) => {
+			await write(intent);
+			throw new Error('disk full');
+		});
+		expect(await f.remove()).toMatchObject({ status: 'pending', reason: 'disk full' });
+		expect((await f.remove()).status).toBe('pending');
+		expect(adapter.beforeRemove).not.toHaveBeenCalled();
+		expect(existsSync(f.root)).toBe(true);
+		expect(f.fence.admit([f.parent]).ok).toBe(false);
+		expect(await inspectRetirementOutcome(f.journal[0])).toEqual({ state: 'present' });
+	});
+	it('restores both fences before startup admits a recovery primary, without restoring old wire authority', async () => {
+		const f = await setup();
+		adapter.beforeRemove.mockImplementationOnce(async () => {
+			await f.git(f.parent, 'worktree', 'lock', f.root);
+		});
+		expect((await f.remove()).status).toBe('pending');
+		const restarted = new WorktreeRetirement();
+		restarted.restoreRetirements(f.journal);
+		expect(restarted.admit([f.root]).ok).toBe(false);
+		expect(restarted.admit([f.parent]).ok).toBe(false);
+		expect(restarted.admitClient('web').ok).toBe(false);
+		expect(restarted.admitClient('secondary').ok).toBe(false);
+		const client = restarted.admitClient('primary');
+		expect(client.ok).toBe(true);
+		expect(restarted.admitClient('primary').ok).toBe(false);
+		if (client.ok) {
+			client.loaded({});
+			client.invalidate();
+			client.release();
+		}
+		expect(restarted.state(f.root)).toBe('removing');
+		restarted.bindRegistrationSource(f.source);
+		expect(await restarted.reconcileRecoveredRemoval(f.journal[0].archive.id)).toMatchObject({
+			ok: false,
+			reason: expect.stringContaining('still present'),
+		});
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+		expect(f.archive).toHaveLength(0);
+	});
+	it('recovers a lost successful Git result by observing disk, with the same archive id and no second removal', async () => {
+		const f = await setup();
+		f.watchers.mockRejectedValueOnce(new Error('lost completion'));
+		expect((await f.remove()).status).toBe('pending');
+		expect(f.journal[0].phase).toBe('removing');
+		expect(await inspectRetirementOutcome(f.journal[0])).toEqual({ state: 'removed' });
+		const restarted = new WorktreeRetirement();
+		restarted.restoreRetirements(structuredClone(f.journal));
+		restarted.bindRegistrationSource(f.source);
+		const [pending] = restarted.pendingRecoveries();
+		expect(await restarted.reconcileRecoveredRemoval(pending.id)).toEqual({ ok: true });
+		expect(await restarted.reconcileRecoveredRemoval(pending.id)).toEqual({ ok: true });
+		expect(f.archive).toHaveLength(1);
+		expect(f.archive[0].id).toBe(pending.id);
+		expect(restarted.state(f.root)).toBe('removing');
+		expect(restarted.admit([f.parent]).ok).toBe(false);
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it.each(['child', 'admin', 'branch', 'parent'])(
+		'refuses ambiguous recovery after %s replacement',
+		async (kind) => {
+			const f = await setup();
+			f.watchers.mockRejectedValueOnce(new Error('lost completion'));
+			expect((await f.remove()).status).toBe('pending');
+			const intent = f.journal[0];
+			if (kind === 'child') mkdirSync(f.root);
+			if (kind === 'admin') mkdirSync(intent.checkout.ownership!.gitDir, { recursive: true });
+			if (kind === 'branch') await f.git(f.parent, 'branch', '-D', 'feature');
+			if (kind === 'parent') renameSync(join(f.parent, '.git'), join(f.parent, '.git-preserved'));
+			const restarted = new WorktreeRetirement();
+			restarted.restoreRetirements(f.journal);
+			restarted.bindRegistrationSource(f.source);
+			expect(await restarted.reconcileRecoveredRemoval(intent.archive.id)).toMatchObject({
+				ok: false,
+			});
+			expect(restarted.admit([f.parent]).ok).toBe(false);
+			expect(f.archive).toHaveLength(0);
+			expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+		}
+	);
+	it('retains a settled tombstone across restart while releasing the surviving parent', async () => {
+		const f = await setup();
+		expect(await f.remove()).toEqual({ status: 'removed' });
+		const restarted = new WorktreeRetirement();
+		restarted.restoreRetirements(f.journal);
+		expect(restarted.state(f.root)).toBe('removed');
+		expect(restarted.admit([f.root], { allowMissing: true }).ok).toBe(false);
+		expect(restarted.admit([f.parent]).ok).toBe(true);
+		expect(restarted.pendingRecoveries()).toEqual([]);
+	});
+	it('keeps removing fenced until the completed journal flush succeeds', async () => {
+		const f = await setup();
+		const write = f.writeIntent.getMockImplementation()!;
+		f.writeIntent.mockImplementation(async (intent) => {
+			if (intent.phase === 'settled') throw new Error('completion disk full');
+			await write(intent);
+		});
+		expect(await f.remove()).toMatchObject({ status: 'pending', reason: 'completion disk full' });
+		expect(f.journal[0].phase).toBe('removing');
+		expect(f.fence.admit([f.parent]).ok).toBe(false);
+		f.writeIntent.mockImplementation(write);
+		expect(await f.remove()).toEqual({ status: 'removed' });
+		expect(adapter.beforeRemove).toHaveBeenCalledOnce();
+	});
+	it('rejects malformed or duplicate journals and late restoration instead of losing fences', async () => {
+		const f = await setup();
+		f.watchers.mockRejectedValueOnce(new Error('lost completion'));
+		await f.remove();
+		for (const input of [
+			null,
+			[null],
+			[f.journal[0], f.journal[0]],
+			[{ ...f.journal[0], version: 2 }],
+		]) {
+			expect(() => new WorktreeRetirement().restoreRetirements(input)).toThrow();
+		}
+		const late = new WorktreeRetirement();
+		late.admitClient('primary');
+		expect(() => late.restoreRetirements(f.journal)).toThrow('precede admissions');
+	});
 	it.each(['merge', 'squash', 'rebase'] as const)(
 		'removes a clean %s checkout from its surviving parent and preserves the branch',
 		async (method) => {
@@ -200,6 +365,8 @@ describe('checked worktree removal with real local Git fixtures', () => {
 			expect(await f.git(f.parent, 'rev-parse', 'feature')).toBe(f.head);
 			expect(await f.git(f.parent, 'rev-parse', 'HEAD')).toBe(f.merged);
 			expect(f.archive).toHaveLength(1);
+			expect(f.journal).toHaveLength(1);
+			expect(f.journal[0]).toMatchObject({ phase: 'settled', archive: f.archive[0] });
 			expect(f.archive[0]).toMatchObject({
 				head: f.head,
 				session: { id: 'child', name: 'Saved child' },

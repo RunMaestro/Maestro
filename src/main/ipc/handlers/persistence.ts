@@ -57,6 +57,12 @@ import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersisten
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
 import { worktreeRetirement } from '../../git/worktreeRetirement';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { readRetirementIntents } from '../../git/worktreeRetirementRecovery';
+import {
+	foldPathCase,
+	isPathWithin,
+	realpathThroughAncestor,
+} from '../../utils/real-path-containment';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -273,6 +279,68 @@ export function registerPersistenceHandlers(
 			sessionsStore.set('sessions', current);
 			await flushSessionWrites();
 			await onSessionsPersisted?.(relocated, current, []);
+		},
+		writeRetirementIntent: async (input) => {
+			const [intent] = readRetirementIntents([input]);
+			// No archive, journal or app-data file may disappear with the checkout.
+			for (const storage of [sessionsStore.path, app.getPath('userData')]) {
+				if (
+					typeof storage !== 'string' ||
+					!path.isAbsolute(storage) ||
+					isPathWithin(
+						foldPathCase(realpathThroughAncestor(storage, { strict: true })),
+						foldPathCase(intent.checkout.path)
+					)
+				)
+					throw new Error('Retirement storage must survive outside the checkout');
+			}
+			const journal = readRetirementIntents(sessionsStore.get('worktreeRetirements', []));
+			const previous = journal.find((record) => record.archive.id === intent.archive.id);
+			if (
+				previous &&
+				(canonicalJson({ ...previous, phase: intent.phase }) !== canonicalJson(intent) ||
+					(previous.phase === 'settled' && intent.phase !== 'settled'))
+			)
+				throw new Error('Retirement journal identity changed');
+			if (
+				!previous &&
+				journal.some(
+					(record) =>
+						record.archive.session.id === intent.archive.session.id ||
+						record.checkout.path === intent.checkout.path
+				)
+			)
+				throw new Error('Retirement journal already owns checkout');
+			const sessions = sessionsStore.get('sessions', []);
+			const parents = sessions.filter((s) => s.id === intent.parent.id);
+			if (parents.length !== 1 || canonicalJson(parents[0]) !== canonicalJson(intent.parent))
+				throw new Error('Retirement journal parent changed');
+			const children = sessions.filter((s) => s.id === intent.archive.session.id);
+			if (intent.phase === 'removing') {
+				if (
+					children.length !== 1 ||
+					canonicalJson(children[0]) !== canonicalJson(intent.archive.session)
+				)
+					throw new Error('Retirement journal child changed');
+			} else {
+				const archives = sessionsStore
+					.get('retiredWorktrees', [])
+					.filter((r) => r.id === intent.archive.id);
+				if (
+					!previous ||
+					children.length ||
+					archives.length !== 1 ||
+					canonicalJson(archives[0]) !== canonicalJson(intent.archive)
+				)
+					throw new Error('Retirement archive settlement pending');
+			}
+			sessionsStore.set(
+				'worktreeRetirements',
+				previous
+					? journal.map((record) => (record.archive.id === intent.archive.id ? intent : record))
+					: [...journal, intent]
+			);
+			await flushSessionWrites();
 		},
 		reconcileRetired: async (record, parent) => {
 			// Called internally in this SAME lane with a Main-owned removing token.

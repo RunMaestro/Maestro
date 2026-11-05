@@ -5,6 +5,7 @@ import type { StoredSession, StoredRetiredWorktree } from '../stores/types';
 import { foldPathCase, isPathWithin } from '../utils/real-path-containment';
 import { execGitReadOnly } from '../utils/remote-git';
 import type { ManagedCheckout } from './worktreeRetirement';
+import type { RetirementIntent } from './worktreeRetirementRecovery';
 
 /** Supplied by persistence, using the SAME lane as sessions:setMany/setAll. */
 export interface RetirementRegistrationSource {
@@ -15,6 +16,8 @@ export interface RetirementRegistrationSource {
 	persistPrepared?(sessions: StoredSession[], isCurrent: () => boolean): Promise<void>;
 	/** Internal token-owned caller already holds the sessions lane and removal fence. */
 	reconcileRetired?(record: StoredRetiredWorktree, parent: StoredSession): Promise<void>;
+	/** Internal only, called in the same serialized lane and awaited through disk flush. */
+	writeRetirementIntent?(intent: RetirementIntent): Promise<void>;
 }
 
 export interface CheckoutOwnership {

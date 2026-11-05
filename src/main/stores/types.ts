@@ -181,6 +181,8 @@ export interface SessionsData {
 	activeSessionId?: string;
 	/** Retained outside retired checkouts, including saved chat and PR metadata. */
 	retiredWorktrees?: StoredRetiredWorktree[];
+	/** Write-ahead retirement intents, restored before startup admits work. */
+	worktreeRetirements?: import('../git/worktreeRetirementRecovery').RetirementIntent[];
 }
 
 export interface StoredRetiredWorktree {

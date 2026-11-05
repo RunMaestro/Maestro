@@ -17,6 +17,11 @@ import {
 	type CheckoutOwnership,
 	type RetirementRegistrationSource,
 } from './worktreeRetirementOwnership';
+import {
+	inspectRetirementOutcome,
+	readRetirementIntents,
+	type RetirementIntent,
+} from './worktreeRetirementRecovery';
 
 export interface ManagedCheckout {
 	/** Verified checkout root; Git ownership must be verified by the caller. */
@@ -38,6 +43,8 @@ type Entry = {
 	state: RetirementState;
 	token?: RetirementToken;
 	owner?: object;
+	intent?: RetirementIntent;
+	recovered?: boolean;
 	registration?: {
 		source: RetirementRegistrationSource;
 		child: StoredSession;
@@ -87,12 +94,71 @@ export class WorktreeRetirement {
 	private readonly clients = new Map<object, RetirementClient>();
 	private registrationSource?: RetirementRegistrationSource;
 
+	/** Synchronous startup barrier, before any process/client/writer is created.
+	 * Restored tokens are new Main capabilities; old wire ids cannot own them.
+	 */
+	restoreRetirements(value: unknown): void {
+		if (this.clients.size || this.holds.size || this.entries.size)
+			throw new Error('Retirement recovery must precede admissions');
+		for (const intent of readRetirementIntents(value)) {
+			this.entries.set(foldPathCase(intent.checkout.path), {
+				identity: intent.checkout,
+				state: intent.phase === 'settled' ? 'removed' : 'removing',
+				token: Object.freeze({}),
+				intent,
+				recovered: true,
+			});
+		}
+	}
+
+	/** Internal recovery control plane. No destructive authority or token is exposed. */
+	pendingRecoveries() {
+		return [...this.entries.values()]
+			.filter((e) => e.recovered && e.state === 'removing')
+			.map((e) => ({
+				id: e.intent!.archive.id,
+				sessionId: e.intent!.archive.session.id,
+				path: e.identity.path,
+			}));
+	}
+
+	/** Observe disk first, then reuse the original archive id and saved snapshots.
+	 * This deliberately retains the fence for watcher/renderer settlement.
+	 */
+	async reconcileRecoveredRemoval(id: string) {
+		const entry = [...this.entries.values()].find(
+			(e) => e.recovered && e.intent?.archive.id === id
+		);
+		if (!entry?.token || entry.state !== 'removing')
+			return { ok: false as const, reason: 'Pending recovery required' };
+		const outcome = await inspectRetirementOutcome(entry.intent!);
+		if (outcome.state !== 'removed')
+			return {
+				ok: false as const,
+				reason:
+					outcome.state === 'present'
+						? 'Checkout still present; new explicit preparation required'
+						: outcome.reason,
+			};
+		return this.reconcileRemovedRegistration(entry.token);
+	}
+
 	/** Persistence owns this source and its generation; no IPC input can replace it. */
 	bindRegistrationSource(source: RetirementRegistrationSource): void {
 		for (const entry of this.entries.values()) {
 			if (entry.state === 'preparing' && entry.token) this.abort(entry.token);
 		}
 		this.registrationSource = source;
+		for (const entry of this.entries.values()) {
+			if (entry.recovered && entry.intent && !entry.registration) {
+				entry.registration = {
+					source,
+					child: entry.intent.archive.session,
+					parent: entry.intent.parent,
+					record: entry.intent.archive,
+				};
+			}
+		}
 	}
 
 	/** Resolve only an id against Main's current store. Hold admission BEFORE the
@@ -252,7 +318,18 @@ export class WorktreeRetirement {
 	 * A client's lifetime ends on closed, never on an error or close request.
 	 */
 	admitClient(kind: RetirementClient['kind']): ClientAdmission {
-		if ([...this.entries.values()].some((e) => e.state === 'preparing' || e.state === 'removing'))
+		// A fresh primary may display recovery after restart. Target writes remain
+		// fenced; secondary windows and web clients still cannot enter.
+		const recoveryPrimary =
+			kind === 'primary' &&
+			this.clients.size === 0 &&
+			[...this.entries.values()].every(
+				(e) => e.state === 'removed' || (e.recovered && e.state === 'removing')
+			);
+		if (
+			!recoveryPrimary &&
+			[...this.entries.values()].some((e) => e.state === 'preparing' || e.state === 'removing')
+		)
 			return { ok: false, reason: 'worktree retirement is in progress' };
 		const owner = Object.freeze({});
 		const client: RetirementClient = { kind };
@@ -426,6 +503,82 @@ export class WorktreeRetirement {
 		return true;
 	}
 
+	/** Transition BEFORE the first await so owner loss cannot unlock a journal
+	 * write that might reach disk. Git must not run until this durable ACK.
+	 */
+	async beginRemoval(token: RetirementToken): Promise<void> {
+		const entry = this.owned(token);
+		const registration = entry?.registration;
+		if (
+			!entry ||
+			!registration ||
+			!entry.identity.ownership ||
+			registration.source !== this.registrationSource ||
+			!registration.source.writeRetirementIntent ||
+			!this.commit(token)
+		)
+			throw new Error('Durable retirement ownership required');
+		const owner = entry.identity.ownership;
+		registration.record ??= {
+			id: generateUUID(),
+			retiredAt: Date.now(),
+			path: entry.identity.path,
+			head: entry.identity.head,
+			parentSessionId: owner.parentSessionId,
+			parentPath: owner.parentPath,
+			branch: owner.branch,
+			session: registration.child,
+		};
+		entry.intent = {
+			version: 1,
+			phase: 'removing',
+			checkout: entry.identity,
+			archive: registration.record,
+			parent: registration.parent,
+		};
+		const source = registration.source;
+		await source.enqueue(async () => {
+			if (
+				this.registrationSource !== source ||
+				this.owned(token) !== entry ||
+				entry.state !== 'removing' ||
+				source.generation() !== entry.identity.generation
+			)
+				throw new Error('Retirement ownership changed before intent persistence');
+			await source.writeRetirementIntent!(entry.intent!);
+			if (
+				this.registrationSource !== source ||
+				this.owned(token) !== entry ||
+				entry.state !== 'removing'
+			)
+				throw new Error('Retirement ownership changed during intent persistence');
+		});
+	}
+
+	/** Only after disk, watchers, archive and renderer have settled. Persist the
+	 * completed tombstone before releasing the surviving parent's fence.
+	 */
+	async settleRemoval(token: RetirementToken): Promise<void> {
+		const entry = this.owned(token);
+		const source = entry?.registration?.source;
+		if (
+			!entry?.intent ||
+			entry.state !== 'removing' ||
+			!entry.registration?.reconciled ||
+			!source?.writeRetirementIntent ||
+			source !== this.registrationSource
+		)
+			throw new Error('Owned reconciled retirement required');
+		await source.enqueue(async () => {
+			if (this.owned(token) !== entry || source !== this.registrationSource)
+				throw new Error('Retirement settlement source changed');
+			await source.writeRetirementIntent!({ ...entry.intent!, phase: 'settled' });
+			if (this.owned(token) !== entry || source !== this.registrationSource)
+				throw new Error('Retirement settlement source changed during persistence');
+			entry.intent = { ...entry.intent!, phase: 'settled' };
+		});
+	}
+
 	/** Called only after checked Git removal settles. Never releases the fence:
 	 * durable persistence and renderer/watcher reconciliation must finish first.
 	 * An uncertain write/callback can be retried with the SAME token and archive id.
@@ -483,7 +636,8 @@ export class WorktreeRetirement {
 	/** A failed or uncertain removal remains fenced for explicit reconciliation. */
 	complete(token: RetirementToken): boolean {
 		const entry = this.owned(token);
-		if (!entry || entry.state !== 'removing') return false;
+		if (!entry || entry.state !== 'removing' || (entry.intent && entry.intent.phase !== 'settled'))
+			return false;
 		entry.state = 'removed';
 		return true;
 	}
