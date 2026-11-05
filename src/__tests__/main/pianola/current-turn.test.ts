@@ -68,6 +68,68 @@ function fixture(index = new NativeCurrentTurns()) {
 }
 
 describe('native current-turn revision and completeness', () => {
+	it.each([
+		'valid',
+		'forgotten',
+		'spawning',
+		'flush-race',
+		'not-durable',
+		'owner-before-flush',
+		'announced',
+		'off',
+		'restarted',
+		'wrong-binding',
+		'busy',
+		'nonempty',
+		'gap',
+		'evicted',
+	])('consumes bounded host birth evidence without granting continuity: %s', (mode) => {
+		let index = new NativeCurrentTurns({ tabs: 1, messages: 8, bytes: 1024, totalBytes: 4096 });
+		const finish = index.recordHostEmptyCreation(binding);
+		if (!['not-durable', 'flush-race', 'owner-before-flush'].includes(mode)) finish(true);
+		if (mode === 'flush-race') {
+			index.spawning('agent-ai-tab');
+			finish(true);
+		}
+		if (mode === 'announced') index.announce('agent-ai-tab', 'provider-session');
+		if (mode === 'forgotten') index.forgetHostEmptyCreation(binding.agentId);
+		if (mode === 'spawning') index.spawning('agent-ai-tab');
+		if (mode === 'off') {
+			index.setEnabled(false);
+			index.setEnabled(true);
+		}
+		if (mode === 'restarted') index = new NativeCurrentTurns();
+		if (mode === 'evicted') index.recordHostEmptyCreation({ ...binding, tabId: 'another' });
+		const patch: SessionTranscriptPatch = {
+			sessionId: 'agent',
+			tabId: 'tab',
+			field: 'logs',
+			snapshot: true,
+			upserts: mode === 'nonempty' ? [row('history')] : [],
+			removedIds: [],
+			orderIds: mode === 'nonempty' ? ['history'] : [],
+			runtime: { state: mode === 'busy' ? 'busy' : 'idle' },
+			observation: {
+				sourceGeneration: 'renderer',
+				sequence: mode === 'gap' ? 2 : 1,
+				createdAt: mode === 'wrong-binding' ? 8 : 7,
+				provider: 'codex',
+			},
+		};
+		index.commit(patch);
+		expect(index.read(binding).status === 'empty-enrollment').toBe(mode === 'valid');
+		if (mode === 'owner-before-flush') finish(true);
+		// Retrying, renderer replacement or returning to empty cannot mint another birth.
+		index.commit({
+			...patch,
+			upserts: [],
+			orderIds: [],
+			runtime: { state: 'idle' },
+			observation: { ...patch.observation!, sequence: 3, createdAt: 7 },
+		});
+		expect(index.read(binding).status).not.toBe('empty-enrollment');
+	});
+
 	it('admits an owner-created empty enrollment without fabricating a turn', () => {
 		const index = new NativeCurrentTurns();
 		const patch: SessionTranscriptPatch = {

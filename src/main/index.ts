@@ -1,3 +1,4 @@
+import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle';
 import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
@@ -66,7 +67,7 @@ import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { nativeCurrentTurns } from './pianola/current-turn';
-import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
+import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import type { PianolaMemoryHost } from './pianola/memory-host';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
@@ -2550,103 +2551,15 @@ app
 		};
 		const pluginSessionsGet = (sessionId: string): PluginSessionMetadata | null =>
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
-		const pluginSessionsCreate = async (
-			params: Record<string, unknown>
-		): Promise<PluginSessionMetadata> => {
-			const now = Date.now();
-			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
-			const tabId = crypto.randomUUID();
-			const title =
-				typeof params.title === 'string'
-					? params.title
-					: typeof params.name === 'string'
-						? params.name
-						: 'Plugin Session';
-			const toolType =
-				typeof params.agentId === 'string'
-					? params.agentId
-					: typeof params.toolType === 'string'
-						? params.toolType
-						: 'claude-code';
-			const cwd =
-				typeof params.projectPath === 'string'
-					? params.projectPath
-					: typeof params.cwd === 'string'
-						? params.cwd
-						: os.homedir();
-			const session = {
-				id: sessionId,
-				name: title,
-				toolType,
-				state: 'idle',
-				cwd,
-				fullPath: cwd,
-				projectRoot: cwd,
-				createdAt: now,
-				updatedAt: now,
-				aiLogs: [],
-				shellLogs: [],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 0,
-				isLive: false,
-				changedFiles: [],
-				isGitRepo: false,
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [
-					{
-						id: tabId,
-						agentSessionId: null,
-						name: null,
-						starred: false,
-						logs: [],
-						inputValue: '',
-						stagedImages: [],
-						createdAt: now,
-						state: 'idle',
-					},
-				],
-				activeTabId: tabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				browserTabs: [],
-				activeBrowserTabId: null,
-				terminalTabs: [],
-				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai', id: tabId }],
-				unifiedClosedTabHistory: [],
-			};
-			const previousSessions = pluginSessionsRaw();
-			setPluginSessionsRaw([...previousSessions, session]);
-			if (!previousSessions.some((existing) => existing.id === sessionId)) {
-				try {
-					await pianolaSupervisor?.autoWatchNewSessions([session], [
-						...previousSessions,
-						session,
-					] as AutoWatchSession[]);
-				} catch (error) {
-					logger.error('Could not register new Pianola watch', '[Pianola]', error);
-					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
-				}
-			}
-			sessionsStore.set('activeSessionId', sessionId);
-			return {
-				id: sessionId,
-				title,
-				agentId: toolType,
-				status: 'idle',
-				createdAt: now,
-				projectPath: cwd,
-			};
-		};
+		const { create: pluginSessionsCreate, remove: pluginSessionsDelete } =
+			createPluginSessionLifecycle({
+				readSessions: pluginSessionsRaw,
+				writeSessions: setPluginSessionsRaw,
+				flush: flushPendingSessionWrites,
+				getActiveSessionId: () => sessionsStore.get('activeSessionId', ''),
+				setActiveSessionId: (id) => sessionsStore.set('activeSessionId', id),
+				getSupervisor: () => pianolaSupervisor,
+			});
 		const pluginSessionsUpdate = async (
 			sessionId: string,
 			patch: Record<string, unknown>
@@ -2667,27 +2580,6 @@ app
 			if (!updated) return null;
 			setPluginSessionsRaw(next);
 			return pluginSessionsGet(sessionId);
-		};
-		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
-			const sessions = pluginSessionsRaw();
-			if (!sessions.some((s) => s.id === sessionId)) return false;
-			const remaining = sessions.filter((s) => s.id !== sessionId);
-			setPluginSessionsRaw(remaining);
-			try {
-				await pianolaSupervisor?.autoWatchNewSessions(
-					[],
-					remaining as unknown as AutoWatchSession[],
-					[sessionId]
-				);
-			} catch (error) {
-				logger.error('Could not retire Pianola watch', '[Pianola]', error);
-				void captureException(error, { operation: 'pianola:retireAutoWatch' });
-			}
-			if (sessionsStore.get('activeSessionId', '') === sessionId) {
-				const nextActive = pluginSessionsRaw()[0]?.id;
-				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');
-			}
-			return true;
 		};
 		const pluginListHistoryEntries = async () => {
 			const all = [];

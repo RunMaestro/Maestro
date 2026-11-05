@@ -35,6 +35,37 @@ export class NativeCurrentTurns {
 	private revision = 0;
 	private retainedBytes = 0;
 	private states = new Map<string, State>();
+	private hostCreations = new Map<
+		string,
+		{ agentId: string; tabId: string; createdAt: number; provider: string; durable: boolean }
+	>();
+
+	/** Only a successful host create may attest birth. The first authenticated
+	 * owner commit consumes it, even when that commit cannot prove emptiness. */
+	recordHostEmptyCreation(binding: {
+		agentId: string;
+		tabId: string;
+		createdAt: number;
+		provider: string;
+	}): (durable: boolean) => void {
+		if (!this.enabled) return () => {};
+		const key = this.key(binding.agentId, binding.tabId);
+		if (this.states.has(key) || this.hostCreations.has(key)) return () => {};
+		const creation = { ...binding, durable: false };
+		this.hostCreations.set(key, creation);
+		while (this.hostCreations.size > this.limits.tabs)
+			this.hostCreations.delete(this.hostCreations.keys().next().value!);
+		return (durable) => {
+			if (this.hostCreations.get(key) !== creation) return;
+			if (durable) creation.durable = true;
+			else this.hostCreations.delete(key);
+		};
+	}
+
+	forgetHostEmptyCreation(agentId: string): void {
+		for (const [key, binding] of this.hostCreations)
+			if (binding.agentId === agentId) this.hostCreations.delete(key);
+	}
 	private observers = new Map<string, { expiresAt: number; client?: object }>();
 	private observerClients = new WeakSet<object>();
 	constructor(
@@ -55,6 +86,7 @@ export class NativeCurrentTurns {
 		if (enabled === this.enabled) return;
 		this.enabled = enabled;
 		this.states.clear();
+		this.hostCreations.clear();
 		this.retainedBytes = 0;
 	}
 
@@ -103,6 +135,8 @@ export class NativeCurrentTurns {
 		if (!patch.tabId) return;
 		const key = this.key(patch.sessionId, patch.tabId);
 		if (!this.enabled && !this.observers.has(key)) return;
+		const hostCreation = this.hostCreations.get(key);
+		this.hostCreations.delete(key);
 		const meta = patch.observation;
 		if (!patch.tabId || patch.field !== 'logs' || !meta) return;
 		if (
@@ -260,7 +294,10 @@ export class NativeCurrentTurns {
 			initial &&
 			!replaced &&
 			meta.sequence === 1 &&
-			meta.emptyCreation === true &&
+			(meta.emptyCreation === true ||
+				(hostCreation?.durable === true &&
+					hostCreation.createdAt === meta.createdAt &&
+					hostCreation.provider === meta.provider)) &&
 			patch.snapshot &&
 			!meta.closed &&
 			!patch.upserts.length &&
@@ -292,6 +329,9 @@ export class NativeCurrentTurns {
 
 	/** Native lifecycle evidence invalidates old reads even when ledger capture fails. */
 	spawning(processSessionId: string): void {
+		for (const [key, binding] of this.hostCreations)
+			if (processSessionId === `${binding.agentId}-ai-${binding.tabId}`)
+				this.hostCreations.delete(key);
 		for (const state of this.states.values()) {
 			if (`${state.cursor.agentId}-ai-${state.cursor.tabId}` !== processSessionId) continue;
 			state.reason = 'native-spawn-unbound';
@@ -301,6 +341,9 @@ export class NativeCurrentTurns {
 
 	announce(processSessionId: string, providerSessionId: string): void {
 		if (!providerSessionId) return;
+		for (const [key, binding] of this.hostCreations)
+			if (processSessionId === `${binding.agentId}-ai-${binding.tabId}`)
+				this.hostCreations.delete(key);
 		for (const state of this.states.values()) {
 			if (`${state.cursor.agentId}-ai-${state.cursor.tabId}` !== processSessionId) continue;
 			if (state.cursor.agentSessionId === providerSessionId) continue;
@@ -316,6 +359,7 @@ export class NativeCurrentTurns {
 	begin(run: AgentRun, boundaryId?: string): void {
 		const native = nativeTabSession(run);
 		if (!native) return;
+		this.hostCreations.delete(this.key(native.agentId, native.tabId));
 		const state = this.states.get(this.key(native.agentId, native.tabId));
 		if (!state) return;
 		const boundary = boundaryId && state.rows.get(boundaryId);

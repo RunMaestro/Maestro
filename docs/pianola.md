@@ -387,7 +387,15 @@ baseline and no run or turn ID. This authorizes enrollment only. It cannot be
 composed as a current turn, classified, or used as an answer guard.
 
 The existing owner-authorized scope configuration and durable persistence
-consumer use that same census. The first question becomes eligible only after a
+consumer use that same census. Plugin create/delete uses the main-registered
+`plugin-session-lifecycle` adapter. Duplicate IDs fail before persistence or
+activation. A host-created plugin tab stages a bounded, memory-only birth
+binding before the store flush; only a successful flush can confirm it. Its
+first authenticated owner snapshot must still be ordered, empty and idle.
+A spawn or owner commit during the flush consumes the pending evidence and
+cannot be undone by the later flush acknowledgement. Failed writes, deletion,
+feature transitions and native lifecycle changes discard unused evidence.
+The first question becomes eligible only after a
 new submitted user row, matching native AgentRun capture and a complete turn.
 An intervening incomplete first submission keeps the enrollment barrier without
 reading or classifying partial history. Pause, scope changes and unknown native
