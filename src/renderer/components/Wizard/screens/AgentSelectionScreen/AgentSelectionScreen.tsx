@@ -71,8 +71,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
 	const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	// Mirrors `visibleTiles` (computed below) for the deferred callbacks that run
-	// after a transition timer, by which point a captured list may be stale.
+	// Mirrors `visibleTiles` (computed below) so filter changes retain provider identity.
 	const visibleTilesRef = useRef<AgentTile[]>(AGENT_TILES);
 
 	const refs = useMemo<AgentSelectionRefs>(
@@ -144,8 +143,9 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		return providerLocationLabel(remote?.name ?? remote?.host ?? 'remote');
 	}, [sshRemoteConfig?.enabled, sshRemoteConfig?.remoteId, sshRemotes]);
 
-	useAgentSelectionFocus({
+	const requestTileFocus = useAgentSelectionFocus({
 		tiles: visibleTiles,
+		viewMode,
 		isDetecting,
 		selectedAgent: state.selectedAgent,
 		detectedAgents,
@@ -169,18 +169,14 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			clearTransitionTimer();
 			setIsTransitioning(true);
 			transitionTimerRef.current = setTimeout(() => {
+				requestTileFocus(agentId);
 				setViewMode('grid');
 				setConfiguringAgentId(null);
 				setIsTransitioning(false);
 				transitionTimerRef.current = null;
-				const index = visibleTilesRef.current.findIndex((tile) => tile.id === agentId);
-				if (index !== -1) {
-					setFocusedTileIndex(index);
-					tileRefs.current[index]?.focus({ preventScroll: true });
-				}
 			}, 150);
 		},
-		[clearTransitionTimer]
+		[clearTransitionTimer, requestTileFocus]
 	);
 
 	const customPath = state.customPath ?? '';

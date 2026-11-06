@@ -19,11 +19,17 @@ import {
 	stripJsonEventLines,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
+import { GrokOutputParser } from '../../../shared/maestro-lib/parsers/grok-output-parser';
+import { GrokAcpEventAdapter } from '../../../shared/maestro-lib/grok/acp-events';
+import { resolveTurnOutcome } from '../../../shared/maestro-lib/streaming/turn-outcome';
+import { classifyRetryableError } from '../../../shared/retryClassification';
 
 // Access per-agent patterns via the registry (single public API)
 const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
 const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
 const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
+const GROK_ERROR_PATTERNS = getErrorPatterns('grok');
+const ANTIGRAVITY_ERROR_PATTERNS = getErrorPatterns('antigravity');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {
@@ -673,8 +679,6 @@ describe('error-patterns', () => {
 		});
 
 		describe('Grok-specific patterns', () => {
-			const GROK_ERROR_PATTERNS = getErrorPatterns('grok');
-
 			describe('session_not_found patterns', () => {
 				// Real stderr from `grok -p "hi" --resume <bad-uuid>
 				// --output-format streaming-json` (grok v0.2.93). Stdout carries
@@ -1075,6 +1079,8 @@ describe('error-patterns', () => {
 			registerErrorPatterns('claude-code', CLAUDE_ERROR_PATTERNS);
 			registerErrorPatterns('opencode', OPENCODE_ERROR_PATTERNS);
 			registerErrorPatterns('codex', CODEX_ERROR_PATTERNS);
+			registerErrorPatterns('grok', GROK_ERROR_PATTERNS);
+			registerErrorPatterns('antigravity', ANTIGRAVITY_ERROR_PATTERNS);
 		});
 
 		it('should register custom patterns', () => {
@@ -1116,6 +1122,8 @@ describe('error-patterns', () => {
 			registerErrorPatterns('claude-code', CLAUDE_ERROR_PATTERNS);
 			registerErrorPatterns('opencode', OPENCODE_ERROR_PATTERNS);
 			registerErrorPatterns('codex', CODEX_ERROR_PATTERNS);
+			registerErrorPatterns('grok', GROK_ERROR_PATTERNS);
+			registerErrorPatterns('antigravity', ANTIGRAVITY_ERROR_PATTERNS);
 		});
 
 		it('should clear all registered patterns', () => {
@@ -1273,4 +1281,223 @@ describe('stripJsonEventLines', () => {
 		expect(matchErrorPattern(patterns, event)).not.toBeNull();
 		expect(matchErrorPattern(patterns, stripJsonEventLines(event))).toBeNull();
 	});
+});
+
+describe('Grok canonical error boundary', () => {
+	const patterns = getErrorPatterns('grok');
+
+	// Synthetic native 0.x/1.x and ACP 0.11.4 envelopes, not live captures.
+	describe.each(['native', 'acp'] as const)('%s error messages', (route) => {
+		it.each([
+			['Session has expired', 'Grok credentials have expired.'],
+			['Refresh token expired', 'Grok credentials have expired.'],
+			['Invalid API key. Please run grok login', 'Grok API key is missing, invalid or expired.'],
+			['Set XAI_API_KEY to continue', 'Grok API key is missing, invalid or expired.'],
+			['Gateway authentication failed (401)', 'Grok gateway authentication failed.'],
+			['Proxy unauthorized request', 'Grok gateway authentication failed.'],
+			['Invalid credentials', 'Grok credentials are invalid or expired.'],
+			['Please run grok login --device-auth', 'Grok authentication is required.'],
+		])('keeps credential remedies neutral for %s', (message, expected) => {
+			const wire =
+				route === 'native'
+					? { type: 'error', message }
+					: { jsonrpc: '2.0', id: 7, error: { code: -32000, message } };
+			// The bank accepts extracted diagnostics, never a raw JSON envelope.
+			expect(matchErrorPattern(patterns, JSON.stringify(wire))).toBeNull();
+			const result =
+				route === 'native'
+					? new GrokOutputParser().detectErrorFromLine(JSON.stringify(wire))
+					: matchErrorPattern(patterns, wire.error!.message);
+			expect(result).toMatchObject({ type: 'auth_expired', message: expected, recoverable: true });
+			expect(result?.message).not.toMatch(/grok login|\/login|sign in|log in|re-authenticate/i);
+		});
+
+		it.each([
+			['API key auth is disabled', 'permission_denied', false],
+			['Model is not allowed by administrator', 'permission_denied', false],
+			['Policy denied the request', 'permission_denied', false],
+			['HTTP 403 Forbidden', 'permission_denied', false],
+			['PermissionRejected', 'permission_denied', false],
+			['HookDenied', 'permission_denied', false],
+			['Tool execution not allowed', 'permission_denied', false],
+			['Provider refusal', 'permission_denied', false],
+			['PermissionCancelled', 'unknown', false],
+			['MidTurnAbort', 'unknown', false],
+			['Request was canceled', 'unknown', false],
+			['removedFromQueue', 'unknown', false],
+			['Grok ACP transport: malformed frame', 'unknown', false],
+			['Grok ACP session: process lost', 'unknown', false],
+			['Grok closed without a successful terminal', 'unknown', false],
+			['Context window full', 'token_exhaustion', true],
+			['context_length_exceeded', 'token_exhaustion', true],
+			['Prompt is too long', 'token_exhaustion', true],
+			['Unknown model id', 'agent_crashed', true],
+			['Failed to restore session', 'session_not_found', true],
+		] as const)('prioritizes %s over incidental throttling', (message, type, recoverable) => {
+			const diagnostic = `${message}; HTTP 429 rate limit exceeded; request timed out`;
+			const wire =
+				route === 'native'
+					? { type: 'error', message: diagnostic }
+					: { jsonrpc: '2.0', id: 'prompt', error: { code: -32603, message: diagnostic } };
+			const result =
+				route === 'native'
+					? new GrokOutputParser().detectErrorFromLine(JSON.stringify(wire))
+					: matchErrorPattern(patterns, wire.error!.message);
+			expect(result).toMatchObject({ type, recoverable });
+			expect(result?.message).not.toMatch(/grok login|sign in|log in/i);
+		});
+	});
+
+	it.each(['Rate limit exceeded', 'Too many requests', 'Quota exhausted', 'Usage limit reached'])(
+		'leaves reset time unknown for %s',
+		(message) => {
+			const result = matchErrorPattern(patterns, message);
+			expect(result).toMatchObject({ type: 'rate_limited', recoverable: true });
+			expect(result?.message).toContain('Reset time is unknown unless reported separately.');
+		}
+	);
+
+	it.each(['Bad gateway', 'HTTP 503', 'ECONNRESET', 'fetch failed', 'Request timed out'])(
+		'classifies %s without claiming completed work',
+		(message) => {
+			expect(matchErrorPattern(patterns, message)).toMatchObject({
+				type: 'network_error',
+				recoverable: true,
+			});
+		}
+	);
+
+	it.each(['Context window: 200000 tokens', 'Maximum context: 256000', 'context_length: 1000'])(
+		'does not mistake context capacity for exhaustion: %s',
+		(message) => expect(matchErrorPattern(patterns, message)).toBeNull()
+	);
+
+	it.each([
+		'text',
+		'thought',
+		'tool_call',
+		'tool_call_update',
+		'end',
+		'acp-answer',
+		'acp-tool',
+		'acp-request',
+		'acp-result',
+	])('ignores quoted failure phrases inside %s JSON', (kind) => {
+		const quoted =
+			'Invalid API key; permission denied; rate limit exceeded; resets in 2h; try again later';
+		const update = {
+			sessionUpdate: kind === 'acp-tool' ? 'tool_call_update' : 'agent_message_chunk',
+			toolCallId: 'tool',
+			status: 'completed',
+			content:
+				kind === 'acp-tool'
+					? [{ type: 'content', content: { type: 'text', text: quoted } }]
+					: { type: 'text', text: quoted },
+		};
+		const wire =
+			kind === 'acp-result'
+				? { jsonrpc: '2.0', id: 1, result: { stopReason: 'end_turn', text: quoted } }
+				: kind.startsWith('acp-')
+					? {
+							jsonrpc: '2.0',
+							method: 'session/update',
+							...(kind === 'acp-request' ? { id: 1 } : {}),
+							params: { sessionId: 'session', update },
+						}
+					: {
+							type: kind,
+							data: quoted,
+							rawInput: { command: quoted },
+							rawOutput: quoted,
+							stopReason: 'end_turn',
+						};
+		const line = JSON.stringify(wire);
+		expect(matchErrorPattern(patterns, line)).toBeNull();
+		if (!kind.startsWith('acp-'))
+			expect(new GrokOutputParser().detectErrorFromLine(line)).toBeNull();
+	});
+
+	it.each([
+		'{"message":"Invalid API key',
+		'  ["rate limit exceeded"]',
+		'{PermissionRejected}',
+		'[Request cancelled',
+	])('never interprets a broken or array frame as stderr: %s', (line) => {
+		expect(matchErrorPattern(patterns, line)).toBeNull();
+		expect(new GrokOutputParser().detectErrorFromLine(line)).toBeNull();
+	});
+
+	it('retains only the plain diagnostic among valid and truncated JSONL', () => {
+		const lines = [
+			'{"type":"text","data":"PermissionRejected"}',
+			'  {"type":"tool_call_update","rawOutput":"Invalid API key',
+			'HTTP 503 Service unavailable',
+			'["Request cancelled"]',
+		].join('\r\n');
+		expect(matchErrorPattern(patterns, lines)).toMatchObject({ type: 'network_error' });
+		expect(stripJsonEventLines(lines, { dropMalformed: true })).toBe(
+			'HTTP 503 Service unavailable\r'
+		);
+		// Other providers retain the default treatment of non-object/invalid JSON.
+		expect(stripJsonEventLines(lines)).toContain('Invalid API key');
+		expect(stripJsonEventLines(lines)).toContain('["Request cancelled"]');
+	});
+
+	describe.each(['native', 'acp'] as const)('%s settlement at the retry boundary', (route) => {
+		it.each([
+			['cancelled', 'cancelled', 'interrupted'],
+			['refusal', 'refused', 'crashed'],
+			['max_tokens', 'incomplete', 'crashed'],
+			['error', 'failed', 'crashed'],
+		] as const)(
+			'preserves %s despite partial output and a clean exit',
+			(stopReason, status, outcome) => {
+				const parser = new GrokOutputParser();
+				const event =
+					route === 'native'
+						? parser.parseJsonObject({ type: 'end', stopReason, sessionId: 'session' })!
+						: new GrokAcpEventAdapter({ sessionId: 'session', turnId: 'turn' }).settle({
+								stopReason,
+							})[0];
+				expect(event.type).toBe('error');
+				expect(parser.isResultMessage(event)).toBe(false);
+				expect(event.terminal?.status).toBe(status);
+				const resolved = resolveTurnOutcome(
+					{
+						exitCode: 0,
+						signal: null,
+						interrupted: false,
+						stderrText: '',
+						stdoutText: '',
+						explicitError: undefined,
+						capturedAnswerText: 'Partial work',
+						resultMessageSeen: true,
+						terminal: event.terminal,
+					},
+					parser,
+					{ providerId: 'grok', sessionId: 'session' }
+				);
+				expect(resolved.outcome).toBe(outcome);
+				expect(resolved.terminal).toEqual(event.terminal);
+				expect(
+					classifyRetryableError({
+						agentId: 'grok',
+						type: 'rate_limited',
+						message: 'HTTP 429; try again later',
+						recoverable: true,
+						terminal: resolved.terminal,
+					})
+				).toBeNull();
+			}
+		);
+	});
+
+	it.each(['claude-code', 'codex', 'antigravity'])(
+		'preserves %s auth and throttle classification',
+		(agentId) => {
+			const legacy = getErrorPatterns(agentId);
+			expect(matchErrorPattern(legacy, 'Authentication failed')?.type).toBe('auth_expired');
+			expect(matchErrorPattern(legacy, 'Rate limit exceeded')?.type).toBe('rate_limited');
+		}
+	);
 });

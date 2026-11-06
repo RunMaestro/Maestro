@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { AGENT_CAPABILITIES } from '../../../../../shared/maestro-lib/providers/capabilities';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
 
 const mockUpdateSessionWith = vi.fn();
@@ -26,38 +27,41 @@ describe('ToolbarControls', () => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 	});
 
-	function renderToolbar(overrides = {}) {
-		return render(
-			<ToolbarControls
-				session={createInputAreaSession()}
-				theme={inputAreaTheme}
-				isTerminalMode={false}
-				isReadOnlyMode={false}
-				canAttachImages
-				hasReadOnlyCapability
-				hasStandardCapability
-				enterToSend
-				setEnterToSend={vi.fn()}
-				setStagedImages={vi.fn()}
-				onOpenPromptComposer={vi.fn()}
-				shortcuts={{ openPromptComposer: { keys: ['Meta', 'p'], description: '' } as any }}
-				showFlashNotification={vi.fn()}
-				tabSaveToHistory={false}
-				onToggleTabSaveToHistory={vi.fn()}
-				tabShowThinking="off"
-				onToggleTabShowThinking={vi.fn()}
-				supportsThinking
-				availableModels={[]}
-				availableEfforts={[]}
-				modelMenuOpen={false}
-				setModelMenuOpen={vi.fn()}
-				modelMenuRef={{ current: null }}
-				effortMenuOpen={false}
-				setEffortMenuOpen={vi.fn()}
-				effortMenuRef={{ current: null }}
-				{...overrides}
-			/>
-		);
+	function renderToolbar(overrides: Partial<React.ComponentProps<typeof ToolbarControls>> = {}) {
+		const props: React.ComponentProps<typeof ToolbarControls> = {
+			session: createInputAreaSession(),
+			theme: inputAreaTheme,
+			isTerminalMode: false,
+			canAttachImages: true,
+			hasReadOnlyCapability: true,
+			hasStandardCapability: true,
+			enterToSend: true,
+			setEnterToSend: vi.fn(),
+			setStagedImages: vi.fn(),
+			onOpenPromptComposer: vi.fn(),
+			shortcuts: { openPromptComposer: { keys: ['Meta', 'p'], description: '' } },
+			showFlashNotification: vi.fn(),
+			tabSaveToHistory: false,
+			onToggleTabSaveToHistory: vi.fn(),
+			tabShowThinking: 'off',
+			onToggleTabShowThinking: vi.fn(),
+			supportsThinking: true,
+			availableModels: [],
+			availableEfforts: [],
+			modelMenuOpen: false,
+			setModelMenuOpen: vi.fn(),
+			modelMenuRef: { current: null },
+			effortMenuOpen: false,
+			setEffortMenuOpen: vi.fn(),
+			effortMenuRef: { current: null },
+			...overrides,
+		};
+		const view = render(<ToolbarControls {...props} />);
+		return {
+			...view,
+			rerenderToolbar: (next: Partial<typeof props>) =>
+				view.rerender(<ToolbarControls {...props} {...next} />),
+		};
 	}
 
 	it('renders terminal cwd in terminal mode', () => {
@@ -124,6 +128,152 @@ describe('ToolbarControls', () => {
 		expect(screen.queryByTitle(/Open Prompt Composer/)).not.toBeInTheDocument();
 		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
 		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+	});
+
+	describe('Grok permission interactions', () => {
+		it.each(['desktop', 'phone'] as const)(
+			'offers Standard for Grok on %s and dispatches standard for only the selected tab',
+			(layout) => {
+				// A local Grok tab reaches the ACP route through Standard.
+				expect(AGENT_CAPABILITIES.grok.supportsStandardPermissionMode).toBe(true);
+				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
+				const session = createInputAreaSession({ id: 'grok-selected', toolType: 'grok' });
+				const otherTab = session.aiTabs[0];
+				const selectedTab = {
+					...otherTab,
+					id: 'grok-tab',
+					permissionMode: 'full' as const,
+					readOnlyMode: false,
+				};
+				session.aiTabs = [otherTab, selectedTab];
+				session.activeTabId = selectedTab.id;
+				renderToolbar({
+					session,
+					hasReadOnlyCapability: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
+				});
+				if (layout === 'phone') {
+					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+					fireEvent.click(screen.getByTestId('composer-options-access'));
+					fireEvent.click(screen.getByRole('button', { name: 'Standard' }));
+				} else {
+					// The desktop pill cycles full -> standard.
+					fireEvent.click(screen.getByRole('button', { name: 'Full Access' }));
+				}
+				expect(mockUpdateSessionWith).toHaveBeenCalledTimes(1);
+				const updated = mockUpdateSessionWith.mock.calls[0][1](session);
+				expect(updated.aiTabs).toEqual([
+					otherTab,
+					{ ...selectedTab, permissionMode: 'standard', readOnlyMode: false },
+				]);
+				expect(updated.aiTabs[0]).toBe(otherTab);
+			}
+		);
+
+		it.each([
+			['desktop', 'full'],
+			['desktop', 'standard'],
+			['phone', 'full'],
+			['phone', 'standard'],
+		] as const)(
+			'still normalizes a stale Standard value for a Grok build without the capability on %s from %s',
+			(layout, mode) => {
+				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
+				const session = createInputAreaSession({ id: 'grok-selected', toolType: 'grok' });
+				const otherTab = session.aiTabs[0];
+				const selectedTab = {
+					...otherTab,
+					id: 'grok-tab',
+					permissionMode: mode,
+					readOnlyMode: false,
+				};
+				session.aiTabs = [otherTab, selectedTab];
+				session.activeTabId = selectedTab.id;
+				// The capability is forced off here: this pins the normalization for any agent
+				// that lacks it, not Grok's current declaration (offered above).
+				const { rerenderToolbar } = renderToolbar({
+					session,
+					hasReadOnlyCapability: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					hasStandardCapability: false,
+				});
+				if (layout === 'phone') {
+					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+					expect(screen.getByTestId('composer-options-access')).toHaveTextContent('Full Access');
+					fireEvent.click(screen.getByTestId('composer-options-access'));
+				}
+				// A stale Standard value is normalized for display without a render-time write.
+				expect(screen.getByRole('button', { name: 'Full Access' })).toBeInTheDocument();
+				expect(mockUpdateSessionWith).not.toHaveBeenCalled();
+				let current = session;
+				for (const [index, nextMode] of (['readonly', 'full'] as const).entries()) {
+					expect(screen.queryByRole('button', { name: /Standard|ACP/ })).not.toBeInTheDocument();
+					const label =
+						layout === 'phone'
+							? nextMode === 'readonly'
+								? 'Read-Only'
+								: 'Full Access'
+							: nextMode === 'readonly'
+								? 'Full Access'
+								: 'Read-Only';
+					fireEvent.click(screen.getByRole('button', { name: label }));
+					expect(mockUpdateSessionWith).toHaveBeenCalledTimes(index + 1);
+					expect(mockUpdateSessionWith).toHaveBeenNthCalledWith(
+						index + 1,
+						session.id,
+						expect.any(Function)
+					);
+					const updater = mockUpdateSessionWith.mock.calls[index][1];
+					const updated = updater(current);
+					expect(updated).toEqual({
+						...current,
+						aiTabs: [
+							otherTab,
+							{ ...selectedTab, permissionMode: nextMode, readOnlyMode: nextMode === 'readonly' },
+						],
+					});
+					expect(updated.aiTabs[0]).toBe(otherTab);
+					current = updated;
+					rerenderToolbar({ session: current });
+					if (layout === 'phone') {
+						expect(screen.getByTestId('composer-options-access')).toHaveTextContent(
+							nextMode === 'readonly' ? 'Read-Only' : 'Full Access'
+						);
+					} else {
+						expect(
+							screen.getByRole('button', {
+								name: nextMode === 'readonly' ? 'Read-Only' : 'Full Access',
+							})
+						).toBeInTheDocument();
+					}
+				}
+				expect(screen.queryByRole('button', { name: /Standard|ACP/ })).not.toBeInTheDocument();
+				expect(selectedTab).toEqual({
+					...otherTab,
+					id: 'grok-tab',
+					permissionMode: mode,
+					readOnlyMode: false,
+				});
+			}
+		);
+
+		it.each(['desktop', 'phone'] as const)(
+			'hides unavailable Grok access controls on %s',
+			(layout) => {
+				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
+				renderToolbar({
+					session: createInputAreaSession({ toolType: 'grok' }),
+					hasReadOnlyCapability: false,
+					hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
+				});
+				if (layout === 'phone')
+					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+				expect(screen.queryByTestId('composer-options-access')).not.toBeInTheDocument();
+				expect(
+					screen.queryByRole('button', { name: /Full Access|Read-Only|Standard|ACP/ })
+				).not.toBeInTheDocument();
+				expect(mockUpdateSessionWith).not.toHaveBeenCalled();
+			}
+		);
 	});
 
 	describe('phone layout', () => {

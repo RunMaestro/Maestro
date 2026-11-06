@@ -145,7 +145,12 @@ describe('runProcess against a real process', () => {
 		expect(result.executionStarted).toBe(true);
 		expect(result.stdout).toBe('plain text\nsecond line\n');
 		expect(result.providerSessionId).toBeNull();
-		expect(result.usage).toBeNull();
+		// No usage arrived: the run carries an explicit unknown receipt, never a zero claim.
+		expect(result.usage).toMatchObject({
+			inputTokens: 0,
+			outputTokens: 0,
+			accounting: { source: 'none', completeness: 'unknown', cost: { status: 'unknown' } },
+		});
 	});
 
 	it('gives the process no stdin to wait on when the prompt is on the command line', async () => {

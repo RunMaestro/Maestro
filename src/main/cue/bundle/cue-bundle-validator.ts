@@ -17,6 +17,9 @@ import * as yaml from 'js-yaml';
 import { compareVersions } from '../../../shared/pathUtils';
 import {
 	CUE_BUNDLE_LOCAL_PATH,
+	CUE_BUNDLE_GROK_RESOURCE_ROOTS,
+	CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+	CUE_BUNDLE_GROK_RESOURCES_VERSION,
 	CUE_BUNDLE_MANIFEST_PATH,
 	CUE_BUNDLE_VERSION,
 	type CueBundleAgentSettings,
@@ -27,6 +30,7 @@ import { isUnsafeZipEntryName, readZipArchive } from '../../utils/zip-archive';
 import { validateCueConfigDocument } from '../config/cue-config-validator';
 import {
 	describeSecretProblem,
+	isValidSecretName,
 	resolveSecrets,
 	type SecretProblem,
 	type SecretSource,
@@ -369,6 +373,232 @@ export function validateCueBundleArchive(
 					'local-invalid',
 					'local.json must hold a workspaces and an agents object',
 					manifest.local
+				);
+			}
+		}
+	}
+
+	// ─── Workspaces' Grok resources ──────────────────────────────────────────
+	for (const ws of manifest.workspaces) {
+		if (!isRecord(ws)) continue;
+		const key = String(ws.key);
+		const prefix = `workspaces/${key}/`;
+		// Grok's account home never travels, whether or not the workspace declares
+		// Grok resources: under `.grok/` only selected skill folders may appear.
+		for (const name of entries.keys()) {
+			if (!name.startsWith(`${prefix}.grok/`)) continue;
+			if (name.startsWith(`${prefix}.grok/skills/`)) continue;
+			error(
+				'grok-account-file',
+				'Grok account or unpinned project files (auth.json, config.toml, rules, agents) never travel in a bundle',
+				name
+			);
+		}
+		if (ws.grok !== undefined) validateGrokResources(ws.grok, key, prefix);
+	}
+
+	function validateGrokResources(grok: unknown, key: string, prefix: string): void {
+		const label = `Workspace "${key}" Grok resources`;
+		if (!isRecord(grok)) {
+			error('grok-resources-invalid', `${label} are not an object`, CUE_BUNDLE_MANIFEST_PATH);
+			return;
+		}
+		if (grok.format !== CUE_BUNDLE_GROK_RESOURCES_FORMAT) {
+			error(
+				'grok-resources-unknown-format',
+				`${label} use format "${String(grok.format)}"; this engine reads only "${CUE_BUNDLE_GROK_RESOURCES_FORMAT}"`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		if (grok.version !== CUE_BUNDLE_GROK_RESOURCES_VERSION) {
+			error(
+				'grok-resources-unsupported-version',
+				`${label} are version ${String(grok.version)}; this engine reads version ${CUE_BUNDLE_GROK_RESOURCES_VERSION}`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		if (typeof grok.schemaSource !== 'string' || !grok.schemaSource) {
+			error('grok-resources-invalid', `${label} name no schemaSource`, CUE_BUNDLE_MANIFEST_PATH);
+		}
+		if (grok.verification !== 'unverified' && grok.verification !== 'verified') {
+			error(
+				'grok-resources-invalid',
+				`${label} have verification "${String(grok.verification)}"; expected unverified or verified`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+		} else if (grok.verification === 'unverified') {
+			warn(
+				'grok-resources-unverified',
+				`${label}: copying them does not prove Grok discovers them; native discovery is not qualified`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+		}
+
+		if (!Array.isArray(grok.resources)) {
+			error('grok-resources-invalid', `${label} have no resources list`, CUE_BUNDLE_MANIFEST_PATH);
+		} else {
+			for (const resource of grok.resources) validateGrokResource(resource, label, prefix);
+		}
+
+		if (grok.mcpServers !== undefined) {
+			if (!Array.isArray(grok.mcpServers)) {
+				error(
+					'grok-resources-invalid',
+					`${label}: mcpServers is not a list`,
+					CUE_BUNDLE_MANIFEST_PATH
+				);
+			} else {
+				for (const server of grok.mcpServers) validateGrokMcpServer(server, label);
+			}
+		}
+
+		if (grok.unsupported !== undefined) {
+			if (!Array.isArray(grok.unsupported)) {
+				error(
+					'grok-resources-invalid',
+					`${label}: unsupported is not a list`,
+					CUE_BUNDLE_MANIFEST_PATH
+				);
+				return;
+			}
+			for (const item of grok.unsupported) {
+				if (
+					!isRecord(item) ||
+					typeof item.path !== 'string' ||
+					typeof item.code !== 'string' ||
+					typeof item.reason !== 'string' ||
+					!item.reason
+				) {
+					error(
+						'grok-resources-invalid',
+						`${label}: an unsupported entry lacks a path, code or reason`,
+						CUE_BUNDLE_MANIFEST_PATH
+					);
+					continue;
+				}
+				// Never silent: the user sees each resource that stayed behind.
+				warn('grok-resource-unsupported', `${item.path}: ${item.reason}`, CUE_BUNDLE_MANIFEST_PATH);
+			}
+		}
+	}
+
+	function validateGrokResource(resource: unknown, label: string, prefix: string): void {
+		if (
+			!isRecord(resource) ||
+			typeof resource.path !== 'string' ||
+			typeof resource.root !== 'string'
+		) {
+			error(
+				'grok-resources-invalid',
+				`${label}: a resource lacks a root or path`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		const { path: resourcePath, root } = resource;
+		const roots: readonly string[] | undefined = Object.prototype.hasOwnProperty.call(
+			CUE_BUNDLE_GROK_RESOURCE_ROOTS,
+			String(resource.kind)
+		)
+			? CUE_BUNDLE_GROK_RESOURCE_ROOTS[resource.kind as keyof typeof CUE_BUNDLE_GROK_RESOURCE_ROOTS]
+			: undefined;
+		if (!roots) {
+			// A kind a newer exporter knows: shown, not imported.
+			warn(
+				'grok-resource-unsupported',
+				`${resourcePath}: Grok resource kind "${String(resource.kind)}" is not supported by this engine and is not imported`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		if (resource.trust !== 'enabled' && resource.trust !== 'disabled') {
+			error(
+				'grok-resources-invalid',
+				`${label}: ${resourcePath} has trust "${String(resource.trust)}"; expected enabled or disabled`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+		}
+		if (isUnsafeZipEntryName(resourcePath) || resourcePath.includes('\\')) {
+			error(
+				'unsafe-path',
+				`${label}: resource path is not workspace-relative: ${resourcePath}`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		const segments = resourcePath.split('/');
+		const insideRoot =
+			roots.includes(root) &&
+			(resource.kind === 'instruction'
+				? resourcePath === root
+				: resourcePath.startsWith(`${root}/`) &&
+					segments.length === root.split('/').length + 1 &&
+					!segments.some((s) => s === '' || s === '.' || s === '..'));
+		if (!insideRoot) {
+			error(
+				'grok-resource-outside-root',
+				`${label}: ${resourcePath} is not a ${String(resource.kind)} under a selected Grok root (${roots.join(', ')})`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		const archivePath = `${prefix}${resourcePath}`;
+		const present =
+			resource.kind === 'instruction'
+				? entries.has(archivePath)
+				: [...entries.keys()].some((name) => name.startsWith(`${archivePath}/`));
+		if (!present) {
+			error('file-missing', `${label}: ${resourcePath} is missing from the archive`, archivePath);
+		}
+	}
+
+	function validateGrokMcpServer(server: unknown, label: string): void {
+		if (!isRecord(server) || typeof server.name !== 'string' || !server.name) {
+			error(
+				'grok-resources-invalid',
+				`${label}: an MCP server has no name`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		const extra = Object.keys(server).filter((k) => !['name', 'enabled', 'secrets'].includes(k));
+		if (extra.length > 0) {
+			// Only names travel: a command, env, header or token field could hold a value.
+			error(
+				'grok-mcp-credential-field',
+				`${label}: MCP server "${server.name}" carries ${extra.sort().join(', ')}; only name, enabled and secret names may travel`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+		}
+		if (typeof server.enabled !== 'boolean') {
+			error(
+				'grok-resources-invalid',
+				`${label}: MCP server "${server.name}" has no enabled state`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+		}
+		if (!Array.isArray(server.secrets)) {
+			error(
+				'grok-resources-invalid',
+				`${label}: MCP server "${server.name}" has no secrets list`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+			return;
+		}
+		for (const name of server.secrets) {
+			if (typeof name !== 'string' || !isValidSecretName(name)) {
+				error(
+					'grok-mcp-secret-invalid',
+					`${label}: MCP server "${server.name}" lists a secret that is not a valid secret name`,
+					CUE_BUNDLE_MANIFEST_PATH
+				);
+			} else if (!secrets.has(name)) {
+				error(
+					'secret-not-declared',
+					`${label}: MCP server "${server.name}" requires ${name}, which is not in requirements.secrets`,
+					CUE_BUNDLE_MANIFEST_PATH
 				);
 			}
 		}

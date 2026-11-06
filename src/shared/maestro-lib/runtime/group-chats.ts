@@ -100,7 +100,7 @@ export interface RuntimeGroupChats {
 	roundsInFlight(): number;
 	/** Stop every round and every Auto Run a chat started. For shutdown, and for a lost data directory. */
 	stopAll(): Promise<void>;
-	/** Wait for the store's queued writes. Call before the lock is released. */
+	/** Wait for queued usage updates and store writes. Call before the lock is released. */
 	drain(): Promise<void>;
 	/** The chat store, for the consult path's and a test's reads. */
 	readonly store: GroupChatStore;
@@ -295,15 +295,41 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 	const chatIdOf = (processId: string): string | undefined =>
 		parseModeratorSessionId(processId) ?? parseParticipantSessionId(processId)?.groupChatId;
 
+	/**
+	 * The provider each running participant turn was spawned as, so its end reads the turn's tails
+	 * with that provider's own error patterns (A11-F07). The moderator keeps the shared default.
+	 */
+	const participantProviders = new Map<string, string>();
+	const runner = background.groupChatRunner({
+		chatIdOf,
+		onActivity: (processId) => engine.noteActivity(processId),
+		onOutput: (processId, chunk) => engine.liveOutput(processId, chunk),
+		onSessionId: (processId, sessionId) => engine.sessionAnnounced(processId, sessionId),
+		onUsage: (processId, usage) => engine.usageReported(processId, usage),
+		onEnd: (processId, completed) => {
+			const providerId = participantProviders.get(processId);
+			participantProviders.delete(processId);
+			return engine.turnEnded(turnEndOf(processId, completed, providerId), launcher);
+		},
+	});
 	const launcher: GroupChatLauncher = {
-		runner: background.groupChatRunner({
-			chatIdOf,
-			onActivity: (processId) => engine.noteActivity(processId),
-			onOutput: (processId, chunk) => engine.liveOutput(processId, chunk),
-			onSessionId: (processId, sessionId) => engine.sessionAnnounced(processId, sessionId),
-			onUsage: (processId, usage) => engine.usageReported(processId, usage),
-			onEnd: (processId, completed) => engine.turnEnded(turnEndOf(processId, completed), launcher),
-		}),
+		runner: {
+			start: async (spawn) => {
+				if (parseParticipantSessionId(spawn.processId) !== null) {
+					participantProviders.set(spawn.processId, spawn.providerId);
+				}
+				try {
+					const started = await runner.start(spawn);
+					// A refusal reports no end, so nothing else would clear the entry.
+					if (!started.success) participantProviders.delete(spawn.processId);
+					return started;
+				} catch (err) {
+					participantProviders.delete(spawn.processId);
+					throw err;
+				}
+			},
+			stop: (processId) => runner.stop(processId),
+		},
 		resolveAgent: (providerId) => background.resolveAgent(providerId),
 	};
 
@@ -630,7 +656,11 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 				});
 			}
 		},
-		drain: () => store.drain(),
+		drain: async () => {
+			// Pending provider lookups can enqueue participant writes, so settle them first.
+			await engine.drainUsageUpdates();
+			await store.drain();
+		},
 		store,
 	};
 }

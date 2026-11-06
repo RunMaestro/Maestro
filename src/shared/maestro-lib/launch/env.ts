@@ -594,6 +594,14 @@ function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 	};
 }
 
+/**
+ * The permission modes a launch can ask for, as the argument builder names
+ * them (`BuildAgentArgsOptions.permissionMode`): `readonly` is the provider's
+ * plan or read-only mode, `standard` its own prompting, `full` its bypass of
+ * every approval. Ordered by width: `readonly` < `standard` < `full`.
+ */
+export type LaunchPermissionMode = 'readonly' | 'standard' | 'full';
+
 // ─── Server mode ─────────────────────────────────────────────────────────────
 
 /** Set to `1` to run Cue with the server-mode environment allowlist. */

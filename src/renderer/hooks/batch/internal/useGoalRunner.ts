@@ -612,9 +612,16 @@ export function useGoalRunner({
 					totalCost += result.usageStats.totalCostUsd || 0;
 				}
 
+				// A failed or cancelled Grok turn finished nothing: whatever it streamed
+				// before the failure is a preamble, not a report. Its markers must not
+				// complete, deadlock or advance the goal, so it is read as reporting
+				// nothing (progress carries forward below). The iteration still counts,
+				// so repeated failures stall the run rather than loop it.
+				const isFailedGrokTurn = session.toolType === 'grok' && !result.success;
+
 				// Parse the agent's self-reported markers. A missing progress report
 				// carries the previous iteration's RAW value forward (0 on the first).
-				const markers = parseGoalMarkers(result.response ?? '');
+				const markers = parseGoalMarkers(isFailedGrokTurn ? '' : (result.response ?? ''));
 				const reportedProgress =
 					markers.progress ?? (history.length > 0 ? history[history.length - 1].progress : 0);
 
@@ -670,7 +677,9 @@ export function useGoalRunner({
 					: `Iteration ${iteration} failed`;
 				const rawFullResponse = result.success
 					? result.response || synopsis
-					: result.error || result.response || synopsis;
+					: isFailedGrokTurn
+						? result.error || synopsis
+						: result.error || result.response || synopsis;
 				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
 				const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
@@ -770,8 +779,10 @@ export function useGoalRunner({
 								// Mirror the primary iteration's effective config: the run-scoped
 								// model/effort override wins over the session default so the handoff
 								// synopsis spawns under the same configuration as the goal run itself.
-								customModel: config.model ?? session.customModel,
-								customEffort: config.effort ?? session.customEffort,
+								// Same truthiness test as `runOverrides`, so an empty run value falls
+								// back to the session's model exactly as the iteration's spawn did.
+								customModel: config.model || session.customModel,
+								customEffort: config.effort || session.customEffort,
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,

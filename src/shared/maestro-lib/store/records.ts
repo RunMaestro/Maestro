@@ -17,6 +17,8 @@
  *     not know is still the user's agent, and must still be listed.
  */
 
+import type { NativeSessionBinding, ProviderTabSession } from '../agents/providerSwap';
+
 /** Keys a record carries that this build does not name. Kept, never dropped. */
 export interface UnknownFields {
 	[key: string]: unknown;
@@ -36,6 +38,16 @@ export interface AITabRecord extends UnknownFields {
 	id: string;
 	/** Provider session id; null for a tab that has not sent a turn yet. */
 	agentSessionId?: string | null;
+	/**
+	 * Observed native ownership. Absent legacy scope is unknown; readers must
+	 * validate persisted values before resume, never infer scope from an ID.
+	 */
+	nativeSessionBinding?: NativeSessionBinding;
+	/**
+	 * Parked provider slots. Keep unknown provider keys and fields; legacy slots
+	 * may omit fields, so this declaration does not assert validated ownership.
+	 */
+	providerSessions?: Partial<Record<string, Partial<ProviderTabSession> & UnknownFields>>;
 	/** User-assigned name; null or absent means "show the session id octet". */
 	name?: string | null;
 	starred?: boolean;

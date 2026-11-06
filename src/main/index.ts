@@ -2808,6 +2808,7 @@ app
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId, unattended),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => pluginToolRunIdentity.hasReceiptOverflowed(token),
+			getRunEvidence: (token) => pluginToolRunIdentity.getEvidence(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
 			cliScriptPath: resolveMaestroCliScriptPath,
 			audit: (agentId, resumed) =>

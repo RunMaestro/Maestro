@@ -4,7 +4,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { Modal } from '../../../../renderer/components/ui/Modal';
+import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
+import {
+	AgentLogo,
+	AGENT_LOGO_FALLBACK_TESTID,
+} from '../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo';
+import {
+	PICKABLE_AGENT_IDS,
+	AGENT_AUTOSELECT_ORDER,
+	getAgentDisplayName,
+	getAgentPickerMeta,
+} from '../../../../shared/agentMetadata';
+import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import { AgentPickerGrid } from '../../../../renderer/components/NewInstanceModal/AgentPickerGrid';
 import type { Theme, AgentConfig } from '../../../../renderer/types';
 import type {
@@ -384,5 +398,161 @@ describe('AgentPickerGrid', () => {
 		const options = screen.getAllByRole('option');
 		expect(options[0]).toHaveAttribute('aria-selected', 'true');
 		expect(options[1]).toHaveAttribute('aria-selected', 'false');
+	});
+
+	describe('Grok provider picker contract', () => {
+		it('keeps alphabetical rows, the preferred selection and the real Grok mark', () => {
+			const props = createDefaultProps({
+				visibleAgents: PICKABLE_AGENT_IDS.map((id) =>
+					createAgent({ id, name: getAgentDisplayName(id) })
+				),
+				selectedAgent: AGENT_AUTOSELECT_ORDER[0],
+			});
+			render(<AgentPickerGrid {...props} />);
+			const rows = within(
+				screen.getByRole('listbox', { name: 'Agent provider selection' })
+			).getAllByRole('option');
+			const names = rows.map((row) => row.querySelector('.font-medium')?.textContent);
+			expect(names).toEqual([
+				'Antigravity CLI',
+				'Claude Code',
+				'Codex',
+				'Copilot-CLI',
+				'Factory Droid',
+				'Grok CLI',
+				'Hermes',
+				'Oh My Pi',
+				'OpenCode',
+				'Pi',
+				'Qwen3 Coder',
+			]);
+			expect(screen.getByRole('option', { name: /Claude Code/ })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(screen.getByRole('option', { name: /Grok CLI\s*Beta Available/ })).toHaveAttribute(
+				'aria-selected',
+				'false'
+			);
+			expect(rows.every((row) => row.tabIndex === 0)).toBe(true);
+			expect(props.onAgentSelect).not.toHaveBeenCalled();
+
+			const { container } = render(
+				<AgentLogo
+					agentId="grok"
+					supported
+					detected
+					brandColor={getAgentPickerMeta('grok')?.brandColor}
+					theme={props.theme}
+				/>
+			);
+			expect(container.querySelector('svg')).toBeInTheDocument();
+			expect(container.querySelectorAll('path')).toHaveLength(3);
+			expect(screen.queryByTestId(AGENT_LOGO_FALLBACK_TESTID)).not.toBeInTheDocument();
+		});
+
+		it.each([true, false])(
+			'forwards custom binary and detection actions when installed=%s',
+			(available) => {
+				const props = createDefaultProps({
+					visibleAgents: [
+						createAgent({
+							id: 'grok',
+							name: 'Grok CLI',
+							binaryName: 'grok',
+							available,
+							path: available ? '/synthetic/bin/grok' : undefined,
+							capabilities: getAgentCapabilities('grok'),
+						}),
+					],
+					selectedAgent: 'grok',
+					expandedAgent: 'grok',
+					customAgentPaths: { grok: '/synthetic/custom/grok' },
+				});
+				render(<AgentPickerGrid {...props} />);
+				const row = screen.getByRole('option', { name: /Grok CLI/ });
+				expect(within(row).getByText(available ? 'Available' : 'Not Found')).toBeInTheDocument();
+				expect(within(row).getByText('Beta')).toBeInTheDocument();
+				const path = screen.getByRole('textbox', { name: 'Path' });
+				expect(path).toHaveValue('/synthetic/custom/grok');
+				fireEvent.change(path, { target: { value: '/synthetic/alternate/grok' } });
+				expect(props.onCustomPathChange).toHaveBeenCalledExactlyOnceWith(
+					'grok',
+					'/synthetic/alternate/grok'
+				);
+				fireEvent.click(within(row).getByRole('button', { name: 'Refresh detection' }));
+				expect(props.onRefreshAgent).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(props.onAgentSelect).not.toHaveBeenCalled();
+				expect(props.onAgentExpand).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['Enter', ' '])(
+			'activates Grok with %j without enabling a disabled model capability',
+			(key) => {
+				const props = createDefaultProps({
+					visibleAgents: [
+						createAgent({
+							id: 'grok',
+							name: 'Grok CLI',
+							capabilities: { ...getAgentCapabilities('grok'), supportsModelSelection: false },
+						}),
+					],
+					onLoadDynamicOptionsForAgent: vi.fn(),
+				});
+				render(<AgentPickerGrid {...props} />);
+				const row = screen.getByRole('option', { name: /Grok CLI/ });
+				row.focus();
+				expect(row).toHaveFocus();
+				fireEvent.keyDown(row, { key });
+				expect(props.onAgentSelect).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(props.onAgentExpand).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(props.onTransferPendingSshConfig).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(props.onLoadDynamicOptionsForAgent).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(props.onLoadModelsForAgent).not.toHaveBeenCalled();
+				fireEvent.keyDown(within(row).getByRole('button', { name: 'Refresh detection' }), { key });
+				expect(props.onAgentSelect).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it('restores the opener focus when the Grok picker modal closes', async () => {
+			const props = createDefaultProps({
+				visibleAgents: [createAgent({ id: 'grok', name: 'Grok CLI' })],
+			});
+			const onClose = vi.fn();
+			const { rerender } = render(
+				<LayerStackProvider>
+					<button>New agent</button>
+				</LayerStackProvider>
+			);
+			const opener = screen.getByRole('button', { name: 'New agent' });
+			opener.focus();
+			rerender(
+				<LayerStackProvider>
+					<button>New agent</button>
+					<Modal
+						theme={props.theme}
+						title="Create New Agent"
+						priority={MODAL_PRIORITIES.NEW_INSTANCE}
+						onClose={onClose}
+					>
+						<AgentPickerGrid {...props} />
+					</Modal>
+				</LayerStackProvider>
+			);
+			await waitFor(() =>
+				expect(screen.getByRole('dialog', { name: 'Create New Agent' })).toHaveFocus()
+			);
+			const row = screen.getByRole('option', { name: /Grok CLI/ });
+			row.focus();
+			fireEvent.keyDown(row, { key: 'Escape' });
+			expect(onClose).toHaveBeenCalledOnce();
+			rerender(
+				<LayerStackProvider>
+					<button>New agent</button>
+				</LayerStackProvider>
+			);
+			await waitFor(() => expect(opener).toHaveFocus());
+		});
 	});
 });

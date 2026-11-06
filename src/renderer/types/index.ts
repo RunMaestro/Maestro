@@ -279,9 +279,12 @@ export interface LogEntry {
 		};
 		/**
 		 * For tool entries produced inside a subagent: the `toolCallId` of the
-		 * parent tool call that spawned it (claude-code's Task tool). The
-		 * transcript nests these badges under the matching parent entry; entries
-		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 * entry to nest under, either the parent tool call that spawned it
+		 * (claude-code's Task tool) or, for a Grok child reported by session
+		 * lineage, the `Subagent` entry keyed by the child session
+		 * (`subagentToolCallId`), never a provider tool-call id. The transcript
+		 * nests these badges under the matching parent entry; entries whose parent
+		 * is not in the log render flat.
 		 */
 		parentToolUseId?: string;
 		hiddenProgress?: {
@@ -524,6 +527,9 @@ export interface QueuedItem {
 	command?: string; // Slash command (e.g., '/commit')
 	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
 	commandDescription?: string; // Command description for display
+	// Opaque renderer receipt. Its evidence lives only in queuedPrompt's WeakMap;
+	// restored/cloned items must be requeued, never rebound to current settings.
+	commandScope?: { readonly provider: ToolType };
 	// Display metadata
 	// Last-known tab label, snapshotted when the item was queued. This is a
 	// FALLBACK only: the queue UI resolves the live tab name first (see
@@ -806,6 +812,8 @@ export interface AITab {
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
 	agentSessionId: string | null; // Agent session UUID (null for new tabs)
+	/** Native ownership captured by the host; absent on legacy tabs means unknown. */
+	nativeSessionBinding?: ProviderTabSession['nativeSessionBinding'];
 	name: string | null; // User-defined name (null = show UUID octet)
 	starred: boolean; // Whether session is starred (for pill display)
 	logs: LogEntry[]; // Conversation history
@@ -899,8 +907,8 @@ export interface AITab {
 	pendingMentionHandoff?: MentionHandoff;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
-	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
-	 * `customModel` / `customEffort` as they always have, so this map never holds
+	 * using. The live provider's values stay in `agentSessionId` / `nativeSessionBinding` /
+	 * `usageStats` / `customModel` / `customEffort`, so this map never holds
 	 * an entry for `session.toolType`. Changing the agent's provider swaps the
 	 * live values with this map's entry rather than clearing them.
 	 */
@@ -1324,7 +1332,7 @@ export interface Session {
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
 	providerTranslationKnowledgeDirectory?: string;
 	providerTranslationTabInventory?: Array<
-		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions'>
+		Pick<AITab, 'id' | 'agentSessionId' | 'nativeSessionBinding' | 'providerSessions'>
 	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */

@@ -13,6 +13,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import type { SessionMessagesResult } from '../../../main/agents/session-storage';
+import type { NativeSessionBinding } from '../../../shared/maestro-lib/agents/providerSwap';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
@@ -229,6 +231,117 @@ describe('Sessions Preload API', () => {
 					undefined
 				);
 				expect(result).toBe('/path/to/session.json');
+			});
+		});
+
+		describe('Grok history scope forwarding', () => {
+			it.each([undefined, 'ssh-remote-1'])(
+				'forwards owner, host %s and pagination through every read API',
+				async (sshRemoteId) => {
+					const ownerAgentId = 'maestro-grok-owner';
+					const listOptions = { ownerAgentId, cursor: 'page-2', limit: 20 };
+					const readOptions = { ownerAgentId, offset: 3, limit: 10, includeNativeRecords: true };
+					mockInvoke.mockResolvedValue(null);
+
+					await api.list('grok', '/project', sshRemoteId, ownerAgentId);
+					await api.listPaginated('grok', '/project', listOptions, sshRemoteId);
+					await api.read('grok', '/project', 'native-collision', readOptions, sshRemoteId);
+					await api.search('grok', '/project', 'needle', 'all', sshRemoteId, ownerAgentId);
+					await api.getPath('grok', '/project', 'native-collision', sshRemoteId, ownerAgentId);
+
+					expect(mockInvoke.mock.calls).toEqual([
+						['agentSessions:list', 'grok', '/project', sshRemoteId, ownerAgentId],
+						['agentSessions:listPaginated', 'grok', '/project', listOptions, sshRemoteId],
+						[
+							'agentSessions:read',
+							'grok',
+							'/project',
+							'native-collision',
+							readOptions,
+							sshRemoteId,
+						],
+						[
+							'agentSessions:search',
+							'grok',
+							'/project',
+							'needle',
+							'all',
+							sshRemoteId,
+							ownerAgentId,
+						],
+						[
+							'agentSessions:getPath',
+							'grok',
+							'/project',
+							'native-collision',
+							sshRemoteId,
+							ownerAgentId,
+						],
+					]);
+				}
+			);
+
+			it.each([
+				['local', 'available'],
+				['ssh', 'available'],
+				['local', 'partial'],
+				['ssh', 'partial'],
+				['local', 'unavailable'],
+				['ssh', 'unavailable'],
+			] as const)(
+				'forwards typed retained ownership and preserves %s %s receipts',
+				async (kind, status) => {
+					const binding: NativeSessionBinding = {
+						version: 1,
+						state: 'bound',
+						provider: 'grok',
+						nativeSessionId: 'native-collision',
+						accountRef: 'grok:observed-account',
+						host: { kind, identity: `${kind}-installation` },
+						cwd: '/canonical/project',
+					};
+					const result: SessionMessagesResult = {
+						messages: [],
+						total: 0,
+						hasMore: false,
+						nativeSessionBinding: status === 'unavailable' ? undefined : binding,
+						source: { provider: 'grok', status, reason: 'fixture-provenance' },
+					};
+					const options: NonNullable<Parameters<typeof api.read>[3]> = {
+						ownerAgentId: 'grok-owner',
+						nativeSessionBinding: binding,
+						includeNativeRecords: true,
+						offset: 3,
+						limit: 10,
+					};
+					const sshRemoteId = kind === 'ssh' ? 'ssh-config-alias' : undefined;
+					mockInvoke.mockResolvedValue(result);
+
+					await expect(
+						api.read('grok', binding.cwd, binding.nativeSessionId, options, sshRemoteId)
+					).resolves.toBe(result);
+					expect(mockInvoke).toHaveBeenCalledExactlyOnceWith(
+						'agentSessions:read',
+						'grok',
+						binding.cwd,
+						binding.nativeSessionId,
+						options,
+						sshRemoteId
+					);
+				}
+			);
+
+			it('propagates scope rejection without retrying an unscoped read', async () => {
+				const error = new Error('Selected SSH remote is unavailable');
+				mockInvoke.mockRejectedValueOnce(error);
+
+				await expect(
+					api.read('grok', '/project', 'native-id', {
+						ownerAgentId: 'missing-owner',
+						includeNativeRecords: true,
+					})
+				).rejects.toBe(error);
+				expect(mockInvoke).toHaveBeenCalledTimes(1);
 			});
 		});
 

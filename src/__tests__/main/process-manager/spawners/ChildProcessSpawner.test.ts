@@ -5,7 +5,7 @@
  * whether output should be processed as JSON lines or raw text.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import * as nodeFs from 'fs';
 import * as nodeOs from 'os';
@@ -148,6 +148,9 @@ import {
 	CODEX_STARTUP_TIMEOUT_MS,
 	HEADLESS_IDLE_PROFILE,
 } from '../../../../shared/plugins/headless-agent-timeouts';
+import * as turnRunner from '../../../../shared/maestro-lib/run/start-turn';
+import * as agentDefinitions from '../../../../main/agents/definitions';
+import * as sentry from '../../../../main/utils/sentry';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -616,6 +619,135 @@ describe('ChildProcessSpawner', () => {
 			expect(mockChildProcess.stdin.write.mock.calls[0][0]).toBe('exec claude');
 		});
 
+		describe('remote prompt-file owner handoff', () => {
+			const artifact: NonNullable<ProcessConfig['promptArtifact']> = {
+				owner: 'remote',
+				sshRemoteId: 'synthetic-grok-remote',
+				path: '/tmp/maestro-prompt-private-10e1.json',
+				content: 'private-body-10e1: 雪\nsecond line',
+				encoding: 'utf8',
+				mode: 0o600,
+				flag: 'wx',
+				cleanup: 'turn',
+			};
+			const config = createBaseConfig({
+				toolType: 'grok',
+				command: '/usr/bin/ssh',
+				args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+				sshRemoteId: artifact.sshRemoteId,
+				sshStdinScript: 'private-script-10e1\nexec /remote/bin/grok\n',
+				// Direct callers may bypass the SSH builder's display redaction.
+				sshRemoteCommand: `grok --prompt-file ${artifact.path} ${artifact.content}`,
+				promptArtifact: artifact,
+			});
+
+			it.each(['', artifact.content])(
+				'binds one remote owner without local materialization (%j)',
+				(content) => {
+					const { processes, spawner } = createTestContext();
+					const start = vi.spyOn(turnRunner, 'startTurn');
+					try {
+						const result = spawner.spawn({ ...config, promptArtifact: { ...artifact, content } });
+						expect(result.success).toBe(true);
+						expect(mockSpawn).toHaveBeenCalledTimes(1);
+						expect(start).toHaveBeenCalledTimes(1);
+						const spec = start.mock.calls[0][0];
+						expect(spec).not.toHaveProperty('promptArtifact');
+						expect(spec.args).toEqual(config.args);
+						const proc = processes.get(config.sessionId)!;
+						expect(processes.size).toBe(1);
+						expect(proc.sshRemotePromptArtifactPath).toBe(artifact.path);
+						expect(proc.sshRemotePidFile).toMatch(
+							/^\/tmp\/maestro-prompt-owner-[0-9a-f-]{36}\.pid$/
+						);
+						const script = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+						expect(script).toBe(spec.stdin);
+						expect(script).toContain(`readonly _maestro_prompt_path='${artifact.path}'`);
+						expect(script).toContain(
+							`readonly _maestro_prompt_pid_file='${proc.sshRemotePidFile}'`
+						);
+						expect(script.match(/readonly _maestro_prompt_pid_file=/g)).toHaveLength(1);
+						expect(script).not.toContain('maestro-agent-');
+						expect(script).toContain(config.sshStdinScript);
+						expect(mockChildProcess.stdin.end).toHaveBeenCalledTimes(1);
+						expect(proc.args).toEqual(config.args);
+						expect(proc.sshRemoteCommand).toBeUndefined();
+						expect(proc).not.toHaveProperty('promptArtifact');
+						expect(proc).not.toHaveProperty('sshStdinScript');
+						expect(proc.tempFiles).toBeUndefined();
+						expect(saveImageToTempFile).not.toHaveBeenCalled();
+						mockChildProcess.stderr.emit(
+							'error',
+							new Error(`${artifact.path} ${artifact.content}`)
+						);
+						expect(logger.error).toHaveBeenCalledWith(
+							'[ProcessManager] stderr error',
+							'ProcessManager',
+							{ sessionId: config.sessionId, error: 'Prompt-file process stderr failed.' }
+						);
+						const diagnostic = JSON.stringify([
+							result,
+							proc.command,
+							proc.args,
+							proc.maestroEnvVars,
+							proc.sshRemoteCommand,
+							vi.mocked(logger.debug).mock.calls,
+							vi.mocked(logger.info).mock.calls,
+							vi.mocked(logger.warn).mock.calls,
+							vi.mocked(logger.error).mock.calls,
+						]);
+						for (const privateText of [artifact.path, 'private-body-10e1', 'private-script-10e1']) {
+							expect(diagnostic).not.toContain(privateText);
+						}
+					} finally {
+						start.mockRestore();
+					}
+				}
+			);
+
+			it('uses the same private owner when SSH closes nonzero', async () => {
+				const { processes, spawner } = createTestContext();
+				spawner.spawn(config);
+				const proc = processes.get(config.sessionId)!;
+				childHandlers(mockChildProcess).get('close')?.(255, null);
+				await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+				const cleanup = mockChildProcess.stdin.end.mock.calls[0][0] as string;
+				expect(cleanup).toContain(`f='${proc.sshRemotePidFile}'; a='${artifact.path}'`);
+				expect(cleanup).toContain('kill -TERM');
+				expect(cleanup).not.toContain('private-body-10e1');
+				expect(cleanup).not.toContain('private-script-10e1');
+				expect(mockSpawn.mock.calls[1][1]).toContain('user@host');
+				childHandlers(mockChildProcess).get('exit')?.(0);
+			});
+
+			it('refuses a remote artifact bound to another host without spawning or exposing it', () => {
+				const { processes, spawner } = createTestContext();
+				expect(spawner.spawn({ ...config, sshRemoteId: 'different-remote' })).toEqual({
+					pid: -1,
+					success: false,
+					error: 'Prompt-file delivery does not match its host plan.',
+				});
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(processes.size).toBe(0);
+			});
+
+			it('preserves ordinary SSH command display and the legacy PID namespace', () => {
+				const { processes, spawner } = createTestContext();
+				spawner.spawn({
+					...config,
+					toolType: 'codex',
+					promptArtifact: undefined,
+					sshStdinScript: 'exec codex exec --json\n',
+					sshRemoteCommand: 'codex exec --json',
+				});
+				const proc = processes.get(config.sessionId)!;
+				expect(proc.sshRemoteCommand).toBe('codex exec --json');
+				expect(proc.sshRemotePromptArtifactPath).toBeUndefined();
+				expect(proc.sshRemotePidFile).toMatch(/^\/tmp\/maestro-agent-[0-9a-f-]{36}\.pid$/);
+				expect(mockChildProcess.stdin.write.mock.calls[0][0]).not.toContain('_maestro_prompt_path');
+			});
+		});
+
 		// 2026-10-15: the local ssh of a Codex turn exited non-zero while Codex
 		// kept working on the remote for two more minutes. The turn settled, the
 		// synopsis resumed the thread under it, and Codex refused ("already has an
@@ -674,6 +806,198 @@ describe('ChildProcessSpawner', () => {
 				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 				expect(mockSpawn).toHaveBeenCalledTimes(1);
 			});
+		});
+	});
+
+	describe('local prompt-file sink', () => {
+		const artifact: NonNullable<ProcessConfig['promptArtifact']> = {
+			owner: 'local',
+			path: nodePath.join(nodeOs.tmpdir(), 'maestro-prompt-synthetic-10et.json'),
+			content: JSON.stringify([{ type: 'text', text: '雪\nprivate-turn-10et' }]),
+			encoding: 'utf8',
+			mode: 0o600,
+			flag: 'wx',
+			cleanup: 'turn',
+		};
+		const config = createBaseConfig({
+			toolType: 'grok',
+			command: nodePath.join(nodeOs.tmpdir(), 'synthetic-grok.exe'),
+			args: ['--output-format', 'streaming-json', '--prompt-file', artifact.path],
+			promptArtifact: artifact,
+		});
+
+		beforeEach(() => {
+			// The production Grok file route remains inactive; opt in only this fixture.
+			const definition = getAgentDefinition('grok')!;
+			vi.spyOn(agentDefinitions, 'getAgentDefinition').mockReturnValue({
+				...definition,
+				promptFileArgs: (file) => ['--prompt-file', file],
+			});
+			vi.spyOn(nodeFs, 'openSync').mockReturnValue(41);
+			vi.spyOn(nodeFs, 'writeFileSync').mockImplementation(() => {});
+			vi.spyOn(nodeFs, 'fstatSync').mockReturnValue({ dev: 1, ino: 41 } as nodeFs.Stats);
+			vi.spyOn(nodeFs, 'lstatSync').mockReturnValue({ dev: 1, ino: 41 } as nodeFs.Stats);
+			vi.spyOn(nodeFs, 'unlinkSync').mockImplementation(() => {});
+			vi.spyOn(nodeFs, 'closeSync').mockImplementation(() => {});
+			vi.spyOn(sentry, 'captureException').mockResolvedValue();
+		});
+		afterEach(() => {
+			vi.restoreAllMocks();
+			vi.mocked(isWindows).mockReturnValue(false);
+		});
+
+		it.each([
+			{ name: 'empty', windows: false, content: '' },
+			{ name: 'Unicode', windows: false, content: artifact.content },
+			{
+				name: 'large Windows input',
+				windows: true,
+				content: JSON.stringify([{ type: 'text', text: '雪\n'.repeat(50000) }]),
+			},
+		])(
+			'delivers $name exactly once despite competing legacy options',
+			async ({ windows, content }) => {
+				vi.mocked(isWindows).mockReturnValue(windows);
+				const { spawner, processes } = createTestContext();
+				const imageArgs = vi.fn(() => ['--legacy-image']);
+				const imagePromptBuilder = vi.fn(() => 'legacy-image-prefix');
+				const promptArgs = vi.fn(() => ['--single']);
+				expect(
+					spawner.spawn({
+						...config,
+						promptArtifact: { ...artifact, content },
+						prompt: 'obsolete raw prompt',
+						images: ['data:image/png;base64,c3ludGhldGlj'],
+						imageArgs,
+						imagePromptBuilder,
+						promptArgs,
+						sendPromptViaStdin: true,
+						sendPromptViaStdinRaw: true,
+					})
+				).toMatchObject({ success: true });
+				expect(nodeFs.openSync).toHaveBeenCalledExactlyOnceWith(artifact.path, 'wx', 0o600);
+				expect(nodeFs.writeFileSync).toHaveBeenCalledExactlyOnceWith(41, content, 'utf8');
+				expect(mockSpawn).toHaveBeenCalledExactlyOnceWith(
+					config.command,
+					config.args,
+					expect.objectContaining({ shell: false })
+				);
+				for (const legacy of [
+					saveImageToTempFile,
+					buildStreamJsonMessage,
+					imageArgs,
+					imagePromptBuilder,
+					promptArgs,
+				]) {
+					expect(legacy).not.toHaveBeenCalled();
+				}
+				expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+				expect(mockChildProcess.stdin.end).toHaveBeenCalledTimes(1);
+				expect(processes.get(config.sessionId)).toMatchObject({ isBatchMode: true, args: [] });
+				expect(processes.get(config.sessionId)?.tempFiles).toBeUndefined();
+				expect(nodeFs.unlinkSync).not.toHaveBeenCalled();
+				childHandlers(mockChildProcess).get('close')?.(0, null);
+				await vi.waitFor(() => expect(processes.size).toBe(0));
+				expect(nodeFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(artifact.path);
+				expect(nodeFs.closeSync).toHaveBeenCalledExactlyOnceWith(41);
+			}
+		);
+
+		it('cleans an owned artifact on synchronous spawn failure using a fixed private diagnostic', () => {
+			const { spawner, processes } = createTestContext();
+			mockSpawn.mockImplementationOnce(() => {
+				throw new Error(`${artifact.path}: ${artifact.content}`);
+			});
+			expect(spawner.spawn(config)).toEqual({
+				pid: -1,
+				success: false,
+				error: 'Prompt-file process could not be started.',
+			});
+			expect(nodeFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(artifact.path);
+			expect(nodeFs.closeSync).toHaveBeenCalledExactlyOnceWith(41);
+			expect(processes.size).toBe(0);
+			expect(sentry.captureException).toHaveBeenCalledExactlyOnceWith(
+				new Error('Prompt-file process could not be started.')
+			);
+			expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(artifact.path);
+			expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain('private-turn-10et');
+		});
+
+		it.each(['error', 'cancelled'] as const)(
+			'cleans a started reader after %s and reports one outcome',
+			async (outcome) => {
+				const { spawner, processes, emitter } = createTestContext();
+				const exit = vi.fn();
+				const data = vi.fn();
+				const agentError = vi.fn();
+				emitter.on('exit', exit);
+				emitter.on('data', data);
+				emitter.on('agent-error', agentError);
+				spawner.spawn(config);
+				const handlers = childHandlers(mockChildProcess);
+				if (outcome === 'error') {
+					// An asynchronous spawn failure never acquired a native process.
+					mockChildProcess.pid = undefined;
+					handlers.get('error')?.(new Error(`${artifact.path}: ${artifact.content}`));
+				} else processes.get(config.sessionId)!.interrupted = true;
+				handlers.get('close')?.(
+					outcome === 'error' ? -1 : 130,
+					outcome === 'cancelled' ? 'SIGINT' : null
+				);
+				await vi.waitFor(() => expect(exit).toHaveBeenCalledTimes(1));
+				expect(processes.size).toBe(0);
+				expect(nodeFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(artifact.path);
+				expect(nodeFs.closeSync).toHaveBeenCalledExactlyOnceWith(41);
+				const diagnostics = JSON.stringify([
+					exit.mock.calls,
+					data.mock.calls,
+					agentError.mock.calls,
+					vi.mocked(logger.error).mock.calls,
+				]);
+				expect(diagnostics).not.toContain(artifact.path);
+				expect(diagnostics).not.toContain('private-turn-10et');
+			}
+		);
+
+		it('cleans a superseded reader without touching the successor file or exit', async () => {
+			const { spawner, processes, emitter } = createTestContext();
+			const exit = vi.fn();
+			emitter.on('exit', exit);
+			spawner.spawn(config);
+			const oldChild = mockChildProcess;
+			const nextPath = nodePath.join(nodeOs.tmpdir(), 'maestro-prompt-successor-10et.json');
+			vi.mocked(nodeFs.openSync).mockReturnValueOnce(42);
+			spawner.spawn({
+				...config,
+				args: [...config.args.slice(0, -1), nextPath],
+				promptArtifact: { ...artifact, path: nextPath },
+			});
+			const successor = processes.get(config.sessionId);
+			childHandlers(oldChild).get('close')?.(143, 'SIGTERM');
+			await vi.waitFor(() => expect(nodeFs.closeSync).toHaveBeenCalledExactlyOnceWith(41));
+			expect(nodeFs.unlinkSync).toHaveBeenCalledExactlyOnceWith(artifact.path);
+			expect(processes.get(config.sessionId)).toBe(successor);
+			expect(exit).not.toHaveBeenCalled();
+			childHandlers(mockChildProcess).get('close')?.(0, null);
+			await vi.waitFor(() => expect(exit).toHaveBeenCalledTimes(1));
+			expect(nodeFs.unlinkSync).toHaveBeenNthCalledWith(2, nextPath);
+			expect(nodeFs.closeSync).toHaveBeenNthCalledWith(2, 42);
+		});
+
+		it.each([
+			{ sshRemoteId: 'remote-10et' },
+			{ sshStdinScript: 'exec remote-grok' },
+			{ args: [...config.args, '--single', 'second-source'] },
+		])('refuses local artifacts crossing host/argv boundaries (%j)', (overrides) => {
+			const { spawner, processes } = createTestContext();
+			expect(spawner.spawn({ ...config, ...overrides })).toEqual({
+				pid: -1,
+				success: false,
+				error: 'Prompt-file delivery does not match its host plan.',
+			});
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(nodeFs.openSync).not.toHaveBeenCalled();
+			expect(processes.size).toBe(0);
 		});
 	});
 

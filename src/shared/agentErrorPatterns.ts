@@ -1355,52 +1355,69 @@ const OMP_ERROR_PATTERNS: AgentErrorPatterns = {
 const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
-			pattern: /not authenticated|authentication failed/i,
-			message: 'Not authenticated. Please run "grok login" to authenticate.',
+			pattern: /(?:gateway|proxy).*(?:authentication (?:failed|required)|unauthorized|\b401\b)/i,
+			message: 'Grok gateway authentication failed.',
+			recoverable: true,
+		},
+		{
+			pattern:
+				/(?:invalid|missing|expired)\s+api[-_ ]key|api[-_ ]key.*(?:invalid|expired)|set XAI_API_KEY/i,
+			message: 'Grok API key is missing, invalid or expired.',
+			recoverable: true,
+		},
+		{
+			pattern:
+				/(?:session|access token|refresh token|credentials?) (?:has |have )?expired|re-authentication required/i,
+			message: 'Grok credentials have expired.',
+			recoverable: true,
+		},
+		{
+			pattern: /not authenticated|authentication (?:failed|required)|auth required/i,
+			message: 'Grok authentication is required or failed.',
 			recoverable: true,
 		},
 		{
 			// Prefer multi-token auth phrases over bare "401" / lone "unauthorized"
 			// (those false-positive on non-auth failures and wrong recovery UX).
 			pattern:
-				/unauthorized.*(?:request|access)|(?:request|access).*unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
-			message: 'Unauthorized. Please re-authenticate with "grok login".',
+				/unauthorized.*(?:request|access)|(?:request|access).*unauthorized|unauthorized\s*\(401\)|http\s*401|status(?:\s+code)?\s*401/i,
+			message: 'Grok rejected the configured credentials.',
 			recoverable: true,
 		},
 		{
 			pattern: /invalid.*credential|credential.*(invalid|expired)/i,
-			message: 'Invalid or expired credentials. Please run "grok login" to re-authenticate.',
+			message: 'Grok credentials are invalid or expired.',
 			recoverable: true,
 		},
 		{
 			pattern: /grok\s+login/i,
-			message: 'Login required. Please run "grok login" to authenticate.',
+			message: 'Grok authentication is required.',
 			recoverable: true,
 		},
 	],
 
 	rate_limited: [
 		{
-			pattern: /rate limit/i,
-			message: 'Rate limit exceeded. Please wait and try again.',
+			pattern: /rate[ _-]limit/i,
+			message: 'Grok rate limit exceeded. Reset time is unknown unless reported separately.',
 			recoverable: true,
 		},
 		{
 			// Multi-token only; bare \b429\b is too broad for exit/stderr banks.
 			pattern: /too many requests|http\s*429|status(?:\s+code)?\s*429/i,
-			message: 'Too many requests. Please wait and try again.',
+			message: 'Grok rejected too many requests. Reset time is unknown unless reported separately.',
 			recoverable: true,
 		},
 		{
-			pattern: /quota.*exceeded/i,
-			message: 'API quota exceeded. Resume when quota resets.',
+			pattern: /quota.*(?:exceeded|exhausted)|usage[ _-]limit.*(?:reached|exceeded)/i,
+			message: 'Grok quota exceeded. Reset time is unknown unless reported separately.',
 			recoverable: true,
 		},
 	],
 
 	token_exhaustion: [
 		{
-			pattern: /context window/i,
+			pattern: /context (?:window|length|limit).*(?:exceeded|exhausted|full|too (?:long|large))/i,
 			message: 'Context window exceeded. Please start a new session.',
 			recoverable: true,
 		},
@@ -1410,7 +1427,8 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			pattern: /maximum context/i,
+			pattern:
+				/maximum context.*(?:reached|exceeded)|\bcontext_length_exceeded\b|^\s*context_length\s*$/i,
 			message: 'Maximum context reached. Start a new session to continue.',
 			recoverable: true,
 		},
@@ -1422,6 +1440,12 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 
 	network_error: [
+		{
+			pattern:
+				/(?:bad gateway|gateway timeout|service unavailable|http\s*50[234]|status(?:\s+code)?\s*50[234])/i,
+			message: 'Grok upstream service is unavailable. Turn completion may be uncertain.',
+			recoverable: true,
+		},
 		{
 			pattern: /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/,
 			message: 'Network error. Please check your connection.',
@@ -1444,7 +1468,7 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 		{
 			pattern: /timed?\s?out/i,
-			message: 'Request timed out. Please try again.',
+			message: 'Grok request timed out. Turn completion may be uncertain.',
 			recoverable: true,
 		},
 	],
@@ -1458,6 +1482,36 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 			message:
 				'Invalid model. Run "grok models" to see available models and check the model setting in configuration.',
 			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern:
+				/api[-_ ]key auth.*(?:disabled|not allowed)|model.*(?:not allowed|not permitted|denied|disabled|blocked)|(?:policy|administrator).*(?:denied|disabled|blocked)|http\s*403|status(?:\s+code)?\s*403/i,
+			message: 'Grok account or model policy denied this request.',
+			recoverable: false,
+		},
+		{
+			pattern:
+				/permission (?:denied|rejected|required)|PermissionRejected|HookDenied|tool.*not allowed|\brefusal\b/i,
+			message: 'Grok refused the request or a required tool permission.',
+			recoverable: false,
+		},
+	],
+
+	unknown: [
+		{
+			pattern:
+				/\b(?:turn|request|prompt) (?:was )?cancelled\b|\b(?:turn|request|prompt) (?:was )?canceled\b|PermissionCancelled|MidTurnAbort|removedFromQueue|stopReason:\s*cancelled/i,
+			message: 'Grok turn was cancelled. Work may be incomplete.',
+			recoverable: false,
+		},
+		{
+			pattern:
+				/Grok ACP transport:|Grok ACP session:|Grok.*(?:malformed|incomplete|without completing|without a successful terminal)/i,
+			message: 'Grok did not complete the turn. Its transport or response is incomplete.',
+			recoverable: false,
 		},
 	],
 
@@ -1724,7 +1778,28 @@ export function matchErrorPattern(
 		return null;
 	}
 
-	for (const errorType of ERROR_TYPES_BY_HIT_FREQUENCY) {
+	if (patterns === GROK_ERROR_PATTERNS) {
+		// The native/ACP adapter owns structured envelopes. Never scan an answer,
+		// tool result or malformed JSON frame as if its contents were stderr.
+		line = stripJsonEventLines(line, { dropMalformed: true });
+	}
+
+	// Explicit Grok stops and permanent failures win over incidental throttle or
+	// timeout words. Other providers retain their established matching order.
+	const errorTypes: readonly AgentErrorType[] =
+		patterns === GROK_ERROR_PATTERNS
+			? [
+					'unknown',
+					'permission_denied',
+					'auth_expired',
+					'token_exhaustion',
+					'agent_crashed',
+					'session_not_found',
+					'rate_limited',
+					'network_error',
+				]
+			: ERROR_TYPES_BY_HIT_FREQUENCY;
+	for (const errorType of errorTypes) {
 		const typePatterns = patterns[errorType];
 		if (!typePatterns) continue;
 
@@ -1772,12 +1847,18 @@ export function matchErrorPattern(
  * after quoting the word "token" and later the word "limit" was reported as
  * "Context length exceeded" at 25% context.
  */
-export function stripJsonEventLines(text: string): string {
+export function stripJsonEventLines(
+	text: string,
+	options?: {
+		/** Also drop JSON-like array/object lines, including incomplete frames. */ dropMalformed?: boolean;
+	}
+): string {
 	if (!text) return '';
 	return text
 		.split('\n')
 		.filter((line) => {
 			const trimmed = line.trim();
+			if (options?.dropMalformed && /^[\[{]/.test(trimmed)) return false;
 			if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return true;
 			try {
 				JSON.parse(trimmed);

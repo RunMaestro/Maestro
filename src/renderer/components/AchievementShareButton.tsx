@@ -406,8 +406,14 @@ export function AchievementShareButton({
 		const totalTokens = globalStats
 			? globalStats.totalInputTokens + globalStats.totalOutputTokens
 			: 0;
-		const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '-';
-		const sessionsValue = globalStats?.totalSessions?.toLocaleString() || '-';
+		// The wait above gives up after GLOBAL_STATS_WAIT_MS; a scan still running
+		// then is a floor, drawn with "+" so the shared card never passes it off as
+		// the finished total. A payload with no `isComplete` is the legacy shape.
+		const floorMark = globalStats?.isComplete === false ? '+' : '';
+		const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) + floorMark : '-';
+		const sessionsValue = globalStats?.totalSessions
+			? globalStats.totalSessions.toLocaleString() + floorMark
+			: '-';
 		// Same formatter as the two Auto Run stats beside it, so a figure past a
 		// day reads "14d 11h 13m" rather than piling up as "347h 13m". The three
 		// share a row and get compared against each other at a glance.

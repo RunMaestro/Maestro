@@ -15,7 +15,10 @@ import {
 	type AgentLaunchInput,
 	type AgentLaunchPlan,
 } from '../../../../shared/maestro-lib/launch/launch-plan';
-import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
+import {
+	getAgentDefinition,
+	GROK_COMPAT_ISOLATION_ENV_VARS,
+} from '../../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
@@ -171,5 +174,97 @@ describe('surfaces that never read secret files', () => {
 		expect(p.target.kind).toBe('remote');
 		expect(JSON.stringify(p)).not.toContain(SENTINEL);
 		expect(p.secrets?.notDeliveredToRemote).toEqual(['GITHUB_TOKEN']);
+	});
+});
+
+// Grok declared secrets and account homes in generated plans (not a native
+// process smoke; live remote and native evidence is not claimed here).
+describe('Grok secrets and account homes (generated plans)', () => {
+	const grok = { ...getAgentDefinition('grok'), capabilities: getAgentCapabilities('grok') };
+	const sshRemote = {
+		id: 'remote-1',
+		name: 'Build Box',
+		host: 'build.example.com',
+		port: 22,
+		username: 'dev',
+		privateKeyPath: '',
+		enabled: true,
+	} as SshRemoteConfig;
+	const grokInput = (overrides: Partial<AgentLaunchInput> = {}) =>
+		input({ agent: grok, command: '/opt/grok', args: [], prompt: 'review it', ...overrides });
+
+	it.each(['cue', 'cli'] as const)(
+		'%s: a declared secret reaches the env only, never envVars, argv or the prompt file',
+		(surface) => {
+			const p = plan(
+				grokInput({
+					surface,
+					isServerMode: surface === 'cue',
+					requiredSecrets: ['GITHUB_TOKEN'],
+					sessionCustomEnvVars: { GROK_HOME: '/accounts/a' },
+				})
+			);
+			expect(p.env?.GITHUB_TOKEN).toBe(SENTINEL);
+			expect(p.env?.GROK_HOME).toBe('/accounts/a');
+			expect(p.envVars).toEqual({ ...GROK_COMPAT_ISOLATION_ENV_VARS, GROK_HOME: '/accounts/a' });
+			const { env: _env, ...shown } = p;
+			expect(JSON.stringify(shown)).not.toContain(SENTINEL);
+			if (p.prompt.via !== 'file') throw new Error('expected Grok prompt file');
+			expect(p.prompt.artifact.content).not.toContain(SENTINEL);
+		}
+	);
+
+	it('an SSH remote gets neither the secret value nor a local account home', () => {
+		process.env.GROK_HOME = '/local/shell/home';
+		const p = plan(
+			grokInput({
+				requiredSecrets: ['GITHUB_TOKEN'],
+				sessionCustomEnvVars: { GROK_HOME: '/remote/accounts/b' },
+				sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				sshStore: { getSshRemotes: () => [sshRemote] },
+				promptFileDestination: {
+					owner: 'remote',
+					path: '/remote/tmp/p.json',
+					sshRemoteId: 'remote-1',
+				},
+			})
+		);
+		expect(p.target.kind).toBe('remote');
+		expect(p.env).toBeUndefined();
+		expect(p.envVars).toEqual({
+			...GROK_COMPAT_ISOLATION_ENV_VARS,
+			GROK_HOME: '/remote/accounts/b',
+		});
+		expect(p.secrets?.notDeliveredToRemote).toEqual(['GITHUB_TOKEN']);
+		expect(JSON.stringify(p)).not.toContain(SENTINEL);
+		expect(JSON.stringify(p)).not.toContain('/local/shell/home');
+	});
+
+	it('two accounts plan separate homes with nothing copied between them', () => {
+		const a = plan(
+			grokInput({ sessionCustomEnvVars: { GROK_HOME: '/accounts/a', XAI_API_KEY: 'key-a' } })
+		);
+		const b = plan(grokInput({ sessionCustomEnvVars: { GROK_HOME: '/accounts/b' } }));
+		expect(a.env?.GROK_HOME).toBe('/accounts/a');
+		expect(b.env?.GROK_HOME).toBe('/accounts/b');
+		expect(JSON.stringify(b)).not.toContain('key-a');
+		expect(JSON.stringify(b)).not.toContain('/accounts/a');
+	});
+
+	it('a refused prompt reports no secret, prompt text or path', () => {
+		const result = buildAgentLaunchPlan(
+			grokInput({
+				surface: 'cli',
+				requiredSecrets: ['GITHUB_TOKEN'],
+				prompt: 'private-\uDC00-text',
+				promptFileDestination: { owner: 'local', path: path.join(tmp, 'p.json') },
+			})
+		);
+		expect(result).toMatchObject({ ok: false, reason: 'prompt-delivery-refused' });
+		const shown = JSON.stringify(result);
+		expect(shown).not.toContain(SENTINEL);
+		expect(shown).not.toContain('private-');
+		expect(shown).not.toContain(tmp);
+		expect(fs.existsSync(path.join(tmp, 'p.json'))).toBe(false);
 	});
 });

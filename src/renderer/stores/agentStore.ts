@@ -71,6 +71,14 @@ import {
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
+import { admitGrokNativeCommand, getGrokSlashCommandRefusal } from '../slashCommands';
+import type { GrokAcpNativeCommandIntent } from '../../shared/maestro-lib/grok/acp-turn';
+import {
+	getQueuedCommandScopeRefusal,
+	getQueuedCommandSelectionRefusal,
+	getQueuedCommandSpawnSelection,
+} from '../services/queuedPrompt';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 
 // ============================================================================
 // Store Types
@@ -421,7 +429,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
 				: false;
 			updateSessionWith(sessionId, (s) =>
-				applyQueuedItemAbort(s, item, ownerRunning ? undefined : ownerTabId)
+				applyQueuedItemAbort(
+					item.type === 'command' && (session.toolType === 'grok' || item.commandScope)
+						? applyQueuedItemDispatchFailure(s, { ...item, paused: true }, { collision: true })
+						: s,
+					item,
+					ownerRunning ? undefined : ownerTabId
+				)
 			);
 			return false;
 		}
@@ -438,6 +452,83 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
+
+		// External/remote producers can bypass the composer and queue raw slash
+		// text as a message. Refuse before naming, mentions, retries or spawning.
+		// A command item that is none of the user's prompts is a native Grok command: it runs
+		// only as the intent admitted here, against this tab's current catalog. Raw slash
+		// text in a message item has no intent and is refused as before.
+		let grokNativeCommand: GrokAcpNativeCommandIntent | undefined;
+		const slashInput =
+			item.type === 'command'
+				? [item.command, item.commandArgs].filter(Boolean).join(' ')
+				: item.text?.trim();
+		if (session.toolType === 'grok' && slashInput?.startsWith('/')) {
+			const isMaestroPrompt =
+				item.type === 'command' &&
+				[
+					...deps.customAICommands,
+					...deps.speckitCommands,
+					...deps.openspecCommands,
+					...(deps.bmadCommands ?? []),
+				].some((command) => command.command === item.command);
+			const admission = isMaestroPrompt
+				? undefined
+				: item.type === 'command'
+					? await admitGrokNativeCommand(session, targetTab, slashInput, {
+							imageCount: item.images?.length ?? 0,
+						})
+					: { refusal: await getGrokSlashCommandRefusal(session, targetTab, slashInput) };
+			grokNativeCommand = admission?.intent;
+			if (admission?.refusal) {
+				const refusal = admission.refusal;
+				const ownerRunning = (await probeSessionAiProcesses(sessionId, targetTab.id))
+					.targetTabActive;
+				updateSessionWith(sessionId, (s) =>
+					applyQueuedItemAbort(s, item, ownerRunning ? undefined : targetTab.id)
+				);
+				useSessionStore
+					.getState()
+					.addLogToTab(sessionId, { source: 'error', text: refusal }, targetTab.id);
+				return false;
+			}
+		}
+
+		// The receipt is also checked after a provider switch, before another
+		// provider could interpret this command. Held legacy items require requeue.
+		const scopedCommand =
+			item.type === 'command' && (session.toolType === 'grok' || !!item.commandScope);
+		const settleUnsentCommand = async (refusal?: string): Promise<void> => {
+			const live = getSession(sessionId);
+			const ownerTabId = live && queuedItemOwnerTabId(live, item);
+			const ownerRunning = ownerTabId
+				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
+				: false;
+			updateSessionWith(sessionId, (current) =>
+				applyQueuedItemAbort(
+					refusal
+						? applyQueuedItemDispatchFailure(
+								current,
+								{ ...item, paused: true },
+								{ collision: true }
+							)
+						: current,
+					item,
+					ownerRunning ? undefined : ownerTabId
+				)
+			);
+			if (refusal)
+				useSessionStore
+					.getState()
+					.addLogToTab(sessionId, { source: 'error', text: refusal }, item.tabId);
+		};
+		const refuseChangedCommand = async (): Promise<boolean> => {
+			const refusal = await getQueuedCommandScopeRefusal(sessionId, item);
+			if (!refusal) return false;
+			await settleUnsentCommand(refusal);
+			return true;
+		};
+		if (scopedCommand && (await refuseChangedCommand())) return false;
 
 		// Name the tab from the message it is about to run. The composer names at
 		// submit time, but `dispatch --queue`, a busy `dispatch --new-tab`, a snooze
@@ -506,6 +597,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// the consult just fired, and an auto-retry of this turn must not re-fire it.
 		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
+		let synopsisBeforeCommand: Session['pendingAICommandForSynopsis'];
+		let commandSynopsisWritten = false;
 		try {
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);
@@ -605,9 +698,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
-				const matchingAgentCommand = session.agentCommands?.find(
-					(cmd) => cmd.command === item.command && cmd.prompt
-				);
+				const matchingAgentCommand =
+					session.toolType === 'grok'
+						? undefined
+						: session.agentCommands?.find((cmd) => cmd.command === item.command && cmd.prompt);
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
@@ -621,11 +715,78 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							}
 						: undefined);
 
-				if (matchingCommand) {
+				if (grokNativeCommand) {
+					// The exact `/name args` text, with no system prompt, New Session Message
+					// or template pass: main refuses any other prompt for the intent, and the
+					// new process must advertise the same entry before it is submitted.
+					const nativeText = slashInput!;
+					if (await refuseChangedCommand()) return false;
+					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(sessionId, item);
+					if (deps.isCancelled?.()) {
+						await settleUnsentCommand();
+						return false;
+					}
+					// No asynchronous gap between this selection check and the spawn.
+					const selectionRefusal = getQueuedCommandSelectionRefusal(sessionId, item);
+					if (selectionRefusal) {
+						await settleUnsentCommand(selectionRefusal);
+						return false;
+					}
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							source: 'user',
+							text: nativeText,
+							aiCommand: { command: item.command, description: 'Grok native command' },
+							queuedItemId: item.id,
+							...(item.forceParallel && { forceParallel: true }),
+						},
+						targetTab.id
+					);
+					const result = await window.maestro.process.spawn({
+						sessionId: targetSessionId,
+						toolType: session.toolType,
+						cwd: session.cwd,
+						command: commandToUse,
+						args: spawnArgs,
+						prompt: nativeText,
+						grokNativeCommand,
+						expectedGrokSpawnSelection,
+						agentSessionId: tabAgentSessionId ?? undefined,
+						readOnlyMode: isReadOnly,
+						permissionMode: effectivePermissionMode,
+						sessionCustomPath: session.customPath,
+						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
+						sessionCustomEnvVars: session.customEnvVars,
+						sessionCustomModel: turnModel,
+						sessionCustomEffort: turnEffort,
+						sessionCustomContextWindow: session.customContextWindow,
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					});
+					if (result?.success === false) {
+						throw new Error(
+							'error' in result && typeof result.error === 'string'
+								? result.error
+								: 'Native Grok command spawn was refused'
+						);
+					}
+				} else if (matchingCommand) {
+					if (scopedCommand && (await refuseChangedCommand())) return false;
+					if (deps.isCancelled?.()) {
+						await settleUnsentCommand();
+						return false;
+					}
+					const remote = session.sessionSshRemoteConfig?.enabled === true;
+					const sshRemoteId = remote
+						? getSessionSshRemoteId({ sessionSshRemoteConfig: session.sessionSshRemoteConfig })
+						: undefined;
+					if (remote && !sshRemoteId) throw new Error('Queued command SSH target is unresolved');
 					let gitBranch: string | undefined;
 					if (session.isGitRepo) {
 						try {
-							const status = await gitService.getStatus(session.cwd);
+							// AI turns launch in session.cwd; remoteCwd tracks the terminal's cd.
+							const status = await gitService.getStatus(session.cwd, sshRemoteId);
 							gitBranch = status.branch;
 						} catch {
 							// Ignore git errors
@@ -649,12 +810,32 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						activeTabId: targetTab.id,
 					});
 
+					// Preparation yields to settings/tab changes and Stop. Validate before
+					// recording a command that may never be admitted.
+					if (scopedCommand && (await refuseChangedCommand())) return false;
+					const expectedGrokSpawnSelection = scopedCommand
+						? await getQueuedCommandSpawnSelection(sessionId, item)
+						: undefined;
+					if (deps.isCancelled?.()) {
+						await settleUnsentCommand();
+						return false;
+					}
+
+					// No asynchronous gap between this selection check and the spawn.
+					const selectionRefusal =
+						scopedCommand && getQueuedCommandSelectionRefusal(sessionId, item);
+					if (selectionRefusal) {
+						await settleUnsentCommand(selectionRefusal);
+						return false;
+					}
+
 					// Add user log showing the command with its interpolated prompt
 					useSessionStore.getState().addLogToTab(
 						sessionId,
 						{
 							source: 'user',
 							text: substitutedPrompt,
+							images: hasImages ? item.images : undefined,
 							aiCommand: {
 								command: matchingCommand.command,
 								description: matchingCommand.description,
@@ -665,21 +846,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							queuedItemId: item.id,
 							...(item.forceParallel && { forceParallel: true }),
 						},
-						item.tabId
+						targetTab.id
 					);
 
 					// Track this command for automatic synopsis on completion
+					synopsisBeforeCommand = getSession(sessionId)?.pendingAICommandForSynopsis;
+					commandSynopsisWritten = true;
 					updateSession(sessionId, (s) => ({
 						...s,
 						pendingAICommandForSynopsis: matchingCommand.command,
 					}));
 
-					// Spawn agent with the prompt
-					if (deps.isCancelled?.()) {
-						updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
-						return false;
-					}
-					await window.maestro.process.spawn({
+					// Spawn agent with the prompt through the existing admission boundary.
+					const result = await window.maestro.process.spawn({
 						sessionId: targetSessionId,
 						querySource: item.querySource,
 						toolType: session.toolType,
@@ -693,7 +872,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							session.newSessionMessage,
 							tabAgentSessionId
 						),
+						images: hasImages ? item.images : undefined,
 						appendSystemPrompt: appendSystemPromptForCommand,
+						// Main checks enqueue-time configuration before its own preparation.
+						...(scopedCommand && { expectedGrokSpawnSelection }),
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
 						permissionMode: effectivePermissionMode,
@@ -706,6 +888,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
+					if (result?.success === false) {
+						throw new Error(
+							'error' in result && typeof result.error === 'string'
+								? result.error
+								: 'Queued command spawn was refused'
+						);
+					}
 				} else {
 					// Unknown command - add error log and reset to idle
 					useSessionStore.getState().addLogToTab(
@@ -753,6 +942,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// failed, so collisions are counted: the drain backs off between them
 			// (see noteSpawnCollision), and past the cap the item is held with an
 			// error frame like any other failure rather than spinning forever.
+			// A refused command can arrive beside a live read-only/forced turn.
+			// Recovery must hold this item without releasing that process's tab.
+			const liveCommandOwner =
+				scopedCommand && (await probeSessionAiProcesses(sessionId, targetTab.id)).targetTabActive;
 			const isSpawnCollision = isAgentAlreadyRunningError(error);
 			const isTransientCollision =
 				isSpawnCollision && noteSpawnCollision(item.id) < SPAWN_COLLISION_MAX_ATTEMPTS;
@@ -766,9 +959,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const recovered = applyQueuedItemDispatchFailure(s, item, {
-						collision: isTransientCollision,
-					});
+					let recovered = applyQueuedItemDispatchFailure(
+						s,
+						isTransientCollision ? item : { ...item, paused: true },
+						{ collision: isTransientCollision || liveCommandOwner }
+					);
+					if (commandSynopsisWritten && recovered.pendingAICommandForSynopsis === item.command) {
+						recovered = {
+							...recovered,
+							pendingAICommandForSynopsis: synopsisBeforeCommand,
+						};
+					}
 					if (isTransientCollision) return recovered;
 
 					const resolvedTabId = item.tabId ?? s.activeTabId;

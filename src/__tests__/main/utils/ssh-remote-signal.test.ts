@@ -9,9 +9,13 @@ vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return { ...actual, spawn: (...args: unknown[]) => mockSpawn(...args) };
 });
-vi.mock('../../../main/utils/logger', () => ({
+vi.mock('../../../shared/maestro-lib/host', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/maestro-lib/host')>()),
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+
+import { logger } from '../../../shared/maestro-lib/host';
+import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 
 import {
 	buildRemoteSignalScript,
@@ -47,6 +51,7 @@ describe('sshConnectionArgs', () => {
 describe('signalRemoteAgent', () => {
 	beforeEach(() => {
 		mockSpawn.mockReset();
+		vi.clearAllMocks();
 	});
 
 	function fakeChild() {
@@ -81,6 +86,44 @@ describe('signalRemoteAgent', () => {
 		);
 		expect(child.unref).toHaveBeenCalled();
 	});
+
+	it.each(['exit', 'error', 'throw'] as const)(
+		'reports unreachable-host %s as failure without exposing the private script',
+		(event) => {
+			const child = fakeChild();
+			const target = {
+				sshCommand: 'ssh',
+				sshArgs: ['u@h', ...STDIN_SHELL],
+				pidFile: newRemotePidFilePath(true),
+				sessionId: 'synthetic-session',
+				promptArtifactPath: '/tmp/private-prompt-fixture.json',
+			};
+			const script = buildRemoteSignalScript(
+				target.pidFile,
+				'terminate',
+				target.promptArtifactPath
+			);
+			const error = new Error(`unreachable ${target.promptArtifactPath} ${script}`);
+			mockSpawn.mockImplementation(() => {
+				if (event === 'throw') throw error;
+				return child;
+			});
+			expect(signalRemoteAgent(target, 'terminate')).toBe(event !== 'throw');
+			if (event !== 'throw') {
+				expect(child.stdin.end).toHaveBeenCalledWith(script);
+				expect(mockSpawn.mock.calls[0][1]).toEqual(target.sshArgs);
+				child.stdin.emit('error', error);
+				if (event === 'exit') child.emit('exit', 255);
+				else child.emit('error', error);
+			}
+			expect(logger.warn).toHaveBeenCalledOnce();
+			expect(logger.info).not.toHaveBeenCalled();
+			const logs = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+			for (const privateValue of [target.promptArtifactPath, target.pidFile, script]) {
+				expect(logs).not.toContain(privateValue);
+			}
+		}
+	);
 
 	it('does nothing for args it cannot reconnect with', () => {
 		expect(
@@ -119,12 +162,13 @@ describe.skipIf(!hasBash)('remote scripts under a real bash', () => {
 	});
 
 	/** Start `bash -s` the way sshd does: as a session leader, reading the script on stdin. */
-	function launch(pidFile: string) {
+	function launch(pidFile: string, script = 'exec sleep 30\n', promptArtifactPath?: string) {
 		const child = realSpawn('/bin/bash', ['--norc', '--noprofile', '-s'], {
 			detached: true,
+			env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
 			stdio: ['pipe', 'ignore', 'ignore'],
 		});
-		child.stdin!.end(withRemotePidRecord('exec sleep 30\n', pidFile));
+		child.stdin!.end(withRemotePidRecord(script, pidFile, promptArtifactPath));
 		return child;
 	}
 
@@ -137,7 +181,11 @@ describe.skipIf(!hasBash)('remote scripts under a real bash', () => {
 	}
 
 	function runScript(script: string) {
-		return spawnSync('/bin/bash', ['--norc', '--noprofile', '-s'], { input: script });
+		return spawnSync('/bin/bash', ['--norc', '--noprofile', '-s'], {
+			input: script,
+			timeout: 7000,
+			env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
+		});
 	}
 
 	it('records the pid of the exec-ed agent and interrupts it', async () => {
@@ -176,6 +224,71 @@ describe.skipIf(!hasBash)('remote scripts under a real bash', () => {
 		expect(child.signalCode).toBeNull();
 		process.kill(-child.pid!, 'SIGKILL');
 	});
+
+	it.skipIf(process.platform !== 'linux')(
+		'keeps a pre-record cancellation tombstone against delayed launch',
+		async () => {
+			const pidFile = newRemotePidFilePath(true);
+			const artifact = path.join(dir, 'never-created.json');
+			try {
+				expect(runScript(buildRemoteSignalScript(pidFile, 'terminate', artifact)).status).toBe(1);
+				expect(fs.statSync(`${pidFile}.cancel`).size).toBe(0);
+				const child = launch(pidFile, 'printf late > "$_maestro_prompt_path"', artifact);
+				await waitFor(() => child.exitCode !== null);
+				expect(child.exitCode).toBe(1);
+				expect(fs.existsSync(artifact)).toBe(false);
+				expect(fs.existsSync(pidFile)).toBe(false);
+			} finally {
+				fs.rmSync(`${pidFile}.cancel`, { force: true });
+			}
+		}
+	);
+
+	it.skipIf(process.platform !== 'linux').each(['owned', 'recycled', 'replaced'] as const)(
+		'checks descriptor ownership before hard-stop cleanup: %s',
+		async (ownership) => {
+			const pidFile = newRemotePidFilePath(true);
+			const artifact = path.join(dir, 'private-prompt.json');
+			const child = launch(
+				pidFile,
+				[
+					'exec 9> "$_maestro_prompt_path"',
+					"trap '' INT TERM",
+					"printf 'synthetic prompt' >&9",
+					'while :; do sleep 1; done',
+				].join('\n'),
+				artifact
+			);
+			try {
+				await waitFor(
+					() => fs.existsSync(artifact) && fs.readFileSync(artifact, 'utf8') === 'synthetic prompt'
+				);
+				if (ownership === 'recycled') {
+					fs.writeFileSync(pidFile, `${child.pid} Thu Jan 1 00:00:00 1970\n`);
+				} else if (ownership === 'replaced') {
+					fs.renameSync(artifact, path.join(dir, 'owned-inode.json'));
+					fs.writeFileSync(artifact, 'unowned replacement');
+				}
+				const result = runScript(buildRemoteSignalScript(pidFile, 'terminate', artifact));
+				expect(result.error).toBeUndefined();
+				expect(result.status).toBe(ownership === 'recycled' ? 1 : 0);
+				expect(result.stdout.toString() + result.stderr.toString()).toBe('');
+				if (ownership === 'owned') expect(fs.existsSync(artifact)).toBe(false);
+				else
+					expect(fs.readFileSync(artifact, 'utf8')).toBe(
+						ownership === 'recycled' ? 'synthetic prompt' : 'unowned replacement'
+					);
+				expect(fs.existsSync(pidFile)).toBe(ownership === 'recycled');
+				expect(fs.statSync(`${pidFile}.cancel`).mode & 0o777).toBe(0o600);
+			} finally {
+				stopProcess({ child }, { from: 'kill', graceMs: 0, immediate: true });
+				await waitFor(() => child.exitCode !== null || child.signalCode !== null);
+				fs.rmSync(pidFile, { force: true });
+				fs.rmSync(`${pidFile}.cancel`, { force: true });
+			}
+		},
+		20_000
+	);
 
 	it('exits quietly when there is no pid file', () => {
 		const result = runScript(buildRemoteSignalScript(path.join(dir, 'missing.pid'), 'interrupt'));

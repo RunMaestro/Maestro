@@ -713,6 +713,7 @@ export type SteerBlockedReason =
 	| 'no-target-tab'
 	| 'tab-not-working'
 	| 'not-claude'
+	| 'grok-no-input-op'
 	| 'codex-exec'
 	| 'api-token-source'
 	| 'nothing-to-type'
@@ -788,6 +789,13 @@ function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
  * opted into the app-server transport (`turn/steer`); see
  * docs/agent-guides/CODEX-APP-SERVER.md.
  *
+ * A Grok turn is never steerable, on either of its routes: the native headless
+ * route has no input channel into a running turn, and the negotiated ACP route
+ * advertises no in-progress input operation (`GROK_ACP_PORT_SUPPORT.steering` and
+ * `grokSteeringAvailability()` in src/shared/maestro-lib/grok/route.ts, which main
+ * answers every Grok steer from). Checked before the SSH test so a remote Grok
+ * agent names the provider gap, the one that holds wherever it runs.
+ *
  * `dynamic` mode is the interesting case and the reason this reads
  * `session.claudeInteractive.mode` rather than the configured token mode. A dynamic
  * agent starts interactive and falls back to API when usage crosses the limit
@@ -835,6 +843,12 @@ export function getSteerEligibility(
 	// both, or neither.
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
+	}
+	if (session.toolType === 'grok') {
+		// Same answer main gives (refused, `this turn is not steerable - ...`), so the
+		// control is never offered for a steer the active transport would refuse. A
+		// port that grows a steering operation must change this in the same change.
+		return { canSteer: false, blockedReason: 'grok-no-input-op' };
 	}
 	const claudeTuiActive =
 		session.toolType === 'claude-code' && session.claudeInteractive?.mode === 'interactive';
@@ -964,6 +978,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'no-target-tab': 'The tab this message was queued on is gone.',
 	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
 	'not-claude': 'This provider cannot take a message while a turn is running.',
+	'grok-no-input-op':
+		'Grok offers no way to add a message to a running turn, on either of its transports.',
 	'codex-exec':
 		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
 	'api-token-source':

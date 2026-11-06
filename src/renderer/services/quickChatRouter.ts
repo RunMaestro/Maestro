@@ -1,4 +1,10 @@
 import { translatedHistorySessionId } from '../../shared/maestro-lib/translation/session';
+import {
+	updateProviderSlot,
+	type NativeSessionBinding,
+} from '../../shared/maestro-lib/agents/providerSwap';
+import { canonicalJson } from '../../shared/canonicalJson';
+import type { HistoryEntry } from '../../shared/types';
 /**
  * Quick Chat router - finds the conversation a Quick Chat message belongs in.
  *
@@ -9,7 +15,7 @@ import { translatedHistorySessionId } from '../../shared/maestro-lib/translation
  * reopens a closed conversation as a background tab when one wins.
  *
  * Nothing here sends the message. The engine does that once it has a tab, so
- * routing can fail in any way and the message still lands somewhere.
+ * an unavailable verified continuation can refuse without replacing its history.
  */
 
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
@@ -30,12 +36,20 @@ import { captureException } from '../utils/sentry';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { createTab, isSessionIdLabel } from '../utils/tabHelpers';
 import { isAiTabHidden } from '../utils/unifiedTabOrderUtils';
-import { loadResumableSession } from './resumableSession';
+import {
+	loadResumableSession,
+	matchesNativeSessionBinding,
+	resumeSelectionKey,
+	SessionResumeRefusedError,
+} from './resumableSession';
 
 /** Where a message should go. */
 export type RouteTarget =
 	| { kind: 'open'; tabId: string }
-	| { kind: 'closed'; agentSessionId: string; name: string | null }
+	| ({ kind: 'closed' } & Pick<
+			ClosedConversation,
+			'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding'
+	  >)
 	| { kind: 'new' };
 
 export interface RouteContext {
@@ -57,12 +71,17 @@ const CLOSED_CACHE_TTL_MS = 30_000;
 /** A past conversation of the agent, as its History entries describe it. */
 interface ClosedConversation {
 	agentSessionId: string;
+	ownerAgentId?: string;
+	nativeSessionBinding?: NativeSessionBinding;
 	name: string | null;
 	text: string;
 	lastActiveAt: number;
 }
 
-const closedCache = new Map<string, { at: number; conversations: ClosedConversation[] }>();
+const closedCache = new Map<
+	string,
+	{ at: number; selectionKey: string; conversations: ClosedConversation[] }
+>();
 
 /** Drop the cached History reads. Tests only. */
 export function resetQuickChatRouterForTests(): void {
@@ -77,9 +96,11 @@ export function resetQuickChatRouterForTests(): void {
  */
 async function readClosedConversations(session: Session): Promise<ClosedConversation[]> {
 	const cached = closedCache.get(session.id);
-	if (cached && Date.now() - cached.at < CLOSED_CACHE_TTL_MS) return cached.conversations;
+	const selectionKey = resumeSelectionKey(session);
+	if (cached?.selectionKey === selectionKey && Date.now() - cached.at < CLOSED_CACHE_TTL_MS)
+		return cached.conversations;
 
-	const { entries } = await window.maestro.history.getAllPaginated({
+	const { entries }: { entries: HistoryEntry[] } = await window.maestro.history.getAllPaginated({
 		sessionId: session.id,
 		projectPath: session.projectRoot || session.cwd || undefined,
 		sharedContext: buildSharedHistoryContext(session),
@@ -92,10 +113,22 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
 	for (const entry of entries) {
 		const id = entry.agentSessionId;
 		if (!id) continue;
-		let conversation = byConversation.get(id);
+		const ownerAgentId = entry.sessionId;
+		const nativeSessionBinding =
+			entry.nativeSessionBinding && structuredClone(entry.nativeSessionBinding);
+		const key = canonicalJson({ ownerAgentId, nativeSessionBinding, id });
+		let conversation = byConversation.get(key);
 		if (!conversation) {
-			conversation = { agentSessionId: id, name: null, text: '', lastActiveAt: 0, summaries: [] };
-			byConversation.set(id, conversation);
+			conversation = {
+				agentSessionId: id,
+				ownerAgentId,
+				nativeSessionBinding,
+				name: null,
+				text: '',
+				lastActiveAt: 0,
+				summaries: [],
+			};
+			byConversation.set(key, conversation);
 		}
 		conversation.lastActiveAt = Math.max(conversation.lastActiveAt, entry.timestamp);
 		// A recorded name that is only the session id's own label is no name.
@@ -110,7 +143,7 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
 		...conversation,
 		text: summaries.join('\n'),
 	}));
-	closedCache.set(session.id, { at: Date.now(), conversations });
+	closedCache.set(session.id, { at: Date.now(), selectionKey, conversations });
 	return conversations;
 }
 
@@ -211,11 +244,7 @@ export async function routeQuickChatMessage(
 
 	// A conversation that still has a tab (shown, hidden, or closed mid-reply) is
 	// reached through that tab, never reopened beside it.
-	const liveSessionIds = new Set(
-		[...session.aiTabs, ...(session.orphanedThinkingTabs ?? [])]
-			.map((tab) => tab.agentSessionId)
-			.filter(Boolean)
-	);
+	const liveTabs = [...session.aiTabs, ...(session.orphanedThinkingTabs ?? [])];
 	let closed: ClosedConversation[] = [];
 	try {
 		closed = await readClosedConversations(session);
@@ -224,12 +253,29 @@ export async function routeQuickChatMessage(
 		captureException(error, { extra: { operation: 'quick-chat-route-history' } });
 	}
 	for (const conversation of closed) {
-		if (liveSessionIds.has(conversation.agentSessionId)) continue;
-		const key = `session:${conversation.agentSessionId}`;
+		if (
+			liveTabs.some(
+				(tab) =>
+					tab.agentSessionId === conversation.agentSessionId &&
+					(conversation.nativeSessionBinding !== undefined || session.toolType === 'grok'
+						? conversation.ownerAgentId === session.id &&
+							matchesNativeSessionBinding(
+								tab.nativeSessionBinding,
+								conversation.nativeSessionBinding
+							)
+						: !tab.nativeSessionBinding &&
+							(!conversation.ownerAgentId || conversation.ownerAgentId === session.id))
+			)
+		)
+			continue;
+		const key = `session:${canonicalJson({ ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId })}`;
 		targets.set(key, {
 			kind: 'closed',
 			agentSessionId: conversation.agentSessionId,
 			name: conversation.name,
+			ownerAgentId: conversation.ownerAgentId,
+			nativeSessionBinding:
+				conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding),
 		});
 		candidates.push({
 			key,
@@ -256,30 +302,62 @@ export async function routeQuickChatMessage(
  * Bring a closed conversation back as a background tab, ready for a prompt. The
  * view does not move: the user is in Quick Chat, not in the main window.
  *
- * @returns The tab's id, or null when the conversation cannot be joined: its
- * transcript aged out or was removed, or it is still replying in a tab that was
- * closed. The caller starts a new tab instead.
+ * Scoped continuations throw on refusal; only legacy unscoped misses allow the
+ * caller's new-tab fallback. Cancellation returns null without creating a tab.
+ * `onCreated` distinguishes a committed new tab from a concurrently reopened one
+ * so recall cannot claim or hide another chat's tab.
  */
 export async function reopenClosedConversation(
 	sessionId: string,
-	conversation: { agentSessionId: string; name: string | null }
+	conversation: Pick<
+		ClosedConversation,
+		'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding'
+	>,
+	isCurrent: () => boolean = () => true,
+	onCreated?: (tabId: string) => void
 ): Promise<string | null> {
 	const find = () => useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const session = find();
 	if (!session) return null;
+	const selectionKey = resumeSelectionKey(session);
+	const binding =
+		conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding);
+	const scoped = session.toolType === 'grok' || binding !== undefined;
+	if (
+		(conversation.ownerAgentId && conversation.ownerAgentId !== sessionId) ||
+		(scoped && conversation.ownerAgentId !== sessionId)
+	) {
+		throw new SessionResumeRefusedError(
+			'The selected history does not have this agent as its recorded owner.'
+		);
+	}
 	let agentSessionId: string;
 	try {
 		agentSessionId = translatedHistorySessionId(session, conversation.agentSessionId);
 	} catch (error) {
+		if (scoped)
+			throw new SessionResumeRefusedError('The selected native conversation cannot be translated.');
 		logger.warn('[QuickChat] History native translation is unavailable', undefined, error);
 		return null;
 	}
 	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
-	if (!projectPathForSessions) return null;
+	if (!projectPathForSessions) {
+		if (scoped)
+			throw new SessionResumeRefusedError(
+				'The selected conversation has no available project path.'
+			);
+		return null;
+	}
+	const matchesTab = (tab: AITab) =>
+		tab.agentSessionId === agentSessionId &&
+		(!scoped || matchesNativeSessionBinding(tab.nativeSessionBinding, binding));
+	const selectedTab = session.aiTabs.find(matchesTab);
 
 	let resumable;
 	try {
 		resumable = await loadResumableSession({
+			ownerAgentId: conversation.ownerAgentId,
+			nativeSessionBinding: binding,
 			toolType: session.toolType,
 			projectRoot: projectPathForSessions,
 			sshRemoteId,
@@ -287,17 +365,43 @@ export async function reopenClosedConversation(
 			sessionName: conversation.name ?? undefined,
 		});
 	} catch (error) {
+		if (error instanceof SessionResumeRefusedError) throw error;
 		logger.warn('[QuickChat] Could not read a closed conversation', undefined, error);
+		if (scoped)
+			throw new SessionResumeRefusedError(
+				'The selected native conversation could not be read. Retained history was kept.'
+			);
 		return null;
 	}
-	if (!resumable) return null;
+	if (!resumable) {
+		if (scoped)
+			throw new SessionResumeRefusedError(
+				'The selected native conversation has no displayable messages.'
+			);
+		return null;
+	}
+	if (scoped && !matchesNativeSessionBinding(binding, resumable.nativeSessionBinding)) {
+		throw new SessionResumeRefusedError(
+			'The selected conversation ownership could not be verified.'
+		);
+	}
 
 	const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 	let tabId: string | null = null;
+	let createdTabId: string | null = null;
 	updateSessionWith(sessionId, (s) => {
+		if (!isCurrent()) return s;
+		if (
+			resumeSelectionKey(s) !== selectionKey ||
+			(selectedTab && !s.aiTabs.some((tab) => tab.id === selectedTab.id && matchesTab(tab)))
+		) {
+			throw new SessionResumeRefusedError(
+				'The agent or conversation changed while reopening history.'
+			);
+		}
 		// Re-checked on fresh state: the read above was awaited, and there must
 		// never be two tabs for one conversation.
-		const existing = s.aiTabs.find((tab) => tab.agentSessionId === agentSessionId);
+		const existing = s.aiTabs.find(matchesTab);
 		if (existing) {
 			tabId = existing.id;
 			return s;
@@ -305,7 +409,7 @@ export async function reopenClosedConversation(
 		// Reopened, used, and closed mid-reply while we were reading: it is still
 		// answering in the background, and a second tab would send a second turn
 		// into the same conversation at once. The caller starts a new tab instead.
-		if (s.orphanedThinkingTabs?.some((tab) => tab.agentSessionId === agentSessionId)) {
+		if (s.orphanedThinkingTabs?.some(matchesTab)) {
 			return s;
 		}
 		const created = createTab(s, {
@@ -322,7 +426,27 @@ export async function reopenClosedConversation(
 		});
 		if (!created) return s;
 		tabId = created.tab.id;
-		return created.session;
+		createdTabId = tabId;
+		return {
+			...created.session,
+			aiTabs: created.session.aiTabs.map((tab) =>
+				tab.id === created.tab.id && resumable.nativeSessionBinding
+					? updateProviderSlot(tab, s, s.toolType, {
+							nativeSessionBinding: resumable.nativeSessionBinding,
+						})
+					: tab
+			),
+		};
 	});
+	if (
+		!tabId &&
+		isCurrent() &&
+		(scoped || !find() || resumeSelectionKey(find()!) !== selectionKey)
+	) {
+		throw new SessionResumeRefusedError(
+			'The selected conversation could not be reopened. Retained history was kept.'
+		);
+	}
+	if (createdTabId) onCreated?.(createdTabId);
 	return tabId;
 }

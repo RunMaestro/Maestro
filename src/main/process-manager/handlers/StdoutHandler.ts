@@ -13,6 +13,18 @@ import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../share
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import { UsageAccumulator } from '../../../shared/maestro-lib/streaming/usage-accumulator';
+import {
+	parsedUsageToStats,
+	subtractUsageStats,
+	usageCostUsd,
+} from '../../../shared/maestro-lib/streaming/usage-totals';
+import { TurnCapture } from '../../../shared/maestro-lib/run/turn-capture';
+import {
+	subagentDisplayParentOf,
+	subagentToolCallOf,
+} from '../../../shared/maestro-lib/turns/turn-events';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import type { UsageAccounting, UsageCost } from '../../../shared/types';
 import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
@@ -25,6 +37,75 @@ interface StdoutHandlerDependencies {
 }
 
 const MAX_COPILOT_JSON_BUFFER_LENGTH = 1024 * 1024;
+
+/**
+ * Per-process recorder for usage that carries `accounting` (Grok native headless and
+ * the Grok ACP driver's events through `handleNormalizedEvent`). The turn total is the
+ * shared `TurnCapture`'s, the same recorder the library's ACP turn and CLI capture use,
+ * so scopes, snapshots, finality and the partial-on-failure rule are decided once. What
+ * goes out on `usage` is the growth of that total since the last emission, because every
+ * desktop consumer (the turn ledger, tab/session totals) sums usage events as deltas.
+ */
+interface ScopedUsageState {
+	capture: TurnCapture;
+	/** The turn total as last emitted. */
+	emitted?: UsageStats;
+	emittedKey?: string;
+	/** Per bucket, the most already emitted (the running sum downstream). */
+	emittedTokens: Record<(typeof SCOPED_TOKEN_BUCKETS)[number], number>;
+	/** A snapshot lowered a bucket below what was emitted: the sum is an upper bound. */
+	overstated: boolean;
+	/** Exact ticks emitted so far; undefined once a dollars-only amount was emitted. */
+	emittedTicks: bigint | undefined;
+	emittedUsd: number;
+}
+
+const SCOPED_TOKEN_BUCKETS = [
+	'inputTokens',
+	'outputTokens',
+	'cacheReadInputTokens',
+	'cacheCreationInputTokens',
+	'reasoningTokens',
+] as const;
+
+const scopedUsageStates = new WeakMap<ManagedProcess, ScopedUsageState>();
+
+/**
+ * The cost of one emitted delta: the turn total's growth since the last emission, by
+ * exact ticks while every amount so far was exact, else by the dollar projection. A total
+ * whose cost is not known emits an unknown delta (never a zero), and a total that fell
+ * below what was already emitted emits unknown rather than a negative amount.
+ */
+function scopedCostDelta(total: UsageCost, state: ScopedUsageState): UsageCost {
+	const ticks =
+		(total.status === 'exact' || total.status === 'partial') &&
+		typeof total.costUsdTicks === 'string' &&
+		/^\d+$/.test(total.costUsdTicks)
+			? BigInt(total.costUsdTicks)
+			: undefined;
+	if (ticks !== undefined && state.emittedTicks !== undefined && ticks >= state.emittedTicks) {
+		const delta = ticks - state.emittedTicks;
+		state.emittedTicks = ticks;
+		state.emittedUsd = Number(ticks) / 1e10;
+		const amount = { costUsdTicks: delta.toString(), costUsd: Number(delta) / 1e10 };
+		return total.status === 'exact'
+			? { status: 'exact', ...amount }
+			: { status: 'partial', ...amount };
+	}
+	const usd = usageCostUsd(total);
+	if (usd === undefined)
+		return { status: 'unknown', reason: 'reason' in total ? total.reason : undefined };
+	if (usd < state.emittedUsd)
+		return { status: 'unknown', reason: 'Turn cost fell below the amount already reported' };
+	const delta = usd - state.emittedUsd;
+	state.emittedUsd = usd;
+	state.emittedTicks = undefined;
+	return total.status === 'estimated'
+		? { ...total, costUsd: delta }
+		: total.status === 'exact'
+			? { status: 'exact', costUsd: delta }
+			: { status: 'partial', costUsd: delta };
+}
 
 /**
  * Normalize usage stats to handle cumulative vs per-turn usage reporting.
@@ -509,7 +590,17 @@ export class StdoutHandler {
 					agentError.sshRemoteId = managedProcess.sshRemoteId;
 				}
 
-				if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
+				if (agentError.type === 'auth_expired' && toolType === 'grok') {
+					// maestroEnvVars omits inherited credentials and cannot establish
+					// Grok's active auth mode. Replace any parser-supplied login remedy
+					// without guessing from the error text or the local SSH executable.
+					const host = managedProcess.sshRemoteHost
+						? ` on remote host "${managedProcess.sshRemoteHost}"`
+						: managedProcess.sshRemoteId
+							? ' on the remote host'
+							: '';
+					agentError.message = `Authentication failed${host}. Check the active Grok credentials on the host running the agent. Sign in only if this account uses provider login; API keys, gateway credentials and inline overrides must be corrected at their source.`;
+				} else if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
 					// Choose the login command by agentId - error-pattern messages
 					// are often generic (no CLI name) and first-match-wins ordering
 					// can shadow the ones that do name a command. A small map keeps
@@ -660,6 +751,10 @@ export class StdoutHandler {
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
 		const usage = outputParser.extractUsage(event);
+		if (usage?.accounting || (event.terminal && scopedUsageStates.has(managedProcess))) {
+			this.emitScopedUsage(sessionId, managedProcess, event, usage, outputParser);
+			return;
+		}
 		if (usage) {
 			const usageStats = this.buildUsageStats(managedProcess, usage);
 			// Claude Code's modelUsage reports the ACTUAL context used for each API call:
@@ -680,6 +775,105 @@ export class StdoutHandler {
 		}
 	}
 
+	/**
+	 * Emit accounting-bearing usage (see `ScopedUsageState`). The first observation of a
+	 * process that is a complete, fully identified process-session snapshot is its baseline,
+	 * by the rule the library's ACP turn applies to its own pre-dispatch observation; with no
+	 * such baseline a process-session ledger stays a non-additive fact and adds nothing.
+	 * Authoritative zero, partial and unknown cost, exact ticks and accounting scope travel
+	 * on the emitted event; nothing is defaulted to a known zero.
+	 */
+	private emitScopedUsage(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		event: ParsedEvent,
+		usage: ParsedEvent['usage'] | null,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		let state = scopedUsageStates.get(managedProcess);
+		if (!state) {
+			if (!usage?.accounting) return;
+			const first = parsedUsageToStats(usage);
+			const fact = first.accounting!;
+			const baseline =
+				fact.scope === 'process-session' &&
+				fact.reporting === 'snapshot' &&
+				fact.completeness === 'complete' &&
+				(['route', 'scopeId', 'providerSessionId', 'processGeneration'] as const).every(
+					(key) => typeof fact[key] === 'string' && fact[key]!.length > 0
+				)
+					? first
+					: undefined;
+			state = {
+				capture: new TurnCapture(managedProcess.toolType, outputParser, {
+					classifyInBandErrors: false,
+					...(baseline
+						? {
+								processSessionBaseline: baseline,
+								usageIdentity: {
+									route: fact.route,
+									scopeId: fact.scopeId,
+									providerSessionId: fact.providerSessionId,
+									processGeneration: fact.processGeneration,
+								},
+							}
+						: {}),
+				}),
+				emittedTokens: {
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				},
+				overstated: false,
+				emittedTicks: 0n,
+				emittedUsd: 0,
+			};
+			scopedUsageStates.set(managedProcess, state);
+		}
+		state.capture.handleEvent(event);
+		const total = state.capture.usage;
+		if (!total?.accounting) return;
+		const key = canonicalJson(total);
+		if (key === state.emittedKey) return;
+		const exact =
+			state.emitted && !state.overstated ? subtractUsageStats(total, state.emitted) : undefined;
+		const delta = structuredClone(total) as UsageStats & { accounting: UsageAccounting };
+		// Each bucket emits its growth over the most already emitted for it. A snapshot that
+		// lowers a bucket (a process ledger replacing the responses it covers) cannot be
+		// un-summed downstream, where the tab reads the latest delta as occupancy, so the sum
+		// becomes an upper bound and the turn is reported partial from then on.
+		let lowered = false;
+		for (const bucket of SCOPED_TOKEN_BUCKETS) {
+			const now = total[bucket] ?? 0;
+			const before = state.emittedTokens[bucket];
+			if (now < before) lowered = true;
+			delta[bucket] = Math.max(0, now - before);
+			state.emittedTokens[bucket] = Math.max(now, before);
+		}
+		if (lowered) state.overstated = true;
+		if (state.emitted) {
+			// Model detail is carried only while it is an exact difference; children are
+			// running totals, never a delta.
+			if (exact?.accounting && !lowered) delta.accounting.models = exact.accounting.models;
+			else delete delta.accounting.models;
+			delete delta.accounting.children;
+		}
+		state.emittedKey = key;
+		state.emitted = structuredClone(total);
+		delta.accounting.cost = scopedCostDelta(total.accounting.cost, state);
+		delta.accounting.reporting = 'delta';
+		// A delta is a piece of the turn total: it carries that total's completeness and finality.
+		delta.accounting.completeness = state.overstated ? 'partial' : total.accounting.completeness;
+		delta.accounting.final = total.accounting.final;
+		delta.totalCostUsd = usageCostUsd(delta.accounting.cost) ?? 0;
+		delta.contextWindow =
+			total.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW;
+		if (!delta.contextWindowResolved) delete delta.contextWindowModel;
+		this.emitter.emit('usage', sessionId, delta);
+	}
+
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
 	private handleParsedEvent(
 		sessionId: string,
@@ -690,6 +884,22 @@ export class StdoutHandler {
 		const event = outputParser.parseJsonObject(parsed);
 
 		if (!event) return;
+		this.handleNormalizedEvent(sessionId, managedProcess, event);
+	}
+
+	/**
+	 * Handle an event a protocol driver already normalized (the shared Grok ACP turn),
+	 * through the same usage, session-id, thinking, tool and result path as a parsed
+	 * stdout line. Error events stop here as they do for lines: the transport owns
+	 * their `agent-error`. Ignored for a process with no output parser.
+	 */
+	handleNormalizedEvent(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		event: ParsedEvent
+	): void {
+		const outputParser = managedProcess.outputParser;
+		if (!outputParser) return;
 
 		// Ahead of every early return below, so a subscriber sees each line once.
 		emitParsedEvent(this.emitter, sessionId, event);
@@ -795,7 +1005,22 @@ export class StdoutHandler {
 				state: event.toolState,
 				timestamp: Date.now(),
 				toolCallId: event.toolCallId,
-				parentToolUseId: event.parentToolUseId,
+				parentToolUseId: subagentDisplayParentOf(event),
+			});
+		}
+
+		// A reported child (Grok ACP lineage) is the tool entry its nested tools name as
+		// display parent, so it renders through the same badge and nesting as a Task call.
+		// Every lifecycle report re-emits it: the renderer merges by id, and the child's
+		// status is monotonic in the capture, so a late report never reopens it.
+		const subagent = subagentToolCallOf(event);
+		if (subagent) {
+			this.emitter.emit('tool-execution', sessionId, {
+				toolName: subagent.toolName,
+				state: subagent.state,
+				timestamp: Date.now(),
+				toolCallId: subagent.toolCallId,
+				parentToolUseId: subagent.parentToolUseId,
 			});
 		}
 

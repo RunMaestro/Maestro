@@ -1,4 +1,27 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Install before the real registry imports; no parser read reaches operator storage.
+const parserStorage = vi.hoisted(() => ({
+	files: new Map<string, string>(),
+	probes: [] as string[],
+}));
+vi.mock('fs', async () => {
+	const { basename } = await import('node:path');
+	return {
+		existsSync: (file: unknown) => {
+			const name = basename(String(file));
+			parserStorage.probes.push(`existsSync:${name}`);
+			return parserStorage.files.has(name);
+		},
+		readFileSync: (file: unknown) => {
+			const name = basename(String(file));
+			parserStorage.probes.push(`readFileSync:${name}`);
+			const content = parserStorage.files.get(name);
+			if (content === undefined) throw new Error('Missing synthetic parser fixture');
+			return content;
+		},
+	};
+});
 import {
 	initializeOutputParsers,
 	getOutputParser,
@@ -15,9 +38,49 @@ import {
 	GrokOutputParser,
 } from '../../../main/parsers';
 
+const importStorageProbes = [...parserStorage.probes];
+
 describe('parsers/index', () => {
 	beforeEach(() => {
 		clearParserRegistry();
+		parserStorage.files.clear();
+		parserStorage.probes.length = 0;
+	});
+
+	it('defers import, construction and real registration storage probes until parsing', () => {
+		expect(importStorageProbes).toEqual([]);
+		const direct = new CodexOutputParser();
+		initializeOutputParsers();
+		expect(getAllOutputParsers()).toHaveLength(10);
+		expect(parserStorage.probes).toEqual([]);
+
+		// Fixtures appear after construction and registration; first parsing resolves them.
+		parserStorage.files.set('config.toml', 'model = "synthetic-registry-model"');
+		parserStorage.files.set(
+			'models_cache.json',
+			JSON.stringify({
+				models: [{ slug: 'synthetic-registry-model', context_window: 654321 }],
+			})
+		);
+		const raw = { type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 3 } };
+		const registered = getOutputParser('codex');
+		expect(registered).toBeInstanceOf(CodexOutputParser);
+		for (const parser of [direct, registered!]) {
+			expect(parser.parseJsonLine(JSON.stringify(raw))?.usage).toMatchObject({
+				inputTokens: 12,
+				outputTokens: 3,
+				contextWindow: 654321,
+				contextWindowReported: false,
+			});
+		}
+		expect(parserStorage.probes).toEqual([
+			'existsSync:config.toml',
+			'readFileSync:config.toml',
+			'readFileSync:models_cache.json',
+			'existsSync:config.toml',
+			'readFileSync:config.toml',
+			'readFileSync:models_cache.json',
+		]);
 	});
 
 	describe('initializeOutputParsers', () => {

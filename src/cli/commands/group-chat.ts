@@ -13,6 +13,8 @@ import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
+import { groupChatModeratorRefusal } from '../../shared/group-chat-types';
+import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
 
 // Starting a chat spawns a moderator and every participant before the app
 // answers; the desktop allows itself 60s, so the CLI waits a little longer.
@@ -114,6 +116,15 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 	const refs = options.participant ?? [];
 	if (refs.length === 0) fail('At least one --participant is required', options.json);
 	const message = readMessage(options.message, options.messageFile, options.json);
+	// Refuse a provider that cannot moderate before the desktop is asked for
+	// anything, with the text storage would throw, so nothing is created or spawned.
+	if (options.moderator) {
+		const refusal = groupChatModeratorRefusal(
+			options.moderator,
+			hasCapability(options.moderator, 'supportsGroupChatModeration')
+		);
+		if (refusal) fail(refusal, options.json);
+	}
 
 	let participantIds: string[];
 	try {

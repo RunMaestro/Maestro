@@ -6,9 +6,13 @@ import {
 	recordContextCompaction,
 	registerContextCompactionSpawner,
 	settleContextCompaction,
+	getTabContextCompactionBlocker,
 	type HiddenTurnSpawner,
 } from '../../../renderer/services/contextCompaction';
-import { getContextCompactCommand } from '../../../shared/contextCompaction';
+import {
+	getContextCompactCommand,
+	getContextCompactionBlocker,
+} from '../../../shared/contextCompaction';
 import { isSelfContainedCard } from '../../../renderer/utils/logEntries';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
@@ -154,5 +158,139 @@ describe('the compaction pill', () => {
 	it('records nothing for a tab that is gone', () => {
 		expect(recordContextCompaction(SESSION, 'missing-tab')).toBeNull();
 		expect(recordContextCompaction('missing-session', TAB)).toBeNull();
+	});
+});
+
+/**
+ * Grok has no qualified native compaction operation, so
+ * the success branch of its context-limit recovery does not exist: the recovery
+ * is a visible required-feature blocker. These cases pin that a scripted Grok
+ * operation reporting success is never reached, never stands in for a
+ * compaction, and leaves the tab's native identity (resume ID, account root,
+ * host, model) and transcript exactly as they were. A future qualified operation
+ * replaces the blocker and must replace these cases with the success contract.
+ */
+describe('Grok context-limit recovery', () => {
+	const GROK_NATIVE_ID = 'grok-native-session-7';
+	const GROK_ACCOUNT_ENV = { GROK_HOME: '/accounts/grok-work' };
+	const GROK_SSH = { enabled: true, remoteId: 'grok-host-1' };
+
+	/** A Grok tab mid-conversation on a selected account, model and host. */
+	function seedGrok(agentSessionId: string | null = GROK_NATIVE_ID) {
+		seed(
+			{
+				toolType: 'grok',
+				customModel: 'grok-4',
+				customEnvVars: { ...GROK_ACCOUNT_ENV },
+				sessionSshRemoteConfig: { ...GROK_SSH },
+			},
+			agentSessionId
+		);
+	}
+
+	/**
+	 * A scripted Grok operation that would report every outcome the recovery
+	 * could mistake for a compaction: success, an empty success, a failure and a
+	 * thrown refusal. None of them may be reached.
+	 */
+	function scriptedGrokOperations(): HiddenTurnSpawner[] {
+		return [
+			vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true }),
+			vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true, response: '' } as never),
+			vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: false, error: 'exit code 143' }),
+			vi.fn<HiddenTurnSpawner>().mockRejectedValue(new Error('grok refused the operation')),
+		];
+	}
+
+	it('names the gap as a required-feature blocker with its parity rows', () => {
+		const blocker = getContextCompactionBlocker('grok');
+		expect(blocker).toEqual({
+			reason: 'required-feature',
+			feature: 'grok-native-compaction',
+			parityRows: ['S34', 'B03'],
+			detail: expect.stringContaining('Grok has no qualified native compaction operation'),
+		});
+		// Never a guessed literal: Grok has no compaction command at all.
+		expect(getContextCompactCommand('grok')).toBeUndefined();
+		// A provider with a verified command is never blocked; an unlisted one is
+		// simply unlisted, not a recorded blocker.
+		expect(getContextCompactionBlocker('claude-code')).toBeUndefined();
+		expect(getContextCompactionBlocker('codex')).toBeUndefined();
+		expect(getContextCompactionBlocker(undefined)).toBeUndefined();
+	});
+
+	it("reads the blocker off the tab's own provider", () => {
+		seedGrok();
+		expect(getTabContextCompactionBlocker(SESSION, TAB)?.feature).toBe('grok-native-compaction');
+		expect(getTabContextCompactionBlocker(SESSION, 'missing-tab')).toBeNull();
+		expect(getTabContextCompactionBlocker('missing-session', TAB)).toBeNull();
+
+		seed();
+		expect(getTabContextCompactionBlocker(SESSION, TAB)).toBeNull();
+	});
+
+	it('is not compactable even with a spawner wired and a native session to resume', () => {
+		registerContextCompactionSpawner(vi.fn<HiddenTurnSpawner>());
+		seedGrok();
+		expect(canCompactTabContext(SESSION, TAB)).toBe(false);
+	});
+
+	it('never runs a scripted Grok operation, whatever it would report', async () => {
+		seedGrok();
+		const blocker = getContextCompactionBlocker('grok')!;
+
+		for (const operation of scriptedGrokOperations()) {
+			registerContextCompactionSpawner(operation);
+			await expect(compactTabContext(SESSION, TAB)).resolves.toEqual({
+				success: false,
+				error: blocker.detail,
+			});
+			expect(operation).not.toHaveBeenCalled();
+		}
+	});
+
+	it("leaves the tab's native identity and transcript untouched after the refusal", async () => {
+		seedGrok();
+		const before = useSessionStore.getState().sessions[0];
+		const logCount = before.aiTabs[0].logs.length;
+		registerContextCompactionSpawner(
+			vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true })
+		);
+
+		expect((await compactTabContext(SESSION, TAB)).success).toBe(false);
+
+		const after = useSessionStore.getState().sessions[0];
+		expect(after.aiTabs[0].agentSessionId).toBe(GROK_NATIVE_ID);
+		expect(after.customEnvVars).toEqual(GROK_ACCOUNT_ENV);
+		expect(after.sessionSshRemoteConfig).toEqual(GROK_SSH);
+		expect(after.customModel).toBe('grok-4');
+		expect(after.toolType).toBe('grok');
+		// No pill: nothing claims a compaction happened.
+		expect(after.aiTabs[0].logs).toHaveLength(logCount);
+		expect(after.aiTabs[0].logs.some((log) => log.contextCompaction)).toBe(false);
+	});
+
+	it('refuses the same way with no native session to resume', async () => {
+		const operation = vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true });
+		registerContextCompactionSpawner(operation);
+		seedGrok(null);
+
+		const result = await compactTabContext(SESSION, TAB);
+		expect(result).toEqual({ success: false, error: getContextCompactionBlocker('grok')!.detail });
+		expect(operation).not.toHaveBeenCalled();
+	});
+
+	it('keeps the qualified provider on its own path beside a blocked one', async () => {
+		const operation = vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true });
+		registerContextCompactionSpawner(operation);
+
+		seedGrok();
+		expect((await compactTabContext(SESSION, TAB)).success).toBe(false);
+		expect(operation).not.toHaveBeenCalled();
+
+		seed();
+		await expect(compactTabContext(SESSION, TAB)).resolves.toEqual({ success: true });
+		expect(operation).toHaveBeenCalledTimes(1);
+		expect(operation.mock.calls[0].slice(2, 5)).toEqual(['claude-abc', '/compact', 'claude-code']);
 	});
 });

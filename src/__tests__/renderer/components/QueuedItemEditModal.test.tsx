@@ -5,15 +5,24 @@
  * Cmd/Ctrl+Enter saves and closes from anywhere in the modal body, including
  * the textarea where plain Enter must stay a newline.
  */
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import { QueuedItemEditModal } from '../../../renderer/components/QueuedItemEditModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { mockTheme } from '../../helpers/mockTheme';
-import type { QueuedItem } from '../../../renderer/types';
+import type { QueuedItem, Session } from '../../../renderer/types';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
+import { resetStore } from '../../helpers/resetStores';
+import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../../../shared/types';
+
+const originalMaestro = window.maestro;
+beforeEach(() => resetStore(useSessionStore));
+afterEach(() => {
+	cleanup();
+	window.maestro = originalMaestro;
+});
 
 function setup(overrides: Partial<QueuedItem> = {}) {
 	const item: QueuedItem = {
@@ -104,15 +113,23 @@ describe('QueuedItemEditModal model + effort override', () => {
 			},
 		};
 
-	function mockAgentsApi() {
+	function mockAgentsApi(status: AgentDiscoveryResult['status'] = 'discovered') {
 		(window as unknown as { maestro: unknown }).maestro = {
 			agents: {
-				getModels: vi.fn((id: string) => Promise.resolve(AGENT_OPTIONS[id]?.models ?? [])),
-				getConfigOptions: vi.fn((id: string, key: string) =>
+				getModels: vi.fn((id: string | AgentDiscoveryRequest) =>
 					Promise.resolve(
-						key === 'effort'
-							? (AGENT_OPTIONS[id]?.effort ?? [])
-							: (AGENT_OPTIONS[id]?.reasoning ?? [])
+						typeof id === 'string'
+							? (AGENT_OPTIONS[id]?.models ?? [])
+							: { status, options: ['queued-grok-model'] }
+					)
+				),
+				getConfigOptions: vi.fn((id: string | AgentDiscoveryRequest, key: string) =>
+					Promise.resolve(
+						typeof id !== 'string'
+							? { status, options: ['queued-effort'] }
+							: key === 'effort'
+								? (AGENT_OPTIONS[id]?.effort ?? [])
+								: (AGENT_OPTIONS[id]?.reasoning ?? [])
 					)
 				),
 				getConfig: vi.fn(() => Promise.resolve({})),
@@ -123,15 +140,18 @@ describe('QueuedItemEditModal model + effort override', () => {
 
 	function renderWithSession(
 		toolType: string,
-		item: Partial<QueuedItem> = {}
+		item: Partial<QueuedItem> = {},
+		sessionOverrides: Partial<Session> = {},
+		status: AgentDiscoveryResult['status'] = 'discovered'
 	): { onSave: ReturnType<typeof vi.fn> } {
-		mockAgentsApi();
+		mockAgentsApi(status);
 		useSessionStore.setState({
 			sessions: [
 				{
 					...createMockSession({ id: 'agent-1', toolType: toolType as never }),
 					aiTabs: [{ ...createMockAITab({ id: 'tab-1' }) }],
 					executionQueue: [],
+					...sessionOverrides,
 				} as never,
 			],
 			activeSessionId: 'agent-1',
@@ -258,5 +278,136 @@ describe('QueuedItemEditModal model + effort override', () => {
 		expect(onSave).toHaveBeenCalledWith(
 			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'think' } })
 		);
+	});
+
+	describe('Grok queued discovery', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => {
+			cleanup();
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+		});
+
+		it.each([
+			[{ model: 'captured-model', effort: 'captured-effort' }, 'captured-model', 'captured-effort'],
+			[{}, undefined, undefined],
+			[undefined, 'tab-model', 'tab-effort'],
+		] as const)(
+			'discovers from capture %j rather than later live overrides',
+			async (turnSettings, model, effort) => {
+				const { onSave } = renderWithSession(
+					'grok',
+					{ turnSettings },
+					{
+						customModel: 'agent-model',
+						customEffort: 'agent-effort',
+						aiTabs: [
+							createMockAITab({
+								id: 'tab-1',
+								customModel: 'tab-model',
+								customEffort: 'tab-effort',
+							}),
+						],
+					}
+				);
+				await act(async () => {});
+				expect(window.maestro.agents.getModels).toHaveBeenCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({ model, effort }),
+				});
+				expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledWith(
+					expect.objectContaining({ context: expect.objectContaining({ model, effort }) }),
+					'reasoningEffort'
+				);
+				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+				expect(onSave).toHaveBeenCalledWith(
+					expect.objectContaining({ turnSettings: { model, effort } })
+				);
+			}
+		);
+
+		it('invalidates suggestions immediately and debounces changed account, path, cwd and SSH context', async () => {
+			renderWithSession(
+				'grok',
+				{ turnSettings: { model: 'captured' } },
+				{
+					cwd: '/account-a/project',
+					customPath: '/account-a/bin/grok',
+					customEnvVars: { GROK_HOME: '/account-a' },
+				}
+			);
+			await act(async () => {});
+			expect(screen.getByRole('option', { name: 'queued-grok-model' })).toBeInTheDocument();
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+				status: 'discovered',
+				options: ['account-b-model'],
+			});
+			const changed = {
+				cwd: '/account-b/project',
+				customPath: '/account-b/bin/grok',
+				customEnvVars: { GROK_HOME: '/account-b', GROK_AUTH: '' },
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'configured-remote' },
+				sshRemoteId: 'observed-remote',
+			};
+			act(() =>
+				useSessionStore.setState((state) => ({ sessions: [{ ...state.sessions[0], ...changed }] }))
+			);
+			expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(299);
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(1);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1);
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: { kind: 'draft', ...changed, model: 'captured', effort: undefined },
+			});
+			expect(screen.getByRole('option', { name: 'account-b-model' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'queued-grok-model' })).not.toBeInTheDocument();
+		});
+
+		it.each(['unavailable', 'configured-fallback'] as const)(
+			'preserves manual values with %s discovery',
+			async (status) => {
+				const { onSave } = renderWithSession(
+					'grok',
+					{ turnSettings: { model: 'saved-model', effort: 'saved-effort' } },
+					{},
+					status
+				);
+				await act(async () => {});
+				expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+				expect(
+					screen.getAllByText(
+						status === 'configured-fallback' ? /configured value retained/ : /Options unavailable\./
+					)
+				).toHaveLength(2);
+				fireEvent.change(screen.getByLabelText('Model for this message'), {
+					target: { value: 'manual-model' },
+				});
+				fireEvent.change(screen.getByLabelText('Effort for this message'), {
+					target: { value: 'manual-effort' },
+				});
+				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+				expect(onSave).toHaveBeenCalledWith(
+					expect.objectContaining({
+						turnSettings: { model: 'manual-model', effort: 'manual-effort' },
+					})
+				);
+			}
+		);
+
+		it('keeps missing cwd unavailable without probing a host account', async () => {
+			renderWithSession('grok', {}, { cwd: '' });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+			expect(window.maestro.agents.getConfigOptions).not.toHaveBeenCalled();
+			expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Model for this message')).toBeEnabled();
+		});
 	});
 });

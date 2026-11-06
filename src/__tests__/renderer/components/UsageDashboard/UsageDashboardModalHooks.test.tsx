@@ -414,4 +414,142 @@ describe('UsageDashboardModal hooks', () => {
 		rerender({ isOpen: true, enabled: false });
 		expect(mockRefreshCodexUsageSnapshots).toHaveBeenCalledTimes(1);
 	});
+
+	describe('Grok quota unavailable', () => {
+		const mockGetClaudeUsageSnapshots = vi.fn();
+		const mockGetCodexUsageSnapshots = vi.fn();
+		// A guessed Grok sampler must never be reached: no qualified Grok quota API exists.
+		const mockRefreshGrokUsageSnapshots = vi.fn();
+		const mockGetGrokUsageSnapshots = vi.fn();
+		let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+		function installQuotaMock() {
+			installMaestroMock();
+			Object.assign(window.maestro.agents, {
+				getClaudeUsageSnapshots: mockGetClaudeUsageSnapshots,
+				getCodexUsageSnapshots: mockGetCodexUsageSnapshots,
+				refreshGrokUsageSnapshots: mockRefreshGrokUsageSnapshots,
+				getGrokUsageSnapshots: mockGetGrokUsageSnapshots,
+			});
+		}
+
+		const claudeAccount = {
+			sampledAt: '2026-11-01T10:00:00.000Z',
+			configDirKey: '/home/user/.claude-work',
+			authState: 'authenticated' as const,
+			session: { percent: 40, resetsAt: '2026-11-01T15:00:00.000Z' },
+			weekAllModels: { percent: 10, resetsAt: '2026-11-07T00:00:00.000Z' },
+			weekSonnetOnly: { percent: 0 },
+		};
+
+		beforeEach(() => {
+			mockGetClaudeUsageSnapshots.mockReset().mockResolvedValue({});
+			mockGetCodexUsageSnapshots.mockReset().mockResolvedValue({});
+			mockRefreshGrokUsageSnapshots.mockReset();
+			mockGetGrokUsageSnapshots.mockReset();
+			fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+		});
+
+		afterEach(() => {
+			fetchSpy.mockRestore();
+		});
+
+		it('samples only the qualified providers and never reaches a Grok quota call', async () => {
+			installQuotaMock();
+			renderHook(() => useQuotaTabDiscovery(true, true));
+
+			await waitFor(() => expect(mockRefreshCodexUsageSnapshots).toHaveBeenCalledTimes(1));
+			expect(mockRefreshClaudeUsageSnapshots).toHaveBeenCalledTimes(1);
+			expect(mockRefreshGrokUsageSnapshots).not.toHaveBeenCalled();
+			expect(mockGetGrokUsageSnapshots).not.toHaveBeenCalled();
+			expect(fetchSpy).not.toHaveBeenCalled();
+			expect(Object.keys(useClaudeUsageStore.getState().snapshots)).toEqual([]);
+			expect(Object.keys(useCodexUsageStore.getState().snapshots)).toEqual([]);
+		});
+
+		it('keeps a cached account-scoped snapshot and samples only the provider without one', async () => {
+			installQuotaMock();
+			mockGetClaudeUsageSnapshots.mockResolvedValue({
+				[claudeAccount.configDirKey]: claudeAccount,
+			});
+			renderHook(() => useQuotaTabDiscovery(true, true));
+
+			await waitFor(() => expect(mockRefreshCodexUsageSnapshots).toHaveBeenCalledTimes(1));
+			expect(mockRefreshClaudeUsageSnapshots).not.toHaveBeenCalled();
+			expect(useClaudeUsageStore.getState().snapshots).toEqual({
+				[claudeAccount.configDirKey]: claudeAccount,
+			});
+			expect(mockRefreshGrokUsageSnapshots).not.toHaveBeenCalled();
+		});
+
+		it('treats zero, unbounded and auth-stub windows as unknown, not as a quota reading', async () => {
+			installQuotaMock();
+			mockGetClaudeUsageSnapshots.mockResolvedValue({
+				zero: {
+					...claudeAccount,
+					configDirKey: 'zero',
+					session: { percent: 0 },
+					weekAllModels: { percent: 0 },
+				},
+				unbounded: {
+					...claudeAccount,
+					configDirKey: 'unbounded',
+					session: { percent: Number.POSITIVE_INFINITY, resetsAt: 'later' },
+					weekAllModels: { percent: Number.NaN, resetsAt: 'later' },
+				},
+				loggedOut: { ...claudeAccount, configDirKey: 'loggedOut', authState: 'unauthenticated' },
+			});
+			mockGetCodexUsageSnapshots.mockResolvedValue({
+				stub: { sampledAt: 'x', codexHomeKey: 'stub', authState: 'missing_auth' },
+			});
+			renderHook(() => useQuotaTabDiscovery(true, true));
+
+			// None of those snapshots counts as quota data, so both providers re-sample.
+			await waitFor(() => expect(mockRefreshClaudeUsageSnapshots).toHaveBeenCalledTimes(1));
+			await waitFor(() => expect(mockRefreshCodexUsageSnapshots).toHaveBeenCalledTimes(1));
+			expect(mockRefreshGrokUsageSnapshots).not.toHaveBeenCalled();
+		});
+
+		it('survives an auth or permission refusal from one sampler without blocking the other', async () => {
+			installQuotaMock();
+			mockRefreshClaudeUsageSnapshots.mockRejectedValueOnce(new Error('401 unauthenticated'));
+			mockRefreshCodexUsageSnapshots.mockRejectedValueOnce(new Error('EACCES permission denied'));
+
+			const { result } = renderHook(() => {
+				useQuotaTabDiscovery(true, true);
+				return useUsageDashboardData({ isOpen: true, timeRange: 'week', cueTabEnabled: false });
+			});
+
+			await waitFor(() => expect(mockRefreshCodexUsageSnapshots).toHaveBeenCalledTimes(1));
+			expect(mockRefreshClaudeUsageSnapshots).toHaveBeenCalledTimes(1);
+			await flushPromises();
+			// Known usage stays available while quota is unavailable.
+			await waitFor(() => expect(result.current.data).toBe(sampleAggregation));
+			expect(result.current.error).toBeNull();
+			expect(mockNotifyToast).not.toHaveBeenCalled();
+		});
+
+		it('offers no quota tab without details and keeps the usage views', async () => {
+			installQuotaMock();
+			useUIStore.setState({ usageDashboardViewMode: 'codex-usage' });
+			const { result } = renderHook(() =>
+				useUsageDashboardTabs({
+					cueTabEnabled: false,
+					hasAnthropicUsageDetails: false,
+					hasCodexUsageDetails: false,
+					contentRef: { current: null },
+					onViewModeChanged: vi.fn(),
+				})
+			);
+
+			await waitFor(() => expect(result.current.viewMode).toBe('overview'));
+			const values = result.current.viewModeTabs.map((tab) => tab.value);
+			expect(values).toContain('tokens');
+			expect(values).toContain('agents');
+			expect(values).not.toContain('anthropic-usage');
+			expect(values).not.toContain('codex-usage');
+			expect(values.some((value) => /grok|xai/i.test(value))).toBe(false);
+			expect(result.current.viewModeTabs.some((tab) => /grok|xai/i.test(tab.label))).toBe(false);
+		});
+	});
 });

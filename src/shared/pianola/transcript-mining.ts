@@ -22,9 +22,34 @@ import {
 	type PianolaDecisionRecord,
 } from './storage';
 import { canonicalJson } from '../canonicalJson';
+import { redactSecrets } from '../redactSecrets';
 
 /** Which installed agent a transcript came from. */
-export type TranscriptAgent = 'claude-code' | 'codex';
+export type TranscriptAgent = 'claude-code' | 'codex' | 'grok';
+
+/**
+ * Where a mined Grok pair came from in its native `chat_history.jsonl`. Grok
+ * rows carry no IDs or timestamps, so the 1-based source line is the only
+ * stable provenance (the same `grok-line-N` identity the session reader uses).
+ */
+export interface GrokDecisionProvenance {
+	format: 'grok-chat-history';
+	askLine: number;
+	replyLine: number;
+}
+
+/**
+ * Grok's model-visible history records the assistant's prose and the user's
+ * typed replies, but not the outcome of a tool-permission prompt: approvals
+ * live in the UI replay stream (`updates.jsonl`), whose row schema is not
+ * pinned. Mining therefore covers prose asks only and reports permission
+ * decisions as unsupported instead of inferring them from assistant text.
+ */
+export const GROK_PERMISSION_DECISIONS_UNSUPPORTED = {
+	code: 'grok-permission-decisions-unrecorded',
+	reason:
+		'Grok chat_history.jsonl does not record tool-permission decisions; the updates.jsonl row schema is not pinned, so permission prompts are not mined.',
+} as const;
 
 /** Coarse read of how the user responded to an awaiting-input moment. */
 export type ReplyPolarity = 'affirmative' | 'negative' | 'other';
@@ -48,6 +73,8 @@ export interface DecisionPair {
 	evidence?: PianolaHumanDecisionEvidence;
 	/** Conflicting snapshots of one source veto learning without increasing count. */
 	conflictingEvidence?: boolean;
+	/** Native source lines of the ask and the reply (Grok only). */
+	provenance?: GrokDecisionProvenance;
 }
 
 /** Convert committed explicit human resolutions. Recipient delivery is a separate outcome.
@@ -176,7 +203,7 @@ function truncate(text: string, limit = EXCERPT_LIMIT): string {
 
 /**
  * Flatten a transcript message's `content` into plain text. Content may be a
- * bare string (typed user text) or an array of blocks (Claude/Codex). Only text
+ * bare string (typed user text) or an array of blocks (Claude/Codex/Grok). Only text
  * is kept: tool-use and tool-result blocks contribute nothing, so a "user" turn
  * that is purely a tool result flattens to empty and is dropped as non-human.
  */
@@ -265,6 +292,75 @@ export function parseCodexTranscriptLine(line: string): PianolaMessage | null {
 	};
 }
 
+/**
+ * `synthetic_reason` values Grok stamps on a record a person typed. Absent is a
+ * plain prompt. Mirrors the session reader's `isSyntheticUserRecord`
+ * (`src/main/storage/grok-session-storage.ts`) minus two values that are not a
+ * reply in this conversation: `parent_human_message` is the parent's message
+ * echoed into a subagent (Claude's sidechain analog) and `direct_bash` is a
+ * shell command the user ran, not an answer.
+ */
+const GROK_HUMAN_SYNTHETIC_REASONS = new Set(['human', 'interjection']);
+
+/** Mining line id, matching the session reader's `grok-line-N` identity. */
+const GROK_LINE_ID = /^grok-line-(\d+)$/;
+
+/** Strip the `<user_query>` wrappers Grok puts around a typed prompt. */
+function stripGrokUserQuery(text: string): string {
+	const matches = [...text.matchAll(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/g)];
+	if (matches.length === 0) return text.trim();
+	return matches
+		.map((m) => m[1])
+		.filter((part) => part.trim().length > 0)
+		.join('\n\n');
+}
+
+/**
+ * Parse one line of a Grok `chat_history.jsonl` (format 1 `ConversationItem`
+ * rows keyed by `type`, legacy rows keyed by `role`) into a normalized message.
+ * Only a person's typed text and the assistant's prose survive: system,
+ * reasoning, tool_result and backend tool rows, injected context
+ * (`synthetic_reason`, the `<user_info>` environment block) and tool-call-only
+ * assistant rows return null. `lineNumber` is the 1-based source line, kept as
+ * the id because Grok rows carry neither IDs nor timestamps. Text is redacted
+ * before it reaches the classifier or the corpus.
+ */
+export function parseGrokTranscriptLine(line: string, lineNumber: number): PianolaMessage | null {
+	const obj = safeParse(line);
+	if (!obj) return null;
+	const role = asRole(obj.type ?? obj.role);
+	if (!role) return null;
+	let content = flattenContent(obj.content);
+	if (role === 'user') {
+		const reason = obj.synthetic_reason;
+		if (reason !== undefined && !GROK_HUMAN_SYNTHETIC_REASONS.has(String(reason))) return null;
+		if (content.trim().startsWith('<user_info>')) return null;
+		content = stripGrokUserQuery(content);
+	}
+	if (content.length === 0) return null;
+	return {
+		id: `grok-line-${lineNumber}`,
+		role,
+		source: role,
+		content: redactSecrets(content).text,
+		timestamp: '',
+	};
+}
+
+/**
+ * The project path of a Grok session from its transcript location
+ * `<GROK_HOME>/sessions/<percent-encoded cwd>/<session id>/chat_history.jsonl`.
+ * Undefined when the folder name does not decode.
+ */
+export function parseGrokCwdFromSessionDir(encodedCwd: string): string | undefined {
+	try {
+		const decoded = decodeURIComponent(encodedCwd);
+		return decoded.length > 0 ? decoded : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Read the originating project path (cwd) from a Codex session_meta line. */
 export function parseCodexCwd(line: string): string | undefined {
 	const obj = safeParse(line);
@@ -341,10 +437,28 @@ export function extractDecisionPairs(
 			polarity: replyPolarity(reply.content),
 			askedAt: turn.timestamp,
 			repliedAt: reply.timestamp,
+			...(meta.agent === 'grok' ? grokProvenance(turn.id, reply.id) : {}),
 		});
 	}
 
 	return pairs;
+}
+
+/** Source-line provenance for a Grok pair, when both ids are Grok line ids. */
+function grokProvenance(
+	askId: string,
+	replyId: string
+): { provenance: GrokDecisionProvenance } | Record<string, never> {
+	const ask = GROK_LINE_ID.exec(askId);
+	const reply = GROK_LINE_ID.exec(replyId);
+	if (!ask || !reply) return {};
+	return {
+		provenance: {
+			format: 'grok-chat-history',
+			askLine: Number(ask[1]),
+			replyLine: Number(reply[1]),
+		},
+	};
 }
 
 function emptyPolarityCounts(): Record<ReplyPolarity, number> {

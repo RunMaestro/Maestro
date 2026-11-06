@@ -8,6 +8,26 @@
 // UTILITY FUNCTIONS
 // ============================================================================
 
+/** Why a provider cannot moderate a group chat, as the moderator picker shows it. */
+export const GROUP_CHAT_MODERATION_UNSUPPORTED = 'Agent does not support group chat moderation.';
+
+/**
+ * The one refusal for a moderator provider without `supportsGroupChatModeration`.
+ * Storage throws it, and the CLI and the moderator picker refuse with the same
+ * text before anything is created, so the user never picks a provider that the
+ * chat then fails to start with.
+ *
+ * @returns the refusal text, or undefined when the provider can moderate
+ */
+export function groupChatModeratorRefusal(
+	moderatorAgentId: string,
+	supportsModeration: boolean
+): string | undefined {
+	return supportsModeration
+		? undefined
+		: `Invalid moderator agent ID: ${moderatorAgentId}. ${GROUP_CHAT_MODERATION_UNSUPPORTED}`;
+}
+
 /**
  * Normalize a name for use in @mentions.
  * Replaces spaces with hyphens and drops bracket punctuation so names can be

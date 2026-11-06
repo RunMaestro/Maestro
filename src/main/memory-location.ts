@@ -49,6 +49,7 @@ export async function resolveMemoryLayout(target: MemoryTarget): Promise<MemoryL
 			return {
 				...memoryLayoutFor('claude-code', { projectPath, accountDir: managed }),
 				directoryPath: path.join(managed, 'memory'),
+				boundKnowledge: true,
 			};
 		}
 	}
