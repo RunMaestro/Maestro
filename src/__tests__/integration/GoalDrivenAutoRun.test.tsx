@@ -12,7 +12,9 @@
  *   - `goalProgress` updates after each iteration
  *   - the run completes with `goalExitReason: 'completed'`
  *   - `onComplete` fires exactly once
- * A second scenario drives a flat run and asserts the `stalled` exit.
+ * A second scenario drives a flat run and asserts the `stalled` exit. A third
+ * parks a Thought Stream steering note mid-run and asserts the next iteration's
+ * prompt carries it.
  *
  * Modeled on src/__tests__/integration/AutoRunBatchProcessing.test.tsx, but
  * driving the hook (per src/__tests__/renderer/hooks/batch/useGoalRunner.test.ts)
@@ -26,6 +28,9 @@ import type { Session, Group, BatchRunConfig } from '../../renderer/types';
 import { useBatchProcessor } from '../../renderer/hooks';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../renderer/stores/batchStore';
+import { useSessionStore } from '../../renderer/stores/sessionStore';
+import { useAutoRunSteeringStore } from '../../renderer/stores/autoRunSteeringStore';
+import { STEERING_BLOCK_START } from '../../shared/autorunSteering';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import type { GoalExitReason } from '../../shared/goalDriven/types';
 
@@ -83,10 +88,14 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 	let mockOnAddHistoryEntry: ReturnType<typeof vi.fn>;
 	let mockOnComplete: ReturnType<typeof vi.fn>;
 
-	const renderProcessor = () =>
-		renderHook(() =>
+	// useBatchProcessor reads sessions from the store at event time, not from props.
+	const renderProcessor = () => {
+		useSessionStore.setState({
+			sessions: [createMockSession()],
+			activeSessionId: SESSION_ID,
+		} as never);
+		return renderHook(() =>
 			useBatchProcessor({
-				sessions: [createMockSession()],
 				groups: [createMockGroup()],
 				onUpdateSession: mockOnUpdateSession,
 				onSpawnAgent: mockOnSpawnAgent,
@@ -94,6 +103,7 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 				onComplete: mockOnComplete,
 			})
 		);
+	};
 
 	/** The final-summary History entry (its summary starts with an exit-reason label). */
 	const finalSummaryEntry = () =>
@@ -134,6 +144,7 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 	beforeEach(() => {
 		useSettingsStore.setState({ autoRunDisabled: false });
 		useBatchStore.setState({ batchRunStates: {} });
+		useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 
 		mockOnUpdateSession = vi.fn();
 		mockOnAddHistoryEntry = vi.fn();
@@ -243,6 +254,64 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 		} finally {
 			unsubscribe();
 		}
+	});
+
+	it('delivers a steering note parked mid-run to the next iteration prompt', async () => {
+		const resolvers: Array<(value: SpawnResult) => void> = [];
+		mockOnSpawnAgent.mockImplementation(
+			() => new Promise<SpawnResult>((resolve) => resolvers.push(resolve))
+		);
+
+		const { result } = renderProcessor();
+
+		let finished = false;
+		act(() => {
+			void result.current
+				.startBatchRun(
+					SESSION_ID,
+					goalConfig('Ship the feature', 'All tests pass', null),
+					'/test/folder'
+				)
+				.then(() => {
+					finished = true;
+				});
+		});
+
+		// Iteration 1 is in flight; the operator types a note in the Thought Stream.
+		await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+		const noteText = 'Skip the migration, focus on the API tests.';
+		let parked: ReturnType<ReturnType<typeof useAutoRunSteeringStore.getState>['addNote']> = null;
+		act(() => {
+			parked = useAutoRunSteeringStore.getState().addNote(SESSION_ID, noteText);
+		});
+		expect(parked).not.toBeNull();
+
+		await act(async () => {
+			resolvers[0]({ success: true, agentSessionId: 'a1', response: progressResponse(40) });
+		});
+		await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2));
+
+		// The NEXT iteration's prompt carries the conductor-notes block and the note.
+		const nextPrompt = mockOnSpawnAgent.mock.calls[1][1] as string;
+		expect(nextPrompt).toContain(STEERING_BLOCK_START);
+		expect(nextPrompt).toContain(noteText);
+		expect(useAutoRunSteeringStore.getState().notes[SESSION_ID]).toBeUndefined();
+
+		await act(async () => {
+			resolvers[1]({ success: true, agentSessionId: 'a2', response: progressResponse(100) });
+		});
+		await waitFor(() => expect(finished).toBe(true));
+
+		// The iteration that took the note replied to it, so the Thought Stream
+		// shows the reply under the note. Iteration 1 took nothing.
+		expect(mockOnSpawnAgent.mock.calls[0][1]).not.toContain(STEERING_BLOCK_START);
+		const delivered = useAutoRunSteeringStore.getState().delivered[SESSION_ID];
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0].text).toBe(noteText);
+		expect(delivered[0].response).toMatchObject({
+			summary: 'Synopsis: did work toward 100%.',
+			success: true,
+		});
 	});
 
 	it('stops a flat run with goalExitReason "stalled" and fires onComplete once', async () => {

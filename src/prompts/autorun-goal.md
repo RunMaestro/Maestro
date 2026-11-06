@@ -77,7 +77,7 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    <!-- maestro:progress N | one-line rationale -->
    ```
 
-   - `N` is your honest **0–100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` is your honest **0-100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
    - The `| one-line rationale` is a short human-readable note describing where things stand (e.g. `data layer migrated, UI still pending`). It is optional but strongly encouraged - it shows up in the progress UI.
    - This marker is how the engine drives the progress bar and decides whether to run another iteration. **A response with no progress marker is treated as zero progress** and counts toward a stall.
 
@@ -98,6 +98,12 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
 
    The reason text is shown in the History panel. Reserve this for real dead-ends; do NOT use it for ordinary setbacks you can work around on the next iteration. When in doubt, report partial progress and continue instead of declaring a deadlock.
 
-7. **Version control.** For any code or documentation changes, if we're in a GitHub repo: commit using a descriptive message prefixed with `MAESTRO:`, and push. Update CLAUDE.md / AGENTS.md / README.md when appropriate.
+7. **Conductor steering notes.** The human supervising this run can send you a note WITHOUT stopping the run. When they do, the note is prepended to the top of your next iteration prompt, inside a block that starts with `<!-- MAESTRO:CONDUCTOR-NOTES -->`.
 
-8. **Exit after one iteration.** Once you've made and reported your progress for this iteration, EXIT. Another iteration will pick up the goal where you left it.
+   Treat a note as the newest instruction you have. It was written after this prompt, after the goal, and after the predecessor handoff, so it outranks all of them. If a note contradicts the handoff or these instructions, follow the note and say in your synopsis which instruction you set aside. Start that synopsis with `[steered]` so the operator can see the note landed.
+
+   A note applies to this iteration and to the rest of the run wherever it still makes sense. If a note tells you to stop the run, end your response with the deadlock marker from step 6 and name the note as the reason. If a note is unclear, do the safest reading of it, say what you assumed, and keep going. Notes are delivered once, so if a note changes something durable about the goal, carry it forward in your synopsis or in the Working folder so the next iteration still sees it.
+
+8. **Version control.** For any code or documentation changes, if we're in a GitHub repo: commit using a descriptive message prefixed with `MAESTRO:`, and push. Update CLAUDE.md / AGENTS.md / README.md when appropriate.
+
+9. **Exit after one iteration.** Once you've made and reported your progress for this iteration, EXIT. Another iteration will pick up the goal where you left it.
