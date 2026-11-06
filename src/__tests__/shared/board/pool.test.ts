@@ -53,3 +53,26 @@ describe('selectPoolAgentIds', () => {
 		).toEqual([]);
 	});
 });
+
+describe('normalized local migration containment', () => {
+	it.each([
+		['/repo', '/repo/../other', false],
+		['/repo', '/repo/./pkg/../inside', true],
+		['/', '/repo', true],
+		['/', '/', true],
+		['/repo', 'repo/child', false],
+		['C:\\repo', 'C:\\repo\\..\\other', false],
+		['C:\\', 'C:\\repo', true],
+		['C:\\repo', 'c:/REPO/./pkg/../inside', true],
+		['C:\\repo', 'D:\\repo', false],
+		['C:\\repo', 'C:repo', false],
+		['\\\\server\\share', '\\\\server\\share\\folder', true],
+		['\\\\server\\share\\repo', '\\\\server\\share\\repo\\..\\other', false],
+		['\\\\server\\share', '\\\\server\\other-share\\folder', false],
+	])('checks %s against %s without cross-repository grants', (parent, child, inside) => {
+		expect(isPathWithin(parent, child)).toBe(inside);
+		expect(selectPoolAgentIds(parent, [{ id: 'worker', dir: child, boardWorker: true }])).toEqual(
+			inside ? ['worker'] : []
+		);
+	});
+});

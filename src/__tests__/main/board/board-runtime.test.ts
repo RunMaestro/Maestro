@@ -1506,6 +1506,63 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		});
 		expect(persisted()).toBe(before);
 	});
+	it.each(['dormancy', 'membership', 'repository-access', 'assignment'])(
+		'preserves completed native evidence behind the authority fence after %s changes',
+		async (change) => {
+			const token = claim();
+			const pending = runtime.start(token);
+			if (change === 'dormancy') host.agentStates.worker.live = false;
+			if (change === 'membership') agents[0].groupId = 'other';
+			if (change === 'repository-access') setBoardWorkerAccess(db, 'worker', [], []);
+			if (change === 'assignment')
+				db.prepare(
+					"UPDATE cards SET payload_json=json_set(payload_json, '$.repositoryId', 'repo1') WHERE collection_key=?"
+				).run(command().collectionKey);
+			const actual = {
+				...good,
+				output: 'Original native output\n<!-- maestro:card-complete | Retained native summary -->',
+				worktreePath: good.artifact!.worktreePath,
+				worktreeBranch: good.artifact!.branch,
+			};
+			settle(actual);
+			expect(await pending).toMatchObject({ ok: false });
+			expect(runtime.read(token)!.life).toMatchObject({
+				phase: 'uncertain',
+				pendingResult: actual,
+			});
+			expect(runtime.read(token)!.outcome).toBeNull();
+			expect(card().status).toBe('running');
+			expect(card().workflow?.workRunId).toBeUndefined();
+			expect(card().runs?.[0]).toMatchObject({
+				runId: token.runId,
+				summary: 'Retained native summary',
+				artifact: good.artifact,
+				worktreePath: actual.worktreePath,
+			});
+			expect(reservations()).toHaveLength(1);
+			expect(runtime.claim(command())).toMatchObject({ ok: false });
+			expect(completed).not.toHaveBeenCalled();
+			const before = persisted();
+			expect(runtime.reconcile(token)).toMatchObject({ ok: false });
+			expect(persisted()).toBe(before);
+			expect(runtime.complete(token, { ...actual, output: 'replacement output' })).toMatchObject({
+				ok: false,
+			});
+			expect(persisted()).toBe(before);
+			host.agentStates.worker.live = true;
+			agents[0].groupId = 'group';
+			setBoardWorkerAccess(db, 'worker', [], ['repo0', 'repo1']);
+			if (change === 'assignment')
+				db.prepare(
+					"UPDATE cards SET payload_json=json_set(payload_json, '$.repositoryId', 'repo0') WHERE collection_key=?"
+				).run(command().collectionKey);
+			expect(runtime.reconcile(token)).toMatchObject({ ok: true });
+			expect(runtime.read(token)!.outcome).toMatchObject({ result: actual });
+			expect(card().status).toBe('review');
+			expect(reservations()).toHaveLength(0);
+			expect(service.spawn).toHaveBeenCalledTimes(1);
+		}
+	);
 	it.each(['membership', 'registration', 'repository-access'])(
 		'rejects a result after %s is revoked',
 		async (change) => {
@@ -1516,7 +1573,9 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 			if (change === 'repository-access') setBoardWorkerAccess(db, 'worker', [], []);
 			settle(good);
 			expect(await pending).toMatchObject({ ok: false });
-			expect(card().status).toBe('todo');
+			expect(card().status).toBe('running');
+			expect(reservations()).toHaveLength(1);
+			expect(runtime.read(token)!.life.pendingResult).toEqual(good);
 			expect(card().workflow?.workRunId).toBeUndefined();
 		}
 	);
@@ -1549,7 +1608,9 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		setBoardWorkerAccess(db, 'worker', [], []);
 		settle(good);
 		expect(await pending).toMatchObject({ ok: false });
-		expect(card().status).toBe('todo');
+		expect(card().status).toBe('running');
+		expect(reservations()).toHaveLength(1);
+		expect(runtime.read(token)!.life.pendingResult).toEqual(good);
 	});
 	it('rejects a result when the assigned namespaced role is revoked after start', async () => {
 		db.prepare(
@@ -1573,7 +1634,9 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		setBoardWorkerAccess(db, 'worker', [], ['repo0', 'repo1']);
 		settle(good);
 		expect(await pending).toMatchObject({ ok: false });
-		expect(card().status).toBe('todo');
+		expect(card().status).toBe('running');
+		expect(reservations()).toHaveLength(1);
+		expect(runtime.read(token)!.life.pendingResult).toEqual(good);
 	});
 	it('fences forged generation and epoch without partial writes', async () => {
 		const token = claim();

@@ -226,3 +226,38 @@ it('does not expand older unmarked central restrictions when their intent cannot
 		db.close();
 	}
 });
+
+it.each([
+	['/repo', '/repo/../outside', '/repo/./inside'],
+	['C:\\repo', 'C:\\repo\\..\\outside', 'C:\\repo\\.\\inside'],
+	['\\\\host\\share\\repo', '\\\\host\\share\\repo\\..\\outside', '\\\\host\\share\\repo\\inside'],
+])(
+	'never migrates repository grants through dotsegment escapes from %s',
+	(project, outside, inside) => {
+		const db = openBoardDb(fixture.contract.db);
+		try {
+			applyBoardMigration(
+				db,
+				planBoardMigration({
+					source: { location: { kind: 'local' }, path: project },
+					repository: { id: 'repo', workingDirectory: project, validated: true },
+					boardBytes: null,
+					profileBytes: null,
+					workers: [
+						{ id: 'outside', dir: outside, boardWorker: true },
+						{ id: 'inside', dir: inside, boardWorker: true },
+					],
+				})
+			);
+			const workers = listBoardWorkers(db);
+			expect(
+				workers.find((worker) => worker.agentId === 'outside')!.payload.allowedRepositoryIds
+			).toEqual([]);
+			expect(
+				workers.find((worker) => worker.agentId === 'inside')!.payload.allowedRepositoryIds
+			).toEqual(['repo']);
+		} finally {
+			db.close();
+		}
+	}
+);

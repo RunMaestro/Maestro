@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+
 /**
  * Board worker-pool selection (Board Phase 6) - pure, framework-free.
  *
@@ -19,23 +21,22 @@ export interface PoolCandidate {
 	boardWorker?: boolean;
 }
 
-/** Normalize a path for containment comparison: forward slashes, no trailing sep. */
-function normalizePath(p: string): string {
-	return p.replace(/\\/g, '/').replace(/\/+$/, '');
-}
-
 /**
- * True when `childDir` is `parentDir` itself or nested inside it. Separator-aware
- * (handles both `/` and `\`) and boundary-safe: `/repo` does NOT contain
- * `/repo-two`. Case-sensitive; agent dirs are expected to match the project's
- * casing. Empty / missing inputs are never contained.
+ * Absolute local containment for migration grants. Node's path implementation
+ * collapses dot segments and preserves drive/UNC/POSIX roots. Remote migration
+ * uses its separate SSH identity rules, never this local pool.
  */
 export function isPathWithin(parentDir: string, childDir: string | undefined | null): boolean {
-	if (!parentDir || !childDir) return false;
-	const parent = normalizePath(parentDir);
-	const child = normalizePath(childDir);
-	if (!parent) return false;
-	return child === parent || child.startsWith(`${parent}/`);
+	if (!parentDir || !childDir || parentDir.includes('\0') || childDir.includes('\0')) return false;
+	const paths = /^[A-Za-z]:[\\/]|^[\\/]{2}[^\\/]/.test(parentDir) ? path.win32 : path.posix;
+	if (!paths.isAbsolute(parentDir) || !paths.isAbsolute(childDir)) return false;
+	// A Windows rooted path without a drive/share depends on process cwd.
+	if (paths === path.win32 && !/^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(childDir)) return false;
+	const relative = paths.relative(paths.normalize(parentDir), paths.normalize(childDir));
+	return (
+		relative === '' ||
+		(relative !== '..' && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative))
+	);
 }
 
 /**

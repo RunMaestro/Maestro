@@ -11,6 +11,14 @@ import type Database from 'better-sqlite3';
 import { selectPoolAgentIds } from '../../shared/board/pool';
 import { resolveBoardLocation } from './board-location';
 
+/** Expected legacy input failures; storage and admission errors remain fatal. */
+export class BoardMigrationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'BoardMigrationError';
+	}
+}
+
 export interface BoardMigrationInput {
 	/** Canonical location and source path supplied by the caller, never inferred from a worker. */
 	source: { location: { kind: 'local' } | { kind: 'ssh'; remoteId: string }; path: string };
@@ -74,13 +82,18 @@ function id(value: unknown): string | null {
 
 function entries(bytes: Uint8Array | null, field: string): unknown[] {
 	if (bytes === null) return [];
-	const parsed: unknown = yaml.load(Buffer.from(bytes).toString('utf8'), {
-		schema: yaml.JSON_SCHEMA,
-	});
+	let parsed: unknown;
+	try {
+		parsed = yaml.load(Buffer.from(bytes).toString('utf8'), { schema: yaml.JSON_SCHEMA });
+	} catch (error) {
+		if (!(error instanceof yaml.YAMLException)) throw error;
+		// Do not persist the parser's input snippet (which can contain secrets).
+		throw new BoardMigrationError(`Invalid legacy ${field} document`);
+	}
 	if (parsed == null) return [];
 	const root = record(parsed);
 	if (!root || (root[field] != null && !Array.isArray(root[field]))) {
-		throw new Error(`Invalid legacy ${field} document`);
+		throw new BoardMigrationError(`Invalid legacy ${field} document`);
 	}
 	return (root[field] as unknown[] | null | undefined) ?? [];
 }
@@ -524,18 +537,18 @@ export function applyBoardMigration(
 				const payload = canonicalJson(plan.repository);
 				if (existing && existing.payload_json !== payload) {
 					const previous = JSON.parse(existing.payload_json);
-					// Discovery's typed pending SSH record is not an imported repository.
+					// Discovery's typed pending source record is not an imported repository.
 					// Complete this exact identity atomically with the original import snapshot.
 					if (
-						plan.source?.location.kind !== 'ssh' ||
+						!plan.source ||
 						plan.repository.id !== `source:${plan.sourceKey}` ||
 						previous.sourceStatus !== 'unresolved' ||
 						previous.validated !== false ||
 						previous.workingDirectory !== plan.source.path ||
-						canonicalJson({ location: previous.location }) !==
+						canonicalJson({ location: previous.location ?? { kind: 'local' } }) !==
 							canonicalJson({ location: plan.source.location })
 					)
-						throw new Error('Board migration repository conflict');
+						throw new BoardMigrationError('Board migration repository conflict');
 					db.prepare('UPDATE repositories SET payload_json=? WHERE id=?').run(
 						payload,
 						plan.repository.id

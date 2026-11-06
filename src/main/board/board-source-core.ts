@@ -14,6 +14,8 @@ import {
 import { execGitReadOnly } from '../utils/remote-git';
 import {
 	applyBoardMigration,
+	BoardMigrationError,
+	type BoardMigrationInput,
 	boardMigrationSourceKey,
 	planBoardMigration,
 } from './board-migration';
@@ -67,9 +69,13 @@ export async function discoverLocalBoardSources(
 			applyBoardMigration(storage.db, JSON.parse(Buffer.from(existing.snapshot).toString('utf8')));
 			continue;
 		}
+		const knownRepository = storage.db
+			.prepare('SELECT payload_json FROM repositories WHERE id=?')
+			.get(`source:${sourceKey}`) as { payload_json: string } | undefined;
 		if (
 			storage.db.prepare('SELECT 1 FROM board_sources WHERE source_key=?').get(sourceKey) &&
-			storage.db.prepare('SELECT 1 FROM repositories WHERE id=?').get(`source:${sourceKey}`)
+			knownRepository &&
+			JSON.parse(knownRepository.payload_json).sourceStatus !== 'unresolved'
 		)
 			continue;
 		const read = async (relative: string): Promise<Buffer | null> => {
@@ -99,10 +105,15 @@ export async function discoverLocalBoardSources(
 					(s.projectRoot || s.dir) === root
 			)
 		) {
-			applyBoardMigration(
-				storage.db,
-				planBoardMigration({ source, repository, boardBytes, profileBytes, workers: registered })
-			);
+			try {
+				applyBoardMigration(
+					storage.db,
+					planBoardMigration({ source, repository, boardBytes, profileBytes, workers: registered })
+				);
+			} catch (error) {
+				if (!(error instanceof BoardMigrationError)) throw error;
+				recordUnresolvedBoardSource(storage, source, error.message);
+			}
 		} else {
 			storage.db
 				.transaction(() => {
@@ -181,43 +192,67 @@ export async function discoverRemoteBoardSources(
 			await importRemoteBoardSource(storage, source, registered, remote);
 			continue;
 		} catch (error) {
-			if (!(error instanceof BoardStorageError)) throw error;
+			if (
+				!(error instanceof BoardMigrationError) &&
+				!(
+					error instanceof BoardStorageError &&
+					['legacy-mapping-missing', 'identity-mismatch'].includes(error.code)
+				)
+			)
+				throw error;
 			diagnostic = error.message;
 		}
-		storage.db
-			.transaction(() => {
-				if (
-					storage.db
-						.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
-						.get(sourceKey)
-				)
-					return;
-				const inserted = storage.db
-					.prepare('INSERT OR IGNORE INTO board_sources VALUES (?)')
-					.run(sourceKey);
-				storage.db
-					.prepare('INSERT OR IGNORE INTO board_source_locations VALUES (?, ?)')
-					.run(sourceKey, canonicalJson(source));
-				const updated = storage.db
-					.prepare(
-						'INSERT INTO repositories VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json WHERE payload_json <> excluded.payload_json'
-					)
-					.run(
-						`source:${sourceKey}`,
-						canonicalJson({
-							id: `source:${sourceKey}`,
-							workingDirectory: source.path,
-							location: source.location,
-							validated: false,
-							diagnostic,
-							sourceStatus: 'unresolved',
-						})
-					);
-				if (inserted.changes || updated.changes)
-					storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
-			})
-			.immediate();
+		recordUnresolvedBoardSource(storage, source, diagnostic);
 	}
+}
+
+/** Retain a retryable source diagnostic without creating a migration ledger or worker grants. */
+function recordUnresolvedBoardSource(
+	storage: BoardStorageFacade,
+	source: BoardMigrationInput['source'],
+	diagnostic: string
+): void {
+	const sourceKey = boardMigrationSourceKey(source);
+	storage.db
+		.transaction(() => {
+			if (
+				storage.db
+					.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
+					.get(sourceKey)
+			)
+				return;
+			const existing = storage.db
+				.prepare('SELECT payload_json FROM repositories WHERE id=?')
+				.get(`source:${sourceKey}`) as { payload_json: string } | undefined;
+			const inserted = storage.db
+				.prepare('INSERT OR IGNORE INTO board_sources VALUES (?)')
+				.run(sourceKey);
+			storage.db
+				.prepare('INSERT OR IGNORE INTO board_source_locations VALUES (?, ?)')
+				.run(sourceKey, canonicalJson(source));
+			const updated = storage.db
+				.prepare(
+					'INSERT INTO repositories VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json WHERE payload_json <> excluded.payload_json'
+				)
+				.run(
+					`source:${sourceKey}`,
+					canonicalJson({
+						...(existing
+							? JSON.parse(existing.payload_json)
+							: {
+									id: `source:${sourceKey}`,
+									workingDirectory: source.path,
+									location: source.location,
+								}),
+						validated: false,
+						diagnostic,
+						sourceStatus: 'unresolved',
+					})
+				);
+			if (inserted.changes || updated.changes)
+				storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+		})
+		.immediate();
 }
 
 /** One immutable import through the selected SSH identity, also used by explicit repair. */

@@ -18,6 +18,7 @@ import {
 } from '../../../main/board/board-source-host';
 import {
 	discoverRemoteBoardSources,
+	discoverLocalBoardSources,
 	executeBoardSourceOperation,
 } from '../../../main/board/board-source-core';
 import { boardMigrationSourceKey } from '../../../main/board/board-migration';
@@ -706,6 +707,43 @@ it('retains local repository revalidation through the admitted host wrapper', as
 			validated: true,
 		});
 		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+	} finally {
+		db.close();
+	}
+});
+
+it('diagnoses invalid remote legacy input without blocking later remote or local sources and retries repair', async () => {
+	const { db, storage } = fixture();
+	try {
+		const root = '/remote-only/Repo';
+		const remote = transport(root);
+		const read = remote.read;
+		let repaired = false;
+		remote.read = async (...args) =>
+			args[1].id === 'one' && !repaired && args[0].endsWith('board.yaml')
+				? { success: true, data: Buffer.from('boards: [').toString('base64') }
+				: read(...args);
+		const workers = ['one', 'two'].map((remoteId) => ({
+			id: `worker-${remoteId}`,
+			dir: root,
+			boardWorker: true,
+			sessionSshRemoteConfig: { enabled: true, remoteId },
+		}));
+		await discoverRemoteBoardSources(storage, workers, remote);
+		execFileSync('git', ['init', '--quiet', dir]);
+		await discoverLocalBoardSources(storage, [{ id: 'local', dir, boardWorker: true }]);
+		expect(storage.query().sources).toHaveLength(3);
+		expect(db.prepare('SELECT * FROM migrations').all()).toHaveLength(2);
+		const key = boardMigrationSourceKey({ location: { kind: 'ssh', remoteId: 'one' }, path: root });
+		expect(
+			storage.captureCatalog().repositories.find((repo) => repo.id === `source:${key}`)
+		).toMatchObject({ validated: false, diagnostic: expect.stringContaining('legacy') });
+		repaired = true;
+		await discoverRemoteBoardSources(storage, workers, remote);
+		expect(db.prepare('SELECT * FROM migrations').all()).toHaveLength(3);
+		expect(
+			storage.captureCatalog().repositories.find((repo) => repo.id === `source:${key}`)
+		).toMatchObject({ validated: true });
 	} finally {
 		db.close();
 	}

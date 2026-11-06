@@ -48,6 +48,7 @@ class NodeSqliteDatabaseShim {
 	private readonly db: DatabaseSync;
 	readonly name: string;
 	private savepoint = 0;
+	private transactionDepth = 0;
 
 	/**
 	 * Honors the better-sqlite3 options whose behavior a caller can depend on:
@@ -100,8 +101,9 @@ class NodeSqliteDatabaseShim {
 		fn: (...args: Args) => Result
 	): ((...args: Args) => Result) & { immediate: (...args: Args) => Result } {
 		const run = (mode: string, args: Args) => {
-			const savepoint = this.db.isTransaction ? `shim_${++this.savepoint}` : null;
+			const savepoint = this.inTransaction ? `shim_${++this.savepoint}` : null;
 			this.db.exec(savepoint ? `SAVEPOINT ${savepoint}` : mode);
+			this.transactionDepth++;
 			try {
 				const result = fn(...args);
 				this.db.exec(savepoint ? `RELEASE ${savepoint}` : 'COMMIT');
@@ -112,6 +114,8 @@ class NodeSqliteDatabaseShim {
 					this.db.exec(`RELEASE ${savepoint}`);
 				} else this.db.exec('ROLLBACK');
 				throw error;
+			} finally {
+				this.transactionDepth--;
 			}
 		};
 		return Object.assign((...args: Args) => run('BEGIN', args), {
@@ -120,7 +124,7 @@ class NodeSqliteDatabaseShim {
 	}
 
 	get inTransaction(): boolean {
-		return this.db.isTransaction;
+		return this.db.isTransaction ?? this.transactionDepth > 0;
 	}
 
 	function(name: string, fn: () => number): this {

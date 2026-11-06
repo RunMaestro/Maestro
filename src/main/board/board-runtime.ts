@@ -43,6 +43,8 @@ export interface BoardRunLifecycle {
 	launchAuthorized?: boolean;
 	process?: { cueRunId: string; pid?: number };
 	reason?: string;
+	/** Native termination evidence retained while current authority is fenced. */
+	pendingResult?: CardSpawnResult;
 	/** Bounded commit witnesses; advisory receipts are never a dispatch authority. */
 	transitionCommits?: Partial<Record<BoardTransitionPhase, string>>;
 }
@@ -362,6 +364,8 @@ export class BoardRuntime {
 				this.updateCard(row.spec, (card) => {
 					card.heldByUser = true;
 				});
+				if (row.life.pendingResult)
+					return this.finish(token, row.life.pendingResult, undefined, true);
 				if (row.life.phase === 'prepared')
 					return this.finish(
 						token,
@@ -425,6 +429,8 @@ export class BoardRuntime {
 				if (!row) return { ok: false, reason: 'attempt-conflict' };
 				if (token.ownerEpoch === this.epoch && row.life.phase !== 'uncertain')
 					return { ok: false, reason: 'attempt-active' };
+				if (row.life.pendingResult)
+					return this.finish(token, row.life.pendingResult, undefined, true);
 				if (row.life.phase === 'prepared')
 					return this.finish(
 						token,
@@ -590,6 +596,11 @@ export class BoardRuntime {
 				const row = this.read(token);
 				if (!row) return { ok: false, reason: 'attempt-conflict' };
 				if (row.outcome) return { ok: false, reason: 'result-already-recorded' };
+				if (
+					row.life.pendingResult &&
+					canonicalJson(row.life.pendingResult) !== canonicalJson(result)
+				)
+					return { ok: false, reason: 'result-pending-authority' };
 				if (!this.current(token)) return { ok: false, reason: 'attempt-conflict' };
 				if (!forced && result.executionStarted !== false && !row.life.launchAuthorized)
 					return { ok: false, reason: 'launch-proof-missing' };
@@ -598,12 +609,33 @@ export class BoardRuntime {
 				if (!forced && result.executionStarted !== false) {
 					const reason = this.resultAuthority(row.spec);
 					if (reason) {
-						const reclaimed = this.finish(
-							token,
-							{ output: '', exitCode: null, terminationConfirmed: true, error: reason },
-							'reclaimed'
-						);
-						return reclaimed.ok ? { ok: false, reason } : reclaimed;
+						if (
+							row.life.pendingResult &&
+							row.life.phase === 'uncertain' &&
+							row.life.reason === reason
+						)
+							return { ok: false, reason };
+						// Native termination is known, but neither success nor reclaim is
+						// authorized. Keep the attempt's reservation and immutable evidence
+						// until reconciliation can validate this exact result again.
+						if (reason !== 'not-found' && reason !== 'invalid-specification')
+							this.updateCard(row.spec, (card) => {
+								const run = card.runs?.find((entry) => entry.attempt === row.spec.attempt);
+								if (!run) return;
+								run.endedAt ??= new Date().toISOString();
+								run.summary = parseCardMarkers(result.output).summary ?? run.summary;
+								if (result.artifact) run.artifact = result.artifact;
+								if (result.artifactBase) run.artifactBase = result.artifactBase;
+								if (result.worktreePath) run.worktreePath = result.worktreePath;
+								if (result.worktreeBranch) run.worktreeBranch = result.worktreeBranch;
+							});
+						this.writeLife(token, {
+							...row.life,
+							phase: 'uncertain',
+							reason,
+							pendingResult: result,
+						});
+						return { ok: false, reason };
 					}
 				}
 				const before = snapshotBoardTransitions(this.storage, row.spec.key, this.onTransitions);
@@ -636,7 +668,9 @@ export class BoardRuntime {
 										error: result.error ?? 'Agent did not start',
 									}
 								: result,
-							new Date().toISOString(),
+							row.life.pendingResult
+								? (run.endedAt ?? new Date().toISOString())
+								: new Date().toISOString(),
 							DEFAULT_MAX_FAILURES
 						);
 					if (result.artifact && !cause) run.artifact = result.artifact;
@@ -702,7 +736,12 @@ export class BoardRuntime {
 						run: card.runs?.find((entry) => entry.attempt === row.spec.attempt),
 					};
 				});
-				this.writeLife(token, { ...row.life, phase: 'finished', reason: result.error });
+				this.writeLife(token, {
+					...row.life,
+					phase: 'finished',
+					reason: result.error,
+					pendingResult: undefined,
+				});
 				const completionId = generateUUID();
 				this.storage.db.prepare('UPDATE runs SET outcome_json=? WHERE run_id=?').run(
 					canonicalJson({

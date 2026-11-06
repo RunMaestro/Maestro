@@ -19,7 +19,7 @@ import {
 import { canonicalJson } from '../../shared/canonicalJson';
 import { BOOTSTRAP_STORE_FILE } from '../../shared/syncPath';
 
-export function createBoardIsolationFixture() {
+export function createBoardIsolationFixture(options: { syncInUserData?: boolean } = {}) {
 	const worktree = fs.realpathSync.native(path.resolve(__dirname, '../../..'));
 	const isolated = path.join(worktree, 'isolated');
 	fs.mkdirSync(isolated, { recursive: true, mode: 0o700 });
@@ -29,7 +29,9 @@ export function createBoardIsolationFixture() {
 	const owned = fs.lstatSync(root);
 	try {
 		const userData = path.join(root, 'userData');
-		const sync = path.join(root, 'sync');
+		// Shared E2E suites seed stores through one testDataDir; keep that layout
+		// inside the same admitted child contract when explicitly requested.
+		const sync = options.syncInUserData ? userData : path.join(root, 'sync');
 		const sourceRoot = path.join(root, 'sources');
 		const sources = Object.freeze({
 			one: path.join(sourceRoot, 'one'),

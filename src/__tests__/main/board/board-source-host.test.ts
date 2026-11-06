@@ -405,3 +405,77 @@ it('explicitly revalidates unresolved imported sources without rewriting origina
 		db.close();
 	}
 });
+
+it.each(['syntax', 'shape', 'repository-conflict'])(
+	'isolates expected %s migration failures per local source and retries repaired input',
+	async (failure) => {
+		dir = fs.mkdtempSync(path.join(isolation.contract.root, 'source-failure-'));
+		const roots = ['broken', 'healthy'].map((name) => {
+			const root = path.join(dir, name);
+			fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
+			execFileSync('git', ['init', '--quiet', root]);
+			return root;
+		});
+		const valid = JSON.stringify({ boards: [{ id: 'legacy', name: 'Legacy', cards: [] }] });
+		const broken =
+			failure === 'syntax' ? 'boards: [' : failure === 'shape' ? '{"boards":{}}' : valid;
+		fs.writeFileSync(path.join(roots[0], '.maestro/board.yaml'), broken);
+		fs.writeFileSync(path.join(roots[1], '.maestro/board.yaml'), valid);
+		const db = openBoardDb(isolation.contract.db);
+		try {
+			const storage = new BoardStorageFacade(db);
+			const key = boardMigrationSourceKey({ location: { kind: 'local' }, path: roots[0] });
+			if (failure === 'repository-conflict')
+				db.prepare('INSERT INTO repositories VALUES (?, ?)').run(
+					`source:${key}`,
+					JSON.stringify({
+						id: `source:${key}`,
+						workingDirectory: path.join(dir, 'different'),
+						validated: true,
+					})
+				);
+			const workers = roots.map((root, i) => ({ id: `worker-${i}`, dir: root, boardWorker: true }));
+			await discoverLocalBoardSources(storage, workers);
+			expect(storage.query().sources).toHaveLength(2);
+			expect(storage.query().collections).toHaveLength(1);
+			expect(
+				storage.captureCatalog().repositories.find((repo) => repo.id === `source:${key}`)
+			).toMatchObject({ validated: false, diagnostic: expect.stringMatching(/legacy|conflict/) });
+			expect(db.prepare('SELECT 1 FROM migrations WHERE source_key=?').get(key)).toBeUndefined();
+			expect(fs.readFileSync(path.join(roots[0], '.maestro/board.yaml'), 'utf8')).toBe(broken);
+			const healthy = db.prepare('SELECT * FROM migrations').all();
+			fs.writeFileSync(path.join(roots[0], '.maestro/board.yaml'), valid);
+			if (failure === 'repository-conflict')
+				db.prepare('DELETE FROM repositories WHERE id=?').run(`source:${key}`);
+			await discoverLocalBoardSources(storage, workers);
+			expect(storage.query().collections).toHaveLength(2);
+			expect(
+				storage.captureCatalog().repositories.find((repo) => repo.id === `source:${key}`)
+			).toMatchObject({ validated: true });
+			expect(db.prepare('SELECT * FROM migrations WHERE source_key<>?').all(key)).toEqual(healthy);
+		} finally {
+			db.close();
+		}
+	}
+);
+
+it('propagates unexpected migration storage corruption rather than diagnosing it as bad legacy input', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'source-corruption-'));
+	execFileSync('git', ['init', '--quiet', dir]);
+	fs.mkdirSync(path.join(dir, '.maestro'));
+	fs.writeFileSync(path.join(dir, '.maestro/board.yaml'), '{"boards":[]}');
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const key = boardMigrationSourceKey({ location: { kind: 'local' }, path: dir });
+		db.prepare('INSERT INTO repositories VALUES (?, ?)').run(
+			`source:${key}`,
+			'corrupted-storage-json'
+		);
+		await expect(
+			discoverLocalBoardSources(new BoardStorageFacade(db), [{ id: 'worker', dir }])
+		).rejects.toThrow();
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+	} finally {
+		db.close();
+	}
+});
