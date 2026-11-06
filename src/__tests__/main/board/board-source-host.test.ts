@@ -1,3 +1,4 @@
+import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -489,6 +490,7 @@ it.each([
 	'root-discovery',
 	'EPERM',
 	'missing',
+	'replay',
 ])(
 	'isolates %s physical-directory failures and retries without partial migration',
 	async (kind) => {
@@ -507,7 +509,8 @@ it.each([
 			);
 			return root;
 		});
-		const denied = kind.startsWith('root') ? roots[0] : path.join(roots[0], 'worker');
+		const denied =
+			kind.startsWith('root') || kind === 'replay' ? roots[0] : path.join(roots[0], 'worker');
 		fs.mkdirSync(denied, { recursive: true });
 		const db = openBoardDb(isolation.contract.db);
 		try {
@@ -530,6 +533,8 @@ it.each([
 					0,
 					JSON.stringify({ accessManaged: true, allowedRepositoryIds: [], roleRefs: [] })
 				);
+			if (kind === 'replay') await discoverLocalBoardSources(storage, workers);
+			const frozen = snapshotSqlite(db);
 			const original = fs.realpathSync.native.bind(fs.realpathSync);
 			let deniedCalls = 0;
 			const spy = vi.spyOn(fs.realpathSync, 'native').mockImplementation((file, options) => {
@@ -543,7 +548,7 @@ it.each([
 			});
 			const asyncRealpath = fs.promises.realpath.bind(fs.promises);
 			const asyncSpy =
-				kind === 'root-discovery'
+				kind === 'root-discovery' || kind === 'replay'
 					? vi.spyOn(fs.promises, 'realpath').mockImplementation(async (file, options) => {
 							if (file === denied) {
 								deniedCalls++;
@@ -556,6 +561,10 @@ it.each([
 			const retry =
 				kind === 'relevant' || kind.startsWith('root') || kind === 'EPERM' || kind === 'missing';
 			await discoverLocalBoardSources(storage, workers);
+			if (kind === 'replay') {
+				expect(snapshotSqlite(db)).toEqual(frozen);
+				return;
+			}
 			expect(deniedCalls).toBe(retry ? 1 : 0);
 			expect(db.prepare('SELECT * FROM migrations WHERE source_key=?').get(key)).toEqual(
 				retry ? undefined : expect.anything()

@@ -231,6 +231,9 @@ function recordUnresolvedBoardSource(
 					.get(sourceKey)
 			)
 				return;
+			// A completed transfer is immutable, including when a concurrent import
+			// wins while this discovery call observes a physical-directory failure.
+			if (storage.db.prepare('SELECT 1 FROM migrations WHERE source_key=?').get(sourceKey)) return;
 			const existing = storage.db
 				.prepare('SELECT payload_json FROM repositories WHERE id=?')
 				.get(`source:${sourceKey}`) as { payload_json: string } | undefined;
