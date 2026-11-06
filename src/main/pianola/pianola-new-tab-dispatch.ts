@@ -52,6 +52,7 @@ class NewTabSpawnFences {
 		if (isTerminalAgentRunStatus(run.status)) this.running.delete(run.id);
 		listener(run, terminalOutput);
 	}
+	/** Fence a tab until its admission is armed and the authorized dispatch claims it. */
 	hold(agentId: string, tabId: string) {
 		const key = `${agentId}-ai-${tabId}`;
 		if (!this.held.has(key)) this.held.set(key, {});
@@ -64,6 +65,7 @@ class NewTabSpawnFences {
 	isHeld(agentId: string, tabId: string): boolean {
 		return this.held.has(`${agentId}-ai-${tabId}`);
 	}
+	/** Attach the admission guard and lifecycle callbacks to an existing held tab. */
 	arm(
 		agentId: string,
 		tabId: string,

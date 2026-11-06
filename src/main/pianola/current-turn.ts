@@ -74,6 +74,7 @@ export class NativeCurrentTurns {
 		};
 	}
 
+	/** Discard unconsumed host-creation evidence when an agent is removed. */
 	forgetHostEmptyCreation(agentId: string): void {
 		for (const [key, binding] of this.hostCreations)
 			if (binding.agentId === agentId) this.hostCreations.delete(key);
@@ -138,6 +139,7 @@ export class NativeCurrentTurns {
 			this.removeObserver(this.observers.keys().next().value!);
 	}
 
+	/** Drop observer interest and its retained state when global observation is disabled. */
 	private removeObserver(key: string): void {
 		this.observers.delete(key);
 		if (!this.enabled) {
@@ -146,6 +148,7 @@ export class NativeCurrentTurns {
 		}
 	}
 
+	/** Retire expired interests through the same state-cleanup path as disconnects. */
 	private expireObservers(): void {
 		const now = Date.now();
 		for (const [key, interest] of this.observers) {
@@ -426,6 +429,7 @@ export class NativeCurrentTurns {
 		}
 	}
 
+	/** Track provider-session identity and invalidate enrollment when that identity changes. */
 	announce(processSessionId: string, providerSessionId: string): void {
 		if (!providerSessionId) return;
 		for (const [key, binding] of this.hostCreations)
@@ -443,6 +447,10 @@ export class NativeCurrentTurns {
 		}
 	}
 
+	/**
+	 * Bind a native run to the fresh user boundary only when tab and provider identities agree.
+	 * Missing or conflicting evidence invalidates enrollment instead of proving a turn.
+	 */
 	begin(run: AgentRun, boundaryId?: string): void {
 		const native = nativeTabSession(run);
 		if (!native) return;

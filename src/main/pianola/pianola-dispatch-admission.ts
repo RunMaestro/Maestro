@@ -122,6 +122,7 @@ export class PianolaDispatchAdmissionService {
 		this.routingReleases.clear();
 	}
 
+	/** Resolve live host authority for this client; a stale or absent run cannot dispatch. */
 	private caller(client: Client): HostCallerRun {
 		const caller = (this.deps.callers ?? hostCallerRuns).resolve(client);
 		if (!caller) throw new Error('CallerRunUnavailable');
@@ -129,6 +130,7 @@ export class PianolaDispatchAdmissionService {
 		return caller;
 	}
 
+	/** Bind a persisted admission to the same active caller run that created it. */
 	private record(client: Client, dispatchId: string): PianolaDispatchAdmission {
 		const caller = this.caller(client);
 		const record = this.deps.store.readDispatchAdmission(dispatchId);
@@ -151,6 +153,7 @@ export class PianolaDispatchAdmissionService {
 		};
 	}
 
+	/** Re-evaluate scope ownership from a complete snapshot and recheck caller authority after the read. */
 	private async authorizeOwner(
 		managerAgentId: string,
 		assertAuthority: () => void,
@@ -286,6 +289,10 @@ export class PianolaDispatchAdmissionService {
 		});
 	}
 
+	/**
+	 * Enroll an idle tab at its current cursor before recording the admission phase.
+	 * Existing suspended or reconfigured checkpoints are never silently re-armed.
+	 */
 	private enrollRecord(
 		record: PianolaDispatchAdmission,
 		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorizeOwner']>>,
@@ -341,6 +348,7 @@ export class PianolaDispatchAdmissionService {
 		this.deps.store.writeDispatchAdmission(record);
 	}
 
+	/** Reject a release if the scope or policy changed since admission. */
 	private checkPolicy(
 		record: PianolaDispatchAdmission,
 		auth: Awaited<ReturnType<PianolaDispatchAdmissionService['authorizeOwner']>>
@@ -407,6 +415,7 @@ export class PianolaDispatchAdmissionService {
 		});
 	}
 
+	/** Persist the observed outcome before returning its receipt for reconciliation. */
 	private settle(
 		record: PianolaDispatchAdmission,
 		outcome: Exclude<PianolaDispatchOutcome, 'not-started'>,
