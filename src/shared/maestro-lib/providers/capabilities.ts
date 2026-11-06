@@ -533,6 +533,29 @@ export function getAgentCapabilities(agentId: string): AgentCapabilities {
 }
 
 /**
+ * Whether a provider can read attached images.
+ *
+ * The one rule the renderer's attach gate and main's send gate share. Only a
+ * KNOWN `supportsImageInput: false` refuses: a missing capability object (an
+ * unknown provider, a capability lookup that has not settled, or a room with no
+ * moderator) allows, which is the behaviour both surfaces had before the gate.
+ */
+export function agentCanReadImages(
+	capabilities: Pick<AgentCapabilities, 'supportsImageInput'> | null | undefined
+): boolean {
+	return capabilities?.supportsImageInput !== false;
+}
+
+/**
+ * Whether the provider with this id can read attached images. An unknown or
+ * missing id allows: only a provider Maestro knows to be text-only refuses.
+ */
+export function agentIdCanReadImages(agentId: string | null | undefined): boolean {
+	if (!agentId) return true;
+	return agentCanReadImages(AGENT_CAPABILITIES[agentId]);
+}
+
+/**
  * Check if an agent has a specific capability.
  *
  * @param agentId - The agent identifier

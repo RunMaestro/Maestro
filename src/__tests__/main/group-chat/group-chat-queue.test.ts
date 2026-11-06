@@ -47,6 +47,7 @@ import {
 } from '../../../main/group-chat/group-chat-queue';
 import type { GroupChatQueueState } from '../../../shared/group-chat-types';
 import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
+import { MODERATOR_CANNOT_READ_IMAGES_REASON } from '../../../shared/maestro-lib/groupchat/image-gate';
 
 const item = (id: string, text = `msg-${id}`) => ({ id, timestamp: Date.now(), text });
 
@@ -106,22 +107,29 @@ function installBusySend(h: Harness): void {
 interface Harness {
 	broadcasts: Array<{ id: string; state: GroupChatQueueState }>;
 	sends: string[];
+	imagesSent: string[][];
 	systemMessages: string[];
 	idle: boolean;
 }
 
-function install(overrides: Partial<{ send: () => Promise<void> }> = {}): Harness {
-	const h: Harness = { broadcasts: [], sends: [], systemMessages: [], idle: true };
+function install(
+	overrides: Partial<{
+		send: (
+			groupChatId: string,
+			text: string,
+			images?: string[],
+			readOnly?: boolean
+		) => Promise<void>;
+	}> = {}
+): Harness {
+	const h: Harness = { broadcasts: [], sends: [], imagesSent: [], systemMessages: [], idle: true };
 	installGroupChatQueue({
 		broadcast: (id, state) => h.broadcasts.push({ id, state }),
-		send: overrides.send
-			? async (_id, text) => {
-					h.sends.push(text);
-					await overrides.send!();
-				}
-			: async (_id, text) => {
-					h.sends.push(text);
-				},
+		send: async (_id, text, images, readOnly) => {
+			h.sends.push(text);
+			h.imagesSent.push(images ?? []);
+			await overrides.send?.(_id, text, images, readOnly);
+		},
 		postSystemMessage: async (_id, content) => {
 			h.systemMessages.push(content);
 		},
@@ -242,6 +250,103 @@ describe('T4: a failed send keeps the item, warns, and does not retry', () => {
 		onModeratorStateChanged(CHAT_ID, true);
 		await settle();
 		expect(h.sends).toHaveLength(attempts);
+	});
+});
+
+describe('T4b (P10): images are refused at send time, not at queue time', () => {
+	const imageItem = (id: string, images: string[]) => ({
+		...item(id, 'look at this'),
+		images,
+	});
+
+	it('keeps an image message when the moderator can no longer read images, then delivers it with the same images after a switch back', async () => {
+		let canReadImages = true;
+		const h = install({
+			send: async (_id, _text, images) => {
+				if (images?.length && !canReadImages) {
+					throw new Error(MODERATOR_CANNOT_READ_IMAGES_REASON);
+				}
+			},
+		});
+		h.idle = false;
+		await addToQueue(CHAT_ID, imageItem('img-1', ['/images/a.png']));
+		await addToQueue(CHAT_ID, item('behind', 'after the image'));
+
+		// The room is still busy while the moderator changes to a text-only one.
+		canReadImages = false;
+		h.idle = true;
+		onModeratorStateChanged(CHAT_ID, true);
+		await settle();
+
+		const failed = await getQueue(CHAT_ID);
+		expect(failed.items).toEqual([
+			expect.objectContaining({
+				id: 'img-1',
+				failed: true,
+				failureReason: MODERATOR_CANNOT_READ_IMAGES_REASON,
+			}),
+			expect.objectContaining({ id: 'behind' }),
+		]);
+		expect(failed.paused).toBe(true);
+		expect(h.sends).toEqual(['look at this']);
+		expect(h.imagesSent).toEqual([['/images/a.png']]);
+
+		// A refusal is final for this attempt: another idle must not spin.
+		onModeratorStateChanged(CHAT_ID, true);
+		await settle();
+		expect(h.imagesSent).toHaveLength(1);
+
+		// Switching back makes the failed item deliverable, images included, and the
+		// item behind it drains in order rather than being lost with the pause.
+		canReadImages = true;
+		await resumeQueueFor(CHAT_ID);
+		await settle();
+
+		expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		expect(h.sends).toEqual(['look at this', 'look at this', 'after the image']);
+		expect(h.imagesSent).toEqual([['/images/a.png'], ['/images/a.png'], []]);
+	});
+
+	it('never gates a text-only message, even while the moderator cannot read images', async () => {
+		let canReadImages = false;
+		const h = install({
+			send: async (_id, _text, images) => {
+				if (images?.length && !canReadImages) {
+					throw new Error(MODERATOR_CANNOT_READ_IMAGES_REASON);
+				}
+			},
+		});
+		h.idle = false;
+		await addToQueue(CHAT_ID, item('1', 'just text'));
+
+		h.idle = true;
+		onModeratorStateChanged(CHAT_ID, true);
+		await settle();
+
+		expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		expect(h.sends).toEqual(['just text']);
+		expect(h.imagesSent).toEqual([[]]);
+	});
+
+	it('requeues a direct image send at the front, failed and paused, when the moderator cannot read images', async () => {
+		const h = install({
+			send: async (_id, _text, images) => {
+				if (images?.length) throw new Error(MODERATOR_CANNOT_READ_IMAGES_REASON);
+			},
+		});
+		h.idle = true;
+
+		const state = await submitMessage(CHAT_ID, imageItem('direct-1', ['/images/a.png']));
+
+		expect(state.paused).toBe(true);
+		expect(state.items).toEqual([
+			expect.objectContaining({
+				id: 'direct-1',
+				failed: true,
+				failureReason: MODERATOR_CANNOT_READ_IMAGES_REASON,
+			}),
+		]);
+		expect(h.imagesSent).toEqual([['/images/a.png']]);
 	});
 });
 
