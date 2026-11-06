@@ -23,7 +23,7 @@ import {
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
-import { redactAnswerTail } from '../../../shared/agent-run/redact';
+import { redactAnswerTail, redactSecrets } from '../../../shared/agent-run/redact';
 import {
 	resolveTurnOutcome,
 	type TurnFacts,
@@ -523,6 +523,10 @@ export class ExitHandler {
 			// that decide dependency readiness must see the final answer, never an
 			// earlier partial snapshot that happened to look stable for two polls.
 			settlement.answerTail = redactAnswerTail(managedProcess.streamedText);
+			Object.defineProperty(settlement, 'nativeAnswer', {
+				value: redactSecrets(managedProcess.streamedText),
+				enumerable: false,
+			});
 		}
 		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}

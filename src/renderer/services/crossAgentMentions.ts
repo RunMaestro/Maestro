@@ -205,19 +205,20 @@ export function dispatchCrossAgentMentions(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
-	images?: string[]
+	images?: string[],
+	managedQueue?: { dispatchId: string; generation: string; starts: Promise<void>[] }
 ): CrossAgentMentionDispatch {
 	const targets = resolveConsultTargets(plan.targetSessionIds);
 	if (plan.routing === 'handoff') {
-		armMentionHandoff(sourceSession.id, sourceTabId, { targets, message });
+		if (!managedQueue) armMentionHandoff(sourceSession.id, sourceTabId, { targets, message });
 		return { consultTargets: [], handoffTargets: targets };
 	}
 
 	// Hold BEFORE sending, so a consult that settles almost at once (a target
 	// that no longer exists) still finds the hold waiting to record it.
-	if (plan.routing === 'parallel') {
+	if (!managedQueue && plan.routing === 'parallel') {
 		holdTurnForConsults(sourceSession.id, sourceTabId, targets);
-	} else if (plan.routing === 'consult-first') {
+	} else if (!managedQueue && plan.routing === 'consult-first') {
 		holdTurnForConsults(sourceSession.id, sourceTabId, targets, {
 			message,
 			...(images && images.length > 0 && { images: [...images] }),
@@ -227,7 +228,10 @@ export function dispatchCrossAgentMentions(
 	const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
 	const sourceLogs = sourceTab?.logs ?? [];
 	for (const targetSessionId of plan.targetSessionIds) {
-		sendCrossAgentRequest({
+		const started = sendCrossAgentRequest({
+			...(managedQueue && {
+				managedQueue: { dispatchId: managedQueue.dispatchId, generation: managedQueue.generation },
+			}),
 			sourceSessionId: sourceSession.id,
 			sourceAgentName: sourceSession.name,
 			sourceTabId,
@@ -238,6 +242,7 @@ export function dispatchCrossAgentMentions(
 			// may READ files here to answer (see cross-agent-router prompt).
 			sourceCwd: sourceSession.cwd,
 		});
+		if (managedQueue) managedQueue.starts.push(started);
 	}
 	return plan.routing === 'parallel'
 		? { consultTargets: targets, handoffTargets: [] }

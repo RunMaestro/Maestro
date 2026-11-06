@@ -537,6 +537,11 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
+	pendingAdmissionId?: string;
+	/** Host-journaled release revision. Pending ID remains provenance and a
+	 * renderer safety barrier until the guarded native queue consumer claims it. */
+	admissionRelease?: { generation: string };
 	// Hold set when the process ownership probe cannot reach main. The
 	// item becomes runnable only after bridge reconciliation confirms ownership.
 	waitingForConnection?: boolean;
@@ -1319,6 +1324,10 @@ export interface PendingSteer {
 }
 
 export interface Session {
+	/** Named exclusions override the group and worktree grants. */
+	peerAgents?: import('../../shared/types').PeerAgent[];
+	groupPeerAccess?: import('../../shared/types').PeerAccess;
+	worktreePeerAccess?: import('../../shared/types').PeerAccess;
 	providerMigration?: ProviderMigrationState;
 	providerTranslationQueuedOrigins?: Record<string, ToolType>;
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
@@ -1677,7 +1686,12 @@ export interface Session {
 
 // Process spawning configuration
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

@@ -1,3 +1,7 @@
+import { createHash } from 'crypto';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { getSessionsStore } from '../stores';
+import { readRules, readSupervisorTargets } from '../pianola/pianola-store-main';
 /**
  * Main-process integration for the permission relay: connects the transport
  * (PermissionRelayServer + registry) to Electron - surfacing requests to the
@@ -8,12 +12,19 @@
  * so the server stays unit-testable.
  */
 
+import { nativeCurrentTurns } from '../pianola/current-turn';
+import { broadcastBridgeEvent } from '../web-server/handlers/bridgeHandlers';
 import { BrowserWindow } from 'electron';
 import type { EventEmitter } from 'events';
 import * as fs from 'fs';
 import { logger } from '../utils/logger';
 import { permissionRelayServer } from './PermissionRelayServer';
-import { registerSpawn, resolvePending, subscribePendingPermissions } from './registry';
+import {
+	registerSpawn,
+	resolvePending,
+	subscribePendingPermissions,
+	lookupBindingForHint,
+} from './registry';
 import { createSafeSend } from '../utils/safe-send';
 import { buildRelayArgs, resolveBridgeScriptPath } from './spawn-args';
 import type { PermissionDecision } from './types';
@@ -43,10 +54,44 @@ export function initPermissionRelay(
 	initialized = true;
 
 	const send = createSafeSend(() => BrowserWindow.getAllWindows());
+	let previousProcesses: string[] = [];
 	subscribePendingPermissions((snapshot) => {
 		// Status only: prompt bodies and per-spawn authentication tokens stay private.
 		send('process:pending-permissions', snapshot);
+		// Pending state is committed before this hint. One shared drain coalesces it;
+		// the frame carries no question content, token, or delivery authority.
+		for (const processId of new Set([...previousProcesses, ...snapshot.processIds])) {
+			const tabId = lookupBindingForHint(processId);
+			const turn = nativeCurrentTurns.readProcessTurn(processId, tabId);
+			if (turn)
+				broadcastBridgeEvent('sessions:transcriptCommitted', [
+					{ ...turn.cursor, inputRequest: true },
+				]);
+		}
+		previousProcesses = snapshot.processIds;
 	});
+
+	permissionRelayServer.setQuestionAuthority(() =>
+		createHash('sha256')
+			.update(
+				canonicalJson({
+					rules: readRules(),
+					targets: readSupervisorTargets(),
+					owners: getSessionsStore()
+						.get('sessions', [])
+						.map((s) => ({
+							id: s.id,
+							cwd: s.cwd,
+							groupId: s.groupId ?? null,
+							parentSessionId: s.parentSessionId ?? null,
+							provider: s.toolType,
+							remote:
+								!!s.sshRemoteId || !!s.sshRemote || s.sessionSshRemoteConfig?.enabled === true,
+						})),
+				})
+			)
+			.digest('hex')
+	);
 
 	permissionRelayServer.setOnRequest((request) => {
 		const win = getMainWindow();

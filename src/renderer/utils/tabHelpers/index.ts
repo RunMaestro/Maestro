@@ -1,3 +1,4 @@
+import { newEmptyTranscript } from '../../../shared/sessionTranscript';
 // Tab helper functions for AI multi-tab support
 // These helpers manage AITab state within Maestro sessions
 
@@ -933,12 +934,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
-	if (item.type === 'message' && item.text) {
+	if (item.type === 'message' && (item.text || item.images?.length)) {
 		const logEntry: LogEntry = {
 			id: generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
-			text: item.text,
+			text: item.text ?? '',
 			images: item.images,
 			// Stamped so a dispatch that throws before spawning can take this card
 			// back out again - the prompt never reached a model, and leaving the
@@ -1141,8 +1142,9 @@ export interface CreateTabOptions {
 	 *  tab is never activated: focusing a tab the strip does not draw strands the
 	 *  user on it, so this overrides `activate`. Default false. */
 	hidden?: boolean;
-	/** Adopt an id minted elsewhere instead of generating one. The only caller
-	 *  is a web-desktop client drawing the tab the DESKTOP just created for it
+	/** Adopt an id minted elsewhere instead of generating one. Callers are
+	 *  the host admission adapter reserving an exact empty tab, and a web-desktop
+	 *  client drawing the tab the DESKTOP just created for it
 	 *  (see `createNewAITab`): the id has to match, or the inventory broadcast
 	 *  that follows adds the same tab a second time under the desktop's id.
 	 *  Omit everywhere else - a caller that passes an id it did not receive
@@ -1190,7 +1192,7 @@ export function createTab(
 	const {
 		origin,
 		agentSessionId = null,
-		logs = [],
+		logs = newEmptyTranscript<LogEntry>(),
 		name = null,
 		starred = false,
 		usageStats,

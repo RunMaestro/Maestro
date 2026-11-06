@@ -3,8 +3,10 @@
  * @description Unit tests for web server factory with dependency injection.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
+import { nativeCurrentTurns } from '../../../main/pianola/current-turn';
+import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -71,6 +73,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setNewAITabWithPromptCallback = vi.fn();
 			setConsultAgentCallback = vi.fn();
 			setNoteAgentDelegationCallback = vi.fn();
+			setReleaseQueueItemCallback = vi.fn();
+			setConfirmQueueItemCallback = vi.fn();
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
@@ -668,116 +672,217 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('native scope census', () => {
-		it('retains a tabless parent and enrolls background work through the real cycle', async () => {
-			const sessions = [
-				{ id: 'parent', cwd: '/project', aiTabs: [] },
-				{
-					id: 'child',
-					cwd: '/worktrees/child',
-					parentSessionId: 'parent',
-					activeTabId: 'active',
-					aiTabs: [
-						{
-							id: 'background',
-							state: 'idle',
-							createdAt: 10,
-							logs: [{ id: 'stream', source: 'ai', text: 'Working.', timestamp: 20 }],
-						},
-					],
-				},
-			];
-			vi.mocked(mockSessionsStore.get).mockReturnValue(sessions);
-			mockProcessManager.get.mockImplementation((id: string) =>
-				id === 'child-ai-background' ? { pid: 1 } : undefined
-			);
-			const server = createWebServerFactory(deps)();
-			const callback = (server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>).mock
-				.calls[0][0];
-			const readSnapshot = async () =>
-				pianolaScopeSnapshotFromDesktop({ success: true, ...callback() });
-			const snapshot = await readSnapshot();
-			expect(snapshot.owners.map((owner) => owner.id)).toEqual(['parent', 'child']);
-			expect(snapshot.tabs[0]).toMatchObject({ tabId: 'background', busy: true, paused: false });
-			const scopeId = '11111111-1111-4111-8111-111111111111';
-			let checkpoint: any = null;
-			const decisions: any[] = [];
-			const dispatch = vi.fn(async () => ({ status: 'accepted' as const }));
-			const cycleDeps = {
-				store: {
-					readSupervisorTargets: () => [
-						{
-							id: scopeId,
-							kind: 'watch-scope' as const,
-							enabled: true,
-							createdAt: 1,
-							managerAgentId: 'manager',
-							selection: {
-								label: 'parent agent',
-								mode: 'agents-and-groups' as const,
-								agentIds: ['parent'],
-								groupIds: [],
-								excludedAgentIds: [],
-							},
-						},
-					],
-					readScopeCheckpoint: () => structuredClone(checkpoint),
-					writeScopeCheckpoint: (value: any) => {
-						checkpoint = structuredClone(value);
-					},
-					readDecisions: () => decisions,
-				},
-				readSnapshot,
-				readTranscript: async () => ({
-					agentId: 'child',
+		afterEach(() => nativeCurrentTurns.setEnabled(false));
+		it.each([
+			'stream',
+			'unchanged',
+			'timestamp',
+			'metadata',
+			'risk',
+			'restart',
+			'reorder',
+		] as const)(
+			'consumes native streaming freshness through census and worker: %s',
+			async (mode) => {
+				nativeCurrentTurns.setEnabled(true);
+				const observation = {
+					sourceGeneration: 'fixture-renderer',
+					createdAt: 10,
+					provider: 'codex',
+				};
+				const user = { id: 'user', source: 'user', text: 'Work on this', timestamp: 19 };
+				const stream = {
+					id: 'stream',
+					source: 'ai',
+					text: ['unchanged', 'timestamp', 'metadata'].includes(mode)
+						? 'Should I run tests?'
+						: 'Working.',
+					timestamp: 20,
+				};
+				nativeCurrentTurns.commit({
+					sessionId: 'child',
 					tabId: 'background',
-					messages: sessions[1].aiTabs
-						.map((tab) =>
-							tab.logs!.map((log) => ({
-								id: log.id,
-								role: 'assistant' as const,
-								source: log.source,
-								content: log.text,
-								timestamp: new Date(log.timestamp).toISOString(),
-							}))
-						)
-						.flat(),
-				}),
-				watch: {
-					readRules: () => [
-						{
-							id: 'rule',
-							enabled: true,
-							scope: 'global' as const,
-							match: { kinds: ['question' as const], maxRisk: 'low' as const },
-							action: 'auto_answer' as const,
-							answer: 'Controlled reply.',
-							priority: 1,
-							createdAt: 1,
-							updatedAt: 1,
-						},
-					],
-					recordDecision: (record: any) => {
-						decisions.push(record);
+					field: 'logs',
+					snapshot: true,
+					upserts: [user],
+					removedIds: [],
+					orderIds: ['user'],
+					observation: { ...observation, sequence: 1 },
+				});
+				const capture = new AgentRunCaptureService({
+					getAgentRun: () => undefined,
+					upsertAgentRun: (run) => run,
+					appendAgentRunEvent: (event) => event,
+					findActiveRunBySession: () => undefined,
+				});
+				const run = capture.captureSpawn({
+					sessionId: 'child-ai-background',
+					toolType: 'codex',
+					cwd: '/worktrees/child',
+					transcriptBoundaryId: 'user',
+					nativeTabSession: { agentId: 'child', tabId: 'background', createdAt: 10 },
+				})!;
+				nativeCurrentTurns.begin(run, 'user');
+				nativeCurrentTurns.commit({
+					sessionId: 'child',
+					tabId: 'background',
+					field: 'logs',
+					upserts: [stream],
+					removedIds: [],
+					orderIds: ['user', 'stream'],
+					observation: { ...observation, sequence: 2 },
+				});
+				const sessions = [
+					{ id: 'parent', cwd: '/project', aiTabs: [] },
+					{
+						id: 'child',
+						toolType: 'codex',
+						cwd: '/worktrees/child',
+						parentSessionId: 'parent',
+						activeTabId: 'active',
+						aiTabs: [
+							{
+								id: 'background',
+								state: 'idle',
+								createdAt: 10,
+								logs: [user, stream],
+							},
+						],
 					},
-					now: () => new Date().toISOString(),
-					genId: () => String(decisions.length + 1),
-					log: () => {},
-				},
-				dispatch,
-			};
-			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
-			expect(dispatch).not.toHaveBeenCalled();
-			mockProcessManager.get.mockReturnValue(undefined);
-			sessions[1].aiTabs[0].logs![0].text = 'Should I run tests?';
-			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
-			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
-			expect(dispatch).toHaveBeenCalledTimes(1);
-			expect(dispatch.mock.calls[0]).toMatchObject([
-				{ agentId: 'child', tabId: 'background' },
-				'Controlled reply.',
-				{ scopeId, messageId: 'stream' },
-			]);
-		});
+				];
+				vi.mocked(mockSessionsStore.get).mockReturnValue(sessions);
+				mockProcessManager.get.mockImplementation((id: string) =>
+					id === 'child-ai-background' ? { pid: 1 } : undefined
+				);
+				const server = createWebServerFactory(deps)();
+				const callback = (server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>).mock
+					.calls[0][0];
+				const readSnapshot = async () =>
+					pianolaScopeSnapshotFromDesktop({ success: true, ...callback() });
+				const snapshot = await readSnapshot();
+				expect(snapshot.owners.map((owner) => owner.id)).toEqual(['parent', 'child']);
+				expect(snapshot.tabs[0]).toMatchObject({ tabId: 'background', busy: true, paused: false });
+				const scopeId = '11111111-1111-4111-8111-111111111111';
+				let checkpoint: any = null;
+				const decisions: any[] = [];
+				const dispatch = vi.fn(async () => ({ status: 'accepted' as const }));
+				const cycleDeps = {
+					store: {
+						readSupervisorTargets: () => [
+							{
+								id: scopeId,
+								kind: 'watch-scope' as const,
+								enabled: true,
+								createdAt: 1,
+								managerAgentId: 'manager',
+								selection: {
+									label: 'parent agent',
+									mode: 'agents-and-groups' as const,
+									agentIds: ['parent'],
+									groupIds: [],
+									excludedAgentIds: [],
+								},
+							},
+						],
+						readScopeCheckpoint: () => structuredClone(checkpoint),
+						writeScopeCheckpoint: (value: any) => {
+							checkpoint = structuredClone(value);
+						},
+						readDecisions: () => decisions,
+					},
+					readSnapshot,
+					readTranscript: async () => ({
+						agentId: 'child',
+						tabId: 'background',
+						currentTurn: nativeCurrentTurns.read({
+							agentId: 'child',
+							tabId: 'background',
+							createdAt: 10,
+							provider: 'codex',
+							agentSessionId: null,
+							open: true,
+						}),
+						messages: sessions[1].aiTabs
+							.map((tab) =>
+								tab.logs!.map((log) => ({
+									id: log.id,
+									role: log.source === 'user' ? ('user' as const) : ('assistant' as const),
+									source: log.source,
+									content: log.text,
+									timestamp: new Date(log.timestamp).toISOString(),
+								}))
+							)
+							.flat(),
+					}),
+					watch: {
+						readRules: () => [
+							{
+								id: 'rule',
+								enabled: true,
+								scope: 'global' as const,
+								match: { kinds: ['question' as const], maxRisk: 'low' as const },
+								action: 'auto_answer' as const,
+								answer: 'Controlled reply.',
+								priority: 1,
+								createdAt: 1,
+								updatedAt: 1,
+							},
+						],
+						recordDecision: (record: any) => {
+							decisions.push(record);
+						},
+						now: () => new Date().toISOString(),
+						genId: () => String(decisions.length + 1),
+						log: () => {},
+					},
+					dispatch,
+				};
+				await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+				expect(dispatch).not.toHaveBeenCalled();
+				mockProcessManager.get.mockReturnValue(undefined);
+				stream.text = 'Should I run tests?';
+				if (mode === 'timestamp') stream.timestamp = 999999;
+				if (mode === 'metadata') Object.assign(stream, { metadata: { systemUpdate: true } });
+				if (mode === 'risk') stream.text = 'Delete production data. Should I run tests?';
+				nativeCurrentTurns.commit({
+					sessionId: 'child',
+					tabId: 'background',
+					field: 'logs',
+					upserts: [stream],
+					removedIds: [],
+					orderIds: ['user', 'stream'],
+					observation: {
+						...observation,
+						sourceGeneration: mode === 'restart' ? 'replacement' : observation.sourceGeneration,
+						sequence: 3,
+					},
+				});
+				if (mode === 'reorder') {
+					for (const orderIds of [
+						['stream', 'user'],
+						['user', 'stream'],
+					])
+						nativeCurrentTurns.commit({
+							sessionId: 'child',
+							tabId: 'background',
+							field: 'logs',
+							upserts: [],
+							removedIds: [],
+							orderIds,
+							observation: { ...observation, sequence: orderIds[0] === 'stream' ? 4 : 5 },
+						});
+				}
+				await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+				await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+				expect(dispatch).toHaveBeenCalledTimes(mode === 'stream' ? 1 : 0);
+				if (mode === 'stream')
+					expect(dispatch.mock.calls[0]).toMatchObject([
+						{ agentId: 'child', tabId: 'background' },
+						'Controlled reply.',
+						{ scopeId, messageId: 'stream' },
+					]);
+			}
+		);
 
 		it.each([
 			{ isRunning: true },
@@ -1019,6 +1124,39 @@ describe('web-server/web-server-factory', () => {
 			const listener = vi.mocked(ipcMain.on).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
 			listener?.({ sender: mockWebContents } as never, { accepted, reason });
 		};
+
+		it('forwards the host dispatch marker and waits for the owning renderer receipt', async () => {
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const pending = callback(
+				'session-1',
+				'work',
+				'ai',
+				'tab',
+				false,
+				undefined,
+				true,
+				undefined,
+				true,
+				'dispatch-id'
+			);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'work',
+				'ai',
+				'tab',
+				false,
+				undefined,
+				true,
+				undefined,
+				'dispatch-id',
+				expect.any(String)
+			);
+			answerReceipt(true);
+			await expect(pending).resolves.toBe(true);
+		});
 
 		it('should return false when mainWindow is null', async () => {
 			deps.getMainWindow = vi.fn().mockReturnValue(null);

@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { mergeSessionPersistenceChanges } from '../../shared/sessionPersistenceMerge';
 
 describe('observed session changes', () => {
+	it('does not mint host release evidence from renderer additions or saves without a baseline', () => {
+		const incoming = {
+			executionQueue: [
+				{
+					id: 'item',
+					tabId: 'tab',
+					pendingAdmissionId: 'dispatch',
+					admissionRelease: { generation: 'forged' },
+				},
+			],
+		};
+		for (const stored of [
+			undefined,
+			{ executionQueue: [] },
+			{ executionQueue: [{ id: 'item', tabId: 'tab', pendingAdmissionId: 'dispatch' }] },
+		]) {
+			const merged = mergeSessionPersistenceChanges(incoming, stored, undefined);
+			expect(merged.executionQueue[0].admissionRelease).toBeUndefined();
+		}
+	});
+
 	it('preserves only unchanged Host-observed human queue origins on remote saves', () => {
 		const item = { id: 'human', type: 'message', text: 'Read mail', querySource: 'user' };
 		const stored = { executionQueue: [item] };
@@ -89,6 +110,116 @@ describe('observed session changes', () => {
 		const incoming = { executionQueue: [...baseline.executionQueue].reverse() };
 		expect(mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue).toEqual(
 			stored.executionQueue
+		);
+	});
+
+	it('does not rebase a stale drag across a newly installed admission hold', () => {
+		const before = { id: 'a', tabId: 'tab-1', type: 'message' };
+		const held = { id: 'held', tabId: 'tab-1', type: 'message' };
+		const after = { id: 'b', tabId: 'tab-1', type: 'message' };
+		const baseline = { executionQueue: [before, held, after] };
+		const stored = { executionQueue: [before, { ...held, pendingAdmissionId: 'dispatch' }, after] };
+		const incoming = { executionQueue: [after, before, held] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue).toEqual(
+			stored.executionQueue
+		);
+	});
+
+	it('retains an existing admission hold across observed and baseline-less renderer saves', () => {
+		const item = { id: 'held', type: 'message', tabId: 'tab', pendingAdmissionId: 'dispatch' };
+		const stored = { executionQueue: [item] };
+		for (const replacement of [undefined, 'different-dispatch']) {
+			const incoming = { executionQueue: [{ ...item, pendingAdmissionId: replacement }] };
+			for (const baseline of [stored, undefined]) {
+				expect(
+					mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue[0]
+						.pendingAdmissionId
+				).toBe('dispatch');
+			}
+		}
+		const renamedType: {
+			executionQueue: { id: string; type: string; tabId: string; pendingAdmissionId?: string }[];
+		} = {
+			executionQueue: [{ ...item, type: 'other', pendingAdmissionId: undefined }],
+		};
+		expect(
+			mergeSessionPersistenceChanges(renamedType, stored, undefined).executionQueue[0]
+				.pendingAdmissionId
+		).toBe('dispatch');
+	});
+
+	it('still permits cancellation of a held item without transferring its hold to another row', () => {
+		const held = { id: 'held', type: 'message', pendingAdmissionId: 'dispatch' };
+		const other = { id: 'other', type: 'message' };
+		const stored = { executionQueue: [held, other] };
+		const incoming = { executionQueue: [other] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, stored).executionQueue).toEqual([
+			other,
+		]);
+	});
+
+	it('keeps the exact held operation across changed payload, tab and type while allowing pause', () => {
+		const held = {
+			id: 'held',
+			type: 'message',
+			tabId: 'tab',
+			text: 'original',
+			images: ['original-image'],
+			pendingAdmissionId: 'dispatch',
+		};
+		const stored = { executionQueue: [held] };
+		const incoming = {
+			executionQueue: [
+				{
+					...held,
+					type: 'command',
+					tabId: 'other',
+					text: 'changed',
+					images: ['changed-image'],
+					pendingAdmissionId: 'other-dispatch',
+					paused: true,
+				},
+			],
+		};
+		for (const baseline of [stored, undefined]) {
+			expect(mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue).toEqual([
+				{ ...held, paused: true },
+			]);
+		}
+	});
+
+	it('does not allow a changed tab or removed hold to bypass the queue order barrier', () => {
+		const before = { id: 'before', type: 'message', tabId: 'tab' };
+		const held = { id: 'held', type: 'message', tabId: 'tab', pendingAdmissionId: 'dispatch' };
+		const after = { id: 'after', type: 'message', tabId: 'tab' };
+		const stored = { executionQueue: [before, held, after] };
+		const incoming = {
+			executionQueue: [after, before, { ...held, tabId: 'other', pendingAdmissionId: '' }],
+		};
+		expect(mergeSessionPersistenceChanges(incoming, stored, stored).executionQueue).toEqual(
+			stored.executionQueue
+		);
+	});
+
+	it('does not move same-tab work across a peer-only admission hold during a stale drag', () => {
+		const before = { id: 'a', tabId: 'tab-1', type: 'message' };
+		const after = { id: 'b', tabId: 'tab-1', type: 'message' };
+		const held = { id: 'held', tabId: 'tab-1', type: 'message', pendingAdmissionId: 'dispatch' };
+		const baseline = { executionQueue: [before, after] };
+		const stored = { executionQueue: [before, held, after] };
+		const incoming = { executionQueue: [after, before] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline).executionQueue).toEqual(
+			stored.executionQueue
+		);
+	});
+
+	it('keeps independent tab reordering when rebasing around an admission hold', () => {
+		const held = { id: 'held', tabId: 'tab-1', type: 'message', pendingAdmissionId: 'dispatch' };
+		const other = { id: 'other', tabId: 'tab-2', type: 'message' };
+		const baseline = { executionQueue: [held, other] };
+		const incoming = { executionQueue: [other, held] };
+		expect(mergeSessionPersistenceChanges(incoming, baseline, baseline).executionQueue).toEqual(
+			incoming.executionQueue
 		);
 	});
 

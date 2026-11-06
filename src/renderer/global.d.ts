@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../shared/pianola/pianola-dispatch';
 import type {
 	TranslationRequest,
 	TranslationReport,
@@ -61,7 +62,12 @@ type LocalFileScanNode = {
 };
 
 interface ProcessConfig {
+	/** Native submitted transcript boundary, checked against owner commits by the host. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	pianolaQueueStepId?: string;
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -409,7 +415,9 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/autoRunRemote').AutoRunRemoteResult
 		) => void;
-		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
+		spawn: (
+			config: ProcessConfig
+		) => Promise<import('../main/preload/process/core').ProcessSpawnResponse>;
 		spawnTerminalTab: (config: {
 			sessionId: string;
 			cwd: string;
@@ -595,7 +603,8 @@ interface MaestroAPI {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => void
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
@@ -949,7 +958,8 @@ interface MaestroAPI {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				control?: import('../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -996,7 +1006,8 @@ interface MaestroAPI {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -3486,18 +3497,7 @@ interface MaestroAPI {
 		onActivityChange: (handler: () => void) => () => void;
 	};
 	// Cross-Agent Dispatch API (@mentions)
-	crossAgent: {
-		/** Dispatch a cross-agent request; response streams back via onChunk. */
-		send: (
-			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
-		) => Promise<{ requestId: string }>;
-		/** Stop every consult this source agent (or one of its tabs) still has in flight (Stop button). */
-		cancel: (sourceSessionId: string, sourceTabId?: string) => Promise<{ canceled: number }>;
-		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
-		onChunk: (
-			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
-		) => () => void;
-	};
+	crossAgent: import('../main/preload/crossAgent').CrossAgentApi;
 	// Group Chat API (multi-agent coordination)
 	groupChat: {
 		// Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts)
