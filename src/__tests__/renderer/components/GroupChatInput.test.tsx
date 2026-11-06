@@ -15,6 +15,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
@@ -1038,6 +1039,199 @@ describe('GroupChatInput', () => {
 				fireEvent.keyDown(textarea, { key: 'Escape' });
 
 				expect(document.activeElement).toBe(textarea);
+			});
+		});
+
+		describe('Tab with @ picker closed', () => {
+			it('completes a single matching agent reference and appends a space', () => {
+				const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Maestro ');
+			});
+
+			it('opens the picker when multiple agents match', () => {
+				const sessions = [
+					createMockSession('session-1', 'Maestro-1', 'claude-code'),
+					createMockSession('session-2', 'Maestro-2', 'claude-code'),
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(screen.queryByText('Maestro-1')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(screen.getByText('Maestro-1')).toBeInTheDocument();
+				expect(screen.getByText('Maestro-2')).toBeInTheDocument();
+				expect(textarea.value).toBe('@Mae');
+			});
+
+			it('completes quoted partial mention on single match with caret at end', () => {
+				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
+			it('completes quoted partial mention on single match with caret mid-token', async () => {
+				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B" and more');
+				textarea.selectionStart = textarea.selectionEnd = 7;
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				await act(async () => {
+					await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+				});
+
+				expect(textarea.value).toBe('@Alice-Bob and more');
+				expect(textarea.selectionStart).toBe('@Alice-Bob '.length);
+			});
+
+			it('opens picker on multiple matches for quoted partial and accepts cleanly', () => {
+				const sessions = [
+					createMockSession('session-1', 'Alice Bob', 'claude-code'),
+					createMockSession('session-2', 'Alice Brown', 'claude-code'),
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(screen.queryByText('Alice Bob')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				expect(screen.getByText('Alice Bob')).toBeInTheDocument();
+				expect(screen.getByText('Alice Brown')).toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
+			it('completes a dotted agent name with the caret mid-token', () => {
+				const sessions = [createMockSession('session-1', 'RunMaestro.ai', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@RunMaestr.ai');
+				textarea.selectionStart = textarea.selectionEnd = 10;
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@RunMaestro.ai ');
+			});
+
+			it('keeps the sentence full stop when completing a dotted agent name', () => {
+				const sessions = [createMockSession('session-1', 'RunMaestro.ai', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@RunMaestro.ai.');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@RunMaestro.ai .');
+			});
+
+			it('never offers or completes a dormant Pianola agent', () => {
+				useSettingsStore.setState({
+					encoreFeatures: {
+						...useSettingsStore.getState().encoreFeatures,
+						pianola: false,
+					},
+				} as any);
+				const sessions = [
+					createMockSession('session-1', 'Pia', 'claude-code'),
+					{
+						...createMockSession('session-2', 'Pianola', 'claude-code'),
+						isPianola: true,
+					} as Session,
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@pia');
+
+				expect(screen.getByText('Pia')).toBeInTheDocument();
+				expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Pia ');
+			});
+
+			it('does not complete group mentions on Tab with picker closed', () => {
+				const groups = [createMockGroup('group-1', 'PROJECTS')];
+				const sessions = [
+					{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@PROJ');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+				textarea.dispatchEvent(event);
+
+				expect(textarea.value).toBe('@PROJ');
+				expect(event.defaultPrevented).toBe(false);
+			});
+
+			it('does not prevent default on plain Tab with no @ token', () => {
+				render(<GroupChatInput {...createDefaultProps()} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, 'hello world');
+
+				const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+				textarea.dispatchEvent(event);
+
+				expect(event.defaultPrevented).toBe(false);
+				expect(textarea.value).toBe('hello world');
+			});
+
+			it('yields Tab to an active IME composition', () => {
+				const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				const event = new KeyboardEvent('keydown', {
+					key: 'Tab',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(event, 'isComposing', { value: true });
+				textarea.dispatchEvent(event);
+
+				expect(textarea.value).toBe('@Mae');
+				expect(event.defaultPrevented).toBe(false);
 			});
 		});
 

@@ -32,13 +32,20 @@ import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { isImeComposing } from '../../utils/ime';
 import {
+	handleComposerAgentTabKey,
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
 	PICKER_KEYS,
 	yieldKeyToIme,
 } from './composerKeyDown';
+import {
+	buildAgentMentionSuggestions,
+	filterAgentMentionSuggestions,
+	type AgentMentionSuggestion,
+} from '../input/useAgentMentionCompletion';
 import { useEventListener } from '../utils/useEventListener';
+import { getLiveSessionsSnapshot } from '../session/useLiveSessions';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 
@@ -116,6 +123,8 @@ export interface InputKeyDownDeps {
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>;
+	/** Optional override for agent mention suggestions (used in tests or custom rosters) */
+	getAgentMentionSuggestions?: (filter: string) => AgentMentionSuggestion[];
 }
 
 // ============================================================================
@@ -144,6 +153,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		setCommandMode,
 		inputRef,
 		terminalOutputRef,
+		getAgentMentionSuggestions,
 	} = deps;
 
 	// --- InputContext state (completion dropdowns) ---
@@ -608,9 +618,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setCommandHistorySelectedIndex(0);
 				}
 			} else if (e.key === 'Tab') {
-				e.preventDefault();
-
 				if (isShellInput && !slashCommandOpen) {
+					e.preventDefault();
 					// An empty command line is a valid trigger - it means "what have I
 					// run before". A terminal needs something to complete against.
 					if (inputValue.trim() || isCommandMode) {
@@ -625,7 +634,47 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 							}
 						}
 					}
+					return;
 				}
+
+				if (
+					handleComposerAgentTabKey(e, {
+						inputRef,
+						getInputValue,
+						getAgentSuggestions: (filter) => {
+							if (getAgentMentionSuggestions) {
+								return getAgentMentionSuggestions(filter);
+							}
+							const state = useSessionStore.getState();
+							const currentActiveSession = selectActiveSession(state);
+							const items = buildAgentMentionSuggestions(
+								getLiveSessionsSnapshot(),
+								state.groups,
+								currentActiveSession?.id
+							);
+							return filterAgentMentionSuggestions(items, filter);
+						},
+						accept: (selected, startIndex, filter) => {
+							const accept = buildMentionAccept(getInputValue(), startIndex, filter, selected);
+							setInputValue(accept.value);
+							requestAnimationFrame(() => {
+								const el = inputRef.current;
+								if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+							});
+						},
+						openPicker: (startIndex, filter) => {
+							setAtMentionOpen(true);
+							setAtMentionFilter(filter);
+							setAtMentionStartIndex(startIndex);
+							setSelectedAtMentionIndex(0);
+							setAtMentionCategory?.('agents');
+						},
+					})
+				) {
+					return;
+				}
+
+				e.preventDefault();
 			}
 		},
 		[
@@ -638,6 +687,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			processInput,
 			runSteerSend,
 			getTabCompletionSuggestions,
+			getAgentMentionSuggestions,
 			getCommandMode,
 			setCommandMode,
 			inputRef,
