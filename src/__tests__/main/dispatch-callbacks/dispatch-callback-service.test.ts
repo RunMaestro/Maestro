@@ -46,6 +46,32 @@ describe('dispatch callback service', () => {
 		vi.useRealTimers();
 	});
 
+	it.each([true, false])(
+		'records parent delivery only after queue acceptance (%s)',
+		async (success) => {
+			const onDelivered = vi.fn();
+			enqueue.mockResolvedValue({ success });
+			initDispatchCallbacks({ enqueue, openTab, onDelivered });
+			const registry = getDispatchCallbackRegistry()!;
+			const entry = registry.register({
+				targetAgentId: 'target',
+				targetTabId: 'tab-1',
+				callerAgentId: 'caller',
+				callerTabId: 'parent',
+				timeoutMs: 60000,
+				prompt: 'go',
+				pendingAdmissionId: 'dispatch',
+			});
+			registry.releaseQueueAdmission(entry.callbackId, 'dispatch');
+			expect(entry.pendingAdmissionId).toBeUndefined();
+			registry.noteSpawn(KEY);
+			registry.noteExit(KEY, 0);
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(onDelivered).toHaveBeenCalledTimes(success ? 1 : 0);
+			if (success) expect(onDelivered.mock.calls[0][0].entry.admissionId).toBe('dispatch');
+		}
+	);
+
 	// A dispatch from a run with no tab (a Cue or bot run) used to land in the
 	// caller's ACTIVE tab: an unrelated conversation the user happened to be in.
 	it('opens a new tab when the callback has no caller tab, never the active one', async () => {

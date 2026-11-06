@@ -17,6 +17,8 @@
 
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
+import { hostCallerRuns } from '../../agent-run/caller-identity';
+import { CALLER_RUN_PROOF_HEADER } from '../../../shared/agentDelegation';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
 import {
@@ -198,6 +200,17 @@ export class WsRoute {
 					return true;
 				},
 			};
+			// The upgrade header stays off message echoes, receipts and client serialization.
+			const callerProof = request.headers[CALLER_RUN_PROOF_HEADER];
+			if (callerProof !== undefined) {
+				try {
+					hostCallerRuns.bind(client, callerProof);
+				} catch (error) {
+					if (!(error instanceof Error) || error.message !== 'CallerRunUnavailable') throw error;
+					socket.close(WS_CLOSE_POLICY_VIOLATION, 'CallerRunUnavailable');
+					return;
+				}
+			}
 			const admissionCheck = admission
 				? setInterval(() => client.isAuthorized?.(), 1000)
 				: undefined;

@@ -88,6 +88,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
+- **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
 - **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
@@ -129,6 +130,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Sealing a file with the key the OS holds for the app:** `safeStorageSeal(safeStorage)`, `obscuringSeal()`, `SealProvider`, `SafeStorageLike` in `src/main/utils/safe-storage-seal.ts`
 - **Proving a sealed file is the newest one (rollback and deletion):** `createKeyringAnchor(service, account)`, `AnchorStore`, `keyringAnchor()`, `noAnchor()` in `src/main/utils/keyring-anchor.ts`
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
+- **Which store holds a provider session's origin record:** `sessionOriginStoreFor()` in `src/shared/sessionOriginStore.ts`
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
@@ -183,12 +185,15 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Providers, accounts, and auth
 
+- **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
+
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
+- **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
@@ -243,6 +248,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
 - **Storing the closed-tab stack (Cmd+Shift+T):** `projectClosedTabHistory()`, `normalizeStoredClosedTabs()`, `MAX_CLOSED_TAB_HISTORY` in `src/shared/closedTabHistory.ts`; `loadReopenedTabContent()` in `src/renderer/services/reopenedTabContent.ts`
 - **Reading or reopening the closed-tab stack from a script (`maestro-cli tab closed` / `tab reopen`):** `runRemoteClosedTabCommand()`, `listClosedTabs()`, `getClosedTabLabel()` in `src/renderer/services/closedTabCommands.ts`, wire in `src/shared/closedTabCommands.ts`
+- **Pinning a message in a tab (pin button, pin panel, `maestro-cli tab pins`):** `toggleMessagePin()`, `persistTabPins()`, `runRemoteMessagePinCommand()` in `src/renderer/services/messagePins.ts`, over `resolvePinnedRows()`, `findPinForRow()` in `src/shared/messagePins.ts`
 - **Compact, Merge Into, or Send to Agent from a script (`maestro-cli tab compact` / `merge` / `transfer`):** `runRemoteTabContextOp()` in `src/renderer/services/tabContextOps.ts`, wire in `src/shared/tabContextOps.ts`
 - **Forcing a tracked sessions flush from outside App's hook tree:** `flushSessionPersistenceNow()`, `registerSessionPersistenceFlush()` in `src/renderer/services/sessionPersistenceFlush.ts`
 - **Which tab a Quick Chat message goes to:** `decideRoute()`, `parseRouteAnswer()` in `src/shared/quickChatRouting.ts`; `routeQuickChatMessage()`, `reopenClosedConversation()` in `src/renderer/services/quickChatRouter.ts`
@@ -264,6 +270,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Parking, waking, dismissing, or rescheduling ONE snooze:** `snoozeTabWithMirror()`, `wakeSnoozeNow()`, `dismissSnoozeNow()`, `rescheduleSnoozeNow()` in `src/renderer/services/snoozeActions.ts`
 
 #### Composer, queue, and transcript
+
+- **Native current-turn observation:** `isCurrentTurnCursor()`, `sameCurrentTurnCursor()`, `composeCurrentTurn()`, `currentTurnMessages()`, `isNativeQuestionRequest()`, `nativeQuestionMessage()` in `src/shared/currentTurn.ts`
+- **Coalescing Pianola scope wakeups:** `PianolaScopeWakeups` in `src/cli/commands/pianola-scope-watch.ts`
+- **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
@@ -338,6 +348,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which pipelines belong to an agent:** `pipelinesForSession()`, `pipelineInvolvesSession()`, `pipelineNamesDeclaredBySession()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`
 - **Where a pipeline is drawn (its one home agent):** `resolvePipelineHomes()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`; cluster box geometry `agentClusterBounds()` in `nodeFootprint.ts`
 - **What a group chat does with a message it cannot send yet:** pure rules in `src/shared/groupChatQueueModel.ts`, driven by `src/main/group-chat/group-chat-queue.ts` (the queue is owned by MAIN; the renderer holds a mirror)
+- **Refusing an image-bearing group chat send:** `moderatorImagesRefusal()`, `MODERATOR_CANNOT_READ_IMAGES_REASON` in `src/shared/maestro-lib/groupchat/image-gate.ts`
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)` in `src/shared/groupChatActivity.ts` (never the first-to-last message span)
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()`, `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`
 - **Which agent a persisted group chat participant came from:** `findSessionForParticipantName(participantName, sessions)` in `src/shared/group-chat-types.ts`

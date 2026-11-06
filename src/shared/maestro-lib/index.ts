@@ -335,3 +335,5 @@ export * from './control/turn-guard';
 
 // Host services
 export * from './host';
+
+export type { CurrentTurnCursor, CurrentTurnMessage, CurrentTurnRead } from '../currentTurn';

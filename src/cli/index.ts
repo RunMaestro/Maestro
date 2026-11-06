@@ -200,6 +200,11 @@ import {
 	tabShow,
 	tabClosed,
 	tabReopen,
+	tabPinsList,
+	tabPinsAdd,
+	tabPinsRemove,
+	tabPinsRename,
+	tabPinsShow,
 	tabCompact,
 	tabMerge,
 	tabTransfer,
@@ -589,6 +594,10 @@ program
 // callers can address the same tab again without owning a persistent channel.
 program
 	.command('dispatch <agent-id> <message>')
+	.option(
+		'--dispatch-id <uuid>',
+		'For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
+	)
 	.description(
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
@@ -2339,6 +2348,38 @@ tab
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabReopen(options));
 
+// Message pins: the pin button on a message and the pin panel.
+const tabPins = tab
+	.command('pins')
+	.description("Read and change an AI tab's pinned messages (default: list them)");
+
+const tabPinsOptions = (cmd: Command): Command =>
+	cmd
+		.option('-t, --tab <tab-id>', 'The AI tab (exact, unique prefix, or "active"; default: active)')
+		.option('-a, --agent <id>', 'Whose active tab, when the tab is "active"')
+		.option('--json', 'Output as JSON (for scripting)');
+
+tabPinsOptions(tabPins.command('list', { isDefault: true }))
+	.description("List a tab's pinned messages in transcript order")
+	.action((options) => tabPinsList(options));
+
+tabPinsOptions(tabPins.command('add [message-id]'))
+	.description('Pin a message by transcript entry id, or the newest one with --last')
+	.option('--last <who>', 'Pin the newest message of this kind: user or agent')
+	.action((messageId, options) => tabPinsAdd(messageId, options));
+
+tabPinsOptions(tabPins.command('remove <pin-id>'))
+	.description('Unpin a message (pin id: exact or unique prefix)')
+	.action((pinId, options) => tabPinsRemove(pinId, options));
+
+tabPinsOptions(tabPins.command('rename <pin-id> [label...]'))
+	.description("Rename a pin; no label restores the message's own first line")
+	.action((pinId, label, options) => tabPinsRename(pinId, label, options));
+
+tabPinsOptions(tabPins.command('show'))
+	.description('Open the pin panel over the tab (selects the agent and the tab)')
+	.action((options) => tabPinsShow(options));
+
 tabTargetOptions(tab.command('compact [tab-id]'))
 	.description(
 		'Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id'
@@ -3089,13 +3130,23 @@ const pianolaSupervise = pianola
 
 pianolaSupervise
 	.command('scope')
-	.description('Create or replace an agent/group watch selection (new selections start paused)')
+	.description(
+		'Configure or reconcile an owner-authorized agent/group selection through the desktop host'
+	)
 	.requiredOption('--manager <agent-id>', 'Manager agent id')
 	.requiredOption('--label <label>', 'Selection label')
-	.option('--id <scope-id>', 'Replace an existing selection')
+	.option('--id <scope-id>', 'Existing owner-authorized selection id')
 	.option('--agents <ids>', 'Comma-separated agent IDs')
 	.option('--groups <ids>', 'Comma-separated group IDs')
 	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')
+	.option(
+		'--future-local-agents',
+		'Include future local agents (requires --id or --request-owner-approval)'
+	)
+	.option(
+		'--request-owner-approval',
+		'Request one native owner confirmation for this exact configuration'
+	)
 	.option('--json', 'Output as JSON')
 	.action((options) => pianolaSuperviseScope(options));
 
@@ -3127,6 +3178,7 @@ pianolaSupervise
 pianolaSupervise
 	.command('list')
 	.description('List registered supervised targets')
+	.option('--live', 'Read worker and coverage status from the desktop host')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaSuperviseList(options));
 

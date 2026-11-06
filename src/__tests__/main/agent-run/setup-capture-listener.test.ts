@@ -1,3 +1,4 @@
+import { pianolaNewTabSpawns } from '../../../main/pianola/pianola-new-tab-dispatch';
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRun, AgentRunEvent } from '../../../shared/agent-run';
@@ -37,8 +38,14 @@ vi.mock('../../../main/agent-run/broadcast', () => ({
 	broadcastRunUpdated: vi.fn(),
 	broadcastEventAppended: vi.fn(),
 }));
+vi.mock('../../../main/stores/getters', () => ({
+	getSessionsStore: () => ({
+		get: () => [{ id: 'worker', aiTabs: [{ id: 'tab', createdAt: 7 }] }],
+	}),
+}));
 vi.mock('../../../main/agent-run/producers', () => ({ buildEnrichHook: () => () => ({}) }));
 
+import { nativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { setupAgentRunCapture } from '../../../main/agent-run/setup-capture-listener';
 
 function spawn(manager: EventEmitter, sessionId = 'worker-ai-tab') {
@@ -48,8 +55,141 @@ function spawn(manager: EventEmitter, sessionId = 'worker-ai-tab') {
 
 describe('ProcessManager -> AgentRun capture', () => {
 	beforeEach(() => {
+		nativeCurrentTurns.setEnabled(true);
 		runs.clear();
 		events.length = 0;
+	});
+
+	it('binds an owner transcript boundary through the actual native spawn listener and retains it after exit', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		nativeCurrentTurns.commit({
+			sessionId: 'worker',
+			tabId: 'tab',
+			field: 'logs',
+			snapshot: true,
+			upserts: [{ id: 'submitted', text: 'Inspect', source: 'user', timestamp: 1 }],
+			removedIds: [],
+			orderIds: ['submitted'],
+			observation: {
+				sourceGeneration: 'capture-test',
+				sequence: 1,
+				createdAt: 7,
+				provider: 'codex',
+			},
+		});
+		manager.emit('spawn', {
+			sessionId: 'worker-ai-tab',
+			toolType: 'codex',
+			cwd: '/fixture',
+			transcriptBoundaryId: 'submitted',
+		});
+		const run = [...runs.values()][0];
+		expect(run.metadata).toHaveProperty('transcriptBoundaryId', 'submitted');
+		manager.emit('exit', 'worker-ai-tab', 0);
+		await vi.waitFor(() => expect(runs.get(run.id)?.status).toBe('completed'));
+		expect(
+			nativeCurrentTurns.read({
+				agentId: 'worker',
+				tabId: 'tab',
+				createdAt: 7,
+				provider: 'codex',
+				agentSessionId: null,
+				open: true,
+			})
+		).toMatchObject({ status: 'complete', cursor: { runId: run.id, turnId: 'submitted' } });
+	});
+
+	it('forwards full native output only after run persistence and keeps the run ledger bounded', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const run = spawn(manager);
+		const observe = vi.spyOn(pianolaNewTabSpawns, 'observeRun');
+		try {
+			const answer =
+				'BEGIN-FULL\npassword=private-output-secret\n' + 'x'.repeat(20000) + 'END-FULL';
+			const settlement = {
+				outcome: 'completed',
+				answerCaptured: true,
+				answerTail: answer.slice(-4000),
+			};
+			Object.defineProperty(settlement, 'nativeAnswer', { value: answer });
+			manager.emit('exit', 'worker-ai-tab', 0, undefined, settlement);
+			await vi.waitFor(() => expect(runs.get(run.id)?.status).toBe('completed'));
+			const [saved, output] = observe.mock.calls.at(-1)!;
+			expect(saved).toEqual(runs.get(run.id));
+			expect(output).toContain('BEGIN-FULL');
+			expect(output).toContain('END-FULL');
+			expect(output).not.toContain('private-output-secret');
+			expect(JSON.stringify(saved)).not.toContain('BEGIN-FULL');
+			expect(saved.metadata?.answerTail).toHaveLength(4000);
+		} finally {
+			observe.mockRestore();
+		}
+	});
+
+	it('persists first native session announcement on the exact captured tab generation', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const run = spawn(manager);
+		manager.emit('session-id', 'other-ai-tab', 'foreign');
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).not.toHaveProperty('announcedSessionId');
+		manager.emit('session-id', 'worker-ai-tab', 'first-session');
+		manager.emit('session-id', 'worker-ai-tab', 'first-session');
+		manager.emit('exit', 'worker-ai-tab', 0);
+		await vi.waitFor(() => expect(runs.get(run.id)?.status).toBe('completed'));
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).toEqual({
+			agentId: 'worker',
+			tabId: 'tab',
+			createdAt: 7,
+			announcedSessionId: 'first-session',
+		});
+		manager.emit('session-id', 'worker-ai-tab', 'late-replacement');
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).toHaveProperty(
+			'announcedSessionId',
+			'first-session'
+		);
+	});
+
+	it('does not certify a native resume into a different conversation than the tab', () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		manager.emit('spawn', {
+			sessionId: 'worker-ai-tab',
+			tabId: 'tab',
+			toolType: 'codex',
+			cwd: '/fixture',
+			agentSessionId: 'foreign-resume',
+		});
+		manager.emit('session-id', 'worker-ai-tab', 'foreign-resume');
+		expect([...runs.values()][0].metadata?.nativeTabSession).toBeUndefined();
+	});
+
+	it('retains conflicting announcements as unusable evidence', () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const run = spawn(manager);
+		manager.emit('session-id', 'worker-ai-tab', 'one');
+		manager.emit('session-id', 'worker-ai-tab', 'two');
+		manager.emit('session-id', 'worker-ai-tab', 'one');
+		expect(runs.get(run.id)?.metadata?.nativeTabSession).toHaveProperty('conflicted', true);
+	});
+
+	it('binds the exact captured run, even after a fast exit, rather than an older run or spawn generation', async () => {
+		const manager = new EventEmitter();
+		setupAgentRunCapture(manager as ProcessManager, { enrich: () => ({}) });
+		const previous = spawn(manager);
+		const started = vi.fn();
+		pianolaNewTabSpawns.hold('worker', 'tab');
+		pianolaNewTabSpawns.arm('worker', 'tab', () => {}, started);
+		pianolaNewTabSpawns.claim('worker-ai-tab')();
+		const current = spawn(manager);
+		expect(current.id).not.toBe(previous.id);
+		manager.emit('exit', 'worker-ai-tab', 0);
+		await vi.waitFor(() => expect(runs.get(current.id)?.status).toBe('completed'));
+		pianolaNewTabSpawns.started('worker-ai-tab');
+		expect(started).toHaveBeenCalledWith(current.id);
+		expect(current.id).toMatch(/^run:/);
 	});
 
 	it.each(['rate_limited', 'auth_expired'])(

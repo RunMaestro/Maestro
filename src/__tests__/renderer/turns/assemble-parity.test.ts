@@ -455,7 +455,13 @@ describe('assembleTurn parity with the desktop', () => {
 				if (!plan.ok) throw new Error(plan.error);
 				const stated = { ...plan.plan.envVars };
 				delete stated.MAESTRO_USER_DATA;
-				expect(stated).toEqual(recorded.customEnvVars ?? {});
+				// The desktop host explicitly clears inherited caller proof when this
+				// fixture has no native run. Assembly cannot mint that authority.
+				expect(recorded.customEnvVars?.MAESTRO_CALLER_RUN_PROOF_FILE).toBe('');
+				expect(stated).not.toHaveProperty('MAESTRO_CALLER_RUN_PROOF_FILE');
+				const desktopEnv = { ...recorded.customEnvVars };
+				delete desktopEnv.MAESTRO_CALLER_RUN_PROOF_FILE;
+				expect(stated).toEqual(desktopEnv);
 			}
 		});
 	}

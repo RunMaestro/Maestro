@@ -321,7 +321,8 @@ export function registerBrowserTabCallbacks(
 			prompt: string,
 			background?: boolean,
 			hidden?: boolean,
-			mentionRouting?: MentionRouting
+			mentionRouting?: MentionRouting,
+			control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -333,10 +334,16 @@ export function registerBrowserTabCallbacks(
 				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
 				let resolved = false;
 
+				/**
+				 * Resolve the new-tab response once, accepting only the owning window's sender. Clean up its
+				 * timeout/listener and normalize structured acknowledgements or the legacy boolean result.
+				 */
 				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (_event.sender !== mainWindow.webContents) return;
 					if (resolved) return;
 					resolved = true;
 					clearTimeout(timeoutId);
+					ipcMain.removeListener(responseChannel, handleResponse);
 					// Renderer was updated to ack with
 					// `{ success, tabId?, queued?, error? }`. Older renderers that
 					// still send a bare boolean stay supported via the
@@ -359,23 +366,6 @@ export function registerBrowserTabCallbacks(
 					}
 				};
 
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false, error: 'Maestro desktop window is not available' });
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:newAITabWithPrompt',
-					sessionId,
-					prompt,
-					responseChannel,
-					background,
-					hidden,
-					mentionRouting
-				);
-
 				const timeoutId = setTimeout(() => {
 					if (resolved) return;
 					resolved = true;
@@ -384,8 +374,38 @@ export function registerBrowserTabCallbacks(
 						`newAITabWithPrompt callback timed out for session ${sessionId}`,
 						'WebServer'
 					);
-					resolve({ success: false, error: 'Maestro desktop did not answer in time' });
+					resolve({
+						success: false,
+						unknown: true,
+						error: 'Maestro desktop did not answer in time',
+					});
 				}, 5000);
+
+				ipcMain.on(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					clearTimeout(timeoutId);
+					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Maestro desktop window is not available' });
+					return;
+				}
+				try {
+					mainWindow.webContents.send(
+						'remote:newAITabWithPrompt',
+						sessionId,
+						prompt,
+						responseChannel,
+						background,
+						hidden,
+						mentionRouting,
+						control
+					);
+				} catch {
+					clearTimeout(timeoutId);
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolved = true;
+					resolve({ success: false, unknown: true });
+				}
 			});
 		}
 	);
