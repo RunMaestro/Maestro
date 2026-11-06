@@ -2,4 +2,6 @@
 export interface PendingPermissionSnapshot {
 	version: number;
 	processIds: string[];
+	/** Native UI reconciliation only; no question bodies or tokens. */
+	requestIds?: string[];
 }

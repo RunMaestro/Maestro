@@ -2478,6 +2478,19 @@ describe('useInputProcessing', () => {
 				'IMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.'
 			);
 			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(typeof spawnCall.transcriptBoundaryId).toBe('string');
+			const recorded = mockSetSessions.mock.calls
+				.map(([updater]) => (typeof updater === 'function' ? updater([session]) : updater))
+				.flatMap((sessions) =>
+					sessions.flatMap((agent: Session) => agent.aiTabs.flatMap((tab) => tab.logs))
+				);
+			expect(recorded).toContainEqual(
+				expect.objectContaining({
+					id: spawnCall.transcriptBoundaryId,
+					source: 'user',
+					text: 'explain this code',
+				})
+			);
 		});
 
 		it('appends read-only instruction suffix when Auto Run is active without worktree (read-only tab)', async () => {

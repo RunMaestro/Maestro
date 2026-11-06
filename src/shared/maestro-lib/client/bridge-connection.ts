@@ -9,7 +9,9 @@
 // and `withMaestroClient` as aliases, so maestro-cli does not change.
 
 import WebSocket from 'ws';
+import { readFileSync } from 'fs';
 import { isIP } from 'net';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR, CALLER_RUN_PROOF_HEADER } from '../../agentDelegation';
 import {
 	readCliServerInfo,
 	readCliServerInfoFrom,
@@ -204,16 +206,26 @@ export class BridgeConnection {
 		const authority = hasPort ? host : `${host}:${info.port}`;
 		const url = `ws://${authority}/${info.token}/ws${query}`;
 		const WebSocketCtor = this.options.WebSocketImpl ?? WebSocket;
+		const headers: Record<string, string> = {};
+		if (info.cliSecret) headers[CLI_SECRET_HEADER] = info.cliSecret;
+		const proofFile = process.env[CALLER_RUN_PROOF_FILE_ENV_VAR];
+		if (proofFile && info.cliSecret && !remoteHost) {
+			try {
+				const proof = readFileSync(proofFile, 'utf8');
+				if (!/^[0-9a-f]{64}$/.test(proof)) throw new Error('Invalid proof');
+				headers[CALLER_RUN_PROOF_HEADER] = proof;
+			} catch {
+				// Never expose the delivery path, file contents or OS error.
+				throw new Error('CallerRunUnavailable');
+			}
+		}
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 
 			// The per-boot secret is what admits the CLI when Web Login is on; the
 			// server never exempts a caller by address (the tunnel is loopback too).
-			const ws = new WebSocketCtor(
-				url,
-				info.cliSecret ? { headers: { [CLI_SECRET_HEADER]: info.cliSecret } } : undefined
-			);
+			const ws = new WebSocketCtor(url, Object.keys(headers).length ? { headers } : undefined);
 
 			const timeout = setTimeout(() => {
 				if (!settled) {

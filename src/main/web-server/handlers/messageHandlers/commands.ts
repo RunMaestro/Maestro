@@ -23,6 +23,10 @@ import {
 } from '../../../pianola/pianola-decisions';
 import { updatePianolaDecision } from '../../../../shared/pianola/pianola-decision-lifecycle';
 import { readCallerMessageFields } from '../../../../shared/agentDelegation';
+import { dispatchSupervision } from './dispatchSupervision';
+import { isPianolaScopeId } from '../../../../shared/pianola/pianola-scope';
+import { newTabAdmission } from './tabs';
+import { generateUUID } from '../../../../shared/uuid';
 
 /** Scope delivery never falls back to unguarded send_command on older hosts. */
 export async function handlePianolaScopeReply(
@@ -69,7 +73,7 @@ export async function handlePianolaScopeReply(
 					status: 'unknown',
 					error: 'Native admission was recorded; reconcile before retrying',
 				};
-			pianolaStore.appendDecision(
+			await pianolaStore.appendDecisionAsync(
 				updatePianolaDecision(
 					record,
 					{
@@ -209,9 +213,27 @@ export function handleSendCommand(
 		return;
 	}
 
+	const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
+	const priorDispatch = isPianolaScopeId(dispatchId)
+		? pianolaStore.readDispatchAdmission(dispatchId)
+		: undefined;
+
+	// Use client's inputMode if provided, otherwise fall back to server state
+	const effectiveMode = clientInputMode || sessionDetail.inputMode;
+	const isAiMode = effectiveMode === 'ai';
+	const coverage =
+		clientInputMode === 'terminal'
+			? { managed: false, receipt: undefined, error: undefined }
+			: dispatchSupervision(
+					ctx,
+					client,
+					sessionId,
+					dispatchId,
+					requestedTabId ?? priorDispatch?.targetTabId ?? sessionDetail.activeTabId
+				);
 	// Check if session is busy - prevent race conditions between desktop and web.
 	// `force: true` opts out of this guard (see `maestro-cli send --live --force`).
-	if (sessionDetail.state === 'busy' && !force) {
+	if (sessionDetail.state === 'busy' && !force && !(coverage.managed && priorDispatch)) {
 		ctx.sendError(client, 'Session is busy - please wait for the current operation to complete', {
 			sessionId,
 		});
@@ -222,9 +244,78 @@ export function handleSendCommand(
 		logger.info(`[Web Command] Force-dispatching to busy session ${sessionId}`, LOG_CONTEXT);
 	}
 
-	// Use client's inputMode if provided, otherwise fall back to server state
-	const effectiveMode = clientInputMode || sessionDetail.inputMode;
-	const isAiMode = effectiveMode === 'ai';
+	if (coverage.managed) {
+		const targetTabId = requestedTabId ?? priorDispatch?.targetTabId ?? sessionDetail.activeTabId;
+		if (coverage.error || !targetTabId || !isAiMode) {
+			ctx.send(client, {
+				type: 'command_result',
+				success: false,
+				sessionId,
+				dispatchId,
+				admission: coverage.receipt,
+				error: coverage.error ?? 'DispatchTargetUnavailable',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		void newTabAdmission(ctx)
+			.runExisting(
+				client,
+				{
+					dispatchId,
+					targetAgentId: sessionId,
+					targetTabId,
+					prompt: effectiveCommand,
+					background,
+					hidden: false,
+					images,
+					mentionRouting,
+				},
+				(tabId) => {
+					const armed = armDispatchCallback(ctx, message, {
+						agentId: sessionId,
+						tabId,
+						prompt: effectiveCommand,
+						isNewTab: false,
+					});
+					if (armed.error) throw new Error(armed.error);
+					return armed.callbackId;
+				}
+			)
+			.then(({ receipt, callbackId }) => {
+				ctx.send(client, {
+					type: 'command_result',
+					success: receipt.outcome === 'accepted',
+					sessionId,
+					tabId: receipt.targetTabId,
+					dispatchId,
+					admission: receipt,
+					unknown: receipt.outcome === 'unknown',
+					callbackId,
+					requestId: message.requestId,
+				});
+				if (receipt.outcome === 'rejected' && callbackId)
+					getDispatchCallbackRegistry()?.cancel(callbackId);
+				if (receipt.outcome === 'accepted')
+					noteDispatchDelegation(ctx, message, {
+						targetSessionId: sessionId,
+						targetTabId: receipt.targetTabId,
+						prompt: effectiveCommand,
+					});
+			})
+			.catch((error) =>
+				ctx.send(client, {
+					type: 'command_result',
+					success: false,
+					sessionId,
+					dispatchId,
+					error: error instanceof Error ? error.message : 'DispatchAdmissionFailed',
+					requestId: message.requestId,
+				})
+			);
+		return;
+	}
+
 	const mode = isAiMode ? 'AI' : 'CLI';
 	const claudeId = sessionDetail.agentSessionId || 'none';
 
@@ -294,6 +385,12 @@ export function handleSendCommand(
 					type: 'command_result',
 					success,
 					sessionId,
+					...(coverage.receipt
+						? {
+								dispatchId,
+								admission: { ...coverage.receipt, outcome: success ? 'accepted' : 'rejected' },
+							}
+						: {}),
 					...(resolvedTabId ? { tabId: resolvedTabId } : {}),
 					...(success && sendCallbackId ? { callbackId: sendCallbackId } : {}),
 					requestId: message.requestId,

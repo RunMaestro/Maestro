@@ -8,7 +8,7 @@ const METHODS: Record<string, string> = {
 	agent: 'clearError retryAfterError',
 	agentRun: 'cancel event events list merge record resolveFinding retry show',
 	agentSessions:
-		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionStarred snapshotStarredTranscript',
+		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionPins setSessionStarred snapshotStarredTranscript',
 	agents:
 		'translateProvider consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
 	aiCommand: 'suggest',
@@ -116,7 +116,7 @@ const EVENTS: Record<string, string> = {
 	// is mirrored intentionally so host-created Concerto panels remain visible.
 	remote:
 		'movement cadenza cadenzaFlash cadenzaHidden notifyToast notifyCenterFlash autoRunStateMirror',
-	sessions: 'lifecycleSync transcriptSync',
+	sessions: 'lifecycleSync transcriptSync transcriptCommitted',
 	settings: 'externalChange',
 	stats: 'updated',
 	symphony: 'contributionStarted prCreated updated',
