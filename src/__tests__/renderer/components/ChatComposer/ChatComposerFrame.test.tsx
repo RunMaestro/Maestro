@@ -141,7 +141,8 @@ describe('ChatComposerFrame', () => {
 			setStagedImages: vi.fn(),
 			setLightboxImage: vi.fn(),
 			openAnnotator: vi.fn(),
-			onReorderStagedImages: vi.fn(),
+			draftValue: '',
+			onDraftChange: vi.fn(),
 		};
 
 		it('shows the strip when the surface wires its actions', () => {

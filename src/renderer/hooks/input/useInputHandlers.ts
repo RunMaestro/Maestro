@@ -971,19 +971,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[setInputValue]
 	);
 
-	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {
-		if (paths.length === 0) return;
-		const joined = paths.map((p) => formatFileMention(p)).join(' ');
-		// Reading the store via getState() (instead of subscribing) is intentional:
-		// this callback only runs on user drop events, so we always want the latest
-		// chatId / setter at fire time and don't want stale-closure invalidation to
-		// re-create the callback (and bust handleDrop's useCallback deps) on every
-		// store update.
-		//
-		// `pinnedChatId` is the chat the drop happened in. An upload resolves
-		// asynchronously, so without the pin a mention would land in whichever chat
-		// is open when it finishes - or vanish entirely once the user has left
-		// group chat.
+	/**
+	 * Append free text to the room draft on screen, or to `pinnedChatId` when the
+	 * write can land after the user has moved rooms. Reads the store through
+	 * `getState()` so a user drop always sees the live chat and setter without
+	 * re-creating the callback (and busting `handleDrop`'s deps) on every update.
+	 */
+	const appendTextToGroupChatDraft = useCallback((text: string, pinnedChatId?: string) => {
+		if (!text) return;
 		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
 		const chatId = pinnedChatId ?? activeGroupChatId;
 		if (!chatId) return;
@@ -992,11 +987,19 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				if (c.id !== chatId) return c;
 				const current = c.draftMessage ?? '';
 				const sep = current && !/\s$/.test(current) ? ' ' : '';
-				const next = current ? current + sep + joined + ' ' : joined + ' ';
+				const next = current ? current + sep + text + ' ' : text + ' ';
 				return { ...c, draftMessage: next };
 			})
 		);
 	}, []);
+
+	const appendMentionsToGroupChatDraft = useCallback(
+		(paths: string[], pinnedChatId?: string) => {
+			if (paths.length === 0) return;
+			appendTextToGroupChatDraft(paths.map((p) => formatFileMention(p)).join(' '), pinnedChatId);
+		},
+		[appendTextToGroupChatDraft]
+	);
 
 	/**
 	 * Attach dropped files that carry no filesystem path (the web-desktop build
@@ -1109,10 +1112,20 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// somewhere else.
 			const stagedImageIndex = e.dataTransfer.getData(STAGED_IMAGE_MIME);
 			if (stagedImageIndex !== '') {
-				if (isGroupChatActive || !isDirectAIMode) return;
 				const index = Number(stagedImageIndex);
 				if (!Number.isInteger(index) || index < 0) return;
-				appendToAiInput(screenshotReferenceLabel(index));
+				const label = screenshotReferenceLabel(index);
+				if (isGroupChatActive) {
+					// A room gets the same end-of-draft append AI chat has. The
+					// top-level preventDefault keeps the browser from also inserting
+					// the drag's text/plain flavour at the pointer, so the reference
+					// lands once. This is text only: the image was already staged, and
+					// the room's send gate still decides whether it may be attached.
+					appendTextToGroupChatDraft(label, groupChatId);
+					return;
+				}
+				if (!isDirectAIMode) return;
+				appendToAiInput(label);
 				inputRef.current?.focus();
 				return;
 			}
@@ -1292,6 +1305,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			setStagedImages,
 			appendToAiInput,
 			appendMentionsToAiInput,
+			appendTextToGroupChatDraft,
 			appendMentionsToGroupChatDraft,
 			uploadAndMentionPathlessFiles,
 			getCommandMode,

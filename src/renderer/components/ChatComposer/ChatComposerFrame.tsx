@@ -12,11 +12,13 @@
  * - Shared toolbar controls (ToolbarControls)
  * - Notification bell and Send button column (ComposerSendColumn)
  *
- * It owns no input behaviour. The surface brings the textarea, its key and
- * change handlers, its popovers, voice dictation and autosize, because the two
- * surfaces wire those differently: the AI composer's keys, picker categories,
- * slash commands and command mode live in useInputKeyDown and InputContext,
- * while a room uses the simpler wiring in ChatComposer. What the surface draws
+ * It owns no keyboard or text-entry behaviour. The surface brings the textarea,
+ * its key and change handlers, its popovers, voice dictation and autosize,
+ * because the two surfaces wire those differently: the AI composer's keys,
+ * picker categories, slash commands and command mode live in useInputKeyDown
+ * and InputContext, while a room uses the simpler wiring in ChatComposer. Its
+ * one draft mutation is the strip's reorder, which rewrites Screenshot N
+ * through the same permutation so both surfaces agree. What the surface draws
  * arrives through slots, in this order: `aboveComposer`, `overlays`, the staged
  * strip, then inside the box `inputHeader` and `textarea`, then `belowInput`.
  */
@@ -33,6 +35,11 @@ import {
 } from '../InputArea/components/ToolbarControls';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { StagedImagesStrip } from '../InputArea/components/StagedImagesStrip';
+import {
+	buildSlotRemap,
+	moveStagedImage,
+	renumberScreenshotReferences,
+} from '../../utils/stagedImageOrder';
 import type { Theme, Shortcut } from '../../types';
 import type { ComposerCapabilities } from './capabilities';
 
@@ -126,7 +133,9 @@ export interface ChatComposerFrameProps {
 	/** False hides the strip without dropping what is staged. Default true. */
 	stagedImagesVisible?: boolean;
 	setStagedImages?: React.Dispatch<React.SetStateAction<string[]>>;
-	onReorderStagedImages?: (from: number, to: number) => void;
+	/** The draft a reorder must renumber, and the setter that writes it back. */
+	draftValue?: string;
+	onDraftChange?: (value: string) => void;
 	setLightboxImage?: (
 		image: string | null,
 		contextImages?: string[],
@@ -184,7 +193,8 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	stagedImages,
 	stagedImagesVisible = true,
 	setStagedImages,
-	onReorderStagedImages,
+	draftValue,
+	onDraftChange,
 	setLightboxImage,
 	openAnnotator,
 	checkImageFile,
@@ -213,6 +223,21 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	const zoneRef = avoidToasts ? toastAvoidRef : undefined;
 	const phone = usePhoneLayout();
 	const resolvedSetStagedImages = setStagedImages ?? NOOP_SET_STAGED_IMAGES;
+
+	// The strip lives in the frame, so its reorder does too: move the images and
+	// rewrite the draft's Screenshot N references through the same permutation.
+	// The surface supplies the draft and its setter, since only it owns the text.
+	const handleReorderStagedImages = React.useCallback(
+		(from: number, to: number) => {
+			const remap = buildSlotRemap(stagedImages?.length ?? 0, from, to);
+			if (remap.size === 0) return;
+			resolvedSetStagedImages((prev) => moveStagedImage(prev, from, to));
+			if (draftValue === undefined || !onDraftChange) return;
+			const renumbered = renumberScreenshotReferences(draftValue, remap);
+			if (renumbered !== draftValue) onDraftChange(renumbered);
+		},
+		[stagedImages?.length, resolvedSetStagedImages, draftValue, onDraftChange]
+	);
 
 	const box = (
 		<div
@@ -293,22 +318,18 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 			{overlays}
 
 			{/* The strip draws only once the surface wires every action a tile offers. */}
-			{stagedImages &&
-				stagedImages.length > 0 &&
-				setLightboxImage &&
-				openAnnotator &&
-				onReorderStagedImages && (
-					<StagedImagesStrip
-						isVisible={stagedImagesVisible}
-						stagedImages={stagedImages}
-						theme={theme}
-						setLightboxImage={setLightboxImage}
-						setStagedImages={resolvedSetStagedImages}
-						openAnnotator={openAnnotator}
-						onReorder={onReorderStagedImages}
-						warning={stagedImagesWarning}
-					/>
-				)}
+			{stagedImages && stagedImages.length > 0 && setLightboxImage && openAnnotator && (
+				<StagedImagesStrip
+					isVisible={stagedImagesVisible}
+					stagedImages={stagedImages}
+					theme={theme}
+					setLightboxImage={setLightboxImage}
+					setStagedImages={resolvedSetStagedImages}
+					openAnnotator={openAnnotator}
+					onReorder={handleReorderStagedImages}
+					warning={stagedImagesWarning}
+				/>
+			)}
 
 			<div className={raised ? 'flex min-w-0 gap-3' : 'flex gap-3'}>
 				{raised ? (

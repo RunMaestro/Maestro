@@ -617,6 +617,12 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   `group-chat send` verb accepts text only (`<message>` or `--message-file`) and
   has no image attachment flag, so the moderator capability gate is not needed
   on the CLI send path.
+- **Reorder a staged image, or drag one into a Group Chat room draft.** The
+  room's strip renumbers `Screenshot N` when a thumbnail moves, and a drag
+  inserts that reference once. `group-chat send` takes the final text, so an
+  agent can write `Screenshot N` directly; the CLI stages no images and has no
+  strip to reorder. The action exists to keep the desktop thumbnails and the
+  draft in sync, which is a view operation with nothing to read back.
 
 ### Backstage plugin updates
 
