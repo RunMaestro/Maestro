@@ -1,9 +1,10 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
+import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 
 import {
 	listBoardWorkers,
@@ -17,6 +18,7 @@ beforeAll(() => fixture.install());
 afterAll(async () => fixture.cleanup());
 let dir: string;
 afterEach(() => {
+	vi.restoreAllMocks();
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
 	for (const suffix of ['', '-wal', '-shm'])
 		fs.rmSync(fixture.contract.db + suffix, { force: true });
@@ -236,8 +238,19 @@ it.each([
 ])(
 	'refuses unresolved physical repository %s without creating a ledger or grants',
 	(project, outside, inside) => {
+		dir = fs.mkdtempSync(path.join(root, 'migration-missing-'));
+		const missing = path.join(dir, 'missing');
+		const realpath = fs.realpathSync.native.bind(fs.realpathSync);
+		// These spellings are plan inputs, not real machine/network locations.
+		// Obtain a real missing-directory error within our owned fixture instead
+		// of asking Windows to resolve an invented UNC host (which can yield UNKNOWN).
+		const probe = vi
+			.spyOn(fs.realpathSync, 'native')
+			.mockImplementation((file, options) => realpath(file === project ? missing : file, options));
 		const db = openBoardDb(fixture.contract.db);
 		try {
+			const before = snapshotSqlite(db);
+			probe.mockClear();
 			expect(() =>
 				applyBoardMigration(
 					db,
@@ -253,8 +266,52 @@ it.each([
 					})
 				)
 			).toThrow('Board migration physical directory unresolved');
+			expect(probe).toHaveBeenCalledExactlyOnceWith(project);
 			for (const table of ['workers', 'migrations', 'cards', 'profiles', 'runs'])
 				expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+			expect(snapshotSqlite(db)).toEqual(before);
+		} finally {
+			db.close();
+		}
+	}
+);
+
+it.each(['UNKNOWN', 'EIO'])(
+	'propagates unexpected native realpath %s unchanged without migration writes',
+	(code) => {
+		dir = fs.mkdtempSync(path.join(root, 'migration-unexpected-'));
+		const failure = Object.assign(new Error(`native realpath ${code}`), {
+			code,
+			syscall: 'realpath',
+			path: dir,
+		});
+		const realpath = fs.realpathSync.native.bind(fs.realpathSync);
+		const probe = vi.spyOn(fs.realpathSync, 'native').mockImplementation((file, options) => {
+			if (file === dir) throw failure;
+			return realpath(file, options);
+		});
+		const db = openBoardDb(fixture.contract.db);
+		try {
+			const before = snapshotSqlite(db);
+			probe.mockClear();
+			let thrown: unknown;
+			try {
+				applyBoardMigration(
+					db,
+					planBoardMigration({
+						source: { location: { kind: 'local' }, path: dir },
+						repository: { id: 'repo', workingDirectory: dir, validated: true },
+						boardBytes: null,
+						profileBytes: null,
+						workers: [{ id: 'worker', dir, boardWorker: true }],
+					})
+				);
+			} catch (error) {
+				thrown = error;
+			}
+			expect(thrown).toBe(failure);
+			expect(probe).toHaveBeenCalledExactlyOnceWith(dir);
+			expect(snapshotSqlite(db)).toEqual(before);
 		} finally {
 			db.close();
 		}
