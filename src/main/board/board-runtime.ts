@@ -7,7 +7,11 @@ import type { DataDirLock } from '../../shared/maestro-lib/runtime/data-dir-lock
 import type { CueEngineLockInfo } from '../cue/cue-engine-lock';
 
 export type BoardRuntimeLock = Pick<DataDirLock, 'verify'> & {
-	info: DataDirLock['info'] & Pick<CueEngineLockInfo, 'token' | 'pidNsInode'>;
+	info: DataDirLock['info'] &
+		Pick<CueEngineLockInfo, 'token' | 'pidNsInode'> & {
+			platform?: NodeJS.Platform;
+			hostIdentity?: string;
+		};
 };
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
@@ -88,13 +92,14 @@ export class BoardRuntime {
 		private readonly onCompleted: (spec: BoardRunSpecification) => void = () => {},
 		private readonly onTransitions?: BoardTransitionsListener
 	) {
-		const { pid, startedAt, bootTime, token, pidNsInode } = lock.info;
+		const { pid, startedAt, bootTime, token, pidNsInode, platform, hostIdentity } = lock.info;
 		this.processIdentity = canonicalJson({
 			pid,
 			startedAt,
 			bootTime: bootTime ?? null,
 			...(token ? { token } : {}),
 			...(pidNsInode === undefined ? {} : { pidNsInode }),
+			...(platform && hostIdentity ? { platform, hostIdentity } : {}),
 		});
 	}
 

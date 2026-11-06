@@ -1,3 +1,4 @@
+import { boardOwnerLiveness } from '../../../main/board/board-owner-liveness';
 import { isLeftByEarlierHolderOfOurPid } from '../../../main/cue/cue-engine-lock';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1507,6 +1508,60 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		});
 		expect(persisted()).toBe(before);
 	});
+	it.each(['darwin', 'win32'] as const)(
+		'recovers a proven dead %s owner and fences callbacks without releasing inherited runs',
+		async (platform) => {
+			db.prepare('DELETE FROM runtime_owner').run();
+			const lock = (pid: number, token: string) => ({
+				info: {
+					pid,
+					token,
+					host: 'local-host',
+					platform,
+					hostIdentity: 'os-machine-proof',
+					mode: 'desktop' as const,
+					bootTime: 1,
+					startedAt: new Date(1).toISOString(),
+				},
+				verify: () => ({ ok: true as const }),
+			});
+			runtime = new BoardRuntime(
+				storage,
+				lock(111, 'old'),
+				() => host,
+				service,
+				() => 'unknown'
+			);
+			expect(runtime.acquire()).toEqual({ ok: true });
+			const token = claim();
+			const pending = runtime.start(token);
+			const inherited = ['reservations', 'runs'];
+			const frozen = inherited.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
+			const current = lock(222, 'new').info;
+			const evidence = {
+				platform,
+				hostIdentity: 'os-machine-proof',
+				current,
+				ownsCurrent: () => true,
+				isPidAlive: (pid: number) => pid !== 111,
+				earlierHolder: () => false,
+			};
+			const successor = new BoardRuntime(
+				storage,
+				lock(222, 'new'),
+				() => host,
+				service,
+				(identity) => boardOwnerLiveness(identity, evidence)
+			);
+			expect(successor.acquire()).toEqual({ ok: true });
+			expect(db.prepare('SELECT epoch FROM runtime_owner').get()).toEqual({ epoch: 2 });
+			expect(inherited.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(frozen);
+			settle(good);
+			expect(await pending).toMatchObject({ ok: false, reason: 'owner-conflict' });
+			expect(inherited.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(frozen);
+			expect(runtime.read(token)!.outcome).toBeNull();
+		}
+	);
 	it('recovers only a namespace-and-token-proven previous owner while retaining inherited uncertain runs', async () => {
 		db.prepare('DELETE FROM runtime_owner').run();
 		const pidNsInode =

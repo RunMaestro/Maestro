@@ -241,11 +241,12 @@ import {
 	cancelBoardCardRun,
 	type BoardSpawnContext,
 } from './board/board-spawn';
-import { isPidAlive } from '../shared/maestro-lib/client/discovery';
 import { BoardStorageError } from './board/board-storage';
 import { probeBoardRemoteRepository } from './board/board-remote-source';
 import { configureBoardSourceHost } from './board/board-source-host';
 import { isBoardIsolationRequested } from './board/board-isolation';
+import { isPidAlive } from '../shared/maestro-lib/client/discovery';
+import { boardOwnerLiveness, readBoardOwnerHostIdentity } from './board/board-owner-liveness';
 import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
 import { configureBoardRuntimeHost } from './board/board-runtime-host';
 import type { BoardClaimHostContext } from './board/board-claims';
@@ -1650,6 +1651,7 @@ app
 				(event) => pluginEventBus?.emit(event),
 				(payload) => safeSend('remote:notifyToast', payload)
 			);
+		const boardOwnerHostIdentity = readBoardOwnerHostIdentity();
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
@@ -1667,6 +1669,8 @@ app
 						mode: 'desktop' as const,
 						token: info.token,
 						pidNsInode: info.pidNsInode,
+						platform: process.platform,
+						hostIdentity: boardOwnerHostIdentity,
 					},
 					verify: () => {
 						const current = readCueEngineLock();
@@ -1756,38 +1760,15 @@ app
 			},
 			onTask: (task) => cueEngine?.trackBoardTask(task),
 			service: createBoardRunService(boardSpawnContext),
-			// Only namespace-bound process evidence proves the previous owner gone.
-			ownerLiveness: (identity) => {
-				let old: { pid?: number; bootTime?: number; token?: string; pidNsInode?: number };
-				try {
-					old = JSON.parse(identity);
-				} catch {
-					return 'unknown';
-				}
-				const current = readCueEngineLock();
-				if (
-					!current ||
-					!isCueEngineLockOwnedByThisProcess(current) ||
-					!old ||
-					!Number.isSafeInteger(old.pid) ||
-					old.pid! <= 0 ||
-					typeof old.token !== 'string' ||
-					!old.token ||
-					!Number.isSafeInteger(old.pidNsInode) ||
-					old.pidNsInode !== current.pidNsInode
-				)
-					return 'unknown';
-				if (isLeftByEarlierHolderOfOurPid({ ...old, pid: old.pid! })) return 'dead';
-				// A dead PID is meaningful only in this same namespace and boot.
-				if (
-					typeof old.bootTime !== 'number' ||
-					typeof current.bootTime !== 'number' ||
-					!Number.isFinite(old.bootTime) ||
-					Math.abs(old.bootTime - current.bootTime) > 60_000
-				)
-					return 'unknown';
-				return !isPidAlive(old.pid!) ? 'dead' : 'unknown';
-			},
+			ownerLiveness: (identity) =>
+				boardOwnerLiveness(identity, {
+					platform: process.platform,
+					hostIdentity: boardOwnerHostIdentity,
+					current: readCueEngineLock(),
+					ownsCurrent: isCueEngineLockOwnedByThisProcess,
+					isPidAlive,
+					earlierHolder: isLeftByEarlierHolderOfOurPid,
+				}),
 			onWait: (key, reason) =>
 				logger.cue(`[Board] ${key.collectionKey}/${key.cardId}: ${reason}`, 'Cue'),
 		});
