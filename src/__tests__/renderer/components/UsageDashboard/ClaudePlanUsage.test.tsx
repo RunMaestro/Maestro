@@ -482,6 +482,46 @@ describe('ClaudePlanUsage - refresh wiring', () => {
 		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
 	});
 
+	it('keeps sampling after the panel unmounts and fills the store in when done', async () => {
+		let finishSample!: (value: unknown) => void;
+		refreshClaudeUsageSnapshotsMock.mockReturnValue(
+			new Promise((resolve) => {
+				finishSample = resolve;
+			})
+		);
+		getClaudeUsageSnapshotsMock.mockResolvedValue({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T01:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 11, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 2, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		const { unmount } = render(<ClaudePlanUsage theme={theme} />);
+		fireEvent.click(screen.getByTestId('claude-plan-refresh'));
+		await waitFor(() => expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+
+		// Switching dashboard tabs unmounts the panel mid-sample.
+		unmount();
+
+		// Coming back while main is still sampling shows the run as busy, and a
+		// click joins it instead of starting a second sample.
+		render(<ClaudePlanUsage theme={theme} />);
+		const button = screen.getByTestId('claude-plan-refresh') as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		expect(button.textContent).toContain('Sampling');
+		fireEvent.click(button);
+		expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+
+		finishSample({ refreshed: 1 });
+		await waitFor(() => {
+			expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
+		});
+		await waitFor(() => expect(button.disabled).toBe(false));
+	});
+
 	it('disables the refresh button while a refresh is in flight', () => {
 		useClaudeUsageStore.setState({
 			snapshots: {},
