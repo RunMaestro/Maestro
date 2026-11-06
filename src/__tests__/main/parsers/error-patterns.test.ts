@@ -144,6 +144,14 @@ describe('error-patterns', () => {
 			});
 		});
 
+		describe('rate_limited patterns', () => {
+			it('should match the OpenCode Go plan quota error (MAESTRO-17W)', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'Go usage limit exceeded');
+				expect(result?.type).toBe('rate_limited');
+				expect(result?.recoverable).toBe(true);
+			});
+		});
+
 		describe('session_not_found patterns', () => {
 			// Verified: opencode-ai v1.18.15, run locally.
 			// `opencode run "hi" --session ses_<bad-id>` -> "Error: Session not found"
