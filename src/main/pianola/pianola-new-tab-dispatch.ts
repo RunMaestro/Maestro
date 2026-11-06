@@ -45,6 +45,7 @@ class NewTabSpawnFences {
 	// Only confirmed native children retain observers; terminal capture (including
 	// supersession) removes them. Neither a wire locator nor restart restores these.
 	private readonly running = new Map<string, (run: AgentRun, terminalOutput?: string) => void>();
+	/** Forward updates only to an observer attached to a confirmed native run; terminal updates retire it. */
 	observeRun(run: AgentRun, terminalOutput?: string) {
 		const listener = this.running.get(run.id);
 		if (!listener) return;
@@ -55,6 +56,7 @@ class NewTabSpawnFences {
 		const key = `${agentId}-ai-${tabId}`;
 		if (!this.held.has(key)) this.held.set(key, {});
 	}
+	/** Release an unclaimed hold; a claimed spawn must settle through its owner. */
 	cancelHold(agentId: string, tabId: string) {
 		const key = `${agentId}-ai-${tabId}`;
 		if (!this.held.get(key)?.claimed) this.held.delete(key);
@@ -93,6 +95,11 @@ class NewTabSpawnFences {
 		if (!entry.guard) throw new Error('DispatchAdmissionPending');
 		entry.guard(boundaryId);
 	}
+	/**
+	 * Claim the held tab for its authorized dispatch and recheck its guard before spawn.
+	 * The returned nonstart callback can release only this exact claim; uncertainty
+	 * about a possible native start must retain the fence for reconciliation.
+	 */
 	claim(
 		processId: string,
 		dispatchId?: string,
