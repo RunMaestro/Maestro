@@ -397,6 +397,7 @@ export function useAgentSessionManagement(
 					usageStats: finalUsageStats,
 					origin,
 					nativeSessionBinding,
+					pinnedMessages,
 				} = resumable;
 
 				// Update the session and switch to AI mode
@@ -436,6 +437,9 @@ export function useAgentSessionManagement(
 									starred: isStarred || tab.starred,
 									usageStats: finalUsageStats ?? tab.usageStats,
 									origin: origin ?? tab.origin,
+									...(!tab.pinnedMessages?.length && pinnedMessages.length > 0
+										? { pinnedMessages }
+										: {}),
 								};
 							});
 							const nextSession = focusAiTabInSession(
@@ -455,6 +459,7 @@ export function useAgentSessionManagement(
 							origin,
 							starred: isStarred,
 							usageStats: finalUsageStats,
+							pinnedMessages,
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 						});

@@ -114,6 +114,7 @@ import type {
 	StarTabCallback,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -223,6 +224,7 @@ import type {
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
+import type { MessagePinCommandRequest } from '../../shared/messagePinCommands';
 import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
@@ -634,6 +636,10 @@ export class WebServer {
 
 	setClosedTabCommandCallback(callback: ClosedTabCommandCallback): void {
 		this.callbackRegistry.setClosedTabCommandCallback(callback);
+	}
+
+	setMessagePinCommandCallback(callback: MessagePinCommandCallback): void {
+		this.callbackRegistry.setMessagePinCommandCallback(callback);
 	}
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
@@ -1384,6 +1390,8 @@ export class WebServer {
 				this.callbackRegistry.snoozeCommand(request),
 			closedTabCommand: async (request: ClosedTabCommandRequest) =>
 				this.callbackRegistry.closedTabCommand(request),
+			messagePinCommand: async (request: MessagePinCommandRequest) =>
+				this.callbackRegistry.messagePinCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>

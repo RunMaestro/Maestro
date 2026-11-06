@@ -3,6 +3,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
+import { useUIStore } from '../../../stores/uiStore';
 import { resolveModelEffortTabId } from '../../../utils/panelLayout';
 import { visibleAiTabs } from '../../../utils/tabHelpers';
 
@@ -53,6 +54,7 @@ interface BuildTabCommandsArgs {
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
 		openModelEffort?: QuickAction['shortcut'];
+		toggleMessagePins?: QuickAction['shortcut'];
 	};
 	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 	toggleInputMode: () => void;
@@ -362,6 +364,22 @@ export function buildTabCommands({
 	if (activeSession && activeTabType === 'ai') {
 		const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
 		const snoozeTarget = activeTab ? resolveSnoozeTarget(activeSession, activeTab.id) : null;
+		// Pinned messages: offered once the tab has a pin, since the panel has
+		// nothing to show before that.
+		const pinCount = activeTab?.pinnedMessages?.length ?? 0;
+		if (activeTab && pinCount > 0 && !activeGroupChatId) {
+			const pinTabId = activeTab.id;
+			commands.push({
+				id: 'showMessagePins',
+				label: 'Show Pinned Messages',
+				subtext: `${pinCount} pinned in this tab - filter, jump to, rename, or unpin`,
+				shortcut: shortcuts.toggleMessagePins,
+				action: () => {
+					setQuickActionOpen(false);
+					useUIStore.getState().setMessagePinsTabId(pinTabId);
+				},
+			});
+		}
 		if (snoozeTarget) {
 			commands.push({
 				id: 'snoozeTab',
