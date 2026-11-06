@@ -651,6 +651,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		async (event, target: unknown, options?: unknown): Promise<PianolaSupervisorSnapshot> => {
 			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 			const transport: unknown = event;
+			/** Recheck the current desktop or authenticated web owner at each authorization boundary. */
 			const ownerAuthorized = (): boolean => {
 				const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
 				const user = getActingUser();

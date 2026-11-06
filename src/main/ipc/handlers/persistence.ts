@@ -315,6 +315,7 @@ export function registerPersistenceHandlers(
 		});
 	};
 
+	/** Cancel pending admissions when their queue row or owning tab disappears. */
 	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]) => {
 		for (const agent of previous) {
 			const current = next.find((s) => s.id === agent.id);
@@ -343,6 +344,7 @@ export function registerPersistenceHandlers(
 		const expected = canonicalJson(input.item);
 		const request = JSON.parse(canonicalJson(input)) as Parameters<ReleaseQueueItem>[0];
 		return sessionWriteQueue.enqueue('sessions', async () => {
+			/** Revalidate tab identity, queue order and exact held intent before release and commit. */
 			const assertRows = (sessions: StoredSession[], releasedGeneration?: string) => {
 				const session = sessions?.find((s) => s.id === request.agentId);
 				const tab = session?.aiTabs?.find((t: { id: string }) => t.id === request.tabId);

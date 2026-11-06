@@ -119,6 +119,7 @@ export function createPianolaScopeWorkerDeps(
 				throw error;
 			}
 		},
+		/** Read only the expected native turn; discard stale cache entries and retry invalid deltas in full. */
 		readTranscript: async (target, expected) => {
 			if (!expected || expected.agentId !== target.agentId || expected.tabId !== target.tabId)
 				throw new Error('Native current-turn cursor required');
