@@ -27,6 +27,7 @@ import React from 'react';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
+import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { ComposerSendColumn, type ComposerSendMenu } from './ComposerSendColumn';
 import { PhoneComposerHandle } from '../InputArea/components/PhoneComposerHandle';
 import {
@@ -227,17 +228,19 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	// The strip lives in the frame, so its reorder does too: move the images and
 	// rewrite the draft's Screenshot N references through the same permutation.
 	// The surface supplies the draft and its setter, since only it owns the text.
-	const handleReorderStagedImages = React.useCallback(
-		(from: number, to: number) => {
-			const remap = buildSlotRemap(stagedImages?.length ?? 0, from, to);
-			if (remap.size === 0) return;
-			resolvedSetStagedImages((prev) => moveStagedImage(prev, from, to));
-			if (draftValue === undefined || !onDraftChange) return;
-			const renumbered = renumberScreenshotReferences(draftValue, remap);
-			if (renumbered !== draftValue) onDraftChange(renumbered);
-		},
-		[stagedImages?.length, resolvedSetStagedImages, draftValue, onDraftChange]
-	);
+	// Stable identity on purpose: the draft changes on every keystroke, and a
+	// callback that closed over it would hand the memoized strip a new `onReorder`
+	// each time, re-rendering it on every AI chat keystroke while images are
+	// staged. The reorder only runs on a drop, so reading the latest draft
+	// through the stable wrapper is enough.
+	const handleReorderStagedImages = useStableCallback((from: number, to: number) => {
+		const remap = buildSlotRemap(stagedImages?.length ?? 0, from, to);
+		if (remap.size === 0) return;
+		resolvedSetStagedImages((prev) => moveStagedImage(prev, from, to));
+		if (draftValue === undefined || !onDraftChange) return;
+		const renumbered = renumberScreenshotReferences(draftValue, remap);
+		if (renumbered !== draftValue) onDraftChange(renumbered);
+	});
 
 	const box = (
 		<div

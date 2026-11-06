@@ -5,6 +5,7 @@
  * and the toolbar passthrough.
  */
 
+import type React from 'react';
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -20,6 +21,27 @@ vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOrig
 	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
 	usePhoneLayout: vi.fn(() => false),
 }));
+
+// Pass through to the real strip, recording the onReorder each frame render
+// hands it, so a test can tell whether typing changes that callback's identity.
+const stripReorders = vi.hoisted(() => [] as Array<(from: number, to: number) => void>);
+vi.mock(
+	'../../../../renderer/components/InputArea/components/StagedImagesStrip',
+	async (importOriginal) => {
+		const actual =
+			await importOriginal<
+				typeof import('../../../../renderer/components/InputArea/components/StagedImagesStrip')
+			>();
+		const Real = actual.StagedImagesStrip;
+		return {
+			...actual,
+			StagedImagesStrip: (props: React.ComponentProps<typeof Real>) => {
+				stripReorders.push(props.onReorder);
+				return <Real {...props} />;
+			},
+		};
+	}
+);
 
 const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
 const theme = createMockTheme();
@@ -155,6 +177,29 @@ describe('ChatComposerFrame', () => {
 			render(frame({ ...staged, stagedImagesVisible: false }));
 
 			expect(screen.queryByLabelText('Staged image 1')).not.toBeInTheDocument();
+		});
+
+		it('keeps the strip reorder stable while the draft changes, and renumbers the latest draft', () => {
+			stripReorders.length = 0;
+			const onDraftChange = vi.fn();
+			const setStagedImages = vi.fn();
+			const two = {
+				...staged,
+				stagedImages: ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
+				setStagedImages,
+				onDraftChange,
+			};
+			const { rerender } = render(frame({ ...two, draftValue: 'crop Screenshot 1' }));
+			rerender(frame({ ...two, draftValue: 'crop Screenshot 1 and' }));
+			rerender(frame({ ...two, draftValue: 'crop Screenshot 1 and Screenshot 2' }));
+
+			expect(stripReorders.length).toBeGreaterThanOrEqual(3);
+			expect(new Set(stripReorders).size).toBe(1);
+
+			stripReorders[0](0, 1);
+
+			expect(setStagedImages).toHaveBeenCalledTimes(1);
+			expect(onDraftChange).toHaveBeenCalledWith('crop Screenshot 2 and Screenshot 1');
 		});
 	});
 
