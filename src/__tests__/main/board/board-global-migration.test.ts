@@ -100,6 +100,8 @@ afterEach(() => {
 
 function input(name: string, cards: unknown[] = [card], boardFields = {}): BoardMigrationInput {
 	const root = path.join(scratch.dir, name);
+	// Validated local repositories and workers need a real directory for physical access grants.
+	fs.mkdirSync(root, { recursive: true });
 	return {
 		source: { location: { kind: 'local' }, path: root },
 		repository: { id: name, workingDirectory: root, validated: true },
