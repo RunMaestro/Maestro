@@ -2252,7 +2252,9 @@ export const FilePreview = React.memo(
 													containerRef.current?.focus();
 												}
 											} else if (searchMode === 'text' && searchKind !== 'line') {
-												if (e.key === 'Enter' && !e.shiftKey) {
+												if (e.key === 'Enter' && isImeComposing(e)) {
+													// Leave the key to the input method.
+												} else if (e.key === 'Enter' && !e.shiftKey) {
 													e.preventDefault();
 													goToNextMatch();
 												} else if (e.key === 'Enter' && e.shiftKey) {

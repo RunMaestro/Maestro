@@ -596,7 +596,7 @@ export function SessionContextMenu({
 											onChange={(e) => setRenameValue(e.target.value)}
 											onKeyDown={(e) => {
 												e.stopPropagation();
-												if (e.key === 'Enter') {
+												if (e.key === 'Enter' && !isImeComposing(e)) {
 													e.preventDefault();
 													commitRenameWindow();
 												} else if (e.key === 'Escape' && !isImeComposing(e)) {

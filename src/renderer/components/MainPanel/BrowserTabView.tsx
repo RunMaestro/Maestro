@@ -1241,9 +1241,11 @@ const NativeBrowserTabView = React.memo(
 										event.stopPropagation();
 										closeFind();
 									} else if (event.key === 'Enter') {
-										event.preventDefault();
 										event.stopPropagation();
-										handleFindNext(!event.shiftKey);
+										if (!isImeComposing(event)) {
+											event.preventDefault();
+											handleFindNext(!event.shiftKey);
+										}
 									} else if (
 										event.key === 'g' &&
 										(event.metaKey || event.ctrlKey) &&

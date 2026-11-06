@@ -4,6 +4,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, MODAL_BUTTON_BASE_CLASS, MODAL_BUTTON_SECONDARY_CLASS } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { isImeComposing } from '../utils/ime';
 
 interface RenameTabModalProps {
 	theme: Theme;
@@ -46,7 +47,13 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 	const showAutoButton = !!onAutoName && !!hasLogs;
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-		if (showAutoButton && e.key === 'Enter' && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+		if (
+			showAutoButton &&
+			e.key === 'Enter' &&
+			e.shiftKey &&
+			(e.metaKey || e.ctrlKey) &&
+			!isImeComposing(e)
+		) {
 			e.preventDefault();
 			e.stopPropagation();
 			onAutoName?.();

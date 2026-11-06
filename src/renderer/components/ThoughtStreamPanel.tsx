@@ -796,6 +796,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 								onChange={(e) => setSteerDraft(e.target.value.slice(0, MAX_STEERING_NOTE_LENGTH))}
 								onKeyDown={(e) => {
 									if (e.key === 'Enter' && !e.shiftKey) {
+										if (isImeComposing(e)) return;
 										e.preventDefault();
 										sendSteeringNote();
 										return;

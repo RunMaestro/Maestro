@@ -136,7 +136,10 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 					setSuggestionIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
 					return;
 				}
-				if (event.key === 'Tab' || (event.key === 'Enter' && suggestionIndex >= 0)) {
+				if (
+					event.key === 'Tab' ||
+					(event.key === 'Enter' && suggestionIndex >= 0 && !isImeComposing(event))
+				) {
 					event.preventDefault();
 					applySuggestion(suggestions[suggestionIndex]);
 					return;
