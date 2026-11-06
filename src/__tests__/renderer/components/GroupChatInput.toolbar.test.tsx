@@ -101,6 +101,18 @@ describe('GroupChatInput toolbar', () => {
 			expectNoAgentPills();
 		});
 
+		// jsdom does no layout, so a width bug cannot be measured here. What it can
+		// see is the structure the width depends on: the bordered box is a column
+		// flex container, which stretches a direct child to its full width. A
+		// wrapper row in between made ComposerTextarea's root a row flex item
+		// without flex-1, so it shrank to the textarea's intrinsic ~200px.
+		it("mounts the textarea's root directly in the bordered composer box", () => {
+			const { textarea } = renderRoom();
+			const root = textarea.parentElement!;
+			expect(root).toHaveClass('relative', 'flex', 'items-start');
+			expect(root.parentElement).toHaveClass('border', 'rounded-lg', 'flex', 'flex-col');
+		});
+
 		it('keeps the room send column with its bell beside the composer', () => {
 			renderRoom();
 			expect(screen.getByTitle('Notification Settings')).toBeInTheDocument();

@@ -723,7 +723,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 						)}
 
 						<InputTextarea
-							session={session}
+							agentId={session.id}
+							agentName={session.name}
+							toolType={session.toolType}
 							theme={theme}
 							isTerminalMode={isTerminalMode}
 							isCommandModeDraft={isShellCommandDraft}

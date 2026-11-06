@@ -3,6 +3,7 @@ export {
 	type ComposerSendColumnProps,
 	type ComposerSendMenu,
 } from './ComposerSendColumn';
+export { ComposerTextarea, type ComposerTextareaProps } from './ComposerTextarea';
 export {
 	ImageAttachInput,
 	stageImageFiles,
