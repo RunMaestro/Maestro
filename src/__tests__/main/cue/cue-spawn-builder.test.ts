@@ -112,6 +112,9 @@ vi.mock('../../../main/utils/logger', () => ({
 // resolver itself (resolveClaudeSpawnMode / applyClaudeSpawnDecision) and
 // getClaudeTokenMode run for real, so these tests exercise the actual
 // command/arg/env rewrite produced inside buildSpawnSpec.
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(async () => undefined),
+}));
 vi.mock('../../../main/agents/claude-usage-startup', () => ({
 	getMaestroPBinPath: () => '/bundled/maestro-p.js',
 	isMaestroPBinaryPath: (p: string | null | undefined) => !!p && p.includes('maestro-p'),
@@ -148,6 +151,7 @@ import {
 import { buildMcpInjection, mergeMcpInjectionArgs } from '../../../shared/plugins/mcp-agent-config';
 import { resolveMaestroCliScriptPath } from '../../../main/cue/cue-cli-executor';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
 import * as platformDetection from '../../../shared/platformDetection';
 import { ensureRemoteMaestroPProbed } from '../../../main/agents/probeRemoteMaestroP';
@@ -410,7 +414,22 @@ describe('cue-spawn-builder', () => {
 					}
 					expect(result).toEqual({ ok: false, message: 'Plugin tool preparation unavailable.' });
 					expect(config.onLog).not.toHaveBeenCalled();
-					expect(logger.warn).not.toHaveBeenCalled();
+					// The failure is reported, but only by class: never the private message.
+					expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+						'Plugin tool preparation failed (Error)',
+						'[PluginRunIdentity]'
+					);
+					expect(captureException).toHaveBeenCalledExactlyOnceWith(expect.any(Error), {
+						operation: 'cue:pluginToolPreparation',
+						errorName: 'Error',
+						errorCode: undefined,
+					});
+					expect(
+						JSON.stringify([
+							vi.mocked(logger.warn).mock.calls,
+							vi.mocked(captureException).mock.calls.map(([e, extra]) => [String(e), extra]),
+						])
+					).not.toContain('PRIVATE');
 					expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
 				}
 			);
@@ -472,10 +491,10 @@ describe('cue-spawn-builder', () => {
 				expect(removePluginRunProofFile).toHaveBeenCalledExactlyOnceWith(
 					vi.mocked(createPluginRunProofFile).mock.results[0].value
 				);
-				expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
-					'Could not remove plugin run proof file',
-					'[PluginRunIdentity]'
-				);
+				expect(vi.mocked(logger.warn).mock.calls).toEqual([
+					['Plugin tool preparation failed (Error)', '[PluginRunIdentity]'],
+					['Could not remove plugin run proof file', '[PluginRunIdentity]'],
+				]);
 			});
 
 			it('transfers a successful proof to its caller without revoking or removing it', async () => {

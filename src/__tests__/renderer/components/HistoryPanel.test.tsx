@@ -42,8 +42,10 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 		onUpdate,
 		filteredEntries,
 		currentIndex,
+		agentId,
 	}: {
 		entry: HistoryEntry;
+		agentId?: string;
 		onClose: () => void;
 		onDelete?: (id: string) => void;
 		onNavigate?: (entry: HistoryEntry, index: number) => void;
@@ -55,6 +57,7 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 			<span data-testid="modal-entry-id">{entry.id}</span>
 			<span data-testid="modal-entry-summary">{entry.summary}</span>
 			<span data-testid="modal-current-index">{currentIndex}</span>
+			<span data-testid="modal-agent-id">{agentId ?? 'none'}</span>
 			<button onClick={onClose} data-testid="modal-close">
 				Close
 			</button>
@@ -1454,6 +1457,38 @@ describe('HistoryPanel', () => {
 				const firstCard = screen.getByText('First entry').closest('div[class*="cursor-pointer"]');
 				expect(firstCard).toHaveStyle({ outlineOffset: '1px' });
 			});
+		});
+
+		it.each([
+			['an unbound entry uses the panel agent', undefined, 'codex'],
+			[
+				'a bound entry uses its recorded provider',
+				{
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: 'native',
+					accountRef: 'account',
+					host: { kind: 'local', identity: 'local' },
+					cwd: '/test/project',
+				},
+				'grok',
+			],
+		] as const)('gives the detail modal a provider: %s', async (_label, binding, expected) => {
+			// Codex already counts cached input, so the provider picks the token formula.
+			const entry = createMockEntry({
+				summary: 'Provider entry',
+				nativeSessionBinding: binding as NativeSessionBinding | undefined,
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+			const { container } = render(
+				<HistoryPanel session={createMockSession({ toolType: 'codex' })} theme={mockTheme} />
+			);
+			await screen.findByText('Provider entry');
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
+			fireEvent.keyDown(listContainer!, { key: 'Enter' });
+			expect(await screen.findByTestId('modal-agent-id')).toHaveTextContent(expected);
 		});
 
 		it('should open detail modal with Enter', async () => {

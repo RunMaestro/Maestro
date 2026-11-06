@@ -30,6 +30,7 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { logger } from '../host';
 import { shellEscape } from '../launch/shell-escape';
+import { redactedErrorFields } from '../../processErrors';
 
 const LOG_CONTEXT = '[ssh-remote-signal]';
 
@@ -280,11 +281,13 @@ export function signalRemoteAgent(
 			}
 		}, SIGNAL_SSH_TIMEOUT_MS);
 		timer.unref?.();
-		child.on('error', () => {
+		child.on('error', (error) => {
 			clearTimeout(timer);
+			// The class and errno only: the message can name the private prompt artifact.
 			logger.warn('Remote agent signal ssh failed to start', LOG_CONTEXT, {
 				sessionId: target.sessionId,
 				mode,
+				...redactedErrorFields(error),
 			});
 		});
 		child.on('exit', (code) => {
@@ -307,10 +310,11 @@ export function signalRemoteAgent(
 		child.stdin?.end(script);
 		child.unref();
 		return true;
-	} catch {
+	} catch (error) {
 		logger.warn('Could not signal remote agent', LOG_CONTEXT, {
 			sessionId: target.sessionId,
 			mode,
+			...redactedErrorFields(error),
 		});
 		return false;
 	}

@@ -1188,10 +1188,13 @@ export const HistoryPanel = React.memo(
 					<HistoryDetailModal
 						theme={theme}
 						entry={detailModalEntry}
+						// Only Grok records a bound provider. Every other entry belongs to this
+						// panel's agent, whose provider decides the input-token formula (Codex
+						// already counts cached input; Claude does not).
 						agentId={
 							detailModalEntry.nativeSessionBinding?.state === 'bound'
 								? detailModalEntry.nativeSessionBinding.provider
-								: undefined
+								: session.toolType
 						}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}

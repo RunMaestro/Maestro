@@ -514,9 +514,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		useLayoutEffect(() => {
 			return () => {
 				// A late result must not close a newer selection or a parked history tab.
+				// Not keyed on the entry list: live entries stream in constantly (Cue writes
+				// most of them), and a list refresh must not refuse a jump already in flight.
 				resumeRequestRef.current++;
 			};
-		}, [detailModalEntry, selectedIndex, filteredEntries, isActive]);
+		}, [detailModalEntry, selectedIndex, isActive]);
 
 		// Scroll selected into view
 		useEffect(() => {

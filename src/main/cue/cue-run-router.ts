@@ -348,14 +348,13 @@ export async function executeCueRunAction(
 
 	const agentConfigValues = deps.getAgentConfigValues(storedSession.toolType);
 
-	// SSH paths belong to the remote host. Select only explicit overrides before
-	// either injected callback can return an executable detected on this host.
+	// SSH paths belong to the remote host. Select only the agent's own override
+	// before either injected callback can return an executable detected on this
+	// host; the provider-level path is a local file and never goes remote.
 	let resolvedAgentPath: string | undefined;
 	if (storedSession.sessionSshRemoteConfig?.enabled) {
 		resolvedAgentPath = await resolveCueAgentBinary({
 			sessionCustomPath: storedSession.customPath,
-			providerCustomPath:
-				typeof agentConfigValues.customPath === 'string' ? agentConfigValues.customPath : undefined,
 			sshEnabled: true,
 			getDetectedPath: async () => undefined,
 		});

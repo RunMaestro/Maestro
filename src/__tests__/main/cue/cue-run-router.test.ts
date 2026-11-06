@@ -219,12 +219,8 @@ describe.each(['injected resolver', 'legacy detector'] as const)(
 				'/remote/Provider Tools/grok',
 				' ~/Session Tools/grok ',
 			],
-			[
-				'provider fallback',
-				undefined,
-				'/remote/Provider Tools/grok',
-				'/remote/Provider Tools/grok',
-			],
+			// The provider path names a LOCAL file, so it never reaches the remote.
+			['provider path stays local', undefined, '/local/Provider Tools/grok', undefined],
 			['no overrides', undefined, undefined, undefined],
 			['empty overrides', '', '', undefined],
 		] as const)(

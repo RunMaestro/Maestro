@@ -695,6 +695,32 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			}
 		);
 
+		it.each(['claude-code', 'opencode'])(
+			'admits a %s stream fallback cost stamped partial by the default accounting',
+			async (lifecycle) => {
+				mockAgentTypes.set('owner', lifecycle);
+				mockEvents = [
+					makeEvent({
+						sessionId: 'owner',
+						providerSessionId: null,
+						streamUsageJson: JSON.stringify({
+							inputTokens: 8,
+							totalCostUsd: 0.25,
+							// The default stamp carries no providerId; the lifecycle names the provider.
+							accounting: {
+								...accounting,
+								providerId: undefined,
+								cost: { status: 'partial', costUsd: 0.25 },
+							},
+						}),
+					}),
+				];
+				const result = await getCueStatsAggregation('day');
+				expect(result.byAgent[0].key).toBe(lifecycle);
+				expect(result.totals).toMatchObject({ totalInputTokens: 8, totalCostUsd: 0.25 });
+			}
+		);
+
 		it('keeps non-Grok native lookups separate for colliding provider IDs', async () => {
 			for (const [owner, input] of [
 				['owner-a', 11],
