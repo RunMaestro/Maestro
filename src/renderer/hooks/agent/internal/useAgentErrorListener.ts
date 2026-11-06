@@ -281,7 +281,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 						return {
 							...s,
 							orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
-							state: stillThinking ? s.state : ('idle' as SessionState),
+							state:
+								stillThinking || (s.state === 'error' && s.agentError)
+									? s.state
+									: ('idle' as SessionState),
 							busySource: stillThinking ? s.busySource : undefined,
 							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
 						};

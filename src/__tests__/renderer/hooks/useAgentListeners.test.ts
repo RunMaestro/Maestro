@@ -2358,13 +2358,27 @@ describe('useAgentListeners', () => {
 			{ event: 'error', remainingState: 'idle' },
 			{ event: 'exit', remainingState: 'busy' },
 			{ event: 'error', remainingState: 'busy' },
+			{ event: 'exit', remainingState: 'idle', pausedError: true },
+			{ event: 'error', remainingState: 'idle', pausedError: true },
+			{ event: 'exit', remainingState: 'idle', pausedError: true, keepPending: true },
 		] as const)(
 			'keeps state consistent on orphan $event with a $remainingState orphan remaining',
-			async ({ event, remainingState }) => {
-				const deps = createMockDeps();
+			async (scenario) => {
+				const { event, remainingState } = scenario;
+				const pausedError = 'pausedError' in scenario;
+				const keepPending = 'keepPending' in scenario;
+				const processQueuedItem = vi.fn();
+				const deps = createMockDeps({ processQueuedItemRef: { current: processQueuedItem } });
+				const agentError: AgentError = {
+					type: 'unknown',
+					message: 'Live tab failed',
+					timestamp: Date.now(),
+					agentId: 'opencode',
+				};
 				const session = createMockSession({
 					id: 'sess-1',
-					state: 'busy',
+					state: pausedError ? 'error' : 'busy',
+					...(pausedError && { agentError, agentErrorPaused: true, agentErrorTabId: 'tab-fresh' }),
 					busySource: 'ai',
 					thinkingStartTime: 123,
 					aiTabs: [createMockTab({ id: 'tab-fresh', state: 'idle' })],
@@ -2376,12 +2390,23 @@ describe('useAgentListeners', () => {
 					executionQueue: [
 						{
 							id: 'held',
-							tabId: 'tab-waiting',
+							tabId: keepPending ? 'tab-a' : 'tab-waiting',
 							type: 'message',
 							text: 'held follow-up',
 							timestamp: Date.now(),
 							paused: true,
 						},
+						...(pausedError
+							? [
+									{
+										id: 'runnable',
+										tabId: 'tab-fresh',
+										type: 'message' as const,
+										text: 'must wait for error recovery',
+										timestamp: Date.now(),
+									},
+								]
+							: []),
 					],
 				});
 				useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
@@ -2397,10 +2422,17 @@ describe('useAgentListeners', () => {
 					});
 				}
 				const updated = useSessionStore.getState().sessions[0];
-				expect(updated.state).toBe(remainingState);
+				expect(updated.state).toBe(pausedError ? 'error' : remainingState);
+				if (pausedError) {
+					expect(updated.agentError).toEqual(agentError);
+					expect(updated.agentErrorPaused).toBe(true);
+					expect(processQueuedItem).not.toHaveBeenCalled();
+				}
 				expect(updated.busySource).toBe(remainingState === 'busy' ? 'ai' : undefined);
 				expect(updated.thinkingStartTime).toBe(remainingState === 'busy' ? 123 : undefined);
-				expect(updated.orphanedThinkingTabs?.map((tab) => tab.id)).toEqual(['tab-waiting']);
+				expect(updated.orphanedThinkingTabs?.map((tab) => tab.id)).toEqual(
+					keepPending ? ['tab-a', 'tab-waiting'] : ['tab-waiting']
+				);
 				expect(updated.executionQueue).toEqual(session.executionQueue);
 			}
 		);
