@@ -313,6 +313,121 @@ describe('BoardModal themed filters and start policy', () => {
 	});
 });
 
+describe('BoardModal project filter', () => {
+	beforeEach(() => {
+		useSessionStore.setState({
+			groups: [{ id: 'g1', name: 'Team', emoji: '' }],
+			sessions: [createMockSession({ id: 's1', name: 'Worker One', projectRoot: PROJECT_ROOT })],
+		});
+		installApis([
+			{
+				id: 'global',
+				name: 'Board',
+				cards: [
+					...['repo-one', 'repo-two'].map((repositoryId) =>
+						makeCard({
+							id: repositoryId,
+							title: `Work for ${repositoryId}`,
+							repositoryId,
+							kind: 'work',
+							executionScope: { kind: 'group', groupId: 'g1' },
+							assigneeAgentId: 's1',
+						})
+					),
+					makeCard({
+						id: 'other-group',
+						title: 'Other group work',
+						repositoryId: 'repo-one',
+						executionScope: { kind: 'group', groupId: 'g2' },
+						assigneeAgentId: 's1',
+					}),
+					makeCard({
+						id: 'other-agent',
+						title: 'Other agent work',
+						repositoryId: 'repo-one',
+						executionScope: { kind: 'group', groupId: 'g1' },
+						assigneeAgentId: 's2',
+					}),
+					makeCard({ id: 'missing', title: 'Unknown project work', repositoryId: 'gone' }),
+					makeCard({ id: 'none', title: 'Unassigned project work' }),
+				],
+			},
+		]);
+		boardApi.captureCatalog.mockResolvedValue({
+			agents: [],
+			groups: [],
+			profiles: [],
+			defaultStartMode: 'approval',
+			repositories: [
+				{ id: 'repo-one', workingDirectory: projectOne, validated: true },
+				{ id: 'repo-two', workingDirectory: projectTwo, validated: true },
+			],
+		});
+	});
+
+	it('separates repository assignments within one global collection and restores all projects', async () => {
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const filter = await screen.findByRole('button', { name: 'Filter by project' });
+		choose(filter, `repo-one: ${projectOne}`);
+		expect(screen.getByText('Work for repo-one')).toBeInTheDocument();
+		expect(screen.queryByText('Work for repo-two')).not.toBeInTheDocument();
+		choose(filter, `repo-two: ${projectTwo}`);
+		expect(screen.getByText('Work for repo-two')).toBeInTheDocument();
+		expect(screen.queryByText('Work for repo-one')).not.toBeInTheDocument();
+		choose(filter, 'All projects');
+		expect(screen.getByText('Work for repo-one')).toBeInTheDocument();
+		expect(screen.getByText('Work for repo-two')).toBeInTheDocument();
+		expect(boardApi.create).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+		expect(boardApi.sourceCommand).not.toHaveBeenCalled();
+	});
+
+	it('combines project group and agent filters and retains them across Workers navigation', async () => {
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		choose(
+			await screen.findByRole('button', { name: 'Filter by project' }),
+			`repo-one: ${projectOne}`
+		);
+		choose(screen.getByRole('button', { name: 'Filter by group' }), 'Team');
+		expect(screen.queryByText('Other group work')).not.toBeInTheDocument();
+		expect(screen.getByText('Other agent work')).toBeInTheDocument();
+		choose(screen.getByRole('button', { name: 'Filter by agent' }), 'Worker One');
+		expect(screen.queryByText('Other agent work')).not.toBeInTheDocument();
+		expect(screen.queryByText('Work for repo-two')).not.toBeInTheDocument();
+		expect(screen.getByText('Work for repo-one')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('tab', { name: 'Workers', exact: true }));
+		fireEvent.click(screen.getByRole('tab', { name: 'Cards', exact: true }));
+		expect(screen.getByRole('button', { name: 'Filter by project' })).toHaveTextContent(
+			`repo-one: ${projectOne}`
+		);
+		expect(screen.getByRole('button', { name: 'Filter by group' })).toHaveTextContent('Team');
+		expect(screen.getByRole('button', { name: 'Filter by agent' })).toHaveTextContent('Worker One');
+		expect(screen.getByText('Work for repo-one')).toBeInTheDocument();
+		expect(screen.queryByText('Other agent work')).not.toBeInTheDocument();
+		expect(screen.queryByText('Other group work')).not.toBeInTheDocument();
+		expect(screen.queryByText('Work for repo-two')).not.toBeInTheDocument();
+	});
+
+	it('names unknown and unassigned projects and supports the existing select keyboard controls', async () => {
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const filter = await screen.findByRole('button', { name: 'Filter by project' });
+		choose(filter, 'Missing repository: gone');
+		expect(screen.getByText('Unknown project work')).toBeInTheDocument();
+		expect(screen.queryByText('Unassigned project work')).not.toBeInTheDocument();
+		choose(filter, 'No project assignment');
+		expect(screen.getByText('Unassigned project work')).toBeInTheDocument();
+		expect(screen.queryByText('Unknown project work')).not.toBeInTheDocument();
+		fireEvent.click(filter);
+		const search = screen.getByRole('textbox');
+		fireEvent.change(search, { target: { value: 'repo-two' } });
+		fireEvent.keyDown(search, { key: 'ArrowDown' });
+		fireEvent.keyDown(search, { key: 'Enter' });
+		expect(filter).toHaveTextContent(`repo-two: ${projectTwo}`);
+		expect(screen.getByText('Work for repo-two')).toBeInTheDocument();
+		expect(screen.queryByText('Unassigned project work')).not.toBeInTheDocument();
+	});
+});
+
 describe('BoardModal card creation', () => {
 	it('creates a role from an empty Workers catalog and makes it selectable on a group card', async () => {
 		installApis([{ id: 'b1', name: 'Board', cards: [] }], []);

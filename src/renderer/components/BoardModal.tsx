@@ -421,6 +421,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		collection: BoardWorkspaceCollection;
 	} | null>(null);
 	const [dragOverStatus, setDragOverStatus] = useState<CardStatus | null>(null);
+	const [projectFilter, setProjectFilter] = useState('all');
 	const [kindFilter, setKindFilter] = useState<BoardCardKind | 'all' | 'unspecified'>('all');
 	const [statusFilter, setStatusFilter] = useState<CardStatus | 'all'>('all');
 	const [bulkSelection, setBulkSelection] = useState<
@@ -1408,11 +1409,37 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		[theme.colors.bgActivity, theme.colors.border, theme.colors.textMain]
 	);
 
+	const projectFilterOptions = useMemo(() => {
+		const repositories = new Map((catalog?.repositories ?? []).map((repo) => [repo.id, repo]));
+		const ids = new Set(repositories.keys());
+		for (const collection of collections)
+			for (const card of collection.board.cards) if (card.repositoryId) ids.add(card.repositoryId);
+		if (projectFilter.startsWith('repository:')) ids.add(projectFilter.slice('repository:'.length));
+		return [
+			{ value: 'all', label: 'All projects' },
+			{ value: 'unassigned', label: 'No project assignment' },
+			...Array.from(ids, (id) => {
+				const repo = repositories.get(id);
+				return {
+					value: `repository:${id}`,
+					label: repo
+						? `${repo.id}: ${repo.workingDirectory}${repo.location?.kind === 'ssh' ? ` [SSH: ${repo.location.remoteId || 'unresolved'}]` : ''}${repo.validated ? '' : ` (unresolved: ${repo.diagnostic ?? 'revalidate source'})`}`
+						: `Missing repository: ${id}`,
+				};
+			}),
+		];
+	}, [catalog, collections, projectFilter]);
+
 	const cardsByStatus = useMemo(() => {
 		const map = new Map<CardStatus, BoardCardEntry[]>();
 		for (const status of WORKFLOW_COLUMNS) map.set(status, []);
 		for (const collection of collections)
 			for (const card of collection.board.cards) {
+				if (
+					projectFilter !== 'all' &&
+					projectFilter !== (card.repositoryId ? `repository:${card.repositoryId}` : 'unassigned')
+				)
+					continue;
 				if (
 					groupFilter !== 'all' &&
 					!(card.executionScope?.kind === 'group' && card.executionScope.groupId === groupFilter)
@@ -1436,7 +1463,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				});
 			}
 		return map;
-	}, [collections, kindFilter, statusFilter, groupFilter, agentFilter]);
+	}, [collections, projectFilter, kindFilter, statusFilter, groupFilter, agentFilter]);
 
 	// --- Keyboard grid navigation -------------------------------------------
 
@@ -1455,7 +1482,13 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		setDragCard(null);
 		setDragOverStatus(null);
 	}, []);
-	const filterKey = canonicalJson([groupFilter, agentFilter, kindFilter, statusFilter]);
+	const filterKey = canonicalJson([
+		projectFilter,
+		groupFilter,
+		agentFilter,
+		kindFilter,
+		statusFilter,
+	]);
 
 	/**
 	 * Arrow-key movement across the kanban grid: up/down within a column, left/
@@ -2036,6 +2069,17 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					{/* Kanban columns */}
 					{board && !draft && (
 						<div className="flex flex-wrap gap-3 px-4 pt-3">
+							<div className="flex items-center gap-1">
+								<span>Project</span>
+								<ThemedSelect
+									aria-label="Filter by project"
+									theme={theme}
+									value={projectFilter}
+									onChange={setProjectFilter}
+									filterable
+									options={projectFilterOptions}
+								/>
+							</div>
 							<div className="flex items-center gap-1">
 								<span>Group</span>
 								<ThemedSelect
