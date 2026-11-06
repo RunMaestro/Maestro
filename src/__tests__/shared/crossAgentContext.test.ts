@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	buildConsultFirstContext,
 	inferMentionTiming,
 	parseAgentMentions,
 	messageStartsWithAgentMention,
@@ -370,5 +371,18 @@ describe('parseMentionRoutingField', () => {
 		if (result.ok) return;
 		expect(result.error).toContain('"sideways"');
 		expect(result.error).toContain('parallel, consult-first, handoff, only');
+	});
+});
+
+describe('consult-first template substitution', () => {
+	it('preserves placeholder literals within replies, agent names and the user message', () => {
+		const context = buildConsultFirstContext(
+			'{{CONSULTED_AGENTS}}\n{{CONSULT_REPLIES}}\n{{USER_MESSAGE}}',
+			[{ targetAgentName: '{{CONSULT_REPLIES}}', text: 'Keep {{USER_MESSAGE}} literal.' }],
+			'Inspect {{CONSULTED_AGENTS}}.'
+		);
+		expect(context).toContain('Keep {{USER_MESSAGE}} literal.');
+		expect(context).toContain('{{CONSULT_REPLIES}}');
+		expect(context).toContain('Inspect {{CONSULTED_AGENTS}}.');
 	});
 });

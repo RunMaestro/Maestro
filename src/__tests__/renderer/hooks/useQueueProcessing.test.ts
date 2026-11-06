@@ -1782,3 +1782,63 @@ describe('remote observer queue ownership', () => {
 		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
 	});
 });
+
+describe('managed host queue drain', () => {
+	it('keeps a managed row idle and intact, then requests once while IPC is in flight', async () => {
+		vi.useFakeTimers();
+		const item = createQueuedItem({ pendingAdmissionId: 'dispatch' });
+		const session = createSession({ executionQueue: [item] });
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [session];
+		let finish!: () => void;
+		mockAgentStoreProcessQueuedItem.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+		);
+		renderHook(() => useQueueProcessing(createDeps()));
+		await act(async () => {
+			vi.advanceTimersByTime(500);
+		});
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledOnce();
+		expect(session.state).toBe('idle');
+		expect(session.executionQueue).toEqual([item]);
+		expect(mockSetSessions).not.toHaveBeenCalled();
+		await act(async () => {
+			vi.advanceTimersByTime(8000);
+		});
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledOnce();
+		await act(async () => {
+			finish();
+		});
+	});
+	it.each(['paused', 'predecessor', 'connection', 'busy-tab', 'retry'] as const)(
+		'does not admit a managed row behind %s',
+		async (hold) => {
+			vi.useFakeTimers();
+			const item = createQueuedItem({ pendingAdmissionId: 'dispatch', paused: hold === 'paused' });
+			const tab = createTab({ state: hold === 'busy-tab' ? 'busy' : 'idle' });
+			const predecessor = createQueuedItem({
+				id: 'earlier',
+				waitingForConnection: hold === 'connection',
+			});
+			const session = createSession({
+				aiTabs: [tab],
+				executionQueue:
+					hold === 'predecessor' || hold === 'connection' ? [predecessor, item] : [item],
+			});
+			if (hold === 'retry') pendingRetryTabs.add(tab.id);
+			mockSessionStoreState.sessionsLoaded = true;
+			mockSessionStoreState.sessions = [session];
+			renderHook(() => useQueueProcessing(createDeps()));
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(
+				mockAgentStoreProcessQueuedItem.mock.calls.every((call) => call[1].id !== item.id)
+			).toBe(true);
+			expect(session.executionQueue).toContain(item);
+		}
+	);
+});

@@ -1671,6 +1671,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
 							sessionId: targetSessionId,
+							transcriptBoundaryId: newEntry.id,
 							querySource,
 							toolType: freshSession.toolType,
 							cwd: freshSession.cwd,

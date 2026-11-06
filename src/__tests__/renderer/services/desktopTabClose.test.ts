@@ -224,6 +224,38 @@ describe('desktop conversation lifecycle', () => {
 		expect(getSession().unifiedClosedTabHistory).toEqual([]);
 	});
 
+	it("mirrors a closed tab's pins onto its origin record, and skips a tab with none", async () => {
+		const pin = {
+			id: 'pin-1',
+			logId: 'log-1',
+			source: 'stdout' as const,
+			timestamp: 1,
+			title: 'Key decision',
+			excerpt: 'Key decision',
+			pinnedAt: 2,
+		};
+		setupSession({
+			id: 'session-1',
+			aiTabs: [
+				createMockAITab({ id: 'pinned', agentSessionId: 'provider-1', pinnedMessages: [pin] }),
+				createMockAITab({ id: 'plain', agentSessionId: 'provider-2' }),
+				createMockAITab({ id: 'other' }),
+			],
+		});
+		window.maestro.agentSessions.setSessionPins = vi.fn().mockResolvedValue(undefined);
+
+		await requestDesktopTabClose('session-1', 'plain');
+		expect(window.maestro.agentSessions.setSessionPins).not.toHaveBeenCalled();
+
+		await requestDesktopTabClose('session-1', 'pinned');
+		expect(window.maestro.agentSessions.setSessionPins).toHaveBeenCalledWith(
+			'claude-code',
+			expect.any(String),
+			'provider-1',
+			[pin]
+		);
+	});
+
 	it('records local history even if inventory removes the tab before the acknowledgement', async () => {
 		window.maestro.web.requestCloseTab = vi.fn(async () => {
 			useSessionStore.setState({

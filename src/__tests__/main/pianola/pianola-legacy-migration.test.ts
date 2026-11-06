@@ -1,0 +1,679 @@
+import * as os from 'os';
+/** Real registry/checkpoint/decision storage composed with host proof ingress and
+ * the actual supervisor. No live configuration, process or recipient is used. */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
+import { spawnSync, type ChildProcess, type SpawnOptions } from 'child_process';
+vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
+vi.mock('electron', () => ({ app: { getPath: () => process.env.MAESTRO_USER_DATA } }));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+vi.mock('../../../main/cue/cue-cli-executor', () => ({
+	resolveMaestroCliScriptPath: () => '/fixture/cli.js',
+}));
+vi.mock('../../../shared/maestro-lib/control/termination', () => ({
+	stopProcess: vi.fn(),
+	BACKGROUND_STOP_GRACE_MS: 0,
+}));
+import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
+import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
+import { migratePianolaLegacyWatches } from '../../../main/pianola/pianola-legacy-migration';
+import { HostCallerRuns, hostCallerRuns } from '../../../main/agent-run/caller-identity';
+import { runWatchIteration, initialWatchState } from '../../../shared/pianola/pianola-watcher';
+import type { PianolaMessage } from '../../../shared/pianola/types';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../shared/agentDelegation';
+import { resolvePianolaScopeOwnership } from '../../../shared/pianola/pianola-scope';
+import {
+	admitPianolaScopeReply,
+	runPianolaScopeCycle,
+	type PianolaScopeSnapshot,
+	type PianolaScopeCycleDeps,
+} from '../../../shared/pianola/pianola-scope-cycle';
+import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
+
+const scopeId = '11111111-1111-4111-8111-111111111111';
+let directory: string;
+let supervisor: PianolaSupervisor;
+let enabled: boolean;
+let store: ReturnType<typeof createPianolaFsStore>;
+let snapshot: PianolaScopeSnapshot;
+let spawned: Array<{ args: readonly string[]; opts: SpawnOptions; child: ChildProcess }>;
+const scope = (): PianolaSupervisedTarget => ({
+	id: scopeId,
+	kind: 'watch-scope',
+	enabled: true,
+	createdAt: 1,
+	managerAgentId: 'manager',
+	selection: {
+		label: 'Agents',
+		mode: 'agents-and-groups',
+		agentIds: ['owner'],
+		groupIds: [],
+		excludedAgentIds: [],
+	},
+	delegationPolicy: {
+		version: 1,
+		revision: 1,
+		enabled: true,
+		managerAgentId: 'manager',
+		coverage: 'selected-agents',
+		ruleSetRevision: 'standing-rules',
+	},
+});
+const legacy = (id = 'legacy', tabId = 'old', on = true): PianolaSupervisedTarget => ({
+	id,
+	kind: 'watch',
+	enabled: on,
+	createdAt: 0,
+	agentId: 'owner',
+	tabId,
+});
+const tab = (tabId: string, agentId = 'owner') => ({
+	agentId,
+	tabId,
+	paused: false,
+	consult: false,
+	ephemeral: false,
+	busy: false,
+	createdAt: 1,
+	cursorAvailable: true,
+	cursor: { id: 'historical', count: 1, textLength: 34 },
+});
+const migrate = (target = scope(), fence = (id: string) => supervisor.canFenceLegacyWatch(id)) =>
+	migratePianolaLegacyWatches(target, {
+		store,
+		snapshot: () => snapshot,
+		canFence: fence,
+		featureEnabled: () => enabled,
+	});
+function ownership(tabId: string, agentId = 'owner') {
+	const targets = store.readSupervisorTargets();
+	return resolvePianolaScopeOwnership(
+		tab(tabId, agentId),
+		snapshot.owners,
+		targets
+			.filter((t) => t.kind === 'watch-scope')
+			.map((t) => ({ ...t, selection: t.selection!, managerAgentId: t.managerAgentId! })),
+		targets.filter((t) => t.kind === 'watch')
+	);
+}
+
+beforeEach(() => {
+	const root = os.tmpdir();
+	fs.mkdirSync(root, { recursive: true });
+	directory = fs.mkdtempSync(path.join(root, 'legacy-migration-'));
+	// The checkout's ancestors are group writable on this CI host. Simulate
+	// private host ancestors only; all fixture files/proof bytes remain real.
+	const lstat = fs.lstatSync;
+	vi.spyOn(fs, 'lstatSync').mockImplementation(((file: fs.PathLike, options?: unknown) => {
+		const stat = lstat(file, options as never);
+		return directory.startsWith(String(file) + path.sep) && String(file) !== directory
+			? Object.assign(Object.create(stat), { mode: stat.mode & ~0o022 })
+			: stat;
+	}) as typeof fs.lstatSync);
+	vi.stubEnv('MAESTRO_USER_DATA', directory);
+	store = createPianolaFsStore({ resolveDir: () => directory, indent: 2, trailingNewline: true });
+	enabled = true;
+	spawned = [];
+	supervisor = new PianolaSupervisor({
+		isEnabled: () => enabled,
+		getPianolaAgentId: () => 'manager',
+		spawnChild: (_cmd, args, opts) => {
+			const child = Object.assign(new EventEmitter(), {
+				pid: 999999,
+				stdout: new PassThrough(),
+				stderr: new PassThrough(),
+				exitCode: null,
+				signalCode: null,
+				kill: vi.fn(),
+			}) as unknown as ChildProcess;
+			spawned.push({ args, opts, child });
+			return child;
+		},
+	});
+	snapshot = {
+		complete: true,
+		capturedAt: 100,
+		owners: [
+			{
+				id: 'owner',
+				cwd: path.join(directory, 'project'),
+				groupId: null,
+				remote: false,
+				isPianola: false,
+			},
+			{
+				id: 'child',
+				cwd: path.join(directory, 'worktree'),
+				parentSessionId: 'owner',
+				groupId: null,
+				remote: false,
+				isPianola: false,
+			},
+			{
+				id: 'manager',
+				cwd: path.join(directory, 'manager'),
+				groupId: null,
+				remote: false,
+				isPianola: true,
+			},
+		],
+		tabs: [tab('old'), tab('paused'), tab('sibling'), tab('child-tab', 'child')],
+	};
+	store.writeSupervisorTargets([legacy(), legacy('pause', 'paused', false)]);
+});
+afterEach(() => {
+	supervisor.stopAll();
+	vi.unstubAllEnvs();
+	vi.restoreAllMocks();
+	fs.rmSync(directory, { recursive: true, force: true });
+});
+
+describe('atomic legacy handover', () => {
+	it.each(['rename', 'in-place', 'crossprocess', 'locked', 'missing', 'corrupt'] as const)(
+		'rechecks the actual late-send boundary before any watcher event: %s',
+		(mode) => {
+			const callerRuns = new HostCallerRuns();
+			vi.spyOn(hostCallerRuns, 'issue').mockImplementation(callerRuns.issue.bind(callerRuns));
+			supervisor.reconcile();
+			const client = { cliAuthenticated: true };
+			const proofPath = spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!;
+			if (process.platform === 'win32') {
+				// Verified private ACL delivery is unavailable, so no caller authority exists.
+				expect(proofPath).toBe('');
+				expect(supervisor.canFenceLegacyWatch('legacy')).toBe(false);
+			} else {
+				callerRuns.bind(client, fs.readFileSync(proofPath, 'utf8'));
+				expect(callerRuns.resolve(client)).toBeDefined();
+			}
+			const file = store.supervisorFilePath();
+			const updated = JSON.stringify({ targets: [legacy('legacy', 'old', false)] });
+			if (mode === 'rename') {
+				fs.writeFileSync(file + '.external', updated);
+				fs.renameSync(file + '.external', file);
+			}
+			if (mode === 'in-place') fs.writeFileSync(file, updated);
+			if (mode === 'crossprocess') {
+				const child = spawnSync(process.execPath, [
+					'-e',
+					"require('fs').writeFileSync(process.argv[1], process.argv[2])",
+					file,
+					updated,
+				]);
+				expect(child.status).toBe(0);
+			}
+			if (mode === 'locked') fs.writeFileSync(file + '.lock', 'external');
+			if (mode === 'missing') fs.unlinkSync(file);
+			if (mode === 'corrupt') fs.writeFileSync(file, '{');
+			expect(callerRuns.resolve(client)).toBeUndefined();
+			expect(callerRuns.isRunClient(client)).toBe(process.platform !== 'win32');
+			expect(spawned).toHaveLength(1);
+		}
+	);
+
+	it('fences a real active owner at host ingress before stop, preserves a concrete pause and covers siblings/worktrees with one scope', async () => {
+		supervisor.reconcile();
+		const proofPath = spawned[0].opts.env![CALLER_RUN_PROOF_FILE_ENV_VAR]!;
+		if (process.platform === 'win32') {
+			expect(proofPath).toBe('');
+			expect(supervisor.canFenceLegacyWatch('legacy')).toBe(false);
+			expect(await migrate()).toMatchObject({ status: 'NeedsConfiguration' });
+			expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+			return;
+		}
+		expect(proofPath).toBeTruthy();
+		const proof = fs.readFileSync(proofPath, 'utf8');
+		const client = { cliAuthenticated: true };
+		hostCallerRuns.bind(client, proof);
+		expect(hostCallerRuns.resolve(client)).toBeDefined();
+		expect(await migrate()).toMatchObject({ status: 'migrated', watchIds: ['legacy'] });
+		// No reconcile/kill has run: the same live child and connected client are denied.
+		expect(spawned).toHaveLength(1);
+		expect(hostCallerRuns.resolve(client)).toBeUndefined();
+		expect(hostCallerRuns.isRunClient(client)).toBe(true);
+		expect(ownership('old')).toEqual({ kind: 'scope', scopeId });
+		expect(ownership('paused')).toEqual({ kind: 'excluded', reason: 'disabled watch' });
+		expect(ownership('sibling')).toEqual({ kind: 'scope', scopeId });
+		expect(ownership('child-tab', 'child')).toEqual({ kind: 'scope', scopeId });
+		expect(ownership('new-chat')).toEqual({ kind: 'scope', scopeId });
+		supervisor.reconcile();
+		expect(spawned.filter((s) => s.args.includes('watch-scope'))).toHaveLength(1);
+		expect(await migrate()).toMatchObject({ status: 'already-migrated' });
+		supervisor.reconcile();
+		expect(spawned).toHaveLength(2);
+	});
+
+	it.each(['policy', 'manager', 'proof', 'feature'] as const)(
+		'leaves old rights intact when %s is missing',
+		async (missing) => {
+			const target = scope();
+			if (missing === 'policy') delete target.delegationPolicy;
+			if (missing === 'manager')
+				snapshot.owners = snapshot.owners.filter((o) => o.id !== 'manager');
+			if (missing === 'feature') enabled = false;
+			const before = fs.readFileSync(store.supervisorFilePath(), 'utf8');
+			expect(await migrate(target, () => missing !== 'proof')).toMatchObject({
+				status: 'NeedsConfiguration',
+			});
+			expect(fs.readFileSync(store.supervisorFilePath(), 'utf8')).toBe(before);
+		}
+	);
+
+	it('refuses an unbound legacy manager handoff even when the old child can be fenced', async () => {
+		await runWatchIteration(
+			[
+				{
+					id: 'ask',
+					role: 'assistant',
+					source: 'ai',
+					content: 'Should I name it count or total?',
+					timestamp: '2026-11-04T10:00:00.000Z',
+				},
+			],
+			{ agentId: 'owner', tabId: 'old' },
+			initialWatchState(),
+			{
+				readRules: () => [],
+				recordDecision: store.appendDecision,
+				now: () => '2026-11-04T10:01:00.000Z',
+				genId: () => 'old-handoff',
+				log: vi.fn(),
+				dispatch: async () => ({ success: true }),
+				resolveProfile: () => ({
+					projectPath: path.join(directory, 'project'),
+					profile: 'Choose short variable names.',
+					updatedAt: 1,
+				}),
+				requestJudgment: async () => ({ success: true }),
+			},
+			{ dryRun: false }
+		);
+		const before = store.readSupervisorTargets();
+		expect(await migrate(scope(), () => true)).toMatchObject({
+			status: 'NeedsConfiguration',
+			reason: expect.stringContaining('old-handoff'),
+		});
+		expect(store.readSupervisorTargets()).toEqual(before);
+	});
+
+	it('baselines busy historical questions and retains the baseline and receipt across restart', async () => {
+		snapshot.tabs[0].busy = true;
+		await migrate(scope(), () => true);
+		const checkpoint = store.readScopeCheckpoint(scopeId)!;
+		expect(checkpoint.tabs).toHaveLength(4);
+		expect(checkpoint.tabs.every((t) => t.baselineBusy === false)).toBe(true);
+		const restored = createPianolaFsStore({
+			resolveDir: () => directory,
+			indent: 2,
+			trailingNewline: true,
+		});
+		expect(restored.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
+		expect(await migrate()).toMatchObject({ status: 'already-migrated' });
+	});
+
+	it.each(
+		[0, 2].flatMap((createdAt) =>
+			[
+				{ targetPaused: false, tabPaused: false, overlappingPaused: false },
+				{ targetPaused: true, tabPaused: false, overlappingPaused: false },
+				{ targetPaused: false, tabPaused: true, overlappingPaused: false },
+				{ targetPaused: false, tabPaused: false, overlappingPaused: true },
+				{ targetPaused: true, tabPaused: true, overlappingPaused: true },
+			].map((pauses) => ({ createdAt, ...pauses }))
+		)
+	)(
+		'checks potential ownership before busy-question handover: %j',
+		async ({ createdAt, targetPaused, tabPaused, overlappingPaused }) => {
+			const callerRuns = new HostCallerRuns();
+			vi.spyOn(hostCallerRuns, 'issue').mockImplementation(callerRuns.issue.bind(callerRuns));
+			const overlappingId = '22222222-2222-4222-8222-222222222222';
+			store.upsertSupervisorTarget({
+				...scope(),
+				id: overlappingId,
+				createdAt,
+				enabled: !overlappingPaused,
+			});
+			const target = { ...scope(), enabled: !targetPaused };
+			snapshot.tabs[0].busy = true;
+			snapshot.tabs[0].paused = tabPaused;
+			// No unpaused sibling may mask the paused-tab ownership bypass.
+			snapshot.tabs = [snapshot.tabs[0]];
+			const history: PianolaMessage[] = [
+				{
+					id: 'historical',
+					role: 'assistant',
+					source: 'ai',
+					content: 'Should I name it count or total?',
+					timestamp: '2026-11-04T10:00:00.000Z',
+				},
+			];
+			snapshot.tabs[0].cursor.textLength = history[0].content.length;
+			store.writeRules([
+				{
+					id: 'rule',
+					enabled: true,
+					scope: 'global',
+					priority: 1,
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			]);
+			let activeStore = store;
+			const dispatch = vi.fn<PianolaScopeCycleDeps['dispatch']>(async (_target, answer, guard) => {
+				admitPianolaScopeReply(guard, answer, snapshot, activeStore);
+				return { status: 'accepted' };
+			});
+			const cycle = (id: string) =>
+				runPianolaScopeCycle(
+					id,
+					{
+						store: activeStore,
+						watch: {
+							readRules: activeStore.readRules,
+							recordDecision: activeStore.appendDecision,
+							now: () => '2026-11-04T10:01:00.000Z',
+							genId: () => 'replayed',
+							log: vi.fn(),
+						},
+						readSnapshot: async () => ({ ...snapshot, capturedAt: ++snapshot.capturedAt }),
+						readTranscript: async (target) => ({
+							...target,
+							messages: target.tabId === 'old' ? history : [],
+						}),
+						dispatch,
+					},
+					{ dryRun: false }
+				);
+			supervisor.reconcile();
+			expect(supervisor.canFenceLegacyWatch('legacy')).toBe(process.platform !== 'win32');
+			const client = { cliAuthenticated: true };
+			const proofPath = spawned.find((child) => child.args.includes('watch'))!.opts.env![
+				CALLER_RUN_PROOF_FILE_ENV_VAR
+			]!;
+			if (process.platform === 'win32') {
+				expect(proofPath).toBe('');
+				expect(await migrate(target)).toMatchObject({ status: 'NeedsConfiguration' });
+				expect(dispatch).not.toHaveBeenCalled();
+				return;
+			}
+			callerRuns.bind(client, fs.readFileSync(proofPath, 'utf8'));
+			expect(callerRuns.resolve(client)).toBeDefined();
+			await cycle(overlappingId);
+			const before = activeStore.readSupervisorTargets();
+			const overlappingCheckpoint = activeStore.readScopeCheckpoint(overlappingId);
+			const result = await migrate(target);
+			if (createdAt === 0) {
+				expect(result).toMatchObject({
+					status: 'NeedsConfiguration',
+					reason: expect.stringContaining(overlappingId),
+				});
+				expect(activeStore.readSupervisorTargets()).toEqual(before);
+				expect(activeStore.readScopeCheckpoint(scopeId)).toBeNull();
+				expect(activeStore.readScopeCheckpoint(overlappingId)).toEqual(overlappingCheckpoint);
+				expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+				expect(callerRuns.resolve(client)).toBeDefined();
+				expect(supervisor.canFenceLegacyWatch('legacy')).toBe(true);
+			} else {
+				expect(result.status).toBe('migrated');
+				expect(callerRuns.resolve(client)).toBeUndefined();
+				expect(store.readSupervisorTargets().find((entry) => entry.id === scopeId)?.enabled).toBe(
+					!targetPaused
+				);
+			}
+			// Resume the actual persisted scopes and tab before idle and restart.
+			await activeStore.updateSupervisorTargetsAsync((targets) =>
+				targets.map((entry) => (entry.kind === 'watch-scope' ? { ...entry, enabled: true } : entry))
+			);
+			snapshot.tabs[0].paused = false;
+			supervisor.reconcile();
+			expect(ownership('old')).toEqual(
+				createdAt === 0 ? { kind: 'explicit-watch' } : { kind: 'scope', scopeId }
+			);
+			await cycle(overlappingId);
+			if (createdAt !== 0) await cycle(scopeId);
+			snapshot.tabs[0].busy = false;
+			await cycle(overlappingId);
+			if (createdAt !== 0) await cycle(scopeId);
+			// Reopen real storage and restart the supervisor while the same old question remains.
+			supervisor.stopAll();
+			activeStore = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			supervisor.reconcile();
+			await cycle(overlappingId);
+			if (createdAt !== 0) await cycle(scopeId);
+			expect(dispatch).not.toHaveBeenCalled();
+			expect(activeStore.readDecisions()).toEqual([]);
+			callerRuns.stop();
+		}
+	);
+
+	it('saves a migrated scope label without rearming, changing its receipt or rebaselining', async () => {
+		await migrate(scope(), () => true);
+		await store.updateSupervisorTargetsAsync((targets) =>
+			targets.map((target) => (target.id === scopeId ? { ...target, enabled: false } : target))
+		);
+		const before = store.readSupervisorTargets();
+		const checkpoint = store.readScopeCheckpoint(scopeId);
+		const changed = scope();
+		changed.selection = { ...changed.selection!, label: 'Renamed' };
+		snapshot.capturedAt++;
+		expect(await migrate(changed, () => true)).toMatchObject({ status: 'already-migrated' });
+		expect(store.readSupervisorTargets()).toEqual(
+			before.map((target) =>
+				target.id === scopeId
+					? { ...target, selection: { ...target.selection!, label: 'Renamed' } }
+					: target
+			)
+		);
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(checkpoint);
+	});
+
+	it.each(['current-baseline', 'feature-off', 'incomplete-census'] as const)(
+		'revalidates migration %s after yielding for the checkpoint lock',
+		async (change) => {
+			const lock = path.join(
+				process.env.MAESTRO_USER_DATA!,
+				`maestro-pianola-scope-${scopeId}.json.lock`
+			);
+			fs.writeFileSync(lock, process.pid + '.held', { flag: 'wx' });
+			const wait = vi.spyOn(Atomics, 'wait');
+			let settled = false;
+			const pending = migrate(scope(), () => true).then((result) => {
+				settled = true;
+				return result;
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 30));
+			expect(settled).toBe(false);
+			expect(wait).not.toHaveBeenCalled();
+			expect(store.readScopeCheckpoint(scopeId)).toBeNull();
+			expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+			snapshot.tabs[0].cursor = { id: 'after-lock', count: 5, textLength: 40 };
+			if (change === 'feature-off') enabled = false;
+			if (change === 'incomplete-census') snapshot.complete = false;
+			fs.rmSync(lock);
+			const result = await pending;
+			if (change === 'current-baseline') {
+				expect(result.status).toBe('migrated');
+				expect(
+					store
+						.readScopeCheckpoint(scopeId)
+						?.tabs.find((tab) => tab.tabId === snapshot.tabs[0].tabId)?.baseline?.id
+				).toBe('after-lock');
+			} else {
+				expect(result.status).toBe('NeedsConfiguration');
+				expect(store.readScopeCheckpoint(scopeId)).toBeNull();
+				expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+			}
+			expect(wait).not.toHaveBeenCalled();
+		}
+	);
+
+	it('recovers a crash after checkpoint preparation but before registry publication', async () => {
+		const original = store.withScopeCheckpointLockAsync;
+		const failure = vi
+			.spyOn(store, 'withScopeCheckpointLockAsync')
+			.mockImplementation((scopeId, operation) =>
+				original(scopeId, (write) =>
+					operation((checkpoint, ...args) => {
+						write(checkpoint, ...args);
+						throw new Error('crash');
+					})
+				)
+			);
+		await expect(migrate(scope(), () => true)).rejects.toThrow('crash');
+		expect(ownership('old')).toEqual({ kind: 'explicit-watch' });
+		expect(store.readSupervisorTargets().some((t) => t.kind === 'watch-scope')).toBe(false);
+		failure.mockRestore();
+		snapshot.capturedAt++;
+		expect(await migrate(scope(), () => true)).toMatchObject({ status: 'migrated' });
+	});
+
+	it('serializes concurrent mutations and prevents a stale writer from resurrecting an old owner', async () => {
+		await Promise.all([
+			migrate(scope(), () => true),
+			store.upsertSupervisorTargetAsync(legacy('unrelated', 'other')),
+		]);
+		expect(store.readSupervisorTargets().find((t) => t.id === 'unrelated')).toBeDefined();
+		await store.upsertSupervisorTargetAsync(legacy());
+		expect(store.readSupervisorTargets().find((t) => t.id === 'legacy')).toMatchObject({
+			enabled: false,
+			migratedToScopeId: scopeId,
+		});
+	});
+
+	it.each(['accepted', 'unknown', 'human'] as const)(
+		'composes real decision storage and delivery admission without replaying a legacy %s answer',
+		async (outcome) => {
+			const question = (id: string): PianolaMessage => ({
+				id,
+				role: 'assistant',
+				source: 'ai',
+				content: 'Should I name it count or total?',
+				timestamp: '2026-11-04T10:00:00.000Z',
+			});
+			const history: PianolaMessage[] = [question('historical')];
+			store.writeRules([
+				{
+					id: 'rule',
+					enabled: true,
+					scope: 'global',
+					priority: 1,
+					match: { kinds: ['question'], maxRisk: 'low' },
+					action: 'auto_answer',
+					answer: 'Use count.',
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			]);
+			let sequence = 0;
+			const watch = {
+				readRules: store.readRules,
+				recordDecision: store.appendDecision,
+				now: () => '2026-11-04T10:01:00.000Z',
+				genId: () => `decision-${++sequence}`,
+				log: vi.fn(),
+			};
+			if (outcome !== 'human') {
+				await runWatchIteration(
+					history,
+					{ agentId: 'owner', tabId: 'old' },
+					initialWatchState(),
+					{
+						...watch,
+						dispatch: async () => {
+							if (outcome === 'unknown') throw new Error('receipt lost after send');
+							return { success: true };
+						},
+					},
+					{ dryRun: false }
+				).catch(() => undefined);
+			} else
+				history.push({
+					id: 'human',
+					role: 'user',
+					source: 'user',
+					content: 'Use total.',
+					timestamp: '2026-11-04T10:00:01.000Z',
+				});
+			const updateCursor = () => {
+				const last = history.at(-1)!;
+				snapshot.tabs[0].cursor = {
+					id: last.id,
+					count: history.length,
+					textLength: last.content.length,
+				};
+			};
+			updateCursor();
+			await migrate(scope(), () => true);
+			// A pre-handover cycle may persist a stale suspended checkpoint later.
+			const stale = store.readScopeCheckpoint(scopeId)!;
+			stale.tabs[0].status = 'suspended';
+			stale.tabs[0].baselineBusy = true;
+			store.writeScopeCheckpoint(stale);
+			const recordsBefore = store.readDecisions();
+			const dispatch = vi.fn<PianolaScopeCycleDeps['dispatch']>(async (_target, answer, guard) => {
+				admitPianolaScopeReply(guard, answer, snapshot, store);
+				return { status: 'unknown', error: 'receipt lost' };
+			});
+			const deps: PianolaScopeCycleDeps = {
+				store,
+				watch,
+				readSnapshot: async () => ({ ...snapshot, capturedAt: ++snapshot.capturedAt }),
+				readTranscript: async (target) => ({
+					...target,
+					messages: target.tabId === 'old' ? history : [],
+				}),
+				dispatch,
+			};
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(dispatch).not.toHaveBeenCalled();
+			expect(store.readDecisions()).toEqual(recordsBefore);
+			history.push(question('fresh'));
+			updateCursor();
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(dispatch).toHaveBeenCalledOnce();
+			await runPianolaScopeCycle(scopeId, deps, { dryRun: false });
+			expect(dispatch).toHaveBeenCalledOnce();
+			expect(
+				store.readScopeCheckpoint(scopeId)!.tabs.find((t) => t.tabId === 'old')!.unresolvedIntent
+			).toMatchObject({ messageId: 'fresh', admitted: true });
+		}
+	);
+
+	it('keeps an existing scope paused and resolves overlapping groups to one owner', async () => {
+		const existing = scope();
+		existing.enabled = false;
+		store.upsertSupervisorTarget(existing);
+		await migrate(scope(), () => true);
+		expect(store.readSupervisorTargets().find((t) => t.id === scopeId)?.enabled).toBe(false);
+		expect(ownership('new')).toMatchObject({ kind: 'excluded', reason: 'disabled scope' });
+		await store.updateSupervisorTargetsAsync((targets) =>
+			targets.map((t) => (t.id === scopeId ? { ...t, enabled: true } : t))
+		);
+		snapshot.owners[0].groupId = 'group';
+		store.upsertSupervisorTarget({
+			...scope(),
+			id: '22222222-2222-4222-8222-222222222222',
+			createdAt: 2,
+			selection: {
+				label: 'Group',
+				mode: 'agents-and-groups',
+				agentIds: [],
+				groupIds: ['group'],
+				excludedAgentIds: [],
+			},
+		});
+		expect(ownership('old')).toEqual({ kind: 'scope', scopeId });
+	});
+});
