@@ -79,6 +79,8 @@ export interface ChatComposerProps {
 	imageInputId?: string;
 	imageReportComponent?: string;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
+	/** Optional visible warning badge beside the staged images strip. */
+	stagedImagesWarning?: string;
 
 	// Keyboard & focus
 	enterToSend?: boolean;
@@ -132,6 +134,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	imageInputId,
 	imageReportComponent,
 	onOpenLightbox,
+	stagedImagesWarning,
 	enterToSend = false,
 	setEnterToSend,
 	resolveSearchKey,
@@ -407,6 +410,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 			isBusy={isBusy}
 			hasDraft={phoneHandleHasDraft}
 			warningBorder={warningBorder}
+			stagedImagesWarning={stagedImagesWarning}
 			aboveComposer={aboveComposer}
 			overlays={
 				<AtMentionPopover

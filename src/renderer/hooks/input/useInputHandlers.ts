@@ -48,6 +48,10 @@ import { useMentionPicker, type MentionPickerItem, type MentionCategory } from '
 import { useInputProcessing, type ProcessInputOptions } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import {
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+} from '../../components/ChatComposer';
+import {
 	useCrossAgentDispatch,
 	type SpawnBackgroundSynopsisFn,
 } from '../agent/useCrossAgentDispatch';
@@ -848,6 +852,15 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				return;
 			}
 
+			if (isGroupChatActive) {
+				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+				if (!canModeratorReadImages(chat?.moderatorAgentId)) {
+					e.preventDefault();
+					flashModeratorCannotReadImages();
+					return;
+				}
+			}
+
 			for (let i = 0; i < items.length; i++) {
 				if (items[i].type.indexOf('image') !== -1) {
 					e.preventDefault();
@@ -1183,9 +1196,24 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const pathlessFiles: File[] = [];
 			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
+			let roomModeratorRefusedImages = false;
+			if (isGroupChatActive) {
+				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+				if (!canModeratorReadImages(chat?.moderatorAgentId)) {
+					const hasAnyImage = Array.from(files).some((file) => file.type.startsWith('image/'));
+					if (hasAnyImage) {
+						roomModeratorRefusedImages = true;
+						flashModeratorCannotReadImages();
+					}
+				}
+			}
+
 			for (let i = 0; i < files.length; i++) {
 				const file = files[i];
 				if (file.type.startsWith('image/')) {
+					if (roomModeratorRefusedImages) {
+						continue;
+					}
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						if (event.target?.result) {
