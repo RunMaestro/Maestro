@@ -1,37 +1,30 @@
 /**
  * ChatComposer.tsx
  *
- * Session-free chat composer shell composing the pieces extracted in steps 2-7:
+ * The room's composer: ChatComposerFrame (the shell both surfaces render) with
+ * the simple input wiring a room needs, so a surface that has no key handler
+ * or picker of its own passes a value and callbacks and gets:
  * - Textarea with MentionChipOverlay and autosize (ComposerTextarea)
- * - @ mention autocomplete popover and keys (AtMentionPopover, useMentionPicker)
- * - Staged images strip and reordering (StagedImagesStrip)
- * - Shared toolbar controls with voice dictation (ToolbarControls)
- * - Notification bell and Send button column (ComposerSendColumn)
- * - Phone fold handle (PhoneComposerHandle)
- * - Toast avoidance zone (useToastAvoidZone)
- * - Deferred quit indicator (QuitWhenIdleIndicator)
+ * - Agents-only @ mention popover and its keys (AtMentionPopover, useMentionPicker)
+ * - Find, picker and send keys (composerKeyDown helpers)
+ * - Trimmed text paste, voice dictation, staged image reordering
  *
- * Surface adapters (such as GroupChatInput) supply surface-specific state
- * (draft persistence, queue mirroring, provider capabilities) through props and slots.
+ * The AI composer renders ChatComposerFrame directly, since its keys, picker
+ * and command mode live in useInputKeyDown and InputContext. Surface adapters
+ * (such as GroupChatInput) supply draft persistence, queue mirroring and
+ * provider capabilities through props and slots.
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
-import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
-import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
-import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
 import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
 import { useVoiceInput } from '../../hooks/utils/useVoiceInput';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
-import { ComposerSendColumn } from './ComposerSendColumn';
 import { ComposerTextarea } from './ComposerTextarea';
-import { PhoneComposerHandle } from '../InputArea/components/PhoneComposerHandle';
-import { ToolbarControls } from '../InputArea/components/ToolbarControls';
-import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
-import { StagedImagesStrip } from '../InputArea/components/StagedImagesStrip';
+import { ChatComposerFrame, useChatComposerFold } from './ChatComposerFrame';
 import { AtMentionPopover } from '../InputArea/overlays/AtMentionPopover';
 import { moveStagedImage } from '../../utils/stagedImageOrder';
 import { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
@@ -54,8 +47,6 @@ import type { ComposerCapabilities } from './capabilities';
 
 const NO_FILE_SUGGESTIONS: AtMentionSuggestion[] = [];
 const EMPTY_SESSIONS: Session[] = [];
-const NOOP_SET_ENTER_TO_SEND = () => {};
-const NOOP_SET_STAGED_IMAGES = () => {};
 const NOOP_DROP = (e: React.DragEvent<HTMLTextAreaElement>) => {
 	e.stopPropagation();
 };
@@ -164,10 +155,8 @@ export const ChatComposer = React.memo(function ChatComposer({
 	const localInputRef = useRef<HTMLTextAreaElement>(null);
 	const inputRef = inputRefProp ?? localInputRef;
 
-	const toastAvoidRef = useToastAvoidZone();
-	const phone = usePhoneLayout();
-	const composerFold = usePersistedToggle(phoneFoldStorageKey ?? 'phone.composer.collapsed', true);
-	const isFolded = phone && composerFold.value;
+	const composerFold = useChatComposerFold(phoneFoldStorageKey ?? 'phone.composer.collapsed');
+	const isFolded = composerFold.isFolded;
 
 	// Mention state
 	const [atMentionOpen, setAtMentionOpen] = useState(false);
@@ -361,140 +350,87 @@ export const ChatComposer = React.memo(function ChatComposer({
 	const resolvedSendTitle = sendTitle ?? (isBusy ? 'Queue message' : 'Send message');
 	const resolvedSendTone = sendTone ?? (isBusy ? 'warning' : 'accent');
 	const resolvedSendDisabled = sendDisabled ?? !value.trim();
-	const resolvedSetEnterToSend = setEnterToSend ?? NOOP_SET_ENTER_TO_SEND;
-	const resolvedSetStagedImages = setStagedImages ?? NOOP_SET_STAGED_IMAGES;
 
-	// Folded: nothing but the handle.
-	if (isFolded) {
-		return (
-			<div ref={toastAvoidRef}>
-				<PhoneComposerHandle
-					theme={theme}
-					collapsed
-					onToggle={composerFold.toggle}
-					busy={isBusy}
-					hasDraft={phoneHandleHasDraft}
-				/>
-			</div>
-		);
-	}
+	const voiceBinding = useMemo(
+		() => ({
+			supported: voice.voiceSupported,
+			listening: voice.isListening,
+			onToggle: handleToggleVoiceInput,
+		}),
+		[voice.voiceSupported, voice.isListening, handleToggleVoiceInput]
+	);
 
 	return (
-		<div
-			ref={toastAvoidRef}
-			className={`relative border-t ${phone ? 'px-3 pb-3 pt-0' : 'p-4'} ${className ?? ''}`}
-			style={{
-				borderColor: theme.colors.border,
-				backgroundColor: theme.colors.bgSidebar,
-				...style,
-			}}
-		>
-			{phone && (
-				<PhoneComposerHandle
+		<ChatComposerFrame
+			theme={theme}
+			capabilities={capabilities}
+			fold={composerFold}
+			isBusy={isBusy}
+			hasDraft={phoneHandleHasDraft}
+			warningBorder={warningBorder}
+			aboveComposer={aboveComposer}
+			overlays={
+				<AtMentionPopover
+					isOpen={atMentionOpen}
+					isTerminalMode={false}
+					items={atMentionItems}
+					category="agents"
+					showCategoryBar={false}
+					selectedIndex={selectedAtMentionIndex}
+					filter={atMentionFilter}
+					startIndex={atMentionStartIndex}
+					inputValue={value}
+					itemRefs={atMentionItemRefs}
 					theme={theme}
-					collapsed={false}
-					onToggle={composerFold.toggle}
-					busy={isBusy}
+					setInputValue={onChange}
+					setOpen={setAtMentionOpen}
+					setFilter={setAtMentionFilter}
+					setStartIndex={setAtMentionStartIndex}
+					setSelectedIndex={setSelectedAtMentionIndex}
+					inputRef={inputRef}
 				/>
-			)}
-
-			<QuitWhenIdleIndicator theme={theme} />
-
-			{aboveComposer}
-
-			<AtMentionPopover
-				isOpen={atMentionOpen}
-				isTerminalMode={false}
-				items={atMentionItems}
-				category="agents"
-				showCategoryBar={false}
-				selectedIndex={selectedAtMentionIndex}
-				filter={atMentionFilter}
-				startIndex={atMentionStartIndex}
-				inputValue={value}
-				itemRefs={atMentionItemRefs}
-				theme={theme}
-				setInputValue={onChange}
-				setOpen={setAtMentionOpen}
-				setFilter={setAtMentionFilter}
-				setStartIndex={setAtMentionStartIndex}
-				setSelectedIndex={setSelectedAtMentionIndex}
-				inputRef={inputRef}
-			/>
-
-			{stagedImages && stagedImages.length > 0 && (
-				<StagedImagesStrip
-					isVisible
-					stagedImages={stagedImages}
+			}
+			textarea={
+				<ComposerTextarea
 					theme={theme}
-					setLightboxImage={setLightboxImageCallback}
-					setStagedImages={resolvedSetStagedImages}
-					openAnnotator={openAnnotatorCallback}
-					onReorder={handleReorderStagedImages}
+					value={value}
+					inputRef={inputRef}
+					placeholder={placeholder}
+					spellCheck={spellCheckEnabled}
+					knownMentionNames={knownMentionNames}
+					rows={1}
+					onChange={handleChange}
+					onKeyDown={handleKeyDown}
+					onPaste={handlePasteWrapped}
+					onDrop={onDrop ?? NOOP_DROP}
+					onFocus={handleFocus}
+					onBlur={onBlur}
 				/>
-			)}
-
-			<div className="flex gap-3">
-				<div
-					className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
-					style={{
-						borderColor: warningBorder ? theme.colors.warning : theme.colors.border,
-						backgroundColor: warningBorder ? `${theme.colors.warning}15` : theme.colors.bgMain,
-					}}
-				>
-					<ComposerTextarea
-						theme={theme}
-						value={value}
-						inputRef={inputRef}
-						placeholder={placeholder}
-						spellCheck={spellCheckEnabled}
-						knownMentionNames={knownMentionNames}
-						rows={1}
-						onChange={handleChange}
-						onKeyDown={handleKeyDown}
-						onPaste={handlePasteWrapped}
-						onDrop={onDrop ?? NOOP_DROP}
-						onFocus={handleFocus}
-						onBlur={onBlur}
-					/>
-
-					<ToolbarControls
-						theme={theme}
-						capabilities={capabilities}
-						isTerminalMode={false}
-						enterToSend={enterToSend}
-						setEnterToSend={resolvedSetEnterToSend}
-						setStagedImages={resolvedSetStagedImages}
-						imageInputId={imageInputId}
-						imageReportComponent={imageReportComponent}
-						checkImageFile={checkImageFile}
-						onUploadFiles={onUploadFiles}
-						voiceSupported={voice.voiceSupported}
-						isVoiceListening={voice.isListening}
-						onToggleVoiceInput={handleToggleVoiceInput}
-						onOpenPromptComposer={onOpenPromptComposer}
-						shortcuts={shortcuts}
-						showFlashNotification={showFlashNotification}
-						toolbarExtras={toolbarExtras}
-						sheetExtras={sheetExtras}
-						processInput={handleSendStable}
-						sendTitle={resolvedSendTitle}
-						sendDisabled={resolvedSendDisabled}
-						sendTone={resolvedSendTone}
-					/>
-				</div>
-
-				{!phone && (
-					<ComposerSendColumn
-						theme={theme}
-						className="self-end"
-						onSend={handleSend}
-						sendTitle={resolvedSendTitle}
-						sendDisabled={resolvedSendDisabled}
-						sendTone={resolvedSendTone}
-					/>
-				)}
-			</div>
-		</div>
+			}
+			toolbarExtras={toolbarExtras}
+			sheetExtras={sheetExtras}
+			stagedImages={stagedImages}
+			setStagedImages={setStagedImages}
+			onReorderStagedImages={handleReorderStagedImages}
+			setLightboxImage={setLightboxImageCallback}
+			openAnnotator={openAnnotatorCallback}
+			checkImageFile={checkImageFile}
+			imageInputId={imageInputId}
+			imageReportComponent={imageReportComponent}
+			enterToSend={enterToSend}
+			setEnterToSend={setEnterToSend}
+			voice={voiceBinding}
+			onUploadFiles={onUploadFiles}
+			onOpenPromptComposer={onOpenPromptComposer}
+			shortcuts={shortcuts}
+			showFlashNotification={showFlashNotification}
+			onSend={handleSendStable}
+			sendTitle={resolvedSendTitle}
+			sendDisabled={resolvedSendDisabled}
+			sendTone={resolvedSendTone}
+			sendColumnClassName="self-end"
+			className={className}
+			style={style}
+		/>
 	);
 });

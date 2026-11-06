@@ -1,5 +1,13 @@
 export { ChatComposer, type ChatComposerProps, type MentionRoster } from './ChatComposer';
 export {
+	ChatComposerFrame,
+	useChatComposerFold,
+	type ChatComposerFold,
+	type ChatComposerFrameProps,
+	type ChatComposerToolbarProps,
+	type ChatComposerVoice,
+} from './ChatComposerFrame';
+export {
 	ComposerSendColumn,
 	type ComposerSendColumnProps,
 	type ComposerSendMenu,
