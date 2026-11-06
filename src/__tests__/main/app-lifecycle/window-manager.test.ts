@@ -2146,6 +2146,64 @@ describe('app-lifecycle/window-manager', () => {
 				expect(sentryCaptureMessageMock).not.toHaveBeenCalled();
 			});
 
+			describe('renderer console errors', () => {
+				async function fireConsoleError(message: string, sourceId: string) {
+					const { createWindowManager } =
+						await import('../../../main/app-lifecycle/window-manager');
+					const windowManager = createWindowManager({
+						windowStateStore: mockWindowStateStore as unknown as Parameters<
+							typeof createWindowManager
+						>[0]['windowStateStore'],
+						isDevelopment: false,
+						preloadPath: '/path/to/preload.js',
+						rendererProductionUrl: 'app://app/index.html',
+						devServerUrl: 'http://localhost:5173',
+						useNativeTitleBar: false,
+						autoHideMenuBar: false,
+					});
+					windowManager.createWindow();
+					// console-message args: (event, level, message, line, sourceId); 3 = error
+					webContentsEventHandlers.get('console-message')?.({}, 3, message, 424, sourceId);
+				}
+
+				const capturedMessages = () =>
+					(sentryCaptureMessageMock.mock.calls as unknown[][]).map(([m]) => m);
+
+				it('reports an uncaught error from the app renderer', async () => {
+					await fireConsoleError(
+						'Uncaught TypeError: v is not a function',
+						'app://app/assets/index.js'
+					);
+					await vi.waitFor(() =>
+						expect(capturedMessages()).toContain(
+							'Renderer error: Uncaught TypeError: v is not a function'
+						)
+					);
+				});
+
+				// MAESTRO-18D: an agent-written Concerto page threw in its own frame and
+				// the error was filed as a Maestro renderer bug.
+				it('does not report an error thrown inside a Concerto document', async () => {
+					await fireConsoleError(
+						'Uncaught TypeError: v is not a function',
+						'maestro-concerto://render/?surface=movement&id=kb-dash&revision=1'
+					);
+					// An app error after it proves the lazy Sentry import has settled.
+					await fireConsoleError(
+						'Uncaught ReferenceError: x is not defined',
+						'app://app/index.html'
+					);
+					await vi.waitFor(() =>
+						expect(capturedMessages()).toContain(
+							'Renderer error: Uncaught ReferenceError: x is not defined'
+						)
+					);
+					expect(capturedMessages()).not.toContain(
+						'Renderer error: Uncaught TypeError: v is not a function'
+					);
+				});
+			});
+
 			describe('reload after the renderer exits', () => {
 				beforeEach(() => {
 					mockWebContents.reload.mockClear();
