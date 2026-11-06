@@ -49,6 +49,7 @@ import type {
 	RenameTabResult,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -161,6 +162,8 @@ export interface MessageHandlerCallbacks {
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli tab closed` / `tab reopen` - read and reopen the closed-tab stack. */
 	closedTabCommand: ClosedTabCommandCallback;
+	/** `maestro-cli tab pins` - list, add, remove, rename, and show a tab's message pins. */
+	messagePinCommand: MessagePinCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */

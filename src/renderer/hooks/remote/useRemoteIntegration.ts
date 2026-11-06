@@ -33,10 +33,12 @@ import {
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
+import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
+import type { MessagePinCommandResult } from '../../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 import { TAB_CONTEXT_OP_EVENT, type TabContextOpEventDetail } from '../../services/tabContextOps';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
@@ -1194,6 +1196,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// `maestro-cli tab pins ...`. Pins live on this window's tab, so they are
+		// read and changed through the same functions the pin button and panel use.
+		const unsubscribeMessagePinCommand = window.maestro.process.onRemoteMessagePinCommand(
+			(request, responseChannel) => {
+				let result: MessagePinCommandResult;
+				try {
+					result = runRemoteMessagePinCommand(request, { selectAgent: setActiveSessionId });
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Message pin command failed', undefined, error);
+					result = {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
+				window.maestro.process.sendRemoteMessagePinCommandResponse(responseChannel, result);
+			}
+		);
+
 		// `maestro-cli tab compact|merge|transfer`: the overlay menu's Context
 		// items. Their handlers live in App's hooks, so the request crosses to
 		// useAppRemoteEventListeners (mounted after them), which answers on the
@@ -1524,6 +1544,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
 			unsubscribeClosedTabCommand();
+			unsubscribeMessagePinCommand();
 			unsubscribeSummarizeContext();
 			unsubscribeMergeContext();
 			unsubscribeTransferContext();

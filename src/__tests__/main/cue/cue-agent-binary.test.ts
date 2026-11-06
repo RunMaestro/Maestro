@@ -118,16 +118,17 @@ describe('resolveCueAgentBinary', () => {
 			expected: '~/Session Tools/grok',
 		},
 		{
-			name: 'provider override without a session override',
+			// The provider path names a LOCAL file; a tab spawn never sends it remote either.
+			name: 'provider override alone is never sent to the remote',
 			sessionCustomPath: undefined,
 			providerCustomPath: '/opt/Provider Tools/grok',
-			expected: '/opt/Provider Tools/grok',
+			expected: undefined,
 		},
 		{
-			name: 'empty session override falls back to provider',
+			name: 'empty session override leaves remote binary selection to the planner',
 			sessionCustomPath: '',
 			providerCustomPath: '~/Provider Tools/grok',
-			expected: '~/Provider Tools/grok',
+			expected: undefined,
 		},
 		{
 			name: 'leading and trailing spaces are preserved',

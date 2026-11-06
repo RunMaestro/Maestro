@@ -209,7 +209,8 @@ export function supportsEffortSelection(toolType: ToolType): boolean {
  * caller discards the `agentSessionId` it returns rather than adopting it. The
  * downgrade therefore cannot follow the conversation forward into the next real
  * turn. If a future caller ever DOES adopt that id, this pin has to be revisited
- * first, or the tab silently continues on the cheap model.
+ * first, or the tab silently continues on the cheap model. A RESUMED synopsis is
+ * not a leaf on every provider: see {@link cheapResumeTurnSettings}.
  *
  * Grok's floor still requires the selected model's advertised wire values (see
  * resolveEffortLevel). Missing evidence or a missing floor leaves effort unset
@@ -229,6 +230,18 @@ export function cheapTurnSettings(
 }
 
 /**
+ * Providers whose resume appends the synopsis turn to the thread the tab goes on
+ * using, so a model swap there is not a leaf. `codex exec resume` writes into the
+ * same rollout: every model change appends a full `<model_instructions>` block
+ * (about 4.5k tokens for the cheap model, 5.5k to switch back) that stays in the
+ * thread forever, the next real turn warns that the session was recorded with
+ * another model, and the cheap model reads the whole transcript cold (0 of 138k
+ * input tokens cached in one measured Codex synopsis). Effort can still drop:
+ * it is not part of the prompt, so the thread's cache stays warm.
+ */
+const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex']);
+
+/**
  * `cheapTurnSettings` for a turn that RESUMES the session it summarizes, with
  * the fallbacks already applied. This is what a synopsis spawn should pass.
  *
@@ -239,6 +252,9 @@ export function cheapTurnSettings(
  * session's model and cannot fit the cheap one. So the session's model is kept
  * whenever the downgrade would shrink the window. Effort still drops to the
  * bottom rung, since that costs nothing to read.
+ *
+ * The session's model is also kept on a provider whose resume writes into the
+ * SAME thread the tab keeps using (see `RESUME_SHARES_THREAD`).
  *
  * `current` is what the summarized turn ran at. It is also what the turn
  * inherits on a provider with no tier mapping (codex, opencode), where there
@@ -255,6 +271,9 @@ export function cheapResumeTurnSettings(
 	effort: string | undefined;
 } {
 	const cheap = cheapTurnSettings(toolType, supportedEfforts);
+	if (RESUME_SHARES_THREAD.has(toolType)) {
+		return { model: current.model, effort: cheap.effort ?? current.effort };
+	}
 	const shrinksWindow =
 		(getModelContextWindowOverride(current.model) ?? FALLBACK_CONTEXT_WINDOW) >
 		(getModelContextWindowOverride(cheap.model) ?? FALLBACK_CONTEXT_WINDOW);

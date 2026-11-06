@@ -18,6 +18,8 @@ import {
 	matchesNativeSessionBinding,
 	type NativeSessionBinding,
 } from '../../shared/maestro-lib/agents/providerSwap';
+import { normalizeMessagePins, type MessagePin } from '../../shared/messagePins';
+import { sessionOriginStoreFor } from '../../shared/sessionOriginStore';
 import type { LogEntry, Session, ToolType, UsageStats } from '../types';
 import { isSessionIdLabel } from '../utils/tabHelpers';
 import {
@@ -59,6 +61,8 @@ export interface ResumableSession {
 	name: string | null;
 	starred: boolean;
 	usageStats?: UsageStats;
+	/** Pins saved on the conversation's origin record (empty when none). */
+	pinnedMessages: MessagePin[];
 }
 
 /** Expected refusal: callers must preserve history and must not start a new conversation. */
@@ -179,17 +183,25 @@ export async function loadResumableSession(
 	if (toolType === 'grok') {
 		// Only the selected record's metadata is scoped by the validated binding.
 		// The origins store is keyed by ID/project, so another account can own it.
-		return { messages, name, starred: isStarred, usageStats, nativeSessionBinding: binding };
+		return {
+			messages,
+			name,
+			starred: isStarred,
+			usageStats,
+			nativeSessionBinding: binding,
+			pinnedMessages: [],
+		};
 	}
 
 	let origin: ResumableSession['origin'];
+	let pinnedMessages: MessagePin[] = [];
 	try {
 		// Claude and Codex origins share the legacy store; other providers use
 		// the generic store. Supplied transcript/name/star fields must not skip provenance.
 		const origins =
-			!toolType || toolType === 'claude-code' || toolType === 'codex'
-				? await window.maestro.claude.getSessionOrigins(projectRoot)
-				: await window.maestro.agentSessions.getOrigins(toolType, projectRoot);
+			toolType && sessionOriginStoreFor(toolType) === 'generic'
+				? await window.maestro.agentSessions.getOrigins(toolType, projectRoot)
+				: await window.maestro.claude.getSessionOrigins(projectRoot);
 		const originData = origins[agentSessionId];
 		origin = typeof originData === 'string' ? originData : originData?.origin;
 		if (originData && typeof originData === 'object') {
@@ -198,6 +210,8 @@ export async function loadResumableSession(
 				isStarred = originData.starred;
 			if ('contextUsage' in originData && typeof originData.contextUsage === 'number')
 				storedContextUsage = originData.contextUsage;
+			if ('pinnedMessages' in originData)
+				pinnedMessages = normalizeMessagePins(originData.pinnedMessages);
 		}
 	} catch (error) {
 		logger.warn('[handleResumeSession] Failed to lookup session metadata:', undefined, error);
@@ -219,5 +233,13 @@ export async function loadResumableSession(
 		};
 	}
 
-	return { messages, name, starred: isStarred, usageStats, origin, nativeSessionBinding: binding };
+	return {
+		messages,
+		name,
+		starred: isStarred,
+		usageStats,
+		origin,
+		nativeSessionBinding: binding,
+		pinnedMessages,
+	};
 }

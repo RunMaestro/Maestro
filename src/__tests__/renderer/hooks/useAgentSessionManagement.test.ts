@@ -988,6 +988,46 @@ describe('useAgentSessionManagement', () => {
 		expect(showFlash).not.toHaveBeenCalled();
 	});
 
+	it.each([false, true])(
+		'says why a named owner that is not here cannot reopen (suppressed: %s)',
+		async (suppressUnavailableFlash) => {
+			const showFlash = vi.fn();
+			seedActiveSession(createMockSession({ id: 'active-agent' }));
+			const { result } = renderHook(() =>
+				useAgentSessionManagement({
+					setSessions: vi.fn(useSessionStore.getState().setSessions),
+					setActiveAgentSessionId: vi.fn(),
+					setAgentSessionsOpen: vi.fn(),
+					rightPanelRef: createRightPanelRef(),
+					defaultSaveToHistory: true,
+					defaultShowThinking: 'off',
+					showFlash,
+				})
+			);
+
+			let resumed: boolean | undefined;
+			await act(async () => {
+				// Shared History from another host names that host's agent id.
+				resumed = await result.current.handleResumeSession(
+					'native',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{ targetSessionId: 'agent-on-another-host', suppressUnavailableFlash }
+				);
+			});
+
+			expect(resumed).toBe(false);
+			if (suppressUnavailableFlash) expect(showFlash).not.toHaveBeenCalled();
+			else
+				expect(showFlash).toHaveBeenCalledExactlyOnceWith(
+					"Cannot reopen this conversation: its agent isn't on this machine"
+				);
+		}
+	);
+
 	it('resumes into targetSessionId resolved from the store, not the active session', async () => {
 		// Active session (stale closure value) lives in a different project than the
 		// target we explicitly ask to resume into.

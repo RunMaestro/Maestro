@@ -24,6 +24,7 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
+import type { MessagePin } from '../../../shared/messagePins';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
@@ -1128,6 +1129,8 @@ export interface CreateTabOptions {
 	name?: string | null; // User-defined name (null = show UUID octet)
 	starred?: boolean; // Whether session is starred
 	usageStats?: UsageStats; // Token usage stats
+	/** Pins read back with the conversation (see `AITab.pinnedMessages`). */
+	pinnedMessages?: MessagePin[];
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
 	/** When false, append the tab without making it active (background create).
@@ -1191,6 +1194,7 @@ export function createTab(
 		name = null,
 		starred = false,
 		usageStats,
+		pinnedMessages,
 		saveToHistory = true,
 		showThinking = 'off',
 		activate: activateOption = true,
@@ -1215,6 +1219,7 @@ export function createTab(
 		saveToHistory,
 		showThinking,
 		...(hidden ? { hidden: true } : {}),
+		...(pinnedMessages && pinnedMessages.length > 0 ? { pinnedMessages } : {}),
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the

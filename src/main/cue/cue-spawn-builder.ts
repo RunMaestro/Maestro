@@ -36,6 +36,8 @@ import {
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
+import { redactedErrorFields } from '../../shared/processErrors';
 import os from 'os';
 import path from 'path';
 import {
@@ -449,8 +451,19 @@ export async function buildSpawnSpec(
 				};
 				pluginProofReady = true;
 			}
-		} catch {
-			// Injection errors can contain prompt-bearing argv or private paths.
+		} catch (error) {
+			// Injection errors can contain prompt-bearing argv or private paths, so
+			// only the error's class and code leave this process, never its message.
+			const { errorName, errorCode } = redactedErrorFields(error);
+			logger.warn(
+				`Plugin tool preparation failed (${errorName}${errorCode ? ` ${errorCode}` : ''})`,
+				'[PluginRunIdentity]'
+			);
+			void captureException(new Error(`Cue plugin tool preparation failed: ${errorName}`), {
+				operation: 'cue:pluginToolPreparation',
+				errorName,
+				errorCode,
+			});
 			return { ok: false, message: 'Plugin tool preparation unavailable.' };
 		} finally {
 			if (!pluginProofReady) {

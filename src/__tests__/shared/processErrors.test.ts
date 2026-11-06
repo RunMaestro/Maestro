@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	AGENT_ALREADY_RUNNING_PREFIX,
 	agentAlreadyRunningMessage,
+	redactedErrorFields,
 	isAgentAlreadyRunningError,
 } from '../../shared/processErrors';
 
@@ -38,5 +39,21 @@ describe('isAgentAlreadyRunningError', () => {
 		expect(isAgentAlreadyRunningError(null)).toBe(false);
 		expect(isAgentAlreadyRunningError(undefined)).toBe(false);
 		expect(isAgentAlreadyRunningError(AGENT_ALREADY_RUNNING_PREFIX)).toBe(true);
+	});
+});
+
+describe('redactedErrorFields', () => {
+	it('keeps the class and errno code, never the message', () => {
+		const error = Object.assign(new Error('spawn /private/prompt-artifact ENOENT'), {
+			code: 'ENOENT',
+		});
+		expect(redactedErrorFields(error)).toEqual({ errorName: 'Error', errorCode: 'ENOENT' });
+		expect(JSON.stringify(redactedErrorFields(error))).not.toContain('private');
+	});
+
+	it('names a codeless error by class and a non-error by type', () => {
+		expect(redactedErrorFields(new TypeError('secret argv'))).toEqual({ errorName: 'TypeError' });
+		expect(redactedErrorFields('secret argv')).toEqual({ errorName: 'string' });
+		expect(redactedErrorFields(undefined)).toEqual({ errorName: 'undefined' });
 	});
 });

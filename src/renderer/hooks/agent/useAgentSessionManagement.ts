@@ -316,8 +316,14 @@ export function useAgentSessionManagement(
 			const targetSession = opts?.targetSessionId
 				? (selectSessionById(opts.targetSessionId)(useSessionStore.getState()) ?? null)
 				: activeSession;
-			// Need a session for tab management
-			if (!targetSession) return false;
+			// Need a session for tab management. A named owner that is not here (an
+			// agent since deleted, or shared History from another Maestro host)
+			// would otherwise refuse with nothing on screen.
+			if (!targetSession) {
+				if (opts?.targetSessionId && !opts.suppressUnavailableFlash)
+					showFlash?.("Cannot reopen this conversation: its agent isn't on this machine");
+				return false;
+			}
 			const selectionKey = resumeSelectionKey(targetSession);
 			const selectionIsCurrent = (session: Session, nextSession?: Session) =>
 				resumeRequestId.current === requestId &&
@@ -397,6 +403,7 @@ export function useAgentSessionManagement(
 					usageStats: finalUsageStats,
 					origin,
 					nativeSessionBinding,
+					pinnedMessages,
 				} = resumable;
 
 				// Update the session and switch to AI mode
@@ -436,6 +443,9 @@ export function useAgentSessionManagement(
 									starred: isStarred || tab.starred,
 									usageStats: finalUsageStats ?? tab.usageStats,
 									origin: origin ?? tab.origin,
+									...(!tab.pinnedMessages?.length && pinnedMessages.length > 0
+										? { pinnedMessages }
+										: {}),
 								};
 							});
 							const nextSession = focusAiTabInSession(
@@ -455,6 +465,7 @@ export function useAgentSessionManagement(
 							origin,
 							starred: isStarred,
 							usageStats: finalUsageStats,
+							pinnedMessages,
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 						});

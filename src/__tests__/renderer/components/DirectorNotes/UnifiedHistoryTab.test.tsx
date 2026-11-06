@@ -1016,6 +1016,43 @@ describe('UnifiedHistoryTab', () => {
 				});
 			}
 		);
+
+		it('keeps a deferred resume current when a live entry streams in', async () => {
+			const entries = createMockEntries().map((entry) => ({
+				...entry,
+				agentSessionId: 'native',
+			}));
+			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
+			let pushLive!: (entry: unknown, sourceSessionId: string) => void;
+			vi.mocked(window.maestro.directorNotes.onHistoryEntryAdded).mockImplementation(
+				(callback: (entry: unknown, sourceSessionId: string) => void) => {
+					pushLive = callback;
+					return () => {};
+				}
+			);
+			let resolve!: (value: boolean) => void;
+			const onResumeSession = vi.fn().mockReturnValue(
+				new Promise<boolean>((done) => {
+					resolve = done;
+				})
+			);
+			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+			await screen.findByTestId('history-entry-0');
+			const pending = mockRowResumes[0]();
+			const isCurrent = onResumeSession.mock.lastCall![5];
+
+			// Cue and other agents write history constantly; a refreshed list is not a new selection.
+			await act(async () => {
+				pushLive({ ...entries[0], id: 'live-entry', timestamp: Date.now() }, 'session-1');
+				await new Promise((done) => setTimeout(done, 50));
+			});
+			expect(screen.getByTestId(`history-entry-${entries.length}`)).toBeInTheDocument();
+			expect(isCurrent()).toBe(true);
+			await act(async () => {
+				resolve(true);
+				expect(await pending).toBe(true);
+			});
+		});
 	});
 
 	describe('Detail Modal', () => {

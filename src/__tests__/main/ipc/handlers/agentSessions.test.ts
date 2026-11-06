@@ -2270,3 +2270,81 @@ describe('agentSessions:getGlobalStats Grok history', () => {
 		expect(saved[await keyFor('.grok', 'KEPT')].archived).toBe(false);
 	});
 });
+
+describe('agentSessions:setSessionPins', () => {
+	type Data = { origins: Record<string, unknown> };
+	/** A tiny in-memory stand-in for electron-store's get/set. */
+	function fakeStore(initial: Data) {
+		let state: Data = initial;
+		return {
+			get: (key: keyof Data, fallback: unknown) => state[key] ?? fallback,
+			set: (key: keyof Data, value: Data['origins']) => {
+				state = { ...state, [key]: value };
+			},
+			read: () => state,
+		};
+	}
+
+	const pin = {
+		id: 'pin-1',
+		logId: 'log-1',
+		source: 'stdout',
+		timestamp: 100,
+		title: 'A reply',
+		excerpt: 'A reply',
+		pinnedAt: 200,
+	};
+
+	let handlers: Map<string, Function>;
+	let claudeStore: ReturnType<typeof fakeStore>;
+	let genericStore: ReturnType<typeof fakeStore>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handlers = new Map();
+		vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+			handlers.set(channel, handler);
+		});
+		claudeStore = fakeStore({ origins: { '/p': { 's-1': 'user' } } });
+		genericStore = fakeStore({
+			origins: { opencode: { '/p': { 's-2': { sessionName: 'Named' } } } },
+		});
+		registerAgentSessionsHandlers({
+			getMainWindow: () => null,
+			agentSessionOriginsStore: genericStore as never,
+			claudeSessionOriginsStore: claudeStore as never,
+		});
+	});
+
+	it('writes Claude Code and Codex pins to the Claude origins store, where resume reads them', async () => {
+		await handlers.get('agentSessions:setSessionPins')!({}, 'codex', '/p', 's-1', [pin]);
+		expect(claudeStore.read().origins).toEqual({
+			'/p': { 's-1': { origin: 'user', pinnedMessages: [pin] } },
+		});
+	});
+
+	it('writes other providers to the generic store and keeps the record fields it does not own', async () => {
+		await handlers.get('agentSessions:setSessionPins')!({}, 'opencode', '/p', 's-2', [pin]);
+		expect(genericStore.read().origins).toEqual({
+			opencode: { '/p': { 's-2': { sessionName: 'Named', pinnedMessages: [pin] } } },
+		});
+	});
+
+	it('drops malformed pins and clears the field when no pins are left', async () => {
+		const handler = handlers.get('agentSessions:setSessionPins')!;
+		await handler({}, 'opencode', '/p', 's-2', [pin, { id: 'broken' }]);
+		expect(genericStore.read().origins).toEqual({
+			opencode: { '/p': { 's-2': { sessionName: 'Named', pinnedMessages: [pin] } } },
+		});
+
+		await handler({}, 'opencode', '/p', 's-2', []);
+		expect(genericStore.read().origins).toEqual({
+			opencode: { '/p': { 's-2': { sessionName: 'Named' } } },
+		});
+
+		// A Claude record that only held pins falls back to its compact form.
+		await handler({}, 'claude-code', '/p', 's-1', [pin]);
+		await handler({}, 'claude-code', '/p', 's-1', []);
+		expect(claudeStore.read().origins).toEqual({ '/p': { 's-1': 'user' } });
+	});
+});

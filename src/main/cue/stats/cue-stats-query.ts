@@ -152,13 +152,23 @@ function streamUsageFallback(
 	// Legacy Cue conversion used `costUsd || 0` and discarded accounting.
 	// No legacy zero proves measured free usage. Grok and unidentified legacy
 	// figures cannot prove a complete cost at all.
-	const cost = accounting
-		? accounting.cost?.status === 'exact'
-			? usageCostUsd(accounting.cost)
-			: undefined
-		: agentType === 'grok' || agentType === 'unknown' || usage.totalCostUsd === 0
+	//
+	// `parsedUsageToStats` stamps a default accounting (cost `partial` when the
+	// provider reported one) on EVERY provider's usage, not just Grok's. So a
+	// non-Grok `partial` cost is the same reported figure the legacy row carried
+	// and is admitted on the same terms; dropping it would blank the spend of
+	// every Claude Code, OpenCode or Factory run that falls back to stream usage.
+	const costStatus = accounting?.cost?.status;
+	const legacyCost =
+		agentType === 'grok' || agentType === 'unknown' || usage.totalCostUsd === 0
 			? undefined
 			: usage.totalCostUsd;
+	const cost =
+		costStatus === 'exact'
+			? usageCostUsd(accounting!.cost!)
+			: costStatus === undefined || costStatus === 'partial'
+				? legacyCost
+				: undefined;
 	return {
 		sessionId: event.providerSessionId ?? event.id,
 		agentType,

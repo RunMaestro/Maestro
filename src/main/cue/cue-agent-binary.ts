@@ -9,9 +9,12 @@
  *
  * Locally, an agent's own path is checked before it is used, exactly as the tab
  * spawn does, and an invalid one falls through with a warning rather than
- * failing the run. Over SSH, explicit paths are preserved as supplied: they
- * name files on the remote host, so neither local validation nor detection
- * applies. Without an override the launch plan uses the remote's bare binary.
+ * failing the run. Over SSH, only the agent's own path is used, preserved as
+ * supplied: it names a file on the remote host, so neither local validation nor
+ * detection applies. The provider-level path names a file on THIS machine, so it
+ * never reaches the remote (the same rule `process:spawn` applies to
+ * `remoteCommand`). Without an agent override the launch plan uses the remote's
+ * bare binary.
  */
 
 import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
@@ -39,7 +42,7 @@ export async function resolveCueAgentBinary(
 ): Promise<string | undefined> {
 	const { sessionCustomPath, providerCustomPath, sshEnabled } = input;
 
-	if (sshEnabled) return sessionCustomPath || providerCustomPath || undefined;
+	if (sshEnabled) return sessionCustomPath || undefined;
 
 	if (sessionCustomPath) {
 		const detection = await (input.checkPath ?? checkCustomPath)(sessionCustomPath);
