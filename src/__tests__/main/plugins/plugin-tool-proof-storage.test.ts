@@ -18,10 +18,12 @@ import {
 import {
 	getActivePluginManager,
 	setActivePluginManager,
+	isPluginsFeatureEnabled,
 } from '../../../main/plugins/plugin-manager-singleton';
 import { PluginAuthorityError } from '../../../main/plugins/plugin-authority';
 import { PluginToolRunIdentity } from '../../../main/plugins/plugin-tool-run-identity';
 import { PluginToolRunProofFiles } from '../../../main/plugins/plugin-tool-run-proof-file';
+import { HostCallerRuns } from '../../../main/agent-run/caller-identity';
 
 describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 	'hardened plugin tool proof storage admission',
@@ -188,6 +190,138 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 			expect(() => resource.assertActive()).toThrow(
 				expect.objectContaining({ code: 'PLUGIN_DENIED' })
 			);
+		});
+
+		it('resolves host-bound identity with plugins disabled and ignores claimed caller/callback IDs', () => {
+			manager = new PluginManager({ ...deps, isEnabled: () => false });
+			setActivePluginManager(manager, () => false);
+			expect(isPluginsFeatureEnabled()).toBe(false);
+			const host = new HostCallerRuns();
+			try {
+				const binding = { agentId: 'fixture-agent', tabId: 'tab-1', spawnGeneration: 'spawn-1' };
+				const resource = host.issue(
+					binding,
+					{ signal: controller.signal, assertActive() {} },
+					directory
+				);
+				const proof = fs.readFileSync(resource.runTokenFile, 'utf8');
+				const client = {
+					cliAuthenticated: true,
+					fromSessionId: 'forged',
+					callbackAgentId: 'forged',
+				};
+				host.bind(client, proof);
+				binding.tabId = 'forged-after-issue';
+				expect(host.resolve(client)?.run).toEqual({
+					agentId: 'fixture-agent',
+					tabId: 'tab-1',
+					spawnGeneration: 'spawn-1',
+				});
+				expect(Object.isFrozen(host.resolve(client)?.run)).toBe(true);
+				expect(JSON.stringify(host.resolve(client))).not.toContain(proof);
+				expect(JSON.stringify(host.resolve(client))).not.toContain(resource.runTokenFile);
+				controller.abort();
+				expect(host.resolve(client)).toBeUndefined();
+				expect(host.isRunClient(client)).toBe(true);
+				expect(fs.existsSync(resource.runTokenFile)).toBe(false);
+				expect(() => host.bind({ cliAuthenticated: true }, proof)).toThrow('CallerRunUnavailable');
+			} finally {
+				host.stop();
+			}
+		});
+
+		it('rejects forged IDs, foreign hosts and unauthenticated CLI attribution', () => {
+			const host = new HostCallerRuns();
+			const foreign = new HostCallerRuns();
+			try {
+				const resource = host.issue(
+					{ agentId: 'fixture-agent', tabId: 'tab-1', spawnGeneration: 'spawn-1' },
+					{ signal: controller.signal, assertActive() {} },
+					directory
+				);
+				const proof = fs.readFileSync(resource.runTokenFile, 'utf8');
+				for (const fake of [
+					'fixture-agent',
+					'tab-1',
+					'spawn-1',
+					'a'.repeat(64),
+					{ agentId: 'fixture-agent' },
+				]) {
+					expect(() => host.bind({ cliAuthenticated: true }, fake)).toThrow('CallerRunUnavailable');
+				}
+				expect(() => foreign.bind({ cliAuthenticated: true }, proof)).toThrow(
+					'CallerRunUnavailable'
+				);
+				expect(() => host.bind({ cliAuthenticated: false, cli: true } as never, proof)).toThrow(
+					'CallerRunUnavailable'
+				);
+				expect(host.resolve({ cliAuthenticated: true })).toBeUndefined();
+				resource.dispose();
+				expect(() => host.bind({ cliAuthenticated: true }, proof)).toThrow('CallerRunUnavailable');
+			} finally {
+				host.stop();
+				foreign.stop();
+			}
+		});
+
+		it('fences a stale spawn before abort callbacks and never accepts it for a replacement tab run', () => {
+			const host = new HostCallerRuns();
+			let generation = 'spawn-1';
+			try {
+				const resource = host.issue(
+					{ agentId: 'fixture-agent', tabId: 'tab-1', spawnGeneration: generation },
+					{
+						signal: controller.signal,
+						assertActive() {
+							if (generation !== 'spawn-1') throw new Error('Replaced');
+						},
+					},
+					directory
+				);
+				const proof = fs.readFileSync(resource.runTokenFile, 'utf8');
+				const client = { cliAuthenticated: true };
+				host.bind(client, proof);
+				const duringAbort = vi.fn(() => expect(host.resolve(client)).toBeUndefined());
+				resource.signal.addEventListener('abort', duringAbort);
+				generation = 'spawn-2';
+				expect(host.resolve(client)).toBeUndefined();
+				expect(host.isRunClient(client)).toBe(true);
+				expect(duringAbort).toHaveBeenCalledOnce();
+				expect(fs.existsSync(resource.runTokenFile)).toBe(false);
+				const next = host.issue(
+					{ agentId: 'fixture-agent', tabId: 'tab-1', spawnGeneration: generation },
+					{ signal: controller.signal, assertActive() {} },
+					directory
+				);
+				host.bind(client, fs.readFileSync(next.runTokenFile, 'utf8'));
+				expect(host.resolve(client)?.run.spawnGeneration).toBe('spawn-2');
+				expect(() => host.bind({ cliAuthenticated: true }, proof)).toThrow('CallerRunUnavailable');
+			} finally {
+				host.stop();
+			}
+		});
+
+		it('keeps a healthy host-bound run beyond plugin TTLs and revokes it at host shutdown', () => {
+			vi.useFakeTimers();
+			const host = new HostCallerRuns();
+			try {
+				const resource = host.issue(
+					{ agentId: 'fixture-agent', tabId: 'tab-1', spawnGeneration: 'spawn-1' },
+					{ signal: controller.signal, assertActive() {} },
+					directory
+				);
+				const client = { cliAuthenticated: true };
+				host.bind(client, fs.readFileSync(resource.runTokenFile, 'utf8'));
+				vi.advanceTimersByTime(48 * 60 * 60_000);
+				expect(host.resolve(client)?.run.spawnGeneration).toBe('spawn-1');
+				host.stop();
+				expect(host.resolve(client)).toBeUndefined();
+				expect(host.isRunClient(client)).toBe(true);
+				expect(fs.existsSync(resource.runTokenFile)).toBe(false);
+			} finally {
+				host.stop();
+				vi.useRealTimers();
+			}
 		});
 	}
 );

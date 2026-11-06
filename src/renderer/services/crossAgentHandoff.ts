@@ -119,10 +119,40 @@ function noteSkippedHandoff(
 export function releaseMentionHandoff(
 	sessionId: string,
 	tabId: string,
-	opts: { failed: boolean }
-): void {
+	opts: {
+		failed: boolean;
+		managedQueue?: { dispatchId: string; generation: string; targetSessionIds: string[] };
+	}
+): void | Promise<void> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const tab = session?.aiTabs.find((t) => t.id === tabId);
+	if (opts.managedQueue) {
+		const release = opts.managedQueue;
+		const item = session?.executionQueue.find(
+			(row) =>
+				row.id === release.dispatchId &&
+				row.pendingAdmissionId === release.dispatchId &&
+				row.tabId === tabId
+		);
+		if (!session || !tab || !item || opts.failed) return;
+		return Promise.all(
+			release.targetSessionIds.map((targetSessionId) =>
+				sendCrossAgentRequest({
+					sourceSessionId: sessionId,
+					sourceAgentName: session.name,
+					sourceTabId: tabId,
+					targetSessionId,
+					userPrompt: item.text ?? '',
+					sourceLogs: [],
+					managedQueue: {
+						dispatchId: release.dispatchId,
+						generation: release.generation,
+						handoff: true,
+					},
+				})
+			)
+		).then(() => {});
+	}
 	const handoff = tab?.pendingMentionHandoff;
 	if (!session || !tab || !handoff) return;
 

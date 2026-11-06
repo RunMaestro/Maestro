@@ -31,19 +31,20 @@ Pure, bundle-safe contracts (no Electron, no fs) in `src/shared/plugins/`:
 
 Main-process runtime in `src/main/plugins/`:
 
-| File                                          | Role                                                                                              |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `plugin-manager.ts`                           | discovery, validation, enable toggle, install/uninstall, sandbox reconcile, panel-html read       |
-| `plugin-sandbox-host.ts`                      | forks one `utilityProcess` per tier-1 plugin; the only path a child affects the host; caps/limits |
-| `plugin-sandbox-entry.ts`                     | runs inside the child; `vm` bootstrap + `buildSdk` (the `maestro` SDK)                            |
-| `plugin-host-handlers.ts`                     | brokered RPC implementations (fs/net/settings/sessions/storage/events/...)                        |
-| `permission-broker.ts`                        | default-deny authorization gate; re-authorizes resolved fs paths                                  |
-| `net-egress-guard.ts`                         | SSRF / DNS-rebind guard for `net:fetch`                                                           |
-| `plugin-kv-store.ts`                          | per-plugin private key-value store                                                                |
-| `plugin-event-bus.ts`                         | host->plugin event delivery, re-authorized per delivery                                           |
-| `action-guard.ts`, `plugin-scheduler-host.ts` | write-verb rate/concurrency guard; supervised cue-trigger scheduler                               |
-| `plugin-signature.ts`, `plugin-store-main.ts` | ed25519 verify; on-disk state/grants and `pluginsDir()`                                           |
-| `plugin-panel-host.ts`                        | panel render host: per-plugin session hardening, `plugin-panel://` protocol, egress/nav denial    |
+| File                                          | Role                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `plugin-manager.ts`                           | discovery, validation, enable toggle, install/uninstall, sandbox reconcile, panel-html read                                                            |
+| `plugin-sandbox-host.ts`                      | forks one `utilityProcess` per tier-1 plugin; the only path a child affects the host; caps/limits                                                      |
+| `plugin-sandbox-entry.ts`                     | runs inside the child; `vm` bootstrap + `buildSdk` (the `maestro` SDK)                                                                                 |
+| `plugin-host-handlers.ts`                     | brokered RPC implementations (fs/net/settings/sessions/storage/events/...)                                                                             |
+| `permission-broker.ts`                        | default-deny authorization gate; re-authorizes resolved fs paths                                                                                       |
+| `net-egress-guard.ts`                         | SSRF / DNS-rebind guard for `net:fetch`                                                                                                                |
+| `plugin-kv-store.ts`                          | per-plugin private key-value store                                                                                                                     |
+| `plugin-session-lifecycle.ts`                 | main-registered session create/delete adapter; duplicate IDs fail before writes; durable creation proof is consumed by the first native owner snapshot |
+| `plugin-event-bus.ts`                         | host->plugin event delivery, re-authorized per delivery                                                                                                |
+| `action-guard.ts`, `plugin-scheduler-host.ts` | write-verb rate/concurrency guard; supervised cue-trigger scheduler                                                                                    |
+| `plugin-signature.ts`, `plugin-store-main.ts` | ed25519 verify; on-disk state/grants and `pluginsDir()`                                                                                                |
+| `plugin-panel-host.ts`                        | panel render host: per-plugin session hardening, `plugin-panel://` protocol, egress/nav denial                                                         |
 
 IPC at `src/main/ipc/handlers/plugins.ts`. Renderer at `src/renderer/components/plugins/PluginPanelFrame.tsx` plus `src/renderer/components/Settings/{PluginsPanel,PluginConsentDialog,PluginPanelHost}.tsx` and `src/renderer/hooks/usePluginContributions.ts`.
 

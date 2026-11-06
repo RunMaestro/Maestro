@@ -104,6 +104,34 @@ describe('reopenedTabContent', () => {
 		expect(current().aiTabs[0].logs).toEqual(transcript);
 	});
 
+	it("adopts the origin record's pins only when the reopened tab carries none", async () => {
+		const pin = (id: string) => ({
+			id,
+			logId: 'm1',
+			source: 'user' as const,
+			timestamp: 1,
+			title: 'hello',
+			excerpt: 'hello',
+			pinnedAt: 2,
+		});
+		seed(strippedAiSession());
+		loadResumableSession.mockResolvedValue({
+			messages: transcript,
+			name: null,
+			starred: false,
+			pinnedMessages: [pin('stored')],
+		});
+		await loadReopenedTabContent('session-1', { type: 'ai', id: 'ai-1' });
+		expect(current().aiTabs[0].pinnedMessages).toEqual([pin('stored')]);
+
+		__resetReopenedTabContentForTests();
+		const own = strippedAiSession();
+		own.aiTabs[0] = { ...own.aiTabs[0], pinnedMessages: [pin('own')] };
+		seed(own);
+		await loadReopenedTabContent('session-1', { type: 'ai', id: 'ai-1' });
+		expect(current().aiTabs[0].pinnedMessages).toEqual([pin('own')]);
+	});
+
 	it('never overwrites logs that arrived while the read was in flight', async () => {
 		seed(strippedAiSession());
 		let resolve!: (value: unknown) => void;
