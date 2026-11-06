@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { app } from 'electron';
 
 // Use vi.hoisted to create mock state that's accessible in both mock factory and tests
 // This ensures proper scoping and avoids potential test interference
@@ -9,7 +11,7 @@ const { mockStoreConstructorCalls } = vi.hoisted(() => ({
 // Mock electron
 vi.mock('electron', () => ({
 	app: {
-		getPath: vi.fn().mockReturnValue('/mock/user/data'),
+		getPath: vi.fn(),
 	},
 }));
 
@@ -37,6 +39,7 @@ vi.mock('../../../main/stores/utils', () => ({
 
 import {
 	initializeStores,
+	selectStoreSyncPath,
 	isInitialized,
 	getStoreInstances,
 	getCachedPaths,
@@ -50,6 +53,16 @@ import {
 const mockedGetCustomSyncPath = vi.mocked(getCustomSyncPath);
 
 describe('stores/instances', () => {
+	const fixture = createBoardIsolationFixture();
+	const { userData, sync } = fixture.contract;
+
+	beforeAll(() => {
+		fixture.install();
+		vi.mocked(app.getPath).mockReturnValue(userData);
+	});
+	afterAll(async () => {
+		await fixture.cleanup();
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockStoreConstructorCalls.length = 0; // Clear tracked constructor calls
@@ -63,39 +76,51 @@ describe('stores/instances', () => {
 
 	describe('initializeStores', () => {
 		it('should initialize all stores', () => {
-			const result = initializeStores({ productionDataPath: '/mock/production/path' });
+			const result = initializeStores({ productionDataPath: userData });
 
 			// Should create 9 stores (added agentCapabilitiesStore for snapshot persistence)
 			expect(mockStoreConstructorCalls).toHaveLength(9);
 
 			// Should return syncPath and bootstrapStore
-			expect(result.syncPath).toBe('/mock/user/data');
+			expect(result.syncPath).toBe(sync);
 			expect(result.bootstrapStore).toBeDefined();
 		});
 
-		it('should use custom sync path when available', () => {
-			const customSyncPath = '/custom/sync/path';
-			mockedGetCustomSyncPath.mockReturnValue(customSyncPath);
+		it('selects default, custom and admitted sync paths', () => {
+			const custom = vi.fn(() => '/custom/sync/path');
+			expect(selectStoreSyncPath('/user/data', () => undefined)).toBe('/user/data');
+			expect(selectStoreSyncPath('/user/data', custom)).toBe('/custom/sync/path');
+			custom.mockClear();
+			expect(selectStoreSyncPath('/user/data', custom, sync)).toBe(sync);
+			expect(custom).not.toHaveBeenCalled();
+		});
 
-			const result = initializeStores({ productionDataPath: '/mock/production/path' });
-
-			expect(result.syncPath).toBe(customSyncPath);
+		it('rejects mismatched paths before constructing any store', () => {
+			expect(() => initializeStores({ productionDataPath: sync })).toThrow(
+				'Board isolation store paths differ'
+			);
+			expect(mockStoreConstructorCalls).toHaveLength(0);
+			vi.mocked(app.getPath).mockReturnValueOnce(sync);
+			expect(() => initializeStores({ productionDataPath: userData })).toThrow(
+				'Board isolation store paths differ'
+			);
+			expect(mockStoreConstructorCalls).toHaveLength(0);
 		});
 
 		it('should create bootstrap store with userData path', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			// First store created should be bootstrap
 			expect(mockStoreConstructorCalls[0]).toEqual({
 				name: 'maestro-bootstrap',
-				cwd: '/mock/user/data',
+				cwd: userData,
 				defaults: {},
 				deserialize: expect.any(Function),
 			});
 		});
 
 		it('configures stores with BOM-safe JSON deserialization', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			for (const call of mockStoreConstructorCalls) {
 				expect(call.deserialize).toEqual(expect.any(Function));
@@ -106,17 +131,17 @@ describe('stores/instances', () => {
 		});
 
 		it('should create settings store with sync path', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			// Second store created should be settings
 			expect(mockStoreConstructorCalls[1]).toMatchObject({
 				name: 'maestro-settings',
-				cwd: '/mock/user/data',
+				cwd: sync,
 			});
 		});
 
 		it('should create agent configs store with production path', () => {
-			const productionPath = '/mock/production/path';
+			const productionPath = userData;
 			initializeStores({ productionDataPath: productionPath });
 
 			// Agent configs store should use production path
@@ -130,7 +155,7 @@ describe('stores/instances', () => {
 		});
 
 		it('should create window state store without cwd (local only)', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			// Window state store should not have cwd
 			const windowStateCall = mockStoreConstructorCalls.find(
@@ -153,7 +178,7 @@ describe('stores/instances', () => {
 		// from an external edit, and every settings:set bounces back to the
 		// renderer as an "external change" that reloads over live typing.
 		it('instruments the watched stores so their writes are stamped', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 			const { settingsStore, agentConfigsStore } = getStoreInstances();
 
 			settingsStore!.set('fontSize', 16);
@@ -169,7 +194,7 @@ describe('stores/instances', () => {
 		it('should log startup paths', () => {
 			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[STARTUP] userData path:'));
 			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[STARTUP] syncPath'));
@@ -181,7 +206,7 @@ describe('stores/instances', () => {
 
 	describe('isInitialized', () => {
 		it('should return true after initialization', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			expect(isInitialized()).toBe(true);
 		});
@@ -189,7 +214,7 @@ describe('stores/instances', () => {
 
 	describe('getStoreInstances', () => {
 		it('should return all store instances after initialization', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			const instances = getStoreInstances();
 
@@ -206,22 +231,12 @@ describe('stores/instances', () => {
 
 	describe('getCachedPaths', () => {
 		it('should return cached paths after initialization', () => {
-			initializeStores({ productionDataPath: '/mock/production/path' });
+			initializeStores({ productionDataPath: userData });
 
 			const paths = getCachedPaths();
 
-			expect(paths.syncPath).toBe('/mock/user/data');
-			expect(paths.productionDataPath).toBe('/mock/production/path');
-		});
-
-		it('should return custom sync path when configured', () => {
-			mockedGetCustomSyncPath.mockReturnValue('/custom/sync');
-
-			initializeStores({ productionDataPath: '/mock/production/path' });
-
-			const paths = getCachedPaths();
-
-			expect(paths.syncPath).toBe('/custom/sync');
+			expect(paths.syncPath).toBe(sync);
+			expect(paths.productionDataPath).toBe(userData);
 		});
 	});
 });

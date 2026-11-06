@@ -40,6 +40,8 @@ export interface ProcessConfig {
 	pianolaQueueItemId?: string;
 	pianolaQueueStepId?: string;
 	sessionId: string;
+	/** Real Maestro worker selected by the caller, absent for standalone moderators. */
+	originWorkerId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

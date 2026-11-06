@@ -356,6 +356,33 @@ describe('ExtensionDetails sub-tabs - Pianola', () => {
 	});
 });
 
+describe('ExtensionDetails sub-tabs - Board', () => {
+	it('opens Board from Settings without leaving the Settings modal over it', () => {
+		useModalStore.getState().closeAll();
+		useModalStore.getState().openModal('settings', { tab: 'encore' });
+		renderDetails({
+			ext: builtinTile('board', true),
+			encoreFeatures: flags({ board: true, maestroCue: true }),
+		});
+
+		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		fireEvent.click(screen.getByTestId('extension-open-board'));
+		expect(useModalStore.getState().isOpen('settings')).toBe(false);
+		expect(useModalStore.getState().isOpen('boardModal')).toBe(true);
+	});
+
+	it('explains the missing Cue dependency instead of offering an ineffective launcher', () => {
+		renderDetails({ ext: builtinTile('board', true), encoreFeatures: flags({ board: true }) });
+		expect(screen.queryByTestId('extension-open-board')).not.toBeInTheDocument();
+		expect(screen.getByTestId('extension-settings-disabled-hint')).toHaveTextContent(
+			'Enable Maestro Cue to open the Board.'
+		);
+	});
+});
+
 describe('ExtensionDetails sub-tabs - plugin Configure (grant + edit)', () => {
 	const pluginId = 'com.example.settings';
 	const setting: SettingContribution = {

@@ -133,6 +133,7 @@ describe('the desktop consult runner', () => {
 
 		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt');
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.originWorkerId).toBe('tgt');
 		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
 		expect(config.isResume).toBe(false);
 	});

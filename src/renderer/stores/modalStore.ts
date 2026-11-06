@@ -81,6 +81,10 @@ export interface SettingsModalData {
 
 /** New instance modal data */
 export interface NewInstanceModalData {
+	/** Receives the real session ID after native creation and persistence submission. */
+	onCreated?: (sessionId: string) => void;
+	onCreationStarted?: () => void;
+	onCreationError?: (message: string) => void;
 	duplicatingSessionId: string | null;
 	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set - duplicates inherit the source's group). */
 	presetGroupId?: string | null;
@@ -465,6 +469,8 @@ export type ModalId =
 	| 'pianolaModal'
 	// Computer History viewer
 	| 'computerHistory'
+	// Board (task DAG kanban; depends on Maestro Cue)
+	| 'boardModal'
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
@@ -503,6 +509,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'directorNotes',
 	'symphony',
 	'cueModal',
+	'boardModal',
 	'marketplace',
 	'processMonitor',
 	'computerHistory',
@@ -1265,6 +1272,10 @@ export function getModalActions() {
 		setComputerHistoryOpen: (open: boolean) =>
 			open ? openModal('computerHistory') : closeModal('computerHistory'),
 
+		// Board Modal (task DAG kanban; gated on Board + Maestro Cue Encore flags)
+		setBoardModalOpen: (open: boolean) =>
+			open ? openModal('boardModal') : closeModal('boardModal'),
+
 		// Concerto stage. This one flag is the whole truth about whether the stage
 		// is up: the movement store reads it back rather than keeping its own
 		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
@@ -1377,6 +1388,7 @@ export function useModalActions() {
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
 	const computerHistoryOpen = useModalStore(selectModalOpen('computerHistory'));
+	const boardModalOpen = useModalStore(selectModalOpen('boardModal'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1593,6 +1605,9 @@ export function useModalActions() {
 		// Pianola Modal (autonomous manager)
 		pianolaModalOpen,
 		computerHistoryOpen,
+
+		// Board Modal (task DAG kanban)
+		boardModalOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

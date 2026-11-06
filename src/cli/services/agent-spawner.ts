@@ -1,6 +1,10 @@
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
+import {
+	createAdmittedCliTurnStarter,
+	type HeadlessTurnAdmissionOptions,
+} from '../../main/utils/headless-agent-activity';
 import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -37,7 +41,7 @@ import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
-	startTurn,
+	startTurn as startUnadmittedTurn,
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
@@ -186,6 +190,8 @@ type SpawnOverrides = Pick<
 	| 'onProgress'
 	| 'onProcessStarted'
 	| 'requireProcessExit'
+	| 'originWorkerId'
+	| 'workerAdmission'
 	| 'maestroPMaxWaitSeconds'
 	| 'acceptWorkspaceTrust'
 > & { deadlineAt?: number };
@@ -857,6 +863,11 @@ async function spawnClaudeAgent(
 	overrides: SpawnOverrides = {},
 	tokenSource: ClaudeTokenSourceFields = {}
 ): Promise<AgentResult> {
+	const startTurn = createAdmittedCliTurnStarter(
+		startUnadmittedTurn,
+		overrides,
+		!!sshRemoteConfig?.enabled
+	);
 	const def = getAgentDefinition('claude-code');
 
 	// Build args WITHOUT the prompt - the prompt is appended below for local
@@ -1372,6 +1383,11 @@ async function spawnJsonLineAgent(
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
+	const startTurn = createAdmittedCliTurnStarter(
+		startUnadmittedTurn,
+		overrides,
+		!!sshRemoteConfig?.enabled
+	);
 	const def = getAgentDefinition(toolType);
 
 	// Build args from agent definition (without the prompt or model/customArgs -
@@ -1737,7 +1753,7 @@ async function spawnJsonLineAgent(
  * from `maestro-agent-configs.json`. Pass the session values directly here -
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
-export interface SpawnAgentOptions {
+export interface SpawnAgentOptions extends HeadlessTurnAdmissionOptions {
 	/**
 	 * Host-owned original attachments must outlive the actual child. On an
 	 * unconfirmed stop, retain this call and its caller's resources until exit,
@@ -1872,6 +1888,16 @@ export async function spawnAgent(
 			...options,
 			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
 		};
+	// SDK timeout/abort wrappers do not establish native termination. Until an
+	// admission-aware native terminal contract exists, managed turns must use
+	// Current; ordinary native callers retain their provider transport.
+	if (
+		(options?.originWorkerId !== undefined || options?.workerAdmission !== undefined) &&
+		options?.harnessControlMode === 'native'
+	)
+		return spawnFailureResult(
+			'Native control is not supported for admission-managed turns; use Current control'
+		);
 	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
 	// Effort fallback and asynchronous launch planning share one absolute ceiling.
 	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
@@ -1961,7 +1987,9 @@ async function spawnAgentOnce(
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
-		requireProcessExit: options?.requireProcessExit,
+		requireProcessExit: options?.requireProcessExit || !!options?.workerAdmission,
+		originWorkerId: options?.originWorkerId,
+		workerAdmission: options?.workerAdmission,
 		signal: options?.signal,
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,

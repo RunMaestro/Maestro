@@ -138,3 +138,11 @@ describe('formatShortcutKeysFor', () => {
 		expect(formatShortcutKeysFor(['Meta', 'Shift', 'k'], false)).toBe('Ctrl+Shift+K');
 	});
 });
+
+it('removes Profiles and requires Cue to open Board', () => {
+	const flags = { board: true, maestroCue: false };
+	expect(resolveUiSurface('profiles')).toBeNull();
+	expect(uiSurfaceRefusal(resolveUiSurface('board')!, null, flags)).toContain(
+		'requires Maestro Cue'
+	);
+});

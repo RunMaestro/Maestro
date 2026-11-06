@@ -1,12 +1,10 @@
 import { acquireProviderSessionWriter } from '../../../main/utils/provider-session-writer';
 import { describe, expect, it, vi } from 'vitest';
-import {
-	HEADLESS_RUN_TIMEOUT_MS,
-	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
-} from '../../../shared/plugins/headless-agent-timeouts';
+import { HEADLESS_RUN_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
+import { startAdmittedAgentTurn } from '../../../main/utils/headless-agent-activity';
 import { isAgentBusy } from '../../../main/utils/agent-busy';
 import { captureException } from '../../../main/utils/sentry';
 
@@ -70,7 +68,7 @@ describe('plugin headless agent runner', () => {
 		}
 	});
 	it('serializes CLI and legacy plugin resumes behind a Relay provider writer', async () => {
-		const spawn = vi.fn(async () => ({
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
 			success: true,
 			response: 'done',
 			agentSessionId: 'relay-provider',
@@ -104,7 +102,10 @@ describe('plugin headless agent runner', () => {
 		'returns a no-start cancellation when stopped %s the resumed writer wait',
 		async (when) => {
 			const controller = new AbortController();
-			const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+			const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+				success: true,
+				response: 'done',
+			}));
 			const detectAgent = vi.fn(async () => ({ available: true }));
 			const run = createPluginHeadlessAgentRunner({
 				getAgent: () => agent,
@@ -239,7 +240,10 @@ describe('plugin headless agent runner', () => {
 				.spyOn(pathProber, 'checkCustomPath')
 				.mockResolvedValueOnce({ exists: valid, path: valid ? '/resolved/codex' : undefined });
 			try {
-				const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+				const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+					success: true,
+					response: 'done',
+				}));
 				const detectAgent = vi.fn(async () => ({ available: true, path: '/default/codex' }));
 				const issueRunToken = vi.fn();
 				const run = createPluginHeadlessAgentRunner({
@@ -281,7 +285,10 @@ describe('plugin headless agent runner', () => {
 	);
 
 	it('forwards live desktop config, binary and global environment independently of session overrides', async () => {
-		const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+			success: true,
+			response: 'done',
+		}));
 		const config = { reasoningSummary: 'detailed', customEnvVars: { SHARED: 'agent' } };
 		const global = { SHARED: 'global', GLOBAL_ONLY: 'global' };
 		const run = createPluginHeadlessAgentRunner({
@@ -454,7 +461,7 @@ describe('plugin headless agent runner', () => {
 	);
 
 	it('keeps Relay as host attribution while marking its provider process unattended', async () => {
-		const spawn = vi.fn(async () => ({
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
 			success: true,
 			response: 'done',
 			agentSessionId: 'relay-1',
@@ -484,11 +491,11 @@ describe('plugin headless agent runner', () => {
 			...agent,
 			customArgs: '--configured-mode',
 			customEnvVars: { USER_MODE: 'configured' },
-			additionalDirectories: ['/additional'],
+			additionalDirectories: [{ path: '/additional', read: true, write: true }],
 			customModel: 'configured-model',
 			customEffort: 'high',
 		} as SessionInfo;
-		const spawn = vi.fn(async () => ({
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
 			success: true,
 			response: 'Release discussion',
 			agentSessionId: 'provider',
@@ -549,7 +556,7 @@ describe('plugin headless agent runner', () => {
 		const resolvers: Array<
 			(value: { success: true; response: string; agentSessionId: string }) => void
 		> = [];
-		const spawn = vi.fn(
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(
 			() =>
 				new Promise<{ success: true; response: string; agentSessionId: string }>((resolve) =>
 					resolvers.push(resolve)
@@ -571,8 +578,8 @@ describe('plugin headless agent runner', () => {
 		await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
 		expect(spawn.mock.calls[0][3]).toBeUndefined();
 		expect(spawn.mock.calls[1][3]).toBeUndefined();
-		const firstProofFile = spawn.mock.calls[0][4].pluginRunProofFile;
-		const secondProofFile = spawn.mock.calls[1][4].pluginRunProofFile;
+		const firstProofFile = spawn.mock.calls[0][4]!.pluginRunProofFile!;
+		const secondProofFile = spawn.mock.calls[1][4]!.pluginRunProofFile!;
 		expect(firstProofFile).not.toBe(secondProofFile);
 		expect(fs.readFileSync(firstProofFile, 'utf8')).toBe('proof-1');
 		expect(fs.readFileSync(secondProofFile, 'utf8')).toBe('proof-2');
@@ -657,7 +664,7 @@ describe('plugin headless agent runner', () => {
 	it('preserves the startup recovery error and revokes proof on provider failure', async () => {
 		const revokeRunToken = vi.fn();
 		const error = 'Codex startup/authentication timed out; check the credential store and retry.';
-		const spawn = vi.fn(async () => ({ success: false, error }));
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({ success: false, error }));
 		const run = createPluginHeadlessAgentRunner({
 			getAgent: () => agent,
 			detectAgent: async () => ({ available: true }),
@@ -676,8 +683,8 @@ describe('plugin headless agent runner', () => {
 			usageStats: undefined,
 			error,
 		});
-		expect(spawn.mock.calls[0][4].timeoutMs).toBeLessThanOrEqual(6 * 60 * 60_000);
-		expect(spawn.mock.calls[0][4].timeoutMs).toBeGreaterThan(359 * 60_000);
+		expect(spawn.mock.calls[0][4]!.timeoutMs).toBeLessThanOrEqual(6 * 60 * 60_000);
+		expect(spawn.mock.calls[0][4]!.timeoutMs).toBeGreaterThan(359 * 60_000);
 		expect(revokeRunToken).toHaveBeenCalledWith('proof');
 	});
 
@@ -739,7 +746,7 @@ describe('plugin headless agent runner', () => {
 		} as SessionInfo;
 		const detectAgent = vi.fn(async () => ({ available: false }));
 		const issueRunToken = vi.fn();
-		const spawn = vi.fn(async () => ({
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
 			success: true,
 			response: 'remote answer',
 			agentSessionId: 'remote-session',
@@ -772,7 +779,8 @@ describe('headless activity is live process evidence', () => {
 		const probe = { get: (id: string) => (liveDesktop.has(id) ? {} : undefined) };
 		const target = { ...agent, activeTabId: 'desktop', aiTabs: [{ id: 'desktop' }] };
 		const runs: Array<{
-			options: SpawnAgentOptions & { onProcessStarted?: (pid: number | undefined) => void };
+			options: SpawnAgentOptions;
+			release?: () => void;
 			finish: (value: { success: boolean; response: string }) => void;
 		}> = [];
 		const run = createPluginHeadlessAgentRunner({
@@ -794,24 +802,40 @@ describe('headless activity is live process evidence', () => {
 		// Dispatch/preparation/queue presence alone is not evidence of a process.
 		expect(isAgentBusy(target, probe)).toBe(false);
 		try {
-			runs[0].options.onProcessStarted?.(101);
-			runs[0].options.onProcessStarted?.(101); // duplicate start
-			runs[1].options.onProcessStarted?.(102);
+			runs[0].release = startAdmittedAgentTurn(
+				runs[0].options.workerAdmission,
+				runs[0].options.originWorkerId
+			);
+			expect(() =>
+				startAdmittedAgentTurn(runs[0].options.workerAdmission, runs[0].options.originWorkerId)
+			).toThrow('admission proof');
+			runs[1].release = startAdmittedAgentTurn(
+				runs[1].options.workerAdmission,
+				runs[1].options.originWorkerId
+			);
 			expect(isAgentBusy(target, probe)).toBe(true);
 			expect(isAgentBusy({ id: 'other-agent' }, probe)).toBe(false);
+			runs[0].release?.();
+			runs[0].release?.(); // duplicate exit cannot release the other process
 			runs[0].finish({ success: true, response: 'done' });
 			await first;
 			expect(isAgentBusy(target, probe)).toBe(true);
 			liveDesktop.add(`${agent.id}-ai-desktop`);
+			runs[1].release?.();
 			runs[1].finish({ success: true, response: 'done' });
 			await second;
 			expect(isAgentBusy(target, probe)).toBe(true);
 			liveDesktop.clear();
 			expect(isAgentBusy(target, probe)).toBe(false);
-			runs[0].options.onProcessStarted?.(101); // late start cannot revive it
+			expect(() =>
+				startAdmittedAgentTurn(runs[0].options.workerAdmission, runs[0].options.originWorkerId)
+			).toThrow('admission proof'); // late start cannot revive it
 			expect(isAgentBusy(target, probe)).toBe(false);
 		} finally {
-			for (const r of runs) r.finish({ success: true, response: 'cleanup' });
+			for (const r of runs) {
+				r.release?.();
+				r.finish({ success: true, response: 'cleanup' });
+			}
 			await Promise.all([first, second]);
 		}
 	});
@@ -823,7 +847,7 @@ describe('headless lifecycle terminal paths', () => {
 		async (outcome) => {
 			const controller = new AbortController();
 			const recordRelayOrigin = vi.fn();
-			let started!: (pid: number | undefined) => void;
+			let started!: () => void;
 			let end!: () => void;
 			const run = createPluginHeadlessAgentRunner({
 				getAgent: () => agent,
@@ -831,13 +855,14 @@ describe('headless lifecycle terminal paths', () => {
 				detectAgent: async () => ({ available: true }),
 				hasPluginTools: () => false,
 				spawn: async (_type, _cwd, _prompt, _session, options) => {
-					started = (
-						options as SpawnAgentOptions & { onProcessStarted: (pid: number | undefined) => void }
-					).onProcessStarted;
-					started?.(301);
+					started = () => {
+						startAdmittedAgentTurn(options?.workerAdmission, options?.originWorkerId);
+					};
+					const release = startAdmittedAgentTurn(options?.workerAdmission, options?.originWorkerId);
 					await new Promise<void>((resolve) => {
 						end = resolve;
 					});
+					release(); // the native process has now confirmed exit
 					if (outcome === 'throw') throw new Error('spawn failure');
 					return outcome === 'success'
 						? { success: true, response: 'done', agentSessionId: 'relay-conversation' }
@@ -864,7 +889,7 @@ describe('headless lifecycle terminal paths', () => {
 					expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'relay-conversation');
 				}
 				expect(isAgentBusy(agent, undefined)).toBe(false);
-				started?.(301);
+				expect(() => started()).toThrow('admission proof');
 				expect(isAgentBusy(agent, undefined)).toBe(false);
 			} finally {
 				end();
@@ -897,7 +922,9 @@ describe('cancelled preparation', () => {
 		await vi.waitFor(() => expect(runs).toHaveLength(1));
 		controller.abort();
 		try {
-			runs[0].options.onProcessStarted?.(401);
+			expect(() =>
+				startAdmittedAgentTurn(runs[0].options.workerAdmission, runs[0].options.originWorkerId)
+			).toThrow('admission proof');
 			expect(isAgentBusy(agent, undefined)).toBe(false);
 		} finally {
 			runs[0].finish({ success: true, response: 'late' });
@@ -956,10 +983,11 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(
 			async (_type, _cwd, _prompt, _session, options) => {
 				proofFile = options!.pluginRunProofFile;
-				options!.onProcessStarted?.(501);
+				const release = startAdmittedAgentTurn(options?.workerAdmission, options?.originWorkerId);
 				expect(isAgentBusy(agent, undefined)).toBe(true);
 				const token = fs.readFileSync(proofFile!, 'utf8');
 				expect(identity.resolve(token)).toEqual({ callerAgentId: agent.id });
+				release(); // native end precedes provenance cleanup
 				if (outcome === 'throw') throw providerError;
 				return outcome === 'success'
 					? { success: true, response: 'answer', agentSessionId: 'conversation' }

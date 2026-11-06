@@ -1,5 +1,6 @@
 // src/main/process-manager/ProcessManager.ts
 
+import { canStartAgentTurn, trackHeadlessAgentActivity } from '../utils/headless-agent-activity';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import type {
@@ -51,8 +52,12 @@ import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
+import { observeSshActivity, type SshActivityHost } from './ssh-activity';
 
 export interface ProcessManagerOptions {
+	/** Private native-host capability, never supplied by spawn/IPC/CLI callers.
+	 * Absent until a trusted remote termination adapter is configured. */
+	sshActivityHost?: SshActivityHost;
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
 	appVersion?: string;
 	/**
@@ -90,6 +95,7 @@ export class ProcessManager extends EventEmitter {
 	private sshCommandRunner: SshCommandRunner;
 	private readonly harnessControls = new HarnessControlRegistry();
 	private readonly isCoworkingEnabled: () => boolean;
+	private readonly sshActivityHost?: SshActivityHost;
 
 	constructor(
 		/**
@@ -104,6 +110,7 @@ export class ProcessManager extends EventEmitter {
 		super();
 		this.on('exit', (sessionId: string) => this.harnessControls.forget(sessionId));
 		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
+		this.sshActivityHost = options.sshActivityHost;
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
@@ -172,6 +179,99 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const workerId = config.originWorkerId ?? resolveOwningMaestroSessionId(config.sessionId);
+		if (config.toolType !== 'terminal' && !canStartAgentTurn(workerId)) {
+			return {
+				pid: -1,
+				success: false,
+				error: 'Board worker is reserved; wait for its current attempt to settle',
+			};
+		}
+		if (config.toolType === 'terminal') return this.spawnManaged(config);
+		const release = trackHeadlessAgentActivity(workerId);
+		const remote = !!(config.sshStdinScript || config.sshRemoteCommand || config.sshRemoteId);
+		// Attach to the actual child before returning. Caller stop/kill may remove
+		// the process-table row before the OS confirms termination.
+		let result: SpawnResult;
+		try {
+			result = this.spawnManaged(config);
+		} catch (error) {
+			release();
+			throw error;
+		}
+		const process = this.processes.get(config.sessionId);
+		if (!result.success) {
+			release();
+		} else if (process?.childProcess) {
+			let activity: ReturnType<typeof observeSshActivity> | undefined;
+			const finish = () => {
+				activity?.dispose();
+				release();
+			};
+			// Keep the original token/target in a host-owned observer, not on the
+			// process-table row. Board occupancy has its separate durable contract.
+			if (
+				remote &&
+				config.originWorkerId === undefined &&
+				this.sshActivityHost &&
+				process.sshRemotePidFile &&
+				process.spawnGeneration !== undefined &&
+				process.command &&
+				process.args
+			) {
+				try {
+					activity = observeSshActivity(
+						this.sshActivityHost,
+						Object.freeze({
+							sessionId: config.sessionId,
+							generation: process.spawnGeneration,
+							remoteId: process.sshRemoteId,
+							command: process.command,
+							args: Object.freeze([...process.args]),
+							pidFile: process.sshRemotePidFile,
+							pidRecordNonce: process.sshRemotePidFile,
+						}),
+						release
+					);
+				} catch (error) {
+					logger.warn(
+						'SSH activity observation unavailable; retaining uncertainty',
+						'ProcessManager',
+						{
+							sessionId: config.sessionId,
+							error: String(error),
+						}
+					);
+				}
+			}
+			let observedExit = false;
+			const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+				if (observedExit) return;
+				observedExit = true;
+				// Local SSH-client termination cannot free an uncertain remote worker.
+				if (!remote || (code === 0 && !signal)) finish();
+				else activity?.uncertain();
+			};
+			process.childProcess.once('exit', onExit);
+			process.childProcess.once('close', onExit);
+			process.childProcess.once('error', () => {
+				if (!process.childProcess?.pid) finish();
+			});
+		} else if (process?.ptyProcess) {
+			process.ptyProcess.onExit(release);
+		} else {
+			// Server-backed turns report their native completion on this seam.
+			const onExit = (id: string) => {
+				if (id !== config.sessionId) return;
+				this.off('exit', onExit);
+				release();
+			};
+			this.on('exit', onExit);
+		}
+		return result;
+	}
+
+	private spawnManaged(config: ProcessConfig): SpawnResult {
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&

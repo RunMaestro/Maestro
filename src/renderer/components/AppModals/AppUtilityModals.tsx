@@ -184,6 +184,8 @@ export interface AppUtilityModalsProps {
 
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Board (task DAG kanban; depends on Maestro Cue)
+	onOpenBoard?: () => void;
 	// Pianola
 	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
@@ -443,6 +445,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onOpenDirectorNotes,
 	// Maestro Cue
 	onOpenMaestroCue,
+	// Board (task DAG kanban; depends on Maestro Cue)
+	onOpenBoard,
 	// Pianola
 	onOpenPianola,
 	onConfigureCue,
@@ -688,6 +692,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
+					onOpenBoard={onOpenBoard}
 					onOpenPianola={onOpenPianola}
 					onConfigureCue={onConfigureCue}
 					onOpenQueueBrowser={onOpenQueueBrowser}

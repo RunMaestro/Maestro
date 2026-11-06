@@ -4944,6 +4944,140 @@ interface MaestroAPI {
 		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
+	// Agent Profiles API (named model/effort/role bundles layered on a base agent)
+	profiles: {
+		list: (projectRoot: string) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		upsert: (
+			projectRoot: string,
+			profile: import('../shared/profiles/types').AgentProfile
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		delete: (
+			projectRoot: string,
+			profileId: string
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		/** Push after every profiles.yaml write. Returns an unsubscribe function. */
+		onProfilesChanged?: (callback: (payload: { projectRoot: string }) => void) => () => void;
+	};
+
+	// Board API (persistent task DAG stored in .maestro/board.yaml)
+	board: {
+		deleteCards: (
+			command: Extract<import('../shared/board/commands').BoardCommand, { action: 'delete-cards' }>
+		) => Promise<import('../shared/board/commands').BoardCommandResult>;
+		roleCommand: (
+			command: import('../shared/board/commands').BoardRoleCommand
+		) => Promise<import('../shared/board/commands').BoardCommandResult>;
+		initialize: () => Promise<import('../shared/board/types').BoardCaptureResponse>;
+		captureCatalog: () => Promise<import('../shared/board/types').BoardCaptureCatalog>;
+		runtimeCommand: (
+			command: import('../shared/board/commands').BoardRuntimeCommand
+		) => Promise<import('../shared/board/commands').BoardCommandResult>;
+		sourceCommand: (
+			command: import('../shared/board/types').BoardSourceCommand
+		) => Promise<import('../shared/board/types').BoardSourceResponse>;
+
+		upsertRole: (
+			projectRoot: string,
+			profile: import('../shared/profiles/types').AgentProfile
+		) => Promise<import('../shared/board/types').BoardRoleRef>;
+		setStartPolicy: (
+			projectRoot: string,
+			boardId: string,
+			expectedRevision: number,
+			mode: 'approval' | 'direct'
+		) => Promise<import('../shared/board/types').BoardCaptureResponse>;
+		captureCard: (
+			command: import('../shared/board/types').BoardCaptureCommand
+		) => Promise<import('../shared/board/types').BoardCaptureResponse>;
+		queryWorkspace: (
+			query?: import('../shared/board/types').BoardWorkspaceQuery
+		) => Promise<import('../shared/board/types').BoardWorkspaceQueryResponse>;
+		listWorkerAccessOptions: () => Promise<
+			ReturnType<
+				typeof import('../main/board/board-workspace-storage').listBoardWorkerAccessOptions
+			>
+		>;
+		listWorkers: () => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		setWorkerOptions: (
+			command: import('../shared/board/worker-options').BoardWorkerOptionsCommand
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		registerWorker: (
+			agentId: string
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		pauseWorker: (
+			agentId: string,
+			paused: boolean
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		enableWorker: (
+			agentId: string,
+			enabled: boolean
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		setWorkerAccess: (
+			agentId: string,
+			roleRefs: { namespace: string; profileId: string }[],
+			allowedRepositoryIds: string[]
+		) => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
+		list: (projectRoot: string) => Promise<import('../shared/board/types').Board[]>;
+		get: (
+			projectRoot: string,
+			boardId: string
+		) => Promise<import('../shared/board/types').Board | null>;
+		create: (projectRoot: string, name: string) => Promise<import('../shared/board/types').Board>;
+		rename: (
+			projectRoot: string,
+			boardId: string,
+			name: string
+		) => Promise<import('../shared/board/types').Board>;
+		// Delete an entire board. Refuses without `force` when any card is not
+		// `done`. Resolves to the remaining boards.
+		delete: (
+			projectRoot: string,
+			boardId: string,
+			force?: boolean
+		) => Promise<import('../shared/board/types').Board[]>;
+		addCard: (
+			projectRoot: string,
+			boardId: string,
+			card: import('../shared/board/types').BoardCard
+		) => Promise<import('../shared/board/types').Board>;
+		updateCard: (
+			projectRoot: string,
+			boardId: string,
+			card: import('../shared/board/types').BoardCard
+		) => Promise<import('../shared/board/types').Board>;
+		setCardStatus: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			status: import('../shared/board/types').CardStatus,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		) => Promise<import('../shared/board/types').Board>;
+		deleteCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		) => Promise<import('../shared/board/types').Board>;
+		// Cancel a running card: kills the agent process and returns the card to
+		// `todo` with a `canceled` run (excluded from the failure circuit breaker).
+		resumeCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		) => Promise<import('../shared/board/types').Board>;
+		cancelCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			read?: { sourceKey: string; collectionKey: string; revision: number; cardRevision: number }
+		) => Promise<import('../shared/board/types').Board>;
+		// Push notification that board.yaml was persisted (dispatcher tick, IPC
+		// mutation, auto-decompose). Payload carries the project root only - the
+		// listener refetches. Returns an unsubscribe function.
+		onBoardChanged: (callback: (payload: { projectRoot: string }) => void) => () => void;
+	};
+
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
 	cueBackup: {
 		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;

@@ -23,6 +23,7 @@ import { desktopGroupChatEngine as engine } from './desktop-engine';
 export interface IProcessManager {
 	spawn(config: {
 		sessionId: string;
+		originWorkerId?: string;
 		toolType: string;
 		cwd: string;
 		command: string;

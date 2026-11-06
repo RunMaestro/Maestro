@@ -1,4 +1,5 @@
 import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
+import { handleBoardCommand } from './board';
 /**
  * WebSocket Message Handlers for Web Server
  *
@@ -329,6 +330,9 @@ export class WebSocketMessageHandler {
 		);
 
 		switch (message.type) {
+			case 'board_command':
+				void handleBoardCommand(this.ctx, client, message);
+				break;
 			case 'ping':
 				this.handlePing(client);
 				break;

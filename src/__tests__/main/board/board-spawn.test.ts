@@ -1,0 +1,666 @@
+/**
+ * @file board-spawn.test.ts
+ * @description Board Phase 4: the spawn path's worktree handling. The Cue
+ * executor and the git provisioning helper are faked, so these tests are about
+ * WHERE the card runs, not about git:
+ *   - a plain card still runs in the shared project root;
+ *   - a worktree card provisions first and runs with the checkout as its cwd;
+ *   - the resolved path/branch come back on the spawn result;
+ *   - an SSH-remote agent refuses the card (block marker) instead of quietly
+ *     running in the project root.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import * as boardReview from '../../../main/board/board-review';
+
+const executeCuePrompt = vi.fn();
+const ensureCardWorktree = vi.fn();
+
+vi.mock('../../../main/cue/cue-executor', () => ({
+	executeCuePrompt: (...args: unknown[]) => executeCuePrompt(...args),
+	stopCueRun: vi.fn(),
+}));
+vi.mock('../../../main/board/board-worktree', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/board/board-worktree')>(
+		'../../../main/board/board-worktree'
+	);
+	return {
+		...actual,
+		ensureCardWorktree: (...args: unknown[]) => ensureCardWorktree(...args),
+	};
+});
+vi.mock('../../../main/profiles/profile-storage', () => ({ listProfiles: () => [] }));
+const buildSystemPrompt = vi.fn(async (_record: unknown) => 'Canonical Maestro prompt');
+vi.mock('../../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: (...args: Parameters<typeof buildSystemPrompt>) =>
+		buildSystemPrompt(...args),
+}));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), cue: vi.fn() },
+}));
+
+import {
+	spawnBoardCard,
+	decomposeBoardCard,
+	cancelBoardCardRun,
+	createBoardRunService,
+	type BoardSpawnContext,
+} from '../../../main/board/board-spawn';
+import { substituteTemplateVariables } from '../../../shared/templateVariables';
+import { stopCueRun } from '../../../main/cue/cue-executor';
+import { WORKTREE_SSH_UNSUPPORTED } from '../../../main/board/board-worktree';
+import type { BoardCard } from '../../../shared/board/types';
+import type { BoardRunSpecification } from '../../../main/board/board-claims';
+
+const PROJECT_ROOT = '/repos/project';
+const WORKTREE_PATH = '/repos/worktrees/board/b1/c1';
+const WORKTREE_BRANCH = 'board/b1/c1';
+
+function card(overrides: Partial<BoardCard> = {}): BoardCard {
+	return {
+		id: 'c1',
+		title: 'Do the thing',
+		body: 'details',
+		assigneeAgentId: 'agent-1',
+		parents: [],
+		status: 'running',
+		createdAt: '2026-07-21T00:00:00.000Z',
+		updatedAt: '2026-07-21T00:00:00.000Z',
+		...overrides,
+	};
+}
+
+function context(session: Record<string, unknown> = {}): BoardSpawnContext {
+	return {
+		getStoredSessions: () => [
+			{ id: 'agent-1', name: 'Worker', toolType: 'claude-code', ...session },
+		],
+		getAgentConfig: () => ({}),
+		getSshStore: () => ({}),
+		nowMs: () => 1,
+	};
+}
+
+/** The cwd the executor was actually handed (`projectRoot` IS the spawn cwd). */
+function spawnedCwd(): string {
+	return executeCuePrompt.mock.calls[0][0].projectRoot;
+}
+
+beforeEach(() => {
+	executeCuePrompt.mockReset();
+	executeCuePrompt.mockResolvedValue({ stdout: 'ok', exitCode: 0 });
+	ensureCardWorktree.mockReset();
+	ensureCardWorktree.mockResolvedValue({
+		ok: true,
+		path: WORKTREE_PATH,
+		branch: WORKTREE_BRANCH,
+	});
+});
+afterEach(() => vi.restoreAllMocks());
+
+describe('spawnBoardCard worktree isolation', () => {
+	it('refuses a historical retry without a baseline and preserves committed work with a recorded base', async () => {
+		const fixtureRoot = fs.mkdtempSync(path.resolve('board-legacy-'));
+		const cwd = path.join(fixtureRoot, 'repo');
+		fs.mkdirSync(cwd);
+		const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+		try {
+			git('init', '-q');
+			git('config', 'user.email', 'board-test@example.invalid');
+			git('config', 'user.name', 'Board test');
+			fs.writeFileSync(path.join(cwd, 'work.txt'), 'before\n');
+			git('add', 'work.txt');
+			git('commit', '-qm', 'baseline');
+			const base = git('rev-parse', 'HEAD');
+			fs.writeFileSync(path.join(cwd, 'work.txt'), 'original work\n');
+			git('commit', '-qam', 'historical work');
+			const current = await boardReview.readBoardRunArtifact(cwd);
+			expect(current).not.toBeNull();
+			const launch = vi.fn(() => true);
+			executeCuePrompt.mockImplementation(async (options) => {
+				if (!(await options.prepareLaunch()))
+					return {
+						stdout: '',
+						exitCode: null,
+						executionStarted: false,
+						terminationConfirmed: true,
+					};
+				options.beforeLaunch();
+				return {
+					stdout: 'checks passed',
+					exitCode: 0,
+					executionStarted: true,
+					terminationConfirmed: true,
+				};
+			});
+			const run = async (recordedBase: boolean) =>
+				spawnBoardCard(
+					cwd,
+					{
+						card: card({
+							workflow: {
+								version: 1,
+								corrections: 0,
+								workRunId: 'old',
+								evidenceIncomplete: { runId: 'old', missing: ['artifact'] },
+							},
+							runs: [
+								{
+									runId: 'old',
+									attempt: 1,
+									startedAt: '2026-11-05',
+									outcome: 'done',
+									...(recordedBase ? { artifactBase: { ...current!, commit: base } } : {}),
+								},
+							],
+						}),
+						overrides: {},
+						agentId: 'agent-1',
+						lifecycle: {
+							runId: 'retry',
+							canPrepare: () => true,
+							beforeLaunch: launch,
+							onStarted: vi.fn(),
+						},
+					},
+					context(),
+					'b1'
+				);
+			const refused = await run(false);
+			expect(refused.executionStarted).toBe(false);
+			expect(refused.error).toMatch(/Legacy run.*baseline/);
+			expect(launch).not.toHaveBeenCalled();
+			const recovered = await run(true);
+			expect(launch).toHaveBeenCalledOnce();
+			expect(recovered.artifact?.diff?.baseCommit).toBe(base);
+			expect(recovered.artifact?.diff?.stat).toContain('work.txt');
+		} finally {
+			fs.rmSync(fixtureRoot, { recursive: true, force: true });
+		}
+	});
+	it.each(['same', 'other-branch', 'other-checkout'] as const)(
+		'retains the original evidence-repair baseline and rejects %s checkout mismatches',
+		async (location) => {
+			const cwd = path.resolve('isolated', 'retry-checkout');
+			const original = { worktreePath: cwd, branch: 'fixture', commit: 'a'.repeat(40) };
+			const current = {
+				...original,
+				commit: 'b'.repeat(40),
+				...(location === 'other-branch' ? { branch: 'changed' } : {}),
+				...(location === 'other-checkout'
+					? { worktreePath: path.resolve('isolated', 'other-checkout') }
+					: {}),
+			};
+			const artifact = {
+				...current,
+				commit: 'c'.repeat(40),
+				diff: { baseCommit: original.commit, sha256: 'd'.repeat(64), stat: 'all work' },
+			};
+			const read = vi
+				.spyOn(boardReview, 'readBoardRunArtifact')
+				.mockResolvedValueOnce(current)
+				.mockResolvedValueOnce(artifact);
+			const launch = vi.fn(() => true);
+			executeCuePrompt.mockImplementationOnce(async (options) => {
+				if (!(await options.prepareLaunch()))
+					return {
+						stdout: '',
+						exitCode: null,
+						executionStarted: false,
+						terminationConfirmed: true,
+					};
+				options.beforeLaunch();
+				options.onStarted(123);
+				return {
+					stdout: '<!-- maestro:card-complete | Checks passed -->',
+					exitCode: 0,
+					executionStarted: true,
+					terminationConfirmed: true,
+				};
+			});
+			const result = await spawnBoardCard(
+				cwd,
+				{
+					card: card({
+						workflow: {
+							version: 1,
+							corrections: 0,
+							workRunId: 'old',
+							evidenceIncomplete: { runId: 'old', missing: ['artifact'] },
+						},
+						runs: [
+							{
+								runId: 'old',
+								attempt: 1,
+								startedAt: '2026-11-05',
+								outcome: 'done',
+								artifactBase: original,
+							},
+						],
+					}),
+					overrides: {},
+					agentId: 'agent-1',
+					lifecycle: {
+						runId: 'retry',
+						canPrepare: () => true,
+						beforeLaunch: launch,
+						onStarted: vi.fn(),
+					},
+				},
+				context(),
+				'b1'
+			);
+			if (location === 'same') {
+				expect(launch).toHaveBeenCalledOnce();
+				expect(read).toHaveBeenLastCalledWith(cwd, original.commit);
+				expect(result).toMatchObject({ artifactBase: original, artifact });
+			} else {
+				expect(launch).not.toHaveBeenCalled();
+				expect(result.executionStarted).toBe(false);
+			}
+		}
+	);
+	it('threads the immutable run identity, validated cwd, overrides and native hooks through the existing Cue runner', async () => {
+		const specification: BoardRunSpecification = {
+			key: { sourceKey: 'source', collectionKey: 'collection', cardId: 'c1' },
+			card: { ...card() },
+			readRevision: { workspace: 1, collection: 1, card: 1, registry: 1 },
+			runToken: { runId: 'immutable-run', ownerEpoch: 1, generation: 2 },
+			attempt: 2,
+			owner: { processIdentity: 'boot:start', epoch: 1 },
+			workerAgentId: 'agent-1',
+			repository: {
+				id: 'repo',
+				workingDirectory: '/explicit-checkout',
+				record: {},
+				identity: 'git:repo',
+				location: { kind: 'local' },
+			},
+			overrides: { customModel: 'snapshot-model' },
+		};
+		const hooks = { canPrepare: () => true, beforeLaunch: vi.fn(() => true), onStarted: vi.fn() };
+		executeCuePrompt.mockResolvedValueOnce({
+			stdout: 'ok',
+			exitCode: 0,
+			executionStarted: true,
+			terminationConfirmed: true,
+		});
+		const result = await createBoardRunService(context()).spawn(specification, hooks);
+		expect(executeCuePrompt.mock.calls[0][0]).toMatchObject({
+			runId: 'immutable-run',
+			projectRoot: '/explicit-checkout',
+			customModel: 'snapshot-model',
+			beforeLaunch: hooks.beforeLaunch,
+			onStarted: hooks.onStarted,
+		});
+		expect(result).toMatchObject({ executionStarted: true, terminationConfirmed: true });
+		expect(createBoardRunService(context()).probe(specification, { phase: 'uncertain' })).toBe(
+			'unknown'
+		);
+	});
+	it('does not provision or run an invalidated prepared attempt', async () => {
+		const result = await spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: {},
+				agentId: 'agent-1',
+				lifecycle: {
+					runId: 'invalidated',
+					canPrepare: () => false,
+					beforeLaunch: () => false,
+					onStarted: vi.fn(),
+				},
+			},
+			context(),
+			'b1'
+		);
+		expect(result.executionStarted).toBe(false);
+		expect(ensureCardWorktree).not.toHaveBeenCalled();
+		expect(executeCuePrompt).not.toHaveBeenCalled();
+	});
+	it('runs a plain card in the shared project root and provisions nothing', async () => {
+		const result = await spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card(), overrides: {}, agentId: 'agent-1' },
+			context(),
+			'b1'
+		);
+
+		expect(ensureCardWorktree).not.toHaveBeenCalled();
+		expect(spawnedCwd()).toBe(PROJECT_ROOT);
+		expect(result).toEqual({ output: 'ok', exitCode: 0 });
+	});
+
+	it('provisions the worktree and spawns with the checkout as cwd', async () => {
+		const worktree = { path: WORKTREE_PATH, branch: WORKTREE_BRANCH };
+		const result = await spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card({ worktree }), overrides: {}, agentId: 'agent-1' },
+			context(),
+			'b1'
+		);
+
+		expect(ensureCardWorktree).toHaveBeenCalledWith(PROJECT_ROOT, worktree);
+		expect(spawnedCwd()).toBe(WORKTREE_PATH);
+		// The session still names the board's project; only the cwd moves.
+		expect(executeCuePrompt.mock.calls[0][0].session.cwd).toBe(WORKTREE_PATH);
+		expect(result).toEqual({
+			output: 'ok',
+			exitCode: 0,
+			worktreePath: WORKTREE_PATH,
+			worktreeBranch: WORKTREE_BRANCH,
+		});
+	});
+
+	it('blocks (never spawns) when provisioning fails', async () => {
+		ensureCardWorktree.mockResolvedValue({ ok: false, reason: 'branch is checked out elsewhere' });
+
+		const result = await spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: {},
+				agentId: 'agent-1',
+			},
+			context(),
+			'b1'
+		);
+
+		expect(executeCuePrompt).not.toHaveBeenCalled();
+		expect(result.output).toContain('maestro:card-block');
+		expect(result.output).toContain('branch is checked out elsewhere');
+	});
+
+	it('refuses a worktree card on an SSH remote instead of running in the project root', async () => {
+		const result = await spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: {},
+				agentId: 'agent-1',
+			},
+			context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			'b1'
+		);
+
+		expect(ensureCardWorktree).not.toHaveBeenCalled();
+		expect(executeCuePrompt).not.toHaveBeenCalled();
+		expect(result.output).toBe(`<!-- maestro:card-block: ${WORKTREE_SSH_UNSUPPORTED} -->`);
+	});
+
+	it('still runs a plain card on an SSH remote (isolation is what is unsupported)', async () => {
+		await spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card(), overrides: {}, agentId: 'agent-1' },
+			context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			'b1'
+		);
+
+		expect(spawnedCwd()).toBe(PROJECT_ROOT);
+	});
+});
+
+describe('Stop during Board launch preparation', () => {
+	it('prevents launch after worktree provisioning finishes', async () => {
+		let finish!: (value: unknown) => void;
+		ensureCardWorktree.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const pending = spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: {},
+				agentId: 'agent-1',
+			},
+			context(),
+			'b1'
+		);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
+		finish({ ok: true, path: WORKTREE_PATH, branch: WORKTREE_BRANCH });
+		await pending;
+		expect(executeCuePrompt).not.toHaveBeenCalled();
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(false);
+	});
+
+	it('keeps a resumed attempt owned when canceled path resolution finishes late', async () => {
+		let finish!: (value: string) => void;
+		const ctx = context();
+		ctx.resolveAgentPath = () =>
+			new Promise((resolve) => {
+				finish = resolve;
+			});
+		const old = spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card(), overrides: {}, agentId: 'agent-1' },
+			ctx,
+			'b1'
+		);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
+		let complete!: (value: unknown) => void;
+		executeCuePrompt.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					complete = resolve;
+				})
+		);
+		const resumed = spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card(), overrides: {}, agentId: 'agent-1' },
+			context(),
+			'b1'
+		);
+		await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(1));
+		const signal = executeCuePrompt.mock.calls[0][0].signal as AbortSignal;
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1', 'older-run-id')).toBe(false);
+		expect(signal.aborted).toBe(false);
+		finish('/usr/bin/agent');
+		await old;
+		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
+		expect(signal.aborted).toBe(false);
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
+		expect(signal.aborted).toBe(true);
+		complete({ stdout: '', exitCode: null });
+		await resumed;
+		expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(false);
+	});
+});
+
+describe('Board attempt identity and worker permissions', () => {
+	it.each([
+		{ root: PROJECT_ROOT, boardId: 'b2' },
+		{ root: '/repos/other', boardId: 'b1' },
+	])(
+		'stops only the targeted card when IDs collide ($root, $boardId)',
+		async ({ root, boardId }) => {
+			const releases: Array<() => void> = [];
+			executeCuePrompt.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						releases.push(() => resolve({ stdout: 'ok', exitCode: 0 }));
+					})
+			);
+			const request = { card: card(), overrides: {}, agentId: 'agent-1' };
+			const first = spawnBoardCard(PROJECT_ROOT, request, context(), 'b1');
+			const second = spawnBoardCard(root, request, context(), boardId);
+			await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(2));
+			const [a, b] = executeCuePrompt.mock.calls.map(([config]) => config.signal as AbortSignal);
+			expect(cancelBoardCardRun(PROJECT_ROOT, 'b1', 'c1')).toBe(true);
+			expect(a.aborted).toBe(true);
+			expect(b.aborted).toBe(false);
+			releases[0]();
+			await first;
+			expect(cancelBoardCardRun(root, boardId, 'c1')).toBe(true);
+			expect(b.aborted).toBe(true);
+			releases[1]();
+			await second;
+		}
+	);
+
+	it('delivers the canonical prompt and directory grants for the actual checkout, preserving role overrides', async () => {
+		const additionalDirectories = [
+			{ path: '/reference', read: true, write: false },
+			{ path: '/dropbox', read: false, write: true },
+		];
+		await spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: { appendSystemPrompt: 'Reviewer role', customModel: 'model-x' },
+				agentId: 'agent-1',
+			},
+			context({ cwd: '/original', fullPath: '/original', additionalDirectories }),
+			'b1'
+		);
+		expect(buildSystemPrompt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				cwd: WORKTREE_PATH,
+				fullPath: WORKTREE_PATH,
+				projectRoot: WORKTREE_PATH,
+				additionalDirectories,
+			})
+		);
+		expect(executeCuePrompt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				appendSystemPrompt: 'Canonical Maestro prompt',
+				customModel: 'model-x',
+				session: expect.objectContaining({ cwd: WORKTREE_PATH, additionalDirectories }),
+				promptPath: expect.stringContaining('Reviewer role'),
+			})
+		);
+	});
+});
+
+it('stops a live decomposition process and discards its late reply', async () => {
+	let finish!: (value: unknown) => void;
+	executeCuePrompt.mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+	);
+	const controller = new AbortController();
+	const ctx = context();
+	ctx.getPoolAgentIds = () => ['agent-1'];
+	const pending = decomposeBoardCard(PROJECT_ROOT, card(), 'Plan children', ctx, controller.signal);
+	await vi.waitFor(() => expect(executeCuePrompt).toHaveBeenCalledTimes(1));
+	const config = executeCuePrompt.mock.calls[0][0];
+	controller.abort();
+	expect(stopCueRun).toHaveBeenCalledWith(config.runId);
+	expect(config.signal.aborted).toBe(true);
+	finish({ stdout: '[{"title":"Child"}]', exitCode: 0 });
+	expect(await pending).toBeNull();
+});
+
+it.each([
+	{ sshRemoteId: 'other', sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' } },
+	{ sessionSshRemoteConfig: { enabled: true } },
+])('refuses decomposition with invalid SSH identity before preparation', async (session) => {
+	const ctx = context(session);
+	ctx.getPoolAgentIds = () => ['agent-1'];
+	ctx.getAgentConfig = vi.fn(() => ({}));
+	ctx.resolveAgentPath = vi.fn();
+	buildSystemPrompt.mockClear();
+	expect(await decomposeBoardCard(PROJECT_ROOT, card(), 'Plan children', ctx)).toBeNull();
+	expect(ctx.getAgentConfig).not.toHaveBeenCalled();
+	expect(ctx.resolveAgentPath).not.toHaveBeenCalled();
+	expect(buildSystemPrompt).not.toHaveBeenCalled();
+	expect(executeCuePrompt).not.toHaveBeenCalled();
+});
+
+it('routes decomposition with a runtime-only SSH identity to that remote', async () => {
+	const ctx = context({ sshRemoteId: 'remote-one' });
+	ctx.getPoolAgentIds = () => ['agent-1'];
+	expect(await decomposeBoardCard(PROJECT_ROOT, card(), 'Plan children', ctx)).toBe('ok');
+	expect(executeCuePrompt).toHaveBeenCalledWith(
+		expect.objectContaining({ sshRemoteConfig: { enabled: true, remoteId: 'remote-one' } })
+	);
+});
+
+it('authorizes writes in the isolated checkout even when the base agent has fullPath', async () => {
+	buildSystemPrompt.mockImplementationOnce(async (record: any) =>
+		substituteTemplateVariables('Write only within {{AGENT_PATH}}', { session: record })
+	);
+	await spawnBoardCard(
+		PROJECT_ROOT,
+		{
+			card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+			overrides: {},
+			agentId: 'agent-1',
+		},
+		context({ fullPath: '/original', projectRoot: '/original' }),
+		'b1'
+	);
+	expect(executeCuePrompt.mock.calls[0][0].appendSystemPrompt).toBe(
+		`Write only within ${WORKTREE_PATH}`
+	);
+});
+
+it('routes a claimed SSH repository through the selected worker SSH config and blocks changed locations before executing', async () => {
+	const specification: BoardRunSpecification = {
+		key: { sourceKey: 'remote-source', collectionKey: 'remote-collection', cardId: 'c1' },
+		card: { ...card() },
+		readRevision: { workspace: 1, collection: 1, card: 1, registry: 1 },
+		runToken: { runId: 'remote-run', ownerEpoch: 1, generation: 1 },
+		attempt: 1,
+		owner: { processIdentity: 'owner', epoch: 1 },
+		workerAgentId: 'agent-1',
+		overrides: {},
+		repository: {
+			id: 'remote-repo',
+			workingDirectory: '/remote-only/repo',
+			record: {},
+			identity: 'remote-proof',
+			location: { kind: 'ssh', remoteId: 'remote-one' },
+		},
+	};
+	const hooks = { canPrepare: () => true, beforeLaunch: vi.fn(() => true), onStarted: vi.fn() };
+	await createBoardRunService(
+		context({ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' } })
+	).spawn(specification, hooks);
+	expect(executeCuePrompt).toHaveBeenCalledWith(
+		expect.objectContaining({
+			projectRoot: '/remote-only/repo',
+			sshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+			beforeLaunch: hooks.beforeLaunch,
+		})
+	);
+	expect(ensureCardWorktree).not.toHaveBeenCalled();
+	executeCuePrompt.mockClear();
+	for (const session of [
+		{ sshRemoteId: 'remote-one' },
+		{
+			sshRemoteId: 'remote-one',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+		},
+	]) {
+		await createBoardRunService(context(session)).spawn(specification, hooks);
+		expect(executeCuePrompt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				sshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+			})
+		);
+	}
+	executeCuePrompt.mockClear();
+	const conflict = await createBoardRunService(
+		context({
+			sshRemoteId: 'other',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-one' },
+		})
+	).spawn(specification, hooks);
+	expect(conflict.executionStarted).toBe(false);
+	expect(conflict.output).toContain('SSH identities conflict');
+	for (const session of [{}, { sessionSshRemoteConfig: { enabled: true, remoteId: 'other' } }]) {
+		const result = await createBoardRunService(context(session)).spawn(specification, hooks);
+		expect(result.executionStarted).toBe(false);
+		expect(result.output).toContain('execution location changed');
+	}
+	expect(executeCuePrompt).not.toHaveBeenCalled();
+});

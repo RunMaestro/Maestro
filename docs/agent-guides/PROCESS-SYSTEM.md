@@ -163,6 +163,96 @@ Both runners keep a `sessionId -> kill` registry of in-flight commands so `cance
 
 **ProcessManagerEvents** - TypeScript interface documenting all emitted events.
 
+### SSH activity ownership and unresolved recovery
+
+`ProcessManager.spawn()` registers each non-terminal turn with
+`trackHeadlessAgentActivity()`. Board-origin spawns use `originWorkerId`; ordinary
+desktop AI tabs use `resolveOwningMaestroSessionId(sessionId)`. Consumers of
+`isAgentBusy()` include web session state, cross-agent mentions and provider
+translation, so an activity entry can keep an agent busy after its local process
+table entry disappears. Per-tab `isAiTabProcessActive()` only checks that table.
+
+For child-process SSH launches (`sshStdinScript`, `sshRemoteCommand` or
+`sshRemoteId`), the existing supported completion seam releases the registration
+on a native child `exit`/`close` with code 0 and no signal. A failed spawn releases
+only its own registration. Each release closes over a unique registry token and
+is idempotent: duplicate events must not clear another tab, attempt or successor.
+
+An SSH client exit with a nonzero code or signal cannot establish whether the
+remote agent stopped. Both Board-origin and ordinary desktop registrations stay
+retained in that case, including when a final answer and `query-complete` were
+emitted. A later clean turn releases its own token only. Board's durable
+reservation and uncertain remote occupancy must also remain fenced; see
+[[board]] for the Board lifecycle contract. Cue's transport cleanup has a
+different durable-reservation contract and is not a desktop recovery seam.
+
+**Private core, adapter still open:** `ProcessManagerOptions.sshActivityHost` is a
+main-process constructor dependency, never a spawn/CLI/IPC field. For an ordinary
+desktop stdin-script SSH launch with an existing PID record, the core freezes
+the actual connection command/arguments, remote ID, generation and random
+PID-record pathname (the legacy path nonce). The host retains an observer with
+the original release closure after the process-table row disappears.
+`ssh-activity.ts` snapshots the host-observed authenticated host key, PID/start
+identity and supervised boundary identity/generation once, before uncertain
+settlement. A late identity cannot fill in missing launch evidence.
+
+Only an opaque object issued by that host adapter's private termination authority
+can release the original desktop token after uncertain settlement. Its complete
+identity must match the original snapshot. Serialized objects, booleans, foreign
+authorities, wrong targets/nonces/PID starts/generations, duplicate receipts and
+late clean child events cannot release a successor or another registration. Clean
+native completion and failed starts keep their existing release behavior. A
+contradictory clean `close` after an uncertain `exit` cannot turn uncertainty into
+proof. Host callback failures retain uncertainty; teardown failure cannot prevent
+normal clean completion. Board-origin uncertain occupancy is never offered to
+this desktop recovery host and retains its independent durable contract.
+
+No production remote adapter is configured yet. `signalRemoteAgent()` returns
+whether signal dispatch started, not a remote termination receipt. Its script
+can exit successfully for an absent or unreadable PID record and does not verify
+process-group death after SIGKILL. A PID group/session cannot contain escaped
+detached descendants. The core accepts only a host-verified supervised boundary;
+legacy launches without that evidence remain unsupported/unknown. Parsed provider
+completion, local row removal, Copilot transcript reconciliation and app restart
+are not remote-death proof. Ordinary desktop activity can still remain busy for
+the main-process lifetime until an actual trusted adapter supplies that evidence.
+
+The actual `ProcessManager`/local fake-child cases in
+`ProcessManager.spawn.process.test.ts` exercise this private core and ownership
+refusals. Injected host identities/proofs are tests, not authenticated remote
+execution or functional remote recovery acceptance.
+
+**Adapter capability blocker:** Neither stdin-script launches nor the native
+Codex app-server SSH launch creates a supervised remote containment boundary.
+Both use `withRemotePidRecord()` (PID and `ps lstart` only). The optional
+`superviseAgentProcess()` observes and stops the local SSH child; its
+`processExited` promise is not remote-boundary evidence. Reconnecting with the
+same SSH arguments does not supply an original host-key/boundary attestation.
+The Linux `scripts/pianola-sandbox/sandbox_runner.py` validator requires a
+provisioned local user manager/bubblewrap and validates sealed artifacts under
+an explicit trusted root. It is not an SSH agent launch or reconciliation
+service and cannot be substituted for ordinary remote execution.
+
+`ssh-remote-signal.process.test.ts` runs the actual signal script against owned
+local processes. A cooperative group terminates, but a detached descendant can
+survive after the leader and its entire group disappear, the PID record is
+deleted and the script (including a retry) exits 0. Missing records and PID-start
+mismatches also exit 0 with work still running. These are local counterexamples,
+not authenticated SSH acceptance or a supported recovery path.
+
+Safe recovery therefore remains **OPEN**. Before wiring an adapter, a trusted
+remote supervisor must create a non-escapable per-attempt boundary before any
+agent/tool starts and attest its original host identity, launch nonce,
+PID/start identity and boundary generation. Its bounded authenticated query must
+retain a matching terminal receipt only after all work in that boundary is
+terminated and cannot re-enter it; lost/missing/reused identities remain
+`unknown`. A future adapter must freeze that launch attestation, strictly bound
+and parse one settlement query, then issue the private authority proof only for
+an exact original match. No such boundary/receipt service is currently part of
+these SSH launch paths, so no always-unknown adapter or PID-based release is
+installed. Provisioning and integrating that boundary is required for functional
+recovery; uncertain desktop and Board occupancy remain retained.
+
 ---
 
 ## 2. Process Listeners

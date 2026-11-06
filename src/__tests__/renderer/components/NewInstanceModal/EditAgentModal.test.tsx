@@ -11,6 +11,7 @@ vi.mock('../../../../renderer/services/providerTranslation', () => ({
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
@@ -137,6 +138,25 @@ describe('EditAgentModal', () => {
 		});
 	});
 
+	it('does not expose Board worker enrollment when Board is enabled', async () => {
+		const flags = useSettingsStore.getState().encoreFeatures;
+		useSettingsStore.setState({ encoreFeatures: { ...flags, board: false } });
+		render(
+			<EditAgentModal
+				isOpen
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ boardWorker: true })}
+				existingSessions={[]}
+			/>
+		);
+		expect(screen.queryByText('Board worker')).not.toBeInTheDocument();
+		act(() => useSettingsStore.setState({ encoreFeatures: { ...flags, board: true } }));
+		expect(screen.queryByRole('checkbox', { name: /Board worker/i })).not.toBeInTheDocument();
+		act(() => useSettingsStore.setState({ encoreFeatures: flags }));
+	});
+
 	it('should render null when isOpen is false', () => {
 		const { container } = render(
 			<EditAgentModal
@@ -247,9 +267,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
-		// and `codexTransport` trail it - anchor on the slot rather than on "last".
-		expect(args[args.length - 3]).toBe('/home/user/moved-project');
+		// `workingDirectory` is at index 20; reset, transport and Board flags follow it.
+		// Keep the established positional callback contract.
+		expect(args[20]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -334,9 +354,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
-		// and `codexTransport` trail it - anchor on the slot rather than on "last".
-		expect(args[args.length - 3]).toBeUndefined(); // workingDirectory unchanged
+		// `workingDirectory` is at index 20; reset, transport and Board flags follow it.
+		// Keep the established positional callback contract.
+		expect(args[20]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -584,7 +604,12 @@ describe('EditAgentModal', () => {
 		).toBeInTheDocument();
 		fireEvent.click(screen.getByText('Save Changes'));
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
-		expect(onSave.mock.calls[0].slice(23)).toEqual([]);
+		expect(onSave.mock.calls[0].slice(23, 27)).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		]);
 	});
 
 	it('shows translation activity and locks the provider picker until save completes', async () => {
@@ -735,7 +760,13 @@ describe('EditAgentModal', () => {
 		const args = onSave.mock.calls[0];
 		expect(args[2]).toBe('codex');
 		// No conversion arguments: the save does a plain switch.
-		expect(args.slice(23)).toEqual([]);
+		expect([args[23], args[24], args[25], args[26], args[27]]).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		]);
 	});
 
 	it('offers no conversion for a provider pair without an adapter, and still saves', async () => {
@@ -794,7 +825,13 @@ describe('EditAgentModal', () => {
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		const args = onSave.mock.calls[0];
 		expect(args[2]).toBe('codex');
-		expect(args.slice(23)).toEqual([]);
+		expect([args[23], args[24], args[25], args[26], args[27]]).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		]);
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
 	});
 
@@ -902,7 +939,11 @@ describe('EditAgentModal', () => {
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined,
+				undefined,
+				undefined,
+				undefined
 			);
 		});
 
@@ -1003,7 +1044,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined,
+			undefined,
+			undefined,
+			undefined
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -1241,7 +1286,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined,
+			undefined,
+			undefined,
+			undefined
 		);
 	});
 
@@ -1319,7 +1368,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined,
+			undefined,
+			undefined,
+			undefined
 		);
 	});
 
@@ -1403,7 +1456,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined,
+			undefined,
+			undefined,
+			undefined
 		);
 	});
 
@@ -1827,8 +1884,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			// `codexTransport` trails it, so the reset flag is second-from-last.
-			expect(args[args.length - 2]).toBe(true);
+			expect(args[21]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1841,7 +1897,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 2]).toBe(false);
+			expect(args[21]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {
@@ -1874,7 +1930,7 @@ describe('EditAgentModal', () => {
 				fireEvent.click(screen.getByText('Save Changes'));
 
 				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('exec');
+				expect(args[22]).toBe('exec');
 			});
 
 			it('reflects a stored app-server choice', async () => {
@@ -1891,7 +1947,7 @@ describe('EditAgentModal', () => {
 				fireEvent.click(screen.getByText('Save Changes'));
 
 				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('app-server');
+				expect(args[22]).toBe('app-server');
 			});
 
 			it('is absent for a non-Codex agent', async () => {
