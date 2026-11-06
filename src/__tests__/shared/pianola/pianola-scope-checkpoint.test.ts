@@ -131,6 +131,106 @@ describe('scope checkpoint validation', () => {
 });
 
 describe('scope checkpoint filesystem storage', () => {
+	it('retains enrollment revision CAS and bounds the locked writer lifetime and scope', async () => {
+		const stale = checkpoint();
+		const current = { ...checkpoint(), enrollmentRevision: 2 };
+		let escaped: PianolaFsStore['writeScopeCheckpoint'] | undefined;
+		await store.withScopeCheckpointLockAsync(scopeId, (write) => {
+			escaped = write;
+			expect(() => write({ ...current, scopeId: otherScopeId })).toThrow('lock unavailable');
+			write(current, true);
+		});
+		expect(() => escaped!(stale)).toThrow('lock unavailable');
+		await expect(
+			store.withScopeCheckpointLockAsync(scopeId, (write) => write(stale, true))
+		).rejects.toThrow('enrollment changed');
+		expect(store.readScopeCheckpoint(scopeId)).toEqual(current);
+		const receipts: unknown[] = [];
+		await store.withScopeCheckpointLockAsync(scopeId, (write) => {
+			write({ ...current, status: 'suspended' }, true, (receipt) => {
+				expect(fs.existsSync(checkpointPath() + '.lock')).toBe(true);
+				expect(JSON.parse(receipt.after!).status).toBe('suspended');
+				receipts.push(receipt);
+			});
+		});
+		expect(receipts).toHaveLength(1);
+		expect(fs.existsSync(checkpointPath() + '.lock')).toBe(false);
+	});
+
+	it('ignores absent optional tab fields but persists real authority and ordered membership changes', () => {
+		const value = checkpoint();
+		store.writeScopeCheckpoint(value);
+		const inode = fs.statSync(checkpointPath(), { bigint: true }).ino;
+		const passive = structuredClone(value);
+		passive.lastSnapshotAt = 120;
+		passive.tabs[0].nextWatchAt = undefined;
+		passive.tabs[0].emptyEnrollment = undefined;
+		store.writeScopeCheckpoint(passive);
+		expect(fs.statSync(checkpointPath(), { bigint: true }).ino).toBe(inode);
+		passive.tabs[0].nextWatchAt = 150;
+		store.writeScopeCheckpoint(passive);
+		expect(store.readScopeCheckpoint(scopeId)?.tabs[0].nextWatchAt).toBe(150);
+		passive.tabs[0].unresolvedIntent = { decisionId: 'decision', messageId: 'ask' };
+		store.writeScopeCheckpoint(passive);
+		expect(store.readScopeCheckpoint(scopeId)?.tabs[0].unresolvedIntent?.decisionId).toBe(
+			'decision'
+		);
+		passive.tabs.push({ ...structuredClone(passive.tabs[0]), tabId: 'other' });
+		store.writeScopeCheckpoint(passive);
+		passive.tabs.reverse();
+		store.writeScopeCheckpoint(passive);
+		expect(store.readScopeCheckpoint(scopeId)?.tabs.map((tab) => tab.tabId)).toEqual([
+			'other',
+			'tab',
+		]);
+	});
+
+	it('persists cursor, ownership, pause, and unknown-delivery changes within the observation window', () => {
+		const value = checkpoint();
+		store.writeScopeCheckpoint(value);
+		const changes = [
+			() => (value.tabs[0].lastSeen = { id: 'later', count: 3, textLength: 40 }),
+			() => (value.tabs[0].bindingFingerprint = 'c'.repeat(64)),
+			() => (value.tabs[0].status = 'suspended'),
+			() =>
+				(value.tabs[0].unresolvedIntent = {
+					decisionId: 'unknown',
+					messageId: 'ask',
+					admitted: true,
+				}),
+		];
+		for (const change of changes) {
+			const before = fs.statSync(checkpointPath(), { bigint: true }).ino;
+			change();
+			value.lastSnapshotAt!++;
+			value.tabs[0].nextWatchAt = undefined;
+			store.writeScopeCheckpoint(value);
+			expect(fs.statSync(checkpointPath(), { bigint: true }).ino).not.toBe(before);
+			expect(store.readScopeCheckpoint(scopeId)).toEqual(JSON.parse(JSON.stringify(value)));
+		}
+	});
+
+	it('skips passive clocks but persists retry authority and durable clocks', () => {
+		const value = checkpoint();
+		store.writeScopeCheckpoint(value);
+		const before = fs.readFileSync(checkpointPath(), 'utf8');
+		const inode = fs.statSync(checkpointPath(), { bigint: true }).ino;
+		// A caller's property insertion order must not force an otherwise equal write.
+		const { tabs, ...rest } = value;
+		const reordered = { tabs, ...rest, lastSnapshotAt: 120, nextTabIndex: 1 };
+		store.writeScopeCheckpoint(reordered);
+		expect(fs.readFileSync(checkpointPath(), 'utf8')).toBe(before);
+		expect(fs.statSync(checkpointPath(), { bigint: true }).ino).toBe(inode);
+		reordered.tabs[0].state.pendingRetry = { messageId: 'ask', attempts: 1 };
+		store.writeScopeCheckpoint(reordered);
+		expect(store.readScopeCheckpoint(scopeId)?.tabs[0].state.pendingRetry).toEqual({
+			messageId: 'ask',
+			attempts: 1,
+		});
+		store.writeScopeCheckpoint({ ...reordered, lastSnapshotAt: 130 }, true);
+		expect(store.readScopeCheckpoint(scopeId)?.lastSnapshotAt).toBe(130);
+	});
+
 	it('distinguishes a missing checkpoint from invalid JSON and invalid schema', () => {
 		expect(store.readScopeCheckpoint(scopeId)).toBeNull();
 		fs.writeFileSync(checkpointPath(), '{broken');

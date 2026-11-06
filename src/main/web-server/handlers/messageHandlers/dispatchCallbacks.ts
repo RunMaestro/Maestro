@@ -49,10 +49,21 @@ export function validateCallbackRequest(
 	return {};
 }
 
+/**
+ * Register a validated completion callback for the target and return its ID or an error.
+ * Pending admissions defer spawn arming, and an already armed target cannot receive a second
+ * callback.
+ */
 export function armDispatchCallback(
 	ctx: MessageHandlerContext,
 	message: WebClientMessage,
-	target: { agentId: string; tabId: string; prompt: string; isNewTab: boolean }
+	target: {
+		agentId: string;
+		tabId: string;
+		prompt: string;
+		isNewTab: boolean;
+		pendingAdmissionId?: string;
+	}
 ): { callbackId?: string; error?: string } {
 	const callerAgentId =
 		typeof message.notifyOnComplete === 'string' ? message.notifyOnComplete : '';
@@ -95,6 +106,7 @@ export function armDispatchCallback(
 			timeoutMs,
 			prompt: target.prompt,
 			armFromRecentSpawn: target.isNewTab,
+			pendingAdmissionId: target.pendingAdmissionId,
 		});
 		return { callbackId: entry.callbackId };
 	} catch (error) {

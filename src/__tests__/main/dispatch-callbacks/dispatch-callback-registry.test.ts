@@ -98,6 +98,27 @@ describe('DispatchCallbackRegistry', () => {
 		h = makeHarness();
 	});
 
+	it('never adopts predecessor or unrelated spawns while a queue admission is held', () => {
+		h.registry.noteSpawn(KEY);
+		const entry = register(h.registry, {
+			pendingAdmissionId: 'dispatch',
+			armFromRecentSpawn: true,
+		});
+		h.registry.noteSpawn(KEY);
+		h.registry.noteExit(KEY, 0);
+		h.runTimers();
+		expect(entry.state).toBe('pending');
+		expect(h.fires).toHaveLength(0);
+		expect(() => h.registry.releaseQueueAdmission(entry.callbackId, 'other')).toThrow(
+			'DispatchCallbackAdmissionMismatch'
+		);
+		h.registry.releaseQueueAdmission(entry.callbackId, 'dispatch');
+		h.registry.noteSpawn(KEY);
+		h.registry.noteExit(KEY, 0);
+		h.runTimers();
+		expect(h.fires).toHaveLength(1);
+	});
+
 	it('does not fire for an exit that happened before the dispatched process started', () => {
 		register(h.registry);
 		// A predecessor turn (queued dispatch) exits while we are still pending.

@@ -289,7 +289,15 @@ List agent sessions (most recent first)
 | `-s, --search <keyword>` | Filter sessions by keyword in name or first message    | -       |
 | `--json`                 | Output as JSON (for scripting)                         | -       |
 
-## `maestro-cli list models`
+## `maestro-cli list ssh-remotes`
+
+List all configured SSH remotes
+
+| Option   | Description                          | Default |
+| -------- | ------------------------------------ | ------- |
+| `--json` | Output as JSON lines (for scripting) | -       |
+
+## `maestro-cli list models <provider>`
 
 List the models a provider offers (e.g. opencode, claude-code), as the model pickers see them
 
@@ -298,14 +306,6 @@ List the models a provider offers (e.g. opencode, claude-code), as the model pic
 | `--refresh`         | Re-run discovery past the cache and update every open model picker | -       |
 | `--ssh-remote <id>` | Discover on this SSH remote instead of this machine                | -       |
 | `--json`            | Output as JSON (for scripting)                                     | -       |
-
-## `maestro-cli list ssh-remotes`
-
-List all configured SSH remotes
-
-| Option   | Description                          | Default |
-| -------- | ------------------------------------ | ------- |
-| `--json` | Output as JSON lines (for scripting) | -       |
 
 ## `maestro-cli list terminals`
 
@@ -425,6 +425,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 
 | Option                            | Description                                                                                                                                                                                                                                                                                                                                                                                    | Default |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--dispatch-id <uuid>`            | For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it                                                                                                                                                                                                                                                                      | -       |
 | `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).                       | -       |
 | `--visible`                       | With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)                                                                                                                                                                                                                                                       | -       |
 | `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                                                                                                     | -       |
@@ -1885,6 +1886,61 @@ Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
 | `--focus`          | Switch to the restored tab (default)                             | -       |
 | `--json`           | Output as JSON (for scripting)                                   | -       |
 
+## `maestro-cli tab pins`
+
+Read and change an AI tab's pinned messages (default: list them)
+
+## `maestro-cli tab pins list`
+
+List a tab's pinned messages in transcript order
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins add [message-id]`
+
+Pin a message by transcript entry id, or the newest one with --last
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+| `--last <who>`       | Pin the newest message of this kind: user or agent              | -       |
+
+## `maestro-cli tab pins remove <pin-id>`
+
+Unpin a message (pin id: exact or unique prefix)
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins rename <pin-id> [label...]`
+
+Rename a pin; no label restores the message's own first line
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins show`
+
+Open the pin panel over the tab (selects the agent and the tab)
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
 ## `maestro-cli tab compact [tab-id]`
 
 Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id
@@ -2469,11 +2525,12 @@ Backfill and retrieve evidence-backed user and project memory
 | `--provider <id>`          | Historical provider for a custom root                                                                     | -       |
 | `--root <path>`            | Custom account/data root                                                                                  | -       |
 | `--mine`                   | Explicitly attribute selected pools to your human-authored history                                        | -       |
-| `--mode <mode>`            | local, hosted, or batch                                                                                   | -       |
+| `--mode <mode>`            | local, cli, hosted, or batch                                                                              | -       |
+| `--cli-provider <id>`      | Installed Maestro CLI to use for extraction                                                               | -       |
 | `--hosted-provider <id>`   | Hosted extraction provider: openai or nan                                                                 | -       |
 | `--model <model>`          | Extraction model                                                                                          | -       |
 | `--endpoint <url>`         | Loopback local extraction endpoint                                                                        | -       |
-| `--qualify-model <model>`  | Recall qualification model (default: qwen3:8b; glm5.3-flash measured equal quality at 66% less latency)   | -       |
+| `--qualify-model <model>`  | Recall qualification model (default: qwen3:8b)                                                            | -       |
 | `--qualify-provider <id>`  | Recall qualification provider: local or hosted                                                            | -       |
 | `--qualify-endpoint <url>` | Qualification endpoint (loopback for local)                                                               | -       |
 | `--rerank-model <model>`   | Hosted recall reranker model (default: rerank)                                                            | -       |
@@ -2648,17 +2705,19 @@ Register desktop-supervised watchers and orchestrations (survive crashes/restart
 
 ## `maestro-cli pianola supervise scope`
 
-Create or replace an agent/group watch selection (new selections start paused)
+Configure or reconcile an owner-authorized agent/group selection through the desktop host
 
-| Option                 | Description                        | Default |
-| ---------------------- | ---------------------------------- | ------- |
-| `--manager <agent-id>` | Manager agent id                   | -       |
-| `--label <label>`      | Selection label                    | -       |
-| `--id <scope-id>`      | Replace an existing selection      | -       |
-| `--agents <ids>`       | Comma-separated agent IDs          | -       |
-| `--groups <ids>`       | Comma-separated group IDs          | -       |
-| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
-| `--json`               | Output as JSON                     | -       |
+| Option                     | Description                                                             | Default |
+| -------------------------- | ----------------------------------------------------------------------- | ------- |
+| `--manager <agent-id>`     | Manager agent id                                                        | -       |
+| `--label <label>`          | Selection label                                                         | -       |
+| `--id <scope-id>`          | Existing owner-authorized selection id                                  | -       |
+| `--agents <ids>`           | Comma-separated agent IDs                                               | -       |
+| `--groups <ids>`           | Comma-separated group IDs                                               | -       |
+| `--exclude <ids>`          | Comma-separated excluded agent IDs                                      | -       |
+| `--future-local-agents`    | Include future local agents (requires --id or --request-owner-approval) | -       |
+| `--request-owner-approval` | Request one native owner confirmation for this exact configuration      | -       |
+| `--json`                   | Output as JSON                                                          | -       |
 
 ## `maestro-cli pianola supervise watch <tabId>`
 
@@ -2692,9 +2751,10 @@ Register a supervised plan orchestration the desktop keeps alive
 
 List registered supervised targets
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option   | Description                                           | Default |
+| -------- | ----------------------------------------------------- | ------- |
+| `--live` | Read worker and coverage status from the desktop host | -       |
+| `--json` | Output as JSON (for scripting)                        | -       |
 
 ## `maestro-cli pianola supervise remove <id>`
 
