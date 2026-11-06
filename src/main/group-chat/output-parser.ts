@@ -124,7 +124,14 @@ export function extractTextFromAgentOutput(rawOutput: string, agentType: string)
  * Extract text content from stream-json output (JSONL).
  * Uses the agent-specific parser when the agent type is known.
  */
-export function extractTextFromStreamJson(rawOutput: string, agentType?: string): string {
+export function extractTextFromStreamJson(
+	rawOutput: string,
+	agentType?: string,
+	alreadyParsed = false
+): string {
+	// ProcessManager data events already contain the answer, even when it is JSON.
+	// Parsing that answer as another protocol envelope can erase valid JSON responses.
+	if (alreadyParsed) return rawOutput;
 	if (agentType) {
 		return extractTextFromAgentOutput(rawOutput, agentType);
 	}
