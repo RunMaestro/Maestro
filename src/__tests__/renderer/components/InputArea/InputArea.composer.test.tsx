@@ -18,7 +18,7 @@
  */
 
 import { memo, type ComponentProps, type RefObject } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InputArea } from '../../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../../renderer/stores/composerInputStore';
@@ -166,6 +166,50 @@ function createProps(overrides: Partial<ComponentProps<typeof InputArea>> = {}) 
 	} as ComponentProps<typeof InputArea>;
 }
 
+function makeStagedImageDataTransfer() {
+	const store: Record<string, string> = {};
+	return {
+		types: [] as string[],
+		effectAllowed: '',
+		dropEffect: '',
+		setData(type: string, value: string) {
+			store[type] = value;
+			if (!this.types.includes(type)) this.types.push(type);
+		},
+		getData(type: string) {
+			return store[type] ?? '';
+		},
+	};
+}
+
+function stubStagedTileLayout(tiles: HTMLElement[]) {
+	const rects = new Map(tiles.map((tile, i) => [tile, { left: i * 100, width: 100 }]));
+	vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+		const r = rects.get(this as HTMLElement) ?? { left: 0, width: 0 };
+		return {
+			...r,
+			right: r.left + r.width,
+			top: 0,
+			bottom: 64,
+			height: 64,
+			x: r.left,
+			y: 0,
+			toJSON: () => ({}),
+		} as DOMRect;
+	});
+}
+
+function fireStagedDrag(
+	kind: 'dragOver' | 'drop',
+	target: HTMLElement,
+	dataTransfer: unknown,
+	clientX: number
+) {
+	const event = createEvent[kind](target, { dataTransfer });
+	Object.defineProperty(event, 'clientX', { value: clientX });
+	fireEvent(target, event);
+}
+
 describe('AI composer through the shared shell', () => {
 	beforeEach(() => {
 		seedDraft('');
@@ -177,6 +221,7 @@ describe('AI composer through the shared shell', () => {
 	afterEach(() => {
 		seedDraft('');
 		useSessionStore.setState({ sessions: [], groups: [], activeSessionId: '' } as never);
+		vi.restoreAllMocks();
 	});
 
 	describe('render budget', () => {
@@ -204,6 +249,35 @@ describe('AI composer through the shared shell', () => {
 
 			expect(counts.toolbar).toBe(0);
 			expect(counts.sendColumn).toBe(0);
+		});
+	});
+
+	describe('staged image reorder', () => {
+		it('renumbers the AI draft when a staged image moves', () => {
+			seedDraft('keep Screenshot 1, swap Screenshot 2, leave Screenshot 3 and Screenshot 9');
+			render(
+				<InputArea
+					{...createProps({
+						stagedImages: [
+							'data:image/png;base64,a',
+							'data:image/png;base64,b',
+							'data:image/png;base64,c',
+						],
+					})}
+				/>
+			);
+
+			const tiles = screen.getAllByRole('button', { name: /^Staged image/ });
+			stubStagedTileLayout(tiles);
+			const dataTransfer = makeStagedImageDataTransfer();
+
+			fireEvent.dragStart(tiles[0], { dataTransfer });
+			fireStagedDrag('dragOver', tiles[1], dataTransfer, 180);
+			fireStagedDrag('drop', tiles[1], dataTransfer, 180);
+
+			expect(useComposerInputStore.getState().aiValue).toBe(
+				'keep Screenshot 2, swap Screenshot 1, leave Screenshot 3 and Screenshot 9'
+			);
 		});
 	});
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	ChatComposer,
@@ -48,6 +48,71 @@ function ControlledComposer(props: Partial<ChatComposerProps>) {
 	);
 }
 
+function StatefulImagesComposer({
+	value: initialValue,
+	images: initialImages,
+}: {
+	value: string;
+	images: string[];
+}) {
+	const [value, setValue] = useState(initialValue);
+	const [images, setImages] = useState(initialImages);
+	return (
+		<ChatComposer
+			{...createMinimalProps({
+				value,
+				onChange: setValue,
+				stagedImages: images,
+				setStagedImages: setImages,
+			})}
+		/>
+	);
+}
+
+function makeStagedImageDataTransfer() {
+	const store: Record<string, string> = {};
+	return {
+		types: [] as string[],
+		effectAllowed: '',
+		dropEffect: '',
+		setData(type: string, value: string) {
+			store[type] = value;
+			if (!this.types.includes(type)) this.types.push(type);
+		},
+		getData(type: string) {
+			return store[type] ?? '';
+		},
+	};
+}
+
+function stubStagedTileLayout(tiles: HTMLElement[]) {
+	const rects = new Map(tiles.map((tile, i) => [tile, { left: i * 100, width: 100 }]));
+	vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+		const r = rects.get(this as HTMLElement) ?? { left: 0, width: 0 };
+		return {
+			...r,
+			right: r.left + r.width,
+			top: 0,
+			bottom: 64,
+			height: 64,
+			x: r.left,
+			y: 0,
+			toJSON: () => ({}),
+		} as DOMRect;
+	});
+}
+
+function fireStagedDrag(
+	kind: 'dragOver' | 'drop',
+	target: HTMLElement,
+	dataTransfer: unknown,
+	clientX: number
+) {
+	const event = createEvent[kind](target, { dataTransfer });
+	Object.defineProperty(event, 'clientX', { value: clientX });
+	fireEvent(target, event);
+}
+
 describe('ChatComposer', () => {
 	beforeEach(() => {
 		mockedUsePhoneLayout.mockReturnValue(false);
@@ -57,6 +122,7 @@ describe('ChatComposer', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	describe('desktop layout', () => {
@@ -408,6 +474,27 @@ describe('ChatComposer', () => {
 			const annotatorState = useImageAnnotatorStore.getState();
 			expect(annotatorState.isOpen).toBe(true);
 			expect(annotatorState.imageDataUrl).toBe(stagedImages[0]);
+		});
+
+		it('renumbers the room draft when a staged image moves', () => {
+			render(
+				<StatefulImagesComposer
+					value="keep Screenshot 1, swap Screenshot 2, leave Screenshot 3 and Screenshot 9"
+					images={['data:image/png;base64,a', 'data:image/png;base64,b', 'data:image/png;base64,c']}
+				/>
+			);
+
+			const tiles = screen.getAllByRole('button', { name: /^Staged image/ });
+			stubStagedTileLayout(tiles);
+			const dataTransfer = makeStagedImageDataTransfer();
+
+			fireEvent.dragStart(tiles[0], { dataTransfer });
+			fireStagedDrag('dragOver', tiles[1], dataTransfer, 180);
+			fireStagedDrag('drop', tiles[1], dataTransfer, 180);
+
+			expect(screen.getByRole('textbox')).toHaveValue(
+				'keep Screenshot 2, swap Screenshot 1, leave Screenshot 3 and Screenshot 9'
+			);
 		});
 	});
 });

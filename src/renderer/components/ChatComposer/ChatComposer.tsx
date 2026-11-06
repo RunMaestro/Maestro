@@ -26,7 +26,6 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { ComposerTextarea } from './ComposerTextarea';
 import { ChatComposerFrame, useChatComposerFold } from './ChatComposerFrame';
 import { AtMentionPopover } from '../InputArea/overlays/AtMentionPopover';
-import { moveStagedImage } from '../../utils/stagedImageOrder';
 import { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
 import { getAtMentionTrigger } from '../InputArea/utils/inputTriggers';
 import {
@@ -371,11 +370,6 @@ export const ChatComposer = React.memo(function ChatComposer({
 		onFocus?.();
 	}, [onFocus]);
 
-	const handleReorderStagedImages = useCallback(
-		(from: number, to: number) => setStagedImages?.((prev) => moveStagedImage(prev, from, to)),
-		[setStagedImages]
-	);
-
 	const setLightboxImageCallback = useCallback(
 		(img: string | null, contextImages?: string[], source?: 'staged' | 'history') => {
 			if (img) onOpenLightbox?.(img, contextImages, source);
@@ -454,7 +448,8 @@ export const ChatComposer = React.memo(function ChatComposer({
 			sheetExtras={sheetExtras}
 			stagedImages={stagedImages}
 			setStagedImages={setStagedImages}
-			onReorderStagedImages={handleReorderStagedImages}
+			draftValue={value}
+			onDraftChange={onChange}
 			setLightboxImage={setLightboxImageCallback}
 			openAnnotator={openAnnotatorCallback}
 			checkImageFile={checkImageFile}
