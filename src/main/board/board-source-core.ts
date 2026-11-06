@@ -48,8 +48,18 @@ export async function discoverLocalBoardSources(
 		try {
 			physical = await fs.promises.realpath(root);
 		} catch (error) {
-			if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
-			throw error;
+			const code = (error as NodeJS.ErrnoException).code;
+			if (['ENOENT', 'ENOTDIR'].includes(code ?? '')) continue;
+			if (code !== 'EACCES' && code !== 'EPERM') throw error;
+			if (admission && !admission.roots.has(root)) throw error;
+			// The registry identifies this source even when its root cannot be read.
+			// Diagnostic persistence still uses durable admission/suppression below.
+			recordUnresolvedBoardSource(
+				storage,
+				{ location: { kind: 'local' }, path: root },
+				`Board source physical directory unresolved (${code}): ${root}`
+			);
+			continue;
 		}
 		if (admission && (physical !== root || !admission.roots.has(physical)))
 			throw new Error('Board isolation source physical identity changed');

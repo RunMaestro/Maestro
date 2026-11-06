@@ -479,3 +479,127 @@ it('propagates unexpected migration storage corruption rather than diagnosing it
 		db.close();
 	}
 });
+
+it.each([
+	'unrelated',
+	'wrong-location',
+	'managed',
+	'relevant',
+	'root',
+	'root-discovery',
+	'EPERM',
+	'missing',
+])(
+	'isolates %s physical-directory failures and retries without partial migration',
+	async (kind) => {
+		dir = fs.mkdtempSync(path.join(isolation.contract.root, 'physical-source-'));
+		const roots = ['a', 'b'].map((name) => {
+			const root = path.join(dir, name);
+			fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
+			execFileSync('git', ['init', '--quiet', root]);
+			fs.writeFileSync(
+				path.join(root, '.maestro/board.yaml'),
+				JSON.stringify({ boards: [{ id: 'legacy', name, cards: [] }] })
+			);
+			fs.writeFileSync(
+				path.join(root, '.maestro/profiles.yaml'),
+				JSON.stringify({ profiles: [{ id: 'role', name: 'Role' }] })
+			);
+			return root;
+		});
+		const denied = kind.startsWith('root') ? roots[0] : path.join(roots[0], 'worker');
+		fs.mkdirSync(denied, { recursive: true });
+		const db = openBoardDb(isolation.contract.db);
+		try {
+			const storage = new BoardStorageFacade(db);
+			const workers = [
+				{
+					id: 'a',
+					dir: denied,
+					projectRoot: roots[0],
+					boardWorker: kind !== 'unrelated',
+					...(kind === 'wrong-location' ? { sshRemoteId: 'elsewhere' } : {}),
+				},
+				{ id: 'b', dir: roots[1], projectRoot: roots[1], boardWorker: true },
+				...roots.map((root, i) => ({ id: `creator-${i}`, dir: root, boardWorker: false })),
+			];
+			if (kind === 'managed')
+				db.prepare('INSERT INTO workers VALUES (?, ?, ?, ?)').run(
+					'a',
+					1,
+					0,
+					JSON.stringify({ accessManaged: true, allowedRepositoryIds: [], roleRefs: [] })
+				);
+			const original = fs.realpathSync.native.bind(fs.realpathSync);
+			let deniedCalls = 0;
+			const spy = vi.spyOn(fs.realpathSync, 'native').mockImplementation((file, options) => {
+				if (file === denied) {
+					deniedCalls++;
+					throw Object.assign(new Error('owned fixture denied'), {
+						code: kind === 'missing' ? 'ENOENT' : kind === 'EPERM' ? 'EPERM' : 'EACCES',
+					});
+				}
+				return original(file, options);
+			});
+			const asyncRealpath = fs.promises.realpath.bind(fs.promises);
+			const asyncSpy =
+				kind === 'root-discovery'
+					? vi.spyOn(fs.promises, 'realpath').mockImplementation(async (file, options) => {
+							if (file === denied) {
+								deniedCalls++;
+								throw Object.assign(new Error('owned root denied'), { code: 'EACCES' });
+							}
+							return asyncRealpath(file, options);
+						})
+					: undefined;
+			const key = boardMigrationSourceKey({ location: { kind: 'local' }, path: roots[0] });
+			const retry =
+				kind === 'relevant' || kind.startsWith('root') || kind === 'EPERM' || kind === 'missing';
+			await discoverLocalBoardSources(storage, workers);
+			expect(deniedCalls).toBe(retry ? 1 : 0);
+			expect(db.prepare('SELECT * FROM migrations WHERE source_key=?').get(key)).toEqual(
+				retry ? undefined : expect.anything()
+			);
+			if (retry) {
+				expect(
+					storage.captureCatalog().repositories.find((r) => r.id === `source:${key}`)
+				).toMatchObject({
+					validated: false,
+					sourceStatus: 'unresolved',
+					diagnostic: expect.stringContaining(
+						kind === 'missing' ? 'ENOENT' : kind === 'EPERM' ? 'EPERM' : 'EACCES'
+					),
+				});
+				expect(storage.query().collections).toHaveLength(1);
+				expect(
+					listBoardWorkers(db).find((w) => w.agentId === 'a')?.payload.allowedRepositoryIds ?? []
+				).toEqual([]);
+			} else expect(storage.query().collections).toHaveLength(2);
+			const healthy = db.prepare('SELECT * FROM migrations WHERE source_key<>?').all(key);
+			spy.mockRestore();
+			asyncSpy?.mockRestore();
+			if (kind === 'relevant')
+				expect(
+					await executeBoardSourceOperation(
+						{ action: 'revalidate', sourceKey: key },
+						storage,
+						workers,
+						remote
+					)
+				).toEqual({ ok: true });
+			await discoverLocalBoardSources(storage, workers);
+			expect(storage.query().collections).toHaveLength(2);
+			expect(db.prepare('SELECT * FROM migrations WHERE source_key<>?').all(key)).toEqual(healthy);
+			if (retry) {
+				expect(listBoardWorkers(db).find((w) => w.agentId === 'a')!.payload.roleRefs).toHaveLength(
+					1
+				);
+				expect(
+					listBoardWorkers(db).find((w) => w.agentId === 'a')!.payload.allowedRepositoryIds
+				).toEqual([`source:${key}`]);
+			}
+		} finally {
+			db.close();
+		}
+	}
+);

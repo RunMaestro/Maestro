@@ -359,17 +359,44 @@ export function applyBoardMigration(
 			plan.repository.workingDirectory,
 			...plan.snapshot.workers.flatMap((worker) => {
 				const raw = record(worker);
-				return raw && typeof raw.dir === 'string' && resolveBoardLocation(raw).kind === 'local'
-					? [raw.dir]
-					: [];
+				if (
+					!raw ||
+					raw.boardWorker !== true ||
+					typeof raw.id !== 'string' ||
+					!raw.id ||
+					typeof raw.dir !== 'string' ||
+					resolveBoardLocation(raw).kind !== 'local'
+				)
+					return [];
+				// An explicit registry project association scopes discovery. Unassociated
+				// workers still use physical containment (including aliases into the root).
+				if (
+					typeof raw.projectRoot === 'string' &&
+					raw.projectRoot &&
+					foldPathCase(raw.projectRoot) !==
+						foldPathCase(plan.source?.path ?? plan.repository!.workingDirectory)
+				)
+					return [];
+				const previous = db
+					.prepare('SELECT payload_json FROM workers WHERE agent_id=?')
+					.get(raw.id) as { payload_json: string } | undefined;
+				if (previous) {
+					const existing = JSON.parse(previous.payload_json);
+					if (!existing.migration || existing.accessManaged !== false) return [];
+				}
+				return [raw.dir];
 			}),
 		]);
 		for (const dir of directories) {
 			try {
 				physicalDirectories.set(dir, foldPathCase(fs.realpathSync.native(dir)));
 			} catch (error) {
-				if (!['ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? ''))
-					throw error;
+				const code = (error as NodeJS.ErrnoException).code;
+				if (['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'ELOOP'].includes(code ?? ''))
+					throw new BoardMigrationError(
+						`Board migration physical directory unresolved (${code}): ${dir}`
+					);
+				throw error;
 			}
 		}
 	}
@@ -569,7 +596,10 @@ export function applyBoardMigration(
 						!plan.source ||
 						plan.repository.id !== `source:${plan.sourceKey}` ||
 						previous.sourceStatus !== 'unresolved' ||
-						previous.validated !== false ||
+						// Explicit local revalidation may already have proven the root;
+						// the pending source still has no completed migration ledger.
+						(previous.validated !== false &&
+							!(plan.source.location.kind === 'local' && previous.validated === true)) ||
 						previous.workingDirectory !== plan.source.path ||
 						canonicalJson({ location: previous.location ?? { kind: 'local' } }) !==
 							canonicalJson({ location: plan.source.location })

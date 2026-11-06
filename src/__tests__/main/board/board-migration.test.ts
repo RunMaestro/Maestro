@@ -28,6 +28,7 @@ describe('central board migration with SQLite', () => {
 		const file = fixture.contract.db;
 		const input = (name: string, running = false) => {
 			const project = path.join(dir, name);
+			fs.mkdirSync(project, { recursive: true });
 			const card = {
 				id: 'card',
 				title: 'Work',
@@ -233,30 +234,27 @@ it.each([
 	['C:\\repo', 'C:\\repo\\..\\outside', 'C:\\repo\\.\\inside'],
 	['\\\\host\\share\\repo', '\\\\host\\share\\repo\\..\\outside', '\\\\host\\share\\repo\\inside'],
 ])(
-	'does not infer physical repository grants from synthetic path spelling %s',
+	'refuses unresolved physical repository %s without creating a ledger or grants',
 	(project, outside, inside) => {
 		const db = openBoardDb(fixture.contract.db);
 		try {
-			applyBoardMigration(
-				db,
-				planBoardMigration({
-					source: { location: { kind: 'local' }, path: project },
-					repository: { id: 'repo', workingDirectory: project, validated: true },
-					boardBytes: null,
-					profileBytes: null,
-					workers: [
-						{ id: 'outside', dir: outside, boardWorker: true },
-						{ id: 'inside', dir: inside, boardWorker: true },
-					],
-				})
-			);
-			const workers = listBoardWorkers(db);
-			expect(
-				workers.find((worker) => worker.agentId === 'outside')!.payload.allowedRepositoryIds
-			).toEqual([]);
-			expect(
-				workers.find((worker) => worker.agentId === 'inside')!.payload.allowedRepositoryIds
-			).toEqual([]);
+			expect(() =>
+				applyBoardMigration(
+					db,
+					planBoardMigration({
+						source: { location: { kind: 'local' }, path: project },
+						repository: { id: 'repo', workingDirectory: project, validated: true },
+						boardBytes: null,
+						profileBytes: null,
+						workers: [
+							{ id: 'outside', dir: outside, boardWorker: true },
+							{ id: 'inside', dir: inside, boardWorker: true },
+						],
+					})
+				)
+			).toThrow('Board migration physical directory unresolved');
+			for (const table of ['workers', 'migrations', 'cards', 'profiles', 'runs'])
+				expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
 		} finally {
 			db.close();
 		}
