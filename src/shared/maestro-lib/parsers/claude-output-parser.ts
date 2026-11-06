@@ -162,6 +162,30 @@ const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:';
 /** Between a reply a Stop hook held back and the text the hook made the model write next. */
 export const STOP_HOOK_ANSWER_SEPARATOR = '\n\n---\n\n';
 
+/**
+ * What each maestro-p failure code (the `error` of its failed result, see
+ * `finalize()` in src/maestro-p/index.ts) means to a person. Exit codes in
+ * parentheses. A code not listed here is shown raw beside the subtype text.
+ */
+const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
+	// 1
+	tui_exited: 'Claude Code quit before the turn finished. Nothing it printed explains why.',
+	// 3
+	timeout: 'Claude Code stopped producing output for too long, so Maestro ended the turn.',
+	// 4
+	ready_timeout:
+		'Claude Code did not finish starting up in time, so the prompt was never sent. This usually means the machine was busy (many agents, slow MCP servers or plugins). Send the message again.',
+	// 5
+	first_byte_timeout:
+		'Claude Code started but never began the turn after the prompt was sent. A startup prompt may have swallowed it. Send the message again.',
+	// 6
+	prompt_truncated:
+		'The terminal dropped part of the prompt on its way into Claude Code, so Maestro stopped the turn before Claude acted on it. Send the message again.',
+	// 7
+	workspace_untrusted:
+		'Claude Code has not been trusted to work in this folder. Open claude in it once and choose "Yes, I trust this folder".',
+};
+
 /** True when a message came from a Task subagent rather than the main transcript. */
 function isSubagentMessage(msg: ClaudeRawMessage): boolean {
 	return normalizeParentToolUseId(msg) !== undefined;
@@ -993,12 +1017,28 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * `subtype` names the cause. The `errors` array is not used: it carries
 	 * internal diagnostics (`[ede_diagnostic] result_type=user ...`), not text
 	 * meant for a person.
+	 *
+	 * maestro-p (interactive mode) ends every failed run with a result that has
+	 * no `result` string and names its cause in `error` instead: a code
+	 * (`ready_timeout`, exit 4) or claude's own words ("No conversation found
+	 * with session ID: ...", exit 9). Without reading it, each of those surfaced
+	 * as the generic subtype text with no reason (#1860), and the exit-9 text
+	 * never reached the session_not_found pattern that recovers it.
 	 */
 	private failedResultText(obj: Record<string, unknown>): string {
 		if (typeof obj.result === 'string' && obj.result.trim()) {
 			return obj.result;
 		}
-		switch (obj.subtype) {
+		const error = typeof obj.error === 'string' ? obj.error.trim() : '';
+		if (error && MAESTRO_P_FAILURE_TEXT[error]) {
+			return MAESTRO_P_FAILURE_TEXT[error];
+		}
+		const subtypeText = this.failedSubtypeText(obj.subtype);
+		return error ? `${subtypeText} (${error})` : subtypeText;
+	}
+
+	private failedSubtypeText(subtype: unknown): string {
+		switch (subtype) {
 			case 'error_max_turns':
 				return 'Claude Code stopped after reaching its maximum number of turns.';
 			case 'error_max_budget_usd':
