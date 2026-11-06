@@ -50,6 +50,8 @@ interface GroupChatPanelProps {
 	handlePaste?: (e: React.ClipboardEvent) => void;
 	// Image drop handler from App
 	handleDrop?: (e: React.DragEvent) => void;
+	/** Upload local files to the host from the composer (web-desktop). */
+	onUploadFiles?: (files: File[]) => void;
 	// Image lightbox handler
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Execution queue props
@@ -109,6 +111,7 @@ export function GroupChatPanel({
 	inputRef,
 	handlePaste,
 	handleDrop,
+	onUploadFiles,
 	onOpenLightbox,
 	queueState,
 	onResumeQueue,
@@ -260,6 +263,7 @@ export function GroupChatPanel({
 				inputRef={inputRef}
 				handlePaste={handlePaste}
 				handleDrop={handleDrop}
+				onUploadFiles={onUploadFiles}
 				onOpenLightbox={onOpenLightbox}
 				queueState={queueState}
 				onResumeQueue={onResumeQueue}
