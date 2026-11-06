@@ -243,6 +243,10 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { ClosedTabCommandRequest, ClosedTabCommandResult } from '../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../shared/tabContextOps';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -654,6 +658,14 @@ interface MaestroAPI {
 		sendRemoteClosedTabCommandResponse: (
 			responseChannel: string,
 			result: ClosedTabCommandResult
+		) => void;
+		// `maestro-cli tab pins ...` requests; returns unsubscribe.
+		onRemoteMessagePinCommand: (
+			callback: (request: MessagePinCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMessagePinCommandResponse: (
+			responseChannel: string,
+			result: MessagePinCommandResult
 		) => void;
 		// `maestro-cli tab compact|merge|transfer` (the overlay menu's Context items);
 		// each returns unsubscribe and is answered with a TabContextOpResult.
@@ -2368,8 +2380,22 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string
 		) => Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{
+					origin?: 'user' | 'auto';
+					sessionName?: string;
+					starred?: boolean;
+					pinnedMessages?: unknown;
+				}
+			>
 		>;
+		setSessionPins: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string,
+			pins: import('../shared/messagePins').MessagePin[]
+		) => Promise<void>;
 		setSessionName: (
 			agentId: string,
 			projectPath: string,
@@ -2752,6 +2778,7 @@ interface MaestroAPI {
 						sessionName?: string;
 						starred?: boolean;
 						contextUsage?: number;
+						pinnedMessages?: unknown;
 				  }
 			>
 		>;
