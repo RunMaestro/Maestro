@@ -2,13 +2,31 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
-import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { inputAreaTheme } from '../_fixtures';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
+import type { ComposerCapabilities } from '../../../../../renderer/components/ChatComposer';
 
-const mockUpdateSessionWith = vi.fn();
-vi.mock('../../../../../renderer/stores/sessionStore', () => ({
-	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
-}));
+/** An AI-mode agent that supports every optional control. */
+const AI_CAPABILITIES: ComposerCapabilities = {
+	imageAttach: true,
+	upload: true,
+	voice: true,
+	saveToHistory: true,
+	permission: true,
+	thinking: true,
+	modelEffort: true,
+};
+
+/** Terminal mode: the toolbar offers none of the optional controls. */
+const TERMINAL_CAPABILITIES: ComposerCapabilities = {
+	imageAttach: false,
+	upload: false,
+	voice: false,
+	saveToHistory: false,
+	permission: false,
+	thinking: false,
+	modelEffort: false,
+};
 
 vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
 	...(await importOriginal<
@@ -22,20 +40,20 @@ describe('ToolbarControls', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		restorePointer();
-		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
 	});
 
 	function renderToolbar(overrides = {}) {
 		return render(
 			<ToolbarControls
-				session={createInputAreaSession()}
 				theme={inputAreaTheme}
+				capabilities={AI_CAPABILITIES}
 				isTerminalMode={false}
-				isReadOnlyMode={false}
-				canAttachImages
-				hasReadOnlyCapability
+				agentId="claude-code"
 				hasStandardCapability
+				permissionMode="full"
+				onPermissionModeChange={vi.fn()}
+				onThinkingModeChange={vi.fn()}
 				enterToSend
 				setEnterToSend={vi.fn()}
 				setStagedImages={vi.fn()}
@@ -46,7 +64,6 @@ describe('ToolbarControls', () => {
 				onToggleTabSaveToHistory={vi.fn()}
 				tabShowThinking="off"
 				onToggleTabShowThinking={vi.fn()}
-				supportsThinking
 				availableModels={[]}
 				availableEfforts={[]}
 				modelMenuOpen={false}
@@ -62,11 +79,9 @@ describe('ToolbarControls', () => {
 
 	it('renders terminal cwd in terminal mode', () => {
 		renderToolbar({
-			session: createInputAreaSession({
-				inputMode: 'terminal',
-				shellCwd: '/Users/test/project/src',
-			}),
+			capabilities: TERMINAL_CAPABILITIES,
 			isTerminalMode: true,
+			terminalCwd: '~/project/src',
 		});
 
 		expect(screen.getByText('~/project/src')).toBeInTheDocument();
@@ -89,9 +104,9 @@ describe('ToolbarControls', () => {
 		const onToggleTabSaveToHistory = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
 		const setEnterToSend = vi.fn();
-		const session = createInputAreaSession();
+		const onPermissionModeChange = vi.fn();
 		renderToolbar({
-			session,
+			onPermissionModeChange,
 			onToggleTabSaveToHistory,
 			onToggleTabShowThinking,
 			setEnterToSend,
@@ -107,23 +122,48 @@ describe('ToolbarControls', () => {
 		expect(onToggleTabShowThinking).toHaveBeenCalled();
 		expect(setEnterToSend).toHaveBeenCalledWith(false);
 
-		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
-		const updater = mockUpdateSessionWith.mock.calls[0][1];
-		const updatedSession = updater(session);
-		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-		expect(updatedTab.permissionMode).toBe('standard');
-		expect(updatedTab.readOnlyMode).toBe(false);
+		expect(onPermissionModeChange).toHaveBeenCalledWith('standard');
 	});
 
 	it('hides AI-only controls in terminal mode', () => {
 		renderToolbar({
-			session: createInputAreaSession({ inputMode: 'terminal' }),
+			capabilities: TERMINAL_CAPABILITIES,
 			isTerminalMode: true,
+			onOpenPromptComposer: undefined,
 		});
 
 		expect(screen.queryByTitle(/Open Prompt Composer/)).not.toBeInTheDocument();
 		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
 		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+	});
+
+	it('hides each optional control its capability turns off', () => {
+		renderToolbar({
+			capabilities: {
+				...AI_CAPABILITIES,
+				imageAttach: false,
+				saveToHistory: false,
+				permission: false,
+				thinking: false,
+			},
+		});
+
+		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/^Full Access/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/Show Thinking/)).not.toBeInTheDocument();
+		// Still offered: the prompt composer and the Enter toggle have no flag.
+		expect(screen.getByTitle(/Open Prompt Composer/)).toBeInTheDocument();
+		expect(screen.getByTitle(/Switch to/)).toBeInTheDocument();
+	});
+
+	it('draws toolbarExtras in the toggle group, before the Enter toggle', () => {
+		renderToolbar({ toolbarExtras: <button>Extra</button> });
+
+		const extra = screen.getByRole('button', { name: 'Extra' });
+		const enterToggle = screen.getByTitle(/Switch to/);
+		expect(extra.parentElement).toBe(enterToggle.parentElement);
+		expect(extra.nextElementSibling).toBe(enterToggle);
 	});
 
 	describe('phone layout', () => {
@@ -179,8 +219,8 @@ describe('ToolbarControls', () => {
 		});
 
 		it('writes a permission mode picked in the sheet, not the next one in the cycle', () => {
-			const session = createInputAreaSession();
-			renderPhoneToolbar({ session });
+			const onPermissionModeChange = vi.fn();
+			renderPhoneToolbar({ onPermissionModeChange });
 
 			fireEvent.click(screen.getByTestId('composer-options-button'));
 			fireEvent.click(screen.getByTestId('composer-options-access'));
@@ -188,23 +228,43 @@ describe('ToolbarControls', () => {
 			// 'readonly' proves the sheet names a mode rather than stepping.
 			fireEvent.click(screen.getByRole('button', { name: /Read Only|Plan/ }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.permissionMode).toBe('readonly');
-			expect(updatedTab.readOnlyMode).toBe(true);
+			expect(onPermissionModeChange).toHaveBeenLastCalledWith('readonly');
 		});
 
 		it('writes a thinking mode picked in the sheet', () => {
-			const session = createInputAreaSession();
-			renderPhoneToolbar({ session });
+			const onThinkingModeChange = vi.fn();
+			renderPhoneToolbar({ onThinkingModeChange });
 
 			fireEvent.click(screen.getByTestId('composer-options-button'));
 			fireEvent.click(screen.getByTestId('composer-options-thinking'));
 			fireEvent.click(screen.getByRole('button', { name: 'Sticky' }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.showThinking).toBe('sticky');
+			expect(onThinkingModeChange).toHaveBeenLastCalledWith('sticky');
+		});
+
+		it('draws the ... in terminal mode with no sheet behind it, as before', () => {
+			// Terminal mode offers no sheet section, so nothing mounts behind the
+			// button (AI mode is covered by "opens the options sheet" above).
+			renderPhoneToolbar({
+				capabilities: TERMINAL_CAPABILITIES,
+				isTerminalMode: true,
+				terminalCwd: '~/project',
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.queryByTestId('composer-options-sheet')).not.toBeInTheDocument();
+		});
+
+		it('leaves out the sheet sections the surface does not offer', () => {
+			renderPhoneToolbar({
+				capabilities: { ...TERMINAL_CAPABILITIES, saveToHistory: true },
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('composer-options-history')).toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-access')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-thinking')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-model')).not.toBeInTheDocument();
 		});
 
 		it('renders exactly one image file input', () => {
@@ -253,7 +313,7 @@ describe('ToolbarControls', () => {
 		it('hides the mic in terminal mode', () => {
 			setCoarsePointer(true);
 			renderToolbar({
-				session: createInputAreaSession({ inputMode: 'terminal' }),
+				capabilities: TERMINAL_CAPABILITIES,
 				isTerminalMode: true,
 				voiceSupported: true,
 				onToggleVoiceInput: vi.fn(),
