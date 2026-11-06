@@ -13,6 +13,7 @@
  */
 
 import type { AgentCapabilities } from '../../../shared/types';
+import { agentCanReadImages } from '../../../shared/maestro-lib/providers/capabilities';
 import type { ComposerCommandMode } from '../../utils/shellCommandInput';
 import { getCachedCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -54,12 +55,10 @@ export function canModeratorReadImages(
 	if (state) {
 		if (state.loading || state.error) return true;
 		if (state.capabilities) {
-			return state.capabilities.supportsImageInput !== false;
+			return agentCanReadImages(state.capabilities);
 		}
 	}
-	const cached = getCachedCapabilities(moderatorAgentId);
-	if (!cached) return true;
-	return cached.supportsImageInput !== false;
+	return agentCanReadImages(getCachedCapabilities(moderatorAgentId));
 }
 
 export interface ComposerCapabilities {
