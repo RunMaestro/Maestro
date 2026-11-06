@@ -743,6 +743,36 @@ narrowing the query brings the rest into view.
 	fleet. Group chats have no AI tabs to search, so the menu entry is hidden there.
 </Note>
 
+## Pinned Messages
+
+Pin a message to find it again without scrolling. Hover one of your messages or an
+agent reply and click the **pin** icon in its action bar. Click it again to unpin.
+Tool calls, thinking, and system notices cannot be pinned.
+
+A pinned message shows a pin under its timestamp, and a pin button with a count
+appears at the top right of the conversation. Click it, click a pinned message's
+pin marker, or press `Ctrl+Cmd+P` (Quick Actions: "Show Pinned Messages") to open
+the pin panel:
+
+- Type to filter. Every word must appear in the pin's name or the message text.
+- Click a pin, or press `Enter` on it, to scroll to that message. The panel stays
+  open so you can visit several. `Top` and `Bottom` jump to either end.
+- Rename a pin with the pencil icon or `F2`. Clear the name to go back to the
+  message's first line.
+- Unpin with the pin-off icon, `Delete`, or `Backspace`.
+- `Escape` clears the filter first, then closes the panel.
+
+Pins belong to the tab. They survive closing and reopening the tab (`Cmd+Shift+T`,
+History, or the sessions browser) and restarting Maestro. Forking a tab or sending it
+to another agent does not copy its pins.
+
+A pin marked **not loaded** points at a message older than what the tab has read
+back. Scroll to the top of the conversation to load earlier messages and the pin
+finds it again.
+
+Scripts use `maestro-cli tab pins` (`list`, `add`, `remove`, `rename`, `show`). See
+the [CLI docs](./cli#message-pins).
+
 ## Command Interpreter
 
 The command interpreter can be focused for a clean, terminal-only experience when you collapse the left panel.

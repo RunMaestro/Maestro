@@ -200,6 +200,11 @@ import {
 	tabShow,
 	tabClosed,
 	tabReopen,
+	tabPinsList,
+	tabPinsAdd,
+	tabPinsRemove,
+	tabPinsRename,
+	tabPinsShow,
 	tabCompact,
 	tabMerge,
 	tabTransfer,
@@ -2342,6 +2347,38 @@ tab
 	.option('--focus', 'Switch to the restored tab (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabReopen(options));
+
+// Message pins: the pin button on a message and the pin panel.
+const tabPins = tab
+	.command('pins')
+	.description("Read and change an AI tab's pinned messages (default: list them)");
+
+const tabPinsOptions = (cmd: Command): Command =>
+	cmd
+		.option('-t, --tab <tab-id>', 'The AI tab (exact, unique prefix, or "active"; default: active)')
+		.option('-a, --agent <id>', 'Whose active tab, when the tab is "active"')
+		.option('--json', 'Output as JSON (for scripting)');
+
+tabPinsOptions(tabPins.command('list', { isDefault: true }))
+	.description("List a tab's pinned messages in transcript order")
+	.action((options) => tabPinsList(options));
+
+tabPinsOptions(tabPins.command('add [message-id]'))
+	.description('Pin a message by transcript entry id, or the newest one with --last')
+	.option('--last <who>', 'Pin the newest message of this kind: user or agent')
+	.action((messageId, options) => tabPinsAdd(messageId, options));
+
+tabPinsOptions(tabPins.command('remove <pin-id>'))
+	.description('Unpin a message (pin id: exact or unique prefix)')
+	.action((pinId, options) => tabPinsRemove(pinId, options));
+
+tabPinsOptions(tabPins.command('rename <pin-id> [label...]'))
+	.description("Rename a pin; no label restores the message's own first line")
+	.action((pinId, label, options) => tabPinsRename(pinId, label, options));
+
+tabPinsOptions(tabPins.command('show'))
+	.description('Open the pin panel over the tab (selects the agent and the tab)')
+	.action((options) => tabPinsShow(options));
 
 tabTargetOptions(tab.command('compact [tab-id]'))
 	.description(

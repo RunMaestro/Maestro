@@ -186,12 +186,12 @@ export class WsRoute {
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 				// Same moment, same reason: only the upgrade carries the CLI secret.
 				...(auth.cli ? { cli: true } : {}),
-				isAuthorized: () => {
+				isAuthorized: (context) => {
 					if (admission && !admission(request)) {
 						socket.close(4403, 'Host admission expired or revoked');
 						return false;
 					}
-					const currentAuth = resolveWebRequestAuth(request);
+					const currentAuth = resolveWebRequestAuth(request, context);
 					if (!isWebRequestAuthorized(currentAuth)) {
 						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 						return false;

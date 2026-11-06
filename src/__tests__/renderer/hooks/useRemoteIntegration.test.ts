@@ -134,6 +134,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteClosedTabCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteMessagePinCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	const contextOpHandlers: Record<
 		string,
 		((request: Record<string, unknown>, responseChannel: string) => void) | undefined
@@ -270,6 +273,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteClosedTabCommandResponse: vi.fn(),
+		onRemoteMessagePinCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteMessagePinCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteMessagePinCommandResponse: vi.fn(),
 		onRemoteSummarizeContext: vi.fn().mockImplementation((handler) => {
 			contextOpHandlers.compact = handler;
 			return () => {};
@@ -1645,7 +1653,8 @@ describe('useRemoteIntegration', () => {
 
 	describe('remote agent delegation', () => {
 		it('marks a CLI dispatch in the delegating tab, never the target', () => {
-			const callerTab = createMockTab({ id: 'caller-tab', logs: [] });
+			// Only a mid-turn tab can claim a delegation (resolveDelegationSourceTab).
+			const callerTab = createMockTab({ id: 'caller-tab', logs: [], state: 'busy' });
 			const caller = createMockSession({
 				id: 'maestro',
 				aiTabs: [callerTab],
@@ -3106,6 +3115,67 @@ describe('useRemoteIntegration', () => {
 					error: 'No closed tabs to reopen',
 				})
 			);
+		});
+	});
+
+	describe('remote message-pin command', () => {
+		// `maestro-cli tab pins` blocks on this reply. The service is covered in
+		// messagePins.test.ts; this pins the wiring.
+		it('answers a list with the tab pins on its response channel', () => {
+			const tab = createMockTab({
+				id: 'tab-1',
+				logs: [{ id: 'm1', timestamp: 10, source: 'user', text: 'Hello there' }],
+				pinnedMessages: [
+					{
+						id: 'pin-1',
+						logId: 'm1',
+						source: 'user',
+						timestamp: 10,
+						title: 'Hello there',
+						excerpt: 'Hello there',
+						pinnedAt: 20,
+					},
+				],
+			});
+			const session = createMockSession({ id: 'session-1', aiTabs: [tab], activeTabId: 'tab-1' });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteMessagePinCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1', tabId: 'tab-1' },
+					'pin-response'
+				);
+			});
+
+			const send = window.maestro.process.sendRemoteMessagePinCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			expect(send).toHaveBeenCalledWith(
+				'pin-response',
+				expect.objectContaining({
+					success: true,
+					pins: [expect.objectContaining({ id: 'pin-1', label: 'Hello there', loaded: true })],
+				})
+			);
+		});
+
+		it('answers an unknown tab with a failure rather than silence', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+
+			act(() => {
+				onRemoteMessagePinCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1', tabId: 'missing' },
+					'pin-response'
+				);
+			});
+
+			const send = window.maestro.process.sendRemoteMessagePinCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			expect(send).toHaveBeenCalledWith('pin-response', {
+				success: false,
+				error: 'AI tab not found: missing',
+			});
 		});
 	});
 

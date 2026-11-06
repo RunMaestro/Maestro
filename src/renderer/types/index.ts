@@ -814,6 +814,13 @@ export interface AITab {
 	name: string | null; // User-defined name (null = show UUID octet)
 	starred: boolean; // Whether session is starred (for pill display)
 	logs: LogEntry[]; // Conversation history
+	/**
+	 * Messages pinned in this tab (see `src/shared/messagePins.ts`). Belongs to
+	 * this tab only: forking or sending the tab elsewhere does not copy it. The
+	 * closed-tab stack keeps it, and it is mirrored to the provider session's
+	 * origin record so a conversation reopened from History gets it back.
+	 */
+	pinnedMessages?: import('../../shared/messagePins').MessagePin[];
 	agentError?: AgentError; // Tab-specific agent error (shown in banner)
 	inputValue: string; // Pending input text for this tab
 	/**

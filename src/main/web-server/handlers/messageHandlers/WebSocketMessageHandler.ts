@@ -120,6 +120,7 @@ import {
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
 import { handleClosedTabCommand } from './closedTabs';
+import { handleMessagePinCommand } from './messagePins';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleLiveCommand } from './live';
 import { handleMaestroRunCommand } from './maestroRun';
@@ -398,6 +399,10 @@ export class WebSocketMessageHandler {
 
 			case 'closed_tab_command':
 				handleClosedTabCommand(this.ctx, client, message);
+				break;
+
+			case 'message_pin_command':
+				handleMessagePinCommand(this.ctx, client, message);
 				break;
 
 			case 'computer_history_command':

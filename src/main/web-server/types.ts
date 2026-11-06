@@ -15,6 +15,10 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
@@ -246,7 +250,7 @@ export interface WebClient {
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
 	/** Revalidate the upgrade session/current login policy before commands and delivery. */
-	isAuthorized?: () => boolean;
+	isAuthorized?: (context?: import('./auth/web-login-policy').WebLoginPolicyContext) => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -449,6 +453,14 @@ export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<S
 export type ClosedTabCommandCallback = (
 	request: ClosedTabCommandRequest
 ) => Promise<ClosedTabCommandResult>;
+/**
+ * One message-pin verb (`maestro-cli tab pins ...`), forwarded to the renderer
+ * that owns the agent - pins live on its tab - and answered with the tab's
+ * pins after the verb ran. Resolves rather than rejects on a miss.
+ */
+export type MessagePinCommandCallback = (
+	request: MessagePinCommandRequest
+) => Promise<MessagePinCommandResult>;
 /**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than

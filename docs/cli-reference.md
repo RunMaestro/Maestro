@@ -1886,6 +1886,61 @@ Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
 | `--focus`          | Switch to the restored tab (default)                             | -       |
 | `--json`           | Output as JSON (for scripting)                                   | -       |
 
+## `maestro-cli tab pins`
+
+Read and change an AI tab's pinned messages (default: list them)
+
+## `maestro-cli tab pins list`
+
+List a tab's pinned messages in transcript order
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins add [message-id]`
+
+Pin a message by transcript entry id, or the newest one with --last
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+| `--last <who>`       | Pin the newest message of this kind: user or agent              | -       |
+
+## `maestro-cli tab pins remove <pin-id>`
+
+Unpin a message (pin id: exact or unique prefix)
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins rename <pin-id> [label...]`
+
+Rename a pin; no label restores the message's own first line
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins show`
+
+Open the pin panel over the tab (selects the agent and the tab)
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
 ## `maestro-cli tab compact [tab-id]`
 
 Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id
