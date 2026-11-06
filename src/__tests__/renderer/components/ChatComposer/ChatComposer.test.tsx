@@ -340,6 +340,30 @@ describe('ChatComposer', () => {
 
 			expect(onChange).toHaveBeenCalledWith('@Alice ');
 		});
+
+		it('accepts a mid-sentence mention with one space and keeps the caret after it', async () => {
+			const onChange = vi.fn();
+			const sessions = [createMockSession({ id: 'agent-1', name: 'Alice' })];
+
+			render(<ControlledComposer onChange={onChange} mentionRoster={{ sessions }} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			fireEvent.change(textarea, {
+				target: { value: 'ask @A to review', selectionStart: 6, selectionEnd: 6 },
+			});
+			expect(screen.getByText('Alice')).toBeInTheDocument();
+
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+			// The accept places the caret in the frame after the controlled value commits.
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+
+			expect(onChange).toHaveBeenLastCalledWith('ask @Alice to review');
+			expect(textarea.value).toBe('ask @Alice to review');
+			expect(textarea.selectionStart).toBe('ask @Alice '.length);
+			expect(textarea.selectionEnd).toBe(textarea.selectionStart);
+		});
 	});
 
 	describe('staged images', () => {

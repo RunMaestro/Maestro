@@ -1818,7 +1818,7 @@ describe('InputArea', () => {
 			fireEvent.click(screen.getByText('src/index.ts'));
 
 			// Should replace @src/ind with @src/index.ts
-			expect(setInputValue).toHaveBeenCalledWith('check @src/index.ts  file');
+			expect(setInputValue).toHaveBeenCalledWith('check @src/index.ts file');
 			expect(setAtMentionOpen).toHaveBeenCalledWith(false);
 			expect(setAtMentionFilter).toHaveBeenCalledWith('');
 			expect(setAtMentionStartIndex).toHaveBeenCalledWith(-1);

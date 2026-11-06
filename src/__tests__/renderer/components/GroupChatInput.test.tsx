@@ -1089,7 +1089,7 @@ describe('GroupChatInput', () => {
 				expect(textarea.value).toBe('@Alice-Bob ');
 			});
 
-			it('completes quoted partial mention on single match with caret mid-token', () => {
+			it('completes quoted partial mention on single match with caret mid-token', async () => {
 				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
 				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
 				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
@@ -1099,8 +1099,12 @@ describe('GroupChatInput', () => {
 				fireEvent.keyDown(textarea, { key: 'Escape' });
 
 				fireEvent.keyDown(textarea, { key: 'Tab' });
+				await act(async () => {
+					await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+				});
 
-				expect(textarea.value).toBe('@Alice-Bob  and more');
+				expect(textarea.value).toBe('@Alice-Bob and more');
+				expect(textarea.selectionStart).toBe('@Alice-Bob '.length);
 			});
 
 			it('opens picker on multiple matches for quoted partial and accepts cleanly', () => {
