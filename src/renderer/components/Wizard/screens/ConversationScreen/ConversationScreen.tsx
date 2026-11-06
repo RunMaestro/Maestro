@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWizard } from '../../WizardContext';
+import { isImeComposing } from '../../../../utils/ime';
 import { getInitialQuestion } from '../../services/wizardPrompts';
 import type { WizardError } from '../../services/wizardErrorDetection';
 import { wizardDebugLogger } from '../../services/phaseGenerator';
@@ -202,7 +203,7 @@ export function ConversationScreen({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			if (e.key === 'Escape') {
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				previousStep();
 			}

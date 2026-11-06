@@ -33,6 +33,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from './History';
+import { isImeComposing } from '../utils/ime';
 import type { PrecomputedGraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -874,7 +875,7 @@ export const HistoryPanel = React.memo(
 									value={searchFilter}
 									onChange={(e) => setSearchFilter(e.target.value)}
 									onKeyDown={(e) => {
-										if (e.key === 'Escape') {
+										if (e.key === 'Escape' && !isImeComposing(e)) {
 											setSearchFilterOpen(false);
 											setSearchFilter('');
 											// Return focus to the list
