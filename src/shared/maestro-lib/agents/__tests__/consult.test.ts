@@ -120,6 +120,69 @@ describe('the consult service launch', () => {
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
 
+	it('does not emit a second terminal when a subscriber rejects a preparation error', async () => {
+		const service = createConsultService();
+		const onChunk = vi.fn(() => {
+			throw new Error('Subscriber failed');
+		});
+		await expect(
+			service.start(request(), {
+				runner: new FakeRunner(),
+				resolveAgent: async () => null,
+				sshStore: null,
+				getTargetSession: () => targetSession(),
+				onChunk,
+			})
+		).rejects.toThrow('Subscriber failed');
+		expect(onChunk).toHaveBeenCalledTimes(1);
+		expect(service.activeCount()).toBe(0);
+	});
+
+	it.each(['provider', 'prompt', 'cancel', 'runner-throw', 'runner-false'] as const)(
+		'reports a host nonstart before the terminal chunk only for pre-runner %s',
+		async (scenario) => {
+			const service = createConsultService();
+			const runner = new FakeRunner();
+			const order: string[] = [];
+			const notStarted = vi.fn(() => order.push('nonstart'));
+			let finishPrompt!: () => void;
+			const heldPrompt = new Promise<void>((resolve) => {
+				finishPrompt = resolve;
+			});
+			if (scenario === 'runner-throw')
+				vi.spyOn(runner, 'start').mockRejectedValue(new Error('Unknown spawn'));
+			if (scenario === 'runner-false') runner.result = { success: false };
+			const pending = service.start(request(), {
+				runner,
+				resolveAgent: async () => {
+					if (scenario === 'provider') throw new Error('Provider setup failed');
+					return claudeAgent();
+				},
+				sshStore: null,
+				getTargetSession: () => targetSession(),
+				getSystemPrompt: async () => {
+					if (scenario === 'prompt') throw new Error('Prompt setup failed');
+					if (scenario === 'cancel') {
+						service.cancel('r1');
+						await heldPrompt;
+					}
+					return undefined;
+				},
+				onNotStarted: notStarted,
+				onChunk: (chunk) => {
+					if (chunk.done) order.push('terminal');
+				},
+			});
+			finishPrompt();
+			await pending;
+			expect(order).toEqual(
+				scenario.startsWith('runner') ? ['terminal'] : ['nonstart', 'terminal']
+			);
+			expect(service.activeCount()).toBe(0);
+			if (!scenario.startsWith('runner')) expect(runner.spawns).toEqual([]);
+		}
+	);
+
 	it('spawns the consult read-only and caps maestro-p idle wait to the idle budget', async () => {
 		const { dispatch, runner } = harness();
 		await dispatch();

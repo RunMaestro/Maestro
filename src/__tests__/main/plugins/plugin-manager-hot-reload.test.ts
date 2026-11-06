@@ -18,8 +18,8 @@ import { EventEmitter } from 'events';
 
 const { forkMock } = vi.hoisted(() => ({ forkMock: vi.fn() }));
 
-// fs passes straight through. `watch` is wrapped only so a test can see the
-// listener a watcher was given (an ESM namespace cannot be spied on directly).
+// fs passes straight through. `watch` is wrapped only so startWatchingWithNudge()
+// can swap in inert watchers (an ESM namespace cannot be spied on directly).
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	const watch = vi.fn(actual.watch);
@@ -97,26 +97,36 @@ function writeCodePlugin(
 
 /**
  * Start the manager's hot-reload watcher and return `nudge()`, which delivers the
- * event the plugins-root watcher is owed for a change the test just made.
+ * one event the plugins-root watcher is owed for a change the test just made.
  *
- * macOS FSEvents can drop an event that lands right after a watch starts, and
- * every test here changes the tree microseconds after `startWatching()`. Waiting
- * on the OS alone failed a random case on most macOS runs (a scan promise that
- * never resolved, or no `onChange`). The real watcher stays in place: `nudge()`
- * calls the listener the manager registered, so the refresh still runs through
- * its own debounce and discovery. A real event arriving too only re-arms that
- * debounce, exactly as several real events for one change already do.
+ * Every watcher the manager opens here is an inert fake, so `nudge()` is the only
+ * event. The OS cannot be trusted in either direction: macOS FSEvents can drop an
+ * event that lands right after a watch starts (a scan promise that never
+ * resolved, or no `onChange`), and it can deliver one late, past the 30 ms
+ * debounce (53 ms in 1 of 30 idle runs, longer under load). A late event starts a
+ * second, unscripted discovery that breaks the exact scan and restart counts these
+ * tests assert. The refresh still runs through the manager's own listener,
+ * debounce, and discovery. `afterEach` puts the real `fs.watch` back.
  */
 function startWatchingWithNudge(manager: PluginManager, debounceMs?: number): () => void {
-	const callsBefore = vi.mocked(fs.watch).mock.calls.length;
+	const listeners = new Map<string, () => void>();
+	vi.mocked(fs.watch).mockImplementation(((target: fs.PathLike, ...rest: unknown[]) => {
+		const listener = rest.find((arg) => typeof arg === 'function') as () => void;
+		listeners.set(String(target), listener);
+		return Object.assign(new EventEmitter(), {
+			close: vi.fn(),
+			ref() {
+				return this;
+			},
+			unref() {
+				return this;
+			},
+		}) as unknown as fs.FSWatcher;
+	}) as typeof fs.watch);
 	manager.startWatching(debounceMs);
-	const listeners = vi
-		.mocked(fs.watch)
-		.mock.calls.slice(callsBefore)
-		.filter(([target]) => String(target) === pluginsDir())
-		.map(([, ...rest]) => rest.find((arg) => typeof arg === 'function') as () => void);
-	expect(listeners).toHaveLength(1);
-	return () => listeners[0]();
+	const rootListener = listeners.get(pluginsDir());
+	expect(rootListener).toBeTypeOf('function');
+	return () => rootListener!();
 }
 
 function makeSandbox(): PluginSandboxLifecycle {
@@ -157,6 +167,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// Restore the real fs.watch that startWatchingWithNudge() replaced.
+	vi.mocked(fs.watch).mockReset();
 	if (prevUserData === undefined) delete process.env.MAESTRO_USER_DATA;
 	else process.env.MAESTRO_USER_DATA = prevUserData;
 	fs.rmSync(workDir, { recursive: true, force: true });

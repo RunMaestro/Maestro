@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
 /**
  * WebSocket Message Handlers for Web Server
  *
@@ -35,6 +36,7 @@
  */
 
 import { app } from 'electron';
+import { newTabAdmission } from './tabs';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getCommitHash } from '../../../utils/build-info';
@@ -118,6 +120,7 @@ import {
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
 import { handleClosedTabCommand } from './closedTabs';
+import { handleMessagePinCommand } from './messagePins';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleLiveCommand } from './live';
 import { handleMaestroRunCommand } from './maestroRun';
@@ -277,6 +280,32 @@ export class WebSocketMessageHandler {
 	 * Bundles callbacks and the response-sending helpers for domain handler
 	 * modules extracted out of this class (e.g. `./autoRun`).
 	 */
+	startQueueHandoffFromMain(
+		...args: Parameters<
+			import('../../../pianola/pianola-new-tab-dispatch').PianolaNewTabDispatch['startQueueHandoff']
+		>
+	) {
+		return newTabAdmission(this.ctx).startQueueHandoff(...args);
+	}
+
+	prepareQueueSpawnFromMain(
+		agentId: string,
+		tabId: string,
+		itemId: string,
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(progress: ManagedQueueRoutingProgress): void },
+		stepId?: string
+	) {
+		return newTabAdmission(this.ctx).prepareQueueSpawn(
+			agentId,
+			tabId,
+			itemId,
+			assertOwner,
+			routingConsumer,
+			stepId
+		);
+	}
+
 	private get ctx(): MessageHandlerContext {
 		return {
 			callbacks: this.callbacks,
@@ -370,6 +399,10 @@ export class WebSocketMessageHandler {
 
 			case 'closed_tab_command':
 				handleClosedTabCommand(this.ctx, client, message);
+				break;
+
+			case 'message_pin_command':
+				handleMessagePinCommand(this.ctx, client, message);
 				break;
 
 			case 'computer_history_command':

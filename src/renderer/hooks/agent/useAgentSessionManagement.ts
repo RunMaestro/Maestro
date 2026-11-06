@@ -357,6 +357,7 @@ export function useAgentSessionManagement(
 					starred: isStarred,
 					usageStats: finalUsageStats,
 					origin,
+					pinnedMessages,
 				} = resumable;
 
 				// Update the session and switch to AI mode
@@ -388,6 +389,9 @@ export function useAgentSessionManagement(
 									starred: isStarred || tab.starred,
 									usageStats: finalUsageStats ?? tab.usageStats,
 									origin: origin ?? tab.origin,
+									...(!tab.pinnedMessages?.length && pinnedMessages.length > 0
+										? { pinnedMessages }
+										: {}),
 								};
 							});
 							return focusAiTabInSession({ ...s, aiTabs: updatedTabs }, freshExistingTab.id);
@@ -401,6 +405,7 @@ export function useAgentSessionManagement(
 							origin,
 							starred: isStarred,
 							usageStats: finalUsageStats,
+							pinnedMessages,
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 						});
