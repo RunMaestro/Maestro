@@ -398,18 +398,23 @@ export function applyBoardReviewResult(
 		return false;
 	const catalog = storage.captureCatalog();
 	if (
-		evaluateClaimWorker(review, review.assigneeAgentId!, {
-			...catalog,
-			canRelaxStartPolicy: true,
-			repositoryIds: catalog.repositories.filter((repo) => repo.validated).map((repo) => repo.id),
-			workers: listBoardWorkers(storage.db).map((worker) => ({
-				...worker,
-				roleRefs: Array.isArray(worker.payload.roleRefs) ? worker.payload.roleRefs : [],
-				allowedRepositoryIds: Array.isArray(worker.payload.allowedRepositoryIds)
-					? worker.payload.allowedRepositoryIds
-					: [],
-			})),
-		})
+		evaluateClaimWorker(
+			review,
+			review.assigneeAgentId!,
+			{
+				...catalog,
+				canRelaxStartPolicy: true,
+				repositoryIds: catalog.repositories.filter((repo) => repo.validated).map((repo) => repo.id),
+				workers: listBoardWorkers(storage.db).map((worker) => ({
+					...worker,
+					roleRefs: Array.isArray(worker.payload.roleRefs) ? worker.payload.roleRefs : [],
+					allowedRepositoryIds: Array.isArray(worker.payload.allowedRepositoryIds)
+						? worker.payload.allowedRepositoryIds
+						: [],
+				})),
+			},
+			'result'
+		)
 	)
 		return false;
 	work.workflow.reviewResult = {

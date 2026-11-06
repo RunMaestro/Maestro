@@ -1228,6 +1228,19 @@ export class BoardStorageFacade {
 		});
 		for (const original of stored?.cards ?? []) {
 			if (original.archived || board.cards.some((card) => card.id === original.cardId)) continue;
+			// A queued review or its completed evidence is still required while the
+			// parent awaits review/human acceptance. Both deletion paths use this plan.
+			if (
+				board.cards.some(
+					(card) =>
+						card.workflow?.reviewCardId === original.cardId &&
+						['review', 'ready-for-human'].includes(card.status)
+				)
+			)
+				throw new BoardWorkspaceStorageError(
+					'protected-field',
+					'Cannot delete a bound review while its parent awaits completion'
+				);
 			cards.push({
 				cardId: original.cardId,
 				expectedRevision: ref.cardRevisions[original.cardId],

@@ -10,7 +10,12 @@ import {
 	approveBoardWork,
 	queueBoardReviews,
 } from '../../../main/board/board-review';
-import { configureBoardStorage, updateCardStatus } from '../../../main/board/board-storage';
+import {
+	configureBoardStorage,
+	updateCardStatus,
+	deleteCard,
+	deleteCards,
+} from '../../../main/board/board-storage';
 import * as path from 'node:path';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
@@ -1979,6 +1984,67 @@ describe('work, linked review and explicit final human decision', () => {
 			expect(persisted()).toBe(after);
 			expect(db.prepare('SELECT * FROM runs').all()).toEqual(history);
 			expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+		}
+	);
+	it('accepts a finished review when intake is paused after native start', async () => {
+		setupWorkflow();
+		nativeService();
+		await runWork();
+		const review = storage
+			.read(roots[0], 'board')
+			.cards.find((c) => c.id === card().workflow!.reviewCardId)!;
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		vi.mocked(service.spawn).mockImplementation(async (_spec, callbacks) => {
+			if (!callbacks.beforeLaunch()) throw new Error('launch rejected');
+			callbacks.onStarted(202);
+			return new Promise<CardSpawnResult>((resolve) => {
+				settle = resolve;
+			});
+		});
+		const attempt = claimFor(review.id, 'reviewer');
+		if (!attempt.ok) throw new Error(attempt.reason);
+		const pending = runtime.start(attempt.runToken);
+		setBoardWorkerPaused(db, 'reviewer', true);
+		settle({ ...good, artifact: review.reviewHandoff!.artifact });
+		expect(await pending).toEqual({ ok: true });
+		expect(card()).toMatchObject({
+			status: 'ready-for-human',
+			workflow: { reviewResult: { verdict: 'clean', reviewRunId: attempt.runToken.runId } },
+		});
+		expect(card().workflow?.humanDecision).toBeUndefined();
+		expect(db.prepare('SELECT * FROM reservations').all()).toEqual([]);
+	});
+	it.each([
+		['single', false],
+		['bulk', false],
+		['single', true],
+		['bulk', true],
+	] as const)(
+		'refuses %s deletion of a bound review (completed=%s) without stranding its parent',
+		async (mode, finished) => {
+			setupWorkflow();
+			nativeService();
+			await runWork();
+			if (finished) await runReview();
+			const board = storage.read(roots[0], 'board');
+			const review = board.cards.find((c) => c.id === card().workflow!.reviewCardId)!;
+			const key = command();
+			const before = storage.workspace.readCollection(key);
+			const history = db.prepare('SELECT * FROM runs ORDER BY run_id').all();
+			expect(() =>
+				mode === 'single'
+					? deleteCard(roots[0], 'board', review.id, board.storage!.expectedRevision!)
+					: deleteCards(roots[0], board, [
+							{ cardId: review.id, cardRevision: review.storageRevision! },
+						])
+			).toThrow('bound review');
+			expect(storage.workspace.readCollection(key)).toEqual(before);
+			expect(db.prepare('SELECT * FROM runs ORDER BY run_id').all()).toEqual(history);
+			queueBoardReviews(storage);
+			expect(storage.read(roots[0], 'board').cards.map((c) => c.id)).toEqual(
+				board.cards.map((c) => c.id)
+			);
+			expect(card().status).toBe(finished ? 'ready-for-human' : 'review');
 		}
 	);
 	it('rejects a review result when reviewer membership is revoked after start', async () => {
