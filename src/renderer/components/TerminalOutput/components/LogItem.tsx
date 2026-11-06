@@ -13,6 +13,7 @@ import {
 	Share2,
 	Hammer,
 	GitFork,
+	Pin,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
 import type { LogEntry } from '../../../types';
@@ -128,6 +129,9 @@ export const LogItem = memo(
 		onPublishGist,
 		publishedGistUrl,
 		onForkConversation,
+		isPinned = false,
+		onTogglePin,
+		onShowPins,
 		bionifyReadingMode,
 		bionifyIntensity,
 		bionifyAlgorithm,
@@ -555,6 +559,19 @@ export const LogItem = memo(
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
 					<LogTimestamp timestamp={log.timestamp} />
+					{isPinned && (
+						<button
+							type="button"
+							onClick={onShowPins}
+							className="mt-0.5 sm:mt-1 inline-flex"
+							style={{ color: theme.colors.accent }}
+							title="Pinned - show pinned messages"
+							aria-label="Show pinned messages"
+							data-testid="log-pinned-marker"
+						>
+							<Pin className="w-3 h-3" fill="currentColor" />
+						</button>
+					)}
 					{/*
 						Turn time, under the clock. Only ever on an agent reply: a user
 						message is instantaneous, so the same line under it would be
@@ -1168,6 +1185,22 @@ export const LogItem = memo(
 									<GitFork className="w-3.5 h-3.5" />
 								</button>
 							)}
+						{/* Pin / unpin - user messages and agent replies. Stays visible while
+						    pinned, the way a published Gist's button does. */}
+						{(log.source === 'user' || log.source === 'stdout') && isAIMode && onTogglePin && (
+							<button
+								onClick={() => onTogglePin(log)}
+								className={`p-1.5 rounded hover:!opacity-100 ${
+									isPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+								}`}
+								style={{ color: isPinned ? theme.colors.accent : theme.colors.textDim }}
+								title={isPinned ? 'Unpin message' : 'Pin message'}
+								aria-pressed={isPinned}
+								data-testid="log-pin-toggle"
+							>
+								<Pin className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} />
+							</button>
+						)}
 						{/* Publish to GitHub Gist - only for AI responses when gh CLI available */}
 						{log.source !== 'user' && isAIMode && ghCliAvailable && onPublishGist && (
 							<button
@@ -1333,6 +1366,9 @@ export const LogItem = memo(
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
+			prevProps.isPinned === nextProps.isPinned &&
+			prevProps.onTogglePin === nextProps.onTogglePin &&
+			prevProps.onShowPins === nextProps.onShowPins &&
 			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
 			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
 			// agent, this one is a toggle the user flips while looking at the

@@ -38,6 +38,11 @@ import {
 	tabCompact,
 	tabMerge,
 	tabTransfer,
+	tabPinsList,
+	tabPinsAdd,
+	tabPinsRemove,
+	tabPinsRename,
+	tabPinsShow,
 } from '../../../cli/commands/tab';
 import { withMaestroClient, CommandTimeoutError } from '../../../cli/services/maestro-client';
 import { resolveAgentId, readActiveAgentId } from '../../../cli/services/storage';
@@ -648,6 +653,114 @@ describe('tab commands', () => {
 			expect(lastJson()).toEqual({
 				success: false,
 				error: 'Agent agent-2 is a terminal and has no AI tabs',
+			});
+		});
+	});
+
+	describe('message pins', () => {
+		const PIN = {
+			id: 'pin-1',
+			label: 'Key decision',
+			title: 'Key decision',
+			renamed: false,
+			source: 'stdout',
+			timestamp: Date.now() - 60_000,
+			pinnedAt: Date.now(),
+			messageId: 'log-1',
+			loaded: true,
+		};
+		const printedLines = () => consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+
+		it("tab pins list sends the agent's active tab and prints each pin", async () => {
+			const getPayload = mockTab({
+				success: true,
+				pins: [PIN, { ...PIN, id: 'pin-2', loaded: false }],
+			});
+			await tabPinsList({ agent: 'agent-1' });
+			expect(getPayload()).toEqual({
+				type: 'message_pin_command',
+				sessionId: 'agent-1',
+				tabId: 'tab-aaaa',
+				action: 'list',
+			});
+			expect(printedLines()).toContain('pin-1  Key decision  (agent,');
+			expect(printedLines()).toContain('not loaded');
+		});
+
+		it('tab pins list on a tab with no pins says so and exits cleanly', async () => {
+			mockTab({ success: true, pins: [] });
+			await tabPinsList({ agent: 'agent-1' });
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(consoleSpy).toHaveBeenCalledWith('No pinned messages in tab tab-aaaa');
+		});
+
+		it('tab pins add --last puts the target on the wire and reports the pin', async () => {
+			const getPayload = mockTab({ success: true, pin: PIN, pins: [PIN] });
+			await tabPinsAdd(undefined, { agent: 'agent-1', last: 'Agent' });
+			expect(getPayload()).toMatchObject({ action: 'add', last: 'agent' });
+			expect(getPayload()).not.toHaveProperty('messageId');
+			expect(consoleSpy).toHaveBeenCalledWith('Success: Pinned "Key decision" in tab tab-aaaa');
+			expect(consoleSpy).toHaveBeenCalledWith('  Pin: pin-1');
+		});
+
+		it('tab pins add with a message id reports alreadyPinned in --json', async () => {
+			const getPayload = mockTab({ success: true, pin: PIN, pins: [PIN], alreadyPinned: true });
+			await tabPinsAdd('log-1', { tab: 'tab-cccc', json: true });
+			expect(getPayload()).toMatchObject({ tabId: 'tab-cccc', action: 'add', messageId: 'log-1' });
+			expect(JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string)).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-cccc',
+				pin: PIN,
+				alreadyPinned: true,
+				pins: [PIN],
+			});
+		});
+
+		it('tab pins add refuses both a message id and --last, or neither, before sending', async () => {
+			const getPayload = mockTab({ success: true, pins: [] });
+			await expect(tabPinsAdd('log-1', { agent: 'agent-1', last: 'user' })).rejects.toThrow(
+				'__exit__'
+			);
+			await expect(tabPinsAdd(undefined, { agent: 'agent-1' })).rejects.toThrow('__exit__');
+			await expect(tabPinsAdd(undefined, { agent: 'agent-1', last: 'tool' })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(getPayload()).toEqual({});
+		});
+
+		it('tab pins remove sends the pin id', async () => {
+			const getPayload = mockTab({ success: true, pin: PIN, pins: [] });
+			await tabPinsRemove('pin-1', { agent: 'agent-1' });
+			expect(getPayload()).toMatchObject({ action: 'remove', pinId: 'pin-1' });
+			expect(consoleSpy).toHaveBeenCalledWith('Success: Unpinned "Key decision" from tab tab-aaaa');
+		});
+
+		it('tab pins rename joins the label words, and no words clears the name', async () => {
+			const getPayload = mockTab({ success: true, pin: { ...PIN, label: 'New name' }, pins: [] });
+			await tabPinsRename('pin-1', ['New', 'name'], { agent: 'agent-1' });
+			expect(getPayload()).toMatchObject({ action: 'rename', pinId: 'pin-1', label: 'New name' });
+
+			await tabPinsRename('pin-1', undefined, { agent: 'agent-1' });
+			expect(getPayload()).toMatchObject({ action: 'rename', label: '' });
+			expect(printedLines()).toContain("Cleared the pin's name");
+		});
+
+		it('tab pins show reports the count', async () => {
+			const getPayload = mockTab({ success: true, pins: [PIN] });
+			await tabPinsShow({ agent: 'agent-1' });
+			expect(getPayload()).toMatchObject({ action: 'show', tabId: 'tab-aaaa' });
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Success: Opened the pin panel on tab tab-aaaa (1 pinned)'
+			);
+		});
+
+		it("tab pins exits non-zero with the desktop's refusal", async () => {
+			mockTab({ success: false, error: 'Tab tab-aaaa has no pinned messages' });
+			await expect(tabPinsShow({ agent: 'agent-1', json: true })).rejects.toThrow('__exit__');
+			expect(JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string)).toEqual({
+				success: false,
+				error: 'Tab tab-aaaa has no pinned messages',
 			});
 		});
 	});

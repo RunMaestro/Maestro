@@ -90,6 +90,12 @@ export interface LogItemProps {
 	publishedGistUrl?: string;
 	// Fork conversation from this message (AI mode only, user messages and AI responses - source 'user' | 'ai' | 'stdout')
 	onForkConversation?: (logId: string) => void;
+	// Message pins (AI mode only, user messages and agent replies). `isPinned`
+	// is a primitive so LogItem memo equality stays cheap.
+	isPinned?: boolean;
+	onTogglePin?: (log: LogEntry) => void;
+	/** Open the pin panel (the pinned marker in the timestamp gutter). */
+	onShowPins?: () => void;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;

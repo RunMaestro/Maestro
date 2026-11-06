@@ -894,6 +894,14 @@ maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
 
+# Pinned messages of an AI tab (default: the active tab; --tab names another).
+maestro-cli tab pins                                  # list, in transcript order
+maestro-cli tab pins add --last agent                 # pin the newest agent reply
+maestro-cli tab pins add <message-id> --tab <tab-id>  # pin one message
+maestro-cli tab pins rename <pin-id> Key decision     # no label restores the title
+maestro-cli tab pins remove <pin-id>
+maestro-cli tab pins show                             # open the pin panel (moves the view)
+
 # The tab menu's Context items. Each acts on the active tab unless you name one,
 # and prints the tab it produced. Merge and transfer move the transcript verbatim.
 maestro-cli tab compact -a <agent-id>                         # summarize into a new tab
@@ -906,6 +914,10 @@ maestro-cli unbookmark <agent-id>
 ```
 
 `tab reopen` prints the restored tab's new ID; without `-a` it acts on the agent selected in the desktop, and an empty stack or a bad `--index` / `--tab` exits 1 with a message. The closed-tab stack is kept across restarts, capped at 25 entries per agent.
+
+### Message Pins
+
+`tab pins` is the CLI half of the pin button on a message and the pin panel (see [Pinned Messages](./general-usage#pinned-messages)). Every verb answers with the tab's pins after it ran, so `--json` output is enough to verify a change. Only user messages and agent replies can be pinned. `add` takes any transcript entry ID (exact or a unique prefix; a later chunk of a streamed reply pins the whole reply) or `--last user|agent`, and pinning a message twice reports `alreadyPinned` instead of failing. A pin listed as `loaded: false` points at a message older than what the tab has read back. `remove` and `rename` take a pin ID (exact or a unique prefix). `show` selects the agent and the tab, then opens the panel; it refuses a tab with no pins.
 
 `tab compact` prints the compacted tab's ID and how much smaller its context is; it refuses a tab too small to compact. `tab merge` sends into the target agent's active tab unless `--target-tab` names another (another tab of the same agent works too); with `--background` the context waits on that tab and sends when it is next opened, which the output says. `tab transfer` prints the new tab's ID in the target agent; a busy target queues the context behind its running turn. A compaction can take minutes, so the CLI waits up to 10 minutes; if any of the three runs out of time it exits 5 and says the operation may still be running, rather than reporting a failure.
 

@@ -194,6 +194,22 @@ describe('tabHelpers', () => {
 			expect(result.session.activeTabId).toBe('mock-generated-id');
 		});
 
+		it('carries pins read back with the conversation, and omits an empty list', () => {
+			const pin = {
+				id: 'pin-1',
+				logId: 'log-1',
+				source: 'user' as const,
+				timestamp: 1,
+				title: 'hello',
+				excerpt: 'hello',
+				pinnedAt: 2,
+			};
+			const session = createMockSession({ aiTabs: [] });
+
+			expect(createTab(session, { pinnedMessages: [pin] })!.tab.pinnedMessages).toEqual([pin]);
+			expect(createTab(session, { pinnedMessages: [] })!.tab).not.toHaveProperty('pinnedMessages');
+		});
+
 		it('adopts an id minted elsewhere instead of generating one', () => {
 			// A web-desktop client draws the tab the DESKTOP just minted for it. The
 			// id has to be the desktop's, or the inventory broadcast that follows
@@ -6344,6 +6360,29 @@ describe('tabHelpers', () => {
 	});
 
 	describe('markTabRunningQueuedItem', () => {
+		it.each([undefined, ''])(
+			'records a boundary for an image-only message with text=%s',
+			(text) => {
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [] });
+				const item: QueuedItem = {
+					id: 'image-job',
+					tabId: tab.id,
+					type: 'message',
+					text,
+					images: ['data:image/png;base64,AA=='],
+					timestamp: 1,
+				};
+				const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
+				expect(result.logs).toHaveLength(1);
+				expect(result.logs[0]).toMatchObject({
+					source: 'user',
+					text: '',
+					images: item.images,
+					queuedItemId: item.id,
+				});
+				expect(tab.logs).toHaveLength(0);
+			}
+		);
 		it('marks the tab busy and appends the user log for a message item', () => {
 			const tab = createMockTab({ id: 't1', state: 'idle', logs: [] });
 			const item: QueuedItem = {
