@@ -167,14 +167,14 @@ The graph reads the same three sources the Peers tab writes, and in Edit it writ
 
 ### Opening It
 
-| Where              | How                                                             | Opens on              |
-| ------------------ | --------------------------------------------------------------- | --------------------- |
-| **Hamburger menu** | **Delegation Graph**                                            | Every agent           |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                   | Every agent           |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name | That group            |
-| **Left Bar**       | Right-click a group header, then **Delegation Graph**           | That group            |
-| **Left Bar**       | Right-click a linked agent, then **View Delegation Graph**      | Its connected cluster |
-| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`        | Either of the two     |
+| Where              | How                                                                      | Opens on              |
+| ------------------ | ------------------------------------------------------------------------ | --------------------- |
+| **Hamburger menu** | **Delegation Graph**                                                     | Every agent           |
+| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                            | Every agent           |
+| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name          | That group            |
+| **Left Bar**       | Right-click a group header, then **Delegation Graph**                    | That group            |
+| **Left Bar**       | Right-click a linked agent, then **Agent Tools > View Delegation Graph** | Its connected cluster |
+| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`                 | Either of the two     |
 
 The graph has no keyboard shortcut by default. You can give it one in **Settings > Shortcuts** (see [Keyboard Shortcuts](./keyboard-shortcuts)).
 

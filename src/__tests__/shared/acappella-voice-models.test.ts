@@ -24,6 +24,8 @@ import {
 	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 	WHISPER_BASE_EN_ID,
+	WHISPER_BASE_ID,
+	WHISPER_SMALL_ID,
 	getLocalModel,
 	sumModelBytes,
 } from '../../shared/local-models/model-catalog';
@@ -46,6 +48,17 @@ import { DEFAULT_WAKE_PHRASE } from '../../shared/acappella/voice-controls';
 import { formatSize } from '../../shared/formatters';
 
 describe('a model voice shares with another consumer', () => {
+	it.each([WHISPER_BASE_ID, WHISPER_SMALL_ID])(
+		'protects %s from voice disk reclamation while assigned to Dictation',
+		(modelId) => {
+			const assigned = modelsAssignedOutsideVoice({ dictation: { type: 'local', modelId } });
+			expect(voiceModelCapability(modelId)).toBe('local-speech-to-text');
+			expect(voiceModelUsageLabel(modelId)).toBe('Voice (speech-to-text)');
+			expect(isVoiceReclaimableModelDir(modelId)).toBe(true);
+			expect(isVoiceReclaimableModelDir(modelId, assigned)).toBe(false);
+		}
+	);
+
 	it('spares a voice-capable model a non-voice task is assigned to', () => {
 		const assigned = modelsAssignedOutsideVoice({
 			dictation: { type: 'local', modelId: PARAKEET_TDT_V2_ID },

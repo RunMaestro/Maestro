@@ -51,6 +51,29 @@ describe('ModelEffortPills', () => {
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
 	});
 
+	it('names the Run on model and explains why provider model choices are overridden', () => {
+		renderPills({ runOn: 'deepseek-v4.1-flash:cloud · Ollama', modelMenuOpen: true });
+
+		expect(
+			screen.getByRole('button', { name: 'deepseek-v4.1-flash:cloud · Ollama' })
+		).toHaveAttribute('title', expect.stringContaining('overrides named provider models'));
+		expect(screen.getByText(/Run on: deepseek-v4.1-flash:cloud · Ollama\./)).toHaveTextContent(
+			'Change Run on in Edit Agent > Models.'
+		);
+		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
+	});
+
+	it('keeps the Run on model visible before provider model discovery', () => {
+		renderPills({
+			runOn: 'deepseek-v4.1-flash:cloud · Ollama',
+			availableModels: [],
+			onModelChange: undefined,
+		});
+
+		expect(screen.getByText('deepseek-v4.1-flash:cloud · Ollama')).toBeInTheDocument();
+		expect(screen.queryByText('gpt-5')).not.toBeInTheDocument();
+	});
+
 	it('filters models without case or surrounding whitespace and selects a match', () => {
 		const onModelChange = vi.fn();
 		renderPills({ modelMenuOpen: true, onModelChange });

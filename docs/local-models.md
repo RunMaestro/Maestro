@@ -650,6 +650,8 @@ Under the picker, Maestro says what the launch will do: that a source was remove
 
 A turn's pill names where it ran, in place of the model: `gpt-oss 20B (MXFP4) · Maestro`, `qwen3:latest · Ollama`.
 
+Before sending, the composer's model pill and the phone options sheet show the effective **Run on** model and source, including a tab's override. A source target overrides named provider model choices; change it in **Edit Agent > Models**. Selecting **Auto** shows Auto instead, because routing can choose a different target for the turn.
+
 ### Which providers can run on a source
 
 Maestro maps a provider only after the recipe ran against the real CLI. A provider without a recipe keeps its picker disabled and says why.

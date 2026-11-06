@@ -20,6 +20,8 @@ import {
 	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
 	WHISPER_BASE_EN_ID,
+	WHISPER_BASE_ID,
+	WHISPER_SMALL_ID,
 	getLocalModel,
 	sumModelBytes,
 } from '../local-models/model-catalog';
@@ -60,6 +62,8 @@ export const VOICE_MODEL_CAPABILITIES: Readonly<Record<string, VoiceModelCapabil
 	Object.freeze({
 		[PARAKEET_TDT_V2_ID]: 'local-speech-to-text',
 		[WHISPER_BASE_EN_ID]: 'local-speech-to-text',
+		[WHISPER_BASE_ID]: 'local-speech-to-text',
+		[WHISPER_SMALL_ID]: 'local-speech-to-text',
 		[OPENWAKEWORD_BASE_ID]: 'hands-free-wake-word',
 		[HEY_JARVIS_WAKE_ID]: 'hands-free-wake-word',
 		[KOKORO_82M_ID]: 'local-text-to-speech',

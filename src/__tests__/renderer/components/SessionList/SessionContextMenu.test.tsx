@@ -120,6 +120,7 @@ describe('SessionContextMenu', () => {
 			});
 			useSessionStore.setState({ sessions: [agent, peer] });
 			const props = renderMenu({ session: agent });
+			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 			fireEvent.click(screen.getByRole('button', { name: 'View Delegation Graph' }));
 			expect(mockOpenModal).toHaveBeenCalledWith('delegationGraph', {
 				scope: { kind: 'agent', sessionId: 'a' },
@@ -132,12 +133,14 @@ describe('SessionContextMenu', () => {
 		const agent = makeSession({ id: 'a' });
 		useSessionStore.setState({ sessions: [agent] });
 		renderMenu({ session: agent });
+		fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 		expect(screen.queryByRole('button', { name: 'View Delegation Graph' })).toBeNull();
 	});
 
 	it('offers Export Agent only when a handler is given, and fires it', () => {
 		const onExport = vi.fn();
 		const props = renderMenu({ onExport });
+		fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 		fireEvent.click(screen.getByText('Export Agent...'));
 		expect(onExport).toHaveBeenCalledTimes(1);
 		expect(props.onDismiss).toHaveBeenCalled();
@@ -145,11 +148,65 @@ describe('SessionContextMenu', () => {
 
 	it('hides Export Agent without a handler', () => {
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 		expect(screen.queryByText('Export Agent...')).not.toBeInTheDocument();
+	});
+
+	it('keeps utilities collapsed until Agent Tools opens and excludes its portal from outside clicks', () => {
+		const props = renderMenu({ onConfigureCue: vi.fn(), onExport: vi.fn() });
+		expect(screen.queryByText('Duplicate...')).not.toBeInTheDocument();
+		expect(screen.queryByText('View Git Log')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Tools' }));
+		const flyout = screen.getByTestId('session-context-flyout');
+		expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+		expect(flyout).toHaveTextContent('Configure Maestro Cue');
+		expect(flyout).toHaveTextContent('Export Agent...');
+		expect(flyout).toHaveTextContent('Copy Agent GUID');
+		fireEvent.mouseDown(screen.getByText('Duplicate...'));
+		expect(props.onDismiss).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByText('Duplicate...'));
+		expect(props.onDuplicate).toHaveBeenCalledOnce();
+		expect(props.onDismiss).toHaveBeenCalledOnce();
+	});
+
+	it('switches categories and supports entering and leaving a flyout with arrow keys', () => {
+		const props = renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
+		expect(screen.getByText('View Git Log')).toBeInTheDocument();
+		const tools = screen.getByRole('button', { name: 'Agent Tools' });
+		fireEvent.keyDown(tools, { key: 'ArrowRight' });
+		expect(screen.queryByText('View Git Log')).not.toBeInTheDocument();
+		const duplicate = screen.getByText('Duplicate...');
+		expect(duplicate).toHaveFocus();
+		fireEvent.keyDown(duplicate, { key: 'Escape' });
+		expect(screen.queryByText('Duplicate...')).not.toBeInTheDocument();
+		expect(tools).toHaveFocus();
+		expect(props.onDismiss).not.toHaveBeenCalled();
+		fireEvent.keyDown(tools, { key: 'Escape' });
+		expect(props.onDismiss).toHaveBeenCalledOnce();
+	});
+
+	it('keeps worktree creation and configuration together under Repository', () => {
+		const props = renderMenu({
+			session: makeSession({
+				worktreeConfig: { basePath: '/worktrees' } as Session['worktreeConfig'],
+			}),
+			onQuickCreateWorktree: vi.fn(),
+			onConfigureWorktrees: vi.fn(),
+		});
+		expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
+		expect(screen.getByTestId('session-context-flyout')).toContainElement(
+			screen.getByText('Configure Worktrees')
+		);
+		fireEvent.click(screen.getByText('Create Worktree'));
+		expect(props.onQuickCreateWorktree).toHaveBeenCalledOnce();
+		expect(props.onDismiss).toHaveBeenCalledOnce();
 	});
 
 	it('renders the git actions for a git agent', () => {
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 		expect(screen.getByTestId('session-context-git-log')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-git-diff')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-git-pull')).toBeInTheDocument();
@@ -160,6 +217,7 @@ describe('SessionContextMenu', () => {
 
 	it('hides the git actions for a non-git agent', () => {
 		renderMenu({ session: makeSession({ isGitRepo: false }) });
+		expect(screen.queryByRole('button', { name: /^Repository/ })).not.toBeInTheDocument();
 		expect(screen.queryByTestId('session-context-git-log')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('session-context-git-diff')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('session-context-git-pull')).not.toBeInTheDocument();
@@ -170,6 +228,7 @@ describe('SessionContextMenu', () => {
 
 	it('badges pull and push with the behind/ahead counts', () => {
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
 		expect(screen.getByTestId('session-context-git-push')).toHaveTextContent('2');
 	});
@@ -194,6 +253,9 @@ describe('SessionContextMenu', () => {
 			},
 		});
 		renderMenu();
+		expect(screen.getByTestId('session-context-repository-running')).toHaveTextContent('Pushing');
+		expect(screen.queryByTestId('session-context-git-push-running')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		expect(screen.getByTestId('session-context-git-push-running')).toBeInTheDocument();
 		// The running badge replaces the ahead count, which is stale mid-push.
@@ -225,6 +287,7 @@ describe('SessionContextMenu', () => {
 			},
 		});
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		expect(screen.getByTestId('session-context-create-pr-running')).toBeInTheDocument();
 		// Clicking the badged row re-opens the form on that same attempt.
@@ -237,6 +300,7 @@ describe('SessionContextMenu', () => {
 	// Without this the row offered a diff without saying whether there was one.
 	it('badges the diff row with the working-tree change counts', () => {
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 		const row = screen.getByTestId('session-context-git-diff');
 		expect(row).toHaveTextContent('206');
 		expect(row).toHaveTextContent('37');
@@ -252,6 +316,7 @@ describe('SessionContextMenu', () => {
 		});
 		mockGetFileCount.mockReturnValue(4);
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		const row = screen.getByTestId('session-context-git-diff');
 		expect(row).toHaveTextContent('4');
@@ -261,6 +326,7 @@ describe('SessionContextMenu', () => {
 	it('leaves the diff row unbadged on a clean tree', () => {
 		mockGetFileCount.mockReturnValue(0);
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		const row = screen.getByTestId('session-context-git-diff');
 		expect(row).toHaveTextContent(/^View Git Diff$/);
@@ -271,6 +337,7 @@ describe('SessionContextMenu', () => {
 		const props = renderMenu({
 			session: makeSession({ id: 'other-agent', cwd: '/other/repo' }),
 		});
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-git-log'));
 
@@ -283,6 +350,7 @@ describe('SessionContextMenu', () => {
 
 	it('opens the streaming runner for pull and push against this agent', () => {
 		renderMenu({ session: makeSession({ id: 'other-agent', cwd: '/other/repo' }) });
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-git-pull'));
 		expect(mockOpenModal).toHaveBeenCalledWith(
@@ -300,6 +368,7 @@ describe('SessionContextMenu', () => {
 		renderMenu({
 			session: makeSession({ inputMode: 'terminal', shellCwd: '/test/repo/packages/app' }),
 		});
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-git-push'));
 
@@ -315,6 +384,7 @@ describe('SessionContextMenu', () => {
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 			} as Partial<Session>),
 		});
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-change-branch'));
 
@@ -327,6 +397,7 @@ describe('SessionContextMenu', () => {
 	it('opens the PR modal for this agent when no explicit handler is given', () => {
 		const session = makeSession({ id: 'other-agent' });
 		renderMenu({ session });
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-create-pr'));
 
@@ -342,6 +413,7 @@ describe('SessionContextMenu', () => {
 			session: makeSession({ parentSessionId: 'parent-1', worktreeBranch: 'feature/x' }),
 			onCreatePR,
 		});
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-create-pr'));
 
@@ -352,6 +424,7 @@ describe('SessionContextMenu', () => {
 	it('hides Create Pull Request when no branch is known', () => {
 		mockGetBranchInfo.mockReturnValue({ branch: '', remote: '', ahead: 0, behind: 0 });
 		renderMenu();
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		expect(screen.queryByTestId('session-context-create-pr')).not.toBeInTheDocument();
 		// The other git actions remain available.
@@ -373,6 +446,7 @@ describe('SessionContextMenu', () => {
 		const props = renderMenu({
 			session: makeSession({ id: 'other-agent', cwd: '/other/repo' }),
 		});
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.click(screen.getByTestId('session-context-git-diff'));
 
@@ -397,6 +471,7 @@ describe('SessionContextMenu', () => {
 				{ id: 'g3', name: 'Mercury', emoji: '☿', collapsed: false },
 			],
 		});
+		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		fireEvent.mouseEnter(screen.getByText('Move to Group').closest('div') as HTMLElement);
 

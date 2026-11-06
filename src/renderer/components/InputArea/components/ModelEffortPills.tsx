@@ -25,6 +25,8 @@ interface ModelEffortPillsProps {
 	 */
 	shortcutKeys?: string[];
 	currentModel?: string;
+	/** Effective Run on model and source, when they override the provider model. */
+	runOn?: string;
 	currentEffort?: string;
 	availableModels: string[];
 	availableEfforts: string[];
@@ -51,6 +53,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	theme,
 	shortcutKeys,
 	currentModel,
+	runOn,
 	currentEffort,
 	availableModels,
 	availableEfforts,
@@ -85,10 +88,11 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 
 	return (
 		<>
-			{onModelChange && availableModels.length > 0 && (
+			{(runOn || (onModelChange && availableModels.length > 0)) && (
 				<div className="relative min-w-0 max-w-full" ref={modelMenuRef} data-tour="model-selector">
 					<button
 						onClick={() => {
+							if (!onModelChange) return;
 							setModelFilter('');
 							setModelMenuOpen(!modelMenuOpen);
 							setEffortMenuOpen(false);
@@ -100,17 +104,19 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							border: `1px solid ${theme.colors.accent}25`,
 						}}
 						title={
-							isAutoModel(currentModel) && autoModelTitle
-								? `${autoModelTitle} Click to change${shortcutSuffix(shortcutKeys)}`
-								: `Change model${shortcutSuffix(shortcutKeys)}`
+							runOn
+								? `Run on: ${runOn}. This target overrides named provider models. Change Run on in Edit Agent > Models.`
+								: isAutoModel(currentModel) && autoModelTitle
+									? `${autoModelTitle} Click to change${shortcutSuffix(shortcutKeys)}`
+									: `Change model${shortcutSuffix(shortcutKeys)}`
 						}
 					>
 						<Sparkles className="w-3 h-3 shrink-0" />
 						<span className="max-w-48 truncate">
-							{currentModel ? modelChoiceLabel(currentModel) : 'default'}
+							{runOn ?? (currentModel ? modelChoiceLabel(currentModel) : 'default')}
 						</span>
 					</button>
-					{modelMenuOpen && (
+					{modelMenuOpen && onModelChange && (
 						<div
 							ref={modelMenu.modalRef}
 							data-testid="model-picker"
@@ -121,6 +127,12 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
+							{runOn && (
+								<p className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
+									Run on: {runOn}. This target overrides named provider models. Change Run on in
+									Edit Agent &gt; Models.
+								</p>
+							)}
 							<div className="shrink-0 flex p-2">
 								<FilterInput
 									theme={theme}

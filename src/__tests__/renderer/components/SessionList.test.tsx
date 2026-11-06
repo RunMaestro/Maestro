@@ -1875,7 +1875,8 @@ describe('SessionList', () => {
 			// Open context menu
 			fireEvent.contextMenu(screen.getByText('Copy GUID Me'), { clientX: 100, clientY: 100 });
 
-			fireEvent.click(screen.getByText('Copy Agent GUID to Clipboard'));
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Tools' }));
+			fireEvent.click(screen.getByText('Copy Agent GUID'));
 
 			expect(mockClipboard.writeText).toHaveBeenCalledWith('agent-guid-1');
 		});
@@ -1912,6 +1913,7 @@ describe('SessionList', () => {
 			// Open context menu
 			fireEvent.contextMenu(screen.getByText('Duplicate Me'), { clientX: 100, clientY: 100 });
 
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Tools' }));
 			fireEvent.click(screen.getByText('Duplicate...'));
 
 			// Should NOT open the newAgentChoice modal

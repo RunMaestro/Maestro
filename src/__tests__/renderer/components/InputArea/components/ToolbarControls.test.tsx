@@ -12,6 +12,7 @@ import type { DictationTarget } from '../../../../../renderer/utils/dictationTar
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
 import { useOptionalContentFits } from '../../../../../renderer/hooks/ui/useOptionalLabelFits';
+import type { RunOnTarget } from '../../../../../shared/local-models/run-on';
 
 vi.mock('../../../../../renderer/hooks/ui/useOptionalLabelFits', () => ({
 	useOptionalContentFits: vi.fn(() => true),
@@ -43,6 +44,7 @@ describe('ToolbarControls', () => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 		vi.mocked(isWebDesktop).mockReturnValue(false);
 		vi.mocked(useOptionalContentFits).mockReturnValue(true);
+		useSettingsStore.setState({ localModelEndpoints: [] });
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -102,6 +104,80 @@ describe('ToolbarControls', () => {
 		expect(screen.getByPlaceholderText('Filter models...')).toBeInTheDocument();
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
 		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+	});
+
+	it.each([false, true])('shows the effective Run on target on phone=%s', (phone) => {
+		mockedUsePhoneLayout.mockReturnValue(phone);
+		useSettingsStore.setState({
+			localModelEndpoints: [
+				{
+					id: 'ollama',
+					name: 'Ollama',
+					kind: 'ollama',
+					baseUrl: 'http://127.0.0.1:11434',
+					enabled: true,
+				},
+			],
+		});
+		renderToolbar({
+			session: createInputAreaSession({
+				toolType: 'claude-code',
+				runOn: { type: 'source', endpointId: 'ollama', model: 'deepseek-v4.1-flash:cloud' },
+			}),
+			currentModel: 'opus[1m]',
+			availableModels: ['opus[1m]', 'sonnet'],
+			onModelChange: vi.fn(),
+		});
+		if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+
+		expect(screen.getByText('deepseek-v4.1-flash:cloud · Ollama')).toBeInTheDocument();
+		expect(screen.queryByText('opus[1m]')).not.toBeInTheDocument();
+	});
+
+	it.each([
+		[{ type: 'provider' }, 'opus[1m]'],
+		[{ type: 'source', endpointId: 'ollama', model: 'tab-model' }, 'tab-model · Ollama'],
+	] satisfies [RunOnTarget, string][])('honors the tab Run on override %j', (runOn, expected) => {
+		useSettingsStore.setState({
+			localModelEndpoints: [
+				{
+					id: 'ollama',
+					name: 'Ollama',
+					kind: 'ollama',
+					baseUrl: 'http://127.0.0.1:11434',
+					enabled: true,
+				},
+			],
+		});
+		const session = createInputAreaSession({
+			toolType: 'claude-code',
+			runOn: { type: 'source', endpointId: 'ollama', model: 'agent-model' },
+		});
+		session.aiTabs[0].runOn = runOn;
+		renderToolbar({
+			session,
+			currentModel: 'opus[1m]',
+			availableModels: ['opus[1m]'],
+			onModelChange: vi.fn(),
+		});
+
+		expect(screen.getByRole('button', { name: expected })).toBeInTheDocument();
+		expect(screen.queryByText('agent-model · Ollama')).not.toBeInTheDocument();
+	});
+
+	it('keeps Auto visible when routing may choose another Run on target', () => {
+		renderToolbar({
+			session: createInputAreaSession({
+				toolType: 'claude-code',
+				runOn: { type: 'source', endpointId: 'ollama', model: 'agent-model' },
+			}),
+			currentModel: 'auto',
+			availableModels: ['opus[1m]'],
+			onModelChange: vi.fn(),
+		});
+
+		expect(screen.getByRole('button', { name: 'Auto' })).toBeInTheDocument();
+		expect(screen.queryByText('agent-model')).not.toBeInTheDocument();
 	});
 
 	it('uses the selected tab provider for permission labels', () => {

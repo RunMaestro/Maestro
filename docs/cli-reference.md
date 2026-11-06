@@ -3452,6 +3452,35 @@ maestro-cli computer-history config --digest-source local
 
 Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
+## `maestro-cli pianola resolve <decision-id>`
+
+Resolve a persisted manager handoff after recipient and pending-ask revalidation
+
+| Option                | Description                                             | Default |
+| --------------------- | ------------------------------------------------------- | ------- |
+| `--answer <text>`     | Answer the requesting agent exactly once                | -       |
+| `--escalation <text>` | Ask the human to decide, with a concrete recommendation | -       |
+| `--background`        | Preserve the active agent and tab                       | -       |
+| `--json`              | Output as JSON                                          | -       |
+
+```bash
+maestro-cli pianola resolve <decision-id> --answer "Continue with the proposed fix" --background
+```
+
+## `maestro-cli pianola watch-scope <scope-id>`
+
+Run one registered agent/group selection under the native supervisor
+
+| Option      | Description                                 | Default |
+| ----------- | ------------------------------------------- | ------- |
+| `--once`    | Run one bounded scope cycle and exit        | -       |
+| `--dry-run` | Classify and record without sending answers | -       |
+| `--json`    | Output cycle status as JSON                 | -       |
+
+```bash
+maestro-cli pianola watch-scope <scope-id> --dry-run --once
+```
+
 ## `maestro-cli pianola watch <tab-id>`
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
@@ -3622,6 +3651,24 @@ maestro-cli pianola orchestrate <plan-id> --concurrency 2 --once
 ## `maestro-cli pianola supervise`
 
 Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
+
+## `maestro-cli pianola supervise scope`
+
+Create or replace an agent/group watch selection (new selections start paused)
+
+| Option                 | Description                        | Default |
+| ---------------------- | ---------------------------------- | ------- |
+| `--manager <agent-id>` | Manager agent id                   | -       |
+| `--label <label>`      | Selection label                    | -       |
+| `--id <scope-id>`      | Replace an existing selection      | -       |
+| `--agents <ids>`       | Comma-separated agent IDs          | -       |
+| `--groups <ids>`       | Comma-separated group IDs          | -       |
+| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
+| `--json`               | Output as JSON                     | -       |
+
+```bash
+maestro-cli pianola supervise scope --manager <agent-id> --label "Project agents" --agents <agent-id>
+```
 
 ## `maestro-cli pianola supervise watch <tabId>`
 

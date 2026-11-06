@@ -27,6 +27,7 @@ import {
 	Check,
 	Waypoints,
 	PackageOpen,
+	Wrench,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -94,7 +95,7 @@ const FLYOUT_CLOSE_DELAY_MS = 300;
 /**
  * Hover/focus open state for a nested context-menu submenu, with a grace timeout
  * so the pointer can travel from the parent row into the flyout. Shared by the
- * Move-to-Group and Move-to-Window submenus so neither reimplements it.
+ * movement and action categories so none reimplements it.
  * Placement lives in `ContextMenuFlyout` below.
  * The return type is inferred so `anchorRef` stays exactly `useRef`'s type
  * (directly ref-assignable, avoiding a null-variance mismatch on the JSX ref).
@@ -132,7 +133,13 @@ function useFlyoutSubmenu() {
 		}, FLYOUT_CLOSE_DELAY_MS);
 	};
 
-	const close = () => setShow(false);
+	const close = () => {
+		if (timeoutRef.current) {
+			clearTimeout(timeoutRef.current);
+			timeoutRef.current = null;
+		}
+		setShow(false);
+	};
 
 	return { anchorRef, flyoutRef, show, open, scheduleClose, close };
 }
@@ -204,6 +211,88 @@ function ContextMenuFlyout({
 	);
 }
 
+/** Category rows reuse the same portaled flyout and hover grace as Move to Group. */
+function ContextMenuSubmenu({
+	label,
+	icon,
+	badge,
+	submenu,
+	theme,
+	onOpen,
+	children,
+}: {
+	label: string;
+	icon: ReactNode;
+	badge?: ReactNode;
+	submenu: ReturnType<typeof useFlyoutSubmenu>;
+	theme: Theme;
+	onOpen: () => void;
+	children: ReactNode;
+}) {
+	const focusFirst = useRef(false);
+	useEffect(() => {
+		if (submenu.show && focusFirst.current) {
+			focusFirst.current = false;
+			submenu.flyoutRef.current?.querySelector('button')?.focus();
+		}
+	}, [submenu.show, submenu.flyoutRef]);
+
+	return (
+		<div
+			ref={submenu.anchorRef}
+			onMouseEnter={onOpen}
+			onMouseLeave={submenu.scheduleClose}
+			onFocus={onOpen}
+			onBlur={submenu.scheduleClose}
+			onKeyDown={(e) => {
+				if (e.key === 'ArrowRight') {
+					e.preventDefault();
+					if (submenu.show) {
+						submenu.flyoutRef.current?.querySelector('button')?.focus();
+					} else {
+						focusFirst.current = true;
+						onOpen();
+					}
+				} else if ((e.key === 'Escape' || e.key === 'ArrowLeft') && submenu.show) {
+					e.preventDefault();
+					e.stopPropagation();
+					submenu.anchorRef.current?.querySelector('button')?.focus();
+					submenu.close();
+				}
+			}}
+		>
+			<button
+				type="button"
+				aria-haspopup="menu"
+				aria-expanded={submenu.show}
+				onClick={onOpen}
+				className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-4 ${submenu.show ? 'bg-white/5' : ''}`}
+				style={{ color: theme.colors.textMain }}
+			>
+				<span className="flex items-center gap-2">
+					{icon}
+					{label}
+				</span>
+				<span className="ml-auto flex items-center gap-2">
+					{badge}
+					<ChevronRight className="w-3 h-3" />
+				</span>
+			</button>
+			{submenu.show && (
+				<ContextMenuFlyout
+					anchorRef={submenu.anchorRef}
+					flyoutRef={submenu.flyoutRef}
+					theme={theme}
+					onKeepOpen={submenu.open}
+					onScheduleClose={submenu.scheduleClose}
+				>
+					{children}
+				</ContextMenuFlyout>
+			)}
+		</div>
+	);
+}
+
 export function SessionContextMenu({
 	x,
 	y,
@@ -250,15 +339,25 @@ export function SessionContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	// One flyout state machine per submenu (Move to Group, Move to Window).
-	// Extracted so the two flyouts do not duplicate the hover/timeout logic.
+	// One shared flyout behavior for placement and hover grace across all categories.
 	const moveToGroup = useFlyoutSubmenu();
 	const moveToWindow = useFlyoutSubmenu();
+	const repository = useFlyoutSubmenu();
+	const agentTools = useFlyoutSubmenu();
 
 	// The flyouts are portaled to <body>, so they are outside `menuRef` in the
 	// DOM: without listing them here, mousedown on a submenu item would dismiss
 	// the menu before the click ever landed on the item.
-	useClickOutside([menuRef, moveToGroup.flyoutRef, moveToWindow.flyoutRef], onDismiss);
+	useClickOutside(
+		[
+			menuRef,
+			moveToGroup.flyoutRef,
+			moveToWindow.flyoutRef,
+			repository.flyoutRef,
+			agentTools.flyoutRef,
+		],
+		onDismiss
+	);
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -373,52 +472,6 @@ export function SessionContextMenu({
 				<Settings className="w-3.5 h-3.5" />
 				Edit Agent...
 			</button>
-			{delegationGraph.edges.length > 0 && (
-				<button
-					type="button"
-					onClick={() => {
-						useModalStore.getState().openModal('delegationGraph', {
-							scope: { kind: 'agent', sessionId: session.id },
-						});
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Waypoints className="w-3.5 h-3.5" />
-					View Delegation Graph
-				</button>
-			)}
-
-			{duplicateAgentBlocker(session) === null && (
-				<button
-					type="button"
-					onClick={() => {
-						onDuplicate();
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Copy className="w-3.5 h-3.5" />
-					Duplicate...
-				</button>
-			)}
-
-			{onExport && (
-				<button
-					type="button"
-					onClick={() => {
-						onExport();
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					<PackageOpen className="w-3.5 h-3.5" />
-					Export Agent...
-				</button>
-			)}
 
 			{!session.parentSessionId && !session.isPianola && (
 				<button
@@ -435,13 +488,55 @@ export function SessionContextMenu({
 				</button>
 			)}
 
+			{/* A Cappella - the same "Talk to this agent" entry the header and the
+			    command palette offer, off the one hook, so the three cannot drift. */}
+			{voiceActions.enabled && (
+				<>
+					<button
+						type="button"
+						onClick={() => {
+							// Fire-and-forget: starting a session opens a microphone and
+							// reports its own refusals, so the menu closes right away.
+							void (voiceActions.hasVoiceFloor
+								? voiceActions.endVoiceSession()
+								: voiceActions.talkToAgent());
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-talk-to-agent"
+					>
+						<Mic className="w-3.5 h-3.5" />
+						{voiceActions.hasVoiceFloor ? 'End voice session' : 'Talk to this agent'}
+						{voiceActions.wakePhrase && (
+							<span className="ml-auto text-2xs opacity-60 truncate max-w-[120px]">
+								&ldquo;{voiceActions.wakePhrase}&rdquo;
+							</span>
+						)}
+					</button>
+				</>
+			)}
+
+			{((showGroupActions && !session.parentSessionId && !session.isPianola) ||
+				showMoveToWindow) && (
+				<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			)}
+
 			{showGroupActions && !session.parentSessionId && !session.isPianola && (
 				<div
 					ref={moveToGroup.anchorRef}
 					tabIndex={0}
-					onMouseEnter={moveToGroup.open}
+					onMouseEnter={() => {
+						repository.close();
+						agentTools.close();
+						moveToGroup.open();
+					}}
 					onMouseLeave={moveToGroup.scheduleClose}
-					onFocus={moveToGroup.open}
+					onFocus={() => {
+						repository.close();
+						agentTools.close();
+						moveToGroup.open();
+					}}
 					onBlur={moveToGroup.scheduleClose}
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -539,14 +634,22 @@ export function SessionContextMenu({
 				<div
 					ref={moveToWindow.anchorRef}
 					tabIndex={0}
-					onMouseEnter={moveToWindow.open}
+					onMouseEnter={() => {
+						repository.close();
+						agentTools.close();
+						moveToWindow.open();
+					}}
 					// Don't auto-close while a row is being renamed - it would unmount the
 					// input mid-edit. The commit (Enter/blur) clears editing, after which
 					// normal close resumes.
 					onMouseLeave={() => {
 						if (!renamingWindowId) moveToWindow.scheduleClose();
 					}}
-					onFocus={moveToWindow.open}
+					onFocus={() => {
+						repository.close();
+						agentTools.close();
+						moveToWindow.open();
+					}}
 					onBlur={() => {
 						if (!renamingWindowId) moveToWindow.scheduleClose();
 					}}
@@ -693,234 +796,312 @@ export function SessionContextMenu({
 				</div>
 			)}
 
-			{/* A Cappella - the same "Talk to this agent" entry the header and the
-			    command palette offer, off the one hook, so the three cannot drift. */}
-			{voiceActions.enabled && (
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			{(gitActions.isGitRepo || showWorktreeParentSection) && (
 				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					<button
-						type="button"
-						onClick={() => {
-							// Fire-and-forget: starting a session opens a microphone and
-							// reports its own refusals, so the menu closes right away.
-							void (voiceActions.hasVoiceFloor
-								? voiceActions.endVoiceSession()
-								: voiceActions.talkToAgent());
-							onDismiss();
+					<ContextMenuSubmenu
+						label="Repository"
+						icon={<GitBranch className="w-3.5 h-3.5" />}
+						submenu={repository}
+						theme={theme}
+						onOpen={() => {
+							agentTools.close();
+							moveToGroup.close();
+							moveToWindow.close();
+							repository.open();
 						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.textMain }}
-						data-testid="session-context-talk-to-agent"
-					>
-						<Mic className="w-3.5 h-3.5" />
-						{voiceActions.hasVoiceFloor ? 'End voice session' : 'Talk to this agent'}
-						{voiceActions.wakePhrase && (
-							<span className="ml-auto text-2xs opacity-60 truncate max-w-[120px]">
-								&ldquo;{voiceActions.wakePhrase}&rdquo;
-							</span>
-						)}
-					</button>
-				</>
-			)}
-
-			{/* Git actions - mirrors the header branch pill's dropdown so the same
-			    operations are reachable from either place. */}
-			{gitActions.isGitRepo && (
-				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					<button
-						type="button"
-						onClick={() => {
-							gitActions.viewLog();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.textMain }}
-						data-testid="session-context-git-log"
-					>
-						<History className="w-3.5 h-3.5" />
-						View Git Log
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							// Fire-and-forget: the diff is fetched asynchronously and
-							// opens its own viewer, so the menu closes right away.
-							void gitActions.viewDiff();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
-						style={{ color: theme.colors.textMain }}
-						data-testid="session-context-git-diff"
-						title={formatGitChangeSummary(gitActions.changes)}
-					>
-						<span className="flex items-center gap-2">
-							<FileDiff className="w-3.5 h-3.5" />
-							View Git Diff
-						</span>
-						{/* Same badge language as the ahead/behind counts below: the row
-						    itself says whether there is anything to open. */}
-						<GitChangeCounts
-							theme={theme}
-							totals={gitActions.changes}
-							className="flex items-center gap-1.5 text-2xs"
-						/>
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							gitActions.pull();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
-						style={{ color: theme.colors.textMain }}
-						data-testid="session-context-git-pull"
-					>
-						<span className="flex items-center gap-2">
-							<ArrowDownToLine className="w-3.5 h-3.5" />
-							Git Pull
-						</span>
-						{/* A backgrounded pull outranks the behind count, which is stale
-						    until it finishes anyway. */}
-						{gitActions.pullRunning ? (
-							<GitRunningBadge
-								theme={theme}
-								className="flex items-center gap-1 text-2xs"
-								testId="session-context-git-pull-running"
-							/>
-						) : (
-							gitActions.behind > 0 && (
-								<span className="flex items-center gap-0.5 text-2xs text-red-500">
-									<ArrowDown className="w-3 h-3" />
-									{gitActions.behind}
-								</span>
-							)
-						)}
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							gitActions.push();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
-						style={{ color: theme.colors.textMain }}
-						data-testid="session-context-git-push"
-					>
-						<span className="flex items-center gap-2">
-							<ArrowUpFromLine className="w-3.5 h-3.5" />
-							Git Push
-						</span>
-						{gitActions.pushRunning ? (
-							<GitRunningBadge
-								theme={theme}
-								className="flex items-center gap-1 text-2xs"
-								testId="session-context-git-push-running"
-							/>
-						) : (
-							gitActions.ahead > 0 && (
-								<span className="flex items-center gap-0.5 text-2xs text-green-500">
-									<ArrowUp className="w-3 h-3" />
-									{gitActions.ahead}
-								</span>
-							)
-						)}
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							gitActions.switchBranch();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.textMain }}
-						data-testid="session-context-change-branch"
-					>
-						<GitBranch className="w-3.5 h-3.5" />
-						Change Branch
-					</button>
-					{createPR && (
-						<button
-							type="button"
-							onClick={() => {
-								createPR();
-								onDismiss();
-							}}
-							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-2"
-							style={{ color: theme.colors.accent }}
-							data-testid="session-context-create-pr"
-						>
-							<span className="flex items-center gap-2">
-								<GitPullRequest className="w-3.5 h-3.5" />
-								Create Pull Request
-							</span>
-							{gitActions.prRunning && (
+						badge={
+							(gitActions.pushRunning || gitActions.pullRunning || gitActions.prRunning) && (
 								<GitRunningBadge
 									theme={theme}
-									label="Creating"
+									label={[
+										gitActions.pushRunning && 'Pushing',
+										gitActions.pullRunning && 'Pulling',
+										gitActions.prRunning && 'Creating PR',
+									]
+										.filter(Boolean)
+										.join(', ')}
 									className="flex items-center gap-1 text-2xs"
-									testId="session-context-create-pr-running"
-									title={PR_RUNNING_TITLE}
+									testId="session-context-repository-running"
+									title="Git operations are running in the background - open Repository for details"
 								/>
-							)}
-						</button>
-					)}
+							)
+						}
+					>
+						{gitActions.isGitRepo && (
+							<>
+								<button
+									type="button"
+									onClick={() => {
+										gitActions.viewLog();
+										onDismiss();
+									}}
+									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+									style={{ color: theme.colors.textMain }}
+									data-testid="session-context-git-log"
+								>
+									<History className="w-3.5 h-3.5" />
+									View Git Log
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										// Fire-and-forget: the diff is fetched asynchronously and
+										// opens its own viewer, so the menu closes right away.
+										void gitActions.viewDiff();
+										onDismiss();
+									}}
+									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
+									style={{ color: theme.colors.textMain }}
+									data-testid="session-context-git-diff"
+									title={formatGitChangeSummary(gitActions.changes)}
+								>
+									<span className="flex items-center gap-2">
+										<FileDiff className="w-3.5 h-3.5" />
+										View Git Diff
+									</span>
+									{/* Same badge language as the ahead/behind counts below: the row
+						    itself says whether there is anything to open. */}
+									<GitChangeCounts
+										theme={theme}
+										totals={gitActions.changes}
+										className="flex items-center gap-1.5 text-2xs"
+									/>
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										gitActions.pull();
+										onDismiss();
+									}}
+									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
+									style={{ color: theme.colors.textMain }}
+									data-testid="session-context-git-pull"
+								>
+									<span className="flex items-center gap-2">
+										<ArrowDownToLine className="w-3.5 h-3.5" />
+										Git Pull
+									</span>
+									{/* A backgrounded pull outranks the behind count, which is stale
+						    until it finishes anyway. */}
+									{gitActions.pullRunning ? (
+										<GitRunningBadge
+											theme={theme}
+											className="flex items-center gap-1 text-2xs"
+											testId="session-context-git-pull-running"
+										/>
+									) : (
+										gitActions.behind > 0 && (
+											<span className="flex items-center gap-0.5 text-2xs text-red-500">
+												<ArrowDown className="w-3 h-3" />
+												{gitActions.behind}
+											</span>
+										)
+									)}
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										gitActions.push();
+										onDismiss();
+									}}
+									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
+									style={{ color: theme.colors.textMain }}
+									data-testid="session-context-git-push"
+								>
+									<span className="flex items-center gap-2">
+										<ArrowUpFromLine className="w-3.5 h-3.5" />
+										Git Push
+									</span>
+									{gitActions.pushRunning ? (
+										<GitRunningBadge
+											theme={theme}
+											className="flex items-center gap-1 text-2xs"
+											testId="session-context-git-push-running"
+										/>
+									) : (
+										gitActions.ahead > 0 && (
+											<span className="flex items-center gap-0.5 text-2xs text-green-500">
+												<ArrowUp className="w-3 h-3" />
+												{gitActions.ahead}
+											</span>
+										)
+									)}
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										gitActions.switchBranch();
+										onDismiss();
+									}}
+									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+									style={{ color: theme.colors.textMain }}
+									data-testid="session-context-change-branch"
+								>
+									<GitBranch className="w-3.5 h-3.5" />
+									Change Branch
+								</button>
+								{createPR && (
+									<button
+										type="button"
+										onClick={() => {
+											createPR();
+											onDismiss();
+										}}
+										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-2"
+										style={{ color: theme.colors.accent }}
+										data-testid="session-context-create-pr"
+									>
+										<span className="flex items-center gap-2">
+											<GitPullRequest className="w-3.5 h-3.5" />
+											Create Pull Request
+										</span>
+										{gitActions.prRunning && (
+											<GitRunningBadge
+												theme={theme}
+												label="Creating"
+												className="flex items-center gap-1 text-2xs"
+												testId="session-context-create-pr-running"
+												title={PR_RUNNING_TITLE}
+											/>
+										)}
+									</button>
+								)}
+							</>
+						)}
+
+						{showWorktreeParentSection && (
+							<>
+								{gitActions.isGitRepo && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+								{onQuickCreateWorktree && session.worktreeConfig && (
+									<button
+										type="button"
+										onClick={() => {
+											onQuickCreateWorktree();
+											onDismiss();
+										}}
+										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+										style={{ color: theme.colors.accent }}
+									>
+										<GitBranch className="w-3.5 h-3.5" />
+										Create Worktree
+									</button>
+								)}
+								{onConfigureWorktrees && (
+									<button
+										type="button"
+										onClick={() => {
+											onConfigureWorktrees();
+											onDismiss();
+										}}
+										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+										style={{ color: theme.colors.accent }}
+									>
+										<Settings className="w-3.5 h-3.5" />
+										Configure Worktrees
+									</button>
+								)}
+							</>
+						)}
+					</ContextMenuSubmenu>
 				</>
 			)}
-
-			{showWorktreeParentSection && (
-				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					{onQuickCreateWorktree && session.worktreeConfig && (
+			<ContextMenuSubmenu
+				label="Agent Tools"
+				icon={<Wrench className="w-3.5 h-3.5" />}
+				submenu={agentTools}
+				theme={theme}
+				onOpen={() => {
+					repository.close();
+					moveToGroup.close();
+					moveToWindow.close();
+					agentTools.open();
+				}}
+			>
+				{onConfigureCue && (
+					<>
 						<button
 							type="button"
 							onClick={() => {
-								onQuickCreateWorktree();
+								onConfigureCue();
 								onDismiss();
 							}}
 							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-							style={{ color: theme.colors.accent }}
+							style={{ color: '#06b6d4' }}
 						>
-							<GitBranch className="w-3.5 h-3.5" />
-							Create Worktree
+							<Zap className="w-3.5 h-3.5" />
+							Configure Maestro Cue
 						</button>
-					)}
-					{onConfigureWorktrees && (
-						<button
-							type="button"
-							onClick={() => {
-								onConfigureWorktrees();
-								onDismiss();
-							}}
-							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-							style={{ color: theme.colors.accent }}
-						>
-							<Settings className="w-3.5 h-3.5" />
-							Configure Worktrees
-						</button>
-					)}
-				</>
-			)}
+					</>
+				)}
 
-			{onConfigureCue && (
-				<>
-					{!showWorktreeParentSection && (
-						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					)}
+				{delegationGraph.edges.length > 0 && (
 					<button
 						type="button"
 						onClick={() => {
-							onConfigureCue();
+							useModalStore.getState().openModal('delegationGraph', {
+								scope: { kind: 'agent', sessionId: session.id },
+							});
 							onDismiss();
 						}}
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: '#06b6d4' }}
+						style={{ color: theme.colors.textMain }}
 					>
-						<Zap className="w-3.5 h-3.5" />
-						Configure Maestro Cue
+						<Waypoints className="w-3.5 h-3.5" />
+						View Delegation Graph
 					</button>
-				</>
-			)}
+				)}
+				{(onConfigureCue || delegationGraph.edges.length > 0) && (
+					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+				)}
+				{duplicateAgentBlocker(session) === null && (
+					<button
+						type="button"
+						onClick={() => {
+							onDuplicate();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Copy className="w-3.5 h-3.5" />
+						Duplicate...
+					</button>
+				)}
+
+				{onExport && (
+					<button
+						type="button"
+						onClick={() => {
+							onExport();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<PackageOpen className="w-3.5 h-3.5" />
+						Export Agent...
+					</button>
+				)}
+
+				<button
+					type="button"
+					onClick={async () => {
+						if (await safeClipboardWrite(session.id)) {
+							flashCopiedToClipboard(session.id, 'Agent GUID Copied');
+						}
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Fingerprint className="w-3.5 h-3.5" />
+					Copy Agent GUID
+				</button>
+				<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onDismiss} />
+			</ContextMenuSubmenu>
 
 			{showWorktreeChildSection && (
 				<>
@@ -942,38 +1123,22 @@ export function SessionContextMenu({
 				</>
 			)}
 
-			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onDismiss} />
-
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-
-			<button
-				type="button"
-				onClick={async () => {
-					if (await safeClipboardWrite(session.id)) {
-						flashCopiedToClipboard(session.id, 'Agent GUID Copied');
-					}
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Fingerprint className="w-3.5 h-3.5" />
-				Copy Agent GUID to Clipboard
-			</button>
-
 			{!session.parentSessionId && !session.isPianola && (
-				<button
-					type="button"
-					onClick={() => {
-						onDelete();
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.error }}
-				>
-					<Trash2 className="w-3.5 h-3.5" />
-					Remove Agent
-				</button>
+				<>
+					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					<button
+						type="button"
+						onClick={() => {
+							onDelete();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.error }}
+					>
+						<Trash2 className="w-3.5 h-3.5" />
+						Remove Agent
+					</button>
+				</>
 			)}
 		</div>
 	);

@@ -98,6 +98,35 @@ describe('ComposerOptionsSheet', () => {
 		expect(onModelChange).toHaveBeenCalledWith('');
 	});
 
+	it('names the Run on target and explains the override while keeping Auto selectable', () => {
+		const onModelChange = vi.fn();
+		renderSheet({
+			runOn: 'qwen3:latest · Ollama',
+			availableModels: ['', 'auto', 'gpt-5'],
+			onModelChange,
+		});
+		const model = screen.getByTestId('composer-options-model');
+		expect(model).toHaveTextContent('qwen3:latest · Ollama');
+		expect(model).not.toHaveTextContent('gpt-5');
+		fireEvent.click(model);
+		expect(screen.getByText(/This target overrides named provider models/)).toHaveTextContent(
+			'Change Run on in Edit Agent > Models.'
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		expect(onModelChange).toHaveBeenCalledWith('auto');
+	});
+
+	it('shows the Run on target and its explanation without provider model discovery', () => {
+		renderSheet({
+			runOn: 'qwen3:latest · Ollama',
+			availableModels: [],
+			onModelChange: undefined,
+		});
+		fireEvent.click(screen.getByTestId('composer-options-model'));
+		expect(screen.getByText(/Run on: qwen3:latest · Ollama/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: '(default)' })).not.toBeInTheDocument();
+	});
+
 	// Auto is in `availableModels` like any model (the toolbar adds it for an
 	// agent it can act on); the sheet's part is to draw the word as "Auto" and to
 	// say under it what it does.

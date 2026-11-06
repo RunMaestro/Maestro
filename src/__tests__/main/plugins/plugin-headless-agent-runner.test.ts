@@ -810,6 +810,7 @@ describe('plugin headless agent runner', () => {
 				undefined,
 				undefined,
 				false,
+				undefined,
 				{
 					consultChain,
 				}
@@ -831,9 +832,18 @@ describe('plugin headless agent runner', () => {
 			const { run, prepareSystemPrompt } = harness();
 			const consultChain = { chainId: 'chain-a', depth: 2 };
 
-			await run('agent-a', 'q', undefined, undefined, 'user', undefined, undefined, false, {
-				consultChain,
-			});
+			await run(
+				'agent-a',
+				'q',
+				undefined,
+				undefined,
+				'user',
+				undefined,
+				undefined,
+				false,
+				undefined,
+				{ consultChain }
+			);
 			expect(prepareSystemPrompt).toHaveBeenLastCalledWith(agent, consultChain);
 
 			await run('agent-a', 'q', undefined, undefined, 'user');

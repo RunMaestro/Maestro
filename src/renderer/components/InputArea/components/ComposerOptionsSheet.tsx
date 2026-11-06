@@ -53,6 +53,8 @@ interface ComposerOptionsSheetProps {
 	tabShowThinking: ThinkingMode;
 	onThinkingModeChange?: (mode: ThinkingMode) => void;
 	currentModel?: string;
+	/** Effective Run on model and source, when they override the provider model. */
+	runOn?: string;
 	availableModels: string[];
 	/** What the Auto row says for this agent. Auto itself is in `availableModels`. */
 	autoModelTitle?: string;
@@ -83,6 +85,7 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 	tabShowThinking,
 	onThinkingModeChange,
 	currentModel,
+	runOn,
 	availableModels,
 	autoModelTitle,
 	onModelChange,
@@ -216,28 +219,35 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 				</PhoneSheetSection>
 			)}
 
-			{onModelChange && availableModels.length > 0 && (
+			{(runOn || (onModelChange && availableModels.length > 0)) && (
 				<PhoneSheetSection
 					icon={Sparkles}
 					label="Model"
-					value={currentModel ? modelChoiceLabel(currentModel) : 'default'}
+					value={runOn ?? (currentModel ? modelChoiceLabel(currentModel) : 'default')}
 					accent={theme.colors.accent}
 					expanded={expanded === 'model'}
 					onToggle={() => toggle('model')}
 					theme={theme}
 					testId="composer-options-model"
 				>
-					{modelOptions.map((model) => (
-						<PhoneSheetOptionRow
-							key={model || '__default__'}
-							label={model ? modelChoiceLabel(model) : '(default)'}
-							description={isAutoModel(model) ? autoModelTitle : undefined}
-							selected={model === currentModel}
-							accent={theme.colors.accent}
-							onSelect={() => onModelChange(model)}
-							theme={theme}
-						/>
-					))}
+					{runOn && (
+						<p className="px-4 py-2 text-xs" style={{ color: theme.colors.textDim }}>
+							Run on: {runOn}. This target overrides named provider models. Change Run on in Edit
+							Agent &gt; Models.
+						</p>
+					)}
+					{onModelChange &&
+						modelOptions.map((model) => (
+							<PhoneSheetOptionRow
+								key={model || '__default__'}
+								label={model ? modelChoiceLabel(model) : '(default)'}
+								description={isAutoModel(model) ? autoModelTitle : undefined}
+								selected={model === currentModel}
+								accent={theme.colors.accent}
+								onSelect={() => onModelChange(model)}
+								theme={theme}
+							/>
+						))}
 				</PhoneSheetSection>
 			)}
 		</PhoneBottomSheet>

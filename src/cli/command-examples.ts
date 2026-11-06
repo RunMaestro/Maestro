@@ -372,6 +372,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	],
 
 	// Pianola
+	'pianola resolve': [
+		'maestro-cli pianola resolve <decision-id> --answer "Continue with the proposed fix" --background',
+	],
+	'pianola watch-scope': ['maestro-cli pianola watch-scope <scope-id> --dry-run --once'],
 	'pianola watch': ['maestro-cli pianola watch <tab-id> --agent <agent-id> --dry-run --once'],
 	'pianola rules': ['maestro-cli pianola rules --json'],
 	'pianola add-rule': [
@@ -389,6 +393,9 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'pianola plan list': ['maestro-cli pianola plan list'],
 	'pianola plan show': ['maestro-cli pianola plan show <plan-id>'],
 	'pianola orchestrate': ['maestro-cli pianola orchestrate <plan-id> --concurrency 2 --once'],
+	'pianola supervise scope': [
+		'maestro-cli pianola supervise scope --manager <agent-id> --label "Project agents" --agents <agent-id>',
+	],
 	'pianola supervise watch': ['maestro-cli pianola supervise watch <tab-id> --agent <agent-id>'],
 	'pianola supervise orchestrate': [
 		'maestro-cli pianola supervise orchestrate <plan-id> --concurrency 2',

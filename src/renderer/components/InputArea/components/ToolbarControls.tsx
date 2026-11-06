@@ -28,6 +28,7 @@ import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { useOptionalContentFits } from '../../../hooks/ui/useOptionalLabelFits';
 import { useAutoModelChoice } from '../../../hooks/agent/useAutoModelChoice';
 import { withAutoModelOption } from '../../../../shared/autoTurn';
+import { isAutoModel } from '../../../../shared/autoModel';
 import {
 	nextPermissionMode,
 	permissionModeFields,
@@ -38,7 +39,7 @@ import { formatTerminalCwd } from '../utils/terminalPath';
 import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
 import { isWebDesktop } from '../../../utils/runtimeContext';
-import { projectTabProvider } from '../../../utils/providerTabSessions';
+import { projectTabProvider, turnRunOnLabel } from '../../../utils/providerTabSessions';
 
 interface ToolbarControlsProps {
 	session: Session;
@@ -171,6 +172,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 
 	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
 	const provider = useMemo(() => projectTabProvider(session, activeTab), [session, activeTab]);
+	const endpoints = useSettingsStore((s) => s.localModelEndpoints);
+	const runOn = isAutoModel(currentModel) ? undefined : turnRunOnLabel(provider.agent, endpoints);
 	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
 	// Hide `standard` for agents without a working relay: if a stale tab is
 	// somehow in `standard`, display it as `full` so we never surface a
@@ -353,6 +356,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						tabShowThinking={tabShowThinking}
 						onThinkingModeChange={onToggleTabShowThinking ? handleThinkingModeChange : undefined}
 						currentModel={currentModel}
+						runOn={runOn}
 						availableModels={modelOptions}
 						autoModelTitle={autoModel?.title}
 						onModelChange={onModelChange}
@@ -431,6 +435,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 					theme={theme}
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
+					runOn={runOn}
 					currentEffort={currentEffort}
 					availableModels={modelOptions}
 					availableEfforts={availableEfforts}

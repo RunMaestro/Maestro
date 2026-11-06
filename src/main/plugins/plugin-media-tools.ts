@@ -7,7 +7,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { findAllBinaryPaths } from '../agents/path-prober';
 import { int16ToFloat32 } from '../../shared/audio/pcm';
-import { resolveLocalClipTranscriber } from '../local-models/dictation';
 import { readPcmWavFile } from '../utils/wav-file';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
@@ -200,6 +199,8 @@ export class PluginMediaTools {
 			if (!keys || Object.keys(p).some((k) => !keys.includes(k)))
 				throw new MediaError('MediaInvalid');
 			if (method === 'media.transcriptionStatus') {
+				// CLI settings validation imports this module without the native STT/stats runtime.
+				const { resolveLocalClipTranscriber } = await import('../local-models/dictation');
 				const snapshot = await resolveLocalClipTranscriber();
 				const runtime = snapshot.reason
 					? null
@@ -626,6 +627,10 @@ export class PluginMediaTools {
 			job.ran = true;
 			// Snapshot once, before reading audio; a later settings change never
 			// silently moves an in-flight clip to a different model or endpoint.
+			const { resolveLocalClipTranscriber } = await this.awaitLookup(
+				job,
+				import('../local-models/dictation')
+			);
 			const snapshot = await this.awaitLookup(job, resolveLocalClipTranscriber());
 			if (snapshot.reason || !snapshot.modelId) throw new MediaError('MediaUnavailable');
 			const language = fields.language ?? snapshot.language;

@@ -32,7 +32,7 @@ Each agent shows a color-coded status indicator:
 For agents whose working directory is a git repository, the same set of git actions is reachable three ways:
 
 - **Header branch pill** - hover the pill showing the current branch name (clicking works too).
-- **Left Bar right-click** - right-click the agent in the agent list.
+- **Left Bar right-click** - right-click the agent in the agent list and open **Repository**.
 - **Command palette** (`Cmd+K` / `Ctrl+K`) - search for the action by name, no mouse required.
 
 | Action                  | What it does                                                                                                  |
@@ -977,19 +977,22 @@ Right-click any agent for quick actions. The menu is headed by the name of the a
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
-- **Duplicate...** - Create a new agent with the same settings
-- **Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
+- **Agent Tools > Duplicate...** - Create a new agent with the same settings
+- **Agent Tools > Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
 - **Move to Window** - Send the agent to another Maestro window
-- **View Git Log / View Git Diff / Git Pull / Git Push / Change Branch / Create Pull Request** - the full [git menu](#git-actions), for git repositories only
-- **Create Worktree** - Create a git worktree sub-agent (if configured)
-- **Configure Worktrees** - Set up worktree configuration
-- **Configure Maestro Cue** - Set up event-driven automation for this agent
-- **Copy Agent GUID to Clipboard** - Copy the agent's unique identifier
+- **Repository** - the full [git menu](#git-actions), for git repositories only
+- **Repository > Create Worktree** - Create a git worktree sub-agent (if configured)
+- **Repository > Configure Worktrees** - Set up worktree configuration
+- **Agent Tools > Configure Maestro Cue** - Set up event-driven automation for this agent
+- **Agent Tools > View Delegation Graph** - Open the agent's delegation graph when it has connections
+- **Agent Tools > Copy Agent GUID** - Copy the agent's unique identifier
 - **Remove Agent** - Delete the agent from Maestro
 
 The git actions here act on the agent you right-clicked, so you can pull or inspect the log of a background agent without switching to it first.
+
+Hover or click **Repository** or **Agent Tools** to open its submenu. With the category focused, **Right Arrow** enters it; **Left Arrow** or **Escape** returns to the category. Press **Escape** again to close the context menu. Running Git operations remain visible on the Repository row while its submenu is closed.
 
 ### Sidebar Width
 
