@@ -48,6 +48,11 @@ import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults'
 import { normalizeRenameTabResult } from '../../types';
 
 const newTabAdmissions = new WeakMap<MessageHandlerContext['callbacks'], PianolaNewTabDispatch>();
+/**
+ * Reuse one native admission adapter per callback set. Wire current desktop/store state and
+ * main-process queue release; renderer transport responses alone do not establish a durable
+ * admission or native start.
+ */
 export function newTabAdmission(ctx: MessageHandlerContext): PianolaNewTabDispatch {
 	let adapter = newTabAdmissions.get(ctx.callbacks);
 	if (!adapter) {

@@ -589,6 +589,11 @@ export class NativeCurrentTurns {
 		return true;
 	}
 
+	/**
+	 * Read a bound native turn or return an explicit unknown, reset, gap or incomplete result.
+	 * Delta reads include only changed rows with their order evidence; returned messages are
+	 * cloned from retained state.
+	 */
 	read(
 		binding: {
 			agentId: string;
@@ -618,6 +623,10 @@ export class NativeCurrentTurns {
 					runId: null,
 					turnId: null,
 				};
+		/**
+		 * Build an empty-message status response using the observed cursor. Only incomplete results
+		 * expose an available enrollment boundary; no transcript success is inferred.
+		 */
 		const result = (status: CurrentTurnRead['status'], reason?: string): CurrentTurnRead => ({
 			version: 1,
 			cursor,

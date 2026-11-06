@@ -417,6 +417,11 @@ export function isValidHumanDecisionEvidence(raw: unknown): raw is PianolaHumanD
 	);
 }
 
+/**
+ * Validate persisted decision lifecycle shape and its guard/source bindings. Native question
+ * evidence must agree with the guard cursor and rule digest; this validator does not itself
+ * reauthorize a send.
+ */
 function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 	if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.guard) || !isRecord(raw.source))
 		return false;

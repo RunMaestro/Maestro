@@ -36,6 +36,11 @@ type MigrationStore = Pick<
 	| 'readDecisions'
 >;
 
+/**
+ * Migrate legacy watch ownership under scope and registry locks using a fresh native census.
+ * Return a configuration refusal without changing ownership when prerequisites fail; retry a
+ * changed scope identity under its own lock.
+ */
 export async function migratePianolaLegacyWatches(
 	target: PianolaSupervisedTarget,
 	deps: {
@@ -73,6 +78,11 @@ export async function migratePianolaLegacyWatches(
 		managerAgentId: target.managerAgentId,
 	};
 	let lockedScopeId = scope.id;
+	/**
+	 * Prepare the locked migration from current registry and native ownership evidence. Preserve
+	 * existing consent and unresolved state, write the checkpoint before publishing replacement
+	 * owners, and leave the registry unchanged on refusal.
+	 */
 	const migrateLocked = (
 		current: PianolaSupervisedTarget[],
 		write: PianolaFsStore['writeScopeCheckpoint']
@@ -155,6 +165,10 @@ export async function migratePianolaLegacyWatches(
 				selection: existing.selection,
 				managerAgentId: existing.managerAgentId,
 			}) !== pianolaScopeConfigurationFingerprint(scope);
+		/**
+		 * Check whether the existing configured scope already selected this tab. Evaluate native
+		 * ownership with the scope enabled to distinguish selection from its current pause state.
+		 */
 		const previouslySelected = (agentId: string, tabId: string) =>
 			!!existing?.selection &&
 			!!existing.managerAgentId &&
@@ -417,6 +431,11 @@ export async function configurePianolaScope(
 ): Promise<PianolaLegacyMigrationResult> {
 	return migratePianolaLegacyWatches(target, {
 		...deps,
+		/**
+		 * Reconcile requested scope configuration with stored consent while holding the registry
+		 * lock. Only an owner-authorized request may change selection; non-owner triggers reuse
+		 * host-stamped future-agent baselines and stored policy.
+		 */
 		prepare: (current, snapshot) => {
 			if (deps.approvalValid && !deps.approvalValid(current))
 				return 'Owner approval expired or configuration changed';

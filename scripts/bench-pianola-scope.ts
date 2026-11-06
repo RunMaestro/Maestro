@@ -177,6 +177,10 @@ for (const [name, fleet, changed, length, busy] of [
 				counts.snapshotBytes += Buffer.byteLength(JSON.stringify(snapshot));
 				return structuredClone(snapshot);
 			},
+			/**
+			 * Return an isolated benchmark transcript and count its serialized bytes. Native mode
+			 * attaches the snapshot cursor so the benchmark exercises current-turn reads.
+			 */
 			readTranscript: async (t) => {
 				const r = {
 					agentId: t.agentId,

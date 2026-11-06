@@ -49,6 +49,11 @@ export function validateCallbackRequest(
 	return {};
 }
 
+/**
+ * Register a validated completion callback for the target and return its ID or an error.
+ * Pending admissions defer spawn arming, and an already armed target cannot receive a second
+ * callback.
+ */
 export function armDispatchCallback(
 	ctx: MessageHandlerContext,
 	message: WebClientMessage,

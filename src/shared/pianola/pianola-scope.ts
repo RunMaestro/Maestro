@@ -67,6 +67,11 @@ export interface PianolaDelegationPolicy {
 	ruleSetRevision: string;
 }
 
+/**
+ * Validate and normalize the supported delegation-policy shape, returning null on invalid
+ * input. Structural validity alone does not prove owner consent or a matching current rule
+ * revision.
+ */
 export function validatePianolaDelegationPolicy(raw: unknown): PianolaDelegationPolicy | null {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 	const p = raw as Record<string, unknown>;

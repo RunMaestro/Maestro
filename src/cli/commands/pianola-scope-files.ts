@@ -24,6 +24,10 @@ export class PianolaScopeFiles {
 		private readonly signal: () => void
 	) {}
 
+	/**
+	 * Read a watched file as UTF-8, returning null only when it is absent. Permission and I/O
+	 * failures propagate to the inspection failure path.
+	 */
 	private read(file: string): string | null {
 		try {
 			return fs.readFileSync(file, 'utf8');
@@ -83,6 +87,11 @@ export class PianolaScopeFiles {
 		}
 	}
 
+	/**
+	 * Inspect passive file hints and signal changed content only after a stable read. Unstable
+	 * identities trigger another wakeup; failures invalidate the inspection without caching a
+	 * failed read.
+	 */
 	private inspect(paths = this.paths): boolean {
 		if (this.disposed) return false;
 		try {
@@ -90,6 +99,10 @@ export class PianolaScopeFiles {
 			for (const file of paths) {
 				// Reuse the store's nanosecond identity scheme for passive hints only.
 				// Commit the identity only after a stable read; never cache a failed read.
+				/**
+				 * Identify this file by nanosecond stat metadata, or mark it missing. This is a passive
+				 * change hint and grants no delivery authority.
+				 */
 				const revision = (): string => {
 					try {
 						const stat = fs.statSync(file, { bigint: true });
@@ -152,6 +165,10 @@ export class PianolaScopeFiles {
 		}
 	}
 
+	/**
+	 * Stop future inspections and close every registered filesystem watcher. Clearing the
+	 * watcher map makes repeated disposal harmless.
+	 */
 	dispose(): void {
 		this.disposed = true;
 		for (const watcher of this.watchers.values()) watcher.close();

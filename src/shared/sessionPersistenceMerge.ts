@@ -45,6 +45,11 @@ const rows: Record<string, true> = {
 	unifiedTabOrder: true,
 };
 
+/**
+ * Merge collection edits against their common baseline while preserving concurrent stored
+ * changes. Queue IDs survive type edits, newer recovery rows survive stale removals, and
+ * reordering cannot cross a held item on the same tab.
+ */
 function mergeRows(
 	incoming: RecordData[],
 	stored: RecordData[],
@@ -55,6 +60,10 @@ function mergeRows(
 ): RecordData[] {
 	// Queue item IDs identify the operation independently of its editable type.
 	// Otherwise changing the type can duplicate a held row during a merge.
+	/**
+	 * Key queue operations by ID even when their editable type changes. Other typed collections
+	 * retain type-qualified identity to avoid collisions.
+	 */
 	const key = (row: RecordData): string =>
 		queueRows ? row.id : row.type ? `${row.type}:${row.id}` : row.id;
 	if ([...incoming, ...stored, ...baseline].some((row) => !row || typeof row.id !== 'string')) {
@@ -147,6 +156,11 @@ function mergeRows(
 	return result;
 }
 
+/**
+ * Merge changed fields against a baseline while retaining concurrent stored values on
+ * conflict. Exclude host-owned admission state and optionally client/live fields,
+ * recursively merging supported row collections and tab records.
+ */
 function mergeRecord(
 	incoming: RecordData,
 	stored: RecordData,

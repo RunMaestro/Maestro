@@ -334,6 +334,10 @@ export function registerBrowserTabCallbacks(
 				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
 				let resolved = false;
 
+				/**
+				 * Resolve the new-tab response once, accepting only the owning window's sender. Clean up its
+				 * timeout/listener and normalize structured acknowledgements or the legacy boolean result.
+				 */
 				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
 					if (_event.sender !== mainWindow.webContents) return;
 					if (resolved) return;

@@ -1409,6 +1409,11 @@ export class WebServer {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
 			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
+			/**
+			 * Forward command execution to the callback registry, retaining optional receipt and
+			 * dispatch metadata. Omit unused trailing arguments to preserve legacy callback invocation
+			 * behavior.
+			 */
 			executeCommand: async (
 				sessionId: string,
 				command: string,

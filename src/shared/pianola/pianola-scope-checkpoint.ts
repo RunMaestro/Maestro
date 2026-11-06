@@ -108,6 +108,11 @@ function nonnegativeInteger(value: unknown): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+/**
+ * Validate a nullable scope cursor and its bounded optional content/question evidence.
+ * Native cursor validation checks shape; callers still have to compare it with current host
+ * state.
+ */
 export function isPianolaScopeCursor(value: unknown): value is PianolaScopeCursor | null {
 	return (
 		value === null ||

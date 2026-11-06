@@ -50,6 +50,11 @@ export function onHumanDecisionSettled(listener: () => void): () => void {
 	};
 }
 
+/**
+ * Prepare a notification for a newly settled human evidence pair. The returned closure fires
+ * listeners only if equivalent evidence was not already stored; callers invoke it after
+ * persistence.
+ */
 function decisionSettledNotification(record: PianolaDecisionRecord): () => void {
 	const candidate = settledDecisionPairs([record])[0];
 	const alreadySettled =
@@ -135,6 +140,10 @@ let artifactCleanupRequested = false;
 export function compactDispatchArtifacts(): Promise<void> {
 	return store.compactDispatchArtifacts();
 }
+/**
+ * Coalesce artifact cleanup outside synchronous journal commits. Repeat when requested
+ * during a pass and report cleanup errors before releasing the scheduled flag.
+ */
 function scheduleArtifactCleanup(): void {
 	artifactCleanupRequested = true;
 	if (artifactCleanupScheduled) return;

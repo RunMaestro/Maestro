@@ -15,6 +15,11 @@ export function createPluginSessionLifecycle(deps: {
 	setActiveSessionId: (id: string) => void;
 	getSupervisor: () => Pick<PianolaSupervisor, 'autoWatchNewSessions'> | null | undefined;
 }) {
+	/**
+	 * Create and flush a new plugin session without overwriting an existing ID. Stage native
+	 * empty-tab evidence across the flush, register watching, and return metadata only if the
+	 * created session still exists.
+	 */
 	const create = async (params: Record<string, unknown>): Promise<PluginSessionMetadata> => {
 		const now = Date.now();
 		const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
@@ -140,6 +145,11 @@ export function createPluginSessionLifecycle(deps: {
 			projectPath: cwd,
 		};
 	};
+	/**
+	 * Remove a stored plugin session and forget its native empty-creation evidence before
+	 * flushing. Retire its watch and choose a surviving active session; return false when the
+	 * session was already absent.
+	 */
 	const remove = async (sessionId: string): Promise<boolean> => {
 		const sessions = deps.readSessions();
 		if (!sessions.some((s) => s.id === sessionId)) return false;

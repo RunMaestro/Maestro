@@ -42,6 +42,11 @@ type NativeCallbacks = Partial<
 type DecisionStore = Parameters<typeof validatePianolaScopeDelivery>[2] &
 	Partial<Pick<typeof defaultStore, 'appendDecisionAsync'>>;
 
+/**
+ * Reclassify the exact pending ask against its current transcript and native request. Throw
+ * if identity, cursor, evidence or risk changed so a stale decision cannot answer a
+ * different question.
+ */
 function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
 	const cursor = record.lifecycle!.guard.cursor;
 	const history = callbacks.getSessionHistory?.(
@@ -83,6 +88,11 @@ function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
 	return classification;
 }
 
+/**
+ * Deliver an already claimed decision after rechecking native authority and risk. Journal
+ * accepted, rejected or unknown outcomes; transport uncertainty retains the hold and
+ * requires reconciliation rather than resend.
+ */
 async function sendClaimedDecision(
 	callbacks: NativeCallbacks,
 	record: PianolaDecisionRecord,

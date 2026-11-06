@@ -14,6 +14,11 @@ export interface NativeTabSession {
 	conflicted?: true;
 }
 
+/**
+ * Validate a run's native tab identity against its process and tab IDs. Return undefined for
+ * malformed metadata; a valid conflict marker remains visible to callers that must reject
+ * it.
+ */
 export function nativeTabSession(run: AgentRun): NativeTabSession | undefined {
 	const value = run.metadata?.nativeTabSession as NativeTabSession | undefined;
 	if (
@@ -32,6 +37,11 @@ export function nativeTabSession(run: AgentRun): NativeTabSession | undefined {
 	return value;
 }
 
+/**
+ * Certify a fresh provider session from native creation-bound run history. Return an empty
+ * proof for an idle unused tab, a run locator for its sole running initial turn, or
+ * undefined when freshness is uncertain.
+ */
 export function initialQueueSession(
 	runs: AgentRun[],
 	tab: {
@@ -56,6 +66,11 @@ export function initialQueueSession(
 		: undefined;
 }
 
+/**
+ * Check queue authority against the current provider session and native initial-run history.
+ * A newly announced session is accepted only after one matching, unconflicted initial run
+ * completed.
+ */
 export function queueSessionMatches(
 	record: PianolaDispatchAdmission,
 	currentSessionId: string | null | undefined,

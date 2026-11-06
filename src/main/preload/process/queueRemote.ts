@@ -26,6 +26,10 @@ export function createQueueRemoteApi() {
 				control?: PianolaQueueControl
 			) => void
 		): (() => void) => {
+			/**
+			 * Forward queue IPC arguments including held state and admission control. On synchronous
+			 * callback failure, send an explicit unsuccessful response and propagate the error.
+			 */
 			const handler = (
 				_: unknown,
 				sessionId: string,

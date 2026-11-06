@@ -95,6 +95,10 @@ export function createPianolaScopeWorkerDeps(
 		store: {
 			readSupervisorTargets: readPianolaSupervisorTargets,
 			readScopeCheckpoint: readPianolaScopeCheckpoint,
+			/**
+			 * Persist a scope checkpoint through the canonical writer. When file tracking is active,
+			 * record the exact mutation receipt to avoid treating our own write as external change.
+			 */
 			writeScopeCheckpoint: (checkpoint, durable) => {
 				if (!files) return writePianolaScopeCheckpoint(checkpoint, durable);
 				files.ownWrite(
@@ -132,6 +136,11 @@ export function createPianolaScopeWorkerDeps(
 					messages: currentTurnMessages(base),
 					currentTurn: base,
 				};
+			/**
+			 * Fetch the expected native turn, optionally relative to the cached cursor. Reject a
+			 * response for another agent, tab or cursor rather than composing unrelated transcript
+			 * evidence.
+			 */
 			const fetchTurn = async (delta: boolean) => {
 				const response = await client.sendCommand<{
 					success?: boolean;
@@ -187,6 +196,10 @@ export function createPianolaScopeWorkerDeps(
 		watch: {
 			resolveProfile: (projectPath) => getPianolaProfile(projectPath).entry,
 			readRules: readPianolaRules,
+			/**
+			 * Append decision evidence with a tracked mutation receipt when available. The canonical
+			 * writer retains responsibility for lifecycle validation and persistence.
+			 */
 			recordDecision: (record) => {
 				if (!files) return appendPianolaDecision(record);
 				files.ownWrite(path.join(getConfigDirectory(), PIANOLA_DECISIONS_FILENAME), (receipt) =>
@@ -227,6 +240,10 @@ export class PianolaScopeWakeups {
 	get generation(): number {
 		return this.membershipGeneration;
 	}
+	/**
+	 * Update wakeup filtering only for the current membership generation. An incomplete or
+	 * ambiguous census clears filters so it cannot hide later authority changes.
+	 */
 	setMembership(
 		snapshot: PianolaScopeSnapshot,
 		selection: PianolaAgentGroupSelection,
@@ -256,11 +273,20 @@ export class PianolaScopeWakeups {
 		);
 		for (const tab of snapshot.tabs) if (tab.busy !== true) this.busyOwners.delete(tab.agentId);
 	}
+	/**
+	 * Request a coalesced wakeup within 50 ms unless disposed. Wake the current waiter so it can
+	 * recalculate its deadline.
+	 */
 	signal = (): void => {
 		if (this.stopped) return;
 		this.dirtyAt = Math.min(this.dirtyAt ?? Infinity, Date.now() + 50);
 		this.wake?.();
 	};
+	/**
+	 * Translate bridge frames into census invalidation or transcript wakeups. Ignore known
+	 * unselected agents and throttle busy output, while native input requests retain the prompt
+	 * wakeup path.
+	 */
 	onFrame = (frame: Record<string, unknown>): void => {
 		if (frame.type === 'bridge.event') {
 			if (frame.channel === 'sessions:transcriptCommitted') {
@@ -309,6 +335,11 @@ export class PianolaScopeWakeups {
 	consume(): void {
 		this.dirtyAt = undefined;
 	}
+	/**
+	 * Wait until the earlier of the caller deadline and a dirty notification. Signals
+	 * recalculate that deadline; disposal terminates the wait without leaving its timer
+	 * attached.
+	 */
 	async wait(deadline: number): Promise<void> {
 		while (!this.stopped) {
 			const due = Math.min(deadline, this.dirtyAt ?? Infinity);
@@ -332,6 +363,11 @@ export class PianolaScopeWakeups {
 	}
 }
 
+/**
+ * Run bounded scope cycles against native desktop state until stopped or disabled. Explicit
+ * disable suspends the checkpoint; finalization removes signal handlers, watchers and the
+ * bridge connection.
+ */
 export async function pianolaWatchScope(
 	scopeId: string,
 	options: PianolaScopeWatchOptions
@@ -395,6 +431,10 @@ export async function pianolaWatchScope(
 						dryRun: !!options.dryRun,
 						maxTabs: 20,
 						sweep,
+						/**
+						 * Stop this cycle when a process signal arrives or Pianola is disabled. The worker checks
+						 * this predicate before further delivery work.
+						 */
 						shouldStop: () => stopped || !pianolaEnabledNow(),
 					}
 				);

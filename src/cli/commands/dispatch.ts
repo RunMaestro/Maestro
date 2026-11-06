@@ -743,6 +743,10 @@ async function runQueueDispatch(
 	}
 }
 
+/**
+ * Print the dispatch receipt and exit with the CLI error code on failure. Preserve admission
+ * and unknown outcomes in JSON so callers can reconcile without resending.
+ */
 export async function dispatch(
 	agentIdArg: string,
 	message: string,

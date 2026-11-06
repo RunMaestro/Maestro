@@ -518,6 +518,10 @@ export class PianolaSupervisor {
 					{
 						signal: new AbortController().signal,
 						unattended: true,
+						/**
+						 * Recheck the supervised child's identity and stored legacy-watch ownership before a native
+						 * send. Disabled, stopping, replaced or migrated watches lose authority immediately.
+						 */
 						assertActive: () => {
 							const current = readSupervisorTarget(target.id);
 							if (

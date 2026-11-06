@@ -44,6 +44,11 @@ function recipientFingerprint(agent: AgentRecord): string {
 		.digest('hex');
 }
 
+/**
+ * Prepare a queue routing plan from current mentions and peer permissions. Reject ambiguous
+ * recipients or mismatched mention intent; return undefined when there is no cross-agent
+ * plan and allocate step IDs only when requested.
+ */
 export function prepareQueueRouting(
 	item: PianolaQueueItem,
 	sourceAgentId: string,
@@ -95,6 +100,10 @@ export function prepareQueueRouting(
 	return { routing, targets, steps };
 }
 
+/**
+ * Rebuild recipient authority without allocating new step IDs. Throw if routing or recipient
+ * fingerprints differ from the pinned plan.
+ */
 export function assertQueueRouting(
 	pinned: PianolaQueueRouting,
 	item: PianolaQueueItem,
@@ -165,6 +174,11 @@ const routingReleases = new Map<
 	}
 >();
 
+/**
+ * Bind a guarded routing release after removing invalid or replaced entries. Capacity
+ * eviction removes future send authority while native consult supervision remains
+ * responsible for already claimed children.
+ */
 export function bindQueueRoutingRelease(
 	dispatchId: string,
 	release: NonNullable<ReturnType<typeof routingReleases.get>>
@@ -190,6 +204,11 @@ export function bindQueueConsultRelease(
 	bindQueueRoutingRelease(dispatchId, release);
 }
 
+/**
+ * Start a released consult only for the matching generation and source agent/tab. Missing or
+ * mismatched release authority rejects the promise before invoking the native start
+ * callback.
+ */
 export function startReleasedQueueConsult(
 	locator: { dispatchId: string; generation: string },
 	sourceAgentId: string,
@@ -224,6 +243,10 @@ export function forgetQueueConsultRelease(dispatchId: string): boolean {
 // Lifecycle entries cover all modes; only consult modes carry a start capability.
 export let queueRoutingEpoch = 0;
 
+/**
+ * Remove routing releases whose guards no longer authorize sends. Disposal also advances the
+ * epoch so outstanding closures cannot revive discarded release authority.
+ */
 export function sweepQueueConsultReleases(dispose = false): void {
 	if (dispose) queueRoutingEpoch++;
 	for (const [id, release] of routingReleases) {

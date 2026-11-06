@@ -109,6 +109,10 @@ export interface PianolaDispatchAdmission extends PianolaDispatchReceipt {
 export function validatePianolaDispatchAdmission(raw: unknown): PianolaDispatchAdmission | null {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 	const r = raw as PianolaDispatchAdmission;
+	/**
+	 * Accept only nonblank bounded string identifiers in this admission validator. This shape
+	 * check does not establish caller or native-run authority.
+	 */
 	const id = (v: unknown) => typeof v === 'string' && v.trim().length > 0 && v.length <= 500;
 	if (
 		r.version !== 1 ||

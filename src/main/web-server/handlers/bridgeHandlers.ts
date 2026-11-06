@@ -181,6 +181,11 @@ export async function handleBridgeInvoke<
 		clientId: client.id,
 		cli: client.cli === true,
 		// Host closure, never a bridge argument. Rechecked after native consent.
+		/**
+		 * Check that the bridge caller is still connected and authorized. Known run clients must
+		 * retain a resolvable active native binding; revoked bindings cannot fall back to ordinary
+		 * CLI authority.
+		 */
 		isCallerActive: () => {
 			if (client.socket?.readyState !== 1 || client.isAuthorized?.() !== true) return false;
 			// Run-client membership survives removal of its revoked binding. Never

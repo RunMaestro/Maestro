@@ -190,6 +190,10 @@ export function pianolaCoverageRegistryFingerprint(targets: PianolaSupervisedTar
 	);
 }
 
+/**
+ * Extract configured scopes from an unambiguous registry. Duplicate IDs or missing
+ * selection/manager configuration throw rather than yielding partial ownership information.
+ */
 function scopesFrom(targets: PianolaSupervisedTarget[]) {
 	if (new Set(targets.map((target) => target.id)).size !== targets.length)
 		throw new Error('Ambiguous Pianola registry IDs');
@@ -202,6 +206,11 @@ function scopesFrom(targets: PianolaSupervisedTarget[]) {
 		});
 }
 
+/**
+ * Require a complete, bounded census with unique owners and tabs. Validate native
+ * question/cursor bindings and empty-enrollment shape; malformed evidence raises a census
+ * error before ownership or delivery work.
+ */
 function assertSnapshot(snapshot: PianolaScopeSnapshot): void {
 	if (
 		snapshot.complete !== true ||
@@ -357,6 +366,10 @@ export function pianolaScopeBindingFingerprint(
 	});
 }
 
+/**
+ * Compare all scope transcript evidence, including content revisions, question signatures
+ * and native cursor. Equal message counts alone cannot certify the same awaiting turn.
+ */
 function sameCursor(a: PianolaScopeCursor | null, b: PianolaScopeCursor | null): boolean {
 	return (
 		a === b ||
@@ -442,6 +455,11 @@ export async function runPianolaScopeCycle(
 	let persistenceFailed = false;
 	let lastPersistedStatus = checkpoint?.status;
 	let externallySuspended = false;
+	/**
+	 * Persist cycle progress while respecting a host suspension or newer enrollment. Carry
+	 * forward durable admitted intents and latch write failure so an older in-memory cycle
+	 * cannot restore send authority.
+	 */
 	const persist = (durable = false): void => {
 		try {
 			// The host may suspend the scope while this child awaits I/O. Never
@@ -1040,6 +1058,11 @@ export async function runPianolaScopeCycle(
 			)
 				continue;
 			let latestRecord: PianolaDecisionRecord | undefined;
+			/**
+			 * Capture the exact decision, enrollment, binding and transcript evidence required for
+			 * delivery. Native questions also pin the request and rule revision used to authorize an
+			 * answer.
+			 */
 			const deliveryGuard = (record: PianolaDecisionRecord): PianolaScopeDeliveryGuard => ({
 				scopeId,
 				enrollmentRevision: checkpoint.enrollmentRevision,
@@ -1058,6 +1081,11 @@ export async function runPianolaScopeCycle(
 					: {}),
 				cursor: tab.cursor!,
 			});
+			/**
+			 * Recheck actionable post-baseline evidence against a fresh registry and native census
+			 * before delivery. Reject changed ownership, pause, cursor or question rules and return a
+			 * guard bound to the current decision.
+			 */
 			const guard = async (): Promise<PianolaScopeDeliveryGuard> => {
 				const messageId = latestRecord?.classification.evidence.messageId;
 				if (
@@ -1132,6 +1160,11 @@ export async function runPianolaScopeCycle(
 				saved.state,
 				{
 					...deps.watch,
+					/**
+					 * Journal the worker's decision without overwriting a native admission or response received
+					 * during an await. Preserve revision checks and mark definite pre-admission refusal rejected
+					 * so it is not misread as unknown delivery.
+					 */
 					recordDecision: (record) => {
 						const current = deps.store
 							.readDecisions()

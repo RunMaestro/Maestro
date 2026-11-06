@@ -35,6 +35,11 @@ function parseEnqueueFailureReason(raw: unknown): EnqueueCommandFailureReason | 
 	return ENQUEUE_FAILURE_REASONS.find((reason) => reason === raw);
 }
 
+/**
+ * Wire renderer queue operations to the window owning each session. Keep native release and
+ * durability confirmation callbacks on the main-process path; renderer replies describe
+ * queue outcomes rather than native spawn proof.
+ */
 export function registerQueueCallbacks(
 	server: WebServer,
 	deps: Pick<

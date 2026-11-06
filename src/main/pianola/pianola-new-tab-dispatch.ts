@@ -91,6 +91,10 @@ class NewTabSpawnFences {
 		entry.guard = guard;
 		entry.started = started;
 	}
+	/**
+	 * Run the held process's final admission guard, forwarding its native boundary. An unarmed
+	 * hold throws; an unrelated process with no hold needs no admission check here.
+	 */
 	assertReady(processId: string, boundaryId?: string) {
 		const entry = this.held.get(processId);
 		if (!entry) return;
@@ -137,6 +141,10 @@ class NewTabSpawnFences {
 				entry.beforeSpawn?.();
 			},
 			{
+				/**
+				 * Release a hold only when this claim still owns its entry and native nonstart is proven.
+				 * Notify the admission writer after removing that exact entry.
+				 */
 				notStarted: () => {
 					// Only the owner of this claim can conclude a proven nonstart.
 					if (this.held.get(processId) === entry) {
@@ -148,6 +156,10 @@ class NewTabSpawnFences {
 		);
 	}
 
+	/**
+	 * Bind native run capture only to the matching claimed dispatch and queue item. A capture
+	 * veto leaves the hold intact; accepted capture also registers subsequent run updates.
+	 */
 	captured(processId: string, runId: string, dispatchId?: string, queueItemId?: string) {
 		const entry = this.held.get(processId);
 		if (
@@ -162,6 +174,10 @@ class NewTabSpawnFences {
 		}
 	}
 
+	/**
+	 * Acknowledge start only for the held dispatch and queue identity. Notify its owner, remove
+	 * the hold and return the captured run ID when available.
+	 */
 	started(processId: string, runId?: string, dispatchId?: string, queueItemId?: string) {
 		const entry = this.held.get(processId);
 		if (
@@ -307,6 +323,11 @@ export class PianolaNewTabDispatch {
 			...deps,
 			readSnapshot: async () => deps.snapshot(),
 			queueSnapshot: () => this.snapshot(),
+			/**
+			 * Require a complete native census and exclusive active scope ownership for the target.
+			 * Reject changed bindings, pause and unrelated busy work; the caller may explicitly prove
+			 * ownership of its local run.
+			 */
 			assertTargetReady: (receipt, fingerprint, ownsLocalRun) => {
 				const snapshot = this.snapshot();
 				const tab = snapshot.tabs.find(
@@ -344,10 +365,19 @@ export class PianolaNewTabDispatch {
 				)
 					throw new Error('DispatchTargetUnavailable');
 			},
+			/**
+			 * Arm the admitted tab before invoking renderer transport. Return accepted only after native
+			 * start capture; renderer success without capture remains unknown, while a final
+			 * pre-transport guard failure is rejected.
+			 */
 			release: async (receipt, admissionGuard) => {
 				const request = this.requests.get(receipt.dispatchId);
 				if (!request || !receipt.targetTabId) throw new Error('DispatchIntentUnavailable');
 				const identity = this.identities.get(receipt.dispatchId);
+				/**
+				 * Recheck admission and the pinned target creation/provider identity. Throw before transport
+				 * if the tab was replaced or rebound.
+				 */
 				const guard = () => {
 					admissionGuard();
 					if (identity) {
@@ -601,6 +631,10 @@ export class PianolaNewTabDispatch {
 		});
 	}
 
+	/**
+	 * Cancel only an admission belonging to the named agent and tab. Revoke routing release
+	 * authority before cancelling the queue item and callback.
+	 */
 	cancelQueueItem(agentId: string, tabId: string, itemId: string) {
 		const record = this.deps.store.readDispatchAdmission(itemId);
 		if (record?.targetAgentId !== agentId || record.targetTabId !== tabId) return;
@@ -608,6 +642,10 @@ export class PianolaNewTabDispatch {
 		cancelPianolaQueueItem(this.deps.store, this.registry(), agentId, tabId, itemId, revoked);
 	}
 
+	/**
+	 * Start a queued handoff only when its durable admission belongs to the source tab. Delegate
+	 * generation and recipient validation to the native admission service.
+	 */
 	startQueueHandoff(
 		sourceAgentId: string,
 		sourceTabId: string,
@@ -629,10 +667,19 @@ export class PianolaNewTabDispatch {
 		);
 	}
 
+	/**
+	 * Resolve the injected callback registry, falling back to the process registry. Return
+	 * undefined when neither registry is available.
+	 */
 	private registry() {
 		return this.deps.callbackRegistry?.() ?? getDispatchCallbackRegistry();
 	}
 
+	/**
+	 * Snapshot callback registration and native caller identity for later reconstruction. Return
+	 * undefined for an absent callback and throw when its owner or required tab cannot be
+	 * established.
+	 */
 	private queueCallbackProof(callbackId: string) {
 		const entry = this.registry()?.get(callbackId);
 		if (!entry) return undefined;
@@ -723,6 +770,10 @@ export class PianolaNewTabDispatch {
 				throw new Error('DispatchQueueLocalUnavailable');
 			let callbackId = record.queuePrepare.callbackId;
 			const registry = this.registry();
+			/**
+			 * Revalidate the pending callback against its captured registration, owner and tab
+			 * generation. Expired, changed or already consumed callbacks cannot authorize queue release.
+			 */
 			const callbackGuard = () => {
 				if (!callbackId) return;
 				const proof = record.queuePrepare!.callbackProof;
@@ -848,6 +899,10 @@ export class PianolaNewTabDispatch {
 			const submitted = !record.queuePrepare.item.crossAgentMention
 				? nativeCurrentTurns.readQueuedAdmission(agentId, tabId, record.queuePrepare.item)
 				: undefined;
+			/**
+			 * Require the same released queue generation before rechecking owner, callback and routing
+			 * guards. Cancellation or a changed phase invalidates this local spawn attempt.
+			 */
 			const guard = () => {
 				const current = this.deps.store.readDispatchAdmission(itemId);
 				if (
@@ -874,6 +929,10 @@ export class PianolaNewTabDispatch {
 			let capturedRunId: string | undefined;
 			let nativeLocalBound = false;
 			let uncertain = false;
+			/**
+			 * Persist a local routing-step mutation only for the pinned intent and release generation.
+			 * Throw on concurrent replacement instead of journaling against a different operation.
+			 */
 			const updateLocal = (
 				mutate: (step: NonNullable<typeof local>, current: NonNullable<typeof record>) => void
 			) => {
@@ -891,6 +950,11 @@ export class PianolaNewTabDispatch {
 				mutate(step, current);
 				this.deps.store.writeDispatchAdmission(current);
 			};
+			/**
+			 * Reconcile local native run evidence with this queue release and tab creation identity.
+			 * Persist bounded terminal output on real completion; mismatches or write failures retire
+			 * release authority and retain unknown state.
+			 */
 			const observeLocal = (run: AgentRun, terminalOutput?: string) => {
 				if (!local || uncertain) return;
 				try {
@@ -999,6 +1063,10 @@ export class PianolaNewTabDispatch {
 							}
 						: undefined,
 					runUpdated: local ? observeLocal : undefined,
+					/**
+					 * Accept capture only when the expected local run can be reconciled without uncertainty. A
+					 * nonlocal callback is released and notified only after native capture.
+					 */
 					captured: (runId) => {
 						if (local) {
 							capturedRunId = runId;
@@ -1015,6 +1083,10 @@ export class PianolaNewTabDispatch {
 						}
 						return !uncertain;
 					},
+					/**
+					 * Cancel the pending callback after proven native nonstart and reconcile the admission as
+					 * rejected. Report reconciliation failure through the host error handler.
+					 */
 					notStarted: () => {
 						if (callbackId) registry?.cancel(callbackId);
 						void this.admission.reconcile(itemId, 'rejected').catch(this.deps.onReconcileError);

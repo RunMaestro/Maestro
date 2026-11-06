@@ -202,6 +202,10 @@ export class PianolaDispatchAdmissionService {
 			throw new Error('PianolaPolicyChanged');
 		const policyFingerprint = hash({ scope: pianolaScopeConfigurationFingerprint(scope), policy });
 		// Synchronous final fence. Adapter additionally verifies the held native tab/queue identity.
+		/**
+		 * Recheck caller authority, feature enablement, target registry and rule revision. Throw on
+		 * any policy change before the admitted operation proceeds.
+		 */
 		const guard = () => {
 			assertAuthority();
 			if (
@@ -371,6 +375,10 @@ export class PianolaDispatchAdmissionService {
 				record.targetAgentId,
 				auth.snapshot.owners
 			);
+			/**
+			 * Require the enrolled tab and armed checkpoint to retain their configuration and binding.
+			 * Recheck target readiness immediately before releasing this admission.
+			 */
 			const guard = () => {
 				auth.guard();
 				const checkpoint = this.deps.store.readScopeCheckpoint(record.scopeId);
@@ -515,6 +523,10 @@ export class PianolaDispatchAdmissionService {
 			if (!this.deps.releaseQueueItem || !this.deps.queueSnapshot)
 				throw new Error('DispatchQueueDrainUnavailable');
 			const authority = record.queueAuthority;
+			/**
+			 * Reject queue authority outside its accepted lifetime, including a clock moving before
+			 * acceptance. Expiry cannot be extended by a renderer receipt.
+			 */
 			const assertAuthority = () => {
 				const now = (this.deps.now ?? Date.now)();
 				if (now < authority.acceptedAt || now >= authority.expiresAt)
@@ -527,6 +539,10 @@ export class PianolaDispatchAdmissionService {
 				record.targetTabId
 			);
 			this.checkPolicy(record, auth);
+			/**
+			 * Revalidate queue admission, owner policy, native session and routing before release. A
+			 * busy tab is allowed only when native capture proves it is this release's own local run.
+			 */
 			const guard = (ownLocal = false) => {
 				if (this.disposed) throw new Error('DispatchAdmissionDisposed');
 				const current = this.deps.store.readDispatchAdmission(dispatchId);
@@ -676,6 +692,11 @@ export class PianolaDispatchAdmissionService {
 					.filter((r) => r.sessionId === `${record.targetAgentId}-ai-${record.targetTabId}`)
 					.map((r) => r.id)
 			);
+			/**
+			 * Fingerprint immutable queue intent and routing recipients while excluding mutable
+			 * progress. Later guards compare this identity so terminal updates do not authorize a
+			 * different operation.
+			 */
 			const routingIdentity = (value: PianolaDispatchAdmission) =>
 				canonicalJson({
 					item: value.queuePrepare?.item,
@@ -694,6 +715,11 @@ export class PianolaDispatchAdmissionService {
 				});
 			const pinnedRouting = routingIdentity(record);
 			const releaseEpoch = queueRoutingEpoch;
+			/**
+			 * Verify this release still belongs to the current routing epoch and pinned admission.
+			 * Reject superseding native runs; only this release's captured local run may use the
+			 * owned-run guard.
+			 */
 			const routingGuard = () => {
 				if (releaseEpoch !== queueRoutingEpoch)
 					throw new Error('DispatchRoutingReleaseUnavailable');
@@ -733,6 +759,11 @@ export class PianolaDispatchAdmissionService {
 			}
 			if (record.queueRouting) {
 				const terminals = new Map<string, string>();
+				/**
+				 * Build local continuation context only from authenticated, successful routing terminals.
+				 * Parallel routing also requires the matching initial local result; missing or changed
+				 * replies throw before a send.
+				 */
 				const localPrompt = () => {
 					routingGuard();
 					const current = this.deps.store.readDispatchAdmission(dispatchId)!;
@@ -1008,6 +1039,11 @@ export class PianolaDispatchAdmissionService {
 		else release.localPrompt();
 		return {
 			generation: release.generation,
+			/**
+			 * Validate the routing phase required by a pending local continuation. Before parallel or
+			 * handoff reply notification, use the release guard; otherwise require usable local reply
+			 * context.
+			 */
 			guard: () => {
 				if (['parallel', 'handoff'].includes(routing?.routing ?? '') && !release.replyNotified)
 					release.guard();
@@ -1059,6 +1095,11 @@ export class PianolaDispatchAdmissionService {
 			);
 			if (!record || !step || step.status !== 'prepared')
 				throw new Error('DispatchRoutingAlreadyClaimedOrUnavailable');
+			/**
+			 * Return the handoff answer only after its native local run completed successfully. Require
+			 * the bounded terminal to agree with the run's redacted answer tail; other routing kinds
+			 * have no handoff answer.
+			 */
 			const handoffAnswer = () => {
 				if (kind !== 'handoff') return undefined;
 				release.guard();
@@ -1089,6 +1130,11 @@ export class PianolaDispatchAdmissionService {
 			const source = this.deps
 				.routingSnapshot?.()
 				.agents.find((a) => a.id === record.targetAgentId);
+			/**
+			 * Mutate and persist the exact routing step in the current release generation. Once all
+			 * terminals are present, retire unused release authority without creating another send
+			 * opportunity.
+			 */
 			const update = (mutate: (s: NonNullable<typeof step>) => void) => {
 				const current = this.deps.store.readDispatchAdmission(dispatchId);
 				const saved = current?.queueRouting?.steps.find(
@@ -1116,6 +1162,11 @@ export class PianolaDispatchAdmissionService {
 			let nativeEndObserved = false;
 			let confirmedNonstart = false;
 			let journalUncertain = false;
+			/**
+			 * Retire release authority after a journal failure and report both persistence errors.
+			 * Best-effort unknown state preserves any terminal already on disk and never resets a step
+			 * for retry.
+			 */
 			const journalFailure = (error: unknown) => {
 				journalUncertain = true;
 				forgetQueueConsultRelease(dispatchId);
@@ -1142,6 +1193,11 @@ export class PianolaDispatchAdmissionService {
 				}
 			};
 			let pendingTerminal: CrossAgentResponseChunk | undefined;
+			/**
+			 * Consume only chunks bound to this routing request and source tab. A done chunk becomes
+			 * terminal authority only after native exit or proven nonstart; journal uncertainty
+			 * suppresses success and further delivery authority.
+			 */
 			const consumeChunk = (nativeChunk: CrossAgentResponseChunk, deliver = true): void => {
 				const terminal = boundPianolaQueueTerminal({
 					text: nativeChunk.chunk,
@@ -1243,6 +1299,10 @@ export class PianolaDispatchAdmissionService {
 					...opts,
 					writable: kind === 'handoff',
 					nativeAdmission: {
+						/**
+						 * Record native proof that the consult did not start. Settle a retained terminal without
+						 * delivering its display chunk for a second time.
+						 */
 						notStarted: () => {
 							confirmedNonstart = true;
 							if (pendingTerminal) {
@@ -1251,6 +1311,11 @@ export class PianolaDispatchAdmissionService {
 								consumeChunk(terminal, false);
 							}
 						},
+						/**
+						 * Claim the consult immediately before native spawn after rechecking owner, release and
+						 * handoff output. Persist unknown before claiming so a crash cannot make a potentially
+						 * started child retryable.
+						 */
 						beforeSpawn: () => {
 							if (nativeClaimed) throw new Error('DispatchRoutingAlreadyStarting');
 							if (handoffAnswer() !== answer) throw new Error('DispatchRoutingLocalOutputChanged');
@@ -1270,6 +1335,10 @@ export class PianolaDispatchAdmissionService {
 								throw new Error('DispatchRoutingReleaseUnavailable');
 							nativeClaimed = true;
 						},
+						/**
+						 * Record the real native exit and settle any earlier retained done chunk. Reusing the chunk
+						 * with delivery disabled avoids a second answer notification.
+						 */
 						ended: () => {
 							nativeEndObserved = true;
 							if (pendingTerminal) {
@@ -1278,6 +1347,11 @@ export class PianolaDispatchAdmissionService {
 								consumeChunk(terminal, false);
 							}
 						},
+						/**
+						 * Journal process identity only for a claimed native start. A fast exit or journal
+						 * uncertainty wins over a late start acknowledgement; persistence failures enter the
+						 * uncertainty path.
+						 */
 						started: (processId, pid) => {
 							// A fast real exit may already have committed terminal evidence.
 							if (nativeEndObserved || journalUncertain) return;

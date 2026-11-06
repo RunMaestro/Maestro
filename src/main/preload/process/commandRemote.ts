@@ -39,6 +39,11 @@ export function createCommandRemoteApi() {
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
+			/**
+			 * Decode legacy receipt-channel arguments and forward remote command delivery metadata.
+			 * Preserve a separate Pianola dispatch ID when provided; log synchronous callback failures
+			 * through the main-process logger.
+			 */
 			const handler = (
 				_: unknown,
 				sessionId: string,

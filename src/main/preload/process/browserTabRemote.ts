@@ -248,6 +248,10 @@ export function createBrowserTabRemoteApi() {
 				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		): (() => void) => {
+			/**
+			 * Forward the new-tab IPC request including admission control to the renderer callback. A
+			 * synchronous callback failure sends a negative response and rethrows the error.
+			 */
 			const handler = (
 				_: unknown,
 				sessionId: string,

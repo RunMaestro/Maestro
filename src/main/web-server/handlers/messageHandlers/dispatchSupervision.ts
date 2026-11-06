@@ -8,6 +8,11 @@ import { pianolaScopeSnapshotFromDesktop } from '../../../../shared/pianola/pian
 import type { PianolaDispatchReceipt } from '../../../../shared/pianola/pianola-dispatch';
 import type { MessageHandlerContext, WebClient } from './types';
 
+/**
+ * Classify a dispatch using native caller identity, stored admissions and current scope
+ * ownership. Return explicit refusal receipts for unavailable authority; a prior journaled
+ * dispatch stays managed to prevent ordinary-path resend.
+ */
 export function dispatchSupervision(
 	ctx: MessageHandlerContext,
 	client: WebClient,

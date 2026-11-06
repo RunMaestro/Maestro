@@ -35,11 +35,21 @@ export interface CaptureListenerOptions {
 	preparePrompt?: CaptureServiceDeps['preparePrompt'];
 }
 
+/**
+ * Wire native process events into durable run capture and current-turn tracking. Return the
+ * capture service; spawn capture binds admission to the native run rather than a renderer
+ * acknowledgement.
+ */
 export function setupAgentRunCapture(
 	processManager: ProcessManager,
 	options: CaptureListenerOptions = {}
 ): AgentRunCaptureService {
 	const service = new AgentRunCaptureService({
+		/**
+		 * Resolve exactly one stored tab matching the native process and provider session. Return
+		 * undefined for ambiguous or changed bindings so capture cannot certify another tab's
+		 * creation identity.
+		 */
 		resolveNativeTabSession: (input) => {
 			const matches = getSessionsStore()
 				.get('sessions', [])
