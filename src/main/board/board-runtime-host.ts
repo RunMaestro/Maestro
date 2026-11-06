@@ -35,8 +35,15 @@ export async function executeBoardRuntimeCommand(
 	/** Only a validated native main-frame IPC action supplies this principal. */
 	principal?: string
 ): Promise<BoardCommandResult> {
-	if (command.action === 'control' && command.operation === 'accept' && !principal)
-		throw new BoardStorageError('protected-field', 'Final approval requires a native human action');
+	if (
+		command.action === 'control' &&
+		['accept', 'recover'].includes(command.operation) &&
+		!principal
+	)
+		throw new BoardStorageError(
+			'protected-field',
+			'Final approval or recovery requires a native human action'
+		);
 	const { target } = command;
 	const sourceIdentity = getBoardStorage().sourceIdentity(target.sourceKey);
 	const requestedQuery = {
@@ -253,7 +260,9 @@ export async function executeBoardRuntimeCommand(
 		const approved = runtime.approve(key, target.expectedRevision, command.cardRevision, principal);
 		return approved.ok ? { ok: true, value: { accepted: true } } : failed(approved.reason);
 	}
-	const token = command.runToken;
+	const token =
+		command.runToken ??
+		(command.operation === 'recover' ? activeBoardRunToken(runtime, key) : undefined);
 	if (!token && (command.operation === 'hold' || command.operation === 'resume')) {
 		runtime.storage.setIdleHold(
 			key,
@@ -268,10 +277,28 @@ export async function executeBoardRuntimeCommand(
 		return failed('attempt-conflict');
 	const expected = { collection: target.expectedRevision, card: command.cardRevision };
 	const result =
-		command.operation === 'hold' ? runtime.hold(token, expected) : runtime.resume(token, expected);
+		command.operation === 'recover'
+			? runtime.recover(token, expected, principal)
+			: command.operation === 'hold'
+				? runtime.hold(token, expected)
+				: runtime.resume(token, expected);
 	return result.ok
 		? { ok: true, value: { accepted: true, runToken: token } }
 		: failed(result.reason);
+}
+
+/** Resolve the persisted attempt for this exact collection/card, shared by desktop control paths. */
+function activeBoardRunToken(
+	runtime: BoardRuntime,
+	key: import('./board-workspace-storage').BoardCardKey
+): import('../../shared/board/commands').BoardRuntimeToken | undefined {
+	const row = runtime.storage.db
+		.prepare(
+			`SELECT specification_json FROM runs
+  WHERE collection_key=? AND card_id=? AND outcome_json IS NULL ORDER BY attempt DESC LIMIT 1`
+		)
+		.get(key.collectionKey, key.cardId) as { specification_json: string } | undefined;
+	return row ? JSON.parse(row.specification_json).runToken : undefined;
 }
 
 /** Compatibility for the existing desktop Stop button. Resolve only the exact
@@ -295,13 +322,7 @@ export async function controlBoardRuntimeCard(
 		throw new BoardStorageError('stale-revision', 'Board changed since read');
 	const runtime = await runtimeFor(key);
 	if (!runtime) throw new BoardStorageError('runtime-unavailable', 'Board runtime is unavailable');
-	const row = runtime.storage.db
-		.prepare(
-			`SELECT specification_json FROM runs
-  WHERE collection_key=? AND card_id=? AND outcome_json IS NULL ORDER BY attempt DESC LIMIT 1`
-		)
-		.get(key.collectionKey, cardId) as { specification_json: string } | undefined;
-	const token = row ? JSON.parse(row.specification_json).runToken : undefined;
+	const token = activeBoardRunToken(runtime, key);
 	const card = entry.board.cards.find((c) => c.id === cardId);
 	if (!card) throw new BoardStorageError('not-found', 'Card not found');
 	if (read && card.storageRevision !== read.cardRevision)

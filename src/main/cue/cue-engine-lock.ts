@@ -337,7 +337,9 @@ export function describeCueEngineLockHolder(
  * token, so its writer can no longer exist (see the module doc). False when
  * either side has no namespace inode: then the pid proves nothing.
  */
-function isLeftByEarlierHolderOfOurPid(info: CueEngineLockInfo): boolean {
+export function isLeftByEarlierHolderOfOurPid(
+	info: Pick<CueEngineLockInfo, 'pid' | 'token' | 'pidNsInode'>
+): boolean {
 	return (
 		info.token !== undefined &&
 		info.token !== processToken &&

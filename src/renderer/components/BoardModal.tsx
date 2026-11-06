@@ -464,6 +464,10 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const draftBaselineRef = useRef<CardDraft | null>(null);
 	/** Which close the user asked for while the editor was dirty, pending confirm. */
 	const [pendingAcceptance, setPendingAcceptance] = useState<CardDraft | null>(null);
+	const [pendingRecovery, setPendingRecovery] = useState<Pick<
+		BoardCardEntry,
+		'card' | 'collection'
+	> | null>(null);
 	const [pendingDiscard, setPendingDiscard] = useState<null | 'editor' | 'modal'>(null);
 
 	// The collection includes a board snapshot. Compare the editable fields first
@@ -1259,6 +1263,44 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		},
 		[sourceRoots, applyBoard]
 	);
+
+	const requestRecovery = useCallback((cardId: string, collection: BoardWorkspaceCollection) => {
+		const card = collection.board.cards.find((entry) => entry.id === cardId);
+		if (card?.heldByUser && card.status === 'running') setPendingRecovery({ card, collection });
+	}, []);
+	const recoverCard = async (selected: Pick<BoardCardEntry, 'card' | 'collection'>) => {
+		if (saving || selected.card.storageRevision === undefined) return;
+		setSaving(true);
+		try {
+			const { card, collection } = selected;
+			const result = await window.maestro.board.runtimeCommand({
+				action: 'control',
+				operation: 'recover',
+				target: {
+					projectRoot:
+						sourceRoots[collection.sourceKey] ??
+						`${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`,
+					sourceKey: collection.sourceKey,
+					collectionKey: collection.collectionKey,
+					expectedRevision: collection.revision,
+				},
+				cardId: card.id,
+				cardRevision: card.storageRevision!,
+			});
+			if (!result.ok) throw new Error(result.error.message);
+			await load(false);
+			notifyToast({
+				color: 'green',
+				title: 'Board',
+				message:
+					'Result retained. The attempt is released and the card remains held for reassignment.',
+			});
+		} catch (error) {
+			notifyToast({ color: 'red', title: 'Board recovery', message: ipcErrorMessage(error) });
+		} finally {
+			setSaving(false);
+		}
+	};
 
 	// --- Moving cards (drag for pointers, "Move to" picker for keyboards) ----
 
@@ -2398,6 +2440,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 																onDelete={handleDeleteCard}
 																onCancelRun={handleCancelCard}
 																onResume={handleResumeCard}
+																onRecover={requestRecovery}
 															/>
 														</div>
 													);
@@ -2446,6 +2489,21 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						void handleApproveStart('accept', selected);
 					}}
 					onClose={() => setPendingAcceptance(null)}
+				/>
+			)}
+
+			{pendingRecovery && (
+				<ConfirmModal
+					theme={theme}
+					title="Retain result and release attempt?"
+					message={`Keep the completed output for "${pendingRecovery.card.title}" and release its held attempt for reassignment? The result stays unaccepted, and the card remains held until you resume it.`}
+					confirmLabel="Retain result and release"
+					onConfirm={() => {
+						const selected = pendingRecovery;
+						setPendingRecovery(null);
+						void recoverCard(selected);
+					}}
+					onClose={() => setPendingRecovery(null)}
 				/>
 			)}
 
@@ -2718,6 +2776,7 @@ interface BoardCardTileProps {
 	onCancelRun: (cardId: string, collection: BoardWorkspaceCollection) => Promise<void>;
 	/** Release an AB1 user hold. Only rendered on cards with `heldByUser`. */
 	onResume: (cardId: string, collection: BoardWorkspaceCollection) => Promise<void>;
+	onRecover: (cardId: string, collection: BoardWorkspaceCollection) => void;
 }
 
 /** A single draggable, focusable card. Shows its title, assignee, parent count,
@@ -2742,6 +2801,7 @@ const BoardCardTile = memo(function BoardCardTile({
 	onDelete,
 	onCancelRun,
 	onResume,
+	onRecover,
 	readiness,
 }: BoardCardTileProps) {
 	// Delete is armed by the first click and fires on the second, mirroring the
@@ -2933,6 +2993,21 @@ const BoardCardTile = memo(function BoardCardTile({
 							title="Stop this run"
 						>
 							<Square className="w-3.5 h-3.5" />
+						</button>
+					)}
+					{isHeld && isRunning && latestRun?.endedAt && (
+						<button
+							type="button"
+							aria-label={`Recover ${card.title}`}
+							title="Retain the completed result and release this held attempt for reassignment"
+							className="p-0.5 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.warning }}
+							onClick={(event) => {
+								event.stopPropagation();
+								onRecover(card.id, collection);
+							}}
+						>
+							<RefreshCw className="w-3.5 h-3.5" />
 						</button>
 					)}
 					{isHeld && (

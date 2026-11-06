@@ -1,5 +1,7 @@
 /** Pure planning of explicitly supplied legacy Board sources. No discovery or writes. */
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import { foldPathCase } from '../utils/real-path-containment';
 import * as yaml from 'js-yaml';
 import { isPathAtOrUnderRoot } from '../../shared/worktreePaths';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -347,6 +349,30 @@ export function applyBoardMigration(
 	const serialized = canonicalJson(plan);
 	const hashesJson = canonicalJson({ ...plan.hashes, plan: hash(serialized) });
 	if (db.inTransaction) throw new Error('Board migration requires its own IMMEDIATE transaction');
+	const physicalDirectories = new Map<string, string>();
+	if (
+		plan.source?.location.kind !== 'ssh' &&
+		plan.repository?.validated &&
+		!db.prepare('SELECT 1 FROM migrations WHERE source_key=?').get(plan.sourceKey)
+	) {
+		const directories = new Set([
+			plan.repository.workingDirectory,
+			...plan.snapshot.workers.flatMap((worker) => {
+				const raw = record(worker);
+				return raw && typeof raw.dir === 'string' && resolveBoardLocation(raw).kind === 'local'
+					? [raw.dir]
+					: [];
+			}),
+		]);
+		for (const dir of directories) {
+			try {
+				physicalDirectories.set(dir, foldPathCase(fs.realpathSync.native(dir)));
+			} catch (error) {
+				if (!['ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? ''))
+					throw error;
+			}
+		}
+	}
 	return db
 		.transaction((): BoardMigrationResult => {
 			// Check under the same write lock as the import, including replay. A cleanup
@@ -556,7 +582,7 @@ export function applyBoardMigration(
 				} else if (!existing)
 					db.prepare('INSERT INTO repositories VALUES (?, ?)').run(plan.repository.id, payload);
 			}
-			applyMigrationWorkerAccess(db, plan);
+			applyMigrationWorkerAccess(db, plan, physicalDirectories);
 			db.prepare('INSERT INTO migrations VALUES (?, ?, ?, ?, ?)').run(
 				plan.sourceKey,
 				hashesJson,
@@ -576,7 +602,11 @@ export function applyBoardMigration(
 }
 
 /** Accumulate only migration-owned grants, without overwriting central or older unmarked restrictions. */
-function applyMigrationWorkerAccess(db: Database.Database, plan: BoardMigrationPlan): void {
+function applyMigrationWorkerAccess(
+	db: Database.Database,
+	plan: BoardMigrationPlan,
+	physicalDirectories: ReadonlyMap<string, string>
+): void {
 	const location = plan.source?.location ?? { kind: 'local' as const };
 	const candidates = plan.snapshot.workers.flatMap((worker) => {
 		const raw = record(worker);
@@ -584,7 +614,12 @@ function applyMigrationWorkerAccess(db: Database.Database, plan: BoardMigrationP
 			? [
 					{
 						id: raw.id,
-						dir: typeof raw.dir === 'string' ? raw.dir : null,
+						dir:
+							typeof raw.dir === 'string'
+								? location.kind === 'ssh'
+									? raw.dir
+									: (physicalDirectories.get(raw.dir) ?? null)
+								: null,
 						boardWorker:
 							raw.boardWorker === true &&
 							canonicalJson(
@@ -611,7 +646,10 @@ function applyMigrationWorkerAccess(db: Database.Database, plan: BoardMigrationP
 								isPathAtOrUnderRoot(c.dir, plan.repository!.workingDirectory)
 						)
 						.map((c) => c.id)
-				: selectPoolAgentIds(plan.repository.workingDirectory, candidates)
+				: selectPoolAgentIds(
+						physicalDirectories.get(plan.repository.workingDirectory) ?? '',
+						candidates
+					)
 			: []
 	);
 	for (const worker of plan.snapshot.workers) {

@@ -3,11 +3,10 @@
 import { yieldToEventLoop } from '../utils/concurrency';
 import { refreshBoardSources } from './board-source-host';
 import { queueBoardReviews } from './board-review';
-import type { DataDirLock } from '../../shared/maestro-lib/runtime/data-dir-lock';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import type { BoardClaimHostContext, BoardRunSpecification } from './board-claims';
-import { BoardRuntime, type BoardRunService } from './board-runtime';
+import { BoardRuntime, type BoardRunService, type BoardRuntimeLock } from './board-runtime';
 import { executeBoardRuntimeCommand } from './board-runtime-host';
 import type { BoardStorageFacade } from './board-storage';
 import type { BoardTickResult } from '../../shared/board/commands';
@@ -19,7 +18,7 @@ export type BoardPreparedContext = Pick<BoardClaimHostContext, 'repository' | 'r
 
 export interface BoardCueHostDeps {
 	storage: () => BoardStorageFacade;
-	lock: () => Pick<DataDirLock, 'info' | 'verify'> | null;
+	lock: () => BoardRuntimeLock | null;
 	context: (
 		key: BoardCardKey,
 		prepared: BoardPreparedContext

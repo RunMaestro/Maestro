@@ -251,7 +251,11 @@ import { configureBoardRuntimeHost } from './board/board-runtime-host';
 import type { BoardClaimHostContext } from './board/board-claims';
 import { resolveBoardLocation } from './board/board-location';
 import type { BoardCardKey } from './board/board-workspace-storage';
-import { readCueEngineLock, isCueEngineLockOwnedByThisProcess } from './cue/cue-engine-lock';
+import {
+	readCueEngineLock,
+	isCueEngineLockOwnedByThisProcess,
+	isLeftByEarlierHolderOfOurPid,
+} from './cue/cue-engine-lock';
 import { execGitReadOnly } from './utils/remote-git';
 import { isAgentDormant } from '../shared/agentVisibility';
 
@@ -1661,6 +1665,8 @@ app
 						bootTime: info.bootTime,
 						startedAt: info.startedAt,
 						mode: 'desktop' as const,
+						token: info.token,
+						pidNsInode: info.pidNsInode,
 					},
 					verify: () => {
 						const current = readCueEngineLock();
@@ -1750,20 +1756,37 @@ app
 			},
 			onTask: (task) => cueEngine?.trackBoardTask(task),
 			service: createBoardRunService(boardSpawnContext),
-			// Only native PID death or a different boot proves the old local owner gone.
+			// Only namespace-bound process evidence proves the previous owner gone.
 			ownerLiveness: (identity) => {
-				const old = JSON.parse(identity) as { pid?: number; bootTime?: number };
+				let old: { pid?: number; bootTime?: number; token?: string; pidNsInode?: number };
+				try {
+					old = JSON.parse(identity);
+				} catch {
+					return 'unknown';
+				}
 				const current = readCueEngineLock();
-				if (!current || !isCueEngineLockOwnedByThisProcess(current)) return 'unknown';
 				if (
-					typeof old.bootTime === 'number' &&
-					typeof current.bootTime === 'number' &&
+					!current ||
+					!isCueEngineLockOwnedByThisProcess(current) ||
+					!old ||
+					!Number.isSafeInteger(old.pid) ||
+					old.pid! <= 0 ||
+					typeof old.token !== 'string' ||
+					!old.token ||
+					!Number.isSafeInteger(old.pidNsInode) ||
+					old.pidNsInode !== current.pidNsInode
+				)
+					return 'unknown';
+				if (isLeftByEarlierHolderOfOurPid({ ...old, pid: old.pid! })) return 'dead';
+				// A dead PID is meaningful only in this same namespace and boot.
+				if (
+					typeof old.bootTime !== 'number' ||
+					typeof current.bootTime !== 'number' ||
+					!Number.isFinite(old.bootTime) ||
 					Math.abs(old.bootTime - current.bootTime) > 60_000
 				)
-					return 'dead';
-				return Number.isSafeInteger(old.pid) && old.pid! > 0 && !isPidAlive(old.pid!)
-					? 'dead'
-					: 'unknown';
+					return 'unknown';
+				return !isPidAlive(old.pid!) ? 'dead' : 'unknown';
 			},
 			onWait: (key, reason) =>
 				logger.cue(`[Board] ${key.collectionKey}/${key.cardId}: ${reason}`, 'Cue'),

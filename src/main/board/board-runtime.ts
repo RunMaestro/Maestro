@@ -4,6 +4,11 @@ import { parseCardMarkers } from '../../shared/board/cardMarkers';
  * lockfile algorithm or process controller. Transport/Cue hosts inject their
  * existing lock and native liveness evidence; unknown always keeps capacity. */
 import type { DataDirLock } from '../../shared/maestro-lib/runtime/data-dir-lock';
+import type { CueEngineLockInfo } from '../cue/cue-engine-lock';
+
+export type BoardRuntimeLock = Pick<DataDirLock, 'verify'> & {
+	info: DataDirLock['info'] & Pick<CueEngineLockInfo, 'token' | 'pidNsInode'>;
+};
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import { validateBoard, type Board, type BoardCard } from '../../shared/board/types';
@@ -74,7 +79,7 @@ export class BoardRuntime {
 	readonly processIdentity: string;
 	constructor(
 		readonly storage: BoardStorageFacade,
-		private readonly lock: Pick<DataDirLock, 'verify' | 'info'>,
+		private readonly lock: BoardRuntimeLock,
 		private readonly host: () => Omit<BoardClaimHostContext, 'owner'>,
 		private readonly service: BoardRunService,
 		/** Must prove death of the exact boot/start identity, never heartbeat age. */
@@ -83,8 +88,14 @@ export class BoardRuntime {
 		private readonly onCompleted: (spec: BoardRunSpecification) => void = () => {},
 		private readonly onTransitions?: BoardTransitionsListener
 	) {
-		const { pid, startedAt, bootTime } = lock.info;
-		this.processIdentity = canonicalJson({ pid, startedAt, bootTime: bootTime ?? null });
+		const { pid, startedAt, bootTime, token, pidNsInode } = lock.info;
+		this.processIdentity = canonicalJson({
+			pid,
+			startedAt,
+			bootTime: bootTime ?? null,
+			...(token ? { token } : {}),
+			...(pidNsInode === undefined ? {} : { pidNsInode }),
+		});
 	}
 
 	/** Layer the SQLite epoch on the caller's existing runtime lock. */
@@ -364,8 +375,11 @@ export class BoardRuntime {
 				this.updateCard(row.spec, (card) => {
 					card.heldByUser = true;
 				});
-				if (row.life.pendingResult)
-					return this.finish(token, row.life.pendingResult, undefined, true);
+				if (row.life.pendingResult) {
+					this.finish(token, row.life.pendingResult, undefined, true);
+					// The durable hold succeeded even when result authority is still fenced.
+					return { ok: true };
+				}
 				if (row.life.phase === 'prepared')
 					return this.finish(
 						token,
@@ -376,7 +390,7 @@ export class BoardRuntime {
 				return { ok: true };
 			})
 			.immediate();
-		if (result.ok && this.current(token)) {
+		if (result.ok && this.current(token) && !this.read(token)?.life.pendingResult) {
 			try {
 				this.service.stop(this.read(token)!.spec);
 			} catch (error) {
@@ -411,6 +425,66 @@ export class BoardRuntime {
 				return { ok: true };
 			})
 			.immediate();
+	}
+
+	/** A native operator may retire one held, provably ended attempt without accepting its result. */
+	recover(
+		token: BoardRunToken,
+		expected: { collection: number; card: number },
+		principal: string | undefined
+	): Verdict {
+		const result = this.storage.db
+			.transaction((): Verdict => {
+				if (!principal) return { ok: false, reason: 'native-operator-required' };
+				if (!this.owns()) return { ok: false, reason: 'owner-conflict' };
+				const row = this.current(token);
+				if (!row) return { ok: false, reason: 'attempt-conflict' };
+				const collection = this.storage.workspace.readCollection(row.spec.key);
+				const card = collection?.cards.find((entry) => entry.cardId === row.spec.key.cardId);
+				if (!collection || !card) return { ok: false, reason: 'not-found' };
+				if (collection.revision !== expected.collection || card.revision !== expected.card)
+					return { ok: false, reason: 'stale-revision' };
+				if (!card.payload.heldByUser) return { ok: false, reason: 'hold-required' };
+				if (
+					row.life.pendingResult?.terminationConfirmed !== true ||
+					!row.life.launchAuthorized ||
+					!row.life.process
+				)
+					return { ok: false, reason: 'termination-unconfirmed' };
+				const run = (card.payload as unknown as BoardCard).runs?.find(
+					(entry) => entry.runId === token.runId && entry.attempt === row.spec.attempt
+				);
+				if (!run) return { ok: false, reason: 'attempt-conflict' };
+				// Preserve the native result and prior authority failure verbatim. Recovery
+				// is not applyCardResult, review acceptance, or a new dispatch approval.
+				this.updateCard(row.spec, (current) => {
+					current.status = 'todo';
+					current.heldByUser = true;
+					current.runs!.find((entry) => entry.runId === token.runId)!.outcome = 'reclaimed';
+				});
+				this.storage.db.prepare('UPDATE runs SET outcome_json=? WHERE run_id=?').run(
+					canonicalJson({
+						result: row.life.pendingResult,
+						forced: 'reclaimed',
+						endedAt: run.endedAt,
+						operatorRecovery: { principal, at: new Date().toISOString(), reason: row.life.reason },
+					}),
+					token.runId
+				);
+				this.writeLife(token, {
+					...row.life,
+					phase: 'finished',
+					reason: 'operator-recovered',
+					pendingResult: undefined,
+				});
+				this.storage.db
+					.prepare('DELETE FROM reservations WHERE run_id=? AND owner_epoch=? AND generation=?')
+					.run(token.runId, token.ownerEpoch, token.generation);
+				return { ok: true };
+			})
+			.immediate();
+		if (result.ok) this.onChanged();
+		return result;
 	}
 
 	/** Only a matching native completion/nonstart proof can release capacity. */

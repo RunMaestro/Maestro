@@ -3922,3 +3922,75 @@ describe('BoardModal windowed columns', () => {
 		]);
 	});
 });
+
+describe('BoardModal retained attempt recovery', () => {
+	it('requires explicit confirmation and sends only the read-fenced recovery request', async () => {
+		installApis([
+			{
+				id: 'b1',
+				name: 'Board',
+				cards: [
+					makeCard({
+						id: 'retained',
+						title: 'Retained work',
+						status: 'running',
+						heldByUser: true,
+						runs: [
+							{
+								runId: 'old-run',
+								attempt: 1,
+								startedAt: '2026-11-01',
+								endedAt: '2026-11-01',
+								summary: 'Preserved result',
+							},
+						],
+					}),
+				],
+			},
+		]);
+		boardApi.runtimeCommand.mockResolvedValue({ ok: true, value: { accepted: true } });
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: 'Recover Retained work' }));
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+		expect(screen.getByText(/card remains held until you resume/)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Retain result and release', exact: true }));
+		await waitFor(() =>
+			expect(boardApi.runtimeCommand).toHaveBeenCalledExactlyOnceWith({
+				action: 'control',
+				operation: 'recover',
+				target: {
+					projectRoot: PROJECT_ROOT,
+					sourceKey: 'source-one',
+					collectionKey: 'b1',
+					expectedRevision: 1,
+				},
+				cardId: 'retained',
+				cardRevision: 0,
+			})
+		);
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+	});
+	it('does not offer result recovery while termination evidence is missing', async () => {
+		installApis([
+			{
+				id: 'b1',
+				name: 'Board',
+				cards: [
+					makeCard({
+						id: 'uncertain',
+						title: 'Uncertain work',
+						status: 'running',
+						heldByUser: true,
+						runs: [{ runId: 'old-run', attempt: 1, startedAt: '2026-11-01' }],
+					}),
+				],
+			},
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('Uncertain work');
+		expect(
+			screen.queryByRole('button', { name: 'Recover Uncertain work' })
+		).not.toBeInTheDocument();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+	});
+});

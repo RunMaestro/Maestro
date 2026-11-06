@@ -33,7 +33,8 @@ import WebSocket from 'ws';
 import { context, type BuildContext } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../../../shared/canonicalJson';
-import { execFile } from 'node:child_process';
+import { execFile, type ChildProcess } from 'node:child_process';
+import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 import { promisify } from 'node:util';
 import { openBoardDb } from '../../../main/board/board-db';
 import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
@@ -80,7 +81,11 @@ afterAll(async () => {
 	if (cliBuildDir) fs.rmSync(cliBuildDir, { recursive: true, force: true });
 	await isolationFixture.cleanup();
 });
+const inFlightCli = new Map<ChildProcess, Promise<unknown>>();
+let cliTeardown = false;
+
 async function cli(...args: string[]) {
+	if (cliTeardown) throw new Error('CLI fixture teardown has begun');
 	const isolation = requireBoardIsolation({ expected: proof.contract });
 	const script = path.join(cliBuildDir, 'cli.cjs');
 	try {
@@ -102,12 +107,19 @@ async function cli(...args: string[]) {
 		]) {
 			if (process.env[key] !== undefined) env[key] = process.env[key];
 		}
-		const output = await promisify(execFile)(process.execPath, [script, 'board', ...args], {
+		const execution = promisify(execFile)(process.execPath, [script, 'board', ...args], {
 			cwd: isolation.worktree,
 			env,
 			timeout: 30000,
 			maxBuffer: 1024 * 1024,
 		});
+		inFlightCli.set(execution.child, execution);
+		let output;
+		try {
+			output = await execution;
+		} finally {
+			inFlightCli.delete(execution.child);
+		}
 		return { code: 0, value: JSON.parse(output.stdout) };
 	} catch (error) {
 		const failure = error as { code: number; stdout: string; stderr: string };
@@ -181,6 +193,8 @@ const raw = (fields: Record<string, unknown>) =>
 	);
 
 beforeEach(async () => {
+	cliTeardown = false;
+	expect(inFlightCli.size).toBe(0);
 	dir = '';
 	ownsDatabase = false;
 	connection = undefined as unknown as BridgeConnection;
@@ -296,6 +310,11 @@ beforeEach(async () => {
 	await connection.connect();
 });
 afterEach(async () => {
+	cliTeardown = true;
+	for (const child of inFlightCli.keys())
+		stopProcess({ child }, { from: 'terminate', graceMs: 0, immediate: true, blocking: true });
+	await Promise.allSettled([...inFlightCli.values()]);
+	expect(inFlightCli.size).toBe(0);
 	try {
 		configureBoardRuntimeHost(() => null);
 		connection?.disconnect();
@@ -1061,46 +1080,98 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 		// Keep each child at 15s and the outer suite runner at 180s.
 	}, 30000);
 
-	it('round-trips dependencies and priority through the CLI and rejects a cycle without writes', async () => {
-		const selected = target();
-		const common = [
-			'--source',
-			selected.sourceKey,
-			'--collection',
-			selected.collectionKey,
-			'--json',
-		];
-		expect((await cli('add-card', 'b', '--title', 'Parent', ...common)).code).toBe(0);
-		const parent = facade.read(roots[0], 'b').cards[0];
-		expect(
-			(
-				await cli(
-					'add-card',
-					'b',
-					'--title',
-					'Child',
-					'--parents',
-					parent.id,
-					'--priority',
-					'high',
-					...common
-				)
-			).code
-		).toBe(0);
-		const before = facade.read(roots[0], 'b');
-		const child = before.cards.find((entry) => entry.title === 'Child')!;
-		expect(child).toMatchObject({ parents: [parent.id], priority: 'high' });
-		const filtered = await cli('show', 'b', '--priority', 'high', ...common);
-		expect(filtered.code).toBe(0);
-		expect(filtered.value.cards.map((entry: BoardCard) => entry.id)).toEqual([child.id]);
-		expect((await cli('update-card', parent.id, '--parents', child.id, ...common)).code).toBe(1);
-		expect(facade.read(roots[0], 'b')).toEqual(before);
-		expect(
-			(await cli('update-card', child.id, '--parents', '', '--priority', 'low', ...common)).code
-		).toBe(0);
-		expect(facade.read(roots[0], 'b').cards.find((entry) => entry.id === child.id)).toMatchObject({
-			parents: [],
-			priority: 'low',
+	describe('dependencies and priority through real CLI', () => {
+		it('captures the original parent through the CLI', async () => {
+			const selected = target();
+			const foreign = facade.read(roots[1], 'b');
+			expect(
+				(
+					await cli(
+						'add-card',
+						'b',
+						'--title',
+						'Parent',
+						'--source',
+						selected.sourceKey,
+						'--collection',
+						selected.collectionKey,
+						'--json'
+					)
+				).code
+			).toBe(0);
+			expect(facade.read(roots[0], 'b').cards[0].title).toBe('Parent');
+			expect(facade.read(roots[1], 'b')).toEqual(foreign);
+		});
+		it('captures the original child dependency and high priority through the CLI', async () => {
+			result(await send(capture(card({ id: 'parent', title: 'Parent' }))));
+			const parent = facade.read(roots[0], 'b').cards[0];
+			const selected = target();
+			const foreign = facade.read(roots[1], 'b');
+			expect(
+				(
+					await cli(
+						'add-card',
+						'b',
+						'--title',
+						'Child',
+						'--parents',
+						parent.id,
+						'--priority',
+						'high',
+						'--source',
+						selected.sourceKey,
+						'--collection',
+						selected.collectionKey,
+						'--json'
+					)
+				).code
+			).toBe(0);
+			expect(
+				facade.read(roots[0], 'b').cards.find((entry) => entry.title === 'Child')
+			).toMatchObject({ parents: [parent.id], priority: 'high' });
+			expect(facade.read(roots[1], 'b')).toEqual(foreign);
+		});
+		describe('with host-captured dependency prerequisites', () => {
+			let parent: BoardCard;
+			let child: BoardCard;
+			let common: string[];
+			let foreign: Board;
+			beforeEach(async () => {
+				result(await send(capture(card({ id: 'parent', title: 'Parent' }))));
+				parent = facade.read(roots[0], 'b').cards[0];
+				result(
+					await send(
+						capture(card({ id: 'child', title: 'Child', parents: [parent.id], priority: 'high' }))
+					)
+				);
+				child = facade.read(roots[0], 'b').cards.find((entry) => entry.id === 'child')!;
+				const selected = target();
+				common = ['--source', selected.sourceKey, '--collection', selected.collectionKey, '--json'];
+				foreign = facade.read(roots[1], 'b');
+			});
+			it('filters the original high-priority child through the CLI', async () => {
+				const filtered = await cli('show', 'b', '--priority', 'high', ...common);
+				expect(filtered.code).toBe(0);
+				expect(filtered.value.cards.map((entry: BoardCard) => entry.id)).toEqual([child.id]);
+				expect(facade.read(roots[1], 'b')).toEqual(foreign);
+			});
+			it('rejects the original dependency cycle without writes through the CLI', async () => {
+				const before = facade.read(roots[0], 'b');
+				expect((await cli('update-card', parent.id, '--parents', child.id, ...common)).code).toBe(
+					1
+				);
+				expect(facade.read(roots[0], 'b')).toEqual(before);
+				expect(facade.read(roots[1], 'b')).toEqual(foreign);
+			});
+			it('clears original dependencies and lowers priority through the CLI', async () => {
+				expect(
+					(await cli('update-card', child.id, '--parents', '', '--priority', 'low', ...common)).code
+				).toBe(0);
+				expect(
+					facade.read(roots[0], 'b').cards.find((entry) => entry.id === child.id)
+				).toMatchObject({ parents: [], priority: 'low' });
+				expect(facade.read(roots[1], 'b')).toEqual(foreign);
+			});
 		});
 	});
 
@@ -1255,32 +1326,55 @@ it('reports an unavailable owning host as machine-readable CLI error without loc
 	});
 });
 
-it('updates canonical roles without legacy aliases and refuses CLI human review approval on the host', async () => {
-	const saved = result<Board>(
-		await send(capture(card({ role: { namespace: namespaces[0], profileId: 'role' } })))
-	);
-	const common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
-	expect(
-		(await cli('update-card', 'c', '--profile-namespace', namespaces[0], ...common)).code
-	).toBe(0);
-	expect(facade.read(roots[0], 'b').cards[0].role).toEqual(saved.cards[0].role);
-	expect((await cli('set-status', 'c', 'review', ...common)).code).toBe(1);
-	// Trusted legacy/runtime fixture, outside caller authority.
-	db.prepare(
-		"UPDATE cards SET payload_json=json_set(payload_json, '$.status', 'review') WHERE id='c'"
-	).run();
-	expect((await cli('set-status', 'c', 'done', ...common)).value.details.code).toBe(
-		'protected-field'
-	);
-	expect(facade.read(roots[0], 'b').cards[0].status).toBe('review');
-	for (const status of ['todo', 'blocked', 'done'])
-		expect((await cli('set-status', 'c', status, ...common)).value.details.code).toBe(
-			'protected-field'
+describe('canonical roles and human approval through real CLI', () => {
+	let saved: Board;
+	let common: string[];
+	beforeEach(async () => {
+		saved = result<Board>(
+			await send(capture(card({ role: { namespace: namespaces[0], profileId: 'role' } })))
 		);
-	const reviewing = facade.read(roots[0], 'b').cards[0];
-	expect(await send(capture({ ...reviewing, status: 'done' }))).toMatchObject({
-		ok: false,
-		error: { code: 'protected-field' },
+		common = ['--project-root', roots[0], '--source', target().sourceKey, '--json'];
+	});
+	it('updates the original canonical role namespace without legacy aliases', async () => {
+		const foreign = facade.read(roots[1], 'b');
+		expect(
+			(await cli('update-card', 'c', '--profile-namespace', namespaces[0], ...common)).code
+		).toBe(0);
+		expect(facade.read(roots[0], 'b').cards[0].role).toEqual(saved.cards[0].role);
+		expect(facade.read(roots[1], 'b')).toEqual(foreign);
+	});
+	it('refuses the original manual review transition without writes', async () => {
+		const before = roots.map((root) => facade.read(root, 'b'));
+		expect((await cli('set-status', 'c', 'review', ...common)).code).toBe(1);
+		expect(roots.map((root) => facade.read(root, 'b'))).toEqual(before);
+	});
+	describe('with the original trusted review fixture', () => {
+		beforeEach(() => {
+			// Trusted legacy/runtime fixture, outside caller authority.
+			db.prepare(
+				"UPDATE cards SET payload_json=json_set(payload_json, '$.status', 'review') WHERE id='c'"
+			).run();
+		});
+		it.each(['done', 'todo', 'blocked', 'done'] as const)(
+			'refuses original CLI human-review status %s without writes (case %#)',
+			async (status) => {
+				const before = roots.map((root) => facade.read(root, 'b'));
+				expect((await cli('set-status', 'c', status, ...common)).value.details.code).toBe(
+					'protected-field'
+				);
+				expect(facade.read(roots[0], 'b').cards[0].status).toBe('review');
+				expect(roots.map((root) => facade.read(root, 'b'))).toEqual(before);
+			}
+		);
+		it('refuses the original host capture bypass of human review without writes', async () => {
+			const before = roots.map((root) => facade.read(root, 'b'));
+			const reviewing = before[0].cards[0];
+			expect(await send(capture({ ...reviewing, status: 'done' }))).toMatchObject({
+				ok: false,
+				error: { code: 'protected-field' },
+			});
+			expect(roots.map((root) => facade.read(root, 'b'))).toEqual(before);
+		});
 	});
 });
 
@@ -2112,3 +2206,48 @@ it.each(['alias', 'source'])(
 		expect(fixture.service.stop).not.toHaveBeenCalled();
 	}
 );
+
+it('requires the native main-frame operator for retained-result recovery and preserves all evidence', async () => {
+	const fixture = installBoardOwner();
+	const response = await send(tick('recovery-fixture'));
+	const token = result<{ runToken: BoardRuntimeToken }[]>(response)[0].runToken!;
+	setBoardWorkerAccess(db, 'a', [], []);
+	fixture.finish();
+	await vi.waitFor(() => expect(fixture.owner.read(token)!.life.pendingResult).toBeDefined());
+	expect(await send(control('hold', token))).toMatchObject({ ok: true });
+	const recovery = { ...control('resume', token), operation: 'recover' as const };
+	const before = roots.map((root) => facade.read(root, 'b'));
+	expect(await send(recovery)).toMatchObject({ ok: false, error: { code: 'protected-field' } });
+	expect(roots.map((root) => facade.read(root, 'b'))).toEqual(before);
+	const contents = { mainFrame: {} };
+	registerBoardHandlers({
+		getCueEngine: () => null,
+		getMainWindow: () => ({ isDestroyed: () => false, webContents: contents }) as never,
+	});
+	const handle = ipcHandlers.get('board:runtimeCommand')!;
+	expect(await handle({ sender: {}, senderFrame: {} }, recovery)).toMatchObject({
+		ok: false,
+		error: { code: 'protected-field' },
+	});
+	expect(
+		await handle(
+			{ sender: contents, senderFrame: contents.mainFrame },
+			{ ...recovery, human: true }
+		)
+	).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
+	expect(roots.map((root) => facade.read(root, 'b'))).toEqual(before);
+	// The UI need not possess the owner epoch: the host resolves the exact current attempt.
+	const native = { ...recovery, runToken: undefined };
+	delete native.runToken;
+	expect(await handle({ sender: contents, senderFrame: contents.mainFrame }, native)).toMatchObject(
+		{ ok: true }
+	);
+	expect(facade.read(roots[0], 'b').cards[0]).toMatchObject({ status: 'todo', heldByUser: true });
+	expect(facade.read(roots[0], 'b').cards[0].workflow?.workRunId).toBeUndefined();
+	expect(facade.read(roots[1], 'b')).toEqual(before[1]);
+	expect(db.prepare('SELECT * FROM reservations').all()).toEqual([]);
+	expect(fixture.owner.read(token)!.outcome).toMatchObject({
+		result: { output: '<!-- maestro:card-complete -->' },
+		operatorRecovery: { principal: 'native-desktop-main-frame' },
+	});
+});

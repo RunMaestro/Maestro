@@ -47,7 +47,7 @@ export type BoardRuntimeCommand =
 			target: BoardCommandTarget;
 			cardId: string;
 			cardRevision: number;
-			operation: 'hold' | 'resume' | 'approve' | 'accept';
+			operation: 'hold' | 'resume' | 'approve' | 'accept' | 'recover';
 			runToken?: BoardRuntimeToken;
 	  };
 export interface BoardTickResult {
@@ -338,7 +338,7 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 		if (
 			!text(message.cardId) ||
 			!revision(message.cardRevision) ||
-			!['hold', 'resume', 'approve', 'accept'].includes(message.operation as string)
+			!['hold', 'resume', 'approve', 'accept', 'recover'].includes(message.operation as string)
 		)
 			return;
 		if (message.runToken !== undefined) {

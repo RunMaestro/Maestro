@@ -126,6 +126,7 @@ describe('cross-source legacy worker access', () => {
 				dir: path.join(dir, name),
 				boardWorker: true,
 			}));
+			for (const worker of workers) fs.mkdirSync(worker.dir);
 			const plan = (name: string) =>
 				planBoardMigration({
 					source: { location: { kind: 'local' }, path: path.join(dir, name) },
@@ -232,7 +233,7 @@ it.each([
 	['C:\\repo', 'C:\\repo\\..\\outside', 'C:\\repo\\.\\inside'],
 	['\\\\host\\share\\repo', '\\\\host\\share\\repo\\..\\outside', '\\\\host\\share\\repo\\inside'],
 ])(
-	'never migrates repository grants through dotsegment escapes from %s',
+	'does not infer physical repository grants from synthetic path spelling %s',
 	(project, outside, inside) => {
 		const db = openBoardDb(fixture.contract.db);
 		try {
@@ -255,9 +256,51 @@ it.each([
 			).toEqual([]);
 			expect(
 				workers.find((worker) => worker.agentId === 'inside')!.payload.allowedRepositoryIds
-			).toEqual(['repo']);
+			).toEqual([]);
 		} finally {
 			db.close();
 		}
 	}
 );
+
+it('resolves local migration worker aliases without granting symlink escapes and retains raw evidence', () => {
+	dir = fs.mkdtempSync(path.join(root, 'migration-alias-'));
+	const project = path.join(dir, 'repo');
+	const outside = path.join(dir, 'outside');
+	const inside = path.join(project, 'inside');
+	fs.mkdirSync(inside, { recursive: true });
+	fs.mkdirSync(outside);
+	const escape = path.join(project, 'escape');
+	const alias = path.join(outside, 'inside-alias');
+	fs.symlinkSync(outside, escape, 'junction');
+	fs.symlinkSync(inside, alias, 'junction');
+	const input = {
+		source: { location: { kind: 'local' as const }, path: project },
+		repository: { id: 'repo', workingDirectory: project, validated: true },
+		boardBytes: null,
+		profileBytes: null,
+		workers: [
+			{ id: 'escape', dir: escape, boardWorker: true },
+			{ id: 'alias', dir: alias, boardWorker: true },
+		],
+	};
+	const plan = planBoardMigration(input);
+	const original = JSON.stringify(plan.snapshot.workers);
+	const db = openBoardDb(fixture.contract.db);
+	try {
+		applyBoardMigration(db, plan);
+		expect(
+			listBoardWorkers(db).find((w) => w.agentId === 'escape')!.payload.allowedRepositoryIds
+		).toEqual([]);
+		expect(
+			listBoardWorkers(db).find((w) => w.agentId === 'alias')!.payload.allowedRepositoryIds
+		).toEqual(['repo']);
+		expect(JSON.stringify(plan.snapshot.workers)).toBe(original);
+		const saved = db.prepare('SELECT snapshot FROM migrations').get() as { snapshot: Uint8Array };
+		expect(JSON.parse(Buffer.from(saved.snapshot).toString()).snapshot.workers).toEqual(
+			input.workers
+		);
+	} finally {
+		db.close();
+	}
+});

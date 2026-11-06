@@ -1,3 +1,4 @@
+import { isLeftByEarlierHolderOfOurPid } from '../../../main/cue/cue-engine-lock';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
@@ -1505,6 +1506,127 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 			reason: 'result-already-recorded',
 		});
 		expect(persisted()).toBe(before);
+	});
+	it('recovers only a namespace-and-token-proven previous owner while retaining inherited uncertain runs', async () => {
+		db.prepare('DELETE FROM runtime_owner').run();
+		const pidNsInode =
+			process.platform === 'linux' ? fs.statSync('/proc/self/ns/pid').ino : undefined;
+		const lock = (token: string) => ({
+			info: {
+				pid: process.pid,
+				mode: 'desktop' as const,
+				bootTime: 1,
+				startedAt: new Date(1).toISOString(),
+				token,
+				pidNsInode,
+			},
+			verify: () => ({ ok: true as const }),
+		});
+		runtime = new BoardRuntime(
+			storage,
+			lock('old-fixture-incarnation'),
+			() => host,
+			service,
+			() => 'unknown'
+		);
+		expect(runtime.acquire()).toEqual({ ok: true });
+		const token = claim();
+		const pending = runtime.start(token);
+		const successor = new BoardRuntime(
+			storage,
+			lock('new-fixture-incarnation'),
+			() => host,
+			service,
+			(identity) => (isLeftByEarlierHolderOfOurPid(JSON.parse(identity)) ? 'dead' : 'unknown')
+		);
+		expect(successor.processIdentity).not.toBe(runtime.processIdentity);
+		expect(successor.acquire()).toEqual(
+			pidNsInode === undefined ? { ok: false, reason: 'owner-conflict' } : { ok: true }
+		);
+		if (pidNsInode !== undefined) {
+			expect(successor.reconcile(token)).toMatchObject({ ok: false });
+			expect(reservations()).toHaveLength(1);
+			expect(card().status).toBe('running');
+		}
+		settle(good);
+		const result = await pending;
+		if (pidNsInode !== undefined) {
+			expect(result).toMatchObject({ ok: false, reason: 'owner-conflict' });
+			expect(reservations()).toHaveLength(1);
+			expect(runtime.read(token)!.outcome).toBeNull();
+		}
+	});
+	it('recovers a held terminated attempt only for a native operator without accepting revoked results', async () => {
+		const token = claim();
+		const pending = runtime.start(token);
+		setBoardWorkerAccess(db, 'worker', [], []);
+		settle(good);
+		await pending;
+		runtime.hold(token);
+		const snapshot = storage.workspace.readCollection(command())!;
+		const expected = { collection: snapshot.revision, card: snapshot.cards[0].revision };
+		const before = persisted();
+		expect(runtime.recover(token, expected, undefined)).toMatchObject({
+			ok: false,
+			reason: 'native-operator-required',
+		});
+		expect(persisted()).toBe(before);
+		expect(
+			runtime.recover(token, { ...expected, card: expected.card + 1 }, 'native-desktop-main-frame')
+		).toMatchObject({ ok: false, reason: 'stale-revision' });
+		expect(persisted()).toBe(before);
+		expect(runtime.recover(token, expected, 'native-desktop-main-frame')).toMatchObject({
+			ok: true,
+		});
+		expect(card()).toMatchObject({ status: 'todo', heldByUser: true });
+		expect(card().workflow?.workRunId).toBeUndefined();
+		expect(card().runs?.[0]).toMatchObject({
+			outcome: 'reclaimed',
+			artifact: good.artifact,
+			summary: 'Fixture checks passed',
+		});
+		expect(runtime.read(token)!.outcome).toMatchObject({
+			result: good,
+			operatorRecovery: { principal: 'native-desktop-main-frame' },
+		});
+		expect(reservations()).toHaveLength(0);
+		expect(completed).not.toHaveBeenCalled();
+		const recovered = persisted();
+		expect(runtime.complete(token, good)).toMatchObject({ ok: false });
+		expect(persisted()).toBe(recovered);
+	});
+	it('refuses operator recovery while the native run end remains unknown', async () => {
+		const token = claim();
+		const pending = runtime.start(token);
+		runtime.hold(token);
+		const snapshot = storage.workspace.readCollection(command())!;
+		const expected = { collection: snapshot.revision, card: snapshot.cards[0].revision };
+		const before = persisted();
+		expect(runtime.recover(token, expected, 'native-desktop-main-frame')).toMatchObject({
+			ok: false,
+			reason: 'termination-unconfirmed',
+		});
+		expect(persisted()).toBe(before);
+		expect(reservations()).toHaveLength(1);
+		settle({ ...good, terminationConfirmed: false });
+		await pending;
+	});
+	it('acknowledges a durable hold separately from revoked pending-result authority', async () => {
+		const token = claim();
+		const pending = runtime.start(token);
+		setBoardWorkerAccess(db, 'worker', [], []);
+		settle(good);
+		expect(await pending).toMatchObject({ ok: false });
+		const retained = runtime.read(token)!.life.pendingResult;
+		expect(runtime.hold(token)).toMatchObject({ ok: true });
+		expect(card().heldByUser).toBe(true);
+		expect(card().status).toBe('running');
+		expect(runtime.read(token)!.life.pendingResult).toEqual(retained);
+		expect(reservations()).toHaveLength(1);
+		expect(service.stop).not.toHaveBeenCalled();
+		setBoardWorkerAccess(db, 'worker', [], ['repo0', 'repo1']);
+		expect(runtime.reconcile(token)).toMatchObject({ ok: true });
+		expect(card()).toMatchObject({ status: 'todo', heldByUser: true });
 	});
 	it.each(['dormancy', 'membership', 'repository-access', 'assignment'])(
 		'preserves completed native evidence behind the authority fence after %s changes',
