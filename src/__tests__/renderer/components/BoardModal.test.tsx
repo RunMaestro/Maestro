@@ -2267,20 +2267,34 @@ describe('BoardModal central workspace identity', () => {
 	});
 
 	it('shows both sources with colliding IDs and combines the remaining filters', async () => {
-		installWorkspace();
+		const workspace = installWorkspace();
+		workspace.collections[0].board.cards[0].repositoryId = 'fixture-repo';
+		workspace.collections[1].board.cards[0].repositoryId = 'other-repo';
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		expect(await screen.findByText('Project one card')).toBeInTheDocument();
 		expect(screen.getByText('Project two card')).toBeInTheDocument();
 		expect(screen.queryByLabelText('Select board')).not.toBeInTheDocument();
-		expect(screen.queryByLabelText('Filter by project')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Filter by project' })).toHaveTextContent(
+			'All projects'
+		);
 		choose(screen.getByLabelText('Filter by group'), 'Group one');
 		choose(screen.getByLabelText('Filter by agent'), 'Agent one');
 		choose(screen.getByLabelText('Filter by type'), 'Work');
 		choose(screen.getByLabelText('Filter by status'), 'To Do');
 		expect(screen.getByText('Project one card')).toBeInTheDocument();
 		expect(screen.getByText('Project two card')).toBeInTheDocument();
+		choose(screen.getByLabelText('Filter by project'), `fixture-repo: ${PROJECT_ROOT}`);
+		expect(screen.getByText('Project one card')).toBeInTheDocument();
+		expect(screen.queryByText('Project two card')).not.toBeInTheDocument();
+		choose(screen.getByLabelText('Filter by project'), 'Missing repository: other-repo');
+		expect(screen.getByText('Project two card')).toBeInTheDocument();
+		expect(screen.queryByText('Project one card')).not.toBeInTheDocument();
+		choose(screen.getByLabelText('Filter by project'), 'All projects');
+		expect(screen.getByText('Project one card')).toBeInTheDocument();
+		expect(screen.getByText('Project two card')).toBeInTheDocument();
 		choose(screen.getByLabelText('Filter by agent'), 'Agent two');
 		expect(screen.queryByText('Project two card')).not.toBeInTheDocument();
+		expect(screen.queryByText('Project one card')).not.toBeInTheDocument();
 	});
 
 	it('opens the selected colliding card by keyboard and saves only to its host-confirmed source with its read card revision', async () => {
@@ -2490,7 +2504,16 @@ it('initializes the global destination and creates the first card with no agent 
 	);
 	expect(boardApi.initialize).toHaveBeenCalled();
 	expect(screen.queryByLabelText('Select board')).not.toBeInTheDocument();
-	expect(screen.queryByLabelText('Filter by project')).not.toBeInTheDocument();
+	const projectFilter = await screen.findByRole('button', { name: 'Filter by project' });
+	expect(projectFilter).toHaveTextContent('All projects');
+	expect(screen.getByText('First card')).toBeInTheDocument();
+	choose(projectFilter, 'No project assignment');
+	expect(screen.getByText('First card')).toBeInTheDocument();
+	choose(projectFilter, `fixture-repo: ${PROJECT_ROOT}`);
+	expect(screen.queryByText('First card')).not.toBeInTheDocument();
+	choose(projectFilter, 'All projects');
+	expect(screen.getByText('First card')).toBeInTheDocument();
+	expect(boardApi.create).not.toHaveBeenCalled();
 });
 
 describe('BoardModal host capture editor', () => {
