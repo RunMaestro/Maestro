@@ -1,3 +1,4 @@
+import { newEmptyTranscript } from './sessionTranscript';
 /**
  * The record a brand-new agent starts as: one idle AI tab and every empty
  * collection the desktop expects to find on a restored agent.
@@ -58,7 +59,7 @@ export function buildNewAgentRecord(input: NewAgentRecordInput, deps: NewAgentRe
 		agentSessionId: null,
 		name: null,
 		starred: false,
-		logs: [] as never[],
+		logs: newEmptyTranscript<never>(),
 		inputValue: '',
 		stagedImages: [] as string[],
 		createdAt: now,

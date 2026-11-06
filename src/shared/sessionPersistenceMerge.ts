@@ -45,6 +45,11 @@ const rows: Record<string, true> = {
 	unifiedTabOrder: true,
 };
 
+/**
+ * Merge collection edits against their common baseline while preserving concurrent stored
+ * changes. Queue IDs survive type edits, newer recovery rows survive stale removals, and
+ * reordering cannot cross a held item on the same tab.
+ */
 function mergeRows(
 	incoming: RecordData[],
 	stored: RecordData[],
@@ -53,7 +58,14 @@ function mergeRows(
 	preserveLive: boolean,
 	queueRows = false
 ): RecordData[] {
-	const key = (row: RecordData): string => (row.type ? `${row.type}:${row.id}` : row.id);
+	// Queue item IDs identify the operation independently of its editable type.
+	// Otherwise changing the type can duplicate a held row during a merge.
+	/**
+	 * Key queue operations by ID even when their editable type changes. Other typed collections
+	 * retain type-qualified identity to avoid collisions.
+	 */
+	const key = (row: RecordData): string =>
+		queueRows ? row.id : row.type ? `${row.type}:${row.id}` : row.id;
 	if ([...incoming, ...stored, ...baseline].some((row) => !row || typeof row.id !== 'string')) {
 		return same(stored, baseline) ? incoming : stored;
 	}
@@ -65,7 +77,15 @@ function mergeRows(
 		const change = next.get(id);
 		const base = before.get(id);
 		if (change) {
-			result.push(mergeRecord(change, current, base ?? current, preserveClient, preserveLive));
+			const merged = mergeRecord(change, current, base ?? current, preserveClient, preserveLive);
+			if (queueRows && current.pendingAdmissionId) {
+				// Reordering checks below must see the saved target and hold, even
+				// when a stale client tried changing or removing them in this save.
+				const restored = { ...current };
+				if ('paused' in merged) restored.paused = merged.paused;
+				else delete restored.paused;
+				result.push(restored);
+			} else result.push(merged);
 			next.delete(id);
 		} else if (
 			!base ||
@@ -110,11 +130,37 @@ function mergeRows(
 			.map((row) => merged.get(key(row)))
 			.filter((row): row is RecordData => row !== undefined);
 		let index = 0;
-		return result.map((row) => (incomingIds.has(key(row)) ? ordered[index++] : row));
+		const reordered = result.map((row) => (incomingIds.has(key(row)) ? ordered[index++] : row));
+		if (queueRows) {
+			// A client may have started dragging before another client installed a
+			// technical hold. Preserve each held tab's existing relative order across
+			// the rebase, even when the hold was absent from the client's baseline.
+			const positions = new Map(reordered.map((row, position) => [key(row), position]));
+			for (let heldIndex = 0; heldIndex < result.length; heldIndex++) {
+				const held = result[heldIndex];
+				if (!held.pendingAdmissionId) continue;
+				const newHeldIndex = positions.get(key(held))!;
+				if (
+					result.some((row, oldIndex) => {
+						const newIndex = positions.get(key(row))!;
+						const wasBefore = oldIndex < heldIndex;
+						const isBefore = newIndex < newHeldIndex;
+						return row.tabId === held.tabId && wasBefore !== isBefore;
+					})
+				)
+					return result;
+			}
+		}
+		return reordered;
 	}
 	return result;
 }
 
+/**
+ * Merge changed fields against a baseline while retaining concurrent stored values on
+ * conflict. Exclude host-owned admission state and optionally client/live fields,
+ * recursively merging supported row collections and tab records.
+ */
 function mergeRecord(
 	incoming: RecordData,
 	stored: RecordData,
@@ -126,6 +172,7 @@ function mergeRecord(
 	for (const field of new Set([...Object.keys(incoming), ...Object.keys(baseline)])) {
 		if (
 			field === 'deferredContent' ||
+			field === 'admissionRelease' ||
 			(preserveClient && clientFields[field]) ||
 			(preserveLive && liveFields[field])
 		)
@@ -162,10 +209,51 @@ export function mergeSessionPersistenceChanges<T extends RecordData>(
 	preserveLive = false,
 	remoteQueue = false
 ): T {
-	const result =
+	let result =
 		!stored || !baseline
 			? incoming
 			: (mergeRecord(incoming, stored, baseline, preserveClient, preserveLive) as T);
+	if (Array.isArray(result.executionQueue)) {
+		const storedRows = new Map(
+			(Array.isArray(stored?.executionQueue) ? stored.executionQueue : [])
+				.filter((item: RecordData) => item && typeof item.id === 'string')
+				.map((item: RecordData) => [item.id, item])
+		);
+		result = {
+			...result,
+			executionQueue: result.executionQueue.map((item: RecordData) => {
+				if (!item || typeof item.id !== 'string') return item;
+				const saved = storedRows.get(item.id) as RecordData | undefined;
+				const copy = { ...item };
+				if (saved?.admissionRelease) copy.admissionRelease = saved.admissionRelease;
+				else delete copy.admissionRelease;
+				return copy;
+			}),
+		};
+	}
+	if (Array.isArray(result.executionQueue) && Array.isArray(stored?.executionQueue)) {
+		// A renderer save cannot change a held operation or release its host hold.
+		// User pause remains independent; the host-authorized drain must clear the
+		// technical hold through a separate boundary.
+		// Removing the whole row remains a queue cancellation.
+		const held = new Map(
+			stored.executionQueue
+				.filter((item: RecordData) => item?.pendingAdmissionId && typeof item.id === 'string')
+				.map((item: RecordData) => [item.id, item])
+		);
+		result = {
+			...result,
+			executionQueue: result.executionQueue.map((item: RecordData) => {
+				if (!item || typeof item.id !== 'string') return item;
+				const saved = held.get(item.id) as RecordData | undefined;
+				if (!saved) return item;
+				const restored = { ...saved };
+				if ('paused' in item) restored.paused = item.paused;
+				else delete restored.paused;
+				return restored;
+			}),
+		};
+	}
 	if (!remoteQueue || !Array.isArray(result.executionQueue)) return result;
 	// Remote persistence may retain an unchanged Host-observed human turn, but
 	// cannot create one or reuse its origin after changing the queued operation.

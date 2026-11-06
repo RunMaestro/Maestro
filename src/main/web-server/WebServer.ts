@@ -1,3 +1,11 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
+import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
+import type {
+	ConfirmQueueItem,
+	ReleaseQueueItem,
+	QueueItemReceiptRequest,
+	QueueItemReceipt,
+} from '../stores/queue-item-receipt';
 /**
  * WebServer - HTTP and WebSocket server for remote access
  *
@@ -114,6 +122,7 @@ import type {
 	StarTabCallback,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -223,6 +232,7 @@ import type {
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
+import type { MessagePinCommandRequest } from '../../shared/messagePinCommands';
 import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
@@ -636,6 +646,10 @@ export class WebServer {
 		this.callbackRegistry.setClosedTabCommandCallback(callback);
 	}
 
+	setMessagePinCommandCallback(callback: MessagePinCommandCallback): void {
+		this.callbackRegistry.setMessagePinCommandCallback(callback);
+	}
+
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
 		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
 	}
@@ -713,6 +727,57 @@ export class WebServer {
 
 	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
 		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
+	}
+
+	startQueueHandoffFromMain(
+		...args: Parameters<
+			import('../pianola/pianola-new-tab-dispatch').PianolaNewTabDispatch['startQueueHandoff']
+		>
+	) {
+		return this.messageHandler.startQueueHandoffFromMain(...args);
+	}
+
+	prepareQueueSpawnFromMain(
+		agentId: string,
+		tabId: string,
+		itemId: string,
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(progress: ManagedQueueRoutingProgress): void },
+		stepId?: string
+	) {
+		return this.messageHandler.prepareQueueSpawnFromMain(
+			agentId,
+			tabId,
+			itemId,
+			assertOwner,
+			routingConsumer,
+			stepId
+		);
+	}
+
+	private releaseQueueItemCallback?: ReleaseQueueItem;
+	setReleaseQueueItemCallback(callback?: ReleaseQueueItem): void {
+		this.releaseQueueItemCallback = callback;
+	}
+	/** Host only, never registered as a remote message or renderer bridge verb. */
+	releaseQueueItemFromMain(...args: Parameters<ReleaseQueueItem>): ReturnType<ReleaseQueueItem> {
+		if (!this.releaseQueueItemCallback)
+			return Promise.reject(new Error('DispatchQueueDrainUnavailable'));
+		return this.releaseQueueItemCallback(...args);
+	}
+
+	private confirmQueueItemCallback?: ConfirmQueueItem;
+
+	setConfirmQueueItemCallback(callback: ConfirmQueueItem): void {
+		this.confirmQueueItemCallback = callback;
+	}
+
+	/** Host-only persisted-item evidence. Does not enqueue or release anything. */
+	confirmQueueItemFromMain(request: QueueItemReceiptRequest): Promise<QueueItemReceipt> {
+		return (
+			this.confirmQueueItemCallback?.(request) ??
+			Promise.resolve({ durable: false, reason: 'store-unavailable' })
+		);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -1344,6 +1409,11 @@ export class WebServer {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
 			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
+			/**
+			 * Forward command execution to the callback registry, retaining optional receipt and
+			 * dispatch metadata. Omit unused trailing arguments to preserve legacy callback invocation
+			 * behavior.
+			 */
 			executeCommand: async (
 				sessionId: string,
 				command: string,
@@ -1353,7 +1423,8 @@ export class WebServer {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: MentionRouting,
-				requireDeliveryReceipt?: boolean
+				requireDeliveryReceipt?: boolean,
+				pianolaDispatchId?: string
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1364,7 +1435,11 @@ export class WebServer {
 					images,
 					background,
 					mentionRouting,
-					...(requireDeliveryReceipt ? [true] : [])
+					...((pianolaDispatchId
+						? [requireDeliveryReceipt, pianolaDispatchId]
+						: requireDeliveryReceipt
+							? [true]
+							: []) as [boolean?, string?])
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1384,6 +1459,8 @@ export class WebServer {
 				this.callbackRegistry.snoozeCommand(request),
 			closedTabCommand: async (request: ClosedTabCommandRequest) =>
 				this.callbackRegistry.closedTabCommand(request),
+			messagePinCommand: async (request: MessagePinCommandRequest) =>
+				this.callbackRegistry.messagePinCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
@@ -1419,14 +1496,16 @@ export class WebServer {
 				prompt: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: import('../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) =>
 				this.callbackRegistry.newAITabWithPrompt(
 					sessionId,
 					prompt,
 					background,
 					hidden,
-					mentionRouting
+					mentionRouting,
+					control
 				),
 			interruptSession: (sessionId: string, tabId?: string) =>
 				this.callbackRegistry.interruptSession(sessionId, tabId),
@@ -1434,6 +1513,8 @@ export class WebServer {
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
 				this.callbackRegistry.noteAgentDelegation(notice),
+			confirmQueueItem: (request) => this.confirmQueueItemFromMain(request),
+			releaseQueueItem: (...args) => this.releaseQueueItemFromMain(...args),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,
@@ -1442,7 +1523,9 @@ export class WebServer {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean,
+				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1452,7 +1535,9 @@ export class WebServer {
 					images,
 					background,
 					held,
-					mentionRouting
+					mentionRouting,
+					dispatchCallback,
+					control
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1696,6 +1781,14 @@ export class WebServer {
 		}
 	): void {
 		this.broadcastService.broadcastSessionStateChange(sessionId, state, additionalData);
+	}
+
+	/** Host-only native census used by owner-authorized Pianola handover. */
+	getPianolaScopeSnapshot() {
+		return pianolaScopeSnapshotFromDesktop({
+			success: true,
+			...this.callbackRegistry.listDesktopSessions(),
+		});
 	}
 
 	broadcastSessionAdded(session: SessionBroadcastData): void {

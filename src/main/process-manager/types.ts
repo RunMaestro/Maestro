@@ -34,6 +34,11 @@ export interface SdkProcessController {
  * Configuration for spawning a new process
  */
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
+	pianolaDispatchId?: string;
+	pianolaQueueItemId?: string;
+	pianolaQueueStepId?: string;
 	sessionId: string;
 	toolType: string;
 	cwd: string;
@@ -257,6 +262,8 @@ export interface TurnSettlement {
 	answerCaptured: boolean;
 	/** Bounded, redacted final assistant text for consumers racing renderer persistence. */
 	answerTail?: string;
+	/** Native-only non-enumerable final output; never serialized to renderer or ledger. */
+	readonly nativeAnswer?: string;
 }
 
 /**

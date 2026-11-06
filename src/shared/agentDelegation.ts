@@ -31,6 +31,17 @@ export const CALLER_AGENT_ID_ENV_VAR = 'MAESTRO_CALLER_AGENT_ID';
 /** The AI tab within that agent whose turn spawned the process, when known. */
 export const CALLER_TAB_ID_ENV_VAR = 'MAESTRO_CALLER_TAB_ID';
 
+/** Private host-issued proof delivery, separate from display attribution. */
+export const CALLER_RUN_PROOF_FILE_ENV_VAR = 'MAESTRO_CALLER_RUN_PROOF_FILE';
+export const CALLER_RUN_PROOF_HEADER = 'x-maestro-caller-run-proof';
+
+/** Public correlation data. These fields alone never establish caller authority. */
+export interface CallerRunIdentity {
+	agentId: string;
+	tabId: string;
+	spawnGeneration: string;
+}
+
 /** The agent (and, when known, the AI tab) a CLI invocation is running under. */
 export interface CallerIdentity {
 	agentId: string;
@@ -60,6 +71,7 @@ export function withoutCallerIdentityEnv(
 	const rest = { ...env };
 	delete rest[CALLER_AGENT_ID_ENV_VAR];
 	delete rest[CALLER_TAB_ID_ENV_VAR];
+	delete rest[CALLER_RUN_PROOF_FILE_ENV_VAR];
 	return Object.keys(rest).length > 0 ? rest : undefined;
 }
 

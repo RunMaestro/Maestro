@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PianolaScopeControls } from '../../../../renderer/components/PianolaDashboard/PianolaScopeControls';
 import { usePianolaSupervisor } from '../../../../renderer/components/PianolaDashboard/usePianolaSupervisor';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
 import { createMockSession, resetAllStores } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { PianolaSupervisorSnapshot } from '../../../../main/ipc/handlers/pianola';
@@ -32,9 +34,15 @@ const scope: PianolaSupervisedTarget = {
 let persisted: PianolaSupervisorSnapshot;
 let original: typeof window.maestro;
 
-function Controls() {
+function Controls({ autoWatchControl = false }: { autoWatchControl?: boolean }) {
 	const supervisor = usePianolaSupervisor();
-	return <PianolaScopeControls theme={mockTheme} supervisor={supervisor} />;
+	return (
+		<PianolaScopeControls
+			theme={mockTheme}
+			supervisor={supervisor}
+			autoWatchControl={autoWatchControl}
+		/>
+	);
 }
 
 beforeEach(() => {
@@ -81,6 +89,58 @@ afterEach(() => {
 });
 
 describe('PianolaScopeControls production hook composition', () => {
+	it('submits an unchanged existing scope for owner policy renewal without creating a selection', async () => {
+		render(<Controls />);
+		await screen.findByText('Fixture selection');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		const save = screen.getByRole('button', { name: 'Save' });
+		fireEvent.click(save);
+		await waitFor(() => expect(window.maestro.pianola.supervisor.add).toHaveBeenCalledOnce());
+		expect(window.maestro.pianola.supervisor.add).toHaveBeenCalledWith(scope);
+		await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+		expect(persisted.targets).toHaveLength(1);
+		expect(persisted.targets[0].id).toBe(scope.id);
+	});
+
+	it('keeps the selection open and displays the migration refusal', async () => {
+		vi.mocked(window.maestro.pianola.supervisor.add).mockResolvedValueOnce({
+			...persisted,
+			migration: {
+				status: 'NeedsConfiguration',
+				scopeId: scope.id,
+				watchIds: ['old'],
+				reason: 'Legacy owner cannot be fenced',
+			},
+		});
+		render(<Controls />);
+		await screen.findByText('Fixture selection');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'Legacy owner cannot be fenced' })
+			)
+		);
+		expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+	});
+
+	it('keeps the edited selection open when saving fails', async () => {
+		vi.mocked(window.maestro.pianola.supervisor.add).mockRejectedValueOnce(new Error('disk full'));
+		render(<Controls />);
+		await screen.findByText('Fixture selection');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		fireEvent.change(screen.getByRole('textbox', { name: 'Label' }), {
+			target: { value: 'Unsaved selection' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+		expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Unsaved selection');
+		expect(persisted.targets[0].selection?.label).toBe('Fixture selection');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'Could not save selection: disk full' })
+		);
+	});
+
 	it('saves native group/whole-agent/exclusion identities and reloads the persisted edit', async () => {
 		const view = render(<Controls />);
 		await screen.findByText('Fixture selection');
@@ -229,4 +289,72 @@ describe('PianolaScopeControls production hook composition', () => {
 		expect(window.maestro.pianola.supervisor.add).not.toHaveBeenCalled();
 		expect(screen.getByText('Fixture selection')).toBeInTheDocument();
 	});
+});
+
+it('configures standing future coverage at Auto-Watch with an explicitly chosen manager', async () => {
+	persisted.targets = [];
+	render(<Controls autoWatchControl />);
+	await screen.findByText('No selections registered.');
+	fireEvent.click(screen.getByRole('checkbox', { name: /Automatically watch future/ }));
+	expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+	expect(window.maestro.pianola.supervisor.add).not.toHaveBeenCalled();
+	fireEvent.change(screen.getByRole('combobox', { name: 'Manager' }), {
+		target: { value: 'manager' },
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+	await waitFor(() =>
+		expect(window.maestro.pianola.supervisor.add).toHaveBeenCalledWith(
+			expect.objectContaining({
+				managerAgentId: 'manager',
+				enabled: false,
+				selection: expect.objectContaining({ futureLocalAgents: true, agentIds: [], groupIds: [] }),
+			})
+		)
+	);
+	fireEvent.click(screen.getByRole('checkbox', { name: /Automatically watch future/ }));
+	await waitFor(() =>
+		expect(window.maestro.pianola.supervisor.setEnabled).toHaveBeenCalledWith(scope.id, true)
+	);
+});
+
+it('does not choose a manager implicitly when multiple future scopes exist', async () => {
+	persisted.targets = [
+		scope,
+		{ ...scope, id: '22222222-2222-4222-8222-222222222222', managerAgentId: 'other' },
+	].map((t) => ({ ...t, selection: { ...t.selection!, futureLocalAgents: true } }));
+	render(<Controls autoWatchControl />);
+	await screen.findByText(/Multiple future-agent selections/);
+	expect(screen.getByRole('checkbox', { name: /Automatically watch future/ })).toBeDisabled();
+	expect(window.maestro.pianola.supervisor.setEnabled).not.toHaveBeenCalled();
+});
+
+it('distinguishes registry pause from actual worker health and identifies selected members', async () => {
+	persisted.targets[0].enabled = false;
+	persisted.health = [
+		{ id: scope.id, kind: 'watch-scope', state: 'running', restarts: 0, recentLogs: [] },
+	];
+	render(<Controls />);
+	await screen.findByText('Fixture selection');
+	expect(screen.getByText(/Registry: Paused/)).toBeInTheDocument();
+	expect(screen.getByText(/Worker: running/)).toBeInTheDocument();
+	expect(screen.getByText(/Agents: Owner/)).toBeInTheDocument();
+	expect(screen.getByText(/Groups: Native group/)).toBeInTheDocument();
+	expect(screen.getByText(/Excluded: Excluded agent/)).toBeInTheDocument();
+});
+
+it('does not label an unused Auto-Watch as a legacy configuration problem', async () => {
+	persisted.targets = [];
+	render(<Controls autoWatchControl />);
+	await screen.findByText('No selections registered.');
+	expect(screen.queryByText(/NeedsConfiguration/)).not.toBeInTheDocument();
+});
+
+it('shows NeedsConfiguration for a legacy auto-watch boolean without a policy', async () => {
+	persisted.targets = [];
+	useSettingsStore.setState({ pianolaAutoWatchNewAgents: true });
+	render(<Controls autoWatchControl />);
+	await screen.findByText(/NeedsConfiguration/);
+	expect(
+		screen.getByText(/Legacy Auto-Watch is enabled without a manager policy/)
+	).toBeInTheDocument();
 });
