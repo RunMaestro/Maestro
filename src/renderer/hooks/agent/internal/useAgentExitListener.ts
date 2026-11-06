@@ -489,7 +489,10 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						return {
 							...s,
 							orphanedThinkingTabs: updatedOrphans,
-							state: anyAiTabStillBusy ? s.state : ('idle' as SessionState),
+							state:
+								anyAiTabStillBusy || (s.state === 'error' && s.agentError)
+									? s.state
+									: ('idle' as SessionState),
 							busySource: anyAiTabStillBusy ? s.busySource : undefined,
 							thinkingStartTime: anyAiTabStillBusy ? s.thinkingStartTime : undefined,
 						};
@@ -548,12 +551,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 
 					// Nothing to dispatch - retire the orphan and recompute thinking state.
 					const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-					const stillThinking = anyAiTabStillBusy || orphansWithoutExited.length > 0;
+					const stillThinking =
+						anyAiTabStillBusy || orphansWithoutExited.some((tab) => tab.state === 'busy');
 					return {
 						...s,
 						orphanedThinkingTabs:
 							orphansWithoutExited.length > 0 ? orphansWithoutExited : undefined,
-						state: stillThinking ? s.state : ('idle' as SessionState),
+						state:
+							stillThinking || (s.state === 'error' && s.agentError)
+								? s.state
+								: ('idle' as SessionState),
 						busySource: stillThinking ? s.busySource : undefined,
 						thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
 					};
