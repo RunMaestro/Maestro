@@ -104,13 +104,22 @@ export class BoardRuntime {
 	}
 
 	/** Layer the SQLite epoch on the caller's existing runtime lock. */
-	acquire(): Verdict {
+	acquire():
+		| { ok: true }
+		| {
+				ok: false;
+				reason: 'runtime-unavailable' | 'owner-identity-unavailable' | 'owner-conflict';
+		  } {
 		return this.storage.db
-			.transaction((): Verdict => {
+			.transaction((): ReturnType<BoardRuntime['acquire']> => {
 				if (!this.lock.verify().ok) return { ok: false, reason: 'runtime-unavailable' };
 				if (
 					!Number.isFinite(this.lock.info.bootTime) ||
-					!Number.isFinite(Date.parse(this.lock.info.startedAt))
+					!Number.isFinite(Date.parse(this.lock.info.startedAt)) ||
+					// Native Mac/Windows recovery needs a platform-bound host proof.
+					// A valid Cue lock alone must not create an irrecoverable owner row.
+					((this.lock.info.platform === 'darwin' || this.lock.info.platform === 'win32') &&
+						!this.lock.info.hostIdentity)
 				)
 					return { ok: false, reason: 'owner-identity-unavailable' };
 				const old = this.storage.db.prepare('SELECT * FROM runtime_owner WHERE id = 1').get() as

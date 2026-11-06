@@ -100,6 +100,9 @@ export async function discoverLocalBoardSources(
 			JSON.parse(knownRepository.payload_json).sourceStatus !== 'unresolved'
 		)
 			continue;
+		const knownSource = storage.db
+			.prepare('SELECT payload_json FROM board_source_locations WHERE source_key=?')
+			.get(sourceKey) as { payload_json: string } | undefined;
 		const read = async (relative: string): Promise<Buffer | null> => {
 			try {
 				const file = path.join(physical, relative);
@@ -146,6 +149,21 @@ export async function discoverLocalBoardSources(
 							.get(sourceKey)
 					)
 						return;
+					// Fence the observation made before asynchronous input/Git probes.
+					// Completed transfers and concurrent repository/location winners stay intact.
+					if (storage.db.prepare('SELECT 1 FROM migrations WHERE source_key=?').get(sourceKey))
+						return;
+					const current = storage.db
+						.prepare('SELECT payload_json FROM repositories WHERE id=?')
+						.get(`source:${sourceKey}`) as { payload_json: string } | undefined;
+					const currentSource = storage.db
+						.prepare('SELECT payload_json FROM board_source_locations WHERE source_key=?')
+						.get(sourceKey) as { payload_json: string } | undefined;
+					if (
+						current?.payload_json !== knownRepository?.payload_json ||
+						currentSource?.payload_json !== knownSource?.payload_json
+					)
+						return;
 					const inserted = storage.db
 						.prepare('INSERT OR IGNORE INTO board_sources VALUES (?)')
 						.run(sourceKey);
@@ -157,7 +175,32 @@ export async function discoverLocalBoardSources(
 								.prepare('INSERT OR IGNORE INTO repositories VALUES (?, ?)')
 								.run(repository.id, canonicalJson(repository)).changes
 						: 0;
-					if (inserted.changes || repositoryAdded)
+					let repaired = 0;
+					if (repository && current && currentSource) {
+						const pending = JSON.parse(current.payload_json);
+						if (
+							pending.id === repository.id &&
+							pending.sourceStatus === 'unresolved' &&
+							pending.validated === false &&
+							pending.workingDirectory === physical &&
+							canonicalJson(pending.location ?? { kind: 'local' }) ===
+								canonicalJson(source.location) &&
+							canonicalJson(JSON.parse(currentSource.payload_json)) === canonicalJson(source)
+						) {
+							const payload = canonicalJson({
+								...pending,
+								validated: true,
+								sourceStatus: undefined,
+								diagnostic: undefined,
+							});
+							repaired = storage.db
+								.prepare(
+									'UPDATE repositories SET payload_json=? WHERE id=? AND payload_json=? AND payload_json<>?'
+								)
+								.run(payload, repository.id, current.payload_json, payload).changes;
+						}
+					}
+					if (inserted.changes || repositoryAdded || repaired)
 						storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
 				})
 				.immediate();

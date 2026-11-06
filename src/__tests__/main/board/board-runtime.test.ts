@@ -1,3 +1,4 @@
+import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { boardOwnerLiveness } from '../../../main/board/board-owner-liveness';
 import { isLeftByEarlierHolderOfOurPid } from '../../../main/cue/cue-engine-lock';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
@@ -1508,6 +1509,71 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		});
 		expect(persisted()).toBe(before);
 	});
+	it('admits the production Linux Cue namespace path without a native Mac/Windows host proof', () => {
+		db.prepare('DELETE FROM runtime_owner').run();
+		const linux = new BoardRuntime(
+			storage,
+			{
+				info: {
+					pid: 222,
+					platform: 'linux',
+					pidNsInode: 123,
+					token: 'linux-cue',
+					mode: 'desktop',
+					bootTime: 1,
+					startedAt: new Date(1).toISOString(),
+				},
+				verify: () => ({ ok: true }),
+			},
+			() => host,
+			service,
+			() => 'unknown'
+		);
+		expect(linux.acquire()).toEqual({ ok: true });
+		expect(linux.claim(command())).toMatchObject({ ok: true });
+		expect(reservations()).toHaveLength(1);
+	});
+	it.each(['darwin', 'win32'] as const)(
+		'refuses new %s owners without host proof before any durable mutation',
+		(platform) => {
+			db.prepare('DELETE FROM runtime_owner').run();
+			const makeRuntime = (hostIdentity?: string) =>
+				new BoardRuntime(
+					storage,
+					{
+						info: {
+							pid: 222,
+							token: 'current',
+							platform,
+							hostIdentity,
+							mode: 'desktop',
+							bootTime: 1,
+							startedAt: new Date(1).toISOString(),
+						},
+						verify: () => ({ ok: true }),
+					},
+					() => host,
+					service,
+					() => 'unknown'
+				);
+			const unproven = makeRuntime();
+			const before = snapshotSqlite(db);
+			expect(unproven.acquire()).toEqual({ ok: false, reason: 'owner-identity-unavailable' });
+			expect(db.prepare('SELECT * FROM runtime_owner').all()).toEqual([]);
+			expect(unproven.dispatch(command())).toMatchObject({ ok: false });
+			expect(reservations()).toEqual([]);
+			expect(service.spawn).not.toHaveBeenCalled();
+			expect(snapshotSqlite(db)).toEqual(before);
+			const proven = makeRuntime('os-machine-proof');
+			expect(proven.acquire()).toEqual({ ok: true });
+			const owned = snapshotSqlite(db);
+			expect(makeRuntime().acquire()).toEqual({ ok: false, reason: 'owner-identity-unavailable' });
+			expect(snapshotSqlite(db)).toEqual(owned);
+			expect(db.prepare('SELECT process_identity FROM runtime_owner').get()).toEqual({
+				process_identity: proven.processIdentity,
+			});
+		}
+	);
 	it.each(['darwin', 'win32'] as const)(
 		'recovers a proven dead %s owner and fences callbacks without releasing inherited runs',
 		async (platform) => {

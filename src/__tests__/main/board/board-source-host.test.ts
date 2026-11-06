@@ -1,3 +1,4 @@
+import * as remoteGit from '../../../main/utils/remote-git';
 import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
@@ -5,7 +6,11 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { openBoardDb } from '../../../main/board/board-db';
 import { BoardStorageFacade, configureBoardStorage } from '../../../main/board/board-storage';
-import { boardMigrationSourceKey } from '../../../main/board/board-migration';
+import {
+	applyBoardMigration,
+	planBoardMigration,
+	boardMigrationSourceKey,
+} from '../../../main/board/board-migration';
 import {
 	configureIsolatedBoardSourceHost,
 	discoverBoardSources,
@@ -673,3 +678,124 @@ it.each([false, true])(
 		}
 	}
 );
+
+it('repairs a pending creator-only repository after one root EACCES and stays byte-identical on replay', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'creator-retry-'));
+	execFileSync('git', ['init', '--quiet', dir]);
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const workers = [{ id: 'creator', dir, boardWorker: false }];
+		const source = { location: { kind: 'local' as const }, path: dir };
+		const sourceKey = boardMigrationSourceKey(source);
+		vi.spyOn(fs.promises, 'realpath').mockImplementationOnce(async (file) => {
+			expect(file).toBe(dir);
+			throw Object.assign(new Error('one transient owned root denial'), { code: 'EACCES' });
+		});
+		await discoverLocalBoardSources(storage, workers);
+		const record = storage.captureCatalog().repositories[0];
+		// Retain manually managed and future repository fields through repair.
+		const pending = { ...record, displayName: 'Keep', allowedPrincipals: ['manual'] };
+		db.prepare('UPDATE repositories SET payload_json=? WHERE id=?').run(
+			JSON.stringify(pending),
+			pending.id
+		);
+		expect(pending).toMatchObject({
+			id: `source:${sourceKey}`,
+			validated: false,
+			sourceStatus: 'unresolved',
+			diagnostic: expect.stringContaining('EACCES'),
+		});
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+		expect(listBoardWorkers(db)).toEqual([]);
+		const locations = db.prepare('SELECT * FROM board_source_locations').all();
+		const revision = storage.workspace.readRevision();
+		await discoverLocalBoardSources(storage, workers);
+		expect(storage.captureCatalog().repositories).toEqual([
+			{ ...pending, validated: true, sourceStatus: undefined, diagnostic: undefined },
+		]);
+		expect(storage.workspace.readRevision()).toBe(revision + 1);
+		expect(fs.existsSync(path.join(dir, '.maestro'))).toBe(false);
+		expect(db.prepare('SELECT * FROM board_source_locations').all()).toEqual(locations);
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual([]);
+		expect(listBoardWorkers(db)).toEqual([]);
+		const healthy = snapshotSqlite(db);
+		const read = vi.spyOn(fs.promises, 'readFile');
+		const git = vi.spyOn(remoteGit, 'execGitReadOnly');
+		await discoverLocalBoardSources(storage, workers);
+		expect(read).not.toHaveBeenCalled();
+		expect(git).not.toHaveBeenCalled();
+		expect(snapshotSqlite(db)).toEqual(healthy);
+	} finally {
+		db.close();
+	}
+});
+
+it.each([
+	'repository-winner',
+	'location-winner',
+	'suppression',
+	'completed',
+	'wrong-id',
+	'wrong-root',
+	'wrong-location',
+])('keeps %s intact during creator-only retry', async (kind) => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'creator-fence-'));
+	execFileSync('git', ['init', '--quiet', dir]);
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const workers = [{ id: 'creator', dir }];
+		const source = { location: { kind: 'local' as const }, path: dir };
+		const sourceKey = boardMigrationSourceKey(source);
+		vi.spyOn(fs.promises, 'realpath').mockRejectedValueOnce(
+			Object.assign(new Error('once'), { code: 'EACCES' })
+		);
+		await discoverLocalBoardSources(storage, workers);
+		if (kind.startsWith('wrong-')) {
+			const pending = storage.captureCatalog().repositories[0];
+			const payload = {
+				...pending,
+				...(kind === 'wrong-id' ? { id: 'other' } : {}),
+				...(kind === 'wrong-root' ? { workingDirectory: path.join(dir, 'other') } : {}),
+				...(kind === 'wrong-location' ? { location: { kind: 'ssh', remoteId: 'foreign' } } : {}),
+			};
+			db.prepare('UPDATE repositories SET payload_json=?').run(JSON.stringify(payload));
+		}
+		let winner = snapshotSqlite(db);
+		const git = remoteGit.execGitReadOnly;
+		vi.spyOn(remoteGit, 'execGitReadOnly').mockImplementationOnce(async (...args) => {
+			const result = await git(...args);
+			if (kind === 'repository-winner')
+				db.prepare(
+					"UPDATE repositories SET payload_json=json_set(payload_json, '$.diagnostic', 'winner')"
+				).run();
+			if (kind === 'location-winner')
+				db.prepare('UPDATE board_source_locations SET payload_json=?').run(
+					JSON.stringify({ ...source, path: path.join(dir, 'winner') })
+				);
+			if (kind === 'suppression')
+				db.prepare('INSERT INTO board_source_suppressions VALUES (?, ?)').run(sourceKey, 1);
+			if (kind === 'completed') {
+				applyBoardMigration(
+					db,
+					planBoardMigration({
+						source,
+						repository: { id: `source:${sourceKey}`, workingDirectory: dir, validated: true },
+						boardBytes: null,
+						profileBytes: null,
+						workers: [],
+					})
+				);
+			}
+			winner = snapshotSqlite(db);
+			return result;
+		});
+		await discoverLocalBoardSources(storage, workers);
+		expect(snapshotSqlite(db)).toEqual(winner);
+		expect(listBoardWorkers(db)).toEqual([]);
+		expect(refuseTransport).not.toHaveBeenCalled();
+	} finally {
+		db.close();
+	}
+});

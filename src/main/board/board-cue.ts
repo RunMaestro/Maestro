@@ -8,7 +8,7 @@ import { generateUUID } from '../../shared/uuid';
 import type { BoardClaimHostContext, BoardRunSpecification } from './board-claims';
 import { BoardRuntime, type BoardRunService, type BoardRuntimeLock } from './board-runtime';
 import { executeBoardRuntimeCommand } from './board-runtime-host';
-import type { BoardStorageFacade } from './board-storage';
+import { BoardStorageError, type BoardStorageFacade } from './board-storage';
 import type { BoardTickResult } from '../../shared/board/commands';
 import type { BoardCardKey } from './board-workspace-storage';
 import type { BoardTransitionsListener } from './board-transitions';
@@ -75,7 +75,18 @@ export class BoardCueHost {
 			this.deps.onCompleted,
 			this.deps.onTransitions
 		);
-		if (!runtime.acquire().ok) return null;
+		const acquired = runtime.acquire();
+		if (!acquired.ok) {
+			// Keep the admission failure visible to intake and future native probes.
+			if (acquired.reason === 'owner-identity-unavailable') {
+				this.deps.onWait(key, acquired.reason);
+				throw new BoardStorageError(
+					acquired.reason,
+					'Board owner identity unavailable; native host proof is required'
+				);
+			}
+			return null;
+		}
 		this.runtimes.set(id, runtime);
 		return runtime;
 	};

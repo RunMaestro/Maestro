@@ -1,3 +1,4 @@
+import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { configureIsolatedBoardSourceHost } from '../../../main/board/board-source-host';
@@ -242,6 +243,48 @@ async function tick() {
 function reserved() {
 	return db.prepare('SELECT * FROM reservations').all();
 }
+
+it.each(['darwin', 'win32'] as const)(
+	'reports missing %s owner identity at native intake without starting a run',
+	async (platform) => {
+		db.prepare('DELETE FROM runtime_owner').run();
+		const info = {
+			pid: 222,
+			token: 'native',
+			platform,
+			hostIdentity: undefined as string | undefined,
+			mode: 'desktop' as const,
+			bootTime: 1,
+			startedAt: new Date(1).toISOString(),
+		};
+		const native = new BoardCueHost({
+			storage: () => storage,
+			lock: () => ({ info, verify: () => ({ ok: true }) }),
+			context: () => host,
+			prepare,
+			service,
+			ownerLiveness: () => 'unknown',
+			onWait: (key, reason) => waits.push({ cardId: key.cardId, reason }),
+		});
+		const entry = storage.query().collections[0];
+		const key = { sourceKey: entry.sourceKey, collectionKey: entry.collectionKey, cardId: 'same' };
+		const frozen = snapshotSqlite(db);
+		await expect(native.runtimeFor(key)).rejects.toMatchObject({
+			code: 'owner-identity-unavailable',
+			message: expect.stringContaining('native host proof'),
+		});
+		expect(waits).toContainEqual({ cardId: 'same', reason: 'owner-identity-unavailable' });
+		expect(snapshotSqlite(db)).toEqual(frozen);
+		expect(service.spawn).not.toHaveBeenCalled();
+		info.hostIdentity = 'os-machine-proof';
+		const admitted = await native.runtimeFor(key);
+		expect(admitted).not.toBeNull();
+		expect(db.prepare('SELECT process_identity FROM runtime_owner').get()).toEqual({
+			process_identity: admitted!.processIdentity,
+		});
+		expect(service.spawn).not.toHaveBeenCalled();
+	}
+);
 
 describe('global Cue intake on the shared persistent runtime', () => {
 	it('checks the current collection revision without projecting the workspace for every card', async () => {

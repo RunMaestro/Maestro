@@ -273,6 +273,7 @@ export interface BoardCollectionWrite extends BoardCollectionKey, BoardWorkspace
 }
 
 export type BoardWorkspaceErrorCode =
+	| 'owner-identity-unavailable'
 	| 'runtime-unavailable'
 	| 'invalid-input'
 	| 'invalid-payload'
