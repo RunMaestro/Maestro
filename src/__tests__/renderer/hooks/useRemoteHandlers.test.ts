@@ -479,6 +479,34 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		it('carries the existing-tab admission ID to native spawn', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const tabId = session.aiTabs[0].id;
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(c: any[]) => c[0] === 'maestro:remoteCommand'
+			)[1];
+			await act(async () =>
+				handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId,
+							command: 'work',
+							inputMode: 'ai',
+							pianolaDispatchId: 'dispatch-id',
+						},
+					})
+				)
+			);
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: `${session.id}-ai-${tabId}`,
+					pianolaDispatchId: 'dispatch-id',
+				})
+			);
+		});
+
 		it('dispatches AI commands via spawn', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			const deps = createMockDeps({

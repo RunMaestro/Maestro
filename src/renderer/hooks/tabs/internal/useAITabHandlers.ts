@@ -11,6 +11,7 @@ import {
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
+import { persistTabPins } from '../../../services/messagePins';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
@@ -141,6 +142,8 @@ export function useAITabHandlers(
 			}
 			if (sessionBeforeClose && tabBeforeClose) {
 				snapshotClosedTabTranscript(sessionBeforeClose, tabBeforeClose);
+				if (tabBeforeClose.pinnedMessages?.length)
+					persistTabPins(sessionBeforeClose, tabBeforeClose);
 			}
 
 			clearLiveDraft(tabId);

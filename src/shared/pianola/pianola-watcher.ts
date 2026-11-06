@@ -350,10 +350,12 @@ export async function runWatchIteration(
 		dryRun: boolean;
 		/** Enrollment eligibility must not remove messages needed for risk context. */
 		canActOnMessage?: (messageId: string) => boolean;
+		/** Authenticated native turn history; independent of current row contents. */
+		observedRisk?: import('./types').PianolaRisk;
 	}
 ): Promise<{ state: WatchState; result: IterationResult }> {
 	const enriched = enrichWithAwaitingInput(messages);
-	const classification = classifyMessages(enriched);
+	const classification = classifyMessages(enriched, options.observedRisk);
 
 	if (classification.kind === 'none') {
 		// A pending handoff resolves when the agent stops awaiting input: it
