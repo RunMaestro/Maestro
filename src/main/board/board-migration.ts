@@ -342,7 +342,12 @@ export type BoardMigrationResult =
 export function applyBoardMigration(
 	db: Database.Database,
 	plan: BoardMigrationPlan,
-	options: { now?: () => number; beforeCommit?: () => void } = {}
+	options: {
+		now?: () => number;
+		beforeCommit?: () => void;
+		/** Per-discovery physical registry-root proofs, excluding unresolved roots. */
+		physicalProjectRoots?: ReadonlyMap<string, string>;
+	} = {}
 ): BoardMigrationResult {
 	// Hash the complete plan as well: changed repository validation or import semantics
 	// must not masquerade as an identical import just because YAML bytes are unchanged.
@@ -355,41 +360,13 @@ export function applyBoardMigration(
 		plan.repository?.validated &&
 		!db.prepare('SELECT 1 FROM migrations WHERE source_key=?').get(plan.sourceKey)
 	) {
-		const directories = new Set([
-			plan.repository.workingDirectory,
-			...plan.snapshot.workers.flatMap((worker) => {
-				const raw = record(worker);
-				if (
-					!raw ||
-					raw.boardWorker !== true ||
-					typeof raw.id !== 'string' ||
-					!raw.id ||
-					typeof raw.dir !== 'string' ||
-					resolveBoardLocation(raw).kind !== 'local'
-				)
-					return [];
-				// An explicit registry project association scopes discovery. Unassociated
-				// workers still use physical containment (including aliases into the root).
-				if (
-					typeof raw.projectRoot === 'string' &&
-					raw.projectRoot &&
-					foldPathCase(raw.projectRoot) !==
-						foldPathCase(plan.source?.path ?? plan.repository!.workingDirectory)
-				)
-					return [];
-				const previous = db
-					.prepare('SELECT payload_json FROM workers WHERE agent_id=?')
-					.get(raw.id) as { payload_json: string } | undefined;
-				if (previous) {
-					const existing = JSON.parse(previous.payload_json);
-					if (!existing.migration || existing.accessManaged !== false) return [];
-				}
-				return [raw.dir];
-			}),
-		]);
-		for (const dir of directories) {
+		const physicalDirectory = (dir: string): string => {
+			const cached = physicalDirectories.get(dir);
+			if (cached) return cached;
 			try {
-				physicalDirectories.set(dir, foldPathCase(fs.realpathSync.native(dir)));
+				const physical = foldPathCase(fs.realpathSync.native(dir));
+				physicalDirectories.set(dir, physical);
+				return physical;
 			} catch (error) {
 				const code = (error as NodeJS.ErrnoException).code;
 				if (['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'ELOOP'].includes(code ?? ''))
@@ -398,6 +375,37 @@ export function applyBoardMigration(
 					);
 				throw error;
 			}
+		};
+		const root = physicalDirectory(plan.repository.workingDirectory);
+		for (const worker of plan.snapshot.workers) {
+			const raw = record(worker);
+			if (
+				!raw ||
+				raw.boardWorker !== true ||
+				typeof raw.id !== 'string' ||
+				!raw.id ||
+				typeof raw.dir !== 'string' ||
+				resolveBoardLocation(raw).kind !== 'local'
+			)
+				continue;
+			const previous = db
+				.prepare('SELECT payload_json FROM workers WHERE agent_id=?')
+				.get(raw.id) as { payload_json: string } | undefined;
+			if (previous) {
+				const existing = JSON.parse(previous.payload_json);
+				if (!existing.migration || existing.accessManaged !== false) continue;
+			}
+			// Prove the explicit project association physically before probing the
+			// worker directory. Registry aliases remain raw in the immutable snapshot.
+			if (
+				typeof raw.projectRoot === 'string' &&
+				raw.projectRoot &&
+				(options.physicalProjectRoots
+					? foldPathCase(options.physicalProjectRoots.get(raw.projectRoot) ?? '')
+					: physicalDirectory(raw.projectRoot)) !== root
+			)
+				continue;
+			physicalDirectory(raw.dir);
 		}
 	}
 	return db

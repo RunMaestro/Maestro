@@ -6,29 +6,61 @@ import {
 } from '../../../main/board/board-owner-liveness';
 
 it.each(['darwin', 'win32'] as const)(
-	'%s native host adapter hashes a valid OS identity and refuses unavailable proof',
-	(platform) => {
+	'%s native host adapter awaits bounded OS evidence and hashes only successful output',
+	async (platform) => {
 		const uuid = '12345678-abcd-1234-abcd-123456789abc';
-		const read = vi.fn(() =>
+		const stdout =
 			platform === 'darwin'
 				? `"IOPlatformUUID" = "${uuid}"`
-				: `    MachineGuid    REG_SZ    ${uuid}\r\n`
+				: `    MachineGuid    REG_SZ    ${uuid}\r\n`;
+		let complete!: (result: { stdout: string; stderr: string; exitCode: number }) => void;
+		const read = vi.fn(
+			() =>
+				new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+					complete = resolve;
+				})
 		);
-		const identity = readBoardOwnerHostIdentity(platform, read);
+		const pending = readBoardOwnerHostIdentity(platform, read);
+		expect(pending).toBeInstanceOf(Promise);
+		complete({ stdout, stderr: '', exitCode: 0 });
+		const identity = await pending;
 		expect(identity).toMatch(/^[0-9a-f]{64}$/);
 		expect(identity).not.toContain(uuid);
+		expect(
+			await readBoardOwnerHostIdentity(platform, async () => ({
+				stdout: stdout.replace(uuid, uuid.toUpperCase()),
+				stderr: '',
+				exitCode: 0,
+			}))
+		).toBe(identity);
 		expect(read).toHaveBeenCalledWith(
 			...(platform === 'darwin'
 				? ['/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice']]
 				: [
-						expect.stringMatching(/\\System32\\reg\.exe$/i),
+						expect.stringMatching(/^[a-z]:\\.*\\System32\\reg\.exe$/i),
 						['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid', '/reg:64'],
-					])
+					]),
+			undefined,
+			{ timeout: 2000 }
 		);
 		for (const raw of ['', 'missing', '00000000-0000-0000-0000-000000000000'])
-			expect(readBoardOwnerHostIdentity(platform, () => raw)).toBeUndefined();
+			expect(
+				await readBoardOwnerHostIdentity(platform, async () => ({
+					stdout: raw,
+					stderr: '',
+					exitCode: 0,
+				}))
+			).toBeUndefined();
+		for (const exitCode of [1, 'ETIMEDOUT'] as const)
+			expect(
+				await readBoardOwnerHostIdentity(platform, async () => ({
+					stdout,
+					stderr: 'failed',
+					exitCode,
+				}))
+			).toBeUndefined();
 		expect(
-			readBoardOwnerHostIdentity(platform, () => {
+			await readBoardOwnerHostIdentity(platform, async () => {
 				throw new Error('host read denied');
 			})
 		).toBeUndefined();

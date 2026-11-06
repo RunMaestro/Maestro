@@ -612,3 +612,64 @@ it.each([
 		}
 	}
 );
+
+it.each([false, true])(
+	'grants an explicitly registered physical project alias after retry=%s and preserves raw snapshot and replay bytes',
+	async (retry) => {
+		dir = fs.mkdtempSync(path.join(isolation.contract.root, 'registered-project-alias-'));
+		const root = path.join(dir, 'repo');
+		const alias = path.join(dir, 'alias');
+		fs.mkdirSync(path.join(root, '.maestro'), { recursive: true });
+		execFileSync('git', ['init', '--quiet', root]);
+		fs.symlinkSync(root, alias, 'junction');
+		fs.writeFileSync(
+			path.join(root, '.maestro/profiles.yaml'),
+			JSON.stringify({ profiles: [{ id: 'role', name: 'Role' }] })
+		);
+		const workers = [{ id: 'alias-worker', dir: alias, projectRoot: alias, boardWorker: true }];
+		const raw = JSON.stringify(workers);
+		const db = openBoardDb(isolation.contract.db);
+		try {
+			const storage = new BoardStorageFacade(db);
+			const key = boardMigrationSourceKey({
+				location: { kind: 'local' },
+				path: fs.realpathSync(root),
+			});
+			if (retry) {
+				const realpath = fs.realpathSync.native.bind(fs.realpathSync);
+				const spy = vi.spyOn(fs.realpathSync, 'native').mockImplementation((file, options) => {
+					if (file === alias)
+						throw Object.assign(new Error('alias temporarily denied'), { code: 'EACCES' });
+					return realpath(file, options);
+				});
+				await discoverLocalBoardSources(storage, workers);
+				expect(db.prepare('SELECT * FROM migrations WHERE source_key=?').get(key)).toBeUndefined();
+				expect(listBoardWorkers(db)).toEqual([]);
+				expect(
+					storage.captureCatalog().repositories.find((r) => r.id === `source:${key}`)
+				).toMatchObject({
+					sourceStatus: 'unresolved',
+					diagnostic: expect.stringContaining('EACCES'),
+				});
+				spy.mockRestore();
+			}
+			await discoverLocalBoardSources(storage, workers);
+			const worker = listBoardWorkers(db).find((w) => w.agentId === 'alias-worker')!;
+			expect(worker.payload.allowedRepositoryIds).toEqual([`source:${key}`]);
+			expect(worker.payload.roleRefs).toEqual([{ namespace: `legacy:${key}`, profileId: 'role' }]);
+			const ledger = db.prepare('SELECT * FROM migrations WHERE source_key=?').get(key) as {
+				snapshot: Uint8Array;
+			};
+			expect(JSON.parse(Buffer.from(ledger.snapshot).toString('utf8')).snapshot.workers).toEqual(
+				workers
+			);
+			expect(JSON.stringify(workers)).toBe(raw);
+			const frozen = snapshotSqlite(db);
+			await discoverLocalBoardSources(storage, workers);
+			expect(snapshotSqlite(db)).toEqual(frozen);
+			expect(JSON.stringify(workers)).toBe(raw);
+		} finally {
+			db.close();
+		}
+	}
+);

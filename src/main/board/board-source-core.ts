@@ -43,10 +43,22 @@ export async function discoverLocalBoardSources(
 			.map((s) => s.projectRoot || s.dir)
 			.filter((root): root is string => !!root)
 	);
+	// Reuse the registry-root proofs for worker associations. Failed unrelated
+	// roots are handled in their own source iteration, never probed by its peers.
+	const physicalProjectRoots = new Map<string, string>();
+	const projectRootErrors = new Map<string, unknown>();
+	for (const root of roots) {
+		try {
+			physicalProjectRoots.set(root, await fs.promises.realpath(root));
+		} catch (error) {
+			projectRootErrors.set(root, error);
+		}
+	}
 	for (const root of roots) {
 		let physical: string;
 		try {
-			physical = await fs.promises.realpath(root);
+			if (projectRootErrors.has(root)) throw projectRootErrors.get(root);
+			physical = physicalProjectRoots.get(root)!;
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (['ENOENT', 'ENOTDIR'].includes(code ?? '')) continue;
@@ -118,7 +130,8 @@ export async function discoverLocalBoardSources(
 			try {
 				applyBoardMigration(
 					storage.db,
-					planBoardMigration({ source, repository, boardBytes, profileBytes, workers: registered })
+					planBoardMigration({ source, repository, boardBytes, profileBytes, workers: registered }),
+					{ physicalProjectRoots }
 				);
 			} catch (error) {
 				if (!(error instanceof BoardMigrationError)) throw error;

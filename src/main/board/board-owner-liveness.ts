@@ -6,7 +6,7 @@ import {
 	type CueEngineLockInfo,
 } from '../cue/cue-engine-lock';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileNoThrow } from '../utils/execFile';
 import { createHash } from 'node:crypto';
 import { isPidAlive } from '../../shared/maestro-lib/client/discovery';
 
@@ -22,7 +22,6 @@ export function boardOwnerLiveness(
 	identity: string,
 	evidence: BoardOwnerEvidence = {
 		platform: process.platform,
-		hostIdentity: readBoardOwnerHostIdentity(),
 		current: readCueEngineLock(),
 		ownsCurrent: isCueEngineLockOwnedByThisProcess,
 		isPidAlive,
@@ -92,30 +91,31 @@ export function boardOwnerLiveness(
 /** Read once per desktop lifetime. Failure supplies no proof, never a guessed identity.
  * The OS-provided identifier is hashed before it reaches the Board ledger.
  * No provisioning, heartbeat takeover, or external supervisor is involved. */
-export function readBoardOwnerHostIdentity(
+export async function readBoardOwnerHostIdentity(
 	platform: NodeJS.Platform = process.platform,
-	read: (file: string, args: string[]) => string = (file, args) =>
-		execFileSync(file, args, {
-			encoding: 'utf8',
-			timeout: 2000,
-			windowsHide: true,
-			stdio: ['ignore', 'pipe', 'pipe'],
-		})
-): string | undefined {
+	read: typeof execFileNoThrow = execFileNoThrow
+): Promise<string | undefined> {
 	try {
+		let result;
+		if (platform === 'darwin') {
+			result = await read('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], undefined, {
+				timeout: 2000,
+			});
+		} else if (platform === 'win32') {
+			const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+			if (!path.win32.isAbsolute(systemRoot)) return undefined;
+			result = await read(
+				path.win32.join(systemRoot, 'System32', 'reg.exe'),
+				['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid', '/reg:64'],
+				undefined,
+				{ timeout: 2000 }
+			);
+		} else return undefined;
+		if (result.exitCode !== 0) return undefined;
 		const value =
 			platform === 'darwin'
-				? /"IOPlatformUUID"\s*=\s*"([0-9a-f-]{36})"/i.exec(
-						read('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'])
-					)?.[1]
-				: platform === 'win32'
-					? /MachineGuid\s+REG_SZ\s+([0-9a-f-]{36})/i.exec(
-							read(
-								path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'reg.exe'),
-								['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid', '/reg:64']
-							)
-						)?.[1]
-					: undefined;
+				? /"IOPlatformUUID"\s*=\s*"([0-9a-f-]{36})"/i.exec(result.stdout)?.[1]
+				: /MachineGuid\s+REG_SZ\s+([0-9a-f-]{36})/i.exec(result.stdout)?.[1];
 		if (
 			!value ||
 			!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value) ||

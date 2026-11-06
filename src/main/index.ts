@@ -1651,7 +1651,7 @@ app
 				(event) => pluginEventBus?.emit(event),
 				(payload) => safeSend('remote:notifyToast', payload)
 			);
-		const boardOwnerHostIdentity = readBoardOwnerHostIdentity();
+		const boardOwnerHostIdentity = await readBoardOwnerHostIdentity();
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
