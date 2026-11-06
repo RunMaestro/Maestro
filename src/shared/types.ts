@@ -1195,3 +1195,13 @@ export interface UpdateStatus {
 	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
 	error?: string;
 }
+
+/** Persisted peer access, shared with the native roster resolver. */
+export interface PeerAccess {
+	read: boolean;
+	write: boolean;
+}
+export interface PeerAgent extends PeerAccess {
+	sessionId: string;
+	description?: string;
+}

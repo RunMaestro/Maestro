@@ -160,6 +160,7 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode       | `Cmd+R`               | `Ctrl+R`              |
 | Toggle Show Thinking        | `Cmd+Shift+K`         | `Ctrl+Shift+K`        |
 | Toggle Tab Star             | `Cmd+Shift+S`         | `Ctrl+Shift+S`        |
+| Toggle Pinned Messages      | `Ctrl+Cmd+P`          | `Ctrl+Win+P`          |
 | Toggle Tab Unread           | `Cmd+Shift+U`         | `Ctrl+Shift+U`        |
 | Filter Unread Agents        | `Opt+U`               | `Alt+U`               |
 | Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |

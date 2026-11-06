@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { Theme } from '../../types';
 import type { PianolaAgentGroupSelection } from '../../../shared/pianola/pianola-scope';
@@ -9,14 +9,27 @@ import type { PianolaSupervisorState } from './usePianolaSupervisor';
 export function PianolaScopeControls({
 	theme,
 	supervisor,
+	requestedAgent,
+	autoWatchControl = false,
 }: {
 	theme: Theme;
 	supervisor: PianolaSupervisorState;
+	autoWatchControl?: boolean;
+	requestedAgent?: { agentId: string; agentName: string } | null;
 }): React.ReactElement {
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
+	const sessionNames = useMemo(
+		() => new Map(sessions.map((session) => [session.id, session.name])),
+		[sessions]
+	);
+	const groupNames = useMemo(
+		() => new Map(groups.map((group) => [group.id, group.name])),
+		[groups]
+	);
 	const [editing, setEditing] = useState<PianolaSupervisedTarget | null>(null);
 	const [creating, setCreating] = useState(false);
+	const [saving, setSaving] = useState(false);
 	const [manager, setManager] = useState('');
 	const [selection, setSelection] = useState<PianolaAgentGroupSelection>({
 		label: '',
@@ -25,7 +38,29 @@ export function PianolaScopeControls({
 		groupIds: [],
 		excludedAgentIds: [],
 	});
-	const scopes = supervisor.targets.filter((target) => target.kind === 'watch-scope');
+	useEffect(() => {
+		if (!requestedAgent) return;
+		setEditing(null);
+		setCreating(true);
+		setManager('');
+		setSelection({
+			label: requestedAgent.agentName,
+			mode: 'agents-and-groups',
+			agentIds: [requestedAgent.agentId],
+			groupIds: [],
+			excludedAgentIds: [],
+		});
+	}, [requestedAgent]);
+	const scopes = supervisor.targets.filter(
+		(target) =>
+			target.kind === 'watch-scope' &&
+			(!autoWatchControl ||
+				(target.selection?.mode === 'agents-and-groups' && target.selection.futureLocalAgents))
+	);
+	const futureScopes = scopes.filter(
+		(target) => target.selection?.mode === 'agents-and-groups' && target.selection.futureLocalAgents
+	);
+	const futureScope = futureScopes.length === 1 ? futureScopes[0] : undefined;
 	const start = (target?: PianolaSupervisedTarget): void => {
 		setEditing(target ?? null);
 		setCreating(!target);
@@ -34,7 +69,8 @@ export function PianolaScopeControls({
 			target?.selection?.mode === 'agents-and-groups'
 				? { ...target.selection }
 				: {
-						label: target?.selection?.label ?? '',
+						label: target?.selection?.label ?? (autoWatchControl ? 'Future local agents' : ''),
+						...(autoWatchControl ? { futureLocalAgents: true } : {}),
 						mode: 'agents-and-groups',
 						agentIds: [],
 						groupIds: [],
@@ -52,9 +88,37 @@ export function PianolaScopeControls({
 	};
 	return (
 		<section className="mb-5" style={{ color: theme.colors.textMain }}>
+			{autoWatchControl && (
+				<label className="flex items-center gap-2 text-xs mb-2">
+					<input
+						type="checkbox"
+						checked={!!futureScope?.enabled}
+						disabled={saving || futureScopes.length > 1}
+						onChange={() => {
+							if (futureScope) void supervisor.setEnabled(futureScope.id, !futureScope.enabled);
+							else start();
+						}}
+					/>{' '}
+					Automatically watch future local agents (all chats and worktree children)
+				</label>
+			)}
+			{autoWatchControl && futureScopes.length > 1 && (
+				<p className="text-xs">
+					Multiple future-agent selections: use each selection's Pause/Resume controls and chosen
+					manager below.
+				</p>
+			)}
+			{autoWatchControl && futureScopes.length === 0 && supervisor.autoWatchNewAgents && (
+				<p className="text-xs">
+					NeedsConfiguration: select the actual manager and save a standing future-agent policy.
+					{supervisor.autoWatchNewAgents
+						? ' Legacy Auto-Watch is enabled without a manager policy.'
+						: ''}
+				</p>
+			)}
 			<div className="flex items-center justify-between mb-2">
 				<h3 className="text-xs font-bold uppercase">Agent and group selections</h3>
-				<button type="button" onClick={() => start()} className="text-xs">
+				<button type="button" disabled={saving} onClick={() => start()} className="text-xs">
 					+ Add selection
 				</button>
 			</div>
@@ -65,7 +129,7 @@ export function PianolaScopeControls({
 			)}
 			{scopes.map((scope) => {
 				const health = supervisor.health.find((item) => item.id === scope.id);
-				const state = !scope.enabled ? 'Paused' : (health?.state ?? 'Not running');
+				const state = health?.state ?? 'Unknown';
 				const evidence = supervisor.checkpoints.find((item) => item.scopeId === scope.id);
 				return (
 					<div
@@ -75,12 +139,14 @@ export function PianolaScopeControls({
 					>
 						<div className="flex gap-2 items-center">
 							<span className="font-medium flex-1">{scope.selection?.label ?? scope.id}</span>
+							<span className="text-xs">Registry: {scope.enabled ? 'Enabled' : 'Paused'}</span>
 							<span className="text-xs">Worker: {state}</span>
-							<button type="button" onClick={() => start(scope)}>
+							<button type="button" disabled={saving} onClick={() => start(scope)}>
 								Edit
 							</button>
 							<button
 								type="button"
+								disabled={saving}
 								onClick={() => void supervisor.setEnabled(scope.id, !scope.enabled)}
 							>
 								{scope.enabled ? 'Pause' : 'Resume'}
@@ -88,11 +154,34 @@ export function PianolaScopeControls({
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
 							{scope.selection?.mode === 'agents-and-groups'
-								? `Selected: ${scope.selection.agentIds.length} agents, ${scope.selection.groupIds.length} groups; ${scope.selection.excludedAgentIds.length} exclusions`
+								? `Selected: ${scope.selection.agentIds.length} agents, ${scope.selection.groupIds.length} groups${scope.selection.futureLocalAgents ? ', future local agents' : ''}; ${scope.selection.excludedAgentIds.length} exclusions`
 								: 'Legacy selection requires reconfiguration'}{' '}
-							· Worker health does not establish individual chat coverage.
+							· Manager: {sessionNames.get(scope.managerAgentId ?? '') ?? scope.managerAgentId}.
+							Worker health does not establish individual chat coverage. Questions already present
+							at enrollment need human handling when the same row is rewritten; fresh native
+							questions remain monitored.
 							{health?.lastError ? ` ${health.lastError}` : ''}
 						</div>
+						{scope.selection?.mode === 'agents-and-groups' && (
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								<div>
+									Agents:{' '}
+									{scope.selection.agentIds.map((id) => sessionNames.get(id) ?? id).join(', ') ||
+										'none'}
+								</div>
+								<div>
+									Groups:{' '}
+									{scope.selection.groupIds.map((id) => groupNames.get(id) ?? id).join(', ') ||
+										'none'}
+								</div>
+								<div>
+									Excluded:{' '}
+									{scope.selection.excludedAgentIds
+										.map((id) => sessionNames.get(id) ?? id)
+										.join(', ') || 'none'}
+								</div>
+							</div>
+						)}
 						{evidence?.error && (
 							<div className="text-xs">Checkpoint unavailable: {evidence.error}</div>
 						)}
@@ -116,9 +205,7 @@ export function PianolaScopeControls({
 										const tabs = evidence.coverage!.tabs.filter((tab) => tab.agentId === agentId);
 										return (
 											<div key={agentId}>
-												<strong>
-													{sessions.find((session) => session.id === agentId)?.name ?? agentId}
-												</strong>
+												<strong>{sessionNames.get(agentId) ?? agentId}</strong>
 												{tabs.map((tab) => (
 													<div key={tab.tabId}>
 														Chat {tab.tabId}: {tab.status} · {tab.reason}
@@ -135,7 +222,8 @@ export function PianolaScopeControls({
 				);
 			})}
 			{(creating || editing) && (
-				<div
+				<fieldset
+					disabled={saving}
 					className="rounded p-3 mt-2 flex flex-col gap-2"
 					style={{ backgroundColor: theme.colors.bgSidebar }}
 				>
@@ -161,6 +249,21 @@ export function PianolaScopeControls({
 								</option>
 							))}
 						</select>
+					</label>
+					<label>
+						<input
+							type="checkbox"
+							checked={selection.futureLocalAgents === true}
+							onChange={(event) => {
+								const { futureAgentBaselineIds: _baseline, ...rest } = selection;
+								setSelection(
+									event.target.checked
+										? { ...rest, futureLocalAgents: true }
+										: { ...rest, futureLocalAgents: undefined }
+								);
+							}}
+						/>{' '}
+						Include future new local agents, all their chats and worktree children
 					</label>
 					<div className="text-xs font-bold">Groups</div>
 					{groups.map((group) => (
@@ -201,18 +304,29 @@ export function PianolaScopeControls({
 							disabled={
 								!manager ||
 								!selection.label.trim() ||
-								!(selection.agentIds.length || selection.groupIds.length)
+								!(
+									selection.agentIds.length ||
+									selection.groupIds.length ||
+									selection.futureLocalAgents
+								)
 							}
-							onClick={() => {
-								void supervisor.saveScope({
-									...editing,
-									kind: 'watch-scope',
-									enabled: editing?.enabled ?? false,
-									managerAgentId: manager,
-									selection,
-								});
-								setCreating(false);
-								setEditing(null);
+							onClick={async () => {
+								setSaving(true);
+								try {
+									const saved = await supervisor.saveScope({
+										...editing,
+										kind: 'watch-scope',
+										enabled: editing?.enabled ?? false,
+										managerAgentId: manager,
+										selection,
+									});
+									if (saved) {
+										setCreating(false);
+										setEditing(null);
+									}
+								} finally {
+									setSaving(false);
+								}
 							}}
 						>
 							Save
@@ -227,7 +341,7 @@ export function PianolaScopeControls({
 							Cancel
 						</button>
 					</div>
-				</div>
+				</fieldset>
 			)}
 		</section>
 	);

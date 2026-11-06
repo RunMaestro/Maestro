@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	buildCallerIdentityEnv,
 	callerMessageFields,
 	isSelfDispatch,
@@ -44,6 +45,9 @@ describe('withoutCallerIdentityEnv', () => {
 	it('collapses an identity-only record to undefined, like an agent with no overrides', () => {
 		expect(withoutCallerIdentityEnv(buildCallerIdentityEnv('agent-1', 'tab-1'))).toBeUndefined();
 		expect(withoutCallerIdentityEnv(undefined)).toBeUndefined();
+		expect(
+			withoutCallerIdentityEnv({ [CALLER_RUN_PROOF_FILE_ENV_VAR]: '/private/proof' })
+		).toBeUndefined();
 	});
 
 	it('keeps real configuration and leaves the input untouched', () => {

@@ -1,3 +1,6 @@
+const hostPaths = vi.hoisted(() => ({ userData: '' }));
+vi.mock('electron', () => ({ app: { getPath: () => hostPaths.userData } }));
+
 vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
@@ -26,7 +29,7 @@ import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
  * - Select session with focus (window foregrounding)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -46,6 +49,7 @@ import {
 import { PluginManager } from '../../../../main/plugins/plugin-manager';
 import { PluginAuthorityError } from '../../../../main/plugins/plugin-authority';
 import { pluginToolRunIdentity } from '../../../../main/plugins/plugin-tool-run-identity';
+import { hostCallerRuns } from '../../../../main/agent-run/caller-identity';
 import {
 	initDispatchCallbacks,
 	getDispatchCallbackRegistry,
@@ -333,6 +337,15 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 	};
 }
 
+beforeAll(() => {
+	hostPaths.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'message-handler-host-'));
+	vi.stubEnv('MAESTRO_USER_DATA', hostPaths.userData);
+});
+afterAll(() => {
+	vi.unstubAllEnvs();
+	fs.rmSync(hostPaths.userData, { recursive: true, force: true });
+});
+
 describe('WebSocketMessageHandler', () => {
 	let handler: WebSocketMessageHandler;
 	let client: WebClient;
@@ -343,6 +356,92 @@ describe('WebSocketMessageHandler', () => {
 		client = createMockClient();
 		callbacks = createMockCallbacks();
 		handler.setCallbacks(callbacks);
+	});
+
+	describe('agent dispatch without native admission', () => {
+		afterEach(() => vi.restoreAllMocks());
+
+		it.each([
+			['send_command', 'command_result', 'executeCommand'],
+			['enqueue_command', 'enqueue_command_result', 'enqueueCommand'],
+		] as const)('refuses %s for revoked bound runs before delivery', (type, result, callback) => {
+			vi.spyOn(hostCallerRuns, 'resolve').mockReturnValue(undefined);
+			vi.spyOn(hostCallerRuns, 'isRunClient').mockReturnValue(true);
+			handler.handleMessage(client, {
+				type,
+				sessionId: 'session-1',
+				command: 'do work',
+				inputMode: 'ai',
+				requestId: 'request-1',
+			});
+			expect(callbacks[callback]).not.toHaveBeenCalled();
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)).toMatchObject({
+				type: result,
+				success: false,
+				error: 'CallerRunUnavailable',
+				requestId: 'request-1',
+			});
+		});
+
+		it('does not turn public caller attribution into authority for a human send', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hello',
+				inputMode: 'ai',
+				fromSessionId: 'forged-manager',
+				fromTabId: 'forged-tab',
+			});
+			await vi.waitFor(() => expect(callbacks.executeCommand).toHaveBeenCalledOnce());
+		});
+
+		it('cannot bypass queue admission by claiming terminal mode', () => {
+			vi.spyOn(hostCallerRuns, 'isRunClient').mockReturnValue(true);
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'do work',
+				inputMode: 'terminal',
+			});
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)).toMatchObject({
+				type: 'enqueue_command_result',
+				success: false,
+				error: 'CallerRunUnavailable',
+			});
+		});
+
+		it('does not trust an older terminal-mode snapshot for an unspecified send mode', () => {
+			vi.spyOn(hostCallerRuns, 'isRunClient').mockReturnValue(true);
+			vi.mocked(callbacks.getSessionDetail!).mockReturnValueOnce({
+				state: 'idle',
+				inputMode: 'terminal',
+			} as ReturnType<NonNullable<typeof callbacks.getSessionDetail>>);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'do work',
+			});
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.lastCall![0] as string)).toMatchObject({
+				type: 'command_result',
+				success: false,
+				error: 'CallerRunUnavailable',
+			});
+		});
+
+		it('keeps terminal sends separate from agent AI delegation', async () => {
+			vi.spyOn(hostCallerRuns, 'resolve').mockReturnValue(
+				{} as ReturnType<typeof hostCallerRuns.resolve>
+			);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'pwd',
+				inputMode: 'terminal',
+			});
+			await vi.waitFor(() => expect(callbacks.executeCommand).toHaveBeenCalledOnce());
+		});
 	});
 
 	describe('External toast duration units', () => {

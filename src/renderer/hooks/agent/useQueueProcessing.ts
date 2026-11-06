@@ -34,8 +34,7 @@ import {
 	resolveQueuedItemTarget,
 } from '../../utils/tabHelpers';
 import {
-	hasRunnableQueueItem,
-	nextRunnableQueueItem,
+	nextQueueDrainItem,
 	spawnCollisionCooldownMs,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
@@ -104,9 +103,9 @@ const QUEUE_DRAIN_RECHECK_MS = 4000;
  */
 export function selectIdleQueuedSignature(state: { sessions: Session[] }): string {
 	return state.sessions
-		.filter((sess) => sess.state === 'idle' && hasRunnableQueueItem(sess.executionQueue ?? []))
+		.filter((sess) => sess.state === 'idle' && nextQueueDrainItem(sess.executionQueue ?? []))
 		.map((sess) => {
-			const item = nextRunnableQueueItem(sess.executionQueue ?? []);
+			const item = nextQueueDrainItem(sess.executionQueue ?? []);
 			return `${sess.id}:${item?.id ?? ''}`;
 		})
 		.join('|');
@@ -142,6 +141,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	const retries = useRetryStore((s) => s.retries);
 
 	// --- Refs ---
+	const admissionInFlight = useRef(new Set<string>());
 	const processQueuedItemRef = useRef<
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
@@ -182,7 +182,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 
 			// Skip paused items: dispatch the first runnable one. If all items are
 			// held, there's nothing to do.
-			const firstItem = nextRunnableQueueItem(session.executionQueue);
+			const firstItem = nextQueueDrainItem(session.executionQueue);
 			if (!firstItem) return false;
 
 			// The last dispatch of this item was refused because its tab's previous
@@ -202,6 +202,26 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			// whole agent dry in seconds and left the user re-typing every one of them.
 			// Hold instead; the queue drains in order once the retry lands.
 			if (queueIsHeldByRetry(session, undefined, (tabId) => hasPendingRetry(session.id, tabId))) {
+				return false;
+			}
+			if (firstItem.pendingAdmissionId) {
+				if (hasPendingRetry(session.id, firstItem.tabId)) return false;
+				if (
+					isQueuedItemTargetBusy(
+						useSessionStore.getState().sessions.find((s) => s.id === session.id)!,
+						firstItem
+					)
+				)
+					return false;
+				if (admissionInFlight.current.has(firstItem.id)) return false;
+				admissionInFlight.current.add(firstItem.id);
+				// D01 needs the held row and idle state until the final native guard.
+				// Never dequeue it or mark the tab busy before the host consumes it.
+				void processQueuedItem(session.id, firstItem)
+					.catch((error) => {
+						logger.error('[QueueProcessing] Managed queue admission blocked', undefined, error);
+					})
+					.finally(() => admissionInFlight.current.delete(firstItem.id));
 				return false;
 			}
 
@@ -317,8 +337,8 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		let stillStuck = false;
 
 		for (const session of useSessionStore.getState().sessions) {
-			if (session.state !== 'idle' || !hasRunnableQueueItem(session.executionQueue ?? [])) continue;
-			const head = nextRunnableQueueItem(session.executionQueue);
+			if (session.state !== 'idle' || !nextQueueDrainItem(session.executionQueue ?? [])) continue;
+			const head = nextQueueDrainItem(session.executionQueue);
 			if (loggedStuckHeadRef.current.get(session.id) !== head?.id) {
 				loggedStuckHeadRef.current.set(session.id, head?.id ?? '');
 				logger.info(

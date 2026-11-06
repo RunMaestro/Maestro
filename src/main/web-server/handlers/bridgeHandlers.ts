@@ -15,6 +15,7 @@
  */
 
 import { ipcMain } from 'electron';
+import { hostCallerRuns } from '../../agent-run/caller-identity';
 import { logger } from '../../utils/logger';
 import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
@@ -164,7 +165,10 @@ export function isBridgeSessionOwner(clientId: string, sessionId: string): boole
  * Handle a bridge.invoke message - dispatch to the registered ipcMain handler
  * and send a bridge.response back to the originating client.
  */
-export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 'user' | 'cli'>>(
+export async function handleBridgeInvoke<
+	TClient extends Pick<WebClient, 'id' | 'user' | 'cli'> &
+		Partial<Pick<WebClient, 'socket' | 'isAuthorized' | 'cliAuthenticated'>>,
+>(
 	client: TClient,
 	message: InvokeMessage,
 	send: (client: TClient, payload: object) => void
@@ -172,7 +176,27 @@ export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 
 	const requestId = message.requestId;
 	const channel = message.channel;
 	let args = Array.isArray(message.args) ? message.args : [];
-	const event = { ...FAKE_EVENT, clientId: client.id };
+	const event = {
+		...FAKE_EVENT,
+		clientId: client.id,
+		cli: client.cli === true,
+		// Host closure, never a bridge argument. Rechecked after native consent.
+		/**
+		 * Check that the bridge caller is still connected and authorized. Known run clients must
+		 * retain a resolvable active native binding; revoked bindings cannot fall back to ordinary
+		 * CLI authority.
+		 */
+		isCallerActive: () => {
+			if (client.socket?.readyState !== 1 || client.isAuthorized?.() !== true) return false;
+			// Run-client membership survives removal of its revoked binding. Never
+			// reinterpret an expired agent connection as an ordinary human CLI.
+			if (!hostCallerRuns.isRunClient(client)) return true;
+			const caller = hostCallerRuns.resolve(client);
+			if (!caller) return false;
+			caller.assertActive();
+			return true;
+		},
+	};
 
 	if (typeof channel !== 'string' || !channel) {
 		send(client, {
