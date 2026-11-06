@@ -106,7 +106,8 @@ export function registerCommandCallbacks(
 			images?: string[],
 			background?: boolean,
 			mentionRouting?: MentionRouting,
-			requireDeliveryReceipt?: boolean
+			requireDeliveryReceipt?: boolean,
+			pianolaDispatchId?: string
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
@@ -150,7 +151,17 @@ export function registerCommandCallbacks(
 					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
 					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
 					parse: parseRemoteCommandReceipt,
-					args: [sessionId, command, inputMode, tabId, force, images, background, mentionRouting],
+					args: [
+						sessionId,
+						command,
+						inputMode,
+						tabId,
+						force,
+						images,
+						background,
+						mentionRouting,
+						...(pianolaDispatchId ? [pianolaDispatchId] : []),
+					],
 				}
 			);
 			if (!receipt.accepted) {

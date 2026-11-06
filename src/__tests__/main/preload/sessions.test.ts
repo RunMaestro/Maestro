@@ -430,6 +430,23 @@ describe('Sessions Preload API', () => {
 			});
 		});
 
+		describe('setSessionPins', () => {
+			it('should invoke agentSessions:setSessionPins', async () => {
+				mockInvoke.mockResolvedValue(undefined);
+				const pins = [{ id: 'pin-1' }];
+
+				await api.setSessionPins('codex', '/project', 'session-123', pins);
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'agentSessions:setSessionPins',
+					'codex',
+					'/project',
+					'session-123',
+					pins
+				);
+			});
+		});
+
 		describe('setSessionStarred', () => {
 			it('should invoke agentSessions:setSessionStarred', async () => {
 				mockInvoke.mockResolvedValue(true);

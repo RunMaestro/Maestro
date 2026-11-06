@@ -1,3 +1,4 @@
+import { isNativeQuestionRequest, sameCurrentTurnCursor } from '../currentTurn';
 /**
  * Pianola storage contract - shared constants, the audit record type, and a
  * pure validator. The fs/electron specifics live in the CLI store
@@ -29,6 +30,8 @@ import { isPianolaOwnerPrincipal, type PianolaOwnerPrincipal } from './owner-ide
 import {
 	isPianolaScopeId,
 	validatePianolaScopeSelection,
+	validatePianolaDelegationPolicy,
+	type PianolaDelegationPolicy,
 	type PianolaScopeSelection,
 } from './pianola-scope';
 
@@ -144,6 +147,8 @@ export interface RulesLoadResult {
 
 /** One recorded decision in the audit log. */
 export interface PianolaDecisionRecord {
+	/** Store-issued compare-and-append token. Preserve the token of the row being changed. */
+	mutationRevision?: string;
 	id: string;
 	/** ISO-8601 timestamp of when the decision was made. */
 	timestamp: string;
@@ -354,6 +359,11 @@ export function validatePianolaDecisionRecord(raw: unknown): PianolaDecisionReco
 	if (typeof raw.dispatched !== 'boolean' || typeof raw.dryRun !== 'boolean') return null;
 	if (raw.projectPath !== undefined && typeof raw.projectPath !== 'string') return null;
 	if (raw.error !== undefined && typeof raw.error !== 'string') return null;
+	if (
+		raw.mutationRevision !== undefined &&
+		(typeof raw.mutationRevision !== 'string' || !/^[a-f0-9]{64}$/.test(raw.mutationRevision))
+	)
+		return null;
 	if (raw.deliveryStatus !== undefined && raw.deliveryStatus !== 'admitted') return null;
 	if (raw.lifecycle !== undefined && !isValidLifecycle(raw.lifecycle)) return null;
 	if (!isValidClassification(raw.classification)) return null;
@@ -407,6 +417,11 @@ export function isValidHumanDecisionEvidence(raw: unknown): raw is PianolaHumanD
 	);
 }
 
+/**
+ * Validate persisted decision lifecycle shape and its guard/source bindings. Native question
+ * evidence must agree with the guard cursor and rule digest; this validator does not itself
+ * reauthorize a send.
+ */
 function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 	if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.guard) || !isRecord(raw.source))
 		return false;
@@ -421,6 +436,18 @@ function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 			'messageId',
 			'decisionId',
 		].every((key) => typeof guard[key] === 'string' && guard[key].length > 0) &&
+		(guard.enrollmentRevision === undefined ||
+			(Number.isSafeInteger(guard.enrollmentRevision) &&
+				(guard.enrollmentRevision as number) >= 0)) &&
+		(guard.nativeQuestion === undefined ||
+			(isNativeQuestionRequest(guard.nativeQuestion) &&
+				typeof guard.ruleRevision === 'string' &&
+				/^[a-f0-9]{64}$/.test(guard.ruleRevision) &&
+				guard.messageId === guard.nativeQuestion.requestId &&
+				sameCurrentTurnCursor(
+					guard.nativeQuestion.cursor,
+					(guard.cursor as { native?: import('../currentTurn').CurrentTurnCursor })?.native
+				))) &&
 		isRecord(guard.cursor) &&
 		typeof guard.cursor.id === 'string' &&
 		Number.isSafeInteger(guard.cursor.count) &&
@@ -585,6 +612,11 @@ export interface PianolaSupervisedTarget {
 	/** Agent/group selection, or a readable legacy selection awaiting migration. */
 	selection?: PianolaScopeSelection;
 	managerAgentId?: string;
+	delegationPolicy?: PianolaDelegationPolicy;
+	/** Durable handover tombstone: never executable, even if enabled is edited later. */
+	migratedToScopeId?: string;
+	/** Same registry commit as the fences; checkpoints are written before publication. */
+	legacyMigration?: { version: 1; watchIds: string[]; completedAt: number };
 	/** Auto-watch targets are removed when their agent session is closed. */
 	autoCreated?: boolean;
 	/** Watch only: hours idle before the watcher retires itself (0 = never). */
@@ -673,6 +705,47 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 		if (target.tabId || target.agentId || target.planId || target.autoCreated) return null;
 		target.selection = selection;
 		target.managerAgentId = raw.managerAgentId;
+	}
+
+	if (raw.migratedToScopeId !== undefined) {
+		if (
+			target.kind !== 'watch' ||
+			typeof raw.migratedToScopeId !== 'string' ||
+			!isPianolaScopeId(raw.migratedToScopeId)
+		)
+			return null;
+		target.migratedToScopeId = raw.migratedToScopeId;
+		target.enabled = false;
+	}
+	if (raw.legacyMigration !== undefined) {
+		const migration = raw.legacyMigration;
+		if (
+			target.kind !== 'watch-scope' ||
+			!isRecord(migration) ||
+			migration.version !== 1 ||
+			!Array.isArray(migration.watchIds) ||
+			migration.watchIds.length > 10000 ||
+			migration.watchIds.some((id) => typeof id !== 'string' || !id || id.length > 500) ||
+			!Number.isSafeInteger(migration.completedAt) ||
+			(migration.completedAt as number) < 0
+		)
+			return null;
+		target.legacyMigration = {
+			version: 1,
+			watchIds: [...new Set(migration.watchIds as string[])],
+			completedAt: migration.completedAt as number,
+		};
+	}
+	if (raw.delegationPolicy !== undefined) {
+		const policy = validatePianolaDelegationPolicy(raw.delegationPolicy);
+		if (
+			!policy ||
+			target.kind !== 'watch-scope' ||
+			policy.managerAgentId !== target.managerAgentId ||
+			target.selection?.mode !== 'agents-and-groups'
+		)
+			return null;
+		target.delegationPolicy = policy;
 	}
 
 	// Drop targets that lack the fields their kind needs to spawn a valid command.

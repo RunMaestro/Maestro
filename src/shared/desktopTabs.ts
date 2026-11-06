@@ -68,9 +68,11 @@ export interface DesktopTabEntry {
 		paused?: boolean;
 		/** Live process/CLI evidence, independent of the persisted display state. */
 		busy?: boolean;
+		nativeQuestion?: import('./currentTurn').NativeQuestionRequest;
 		consult: boolean;
 		ephemeral: boolean;
 		/** False when the persisted tab has no available transcript snapshot. */
+		currentTurn?: Omit<import('./currentTurn').CurrentTurnRead, 'messages'>;
 		cursorAvailable: boolean;
 		cursor: { id: string; count: number; textLength: number } | null;
 	};

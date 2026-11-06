@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
@@ -32,6 +33,7 @@ import type {
 	StarTabCallback,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -176,6 +178,10 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
@@ -221,6 +227,7 @@ export interface WebServerCallbacks {
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
 	closedTabCommand: ClosedTabCommandCallback | null;
+	messagePinCommand: MessagePinCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
@@ -338,6 +345,7 @@ export class CallbackRegistry {
 		starTab: null,
 		snoozeCommand: null,
 		closedTabCommand: null,
+		messagePinCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
 		throughputGaugeCommand: null,
@@ -468,7 +476,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -480,7 +489,11 @@ export class CallbackRegistry {
 			images,
 			background,
 			mentionRouting,
-			...(requireDeliveryReceipt ? [true] : [])
+			...((pianolaDispatchId
+				? [requireDeliveryReceipt, pianolaDispatchId]
+				: requireDeliveryReceipt
+					? [true]
+					: []) as [boolean?, string?])
 		);
 	}
 
@@ -556,6 +569,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Reopening closed tabs is not configured' };
 		}
 		return this.callbacks.closedTabCommand(request);
+	}
+
+	async messagePinCommand(request: MessagePinCommandRequest): Promise<MessagePinCommandResult> {
+		if (!this.callbacks.messagePinCommand) {
+			return { success: false, error: 'Message pins are not configured' };
+		}
+		return this.callbacks.messagePinCommand(request);
 	}
 
 	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
@@ -683,10 +703,18 @@ export class CallbackRegistry {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	): Promise<{ success: boolean; tabId?: string }> {
+		mentionRouting?: MentionRouting,
+		control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	): Promise<import('../types').NewAITabWithPromptResult> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, mentionRouting);
+		return this.callbacks.newAITabWithPrompt(
+			sessionId,
+			prompt,
+			background,
+			hidden,
+			mentionRouting,
+			control
+		);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -710,7 +738,8 @@ export class CallbackRegistry {
 		background?: boolean,
 		held?: boolean,
 		mentionRouting?: MentionRouting,
-		dispatchCallback?: boolean
+		dispatchCallback?: boolean,
+		control?: PianolaQueueControl
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -722,7 +751,8 @@ export class CallbackRegistry {
 			background,
 			held,
 			mentionRouting,
-			dispatchCallback
+			dispatchCallback,
+			control
 		);
 	}
 
@@ -1341,6 +1371,10 @@ export class CallbackRegistry {
 
 	setClosedTabCommandCallback(callback: ClosedTabCommandCallback): void {
 		this.callbacks.closedTabCommand = callback;
+	}
+
+	setMessagePinCommandCallback(callback: MessagePinCommandCallback): void {
+		this.callbacks.messagePinCommand = callback;
 	}
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
