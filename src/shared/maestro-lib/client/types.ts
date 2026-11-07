@@ -23,6 +23,7 @@ import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
+import type { ExplicitHostEndpointSource } from './discovery';
 
 // ---------------------------------------------------------------------------
 // Results and errors
@@ -669,10 +670,30 @@ export interface MaestroClient {
 // The WebSocket factory's options
 // ---------------------------------------------------------------------------
 
-/** Transport options, kept off the interface (R1). */
-export interface WsMaestroClientOptions {
-	/** The data dir the caller resolved. Discovery reads `cli-server.json` here. */
-	userDataDir: string;
+/**
+ * Transport options, kept off the interface (R1). The host is found one of two ways: the local
+ * `cli-server.json` in `userDataDir` (the default), or an explicit `endpoint` (a Federation
+ * remote's SSH forward). Exactly one is given.
+ */
+export type WsMaestroClientOptions = WsMaestroClientTransportOptions &
+	(
+		| {
+				/** The data dir the caller resolved. Discovery reads `cli-server.json` here. */
+				userDataDir: string;
+				endpoint?: undefined;
+		  }
+		| {
+				/**
+				 * Dial this bridge on 127.0.0.1 instead of reading `cli-server.json`. A function is
+				 * called before every connection attempt, reconnects included, so a host that came
+				 * back on a new port is found again.
+				 */
+				endpoint: ExplicitHostEndpointSource;
+				userDataDir?: undefined;
+		  }
+	);
+
+export interface WsMaestroClientTransportOptions {
 	/** Per call. Default 10000. */
 	requestTimeoutMs?: number;
 	/** Default 500, doubling to 15000, with 20% jitter. */

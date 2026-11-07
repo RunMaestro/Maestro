@@ -75,6 +75,42 @@ export interface HostEndpoint {
 	pid: number;
 }
 
+/**
+ * A bridge a client dials directly instead of reading `cli-server.json`: always on 127.0.0.1, so
+ * `port` is a local port (for a Federation remote, the laptop end of its SSH forward). A
+ * `HostEndpoint` or a `ForwardedHostEndpoint` is one as it stands. `pid` and `version` only label
+ * the host: the pid belongs to the far machine and is never checked here.
+ */
+export interface ExplicitHostEndpoint extends Pick<HostEndpoint, 'port' | 'token' | 'cliSecret'> {
+	pid?: number;
+	version?: string;
+	/** Who serves it, as the discovery file says it. Absent means the desktop app. */
+	hostKind?: CliServerInfo['hostKind'];
+}
+
+/**
+ * Where a client finds an explicit endpoint: the endpoint itself, or a function the client calls
+ * before every connection attempt (a reconnect included), so a host that restarted on a new port
+ * is found again. An SSH forward lease's `ready` is one.
+ */
+export type ExplicitHostEndpointSource =
+	| ExplicitHostEndpoint
+	| (() => ExplicitHostEndpoint | Promise<ExplicitHostEndpoint>);
+
+/**
+ * Whether `endpoint` can be dialed: a TCP port, and a path token of URL-safe characters only, so a
+ * token that came from another machine cannot change the URL it is spliced into.
+ */
+export function isDialableEndpoint(endpoint: ExplicitHostEndpoint): boolean {
+	return (
+		Number.isInteger(endpoint.port) &&
+		endpoint.port > 0 &&
+		endpoint.port <= 65535 &&
+		typeof endpoint.token === 'string' &&
+		/^[\w.~-]+$/.test(endpoint.token)
+	);
+}
+
 /** Maestro's data directory, as every other reader resolves it (`resolveUserDataDir()`). */
 export function getConfigDir(): string {
 	return resolveUserDataDir();

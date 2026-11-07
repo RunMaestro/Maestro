@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
-import type { MaestroClient, MaestroEvent, TurnEvent } from '../types';
+import type {
+	MaestroClient,
+	MaestroEvent,
+	TurnEvent,
+	WsMaestroClientTransportOptions,
+} from '../types';
+import type { ExplicitHostEndpointSource } from '../discovery';
 import { CLI_SECRET, FakeBridge, TOKEN, agentRecord, tabProcessId, type Frame } from './fakeBridge';
 
 const A1 = 'a1';
@@ -39,14 +45,17 @@ describe('createWsMaestroClient', () => {
 		events.flatMap((event) => (event.type === 'turn' ? [event.event] : []));
 	const turnKinds = () => turnEvents().map((event) => event.kind);
 
-	function makeClient(options: Partial<Parameters<typeof createWsMaestroClient>[0]> = {}) {
+	function makeClient(
+		options: WsMaestroClientTransportOptions & { endpoint?: ExplicitHostEndpointSource } = {}
+	) {
+		const { endpoint, ...transport } = options;
 		const created = createWsMaestroClient({
-			userDataDir: bridge.dataDir,
+			...(endpoint ? { endpoint } : { userDataDir: bridge.dataDir }),
 			requestTimeoutMs: 1000,
 			reconcileIntervalMs: 0,
 			heartbeatIntervalMs: 60_000,
 			reconnect: { initialDelayMs: 10, maxDelayMs: 40 },
-			...options,
+			...transport,
 		});
 		created.events.subscribe((event) => events.push(event));
 		return created;
@@ -177,6 +186,96 @@ describe('createWsMaestroClient', () => {
 			const text = JSON.stringify(result);
 			expect(text).not.toContain(TOKEN);
 			expect(text).not.toContain(CLI_SECRET);
+		});
+
+		describe('explicit endpoint', () => {
+			const endpointOf = (overrides: Record<string, unknown> = {}) => ({
+				port: bridge.port,
+				token: TOKEN,
+				cliSecret: CLI_SECRET,
+				...overrides,
+			});
+
+			it('dials the endpoint on 127.0.0.1 with its secret, never reading cli-server.json', async () => {
+				bridge.removeDiscovery();
+				client = makeClient({
+					endpoint: endpointOf({ pid: 812, version: '1.2.3', hostKind: 'headless' }),
+				});
+				expect(await client.connection.discover()).toEqual({
+					ok: true,
+					value: { kind: 'headless', pid: 812, version: '1.2.3', label: 'headless pid 812' },
+				});
+				expect(bridge.connections).toHaveLength(0);
+				const result = await client.connection.connect();
+				expect(result).toMatchObject({ ok: true, value: { label: 'headless pid 812' } });
+				expect(bridge.connections[0].headers['x-maestro-cli-secret']).toBe(CLI_SECRET);
+				expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws`);
+				expect(client.connection.state()).toBe('connected');
+			});
+
+			it('does not check the pid, which may belong to another machine', async () => {
+				client = makeClient({ endpoint: endpointOf({ pid: 2 ** 22 + 12345 }) });
+				expect(await client.connection.connect()).toMatchObject({ ok: true });
+			});
+
+			it('labels an endpoint without a pid by its port', async () => {
+				client = makeClient({ endpoint: endpointOf() });
+				expect(await client.connection.discover()).toEqual({
+					ok: true,
+					value: { kind: 'desktop', label: `desktop 127.0.0.1:${bridge.port}` },
+				});
+			});
+
+			it('asks a resolver again on every attempt, so a host on a new port is found', async () => {
+				const resolver = vi.fn(() => Promise.resolve(endpointOf({ hostKind: 'headless' })));
+				client = makeClient({ endpoint: resolver });
+				await connect();
+				expect(resolver).toHaveBeenCalledTimes(1);
+				bridge.dropAll();
+				await vi.waitFor(() => expect(types()).toContain('host.connected'));
+				expect(client.connection.state()).toBe('connected');
+				expect(resolver).toHaveBeenCalledTimes(2);
+			});
+
+			it('reports a resolver failure as host-unavailable without the secrets', async () => {
+				client = makeClient({
+					endpoint: () => Promise.reject(new Error(`forward down ${TOKEN} ${CLI_SECRET}`)),
+				});
+				const result = await client.connection.connect();
+				expect(result).toMatchObject({
+					ok: false,
+					error: { code: 'host-unavailable', method: 'connection.connect' },
+				});
+				expect(!result.ok && result.error.message).toMatch(/forward down/);
+				expect(bridge.connections).toHaveLength(0);
+			});
+
+			it('refuses an endpoint that cannot be dialed, without echoing the token', async () => {
+				for (const bad of [
+					endpointOf({ port: 0 }),
+					endpointOf({ port: 70_000 }),
+					endpointOf({ token: '' }),
+					endpointOf({ token: 'tok/../../evil?x=' }),
+				]) {
+					client = makeClient({ endpoint: bad });
+					const result = await client.connection.discover();
+					expect(result).toMatchObject({ ok: false, error: { code: 'invalid' } });
+					expect(JSON.stringify(result)).not.toContain('evil');
+				}
+				expect(bridge.connections).toHaveLength(0);
+			});
+
+			it('never puts the endpoint token or secret in an error message', async () => {
+				bridge.invokes.set('sessions:getBootstrap', () => {
+					throw new Error(`boom ${TOKEN} ${CLI_SECRET}`);
+				});
+				client = makeClient({ endpoint: endpointOf() });
+				const result = await client.connection.connect();
+				expect(result.ok).toBe(false);
+				const text = JSON.stringify(result);
+				expect(text).not.toContain(TOKEN);
+				expect(text).not.toContain(CLI_SECRET);
+			});
 		});
 
 		it('ends calls in flight with host-unavailable when closed, and refuses new ones', async () => {

@@ -5,8 +5,9 @@ import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
  * desktop's WebSocket bridge (milestone M1).
  *
  * Follows `Plans/maestro-tui-client-api.md`. In short:
- *   - discovery reads `cli-server.json` from the caller's data dir; the socket
- *     is dialed on 127.0.0.1 with the per-boot `cliSecret`;
+ *   - discovery reads `cli-server.json` from the caller's data dir, or takes
+ *     the explicit endpoint the caller gave (a Federation remote's SSH
+ *     forward); the socket is dialed on 127.0.0.1 with the per-boot `cliSecret`;
  *   - the client stays a dashboard client (it never sends `subscribe`), and
  *     turn streams come from `bridge.event` `process:*` frames (C3);
  *   - mutations are typed bridge messages; `bridge.invoke` is only for full
@@ -58,7 +59,12 @@ import {
 	ConnectionClosedError,
 	UnsupportedCommandError,
 } from './bridge-connection';
-import { isPidAlive, readCliServerInfoFrom, type CliServerInfo } from './discovery';
+import {
+	isDialableEndpoint,
+	isPidAlive,
+	readCliServerInfoFrom,
+	type ExplicitHostEndpoint,
+} from './discovery';
 import {
 	CUSTOM_COMMANDS_STORE_KEY,
 	THEME_STORE_KEY,
@@ -244,7 +250,7 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly connection = {
 		discover: async (): Promise<ClientResult<HostInfo>> => {
-			const found = this.discoverHost('connection.discover');
+			const found = await this.discoverHost('connection.discover');
 			return found.ok ? ok(found.value.host) : found;
 		},
 		connect: (): Promise<ClientResult<HostInfo>> => this.connectPublic(),
@@ -546,9 +552,14 @@ class WsMaestroClient implements MaestroClient {
 	// Connection
 	// =======================================================================
 
-	private discoverHost(
+	/**
+	 * Find the host to dial: the explicit endpoint when the caller gave one, else the local
+	 * `cli-server.json`. Every attempt asks again, since a host's port and secret change per boot.
+	 */
+	private async discoverHost(
 		method: ClientMethod
-	): ClientResult<{ info: CliServerInfo; host: HostInfo }> {
+	): Promise<ClientResult<{ endpoint: ExplicitHostEndpoint | undefined; host: HostInfo }>> {
+		if (this.options.endpoint !== undefined) return this.resolveExplicitEndpoint(method);
 		const info = readCliServerInfoFrom(this.options.userDataDir);
 		if (!info) {
 			return this.fail(
@@ -567,13 +578,51 @@ class WsMaestroClient implements MaestroClient {
 		}
 		const kind = info.hostKind === 'headless' ? 'headless' : 'desktop';
 		return ok({
-			info,
+			endpoint: undefined,
 			host: {
 				kind,
 				pid: info.pid,
 				...(info.version ? { version: info.version } : {}),
 				startedAt: info.startedAt,
 				label: `${kind} pid ${info.pid}`,
+			},
+		});
+	}
+
+	/**
+	 * The explicit endpoint, resolved and checked. Its pid is a label only: it can belong to
+	 * another machine, so liveness is the socket answering, not a pid probe.
+	 */
+	private async resolveExplicitEndpoint(
+		method: ClientMethod
+	): Promise<ClientResult<{ endpoint: ExplicitHostEndpoint; host: HostInfo }>> {
+		const source = this.options.endpoint;
+		let endpoint: ExplicitHostEndpoint;
+		try {
+			endpoint = typeof source === 'function' ? await source() : source!;
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			return this.fail(method, 'host-unavailable', `The host endpoint is not available: ${reason}`);
+		}
+		this.secrets = [endpoint?.token ?? '', endpoint?.cliSecret ?? ''];
+		if (!endpoint || !isDialableEndpoint(endpoint)) {
+			return this.fail(
+				method,
+				'invalid',
+				'The host endpoint is not valid: expected a TCP port and a URL-safe path token.'
+			);
+		}
+		const kind = endpoint.hostKind === 'headless' ? 'headless' : 'desktop';
+		return ok({
+			endpoint,
+			host: {
+				kind,
+				...(endpoint.pid !== undefined ? { pid: endpoint.pid } : {}),
+				...(endpoint.version ? { version: endpoint.version } : {}),
+				label:
+					endpoint.pid !== undefined
+						? `${kind} pid ${endpoint.pid}`
+						: `${kind} 127.0.0.1:${endpoint.port}`,
 			},
 		});
 	}
@@ -635,9 +684,9 @@ class WsMaestroClient implements MaestroClient {
 		method: 'connection.connect' | 'connection.reconnect',
 		resume: boolean
 	): Promise<ClientResult<{ host: HostInfo; resumed: boolean }>> {
-		const found = this.discoverHost(method);
+		const found = await this.discoverHost(method);
 		if (!found.ok) return found;
-		const { host } = found.value;
+		const { host, endpoint } = found.value;
 
 		let settle!: Attempt['settleHandshake'];
 		const handshake = new Promise<HandshakeResult>((resolve) => {
@@ -655,7 +704,7 @@ class WsMaestroClient implements MaestroClient {
 		};
 		const query = resume && this.epoch ? { since: this.lastSeq, epoch: this.epoch } : undefined;
 		const conn = new BridgeConnection({
-			userDataDir: this.options.userDataDir,
+			...(endpoint ? { endpoint } : { userDataDir: this.options.userDataDir }),
 			strictReplies: true,
 			...(query ? { query } : {}),
 			WebSocketImpl: this.options.WebSocketImpl,
@@ -2161,7 +2210,8 @@ class WsMaestroClient implements MaestroClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the `MaestroClient` for the desktop running against `userDataDir`.
+ * Create the `MaestroClient` for the desktop running against `userDataDir`, or for the
+ * host at an explicit `endpoint`.
  * Nothing is opened until `client.connection.connect()`.
  */
 export function createWsMaestroClient(options: WsMaestroClientOptions): MaestroClient {
