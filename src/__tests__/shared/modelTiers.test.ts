@@ -177,9 +177,9 @@ describe('cheap synopsis turn resumed on its session', () => {
 		});
 	});
 
-	it('drops a codex session to the luna tier (a resume across models keeps the context)', () => {
+	it('keeps a codex session model while lowering effort for a resume', () => {
 		expect(cheapResumeTurnSettings('codex', { model: 'gpt-6.1-sol', effort: 'high' })).toEqual({
-			model: 'gpt-6-luna',
+			model: 'gpt-6.1-sol',
 			effort: 'low',
 		});
 	});

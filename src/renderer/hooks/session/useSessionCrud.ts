@@ -28,6 +28,7 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
@@ -324,15 +325,18 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				};
 
 				setSessions((prev) => [...prev, newSession]);
+				// Claim this window's agent before routing setup yields to IPC.
+				void registerNewSession?.(newId);
+				if (seedExtras?.tokenProxyMode) {
+					await applySeededTokenProxy(newId, seedExtras);
+				} else {
+					await applyDefaultAgentTokenProxy(newId);
+				}
 				setActiveSessionId(newId);
 				// The first spawn reads its routing (Codex transport, Claude token mode)
 				// from the persisted record, so do not leave the new agent sitting in a
 				// debounce that any streaming agent keeps re-arming.
 				setTimeout(() => flushSessionPersistence(), 0);
-				// Claim the agent for THIS window before any process spawns, so a
-				// secondary window surfaces it immediately and the primary's catch-all
-				// never flashes it. No-op in the primary window / outside a WindowProvider.
-				void registerNewSession?.(newId);
 				// Publish membership immediately: output from another agent can keep
 				// resetting the debounce, leaving this agent without a host owner.
 				flushSessionPersistence();
@@ -347,13 +351,6 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);
-
-				// The agent is in the store now, which is where the proxy writers
-				// look it up. Not awaited: the agent exists whatever they answer, and
-				// a refusal is reported by its own toast.
-				if (seedExtras?.tokenProxyMode) {
-					void applySeededTokenProxy(newId, seedExtras);
-				}
 			} catch (error) {
 				logger.error('Failed to create session:', undefined, error);
 			}

@@ -40,6 +40,7 @@ import {
 } from '../../shared/local-models/token-proxy';
 import { effectiveAgentCustomEnvVars } from '../../shared/providerProfiles';
 import { useSettingsStore } from '../stores/settingsStore';
+import { notifyToast } from '../stores/notificationStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import type { Session } from '../types';
 import { logger } from '../utils/logger';
@@ -176,6 +177,39 @@ export async function setAgentTokenProxyMode(
 export type SetAgentBackgroundRequestsResult =
 	| { ok: true; backgroundRequests: BackgroundRequests | undefined }
 	| { ok: false; error: string };
+
+/**
+ * Copy the saved proxy default onto a new local agent before its first turn.
+ * Explicit routing and group seeds win. Worktrees inherit their parent's routing
+ * instead. Reuse the same writer as the Gateway controls so URL, mode and the
+ * main-process record are ready together. A refusal stays visible to the user.
+ */
+export async function applyDefaultAgentTokenProxy(sessionId: string): Promise<void> {
+	const mode = useSettingsStore.getState().defaultTokenProxyMode;
+	if (!mode || mode === 'off') return;
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	if (
+		!session ||
+		session.gatewayUrl ||
+		session.tokenProxyMode ||
+		session.runOn ||
+		session.sessionSshRemoteConfig?.enabled ||
+		!agentGatewaySupport(session.toolType).supported
+	)
+		return;
+
+	try {
+		const result = await setAgentTokenProxyMode(sessionId, mode);
+		if (!result.ok) throw new Error(result.error);
+	} catch (error) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Proxy default was not applied',
+			message: `${session.name}: ${error instanceof Error ? error.message : String(error)}`,
+			dismissible: true,
+		});
+	}
+}
 
 /**
  * Set where the Maestro token proxy sends one agent's background requests, or

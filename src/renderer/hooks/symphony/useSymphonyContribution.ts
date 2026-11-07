@@ -19,6 +19,7 @@ import type { ToolType, Session, AITab, BatchRunConfig } from '../../types';
 import type { SymphonyContributionData } from '../../components/SymphonyModal';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { getModalActions } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
@@ -205,6 +206,7 @@ export function useSymphonyContribution(
 			};
 
 			setSessions((prev) => [...prev, newSession]);
+			await applyDefaultAgentTokenProxy(newId);
 			setActiveSessionId(newId);
 			setSymphonyModalOpen(false);
 

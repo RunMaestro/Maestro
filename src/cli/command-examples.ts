@@ -13,6 +13,31 @@
 import type { Command } from 'commander';
 
 export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
+	'list models': ['maestro-cli list models'],
+	'tab pins list': ['maestro-cli tab pins list --agent <agent-id>'],
+	'tab pins add': ['maestro-cli tab pins add <message-id> --agent <agent-id>'],
+	'tab pins remove': ['maestro-cli tab pins remove <pin-id> --agent <agent-id>'],
+	'tab pins rename': ['maestro-cli tab pins rename <pin-id> Investigation --agent <agent-id>'],
+	'tab pins show': ['maestro-cli tab pins show --agent <agent-id>'],
+	'pianola memory': ['maestro-cli pianola memory status'],
+	'pianola program apply': ['maestro-cli pianola program apply --file ./program.yaml'],
+	'pianola program list': ['maestro-cli pianola program list --json'],
+	'pianola program show': ['maestro-cli pianola program show <program-id> --json'],
+	'pianola program pause': ['maestro-cli pianola program pause <program-id>'],
+	'pianola program resume': ['maestro-cli pianola program resume <program-id>'],
+	'pianola escalate': [
+		'maestro-cli pianola escalate --title "Review needed" --detail "Confirm the proposed change"',
+	],
+	'pianola needs-me': ['maestro-cli pianola needs-me --json'],
+	'pianola dismiss': ['maestro-cli pianola dismiss <ask-id>'],
+	'pianola brief': ['maestro-cli pianola brief --json'],
+	'pianola plan revise': [
+		'maestro-cli pianola plan revise <plan-id> <task-id> --prompt "Correct the implementation"',
+	],
+	'pianola plan skip': ['maestro-cli pianola plan skip <plan-id> <task-id>'],
+	'pianola validate': ['maestro-cli pianola validate <plan-id> <task-id>'],
+	'pianola program-loop': ['maestro-cli pianola program-loop <program-id> --once'],
+	'pianola supervise program': ['maestro-cli pianola supervise program <program-id>'],
 	// RC surfaces and the detached runtime host
 	'throughput-gauge show': ['maestro-cli throughput-gauge show'],
 	'throughput-gauge hide': ['maestro-cli throughput-gauge hide'],

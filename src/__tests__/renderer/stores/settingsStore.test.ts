@@ -193,6 +193,29 @@ function resetStore() {
 }
 
 describe('settingsStore', () => {
+	it.each(['off', 'passthrough', 'compress', 'compress-early'] as const)(
+		'persists and restores the %s proxy default',
+		async (mode) => {
+			expect(SETTINGS_METADATA.defaultTokenProxyMode.default).toBe('off');
+			expect(useSettingsStore.getInitialState().defaultTokenProxyMode).toBe('off');
+			await useSettingsStore.getState().setDefaultTokenProxyMode(mode);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('defaultTokenProxyMode', mode);
+			useSettingsStore.setState({ defaultTokenProxyMode: 'off' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ defaultTokenProxyMode: mode });
+			await loadAllSettings();
+			expect(useSettingsStore.getState().defaultTokenProxyMode).toBe(mode);
+		}
+	);
+
+	it.each([undefined, 'invalid', 1, null])(
+		'keeps a missing or invalid proxy default off: %j',
+		async (value) => {
+			useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ defaultTokenProxyMode: value });
+			await loadAllSettings();
+			expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('off');
+		}
+	);
 	it.each([
 		['notificationCenterEnabled', 'setNotificationCenterEnabled'],
 		['notificationCenterLarge', 'setNotificationCenterLarge'],

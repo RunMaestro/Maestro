@@ -65,6 +65,7 @@ import {
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { seedRemoteCreate } from '../../services/groupSeededCreate';
 import type { GroupDefaultsCreateFields } from '../../../shared/groupAgentDefaults';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
@@ -1698,10 +1699,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
-			// The agent is in the store now, which is where the proxy writers look
-			// it up. Not awaited: a refusal is reported by its own toast.
+			// Finish routing before the CLI can send the new agent its first turn.
 			if (seeded.extras.tokenProxyMode) {
-				void applySeededTokenProxy(newId, seeded.extras);
+				await applySeededTokenProxy(newId, seeded.extras);
+			} else {
+				await applyDefaultAgentTokenProxy(newId);
 			}
 			// A background create leaves the Left Bar selection where it is. The
 			// agent still exists, is listed, and is addressable by the id handed
@@ -1726,7 +1728,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// `setMany` is incremental and idempotent: the debounced flush that
 			// follows simply rewrites the same row.
 			try {
-				await window.maestro.sessions.setMany([newSession], []);
+				const currentSession = useSessionStore.getState().sessions.find((s) => s.id === newId);
+				if (currentSession) await window.maestro.sessions.setMany([currentSession], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist new CLI-created session:', undefined, persistErr);
 			}

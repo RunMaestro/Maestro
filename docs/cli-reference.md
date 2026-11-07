@@ -460,6 +460,10 @@ List the models a provider offers (e.g. opencode, claude-code), as the model pic
 | `--ssh-remote <id>` | Discover on this SSH remote instead of this machine                | -       |
 | `--json`            | Output as JSON (for scripting)                                     | -       |
 
+```bash
+maestro-cli list models
+```
+
 ## `maestro-cli list terminals`
 
 List open terminal tabs in the desktop app (all agents unless --agent is given)
@@ -2817,6 +2821,10 @@ List a tab's pinned messages in transcript order
 | `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
 | `--json`             | Output as JSON (for scripting)                                  | -       |
 
+```bash
+maestro-cli tab pins list --agent <agent-id>
+```
+
 ## `maestro-cli tab pins add [message-id]`
 
 Pin a message by transcript entry id, or the newest one with --last
@@ -2828,6 +2836,10 @@ Pin a message by transcript entry id, or the newest one with --last
 | `--json`             | Output as JSON (for scripting)                                  | -       |
 | `--last <who>`       | Pin the newest message of this kind: user or agent              | -       |
 
+```bash
+maestro-cli tab pins add <message-id> --agent <agent-id>
+```
+
 ## `maestro-cli tab pins remove <pin-id>`
 
 Unpin a message (pin id: exact or unique prefix)
@@ -2837,6 +2849,10 @@ Unpin a message (pin id: exact or unique prefix)
 | `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
 | `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
 | `--json`             | Output as JSON (for scripting)                                  | -       |
+
+```bash
+maestro-cli tab pins remove <pin-id> --agent <agent-id>
+```
 
 ## `maestro-cli tab pins rename <pin-id> [label...]`
 
@@ -2848,6 +2864,10 @@ Rename a pin; no label restores the message's own first line
 | `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
 | `--json`             | Output as JSON (for scripting)                                  | -       |
 
+```bash
+maestro-cli tab pins rename <pin-id> Investigation --agent <agent-id>
+```
+
 ## `maestro-cli tab pins show`
 
 Open the pin panel over the tab (selects the agent and the tab)
@@ -2857,6 +2877,10 @@ Open the pin panel over the tab (selects the agent and the tab)
 | `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
 | `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
 | `--json`             | Output as JSON (for scripting)                                  | -       |
+
+```bash
+maestro-cli tab pins show --agent <agent-id>
+```
 
 ## `maestro-cli tab compact [tab-id]`
 
@@ -3685,6 +3709,10 @@ Backfill and retrieve evidence-backed user and project memory
 | `--out <file>`             | Write JSON output to a file                                                                               | -       |
 | `--json`                   | JSON output                                                                                               | -       |
 
+```bash
+maestro-cli pianola memory status
+```
+
 ## `maestro-cli pianola log`
 
 Show recent Pianola decisions from the audit log
@@ -3704,36 +3732,68 @@ Manage product programs
 
 ## `maestro-cli pianola program apply`
 
+Apply a product program manifest
+
 | Option          | Description                   | Default |
 | --------------- | ----------------------------- | ------- |
 | `--file <path>` | YAML or JSON program manifest | -       |
 | `--json`        | Output as JSON                | -       |
 
+```bash
+maestro-cli pianola program apply --file ./program.yaml
+```
+
 ## `maestro-cli pianola program list`
+
+List product programs
 
 | Option   | Description    | Default |
 | -------- | -------------- | ------- |
 | `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli pianola program list --json
+```
 
 ## `maestro-cli pianola program show <id>`
 
+Show a product program
+
 | Option   | Description    | Default |
 | -------- | -------------- | ------- |
 | `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli pianola program show <program-id> --json
+```
 
 ## `maestro-cli pianola program pause <id>`
 
+Pause a product program
+
 | Option   | Description    | Default |
 | -------- | -------------- | ------- |
 | `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli pianola program pause <program-id>
+```
 
 ## `maestro-cli pianola program resume <id>`
 
+Resume a product program
+
 | Option   | Description    | Default |
 | -------- | -------------- | ------- |
 | `--json` | Output as JSON | -       |
 
+```bash
+maestro-cli pianola program resume <program-id>
+```
+
 ## `maestro-cli pianola escalate`
+
+Record a request for owner review
 
 | Option                      | Description | Default |
 | --------------------------- | ----------- | ------- |
@@ -3747,23 +3807,45 @@ Manage product programs
 | `--distinct`                | -           | -       |
 | `--json`                    | -           | -       |
 
+```bash
+maestro-cli pianola escalate --title "Review needed" --detail "Confirm the proposed change"
+```
+
 ## `maestro-cli pianola needs-me`
+
+List open requests for owner review
 
 | Option   | Description | Default |
 | -------- | ----------- | ------- |
 | `--json` | -           | -       |
+
+```bash
+maestro-cli pianola needs-me --json
+```
 
 ## `maestro-cli pianola dismiss <askId>`
 
+Dismiss a request for owner review
+
 | Option   | Description | Default |
 | -------- | ----------- | ------- |
 | `--json` | -           | -       |
+
+```bash
+maestro-cli pianola dismiss <ask-id>
+```
 
 ## `maestro-cli pianola brief`
 
+Show the current product program brief
+
 | Option   | Description | Default |
 | -------- | ----------- | ------- |
 | `--json` | -           | -       |
+
+```bash
+maestro-cli pianola brief --json
+```
 
 ## `maestro-cli pianola plan`
 
@@ -3791,6 +3873,10 @@ Revise a reviewed or failed task and queue it again without replacing its plan
 | `--prompt <text>` | Corrected implementation instructions; validation stays unchanged | -       |
 | `--json`          | Output as JSON (for scripting)                                    | -       |
 
+```bash
+maestro-cli pianola plan revise <plan-id> <task-id> --prompt "Correct the implementation"
+```
+
 ## `maestro-cli pianola plan skip <planId> <taskId>`
 
 Skip a failed task while keeping its dependents blocked
@@ -3798,6 +3884,10 @@ Skip a failed task while keeping its dependents blocked
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli pianola plan skip <plan-id> <task-id>
+```
 
 ## `maestro-cli pianola plan list`
 
@@ -3846,13 +3936,23 @@ Run the task validation oracle in the sandbox and append its Agent Run check
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+```bash
+maestro-cli pianola validate <plan-id> <task-id>
+```
+
 ## `maestro-cli pianola program-loop <programId>`
+
+Run the product program control loop
 
 | Option                 | Description                    | Default |
 | ---------------------- | ------------------------------ | ------- |
 | `--interval <seconds>` | Polling interval (default 120) | -       |
 | `--once`               | Perform one tick and exit      | -       |
 | `--json`               | Output as JSON                 | -       |
+
+```bash
+maestro-cli pianola program-loop <program-id> --once
+```
 
 ## `maestro-cli pianola supervise`
 
@@ -3909,10 +4009,16 @@ maestro-cli pianola supervise orchestrate <plan-id> --concurrency 2
 
 ## `maestro-cli pianola supervise program <programId>`
 
+Register a desktop-supervised product program loop
+
 | Option                 | Description                    | Default |
 | ---------------------- | ------------------------------ | ------- |
 | `--interval <seconds>` | Polling interval (default 120) | -       |
 | `--json`               | Output as JSON                 | -       |
+
+```bash
+maestro-cli pianola supervise program <program-id>
+```
 
 ## `maestro-cli pianola supervise list`
 

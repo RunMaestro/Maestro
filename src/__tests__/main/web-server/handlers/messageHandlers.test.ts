@@ -1369,6 +1369,7 @@ describe('WebSocketMessageHandler', () => {
 					false,
 					undefined,
 					false,
+					undefined,
 					undefined
 				);
 			});
@@ -8440,6 +8441,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(readTokenProxyBlock).toHaveBeenCalledExactlyOnceWith(hash, range);
 			expect(lastResponse()).toEqual({
 				type: 'local_models_proxy_block_result',
+				timestamp: expect.any(Number),
 				success: true,
 				block,
 				requestId: 'pb-range',

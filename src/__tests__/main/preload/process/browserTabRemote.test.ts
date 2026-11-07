@@ -135,8 +135,17 @@ describe('Process BrowserTabRemote Preload API', () => {
 				([channel]) => channel === 'remote:newAITabWithPrompt'
 			)![1];
 			const control = { phase: 'prepare', dispatchId: 'dispatch', tabId: 'exact-tab' };
-			handler(null, 'worker', '', 'reply', true, false, undefined, control);
-			expect(callback).toHaveBeenCalledWith('worker', '', 'reply', true, false, undefined, control);
+			handler(null, 'worker', '', 'reply', true, false, undefined, undefined, control);
+			expect(callback).toHaveBeenCalledWith(
+				'worker',
+				'',
+				'reply',
+				true,
+				false,
+				undefined,
+				undefined,
+				control
+			);
 		});
 	});
 });

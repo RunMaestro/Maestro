@@ -54,12 +54,17 @@ vi.mock('../../../renderer/services/groupDefaultsPublish', () => ({
 	applySeededTokenProxy: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../../renderer/services/agentGateway', () => ({
+	applyDefaultAgentTokenProxy: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
 
 import { useSessionCrud } from '../../../renderer/hooks/session/useSessionCrud';
 import { applySeededTokenProxy } from '../../../renderer/services/groupDefaultsPublish';
+import { applyDefaultAgentTokenProxy } from '../../../renderer/services/agentGateway';
 import type { UseSessionCrudDeps } from '../../../renderer/hooks/session/useSessionCrud';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -226,6 +231,20 @@ describe('useSessionCrud', () => {
 	// createNewSession
 	// ========================================================================
 	describe('createNewSession', () => {
+		it('finishes applying the saved proxy default before activating the new agent', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+			vi.mocked(applyDefaultAgentTokenProxy).mockImplementationOnce(async (id) => {
+				expect(useSessionStore.getState().sessions.some((s) => s.id === id)).toBe(true);
+				expect(useSessionStore.getState().activeSessionId).not.toBe(id);
+			});
+			await act(async () => {
+				await result.current.createNewSession('claude-code', '/test/project', 'Proxy default');
+			});
+			const id = useSessionStore.getState().sessions[0].id;
+			expect(applyDefaultAgentTokenProxy).toHaveBeenCalledWith(id);
+			expect(useSessionStore.getState().activeSessionId).toBe(id);
+		});
 		it('publishes a newly created agent behind an in-flight save while another agent keeps streaming', async () => {
 			vi.useFakeTimers();
 			web = true;
@@ -801,6 +820,7 @@ describe('useSessionCrud', () => {
 			expect(session.tokenProxyMode).toBeUndefined();
 			expect(session.backgroundRequests).toBeUndefined();
 			expect(applySeededTokenProxy).toHaveBeenCalledWith(session.id, seedExtras);
+			expect(applyDefaultAgentTokenProxy).not.toHaveBeenCalled();
 		});
 
 		// Every caller but a group-seeded form passes 25 arguments.

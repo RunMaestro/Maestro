@@ -108,6 +108,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
+- **Encoding answers to provider questions:** `encodeQuestionAnswer()`, `hasAnswer()`, `QuestionForAnswer`, `QuestionSelection` in `src/shared/questionAnswer.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
 - **Normalized edit similarity:** `normalizedEditSimilarity()` in `src/shared/stringUtils.ts`
 - **Preparing text for speech:** `prepareSpeechText()` in `src/shared/acappella/speech-text.ts`
@@ -523,6 +524,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The Maestro token proxy (address, routing, lifecycle):** `TOKEN_PROXY_ROUTES`, `resolveTokenProxyTarget()`, `tokenProxyGatewayUrl()`, `gatewayPointsAtTokenProxy()` in `src/shared/local-models/token-proxy.ts`; `createTokenProxyServer()` in `src/main/local-models/proxy/server.ts`; `syncTokenProxy()`
 - **Compressing tool results in a model request (token proxy):** `compressRequestBody(kind, body, options)`, `findToolResultSpans()`, `summarizeToolResult()`, `formatCompressionMarker()` / `parseCompressionMarker()` in `src/main/local-models/proxy/compress.ts`; `compressWithHeuristics()`, `compressJson()`
 - **An agent's Maestro token proxy mode (`off | passthrough | compress | compress-early`):** `resolveTokenProxyMode()`, `asTokenProxyMode()`, `asStoredTokenProxyMode()`, `isCompressingTokenProxyMode()`, `TOKEN_PROXY_MODE_DESCRIPTIONS`, `tokenProxyRouteForAgent()`, `tokenProxyAgentGatewayUrl()`
+- **Applying the global proxy default to a new agent:** `applyDefaultAgentTokenProxy()` in `src/renderer/services/agentGateway.ts`
 - **What the token proxy carried, saved and shortened:** `recordTokenProxyRequest()`, `proxyRequestFromLog()`, `readTokenProxyUsage()` in `src/main/local-models/proxy/request-stats.ts`; `getTokenProxyReport()`, `readTokenProxyBlock()` in `proxy/service.ts`; table `proxy_requests` via `src/main/stats/proxy-requests.ts`
 - **Routing a token proxy request to a background target:** `planBackgroundRoute()`, `withRequestModel()` in `src/main/local-models/proxy/background-route.ts`; `modelIdInTierFamily()` in `src/shared/modelTiers.ts`; `resolveSourceCallTarget()` in `src/main/local-models/run-on.ts`
 - **Setting an agent's background requests target:** `parseBackgroundRequestsEdit()`, `backgroundRequestsSupport()`, `buildBackgroundRequestsOptionGroups()` in `src/shared/local-models/background-requests.ts`; `setAgentBackgroundRequests()`, `OFF_TOKEN_PROXY_FIELDS` in `src/renderer/services/agentGateway.ts`

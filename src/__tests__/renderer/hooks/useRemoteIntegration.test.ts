@@ -715,6 +715,7 @@ describe('useRemoteIntegration', () => {
 					undefined,
 					true,
 					undefined,
+					undefined,
 					'reply',
 					'dispatch-id'
 				)
@@ -1772,6 +1773,7 @@ describe('useRemoteIntegration', () => {
 					true,
 					false,
 					undefined,
+					undefined,
 					{ phase: 'release', dispatchId: 'held-mention', tabId: 'held-tab' }
 				);
 			});
@@ -1797,6 +1799,7 @@ describe('useRemoteIntegration', () => {
 					true,
 					false,
 					undefined,
+					undefined,
 					control
 				);
 			});
@@ -1819,6 +1822,7 @@ describe('useRemoteIntegration', () => {
 					true,
 					false,
 					undefined,
+					undefined,
 					{ ...control, phase: 'release' }
 				);
 			});
@@ -1829,6 +1833,7 @@ describe('useRemoteIntegration', () => {
 					'duplicate',
 					true,
 					false,
+					undefined,
 					undefined,
 					{ ...control, phase: 'release' }
 				);
@@ -1859,6 +1864,7 @@ describe('useRemoteIntegration', () => {
 					'prepare-failed',
 					true,
 					false,
+					undefined,
 					undefined,
 					{ phase: 'prepare', dispatchId: 'host-dispatch', tabId: 'host-tab' }
 				);
@@ -2403,11 +2409,12 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
-		it('queues --new-tab with its chain when the agent is busy', () => {
-			const tab = createMockTab({ id: 'tab-1' });
+		it('sends --new-tab with its chain while a sibling tab is busy', () => {
+			const tab = createMockTab({ id: 'tab-1', state: 'busy' });
 			const session = createMockSession({ id: 'session-1', state: 'busy', aiTabs: [tab] });
 			const deps = createDeps({ sessions: [session] });
 
+			const events = vi.spyOn(window, 'dispatchEvent');
 			renderHook(() => useRemoteIntegration(deps));
 
 			act(() => {
@@ -2422,11 +2429,22 @@ describe('useRemoteIntegration', () => {
 			});
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
-			expect(updated?.executionQueue?.[0]).toMatchObject({ text: 'Hello', consultChain: chain });
+			expect(updated?.executionQueue).toHaveLength(0);
+			expect(events).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({
+						command: 'Hello',
+						consultChain: chain,
+						tabId: expect.any(String),
+					}),
+				})
+			);
+			expect(updated?.aiTabs.find((t) => t.id === tab.id)?.state).toBe('busy');
 		});
 
 		it('queues --queue with its chain on a busy agent', () => {
-			const tab = createMockTab({ id: 'tab-1' });
+			const tab = createMockTab({ id: 'tab-1', state: 'busy' });
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'busy',
@@ -2543,6 +2561,7 @@ describe('useRemoteIntegration', () => {
 						false,
 						undefined,
 						undefined,
+						undefined,
 						{ dispatchId: item.id, item }
 					);
 				});
@@ -2566,6 +2585,7 @@ describe('useRemoteIntegration', () => {
 						undefined,
 						true,
 						false,
+						undefined,
 						undefined,
 						undefined,
 						{ dispatchId: item.id, item }
@@ -2646,6 +2666,7 @@ describe('useRemoteIntegration', () => {
 					'tab-1',
 					undefined,
 					true,
+					undefined,
 					undefined,
 					undefined,
 					true

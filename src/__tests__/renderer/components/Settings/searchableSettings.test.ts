@@ -480,6 +480,8 @@ describe('searchableSettings', () => {
 
 			// Local Models tab
 			['local models', 'local-models-models'],
+			['future agents', 'local-models-gateway'],
+			['default proxy', 'local-models-gateway'],
 			['models overview', 'local-models-overview'],
 			['active tasks', 'local-models-overview'],
 			['download model', 'local-models-models'],

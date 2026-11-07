@@ -15,6 +15,7 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
 import type { UtilitySource } from '../../../shared/local-models/tasks';
+import type { TokenProxyMode } from '../../../shared/local-models/token-proxy';
 import type {
 	ThemeId,
 	ThemeColors,
@@ -90,6 +91,8 @@ export interface UseSettingsReturn {
 	/** Variables switched off in the editor: kept for later, never spawned with. */
 	shellEnvVarsDisabled: Record<string, string>;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+	defaultTokenProxyMode: TokenProxyMode;
+	setDefaultTokenProxyMode: (value: TokenProxyMode) => Promise<void>;
 
 	// Pianola auto-watch
 	pianolaAutoWatchNewAgents: boolean;

@@ -1363,7 +1363,9 @@ describe('agentStore', () => {
 				false
 			);
 			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(updated.executionQueue).toEqual([
+				{ ...item, paused: true, dispatchRecoveryGeneration: 1 },
+			]);
 			expect(updated.executionQueue[0].turnSettings).toBe(settings);
 			expect(updated.aiTabs[0].agentSessionId).toBeNull();
 			expect(updated.aiTabs[0].state).toBe('idle');
@@ -1393,7 +1395,9 @@ describe('agentStore', () => {
 				false
 			);
 			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.executionQueue).toEqual([item]);
+			expect(updated.executionQueue).toEqual([
+				{ ...item, dispatchRecoveryGeneration: 1, paused: undefined },
+			]);
 			expect(updated.aiTabs[0].state).toBe('busy');
 			expect(translate).not.toHaveBeenCalled();
 			expect(mockKill).not.toHaveBeenCalled();

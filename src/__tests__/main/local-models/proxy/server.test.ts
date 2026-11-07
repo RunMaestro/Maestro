@@ -1011,7 +1011,7 @@ describe('token proxy server, compress mode', () => {
 					port,
 					method: 'POST',
 					path: `/agent/a/launch/${'a'.repeat(64)}/anthropic/v1/messages`,
-					headers: jsonHeaders(body),
+					headers: [...jsonHeaders(body), 'Host', `127.0.0.1:${port}`],
 					agent: false,
 				},
 				(res) => {

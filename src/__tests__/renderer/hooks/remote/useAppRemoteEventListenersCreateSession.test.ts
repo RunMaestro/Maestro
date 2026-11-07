@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { applyDefaultAgentTokenProxy } from '../../../../renderer/services/agentGateway';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -20,6 +21,10 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
 }));
 vi.mock('../../../../renderer/hooks/batch/batchUtils', () => ({ DEFAULT_BATCH_PROMPT: '' }));
+vi.mock('../../../../renderer/services/agentGateway', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/services/agentGateway')>()),
+	applyDefaultAgentTokenProxy: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../../../../renderer/services/git', () => ({
 	gitService: { isRepo: vi.fn().mockResolvedValue(false) },
 }));
@@ -35,7 +40,14 @@ const respond = vi.fn();
 const setMany = vi.fn().mockResolvedValue(undefined);
 
 function setup() {
-	const setSessions = vi.fn();
+	const initial = useSessionStore.getState();
+	let sessions = initial.sessions ?? [];
+	const setSessions = vi.fn((update: Session[] | ((prev: Session[]) => Session[])) => {
+		sessions = typeof update === 'function' ? update(sessions) : update;
+	});
+	vi.mocked(useSessionStore.getState).mockImplementation(
+		() => ({ ...initial, sessions, setSessions }) as never
+	);
 	renderHook(() =>
 		useAppRemoteEventListeners({
 			sessionsRef: { current: [] },
@@ -82,6 +94,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(useSessionStore.getState).mockReturnValue({ sessions: [], groups: [] } as never);
 	(window as any).maestro = {
 		agents: { get: vi.fn(async (id: string) => ({ id })) },
 		process: { sendRemoteCreateSessionResponse: respond },
@@ -91,6 +104,39 @@ beforeEach(() => {
 });
 
 describe('maestro:remoteCreateSession gateway', () => {
+	it('persists the routed record before replying, without overwriting it with the create snapshot', async () => {
+		setup();
+		vi.mocked(applyDefaultAgentTokenProxy).mockImplementationOnce(async (id) => {
+			const store = useSessionStore.getState();
+			store.setSessions((sessions) =>
+				sessions.map((session) =>
+					session.id === id
+						? {
+								...session,
+								gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+								tokenProxyMode: 'compress',
+							}
+						: session
+				)
+			);
+		});
+		dispatchCreate('claude-code');
+		await flush();
+		expect(setMany).toHaveBeenLastCalledWith(
+			[
+				expect.objectContaining({
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress',
+				}),
+			],
+			[]
+		);
+		expect(respond).toHaveBeenCalledWith(
+			'ch',
+			expect.objectContaining({ sessionId: expect.any(String) })
+		);
+		expect(setMany.mock.invocationCallOrder[0]).toBeLessThan(respond.mock.invocationCallOrder[0]);
+	});
 	it('stores the normalized gateway on the new agent, with no proxy mode', async () => {
 		const { setSessions } = setup();
 

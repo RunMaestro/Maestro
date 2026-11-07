@@ -167,7 +167,7 @@ describe('production new-tab handler supervision wiring', () => {
 		'returns truthful WS/CLI queue semantics after caller ends at %s',
 		async (boundary) => {
 			const f = fixture();
-			await f.newTab('worker', '', true, false, undefined, {
+			await f.newTab('worker', '', true, false, undefined, undefined, {
 				phase: 'prepare',
 				dispatchId: generateUUID(),
 				tabId: 'tab',
@@ -223,7 +223,7 @@ describe('production new-tab handler supervision wiring', () => {
 		'consumes production queue admission with busy=%s and pins host intent rather than renderer ack',
 		async (busy) => {
 			const f = fixture();
-			await f.newTab('worker', '', true, false, undefined, {
+			await f.newTab('worker', '', true, false, undefined, undefined, {
 				phase: 'prepare',
 				dispatchId: generateUUID(),
 				tabId: 'tab',
@@ -265,7 +265,7 @@ describe('production new-tab handler supervision wiring', () => {
 				itemId: message.dispatchId,
 				admission: { outcome: 'queued', supervision: 'unavailable' },
 			});
-			const expectedItem = (f.enqueueCommand.mock.calls[0][9] as { item: object }).item;
+			const expectedItem = (f.enqueueCommand.mock.calls[0][10] as { item: object }).item;
 			expect((expectedItem as { images: string[] }).images).toEqual([
 				expect.stringMatching(/^maestro-image:\/\/store\/[a-f0-9]{64}\.png$/),
 			]);
@@ -300,7 +300,7 @@ describe('production new-tab handler supervision wiring', () => {
 		async (kind, handle) => {
 			const f = fixture();
 			// Prepare native metadata for an existing tab using the same real adapter fixture.
-			await f.newTab('worker', '', true, false, undefined, {
+			await f.newTab('worker', '', true, false, undefined, undefined, {
 				phase: 'prepare',
 				tabId: 'tab',
 				dispatchId: generateUUID(),
@@ -400,8 +400,8 @@ describe('production new-tab handler supervision wiring', () => {
 		const f = fixture();
 		const native = f.newTab.getMockImplementation()!;
 		f.newTab.mockImplementation(async (...args) =>
-			args[5]?.phase === 'release'
-				? { success: false, unknown: true, tabId: args[5].tabId }
+			args[6]?.phase === 'release'
+				? { success: false, unknown: true, tabId: args[6].tabId }
 				: native(...args)
 		);
 		const message = {
@@ -480,7 +480,7 @@ describe('production new-tab handler supervision wiring', () => {
 			dispatchId: generateUUID(),
 		});
 		await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
-		expect(f.newTab.mock.calls[0]).toHaveLength(5);
+		expect(f.newTab.mock.calls[0]).toHaveLength(6);
 		expect(f.send.mock.calls[0][1].admission).toBeUndefined();
 	});
 });
@@ -488,7 +488,7 @@ describe('production new-tab handler supervision wiring', () => {
 describe('existing-tab production dispatch admission', () => {
 	async function existingFixture() {
 		const f = fixture();
-		await f.newTab('worker', '', true, false, undefined, {
+		await f.newTab('worker', '', true, false, undefined, undefined, {
 			phase: 'prepare',
 			dispatchId: generateUUID(),
 			tabId: 'tab',
@@ -498,9 +498,10 @@ describe('existing-tab production dispatch admission', () => {
 			expect(args[2]).toBe('ai');
 			expect(args[3]).toBe('tab');
 			expect(args[4]).toBe(false);
-			expect(args[8]).toBe(true);
+			expect(args[8]).toBeUndefined();
+			expect(args[9]).toBe(true);
 			expect(store.readScopeCheckpoint(f.scopeId)?.tabs[0].tabId).toBe('tab');
-			const id = args[9] as string;
+			const id = args[10] as string;
 			expect(store.readDispatchAdmission(id)?.outcome).toBe('unknown');
 			const key = 'worker-ai-tab';
 			pianolaNewTabSpawns.claim(key, id)();
@@ -584,7 +585,7 @@ describe('existing-tab production dispatch admission', () => {
 		const f = await existingFixture();
 		f.executeCommand.mockImplementation(async (...args: unknown[]) => {
 			(f.snapshot.sessions[0] as { agentSessionId: string }).agentSessionId = 'replacement';
-			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab', args[9] as string)).toThrow(
+			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab', args[10] as string)).toThrow(
 				'DispatchTargetIdentityChanged'
 			);
 			return false;
@@ -613,7 +614,7 @@ describe('existing-tab production dispatch admission', () => {
 		f.executeCommand.mockImplementation(async (...args: unknown[]) => {
 			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab')).toThrow('DispatchIdentityMismatch');
 			(f.snapshot.sessions[0] as { supervision: { paused: boolean } }).supervision.paused = true;
-			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab', args[9] as string)).toThrow();
+			expect(() => pianolaNewTabSpawns.claim('worker-ai-tab', args[10] as string)).toThrow();
 			return false;
 		});
 		expect(await send(f, generateUUID(), 'tab')).toMatchObject({

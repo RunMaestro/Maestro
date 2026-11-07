@@ -387,7 +387,7 @@ describe('cueTrigger command', () => {
 
 			expect(submitCueTrigger).not.toHaveBeenCalled();
 			expect(consoleErrorSpy).toHaveBeenCalledWith(`Error: ${sendError.message}`);
-			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(processExitSpy).toHaveBeenCalledWith(sendError instanceof CommandTimeoutError ? 5 : 1);
 		});
 	});
 });

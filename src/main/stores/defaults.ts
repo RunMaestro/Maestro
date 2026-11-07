@@ -190,6 +190,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
 	// See shared/local-models/endpoints.ts.
 	localModelEndpoints: [],
+	defaultTokenProxyMode: 'off',
 	// Where Local Models downloads model files from. See
 	// shared/local-models/download-base.ts.
 	localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,

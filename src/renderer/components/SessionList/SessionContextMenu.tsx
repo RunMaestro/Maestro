@@ -796,7 +796,6 @@ export function SessionContextMenu({
 				</div>
 			)}
 
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 			{(gitActions.isGitRepo || showWorktreeParentSection) && (
 				<>
 					<ContextMenuSubmenu

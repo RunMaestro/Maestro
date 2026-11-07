@@ -32,6 +32,7 @@ import { gatewayEnvVarsFor } from '../../../../../shared/local-models/gateway';
 import {
 	resolveTokenProxyMode,
 	TOKEN_PROXY_MODE_LABELS,
+	TOKEN_PROXY_MODE_DESCRIPTIONS,
 	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_NAME,
 	type TokenProxyMode,
@@ -68,6 +69,8 @@ function agentRemoteId(session: Session): string | undefined {
 
 export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionProps) {
 	const sessions = useSessionStore((s) => s.sessions);
+	const defaultMode = useSettingsStore((s) => s.defaultTokenProxyMode);
+	const setDefaultMode = useSettingsStore((s) => s.setDefaultTokenProxyMode);
 	// A terminal is a shell, not an agent: it has no provider traffic to route.
 	const agents = useMemo(
 		() =>
@@ -97,6 +100,7 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 		() =>
 			agents.filter(
 				(agent) =>
+					!agent.runOn &&
 					!tokenProxyModeBlocker(
 						agent.toolType,
 						agent.sessionSshRemoteConfig?.enabled
@@ -117,6 +121,9 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 			const errors: string[] = [];
 			let applied = 0;
 			try {
+				// Persist the choice even with no agents yet. Creation copies it
+				// through the same per-agent writer used by the loop below.
+				await setDefaultMode(mode);
 				for (const agent of targets) {
 					try {
 						const result = await setAgentTokenProxyMode(agent.id, mode);
@@ -130,17 +137,21 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 				setBulkStatus(
 					`Applied ${TOKEN_PROXY_MODE_LABELS[mode]} to ${applied} agent${applied === 1 ? '' : 's'}.${
 						skipped
-							? ` Skipped ${skipped} remote or unsupported agent${skipped === 1 ? '' : 's'}.`
+							? ` Skipped ${skipped} remote, unsupported, or Run on agent${skipped === 1 ? '' : 's'}.`
 							: ''
-					}`
+					} Default saved for future eligible agents.`
 				);
 				setBulkErrors(errors);
+			} catch (err: unknown) {
+				setBulkErrors([
+					`Could not save proxy default: ${err instanceof Error ? err.message : String(err)}`,
+				]);
 			} finally {
 				setBulkBusy(false);
 				proxy.refresh();
 			}
 		},
-		[agents, eligibleAgents, proxy.refresh]
+		[agents, eligibleAgents, proxy.refresh, setDefaultMode]
 	);
 
 	return (
@@ -164,46 +175,49 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 					an agent sends, keeps every original on this machine, and marks each block it changed.
 					Choosing either one sets the agent's gateway to the proxy; Off clears it.
 				</p>
+				<div>
+					<div className="text-sm font-medium">Set Maestro proxy for all agents</div>
+					<p className="text-xs opacity-70 mt-0.5 mb-2">
+						Choosing a mode updates {eligibleAgents.length} existing local agents with gateway
+						support and saves the default for future eligible agents. Enabling replaces existing
+						gateway URLs; Off preserves other proxies. Individual and group settings can override
+						the default for new agents. Worktrees inherit their parent agent's settings.
+					</p>
+					<p className="text-xs opacity-70 mb-2" data-testid="gateway-proxy-default">
+						Default for new agents: {TOKEN_PROXY_MODE_LABELS[defaultMode]}.
+					</p>
+					<p className="text-xs opacity-70 mb-2">{TOKEN_PROXY_MODE_DESCRIPTIONS[defaultMode]}</p>
+					<div className="flex flex-wrap gap-2" role="group" aria-label="All agents proxy mode">
+						{TOKEN_PROXY_MODES.map((mode) => (
+							<CardButton
+								key={mode}
+								theme={theme}
+								icon={mode === 'off' ? Power : Router}
+								label={`All: ${TOKEN_PROXY_MODE_LABELS[mode]}`}
+								primary={mode === defaultMode}
+								onClick={() => void chooseAll(mode)}
+								disabled={bulkBusy}
+								testId={`gateway-proxy-all-${mode}`}
+							/>
+						))}
+					</div>
+					<p className="text-xs opacity-70 mt-1" role="status">
+						{bulkBusy ? 'Applying proxy mode...' : bulkStatus}
+					</p>
+					{bulkErrors.length > 0 && (
+						<div className="text-xs select-text" style={{ color: theme.colors.error }} role="alert">
+							{bulkErrors.map((error, index) => (
+								<p key={index}>{error}</p>
+							))}
+						</div>
+					)}
+				</div>
 				{agents.length === 0 ? (
 					<p className="text-xs opacity-70" data-testid="local-models-gateway-empty">
 						No agents yet.
 					</p>
 				) : (
 					<>
-						<div>
-							<div className="text-sm font-medium">Set Maestro proxy for all agents</div>
-							<p className="text-xs opacity-70 mt-0.5 mb-2">
-								Enabling applies to {eligibleAgents.length} local agents with gateway support and
-								replaces their gateway URLs. Off preserves gateways to other proxies.
-							</p>
-							<div className="flex flex-wrap gap-2" role="group" aria-label="All agents proxy mode">
-								{TOKEN_PROXY_MODES.map((mode) => (
-									<CardButton
-										key={mode}
-										theme={theme}
-										icon={mode === 'off' ? Power : Router}
-										label={`All: ${TOKEN_PROXY_MODE_LABELS[mode]}`}
-										onClick={() => void chooseAll(mode)}
-										disabled={bulkBusy || (mode !== 'off' && eligibleAgents.length === 0)}
-										testId={`gateway-proxy-all-${mode}`}
-									/>
-								))}
-							</div>
-							<p className="text-xs opacity-70 mt-1" role="status">
-								{bulkBusy ? 'Applying proxy mode...' : bulkStatus}
-							</p>
-							{bulkErrors.length > 0 && (
-								<div
-									className="text-xs select-text"
-									style={{ color: theme.colors.error }}
-									role="alert"
-								>
-									{bulkErrors.map((error, index) => (
-										<p key={index}>{error}</p>
-									))}
-								</div>
-							)}
-						</div>
 						<fieldset disabled={bulkBusy} className="space-y-3">
 							{listedAgents.length === 0 && (
 								<p className="text-xs opacity-70 mb-2">No agent gateways configured.</p>

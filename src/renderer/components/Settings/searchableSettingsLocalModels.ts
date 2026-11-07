@@ -541,9 +541,14 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		...inPanel('gateway'),
 		label: 'Gateway',
 		description:
-			"Send an agent's provider traffic through a proxy such as Headroom, LiteLLM, or Maestro's own, which can compress tool results; set per agent",
+			"Send agents through a proxy such as Headroom, LiteLLM, or Maestro's own; set a default for existing and future agents or override per agent",
 		keywords: [
 			'gateway',
+			'all agents',
+			'future agents',
+			'new agents',
+			'default proxy',
+			'blanket',
 			'proxy',
 			'base url',
 			'ANTHROPIC_BASE_URL',

@@ -42,6 +42,7 @@ import {
 	updateAiTab,
 } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -1433,6 +1434,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 
 			setSessions((prev) => [...prev, newSession]);
+			await applyDefaultAgentTokenProxy(newId);
 			setActiveSessionId(newId);
 			(window as any).maestro.stats.recordSessionCreated({
 				sessionId: newId,

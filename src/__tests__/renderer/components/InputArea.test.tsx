@@ -6,7 +6,6 @@ import { useComposerInputStore } from '../../../renderer/stores/composerInputSto
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
-import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { resolveDictationTarget } from '../../../renderer/services/dictation';
 import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
 import type { Session } from '../../../renderer/types';

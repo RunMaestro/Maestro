@@ -620,7 +620,7 @@ export function createConsultService() {
 			...buildConsultChainEnv(targetChain),
 		};
 		try {
-			const appendSystemPrompt = await opts.getSystemPrompt?.(target);
+			const appendSystemPrompt = await opts.getSystemPrompt?.(target, targetChain);
 			if (settled) return;
 			const spawnResult = await runner.start(
 				{

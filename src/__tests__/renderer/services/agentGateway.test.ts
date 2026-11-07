@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+	applyDefaultAgentTokenProxy,
 	flushAgentToStore,
 	setAgentBackgroundRequests,
 	setAgentGatewayUrl,
@@ -18,6 +19,7 @@ import { BACKGROUND_REQUESTS_NEEDS_PROXY } from '../../../shared/local-models/ba
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Session } from '../../../renderer/types';
 
 function seed(overrides: Partial<Session> = {}): Session {
@@ -66,6 +68,7 @@ const CLOUD: LocalModelEndpoint = {
 const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:4b' };
 
 beforeEach(() => {
+	useNotificationStore.setState({ toasts: [] });
 	vi.mocked(window.maestro.sessions.setMany).mockReset();
 	vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
 	const proxy = window.maestro.localModels.proxy;
@@ -75,7 +78,68 @@ beforeEach(() => {
 	vi.mocked(proxy.report).mockResolvedValue(proxyReport(PROXY_PORT) as never);
 	vi.mocked(window.maestro.agents.getCustomEnvVars).mockReset();
 	vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValue(null);
-	useSettingsStore.setState({ shellEnvVars: {}, localModelEndpoints: [OLLAMA, CLOUD] });
+	useSettingsStore.setState({
+		shellEnvVars: {},
+		localModelEndpoints: [OLLAMA, CLOUD],
+		defaultTokenProxyMode: 'off',
+	});
+});
+
+describe('applyDefaultAgentTokenProxy', () => {
+	it.each(['passthrough', 'compress', 'compress-early'] as const)(
+		'copies %s onto a new agent and persists its gateway before returning',
+		async (mode) => {
+			seed();
+			useSettingsStore.setState({ defaultTokenProxyMode: mode });
+			await applyDefaultAgentTokenProxy('agent-1');
+			expect(stored()).toMatchObject({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: mode });
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ tokenProxyMode: mode, gatewayUrl: proxyUrl('/anthropic') })],
+				[]
+			);
+		}
+	);
+
+	it.each<Partial<Session>>([
+		{ gatewayUrl: 'https://external.example.com' },
+		{ tokenProxyMode: 'passthrough', gatewayUrl: proxyUrl('/anthropic') },
+		{ runOn: QWEN },
+		{ sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
+		{ toolType: 'copilot-cli' },
+		{ toolType: 'terminal' },
+	])('preserves explicit routing and skips ineligible agents: %j', async (overrides) => {
+		const original = seed(overrides);
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		await applyDefaultAgentTokenProxy('agent-1');
+		expect(stored()).toBe(original);
+		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('leaves a new agent direct when the default is off', async () => {
+		const original = seed();
+		await applyDefaultAgentTokenProxy('agent-1');
+		expect(stored()).toBe(original);
+		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
+	});
+
+	it('reports a refused default so the user can see that routing was not applied', async () => {
+		const original = seed();
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		vi.mocked(window.maestro.localModels.proxy.ensurePort).mockRejectedValueOnce(
+			new Error('Port unavailable')
+		);
+		await applyDefaultAgentTokenProxy('agent-1');
+		expect(stored()).toBe(original);
+		expect(useNotificationStore.getState().toasts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					title: 'Proxy default was not applied',
+					message: 'Agent: Port unavailable',
+				}),
+			])
+		);
+	});
 });
 
 describe('setAgentGatewayUrl', () => {

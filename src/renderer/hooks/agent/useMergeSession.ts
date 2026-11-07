@@ -29,6 +29,7 @@ import { ContextGroomingService, contextGroomingService } from '../../services/c
 import { resolveTabProvider } from '../../utils/providerTabSessions';
 import { extractTabContext } from '../../utils/contextExtractor';
 import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
 import type { MergeState, TabMergeState } from '../../stores/operationStore';
@@ -686,6 +687,7 @@ export function useMergeSessionWithSessions(
 
 						// Add new session to state
 						setSessions((prev) => [...prev, newSession]);
+						await applyDefaultAgentTokenProxy(newSession.id);
 
 						// Log merge operation to history
 						const sourceNames = [

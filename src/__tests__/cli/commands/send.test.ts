@@ -348,7 +348,7 @@ describe('send command', () => {
 			'provider-1',
 			expect.objectContaining({
 				querySource: 'auto',
-				customModel: 'gpt-6-luna',
+				customModel: undefined,
 				customEffort: 'low',
 			})
 		);

@@ -99,6 +99,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: [],
 		category: 'integrations',
 	},
+	defaultTokenProxyMode: {
+		description:
+			'Default Maestro proxy mode for new local agents with gateway support: off, passthrough, compress, or compress-early. Explicit gateway, Run on, and group proxy settings take precedence. Choosing an All mode in Settings > Models > Gateway also applies it to existing eligible agents.',
+		type: 'string',
+		default: 'off',
+		category: 'integrations',
+	},
 	localModelsDownloadBase: {
 		description:
 			'Where Local Models downloads model files from, and where Add from Hugging Face looks a repo up. Default https://huggingface.co. Point it at a mirror that serves the same /<repo>/resolve/<revision>/<file> and /api/models/<repo> paths when a network blocks Hugging Face. Every download is still checked against the catalog hash.',

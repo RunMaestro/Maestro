@@ -55,6 +55,7 @@ import {
 	type UtilitySource,
 } from '../../shared/local-models/tasks';
 import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
+import { asTokenProxyMode, type TokenProxyMode } from '../../shared/local-models/token-proxy';
 import {
 	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 	MAX_CONSULTATIONS_PER_TURN_SETTING,
@@ -396,6 +397,8 @@ export interface SettingsStoreState
 	 * at call time; see shared/local-models/endpoints.ts.
 	 */
 	localModelEndpoints: LocalModelEndpoint[];
+	/** Copied to new eligible agents unless their creation supplies explicit routing. */
+	defaultTokenProxyMode: TokenProxyMode;
 	/**
 	 * Which source each Local Models task runs on. Sparse: a task with no entry
 	 * uses its registry default; read through `resolveLocalModelAssignment()`.
@@ -581,6 +584,7 @@ export interface SettingsStoreActions
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+	setDefaultTokenProxyMode: (value: TokenProxyMode) => Promise<void>;
 	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
 	setLocalModelAssignments: (value: LocalModelAssignments) => void;
 	setHarnessTierDefaults: (value: HarnessTierDefaults) => void;
@@ -853,6 +857,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		localModelEndpoints: [],
+		defaultTokenProxyMode: 'off',
 		localModelAssignments: {},
 		harnessTierDefaults: {},
 		localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
@@ -1026,6 +1031,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setLocalModelEndpoints: (value) => {
 			set({ localModelEndpoints: value });
 			window.maestro.settings.set('localModelEndpoints', value);
+		},
+
+		setDefaultTokenProxyMode: async (value) => {
+			const mode = asTokenProxyMode(value) ?? 'off';
+			await window.maestro.settings.set('defaultTokenProxyMode', mode);
+			set({ defaultTokenProxyMode: mode });
 		},
 
 		setLocalModelAssignments: (value) => {
@@ -2244,6 +2255,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['localModelEndpoints'] !== undefined)
 			patch.localModelEndpoints = parseLocalModelEndpoints(allSettings['localModelEndpoints']);
 
+		patch.defaultTokenProxyMode = asTokenProxyMode(allSettings['defaultTokenProxyMode']) ?? 'off';
+
 		if (allSettings['localModelAssignments'] !== undefined)
 			patch.localModelAssignments = parseLocalModelAssignments(
 				allSettings['localModelAssignments']
@@ -3097,6 +3110,7 @@ export function getSettingsActions() {
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
 		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
+		setDefaultTokenProxyMode: state.setDefaultTokenProxyMode,
 		setLocalModelEndpoints: state.setLocalModelEndpoints,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,

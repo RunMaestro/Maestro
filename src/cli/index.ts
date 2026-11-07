@@ -3536,28 +3536,34 @@ pianola
 const pianolaProgram = pianola.command('program').description('Manage product programs');
 pianolaProgram
 	.command('apply')
+	.description('Apply a product program manifest')
 	.requiredOption('--file <path>', 'YAML or JSON program manifest')
 	.option('--json', 'Output as JSON')
 	.action((options) => pianolaProgramApply(options));
 pianolaProgram
 	.command('list')
+	.description('List product programs')
 	.option('--json', 'Output as JSON')
 	.action((options) => pianolaProgramList(options));
 pianolaProgram
 	.command('show <id>')
+	.description('Show a product program')
 	.option('--json', 'Output as JSON')
 	.action((id, options) => pianolaProgramShow(id, options));
 pianolaProgram
 	.command('pause <id>')
+	.description('Pause a product program')
 	.option('--json', 'Output as JSON')
 	.action((id, options) => pianolaProgramStatus(id, 'paused', options));
 pianolaProgram
 	.command('resume <id>')
+	.description('Resume a product program')
 	.option('--json', 'Output as JSON')
 	.action((id, options) => pianolaProgramStatus(id, 'active', options));
 
 pianola
 	.command('escalate')
+	.description('Record a request for owner review')
 	.requiredOption('--title <text>')
 	.requiredOption('--detail <text>')
 	.option('--program <id>')
@@ -3570,14 +3576,17 @@ pianola
 	.action((options) => pianolaEscalate(options));
 pianola
 	.command('needs-me')
+	.description('List open requests for owner review')
 	.option('--json')
 	.action((options) => pianolaNeedsMe(options));
 pianola
 	.command('dismiss <askId>')
+	.description('Dismiss a request for owner review')
 	.option('--json')
 	.action((askId, options) => pianolaDismiss(askId, options));
 pianola
 	.command('brief')
+	.description('Show the current product program brief')
 	.option('--json')
 	.action((options) => pianolaBrief(options));
 // Pianola plan - author and inspect task DAGs the orchestrator runs.
@@ -3637,6 +3646,7 @@ pianola
 
 pianola
 	.command('program-loop <programId>')
+	.description('Run the product program control loop')
 	.option('--interval <seconds>', 'Polling interval (default 120)')
 	.option('--once', 'Perform one tick and exit')
 	.option('--json', 'Output as JSON')
@@ -3694,6 +3704,7 @@ pianolaSupervise
 
 pianolaSupervise
 	.command('program <programId>')
+	.description('Register a desktop-supervised product program loop')
 	.option('--interval <seconds>', 'Polling interval (default 120)')
 	.option('--json', 'Output as JSON')
 	.action((programId, options) => pianolaSuperviseProgram(programId, options));

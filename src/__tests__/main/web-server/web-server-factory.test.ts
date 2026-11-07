@@ -2375,6 +2375,7 @@ describe('web-server/web-server-factory', () => {
 				true,
 				true,
 				chain,
+				undefined,
 				undefined
 			);
 		});

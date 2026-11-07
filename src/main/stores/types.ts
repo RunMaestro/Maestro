@@ -9,6 +9,7 @@ import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type { TokenProxyMode } from '../../shared/local-models/token-proxy';
 import type { LocalModelAssignments, UtilitySource } from '../../shared/local-models/tasks';
 import type { HarnessTierDefaults } from '../../shared/modelTiers';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
@@ -182,6 +183,7 @@ export interface MaestroSettings {
 	// Local Models endpoints (Ollama, LM Studio, OpenAI-compatible servers the
 	// user runs). API keys are referenced by env-var name, never stored here.
 	localModelEndpoints: LocalModelEndpoint[];
+	defaultTokenProxyMode: TokenProxyMode;
 	// Where Local Models downloads model files from (a mirror of Hugging Face
 	// for networks that block it). See shared/local-models/download-base.ts.
 	localModelsDownloadBase: string;

@@ -34,6 +34,7 @@ import {
 import { resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { extractTabContext } from '../../utils/contextExtractor';
 import { createMergedSession } from '../../utils/tabHelpers';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { classifyTransferError } from '../../components/TransferErrorModal';
 import { generateId } from '../../utils/ids';
 import { useOperationStore } from '../../stores/operationStore';
@@ -668,6 +669,7 @@ Please confirm you've reviewed this context and let me know you're ready to cont
 
 				// Add new session to state
 				setSessions((prev) => [...prev, newSession]);
+				await applyDefaultAgentTokenProxy(newSession.id);
 
 				// Log transfer operation to history
 				const targetAgentName = getAgentDisplayName(targetAgent);
