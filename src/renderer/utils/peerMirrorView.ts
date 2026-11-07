@@ -172,3 +172,30 @@ export function peerConnectionLabel(peer: Pick<MirroredPeer, 'connection' | 'err
 			return peer.error ?? 'Not connected';
 	}
 }
+
+/**
+ * Why a mirrored agent's composer offers a control a local one has, but greys it out. The host
+ * serves a plain message (`enqueue_command`) and nothing else: no slash commands (they run in the
+ * local renderer), no shell command mode (it runs on THIS machine), and no images (FED-SSH-06
+ * sends text only).
+ */
+export const MIRROR_COMPOSER_UNAVAILABLE = {
+	slashCommands:
+		"Slash commands are not available for a peer's agent: they run in this window, and the host receives only plain messages.",
+	shellMode:
+		"Shell command mode is not available for a peer's agent: it would run the command on this machine, not on the host.",
+	images: "Images are not available for a peer's agent yet: the host receives text only.",
+} as const;
+
+/** A leading `/command` (not a path such as `/Users/me`), the way a local slash command starts. */
+const SLASH_COMMAND_PATTERN = /^\/[A-Za-z][\w:-]*(?:\s|$)/;
+
+/**
+ * Why `text` cannot be sent to a mirrored agent as it stands, or undefined when it can. Only a
+ * slash command is refused: sent as text it would reach the host's provider, not run here.
+ */
+export function mirrorSendBlockReason(text: string): string | undefined {
+	return SLASH_COMMAND_PATTERN.test(text.trimStart())
+		? MIRROR_COMPOSER_UNAVAILABLE.slashCommands
+		: undefined;
+}

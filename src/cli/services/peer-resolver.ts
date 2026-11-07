@@ -35,11 +35,12 @@ import {
 	type PeerClient,
 } from '../../shared/maestro-lib/client/peer-connection';
 import { peerAgentRef } from '../../shared/maestro-lib/agents/lift-pointer';
-import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { AITabRecord, AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import { isEncoreEnabled } from '../utils/encore-gate';
 import { readSshRemotes, resolveAgentId, resolveSshRemoteId } from './storage';
+import { ACTIVE_TAB_KEYWORD, matchTabId } from './session-command';
 
 /** A `peer:agent` target, split on its first colon. */
 export interface PeerTarget {
@@ -414,4 +415,21 @@ export async function withPeerAgent<T>(
 	} finally {
 		await resolved.release();
 	}
+}
+
+/**
+ * The host tab a `--tab` (or a tab argument) names on a peer's agent: an exact id, a unique
+ * prefix, or `active` (the agent's active tab). Throws a message that names the problem.
+ */
+export function pickHostTab(
+	tabs: readonly AITabRecord[],
+	ref: string,
+	activeTabId?: string
+): AITabRecord {
+	if (ref.trim().toLowerCase() === ACTIVE_TAB_KEYWORD) {
+		const active = tabs.find((tab) => tab.id === activeTabId);
+		if (!active) throw new Error('The agent has no active AI tab');
+		return active;
+	}
+	return matchTabId(tabs, ref, (tab) => tab.id);
 }

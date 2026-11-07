@@ -8,12 +8,16 @@
  * added later is off for a mirror until someone decides it is safe. A blocked chord is still
  * swallowed (`preventDefault`), so the browser default does not fire in its place either.
  *
- * Tab cycling is answered here, on the mirror's own tabs, instead of passing through.
+ * Tab cycling is answered here, on the mirror's own tabs, instead of passing through. So are New
+ * Tab and Toggle Tab Star (FED-SSH-06): they go to the host through the mirror service, the same
+ * path as the controls beside the mirrored tab strip.
  */
 
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { openMirrorTab, starMirrorTab } from '../../services/peerMirror';
+import { resolveMirrorTabId } from '../../utils/peerMirrorView';
 
 /**
  * Shortcuts that never read or write the active agent: they open a global surface, move between
@@ -91,6 +95,16 @@ function matchesAnyBoundShortcut(e: KeyboardEvent, matchers: MirrorGateMatchers)
 	return false;
 }
 
+/** Star or unstar the tab the mirrored agent shows, on its host. */
+function toggleShownMirrorTabStar(peerId: string, agentId: string): void {
+	const state = usePeerMirrorStore.getState();
+	const agent = state.peers[peerId]?.agents.find((candidate) => candidate.id === agentId);
+	if (!agent) return;
+	const tabId = resolveMirrorTabId(agent, state.activeTabIds[peerId]?.[agentId]);
+	const tab = agent.aiTabs?.find((candidate) => candidate.id === tabId);
+	if (tab) void starMirrorTab(peerId, agentId, tab.id, !tab.starred);
+}
+
 /**
  * Decide what a keydown may do while a mirror is shown. Call only when one is
  * (`isMirrorShown()`); otherwise every key passes.
@@ -109,6 +123,18 @@ export function gateKeyForMirror(
 			}
 			return 'handled';
 		}
+	}
+
+	const selection = usePeerMirrorStore.getState().activeMirror;
+	if (selection && matchers.isTabShortcut(e, 'newTab')) {
+		e.preventDefault();
+		if (!matchers.hasOpenLayers?.()) void openMirrorTab(selection.peerId, selection.agentId);
+		return 'handled';
+	}
+	if (selection && matchers.isShortcut(e, 'toggleTabStar')) {
+		e.preventDefault();
+		if (!matchers.hasOpenLayers?.()) toggleShownMirrorTabStar(selection.peerId, selection.agentId);
+		return 'handled';
 	}
 
 	if (MIRROR_SAFE_SHORTCUT_IDS.some((id) => matchers.isShortcut(e, id))) return 'pass';

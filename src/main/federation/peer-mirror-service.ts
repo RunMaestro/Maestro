@@ -1,11 +1,11 @@
 /**
- * The desktop's read-only mirror of its Federation peers (FED-SSH-05).
+ * The desktop's mirror of its Federation peers (FED-SSH-05), and the input path to them (FED-SSH-06).
  *
  * For every SSH remote with `federation` on, the service holds the SSH forward (FED-SSH-01) and a
  * `MaestroClient` attached to the host behind it, and folds the host's events into a
  * `MirroredPeer` (`src/shared/maestro-lib/client/peer-mirror.ts`). It pushes each change to every
  * window as `federation:event` and answers reads (`peers`, `snapshot`, `transcript`) for the IPC
- * handler and the CLI bridge.
+ * handler and the CLI bridge. `act()` drives a mirrored agent over the same held client.
  *
  * Hard rules:
  * - Memory only. A mirrored agent never reaches `sessionStore`, `maestro-sessions.json`, or any
@@ -43,6 +43,12 @@ import {
 	type MirroredPeer,
 } from '../../shared/maestro-lib/client/peer-mirror';
 import { coalesceTurnEvents, liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
+import {
+	peerActionErrorMessage,
+	runPeerAgentAction,
+	type PeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	ForwardedHostEndpoint,
 	SshForwardLease,
@@ -88,6 +94,11 @@ export interface PeerReconnectResult {
 	error?: string;
 	peer?: MirrorPeerSummary;
 }
+
+/** What `act()` answers. `unknown`: the host may have taken a send; do not resend blindly. */
+export type PeerActionAnswer =
+	| { ok: true; result: PeerAgentActionResult }
+	| { ok: false; error: string; unknown?: boolean };
 
 export interface TranscriptReadOptions {
 	tail?: number;
@@ -221,6 +232,42 @@ export class PeerMirrorService {
 			}
 		}
 		return read.value;
+	}
+
+	/**
+	 * Drive a mirrored agent (FED-SSH-06): send, Stop, new tab, rename or star a tab, through the
+	 * same `runPeerAgentAction()` the CLI's `peer:agent` verbs run. Never queued: a peer that is not
+	 * connected right now answers an error at once, and nothing is held for a reconnect. The host's
+	 * own events then update the mirror (a new tab, a rename, the turn's stream).
+	 */
+	async act(peerId: string, agentId: string, action: PeerAgentAction): Promise<PeerActionAnswer> {
+		let entry: PeerEntry;
+		try {
+			entry = this.entryForPeer(peerId);
+		} catch (error) {
+			return { ok: false, error: error instanceof Error ? error.message : String(error) };
+		}
+		const client = entry.connection?.client;
+		if (!client || entry.state.connection !== 'connected') {
+			const reason = entry.state.error ? ` ${entry.state.error}` : '';
+			return {
+				ok: false,
+				error: `Not connected to peer "${peerId}" (${entry.state.connection}). Nothing was sent.${reason}`,
+			};
+		}
+		const agent = entry.state.agents.find((candidate) => candidate.id === agentId);
+		if (!agent) {
+			return { ok: false, error: `Peer "${peerId}" has no agent ${agentId}.` };
+		}
+		const result = await runPeerAgentAction(client, agent, action);
+		if (!result.ok) {
+			return {
+				ok: false,
+				error: peerActionErrorMessage(peerId, result.error),
+				...(result.error.unknown ? { unknown: true } : {}),
+			};
+		}
+		return { ok: true, result: result.value };
 	}
 
 	/**

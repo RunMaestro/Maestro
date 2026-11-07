@@ -44,6 +44,10 @@ import {
 	type PeerTarget,
 	type ResolvedPeerAgent,
 } from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
 import { ExitCode } from '../exit-codes';
 
 interface SendOptions {
@@ -630,9 +634,9 @@ async function pickPeerTab(resolved: ResolvedPeerAgent, session?: string): Promi
 	const { agent, client, peer } = resolved;
 	const ref = peerAgentRef(peer, agent.id);
 	if (session === undefined) {
-		const created = await client.tabs.create(agent.id);
+		const created = await runPeerAgentAction(client, agent, { kind: 'new-tab' });
 		if (!created.ok) throw hostCallError(peer, created.error);
-		return created.value.tabId;
+		return (created.value as Extract<PeerAgentActionResult, { kind: 'new-tab' }>).tabId;
 	}
 	const tab = (agent.aiTabs ?? []).find((t) => t.agentSessionId === session);
 	if (!tab) {
@@ -705,7 +709,11 @@ async function sendToPeer(
 				onFirst: () => void client.turns.interrupt(agent.id, tabId),
 			});
 			try {
-				const sent = await client.turns.send(agent.id, tabId, { text: message });
+				const sent = await runPeerAgentAction(client, agent, {
+					kind: 'send',
+					tabId,
+					text: message,
+				});
 				if (!sent.ok) {
 					if (sent.error.unknown || sent.error.code === 'host-lost') {
 						throw new PeerSendFailure(
@@ -717,12 +725,13 @@ async function sendToPeer(
 					}
 					throw hostCallError(peer, sent.error);
 				}
-				if (sent.value.status === 'queued') {
+				const receipt = (sent.value as Extract<PeerAgentActionResult, { kind: 'send' }>).receipt;
+				if (receipt.status === 'queued') {
 					throw new PeerSendFailure(
 						'QUEUED_ON_PEER',
-						`Tab ${tabId} became busy, so the message waits in the host's queue (item ${sent.value.itemId}) and runs there. Check it with: maestro-cli show agent ${ref}`,
+						`Tab ${tabId} became busy, so the message waits in the host's queue (item ${receipt.itemId}) and runs there. Check it with: maestro-cli show agent ${ref}`,
 						ExitCode.GeneralError,
-						{ ...where, itemId: sent.value.itemId }
+						{ ...where, itemId: receipt.itemId }
 					);
 				}
 

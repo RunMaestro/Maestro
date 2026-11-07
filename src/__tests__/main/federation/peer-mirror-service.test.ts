@@ -1,6 +1,7 @@
 /**
  * Tests for the desktop's peer mirror service: sequential connects, failures as peer state,
- * event pushes with turn coalescing, reconcile on remote edits, wake reload, reconnect, and stop.
+ * event pushes with turn coalescing, reconcile on remote edits, wake reload, reconnect, stop, and
+ * `act()`, the input path to a mirrored agent (FED-SSH-06).
  * The SSH forward and the host client are stood in for; nothing here dials.
  */
 
@@ -392,5 +393,83 @@ describe('PeerMirrorService', () => {
 		h.service.reloadAfterWake();
 		await settle();
 		expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+	});
+
+	describe('act', () => {
+		/** Give the fake client the input calls `runPeerAgentAction()` makes. */
+		function withInput(host: FakeHost) {
+			const turns = {
+				send: vi.fn(async () => ({ ok: true, value: { status: 'started' } })),
+				interrupt: vi.fn(async () => ({ ok: true, value: { stopped: true } })),
+			};
+			const tabs = host.client.tabs as unknown as Record<string, unknown>;
+			tabs.create = vi.fn(async () => ({ ok: true, value: { tabId: 't-new' } }));
+			tabs.rename = vi.fn(async () => ({ ok: true, value: undefined }));
+			tabs.star = vi.fn(async () => ({ ok: true, value: undefined }));
+			(host.client as unknown as Record<string, unknown>).turns = turns;
+			return { turns, tabs };
+		}
+
+		it('runs each action on the held client of a connected peer', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns, tabs } = withInput(a);
+			h.service.start();
+			await settle();
+
+			expect(
+				await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hello' })
+			).toEqual({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
+			expect(turns.send).toHaveBeenCalledWith('a-a1', 't1', { text: 'hello' });
+
+			expect(await h.service.act('a', 'a-a1', { kind: 'new-tab' })).toEqual({
+				ok: true,
+				result: { kind: 'new-tab', tabId: 't-new' },
+			});
+			await h.service.act('a', 'a-a1', { kind: 'rename-tab', tabId: 't1', name: 'Plan' });
+			expect(tabs.rename).toHaveBeenCalledWith('a-a1', 't1', 'Plan');
+			await h.service.act('a', 'a-a1', { kind: 'star-tab', tabId: 't1', starred: true });
+			expect(tabs.star).toHaveBeenCalledWith('a-a1', 't1', true);
+			await h.service.act('a', 'a-a1', { kind: 'interrupt', tabId: 't1' });
+			expect(turns.interrupt).toHaveBeenCalledWith('a-a1', 't1');
+			// Input never dials: still the one forward from the connect.
+			expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses at once while the peer is not connected, and never queues the send', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			a.emit({ type: 'host.lost', reason: 'socket closed' });
+			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+			expect(answer).toMatchObject({ ok: false });
+			expect(answer.ok ? '' : answer.error).toContain('Nothing was sent');
+			// Back up: the refused message is not delivered late.
+			a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });
+			await settle();
+			expect(turns.send).not.toHaveBeenCalled();
+		});
+
+		it('names an unknown peer or agent, and passes a host failure through with the peer', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			expect(await h.service.act('nope', 'x', { kind: 'new-tab' })).toMatchObject({ ok: false });
+			expect(await h.service.act('a', 'ghost', { kind: 'new-tab' })).toEqual({
+				ok: false,
+				error: 'Peer "a" has no agent ghost.',
+			});
+			turns.send.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'host-lost', message: 'dropped', method: 'turns.send', unknown: true },
+			} as never);
+			const lost = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'x' });
+			expect(lost).toMatchObject({ ok: false, unknown: true });
+			expect(lost.ok ? '' : lost.error).toContain('The connection to peer "a" dropped');
+		});
 	});
 });

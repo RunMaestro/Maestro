@@ -15,6 +15,7 @@ import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import {
 	isMirrorShown,
+	mirrorDraftKey,
 	reducePeerMirrorPush,
 	selectActiveMirrorKey,
 	usePeerMirrorStore,
@@ -308,6 +309,44 @@ describe('peerMirrorStore', () => {
 			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t1');
 			usePeerMirrorStore.getState().cycleMirrorTab(-1);
 			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t3');
+		});
+	});
+
+	describe('composer drafts', () => {
+		it('keeps a draft per mirrored tab and drops it when emptied', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1', ['t1', 't2'])])]);
+			store.setMirrorDraft('buildbox', 'a1', 't1', 'half a thought');
+			store.setMirrorDraft('buildbox', 'a1', 't2', 'other tab');
+			expect(usePeerMirrorStore.getState().drafts).toEqual({
+				[mirrorDraftKey('buildbox', 'a1', 't1')]: 'half a thought',
+				[mirrorDraftKey('buildbox', 'a1', 't2')]: 'other tab',
+			});
+			usePeerMirrorStore.getState().setMirrorDraft('buildbox', 'a1', 't1', '');
+			expect(Object.keys(usePeerMirrorStore.getState().drafts)).toEqual([
+				mirrorDraftKey('buildbox', 'a1', 't2'),
+			]);
+		});
+
+		it('survives a fresh snapshot, and goes with a removed peer', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
+			store.setMirrorDraft('buildbox', 'a1', 't1', 'keep me');
+			store.setMirrorDraft('gpu', 'b1', 't1', 'gpu draft');
+			usePeerMirrorStore
+				.getState()
+				.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
+			expect(Object.keys(usePeerMirrorStore.getState().drafts)).toHaveLength(2);
+			usePeerMirrorStore.getState().applyPush(push('buildbox', { type: 'peer.removed' }));
+			expect(usePeerMirrorStore.getState().drafts).toEqual({
+				[mirrorDraftKey('gpu', 'b1', 't1')]: 'gpu draft',
+			});
+		});
+
+		it('never writes a draft into sessionStore', () => {
+			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
+			usePeerMirrorStore.getState().setMirrorDraft('buildbox', 'a1', 't1', 'text');
+			expect(useSessionStore.getState().sessions).toEqual([]);
 		});
 	});
 });

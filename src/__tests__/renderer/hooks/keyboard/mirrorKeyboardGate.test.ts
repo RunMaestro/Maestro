@@ -2,11 +2,18 @@
  * Tests for the keyboard gate that runs while a Federation peer's mirrored agent is shown.
  *
  * The local active agent is hidden behind the mirror, not replaced, so the gate is an allowlist:
- * a global shortcut passes, a local one (close tab, kill agent, ...) is swallowed, and tab
- * cycling walks the mirror's own tabs.
+ * a global shortcut passes, a local one (close tab, kill agent, ...) is swallowed, tab cycling
+ * walks the mirror's own tabs, and New Tab and Toggle Tab Star go to the host (FED-SSH-06).
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../../../renderer/services/peerMirror', () => ({
+	openMirrorTab: vi.fn(async () => undefined),
+	starMirrorTab: vi.fn(async () => undefined),
+}));
+
+import { openMirrorTab, starMirrorTab } from '../../../../renderer/services/peerMirror';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -48,7 +55,7 @@ function showMirror(): void {
 		id: 'a1',
 		name: 'Builder',
 		toolType: 'claude-code',
-		aiTabs: [{ id: 't1' }, { id: 't2' }],
+		aiTabs: [{ id: 't1', starred: true }, { id: 't2' }],
 	};
 	const peer = replacePeerAgents(
 		{
@@ -66,6 +73,8 @@ function showMirror(): void {
 describe('gateKeyForMirror', () => {
 	beforeEach(() => {
 		resetStores(usePeerMirrorStore, useSessionStore);
+		vi.mocked(openMirrorTab).mockClear();
+		vi.mocked(starMirrorTab).mockClear();
 	});
 
 	it('passes every key while no mirror is shown', () => {
@@ -127,5 +136,32 @@ describe('gateKeyForMirror', () => {
 		const event = eventFor('nextTab');
 		expect(gateKeyForMirror(event, { ...matchers, hasOpenLayers: () => true })).toBe('handled');
 		expect(usePeerMirrorStore.getState().activeTabIds.buildbox?.a1).toBeUndefined();
+	});
+
+	it('opens a new tab on the host for New Tab, not on the hidden local agent', () => {
+		showMirror();
+		const event = eventFor('newTab', 'tabShortcuts');
+		expect(gateKeyForMirror(event, matchers)).toBe('handled');
+		expect(event.defaultPrevented).toBe(true);
+		expect(openMirrorTab).toHaveBeenCalledWith('buildbox', 'a1');
+		expect(useSessionStore.getState().sessions).toEqual([]);
+	});
+
+	it('toggles the star of the shown mirrored tab on the host', () => {
+		showMirror();
+		expect(gateKeyForMirror(eventFor('toggleTabStar'), matchers)).toBe('handled');
+		expect(starMirrorTab).toHaveBeenCalledWith('buildbox', 'a1', 't1', false);
+		usePeerMirrorStore.getState().selectMirrorTab('buildbox', 'a1', 't2');
+		gateKeyForMirror(eventFor('toggleTabStar'), matchers);
+		expect(starMirrorTab).toHaveBeenLastCalledWith('buildbox', 'a1', 't2', true);
+	});
+
+	it('does not open or star a tab behind an open modal', () => {
+		showMirror();
+		const behind = { ...matchers, hasOpenLayers: () => true };
+		expect(gateKeyForMirror(eventFor('newTab', 'tabShortcuts'), behind)).toBe('handled');
+		expect(gateKeyForMirror(eventFor('toggleTabStar'), behind)).toBe('handled');
+		expect(openMirrorTab).not.toHaveBeenCalled();
+		expect(starMirrorTab).not.toHaveBeenCalled();
 	});
 });

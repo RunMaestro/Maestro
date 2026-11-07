@@ -12,15 +12,14 @@
 // A `peer:agent` target (Federation) stops the turn on that peer's host. The host
 // has no `interrupt_turn` (it is the renderer's Stop ladder), so each tab is
 // stopped with the bridge's `process:interrupt`, the call the client's
-// `turns.interrupt` makes, and the agent is read back to report `exited`.
+// `turns.interrupt` makes (through `runPeerAgentAction()`, shared with the
+// desktop's mirror), and the agent is read back to report `exited`.
 
 import { withMaestroClient } from '../services/maestro-client';
 import {
-	ACTIVE_TAB_KEYWORD,
 	errorFrameMessage,
 	failCommand,
 	failFromError,
-	matchTabId,
 	resolveAgentOrFail,
 	resolveTabEntry,
 	type DesktopTabEntry,
@@ -29,12 +28,17 @@ import {
 	PeerResolveError,
 	hostCallError,
 	peerAgentRef,
+	pickHostTab,
 	peerErrorCode,
 	routeAgentTarget,
 	withPeerAgent,
 	type PeerTarget,
 } from '../services/peer-resolver';
 import type { AITabRecord } from '../../shared/maestro-lib/store/records';
+import {
+	runPeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatError, formatSuccess } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
@@ -167,16 +171,6 @@ function reportStopped(
 	}
 }
 
-/** The host tab `--tab` names: an exact id, a unique prefix, or `active`. */
-function pickHostTab(tabs: readonly AITabRecord[], ref: string, activeTabId?: string): AITabRecord {
-	if (ref.trim().toLowerCase() === ACTIVE_TAB_KEYWORD) {
-		const active = tabs.find((tab) => tab.id === activeTabId);
-		if (!active) throw new Error('The agent has no active AI tab');
-		return active;
-	}
-	return matchTabId(tabs, ref, (tab) => tab.id);
-}
-
 /**
  * Stop a turn on a peer's host. No `--tab` stops every busy tab of the agent, as the Stop pill
  * does; `--tab` stops that tab. Nothing is retried: a dropped forward is an error.
@@ -208,12 +202,17 @@ async function interruptPeer(target: PeerTarget, options: InterruptOptions): Pro
 				targets = tabs.filter((tab) => tab.state === 'busy');
 			}
 
-			const stoppedTabIds: string[] = [];
-			for (const tab of targets) {
-				const stopped = await client.turns.interrupt(agent.id, tab.id);
-				if (!stopped.ok) throw hostCallError(peer, stopped.error);
-				if (stopped.value.stopped) stoppedTabIds.push(tab.id);
-			}
+			// The shared action stops the named tab, or every busy tab, as the desktop's Stop does.
+			const stopped = await runPeerAgentAction(
+				client,
+				agent,
+				tabId ? { kind: 'interrupt', tabId } : { kind: 'interrupt' }
+			);
+			if (!stopped.ok) throw hostCallError(peer, stopped.error);
+			const { stoppedTabIds } = stopped.value as Extract<
+				PeerAgentActionResult,
+				{ kind: 'interrupt' }
+			>;
 
 			// The host stops a tab by signalling its process; read the agent back to see it settle.
 			let exited = true;

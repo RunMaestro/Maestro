@@ -1,16 +1,18 @@
 /**
  * Preload API for the Federation peer mirror (`window.maestro.federation`).
  *
- * Mirrors the `federation:*` channels in `src/main/ipc/handlers/federation.ts`. Read-only in
- * FED-SSH-05: a window reads what the main-process service mirrors and follows its pushes. What a
- * window gets here lives in memory only; nothing here writes a store. Desktop-only: no
+ * Mirrors the `federation:*` channels in `src/main/ipc/handlers/federation.ts`. A window reads
+ * what the main-process service mirrors, follows its pushes, and drives a mirrored agent with
+ * `act()` (FED-SSH-06). What a window gets here lives in memory only; nothing here writes a store. Desktop-only: no
  * `federation:` channel is on the web-desktop allowlist.
  */
 
 import { ipcRenderer } from 'electron';
 import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
+import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type {
+	PeerActionAnswer,
 	PeerMirrorSnapshot,
 	PeerReconnectResult,
 	TranscriptReadOptions,
@@ -36,6 +38,12 @@ export function createFederationApi() {
 		/** Restart the forward or the client when down, then reload the peer's agents. */
 		reconnect: (peerId: string): Promise<PeerReconnectResult> =>
 			ipcRenderer.invoke('federation:reconnect', peerId),
+		/**
+		 * Drive a mirrored agent: send, Stop, new tab, rename or star a tab. Never queued: a peer
+		 * that is not connected answers `{ ok: false }` at once.
+		 */
+		act: (peerId: string, agentId: string, action: PeerAgentAction): Promise<PeerActionAnswer> =>
+			ipcRenderer.invoke('federation:act', peerId, agentId, action),
 		/** Fires on every change to a mirrored peer. */
 		onEvent: (handler: (payload: MirrorPush) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, payload: MirrorPush) => handler(payload);

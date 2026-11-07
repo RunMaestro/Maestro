@@ -1,7 +1,8 @@
 /**
- * Tests for PeerAgentPanel, the Main Window for a mirrored Federation agent (read-only): the lazy
- * transcript read, its loading and error states, the read-only TabBar and TerminalOutput it
- * composes, the disconnected banner, and the absence of any composer.
+ * Tests for PeerAgentPanel, the Main Window for a mirrored Federation agent: the lazy transcript
+ * read, its loading and error states, the select-only TabBar and read-only TerminalOutput it
+ * composes, the disconnected banner, the composer (FED-SSH-06), and the tab actions beside the
+ * strip, which go to the host through `services/peerMirror` and never touch `sessionStore`.
  *
  * `TabBar` and `TerminalOutput` are stood in for by stubs that record their props: their own
  * suites cover rendering, and what matters here is that the mirror hands them read-only views.
@@ -29,13 +30,22 @@ vi.mock('../../../../renderer/services/peerMirror', () => ({
 	readMirrorTranscript: vi.fn(async () => undefined),
 	reconnectPeer: vi.fn(async () => undefined),
 	copyPeerAgentRef: vi.fn(async () => undefined),
+	openMirrorTab: vi.fn(async () => undefined),
+	renameMirrorTab: vi.fn(async () => undefined),
+	starMirrorTab: vi.fn(async () => undefined),
+	sendToMirroredTab: vi.fn(async () => true),
+	interruptMirroredAgent: vi.fn(async () => undefined),
 }));
 
 import { PeerAgentPanel } from '../../../../renderer/components/PeerAgentPanel';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import {
 	copyPeerAgentRef,
+	openMirrorTab,
 	readMirrorTranscript,
 	reconnectPeer,
+	renameMirrorTab,
+	starMirrorTab,
 } from '../../../../renderer/services/peerMirror';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
@@ -86,7 +96,10 @@ function show(peer: MirroredPeer = peerWith([agent()])) {
 	store.selectMirroredAgent('build', 'a1');
 }
 
-const renderPanel = () => render(<PeerAgentPanel theme={mockTheme} setLightboxImage={vi.fn()} />);
+const renderPanel = () =>
+	render(<PeerAgentPanel theme={mockTheme} setLightboxImage={vi.fn()} />, {
+		wrapper: LayerStackProvider,
+	});
 
 /** Land a transcript read the way `readMirrorTranscript` would. */
 function landRead(tabId: string, entries: LogEntryRecord[] = ENTRIES) {
@@ -105,6 +118,9 @@ describe('PeerAgentPanel', () => {
 		vi.mocked(readMirrorTranscript).mockClear();
 		vi.mocked(reconnectPeer).mockClear();
 		vi.mocked(copyPeerAgentRef).mockClear();
+		vi.mocked(openMirrorTab).mockClear();
+		vi.mocked(renameMirrorTab).mockClear();
+		vi.mocked(starMirrorTab).mockClear();
 	});
 
 	it('renders nothing with no mirror selected', () => {
@@ -141,7 +157,7 @@ describe('PeerAgentPanel', () => {
 		expect(useSessionStore.getState().sessions).toEqual([]);
 	});
 
-	it('shows a read-only TabBar and switches tabs in peerMirrorStore only', () => {
+	it('shows a select-only TabBar and switches tabs in peerMirrorStore only', () => {
 		show();
 		renderPanel();
 		expect(tabBarProps.current?.readOnly).toBe(true);
@@ -194,15 +210,50 @@ describe('PeerAgentPanel', () => {
 		expect(reconnectPeer).toHaveBeenCalledWith('build');
 	});
 
-	it('marks the agent as a peer, copies its address, and has no composer', () => {
+	it('marks the agent as a peer, copies its address, and shows the composer for the shown tab', () => {
 		show();
-		const { container } = renderPanel();
+		renderPanel();
 		expect(screen.getByTestId('peer-agent-panel-badge')).toBeInTheDocument();
 		expect(screen.getByText('build:a1')).toBeInTheDocument();
 		fireEvent.click(screen.getByLabelText('Copy build:a1'));
 		expect(copyPeerAgentRef).toHaveBeenCalledWith('build', 'a1');
-		expect(screen.getByTestId('peer-agent-panel-readonly-footer')).toHaveTextContent('Read-only');
-		expect(container.querySelector('textarea')).toBeNull();
+		expect(screen.getByTestId('peer-agent-composer')).toBeInTheDocument();
+		expect(screen.getByLabelText('Message Builder on Build Box')).toBeInTheDocument();
+		expect(screen.queryByTestId('peer-agent-panel-readonly-footer')).not.toBeInTheDocument();
+	});
+
+	it('opens a new tab, stars, and renames the shown tab on the host', () => {
+		show(
+			peerWith([
+				agent({
+					aiTabs: [
+						{ id: 't1', name: 'First', starred: false },
+						{ id: 't2', name: 'Second' },
+					],
+				}),
+			])
+		);
+		renderPanel();
+		fireEvent.click(screen.getByLabelText('New tab'));
+		expect(openMirrorTab).toHaveBeenCalledWith('build', 'a1');
+		fireEvent.click(screen.getByLabelText('Star tab'));
+		expect(starMirrorTab).toHaveBeenCalledWith('build', 'a1', 't1', true);
+
+		fireEvent.click(screen.getByLabelText('Rename tab'));
+		const input = screen.getByDisplayValue('First');
+		fireEvent.change(input, { target: { value: 'Renamed' } });
+		fireEvent.click(screen.getByText('Rename'));
+		expect(renameMirrorTab).toHaveBeenCalledWith('build', 'a1', 't1', 'Renamed');
+		// The host's update renames the tab; nothing local changed.
+		expect(usePeerMirrorStore.getState().peers.build.agents[0].aiTabs?.[0].name).toBe('First');
+		expect(useSessionStore.getState().sessions).toEqual([]);
+	});
+
+	it('offers Unstar on a starred tab', () => {
+		show(peerWith([agent({ aiTabs: [{ id: 't1', name: 'First', starred: true }] })]));
+		renderPanel();
+		fireEvent.click(screen.getByLabelText('Unstar tab'));
+		expect(starMirrorTab).toHaveBeenCalledWith('build', 'a1', 't1', false);
 	});
 
 	it('says so when the agent has no open tab, and reads nothing', () => {
@@ -211,6 +262,10 @@ describe('PeerAgentPanel', () => {
 		expect(screen.getByText('This agent has no open tabs on Build Box.')).toBeInTheDocument();
 		expect(readMirrorTranscript).not.toHaveBeenCalled();
 		expect(tabBarProps.current).toBeNull();
+		// No tab to send to, but a new one can still be opened on the host.
+		expect(screen.queryByTestId('peer-agent-composer')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByLabelText('New tab'));
+		expect(openMirrorTab).toHaveBeenCalledWith('build', 'a1');
 	});
 
 	it('goes away when the mirrored agent is removed on the host', () => {

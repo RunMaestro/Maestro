@@ -1,7 +1,7 @@
 /**
  * @file peer-targets.test.ts
- * @description The `peer:agent` path of `show agent`, `send`, `ask`, `dispatch` and `interrupt`
- * (Federation over SSH).
+ * @description The `peer:agent` path of `show agent`, `send`, `ask`, `dispatch`, `interrupt`, and
+ * `tab new|rename|star|unstar --agent peer:agent` (Federation over SSH).
  *
  * The resolver is stood in for at its seams (`routeAgentTarget`, `withPeerAgent`,
  * `resolvePeerAgent`), so no SSH is dialed; the rest of it (error codes, `hostCallError`,
@@ -35,6 +35,7 @@ import { interrupt } from '../../../cli/commands/interrupt';
 import { ask } from '../../../cli/commands/ask';
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { send } from '../../../cli/commands/send';
+import { tabNew, tabRename, tabStar } from '../../../cli/commands/tab';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
 	ClientResult,
@@ -81,7 +82,11 @@ function fakePeer(agent: AgentRecord, bridgeReply: Record<string, unknown> = {})
 	const client = {
 		groups: { list: vi.fn(async () => ok([{ id: 'g1', name: 'Docs group' }])) },
 		agents: { get: vi.fn(async () => ok(agent)) },
-		tabs: { create: vi.fn(async () => ok({ tabId: 'tab-new' })) },
+		tabs: {
+			create: vi.fn(async () => ok({ tabId: 'tab-new' })),
+			rename: vi.fn(async () => ok(undefined)),
+			star: vi.fn(async () => ok(undefined)),
+		},
 		turns: {
 			send: vi.fn(async () => ok({ status: 'started' as const })),
 			interrupt: vi.fn(async () => ok({ stopped: true })),
@@ -472,6 +477,85 @@ describe('peer:agent targets', () => {
 			const payload = printedJson(logSpy)[0];
 			expect(payload).toMatchObject({ success: false, code: 'PEER_HOST_DOWN', peer: PEER });
 			expect(payload).not.toHaveProperty('exitCode');
+		});
+	});
+
+	describe('tab verbs with --agent peer:agent', () => {
+		const tabs: AITabRecord[] = [
+			{ id: 'tab-aaaa1111', state: 'idle' },
+			{ id: 'tab-bbbb2222', state: 'idle' },
+		];
+
+		it('tab new opens a host tab through the shared action and reports it with the peer', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await tabNew({ agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.create).toHaveBeenCalledWith(AGENT_ID);
+			expect(printedJson(logSpy)[0]).toEqual({
+				success: true,
+				agentId: AGENT_ID,
+				tabId: 'tab-new',
+				peer: PEER,
+			});
+			expect(peer.release).toHaveBeenCalledTimes(1);
+		});
+
+		it('tab new refuses --prompt for a peer before dialing it', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await expect(tabNew({ agent: `${PEER}:docs`, prompt: 'hi', json: true })).rejects.toThrow(
+				'process.exit(1)'
+			);
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: false,
+				error: expect.stringContaining('maestro-cli dispatch'),
+			});
+			expect(withPeerAgent).not.toHaveBeenCalled();
+			expect(peer.client.tabs.create).not.toHaveBeenCalled();
+		});
+
+		it('tab rename resolves the tab on the host by prefix and renames it there', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await tabRename('tab-bbbb', '  Plan  ', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.rename).toHaveBeenCalledWith(AGENT_ID, 'tab-bbbb2222', 'Plan');
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: true,
+				tabId: 'tab-bbbb2222',
+				peer: PEER,
+			});
+		});
+
+		it('tab star and unstar take "active" as the host agent active tab', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await tabStar('active', true, { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.star).toHaveBeenCalledWith(AGENT_ID, 'tab-aaaa1111', true);
+			await tabStar('tab-bbbb', false, { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.star).toHaveBeenLastCalledWith(AGENT_ID, 'tab-bbbb2222', false);
+		});
+
+		it('names the peer agent when the tab is not on the host, and sends nothing', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await expect(tabStar('nope', true, { agent: `${PEER}:docs`, json: true })).rejects.toThrow(
+				'process.exit(1)'
+			);
+			expect(peer.client.tabs.star).not.toHaveBeenCalled();
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: false,
+				code: 'PEER_HOST_FAILED',
+				peer: PEER,
+				error: expect.stringContaining(`${PEER}:${AGENT_ID}`),
+			});
+		});
+
+		it('reports a dropped connection with its code, exit 3, and no retry', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			peer.client.tabs.rename.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'host-lost', message: 'dropped', method: 'tabs.rename' },
+			} as never);
+			await expect(
+				tabRename('tab-aaaa', 'x', { agent: `${PEER}:docs`, json: true })
+			).rejects.toThrow('process.exit(3)');
+			expect(peer.client.tabs.rename).toHaveBeenCalledTimes(1);
+			expect(printedJson(logSpy)[0]).toMatchObject({ code: 'PEER_CONNECTION_LOST', peer: PEER });
 		});
 	});
 

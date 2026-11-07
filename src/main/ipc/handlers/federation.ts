@@ -1,6 +1,6 @@
 /**
- * Federation peer mirror IPC (`federation:*`), the read side of the desktop's mirror of its
- * Federation peers (FED-SSH-05).
+ * Federation peer mirror IPC (`federation:*`): the desktop's mirror of its Federation peers
+ * (FED-SSH-05), and `federation:act`, the input that drives a mirrored agent (FED-SSH-06).
  *
  * Thin pass-throughs to the one `PeerMirrorService` (`src/main/federation/`); the CLI bridge
  * reaches the same instance. While the Federation Encore Feature is off there is no service:
@@ -16,7 +16,9 @@ import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 import type { MirrorPeerSummary } from '../../../shared/maestro-lib/client/peer-mirror';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import { getPeerMirrorService, type PeerMirrorService } from '../../federation';
+import { parsePeerAgentAction } from '../../../shared/maestro-lib/client/peer-actions';
 import type {
+	PeerActionAnswer,
 	PeerMirrorSnapshot,
 	PeerReconnectResult,
 	TranscriptReadOptions,
@@ -100,6 +102,21 @@ export function registerFederationHandlers(): void {
 				const service = getPeerMirrorService();
 				if (!service) return { ok: false, error: encoreDisabledMessage('federation') };
 				return service.reconnect(requireId(peerId, 'peer id'));
+			}
+		)
+	);
+	ipcMain.handle(
+		'federation:act',
+		withIpcErrorLogging(
+			opts('act'),
+			async (peerId: unknown, agentId: unknown, action: unknown): Promise<PeerActionAnswer> => {
+				const service = getPeerMirrorService();
+				if (!service) return { ok: false, error: encoreDisabledMessage('federation') };
+				return service.act(
+					requireId(peerId, 'peer id'),
+					requireId(agentId, 'agent id'),
+					parsePeerAgentAction(action)
+				);
 			}
 		)
 	);

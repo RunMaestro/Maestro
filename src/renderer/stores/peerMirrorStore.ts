@@ -1,11 +1,12 @@
 /**
  * peerMirrorStore - this window's copy of the Federation peers the desktop mirrors.
  *
- * Read-only and memory only (FED-SSH-05). The main-process `PeerMirrorService` owns the truth;
+ * Memory only (FED-SSH-05). The main-process `PeerMirrorService` owns the truth;
  * `usePeerMirrorBridge()` loads its snapshot and folds its `federation:event` pushes in here. A
  * mirrored agent NEVER enters `sessionStore`, `maestro-sessions.json`, or any persisted store:
  * this store has no `persist` middleware and nothing here calls an IPC writer, so a disconnect or
- * a removed peer can never change local data.
+ * a removed peer can never change local data. Input (FED-SSH-06) goes out through
+ * `services/peerMirror.ts`; the only input state kept here is the composer's unsent drafts.
  *
  * Selection is separate from the local one. `activeMirror` is set only while the Main Window
  * shows a mirrored agent; `activeSessionId` keeps holding a LOCAL id the whole time, so no
@@ -73,6 +74,8 @@ export interface PeerMirrorData {
 	activeTabIds: Record<string, Record<string, string>>;
 	/** View state: Left Bar peer groups the user collapsed. */
 	collapsedPeerIds: Record<string, true>;
+	/** Unsent composer text per mirrored tab, by `mirrorDraftKey()`. Memory only. */
+	drafts: Record<string, string>;
 }
 
 export interface PeerMirrorActions {
@@ -88,6 +91,8 @@ export interface PeerMirrorActions {
 	/** Step the shown mirrored agent's tab, wrapping (the tab-cycling shortcut). */
 	cycleMirrorTab(direction: 1 | -1): void;
 	togglePeerCollapsed(peerId: string): void;
+	/** Keep (or, with an empty text, drop) the composer draft of one mirrored tab. */
+	setMirrorDraft(peerId: string, agentId: string, tabId: string, text: string): void;
 	/** Mark a tab's read in flight. Returns the stale version the read must report back. */
 	beginTranscriptRead(peerId: string, agentId: string, tabId: string): number;
 	finishTranscriptRead(
@@ -110,7 +115,25 @@ const EMPTY: PeerMirrorData = {
 	activeMirror: null,
 	activeTabIds: {},
 	collapsedPeerIds: {},
+	drafts: {},
 };
+
+/** The key of one mirrored tab's composer draft. */
+export function mirrorDraftKey(peerId: string, agentId: string, tabId: string): string {
+	return `${mirrorKey(peerId, agentId)}\u0000${tabId}`;
+}
+
+/** Drop the drafts of one peer's agents (the peer was removed). */
+function withoutPeerDrafts(drafts: Record<string, string>, peerId: string): Record<string, string> {
+	const prefix = `${peerId}:`;
+	let changed = false;
+	const next: Record<string, string> = {};
+	for (const [key, text] of Object.entries(drafts)) {
+		if (key.startsWith(prefix)) changed = true;
+		else next[key] = text;
+	}
+	return changed ? next : drafts;
+}
 
 const foldContext: MirrorContext = { newId: generateId, now: () => Date.now() };
 
@@ -268,6 +291,7 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				transcripts: withoutKey(state.transcripts, peerId),
 				activeTabIds: withoutKey(state.activeTabIds, peerId),
 				collapsedPeerIds: withoutKey(state.collapsedPeerIds, peerId),
+				drafts: withoutPeerDrafts(state.drafts, peerId),
 				activeMirror: state.activeMirror?.peerId === peerId ? null : state.activeMirror,
 			};
 		}
@@ -300,6 +324,7 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 				activeMirror: keep ? selection : null,
 				activeTabIds: {},
 				collapsedPeerIds,
+				drafts: state.drafts,
 			};
 		}),
 
@@ -353,6 +378,13 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 				? withoutKey(state.collapsedPeerIds, peerId)
 				: { ...state.collapsedPeerIds, [peerId]: true },
 		})),
+
+	setMirrorDraft: (peerId, agentId, tabId, text) =>
+		set((state) => {
+			const key = mirrorDraftKey(peerId, agentId, tabId);
+			if (!text) return key in state.drafts ? { drafts: withoutKey(state.drafts, key) } : {};
+			return state.drafts[key] === text ? {} : { drafts: { ...state.drafts, [key]: text } };
+		}),
 
 	beginTranscriptRead: (peerId, agentId, tabId) => {
 		const key = liveTurnKey(agentId, tabId);

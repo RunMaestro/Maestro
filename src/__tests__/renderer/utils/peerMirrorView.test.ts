@@ -10,7 +10,9 @@ import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcrip
 import {
 	buildMirrorViewSession,
 	isPeerDisconnected,
+	MIRROR_COMPOSER_UNAVAILABLE,
 	mirroredAgentState,
+	mirrorSendBlockReason,
 	mirrorLogEntry,
 	mirrorTabEntries,
 	mirrorTabs,
@@ -136,5 +138,19 @@ describe('state dots', () => {
 		expect(peerConnectionDotState('host-down')).toBe('error');
 		expect(isPeerDisconnected({ connection: 'lost' })).toBe(true);
 		expect(isPeerDisconnected({ connection: 'connecting' })).toBe(false);
+	});
+});
+
+describe('mirrorSendBlockReason', () => {
+	it('refuses a leading slash command, which would not run on the host', () => {
+		for (const text of ['/compact', '/clear now', '  /speckit:plan x', '/review-pr 12']) {
+			expect(mirrorSendBlockReason(text)).toBe(MIRROR_COMPOSER_UNAVAILABLE.slashCommands);
+		}
+	});
+
+	it('lets a message through that starts with a path or merely holds a slash', () => {
+		for (const text of ['/Users/me/plan.md says hi', 'use a/b here', '/ alone', '!ls', 'hello']) {
+			expect(mirrorSendBlockReason(text)).toBeUndefined();
+		}
 	});
 });

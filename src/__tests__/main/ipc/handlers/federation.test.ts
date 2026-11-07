@@ -1,7 +1,7 @@
 /**
  * Tests for the Federation peer mirror IPC (`federation:*`): what each channel answers while the
  * Federation Encore Feature is off (no service), and the pass-throughs and argument checks while
- * it is on.
+ * it is on, including `federation:act`, the input path to a mirrored agent (FED-SSH-06).
  */
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -34,6 +34,7 @@ function fakeService() {
 		snapshot: vi.fn(() => ({ peers: [{ peerId: 'a' }] })),
 		transcript: vi.fn(async () => [{ id: 'e1' }]),
 		reconnect: vi.fn(async (peerId: string) => ({ ok: true, peer: { peerId } })),
+		act: vi.fn(async () => ({ ok: true, result: { kind: 'new-tab', tabId: 't9' } })),
 	};
 }
 
@@ -49,8 +50,9 @@ describe('federation IPC handlers', () => {
 		registerFederationHandlers();
 	});
 
-	it('registers the five federation channels', () => {
+	it('registers the six federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
+			'federation:act',
 			'federation:peers',
 			'federation:reconnect',
 			'federation:snapshot',
@@ -67,6 +69,10 @@ describe('federation IPC handlers', () => {
 			expect(await call('federation:snapshot')).toEqual({ peers: [] });
 			await expect(call('federation:transcript', 'a', 'x', 't1')).rejects.toThrow(off);
 			expect(await call('federation:reconnect', 'a')).toEqual({ ok: false, error: off });
+			expect(await call('federation:act', 'a', 'x', { kind: 'new-tab' })).toEqual({
+				ok: false,
+				error: off,
+			});
 		});
 	});
 
@@ -93,6 +99,39 @@ describe('federation IPC handlers', () => {
 		it('forwards a reconnect and answers with its result', async () => {
 			expect(await call('federation:reconnect', 'a')).toEqual({ ok: true, peer: { peerId: 'a' } });
 			expect(service.reconnect).toHaveBeenCalledWith('a');
+		});
+
+		it('forwards a parsed action and answers with its result', async () => {
+			expect(await call('federation:act', 'a', 'x', { kind: 'new-tab' })).toEqual({
+				ok: true,
+				result: { kind: 'new-tab', tabId: 't9' },
+			});
+			expect(service.act).toHaveBeenCalledWith('a', 'x', { kind: 'new-tab' });
+			await call('federation:act', 'a', 'x', {
+				kind: 'rename-tab',
+				tabId: 't1',
+				name: '  Plan  ',
+				extra: 'dropped',
+			});
+			expect(service.act).toHaveBeenLastCalledWith('a', 'x', {
+				kind: 'rename-tab',
+				tabId: 't1',
+				name: 'Plan',
+			});
+		});
+
+		it('refuses a bad action before the service is touched', async () => {
+			await expect(call('federation:act', 'a', 'x', { kind: 'close-tab' })).rejects.toThrow(
+				/Unknown action/
+			);
+			await expect(
+				call('federation:act', 'a', 'x', { kind: 'send', tabId: 't1', text: ' ' })
+			).rejects.toThrow(/nothing to send/);
+			await expect(
+				call('federation:act', 'a', 'x', { kind: 'star-tab', tabId: 't1' })
+			).rejects.toThrow(/starred/);
+			await expect(call('federation:act', '', 'x', { kind: 'new-tab' })).rejects.toThrow(/peer id/);
+			expect(service.act).not.toHaveBeenCalled();
 		});
 
 		it('refuses a missing id or a bad tail before the service is touched', async () => {
