@@ -176,12 +176,15 @@ describe('update_session_config', () => {
 describe('import_agent', () => {
 	let dir: string;
 	let workDir: string;
+	let configDir: string;
 	let runtime: MaestroRuntime;
 	let handle: RequestHandler;
 
 	beforeEach(async () => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-import-'));
 		workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-import-cwd-'));
+		configDir = path.join(workDir, '.claude-work');
+		fs.mkdirSync(configDir);
 		let id = 0;
 		const started = await createMaestroRuntime({
 			dataDir: dir,
@@ -223,7 +226,7 @@ describe('import_agent', () => {
 			customModel: 'opus',
 			customEffort: 'high',
 			customArgs: '--verbose',
-			customEnvVars: { CLAUDE_CONFIG_DIR: '/home/me/.claude' },
+			customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
 		},
 		tabs: [
 			{ id: 't1', name: 'Main', starred: true, agentSessionId: 'sess-1', logs },
@@ -247,7 +250,7 @@ describe('import_agent', () => {
 			customModel: 'opus',
 			customEffort: 'high',
 			customArgs: '--verbose',
-			customEnvVars: { CLAUDE_CONFIG_DIR: '/home/me/.claude' },
+			customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
 			activeTabId: 't2',
 			unifiedTabOrder: [
 				{ type: 'ai', id: 't1' },
@@ -288,6 +291,34 @@ describe('import_agent', () => {
 			error: `Working directory does not exist: ${missing}`,
 		});
 		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('refuses a session-dir selector naming a directory the host lacks, and creates nothing', async () => {
+		const missing = path.join(workDir, '.claude-gone');
+		const reply = await handle(
+			message({
+				agent: {
+					name: 'Lifted',
+					toolType: 'claude-code',
+					cwd: workDir,
+					customEnvVars: { CLAUDE_CONFIG_DIR: missing },
+				},
+			})
+		);
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: false });
+		const error = (reply as { error: string }).error;
+		expect(error).toContain(
+			`The provider session directory set by CLAUDE_CONFIG_DIR does not exist: ${missing}`
+		);
+		expect(error).toContain('start a new session');
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('imports an agent with no session-dir selector: the provider default dir is the SSH one', async () => {
+		const reply = await handle(
+			message({ agent: { name: 'Lifted', toolType: 'claude-code', cwd: workDir } })
+		);
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: true });
 	});
 
 	it.each([

@@ -48,6 +48,7 @@ import type { EventBus } from '../client/event-bus';
 import { listAutoRunDocuments } from '../autorun/documents';
 import { logger } from '../host';
 import { unusableCwdReason } from '../launch/cwd';
+import { liftSessionDirProblem } from './lift-env';
 import type { MaestroPaths } from '../paths/resolve';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import {
@@ -576,6 +577,10 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			// directory must be here.
 			const reason = checkCwd(checked.value.cwd);
 			if (reason) return failure(method, 'invalid', reason);
+			// The tabs resume provider sessions from the dir the agent's env selects. A dir the
+			// host lacks would start new sessions silently, so refuse instead.
+			const sessionDir = liftSessionDirProblem(input.agent.provider, input.agent.env);
+			if (sessionDir) return failure(method, 'invalid', sessionDir);
 
 			const defaults = await readTabDefaults();
 			const agent = buildImportedAgentRecord(input, checked.value, ctx, defaults);
