@@ -77,6 +77,7 @@ describe('maestro-cli host', () => {
 			},
 			now: () => clock,
 			cliScript: '/bundle/maestro-cli.js',
+			checkLinger: async () => undefined,
 			...overrides,
 		};
 	}
@@ -358,6 +359,74 @@ describe('maestro-cli host', () => {
 			await hostStart({ dataDir: dir, preventSleep: true }, undefined, deps({ spawnDetached }));
 			const [args] = spawnDetached.mock.calls[0] as unknown as [string[]];
 			expect(args).not.toContain('--no-prevent-sleep');
+		});
+	});
+
+	describe('Linux lingering', () => {
+		const lingerOff = async () =>
+			({ linger: false, lingerFix: 'loginctl enable-linger alice' }) as const;
+
+		it('warns on start, with the fix, and puts linger: false in the JSON', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir }, undefined, deps({ spawnDetached, checkLinger: lingerOff }));
+			expect(out.join('\n')).toContain('Host started');
+			expect(err.join('\n')).toContain('lingering is off');
+			expect(err.join('\n')).toContain('loginctl enable-linger alice');
+
+			out.length = 0;
+			err.length = 0;
+			await hostStart(
+				{ dataDir: dir, json: true },
+				undefined,
+				deps({ spawnDetached, checkLinger: lingerOff })
+			);
+			expect(JSON.parse(out.join('\n'))).toMatchObject({
+				alreadyRunning: true,
+				linger: false,
+				lingerFix: 'loginctl enable-linger alice',
+			});
+			expect(err).toEqual([]);
+		});
+
+		it('warns on status, running or not', async () => {
+			await hostStatus({ dataDir: dir, json: true }, deps({ checkLinger: lingerOff }));
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, linger: false });
+
+			out.length = 0;
+			await hostStatus(
+				{ dataDir: dir },
+				deps({
+					checkLinger: lingerOff,
+					requestStatus: async () => {
+						throw new Error('Maestro desktop app is not running');
+					},
+				})
+			);
+			expect(out.join('\n')).toBe('No host is running.');
+			expect(err.join('\n')).toContain('loginctl enable-linger alice');
+		});
+
+		it('says nothing when lingering is on or the platform is not Linux', async () => {
+			await hostStatus({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).not.toHaveProperty('linger');
+			expect(err).toEqual([]);
+		});
+
+		it('rides the endpoint report, so remote-host status can pass it on', async () => {
+			await hostEndpoint({ dataDir: dir, json: true }, deps({ checkLinger: lingerOff }));
+			expect(JSON.parse(out.join('\n'))).toEqual({
+				running: false,
+				linger: false,
+				lingerFix: 'loginctl enable-linger alice',
+			});
+
+			out.length = 0;
+			publish(process.pid, 4321);
+			await hostEndpoint({ dataDir: dir, json: true }, deps({ checkLinger: lingerOff }));
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, linger: false });
 		});
 	});
 

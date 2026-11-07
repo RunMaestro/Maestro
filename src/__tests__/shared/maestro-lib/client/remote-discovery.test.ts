@@ -15,6 +15,7 @@ import {
 	buildRemoteScriptArgs,
 	discoverRemoteHost,
 	parseHostEndpointReport,
+	readRemoteLingerWarning,
 	readRemoteScriptOutput,
 	remoteVersionSkew,
 	startRemoteHost,
@@ -265,6 +266,49 @@ describe('remoteVersionSkew', () => {
 	it('is unknown when either side has no version', () => {
 		expect(remoteVersionSkew('0.17.2', undefined)).toBe('unknown');
 		expect(remoteVersionSkew(undefined, '0.17.2')).toBe('unknown');
+	});
+});
+
+describe('remote linger warning', () => {
+	it('passes linger: false and its fix through discovery, running or not', async () => {
+		const stopped = await discover(
+			execReturning(
+				`${markers()}${JSON.stringify({ running: false, linger: false, lingerFix: 'loginctl enable-linger pedram' })}`,
+				'',
+				3
+			)
+		);
+		expect(stopped).toMatchObject({
+			running: false,
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+
+		const body = JSON.stringify({
+			running: true,
+			port: 41234,
+			token: TOKEN,
+			pid: 812,
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+		const live = await discover(execReturning(`${markers()}${body}`));
+		expect(live).toMatchObject({ running: true, linger: false });
+		if (live.installed && live.running) expect(live.endpoint).not.toHaveProperty('linger');
+	});
+
+	it('reads nothing when the remote did not warn', () => {
+		expect(readRemoteLingerWarning(JSON.stringify({ running: false }))).toEqual({});
+		expect(readRemoteLingerWarning(JSON.stringify({ running: false, linger: true }))).toEqual({});
+		expect(readRemoteLingerWarning('not json')).toEqual({});
+	});
+
+	it('keeps the warning but drops a fix that is not one plain enable-linger command', () => {
+		expect(
+			readRemoteLingerWarning(
+				JSON.stringify({ linger: false, lingerFix: 'loginctl enable-linger x; rm -rf ~' })
+			)
+		).toEqual({ linger: false });
 	});
 });
 

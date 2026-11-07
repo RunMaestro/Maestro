@@ -18,11 +18,13 @@ import {
 	type DiscoverRemoteHostOptions,
 	type RemoteCliLauncher,
 	type RemoteHostDiscovery,
+	type RemoteLingerWarning,
 	type RemoteVersionSkew,
 } from '../../shared/maestro-lib/client/remote-discovery';
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import { colorize, formatError, formatSuccess } from '../output/formatter';
+import { formatLingerWarning } from '../services/host-linger';
 import {
 	PeerResolveError,
 	findPeerRemote,
@@ -36,8 +38,12 @@ export interface RemoteHostOptions {
 	timeout?: string | number;
 }
 
-/** What `remote-host status --json` prints. Never holds the token or the CLI secret. */
-export interface RemoteHostStatusReport {
+/**
+ * What `remote-host status --json` prints. Never holds the token or the CLI secret. `linger: false`
+ * (with `lingerFix`) is the remote's own warning, passed through: the host there may stop when the
+ * SSH session that started it ends.
+ */
+export interface RemoteHostStatusReport extends RemoteLingerWarning {
 	remote: { id: string; name: string };
 	installed: boolean;
 	/** `installed: false` only: what to install on the remote. */
@@ -113,6 +119,8 @@ export function buildRemoteHostStatusReport(
 		installed: true,
 		launcher: found.launcher,
 		...(found.cliVersion ? { cliVersion: found.cliVersion } : {}),
+		...(found.linger === false ? { linger: false as const } : {}),
+		...(found.linger === false && found.lingerFix ? { lingerFix: found.lingerFix } : {}),
 	};
 	if (!found.running) {
 		return {
@@ -166,6 +174,17 @@ export function formatRemoteHostStatus(report: RemoteHostStatusReport): string {
 			: `Host: ${colorize('yellow', 'not running')} (start it with: maestro-cli remote-host start ${report.remote.id})`
 	);
 	lines.push(`Version skew: ${describeSkew(report)}`);
+	if (report.linger === false) {
+		lines.push(
+			colorize(
+				'yellow',
+				formatLingerWarning(
+					report.lingerFix ?? 'loginctl enable-linger <ssh user>',
+					report.remote.name
+				)
+			)
+		);
+	}
 	return lines.join('\n');
 }
 

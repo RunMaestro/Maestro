@@ -272,6 +272,33 @@ describe('maestro-cli remote-host', () => {
 		});
 	});
 
+	describe('Linux lingering on the remote', () => {
+		const lingering = (found: RemoteHostDiscovery): RemoteHostDiscovery => ({
+			...found,
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+
+		it('passes the remote warning through status, in JSON and for a human', async () => {
+			await remoteHostStatus('r1', { json: true }, LOCAL, depsWith([lingering(running())]));
+			expect(json()).toMatchObject({
+				running: true,
+				linger: false,
+				lingerFix: 'loginctl enable-linger pedram',
+			});
+
+			await remoteHostStatus('r1', {}, LOCAL, depsWith([lingering(notRunning)]));
+			expect(everything()).toContain('lingering is off for the SSH user on Build box');
+			expect(everything()).toContain('Turn it on on Build box with: loginctl enable-linger pedram');
+		});
+
+		it('says nothing about lingering when the remote did not warn', async () => {
+			await remoteHostStatus('r1', { json: true }, LOCAL, depsWith([running()]));
+			expect(json()).not.toHaveProperty('linger');
+			expect(everything()).not.toContain('lingering');
+		});
+	});
+
 	describe('formatRemoteHostStatus', () => {
 		it('points a stopped host at `remote-host start`', () => {
 			const report: RemoteHostStatusReport = {

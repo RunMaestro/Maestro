@@ -36,19 +36,34 @@ export const MAC_APP_CLI_PATH = '/Applications/Maestro.app/Contents/Resources/ma
 /** How the remote ran `maestro-cli`: the command on PATH, or `node` on the Maestro.app bundle. */
 export type RemoteCliLauncher = 'path' | 'app-bundle';
 
+/**
+ * Set when the remote said lingering is off for the SSH user (Linux, `loginctl ... Linger=no`), so
+ * systemd-logind may stop its host when the SSH session that started it ends. `lingerFix` is the
+ * command that turns it on, for the operator to run; nothing here runs it.
+ */
+export interface RemoteLingerWarning {
+	linger?: false;
+	lingerFix?: string;
+}
+
 /** What discovery found on the remote. */
 export type RemoteHostDiscovery =
 	/** No usable `maestro-cli` on the remote. `fix` names what to install (decision D3). */
 	| { installed: false; fix: string }
 	/** The CLI is there, but no host serves its data directory. */
-	| { installed: true; running: false; launcher: RemoteCliLauncher; cliVersion?: string }
-	| {
+	| ({
+			installed: true;
+			running: false;
+			launcher: RemoteCliLauncher;
+			cliVersion?: string;
+	  } & RemoteLingerWarning)
+	| ({
 			installed: true;
 			running: true;
 			launcher: RemoteCliLauncher;
 			cliVersion?: string;
 			endpoint: HostEndpoint;
-	  };
+	  } & RemoteLingerWarning);
 
 /** Why discovery could not give an answer. The message never holds a token or a secret. */
 export type RemoteDiscoveryErrorCode =
@@ -198,6 +213,25 @@ export function parseHostEndpointReport(
 	};
 }
 
+/**
+ * The linger warning in a `host endpoint --json` payload, or `{}`. A fix that is not one plain
+ * `loginctl enable-linger <user>` line is dropped: it is printed on the laptop as a command to run.
+ */
+export function readRemoteLingerWarning(raw: string): RemoteLingerWarning {
+	let data: unknown;
+	try {
+		data = JSON.parse(raw);
+	} catch {
+		return {};
+	}
+	if (!data || typeof data !== 'object') return {};
+	const { linger, lingerFix } = data as Record<string, unknown>;
+	if (linger !== false) return {};
+	return typeof lingerFix === 'string' && /^loginctl enable-linger [\w.@-]+$/.test(lingerFix)
+		? { linger: false, lingerFix }
+		: { linger: false };
+}
+
 function remoteLabel(remote: SshRemoteConfig): string {
 	return remote.name || remote.host;
 }
@@ -296,8 +330,15 @@ export async function discoverRemoteHost(
 	const { launcher, cliVersion, label } = run;
 
 	const report = parseHostEndpointReport(run.body);
+	const linger = readRemoteLingerWarning(run.body);
 	if (report === 'not-running') {
-		return { installed: true, running: false, launcher, ...(cliVersion ? { cliVersion } : {}) };
+		return {
+			installed: true,
+			running: false,
+			launcher,
+			...(cliVersion ? { cliVersion } : {}),
+			...linger,
+		};
 	}
 	if (report && 'error' in report) {
 		throw new RemoteDiscoveryError(
@@ -312,6 +353,7 @@ export async function discoverRemoteHost(
 			launcher,
 			...(cliVersion ? { cliVersion } : {}),
 			endpoint: report,
+			...linger,
 		};
 	}
 
