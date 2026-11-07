@@ -180,7 +180,10 @@ export interface CrossAgentRequest {
  * process stamps `requestId` + `createdAt` to form the full
  * {@link CrossAgentRequest}.
  */
-export type CrossAgentSendRequest = Omit<CrossAgentRequest, 'requestId' | 'createdAt'>;
+export type CrossAgentSendRequest = Omit<CrossAgentRequest, 'requestId' | 'createdAt'> & {
+	/** Locator only. Native queue release and owning renderer are verified by the host. */
+	managedQueue?: { dispatchId: string; generation: string; handoff?: boolean };
+};
 
 /**
  * One streamed piece of a target agent's response, routed back to the source
@@ -226,4 +229,12 @@ export interface CrossAgentResponseChunk {
 	 * which blames the target for something the user did.
 	 */
 	canceled?: boolean;
+}
+
+/** Native aggregate progress for one accepted managed queue intent.
+ * Step IDs and recipients are transport locators; only live host releases authorize them. */
+export interface ManagedQueueRoutingProgress {
+	failed: boolean;
+	continuationStepId?: string;
+	handoff?: { generation: string; targetSessionIds: string[] };
 }

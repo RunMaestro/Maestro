@@ -26,6 +26,7 @@ import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
+import { HarnessInteractionPrompt } from './HarnessInteractionPrompt';
 import { StatsIndexingHost } from './StatsIndexing/StatsIndexingHost';
 import { CadenzaLayer } from './Cadenza';
 import { ConcertoStageModal } from './Concerto/ConcertoStageModal';
@@ -340,6 +341,8 @@ export function AppShell({
 			    protocol event twice. Renders nothing, and subscribes to nothing,
 			    while the Encore Feature is off. */}
 			<VoiceHud theme={theme} enabled={aCappellaEnabled} />
+			{/* Native protocol interactions are opt-in and independent of the current relay. */}
+			<HarnessInteractionPrompt theme={theme} />
 			{/* --- USAGE DATA SCAN PROGRESS (single, app-wide) ---
 			    A version upgrade re-reads all session history once; this shows it
 			    as a modal, then a corner card, instead of a silent stall. */}

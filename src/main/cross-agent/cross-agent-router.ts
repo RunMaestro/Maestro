@@ -25,7 +25,7 @@ import {
 	buildCrossAgentPrompt,
 	serializeTranscript,
 } from '../../shared/maestro-lib/agents/consult-prompt';
-import { createDesktopConsultRunner } from './consult-runner';
+import { createDesktopConsultRunner, type NativeConsultAdmission } from './consult-runner';
 import type { ConsultBudgetStoreOptions } from '../peer-consults/consult-budget';
 import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 
@@ -66,6 +66,9 @@ export function getCrossAgentConsultParties(
 }
 
 export interface StartCrossAgentRequestOptions {
+	assertNativeOwner?: () => void;
+	/** Host-only, never accepted in a cross-agent wire payload. */
+	nativeAdmission?: NativeConsultAdmission;
 	/** Concrete process manager (needed for both spawn and the data/exit events). */
 	processManager: ProcessManager;
 	/** Resolves an agent id to its executable config. */
@@ -110,7 +113,7 @@ export function startCrossAgentRequest(
 	opts: StartCrossAgentRequestOptions
 ): Promise<void> {
 	return consultService.start(request, {
-		runner: createDesktopConsultRunner(opts.processManager, opts.sshStore),
+		runner: createDesktopConsultRunner(opts.processManager, opts.sshStore, opts.nativeAdmission),
 		resolveAgent: (providerId) => opts.agentDetector.getAgent(providerId),
 		sshStore: opts.sshStore,
 		getTargetSession: opts.getTargetSession,
@@ -126,6 +129,7 @@ export function startCrossAgentRequest(
 				consultChain,
 				consultBudgetStore: opts.consultBudgetStore,
 			}),
+		onNotStarted: opts.nativeAdmission?.notStarted,
 		onChunk: opts.onChunk,
 	});
 }

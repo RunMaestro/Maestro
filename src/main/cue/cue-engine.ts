@@ -277,6 +277,7 @@ export class CueEngine {
 	private forceDrain: (() => void) | null = null;
 	/** `forceStop()` arrived with no drain running: the drain it starts is forced from the outset. */
 	private forceNextDrain = false;
+	private startGeneration = 0;
 	/** Set to 'system-boot' while the engine is running after a system-boot or
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
@@ -656,7 +657,10 @@ export class CueEngine {
 			enabled: () => this.enabled,
 			getSessions: deps.getSessions,
 			onRefreshRequested: (sessionId, projectRoot) => {
-				this.refreshSession(sessionId, projectRoot);
+				void this.refreshSession(sessionId, projectRoot).catch((error) => {
+					void captureException(error, { operation: 'cue:refreshSession', sessionId });
+					meteredOnLog('error', `[CUE] Failed to refresh session ${sessionId}: ${String(error)}`);
+				});
 			},
 			onLog: meteredOnLog,
 			onPreventSleep: deps.onPreventSleep,
@@ -811,7 +815,7 @@ export class CueEngine {
 	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire -
 	 *     only IPC-driven enables and Electron launch use 'system-boot'.
 	 */
-	start(reason: SessionInitReason = 'user-toggle'): void {
+	async start(reason: SessionInitReason = 'user-toggle'): Promise<void> {
 		if (this.enabled) return;
 
 		// Cross-process guard (cue-engine-lock.ts): refuse to start a second
@@ -867,10 +871,18 @@ export class CueEngine {
 		this.queuePersistence.beginRestoreEpoch();
 		this.pendingPluginRestoreIds = this.queuePersistence.persistedIds(true);
 
-		const sessions = this.deps.getSessions();
-		for (const session of sessions) {
-			this.sessionRuntimeService.initSession(session, { reason });
+		const generation = this.startGeneration;
+		try {
+			const sessions = this.deps.getSessions();
+			await Promise.all(
+				sessions.map((session) => this.sessionRuntimeService.initSession(session, { reason }))
+			);
+		} catch (error) {
+			// A failed old start must not stop a newer engine cycle.
+			if (generation === this.startGeneration) this.stop();
+			throw error;
 		}
+		if (!this.enabled || generation !== this.startGeneration) return;
 
 		// Phase 12A - restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
@@ -1013,6 +1025,7 @@ export class CueEngine {
 	stop(): void {
 		if (!this.enabled) return;
 
+		this.startGeneration++;
 		this.enabled = false;
 		this.pendingPluginRestoreIds = new Set();
 		this.deferredPluginRestoreOwners.clear();
@@ -1305,15 +1318,22 @@ export class CueEngine {
 	}
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
-	refreshSession(sessionId: string, projectRoot: string): void {
+	async refreshSession(sessionId: string, requestedRoot: string): Promise<void> {
 		// A drain has disarmed every trigger; a yaml change must not re-arm one.
 		if (this.drainInProgress) return;
+		// The root Cue reads is the one `getSessions()` resolves (for an SSH agent that
+		// is the remote's host mount, not the remote path the renderer knows). A caller
+		// passing the raw session root would otherwise read "missing" and tear the
+		// config down. Unknown sessions keep the caller's root.
+		const projectRoot =
+			this.deps.getSessions().find((session) => session.id === sessionId)?.projectRoot ??
+			requestedRoot;
 		// When the engine started with 'system-boot', sessions that arrive via
 		// refreshSession (the typical path at boot, since getSessions() is empty
 		// when start() fires) should still get their app.startup triggers.
 		const reason = this.startReason ?? 'refresh';
 		cueDebugLog('engine:refreshSession:start', { sessionId, projectRoot, reason });
-		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
+		const result = await this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
 		if (result.reloaded) this.confirmedRemovedCueOwners.delete(sessionId);
 		else if (result.configRemoved) this.confirmedRemovedCueOwners.add(sessionId);
 		this.retryPendingPluginEvents();
@@ -1461,14 +1481,14 @@ export class CueEngine {
 		);
 	}
 
-	private runSubscriptionEnabledWrite(
+	private async runSubscriptionEnabledWrite(
 		sessionId: string,
 		projectRoot: string,
 		targetPipeline: string,
 		subName: string,
 		enabled: boolean
-	): boolean {
-		const changed = this.patchSubscriptionRecords(
+	): Promise<boolean> {
+		const changed = await this.patchSubscriptionRecords(
 			sessionId,
 			projectRoot,
 			'setSubscriptionEnabled',
@@ -1496,14 +1516,14 @@ export class CueEngine {
 	 * Callers run this inside {@link enqueueYamlWrite}: it is a read, a
 	 * mutate and a write, which is not atomic on the filesystem.
 	 */
-	private patchSubscriptionRecords(
+	private async patchSubscriptionRecords(
 		sessionId: string,
 		projectRoot: string,
 		operation: string,
 		names: ReadonlySet<string>,
 		targetPipeline: string,
 		mutate: (record: Record<string, unknown>) => void
-	): string[] {
+	): Promise<string[]> {
 		const file = readCueConfigFile(projectRoot);
 		if (!file) return [];
 
@@ -1545,7 +1565,7 @@ export class CueEngine {
 			return [];
 		}
 
-		this.refreshSession(sessionId, projectRoot);
+		await this.refreshSession(sessionId, projectRoot);
 		return changed;
 	}
 
@@ -1582,8 +1602,8 @@ export class CueEngine {
 		const projectRoot = session?.projectRoot;
 		if (!projectRoot) return { ok: false, error: `No agent owns subscription "${subName}".` };
 
-		return await this.enqueueYamlWrite(projectRoot, () => {
-			const updated = this.patchSubscriptionRecords(
+		return await this.enqueueYamlWrite(projectRoot, async () => {
+			const updated = await this.patchSubscriptionRecords(
 				sessionId,
 				projectRoot,
 				'setSubscriptionGate',
@@ -1629,8 +1649,8 @@ export class CueEngine {
 		const projectRoot = session?.projectRoot;
 		if (!projectRoot) return { ok: false, error: `No agent owns subscription "${subName}".` };
 
-		return await this.enqueueYamlWrite(projectRoot, () => {
-			const updated = this.patchSubscriptionRecords(
+		return await this.enqueueYamlWrite(projectRoot, async () => {
+			const updated = await this.patchSubscriptionRecords(
 				sessionId,
 				projectRoot,
 				'setSubscriptionInjectionScreen',

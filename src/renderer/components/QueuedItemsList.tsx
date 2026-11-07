@@ -39,6 +39,8 @@ import { TurnSettingPills } from './ui/TurnSettingPills';
 import { queuedTurnPills } from '../utils/providerTabSessions';
 import { MiniBadge } from './ui/MiniBadge';
 import { HeldForRetryBadge } from './HeldForRetryBadge';
+import { DispatchCallbackCard } from './DispatchCallbackCard';
+import { parseDispatchCallbackPrompt } from '../../shared/dispatchCallbackCard';
 import { useIsHeldRetryItem } from '../stores/retryStore';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
@@ -643,11 +645,19 @@ function QueuedItemRow({
 	const isAwaitingConsult = !!item.awaitingConsult;
 	const isHeldForRetry = useIsHeldRetryItem(item.id);
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
+	// A dispatch callback that reached a busy tab waits here like any message, but
+	// it is the same `[Maestro dispatch callback]` text the transcript draws as a
+	// compact result card. Draw it the same way, so the result looks the same
+	// whether the tab was idle or mid-turn when it came back.
+	const dispatchCallback = useMemo(
+		() => (isCommand ? null : parseDispatchCallbackPrompt(item.text ?? '')),
+		[isCommand, item.text]
+	);
 	const hiddenChars = Math.max(0, displayText.length - QUEUE_PREVIEW_CHARS);
 	// Only collapse when collapsing actually buys back screen: a message that is a
 	// line or two over the preview costs more in toggle chrome than it saves, so it
-	// renders in full with no toggle at all.
-	const isLongMessage = hiddenChars >= QUEUE_COLLAPSE_MIN_HIDDEN_CHARS;
+	// renders in full with no toggle at all. The callback card has its own expand.
+	const isLongMessage = !dispatchCallback && hiddenChars >= QUEUE_COLLAPSE_MIN_HIDDEN_CHARS;
 	const visibleText =
 		isLongMessage && !isExpanded
 			? displayText.substring(0, QUEUE_PREVIEW_CHARS) + '...'
@@ -711,7 +721,7 @@ function QueuedItemRow({
 
 				{/* Item content */}
 				<div
-					className={`text-sm break-words ${showMarkdown ? '' : 'whitespace-pre-wrap'} ${canDrag ? 'pl-4' : ''}`}
+					className={`text-sm break-words ${showMarkdown || dispatchCallback ? '' : 'whitespace-pre-wrap'} ${canDrag ? 'pl-4' : ''}`}
 					style={{ color: theme.colors.textMain }}
 				>
 					{isCommand && (
@@ -729,7 +739,9 @@ function QueuedItemRow({
 							</span>
 						</span>
 					)}
+					{dispatchCallback && <DispatchCallbackCard parsed={dispatchCallback} theme={theme} />}
 					{!isCommand &&
+						!dispatchCallback &&
 						(showMarkdown ? (
 							<MarkdownRenderer
 								content={visibleText}

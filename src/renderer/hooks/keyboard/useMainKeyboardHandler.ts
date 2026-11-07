@@ -907,6 +907,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleTabStar();
 				trackShortcut('toggleTabStar');
+			} else if (ctx.isShortcut(e, 'toggleMessagePins')) {
+				e.preventDefault();
+				// Only a visible AI transcript draws the pin panel, and only once the
+				// tab has a pin; otherwise the key is a clean no-op.
+				const ref =
+					activeSession && !ctx.activeGroupChatId ? resolveActiveTabRef(activeSession) : null;
+				const tab =
+					ref?.type === 'ai' ? activeSession?.aiTabs.find((t) => t.id === ref.id) : undefined;
+				if (tab?.pinnedMessages?.length) {
+					useUIStore.getState().toggleMessagePins(tab.id);
+					trackShortcut('toggleMessagePins');
+				}
 			} else if (ctx.isShortcut(e, 'openPromptComposer')) {
 				e.preventDefault();
 				// Only act in AI mode - the composer is AI-only. While it's already

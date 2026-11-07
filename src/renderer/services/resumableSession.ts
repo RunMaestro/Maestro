@@ -13,6 +13,8 @@
  */
 
 import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
+import { normalizeMessagePins, type MessagePin } from '../../shared/messagePins';
+import { sessionOriginStoreFor } from '../../shared/sessionOriginStore';
 import type { LogEntry, ToolType, UsageStats } from '../types';
 import { isSessionIdLabel } from '../utils/tabHelpers';
 import {
@@ -47,6 +49,8 @@ export interface ResumableSession {
 	name: string | null;
 	starred: boolean;
 	usageStats?: UsageStats;
+	/** Pins saved on the conversation's origin record (empty when none). */
+	pinnedMessages: MessagePin[];
 }
 
 /**
@@ -98,13 +102,14 @@ export async function loadResumableSession(
 	let usageStats = options.usageStats;
 
 	let origin: ResumableSession['origin'];
+	let pinnedMessages: MessagePin[] = [];
 	try {
 		// Claude and Codex origins share the legacy store; other providers use
 		// the generic store. Supplied transcript/name/star fields must not skip provenance.
 		const origins =
-			!toolType || toolType === 'claude-code' || toolType === 'codex'
-				? await window.maestro.claude.getSessionOrigins(projectRoot)
-				: await window.maestro.agentSessions.getOrigins(toolType, projectRoot);
+			toolType && sessionOriginStoreFor(toolType) === 'generic'
+				? await window.maestro.agentSessions.getOrigins(toolType, projectRoot)
+				: await window.maestro.claude.getSessionOrigins(projectRoot);
 		const originData = origins[agentSessionId];
 		origin = typeof originData === 'string' ? originData : originData?.origin;
 		if (originData && typeof originData === 'object') {
@@ -113,6 +118,8 @@ export async function loadResumableSession(
 				isStarred = originData.starred;
 			if ('contextUsage' in originData && typeof originData.contextUsage === 'number')
 				storedContextUsage = originData.contextUsage;
+			if ('pinnedMessages' in originData)
+				pinnedMessages = normalizeMessagePins(originData.pinnedMessages);
 		}
 	} catch (error) {
 		logger.warn('[handleResumeSession] Failed to lookup session metadata:', undefined, error);
@@ -134,5 +141,5 @@ export async function loadResumableSession(
 		};
 	}
 
-	return { messages, name, starred: isStarred, usageStats, origin };
+	return { messages, name, starred: isStarred, usageStats, origin, pinnedMessages };
 }

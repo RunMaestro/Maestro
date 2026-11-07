@@ -1,4 +1,5 @@
 import { agentCommandScope } from '../../../renderer/utils/agentCommands';
+import { registerSessionPersistenceFlush } from '../../../renderer/services/sessionPersistenceFlush';
 /**
  * Tests for src/renderer/services/queuedPrompt.ts
  *
@@ -486,6 +487,24 @@ describe('mergeQueuedItemIntoAbove', () => {
 });
 
 describe('sendQueuedItemNow', () => {
+	it('keeps technical admission held across user resume and force send', () => {
+		const held = {
+			id: 'held',
+			timestamp: 0,
+			tabId: 'b',
+			type: 'message' as const,
+			text: 'hi',
+			paused: true,
+			pendingAdmissionId: 'dispatch-1',
+		};
+		seed({ executionQueue: [held] });
+		const dispatch = vi.fn().mockResolvedValue(true);
+		expect(setQueuedItemPaused('session-1', held.id, false)).toBe(true);
+		expect(currentQueue()[0]).toMatchObject({ pendingAdmissionId: 'dispatch-1' });
+		expect(sendQueuedItemNow('session-1', held.id, dispatch)).toBe(false);
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(currentQueue()).toHaveLength(1);
+	});
 	beforeEach(() => {
 		planCrossAgentMentions.mockReset();
 		planCrossAgentMentions.mockReturnValue(null);
@@ -566,4 +585,27 @@ it('preserves a submitted provider capture across asynchronous queueing', () => 
 		turnSettings: settings,
 	});
 	expect(item?.turnSettings).toBe(settings);
+});
+
+describe('managed queue mutation persistence', () => {
+	afterEach(() => registerSessionPersistenceFlush(null));
+	it.each(['remove', 'pause'] as const)(
+		'flushes %s through the registered persistence owner immediately',
+		async (action) => {
+			const session = seed();
+			const item = {
+				...buildQueuedMessageItem({ session, tab: session.aiTabs[0], text: 'managed' }),
+				pendingAdmissionId: 'dispatch',
+			};
+			seed({ executionQueue: [item] });
+			const flush = vi.fn().mockResolvedValue(undefined);
+			registerSessionPersistenceFlush(flush);
+			if (action === 'remove') removeQueuedItem(session.id, item.id);
+			else setQueuedItemPaused(session.id, item.id, true);
+			expect(flush).toHaveBeenCalledOnce();
+			expect(flush.mock.calls[0][0][0].executionQueue).toEqual(
+				action === 'remove' ? [] : [{ ...item, paused: true }]
+			);
+		}
+	);
 });

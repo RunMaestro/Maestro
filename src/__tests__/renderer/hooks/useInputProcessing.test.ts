@@ -2593,6 +2593,19 @@ describe('useInputProcessing', () => {
 				'IMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.'
 			);
 			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(typeof spawnCall.transcriptBoundaryId).toBe('string');
+			const recorded = mockSetSessions.mock.calls
+				.map(([updater]) => (typeof updater === 'function' ? updater([session]) : updater))
+				.flatMap((sessions) =>
+					sessions.flatMap((agent: Session) => agent.aiTabs.flatMap((tab) => tab.logs))
+				);
+			expect(recorded).toContainEqual(
+				expect.objectContaining({
+					id: spawnCall.transcriptBoundaryId,
+					source: 'user',
+					text: 'explain this code',
+				})
+			);
 		});
 
 		it('appends read-only instruction suffix when Auto Run is active without worktree (read-only tab)', async () => {
@@ -2764,8 +2777,6 @@ describe('useInputProcessing', () => {
 		});
 
 		it('sends permissionMode "standard" when tab permissionMode is "standard"', async () => {
-			// standard mode must propagate to the spawn config so the main process
-			// can wire up the permission relay (rather than defaulting to full).
 			const standardTab = createMockTab({
 				readOnlyMode: false,
 				permissionMode: 'standard',
@@ -2789,6 +2800,33 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
 			expect(spawnCall.permissionMode).toBe('standard');
+		});
+
+		it('preserves Standard on image turns so main can refuse without escalating', async () => {
+			const standardTab = createMockTab({
+				permissionMode: 'standard',
+				agentSessionId: 'opencode-session',
+			});
+			const session = createMockSession({
+				toolType: 'opencode',
+				aiTabs: [standardTab],
+				activeTabId: standardTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'describe this image',
+				stagedImages: ['data:image/png;base64,abc'],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('standard');
+			expect(spawnCall.images).toEqual(['data:image/png;base64,abc']);
 		});
 
 		it('does not append read-only suffix when in normal write mode', async () => {

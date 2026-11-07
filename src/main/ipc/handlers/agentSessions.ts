@@ -24,6 +24,10 @@ import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
+import type { AgentSessionOriginsData, ClaudeSessionOriginsData } from '../../stores/types';
+import { setClaudeSessionOrigin } from '../../storage/claude-session-origins';
+import { normalizeMessagePins } from '../../../shared/messagePins';
+import { sessionOriginStoreFor } from '../../../shared/sessionOriginStore';
 import { calculateModelCost } from '../../utils/pricing';
 import {
 	loadGlobalStatsCache,
@@ -80,22 +84,8 @@ const LOG_CONTEXT = '[AgentSessions]';
  */
 export { isExpectedSessionReadError };
 
-/**
- * Generic agent session origins data structure
- * Structure: { [agentId]: { [projectPath]: { [sessionId]: { origin, sessionName, starred } } } }
- */
-export interface AgentSessionOriginsData {
-	origins: Record<
-		string,
-		Record<
-			string,
-			Record<
-				string,
-				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
-			>
-		>
-	>;
-}
+/** Generic agent session origins data (one definition, in the stores module). */
+export type { AgentSessionOriginsData } from '../../stores/types';
 
 /**
  * Dependencies required for agent sessions handlers
@@ -103,6 +93,12 @@ export interface AgentSessionOriginsData {
 export interface AgentSessionsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	agentSessionOriginsStore?: Store<AgentSessionOriginsData>;
+	/**
+	 * The legacy Claude origins store. Claude Code and Codex keep their origin
+	 * records there (see `sessionOriginStoreFor`), so a write for those
+	 * providers has to land in it rather than in the generic store.
+	 */
+	claudeSessionOriginsStore?: Store<ClaudeSessionOriginsData>;
 }
 
 /**
@@ -416,7 +412,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				const result = await storage.readSessionMessages(
 					projectPath,
 					sessionId,
-					options,
+					options ? { offset: options.offset, limit: options.limit } : undefined,
 					sshConfig
 				);
 				logger.info(
@@ -835,6 +831,58 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				} else {
 					void releaseTranscriptMirror({ agentId, sessionId });
 				}
+			}
+		)
+	);
+
+	// ============ Message pins (any provider) ============
+	// The tab owns its pins; this mirrors them onto the provider session's origin
+	// record so a conversation reopened from History or the sessions browser gets
+	// them back. Routed by provider because Claude Code and Codex keep their
+	// records in the Claude store, which is where loadResumableSession reads them.
+
+	const claudeOriginsStore = deps?.claudeSessionOriginsStore;
+
+	ipcMain.handle(
+		'agentSessions:setSessionPins',
+		withIpcErrorLogging(
+			handlerOpts('setSessionPins'),
+			async (
+				agentId: string,
+				projectPath: string,
+				sessionId: string,
+				pins: unknown
+			): Promise<void> => {
+				const normalized = normalizeMessagePins(pins);
+				const pinnedMessages = normalized.length > 0 ? normalized : undefined;
+
+				if (sessionOriginStoreFor(agentId) === 'claude') {
+					if (!claudeOriginsStore) {
+						logger.warn('Claude origins store not available for setSessionPins', LOG_CONTEXT);
+						return;
+					}
+					setClaudeSessionOrigin(claudeOriginsStore, projectPath, sessionId, { pinnedMessages });
+					return;
+				}
+
+				if (!originsStore) {
+					logger.warn('Origins store not available for setSessionPins', LOG_CONTEXT);
+					return;
+				}
+				const allOrigins = originsStore.get('origins', {});
+				const projectOrigins = allOrigins[agentId]?.[projectPath] ?? {};
+				const existing = projectOrigins[sessionId];
+				if (pinnedMessages) {
+					projectOrigins[sessionId] = { ...existing, pinnedMessages };
+				} else if (existing) {
+					const { pinnedMessages: _removed, ...rest } = existing;
+					if (rest.origin || rest.sessionName || rest.starred) projectOrigins[sessionId] = rest;
+					else delete projectOrigins[sessionId];
+				} else {
+					return;
+				}
+				allOrigins[agentId] = { ...allOrigins[agentId], [projectPath]: projectOrigins };
+				originsStore.set('origins', allOrigins);
 			}
 		)
 	);

@@ -27,6 +27,11 @@ vi.mock('../../../renderer/services/desktopTabClose', () => ({
 	requestDesktopTabClose: (...args: unknown[]) => requestDesktopTabClose(...args),
 }));
 
+const persistTabPins = vi.fn();
+vi.mock('../../../renderer/services/messagePins', () => ({
+	persistTabPins: (...args: unknown[]) => persistTabPins(...args),
+}));
+
 import { closeAiTabInSession } from '../../../renderer/services/aiTabClose';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { getLiveDraft, setLiveDraft } from '../../../renderer/utils/liveDraftStore';
@@ -86,6 +91,24 @@ describe('closeAiTabInSession', () => {
 		setLiveDraft('t2', 'never sent');
 		closeAiTabInSession('a1', 't2');
 		expect(getLiveDraft('t2')).toBeUndefined();
+	});
+
+	it('persists message pins before the canonical close removes the tab', () => {
+		const target = session('a1').aiTabs.find((tab) => tab.id === 't2')!;
+		target.pinnedMessages = [
+			{
+				id: 'pin',
+				logId: 'message',
+				source: 'user',
+				timestamp: 1,
+				title: 'Keep this',
+				excerpt: 'Evidence',
+				pinnedAt: 2,
+			},
+		];
+		closeAiTabInSession('a1', 't2');
+		expect(persistTabPins).toHaveBeenCalledWith(expect.objectContaining({ id: 'a1' }), target);
+		expect(session('a1').aiTabs.some((tab) => tab.id === 't2')).toBe(false);
 	});
 
 	it('reports a missing agent or tab and changes nothing', () => {

@@ -6,6 +6,7 @@ import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargetAgent, TierTargets } from '../../../shared/modelTiers';
 import type { PeerGrants } from '../../../shared/peerAgents';
 import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -80,6 +81,7 @@ export type AgentSeed = Partial<
 		| 'retryOnAvailabilityErrors'
 		| 'retryOnTokenExhaustion'
 		| 'codexAutoResetOnExhaustion'
+		| 'harnessControlMode'
 		| 'codexTransport'
 		| 'gatewayUrl'
 		| 'runOn'
@@ -122,7 +124,8 @@ export interface NewInstanceModalProps {
 		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
 		peerGrants?: PeerGrants,
 		/** Group defaults the create form has no control for; stamped onto the new agent. */
-		seedExtras?: GroupDefaultsCreateExtras
+		seedExtras?: GroupDefaultsCreateExtras,
+		harnessControlMode?: HarnessControlMode
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -176,7 +179,8 @@ export interface EditAgentModalProps {
 		migrationPlanId?: string,
 		projectResourcesIntoRepo?: boolean,
 		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-		convertProviderHistory?: boolean
+		convertProviderHistory?: boolean,
+		harnessControlMode?: HarnessControlMode
 	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;
@@ -273,4 +277,7 @@ export interface AgentPickerGridProps {
 	hideEnvVars?: boolean;
 	/** Offer Auto in each provider's model field (`AgentConfigPanelProps.autoModelFor`). */
 	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
+	/** Native protocol mode, per agent id. Defaults to current. */
+	harnessControlModeByAgent?: Record<string, HarnessControlMode>;
+	onHarnessControlModeChange?: (agentId: string, value: HarnessControlMode) => void;
 }

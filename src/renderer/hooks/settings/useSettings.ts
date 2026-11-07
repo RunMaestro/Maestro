@@ -189,8 +189,6 @@ export interface UseSettingsReturn {
 	setShowHiddenFiles: (value: boolean) => void;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
-	fileTreeBranchConnectors: boolean;
-	setFileTreeBranchConnectors: (value: boolean) => void;
 	toastWidth: ToastWidth;
 	setToastWidth: (value: ToastWidth) => void;
 	toastPosition: ToastPosition;

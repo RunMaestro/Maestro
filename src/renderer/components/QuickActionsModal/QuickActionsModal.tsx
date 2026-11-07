@@ -802,6 +802,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
+				toggleMessagePins: shortcuts.toggleMessagePins,
 			},
 			tabShortcuts,
 			toggleInputMode,

@@ -24,6 +24,7 @@ import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { sendBounded } from './socket-send';
+import type { WebLoginPolicyContext } from '../auth/web-login-policy';
 import type {
 	Theme,
 	WebClient,
@@ -153,17 +154,21 @@ export class BroadcastService {
 	}
 
 	/** Send a stamped frame to every open client its scope reaches. */
-	private deliver(frame: ReplayFrame): void {
-		if (!this.getWebClients) return;
+	private deliver(frame: ReplayFrame): boolean {
+		if (!this.getWebClients) return false;
+		// This context expires with this synchronous pass; client authorization remains live.
+		const policy: WebLoginPolicyContext = {};
+		let delivered = false;
 		for (const client of this.getWebClients().values()) {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&
-				client.isAuthorized?.() !== false &&
+				client.isAuthorized?.(policy) !== false &&
 				frameReaches(frame.scope, client.subscribedSessionId)
 			) {
-				sendBounded(client.socket, frame.data, frame.bytes);
+				delivered = sendBounded(client.socket, frame.data, frame.bytes) || delivered;
 			}
 		}
+		return delivered;
 	}
 
 	/**
@@ -219,6 +224,22 @@ export class BroadcastService {
 	broadcastToSession(sessionId: string, message: object): void {
 		if (!this.getWebClients) return;
 		this.deliver(this.stampForBridge(message, { kind: 'session', sessionId }));
+	}
+
+	/** Deliver private session traffic only to authorized subscribers of that session. */
+	broadcastToSubscribers(sessionId: string, message: object): boolean {
+		if (!this.getWebClients) return false;
+		return this.deliver(this.stampForBridge(message, { kind: 'subscribers', sessionId }));
+	}
+
+	/** A bridge client may read or answer a private session request only while subscribed. */
+	isClientSubscribed(clientId: string, sessionId: string): boolean {
+		const client = this.getWebClients?.().get(clientId);
+		return (
+			client?.socket.readyState === WebSocket.OPEN &&
+			client.isAuthorized?.() !== false &&
+			client.subscribedSessionId === sessionId
+		);
 	}
 
 	/**

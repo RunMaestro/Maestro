@@ -69,6 +69,7 @@ import {
 } from '../../utils/providerAvailability';
 import { logger } from '../../utils/logger';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
@@ -139,6 +140,9 @@ export function NewInstanceModal({
 	// Codex transport, per provider. Absent means `exec`, the default.
 	const [codexTransportByAgent, setCodexTransportByAgent] = useState<
 		Record<string, CodexTransport>
+	>({});
+	const [harnessControlModeByAgent, setHarnessControlModeByAgent] = useState<
+		Record<string, HarnessControlMode>
 	>({});
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
@@ -575,6 +579,10 @@ export function NewInstanceModal({
 						...prev,
 						[seedProvider]: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
 					}));
+					setHarnessControlModeByAgent((prev) => ({
+						...prev,
+						[seedProvider]: source.harnessControlMode ?? 'current',
+					}));
 					// And through the same gateway. Its token proxy mode is not copied:
 					// absent reads as passthrough, so a copy never starts compressing.
 					setGatewayUrlByAgent((prev) => ({
@@ -990,7 +998,8 @@ export function NewInstanceModal({
 			},
 			// The group defaults the form has no control for. Absent for a form that
 			// was not seeded from a group, and for a seed that holds none.
-			seedExtras && Object.keys(seedExtras.extras).length > 0 ? seedExtras.extras : undefined
+			seedExtras && Object.keys(seedExtras.extras).length > 0 ? seedExtras.extras : undefined,
+			...(harnessControlModeByAgent[selectedAgent] === 'native' ? (['native'] as const) : [])
 		);
 		onClose();
 
@@ -1074,6 +1083,7 @@ export function NewInstanceModal({
 		retryAvailabilityByAgent,
 		retryTokenByAgent,
 		codexAutoResetByAgent,
+		harnessControlModeByAgent,
 		codexTransportByAgent,
 		gatewayUrlByAgent,
 		effectiveRunOn,
@@ -1659,6 +1669,10 @@ export function NewInstanceModal({
 								availableProviderCount={providerCounts.available}
 								totalProviderCount={providerCounts.total}
 								providerLocationLabel={providerLocation}
+								harnessControlModeByAgent={harnessControlModeByAgent}
+								onHarnessControlModeChange={(id, value) =>
+									setHarnessControlModeByAgent((prev) => ({ ...prev, [id]: value }))
+								}
 								showAllProviders={showAllProviders}
 								onShowAllProvidersChange={setShowAllProviders}
 								selectedAgent={selectedAgent}

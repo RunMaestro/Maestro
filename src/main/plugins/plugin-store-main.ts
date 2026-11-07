@@ -22,6 +22,7 @@ import {
 	type PluginGrantsFile,
 } from '../../shared/plugins/storage';
 import type { PermissionGrant } from '../../shared/plugins/permissions';
+import type { SignatureCheck } from '../../shared/plugins/signing';
 
 export type { PluginStateFile, PluginGrantsFile };
 
@@ -106,9 +107,38 @@ export function setPluginEnabled(id: string, enabled: boolean): PluginStateFile 
 	const current = readPluginState();
 	const next: PluginStateFile = {
 		...current,
-		plugins: { ...current.plugins, [id]: { enabled } },
+		plugins: { ...current.plugins, [id]: { ...current.plugins[id], enabled } },
 	};
 	return writePluginState(next);
+}
+
+/** Remember only the first trusted installed publisher. Always merge fresh state:
+ * discovery awaits file scans, during which another operation can change a toggle. */
+export function rememberPluginPublisher(
+	id: string,
+	signature: SignatureCheck,
+	enabledDefault: boolean
+): PluginStateFile {
+	const current = readPluginState();
+	const entry = current.plugins[id];
+	if (
+		signature.status !== 'trusted' ||
+		!signature.signerKey ||
+		entry?.trustedPublisher !== undefined
+	) {
+		return current;
+	}
+	return writePluginState({
+		...current,
+		plugins: {
+			...current.plugins,
+			[id]: {
+				...entry,
+				enabled: entry?.enabled ?? enabledDefault,
+				trustedPublisher: signature.signerKey,
+			},
+		},
+	});
 }
 
 /** Forget a plugin's persisted state (used on uninstall). Returns new state. */

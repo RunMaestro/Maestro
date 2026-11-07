@@ -26,11 +26,18 @@ export interface DispatchCallbackServiceDeps {
 		prompt: string,
 		tabId?: string
 	) => Promise<{ success: boolean; error?: string; reason?: string }>;
+	/**
+	 * Open a new background AI tab in the caller agent with the prompt as its
+	 * first turn. Used when the callback has no tab of its own to return to.
+	 */
+	openTab: (agentId: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
 	/** Best-effort result text for the finished dispatch. */
 	getTargetOutput?: (
 		agentId: string,
 		since: number
 	) => Promise<string | undefined> | string | undefined;
+	/** Called only after the parent queue/new-tab accepted delivery. */
+	onDelivered?: (fire: DispatchCallbackFire) => void | Promise<void>;
 	/** Display name lookup for {{DISPATCH_TARGET_NAME}} at fire time. */
 	logger?: {
 		info: (msg: string, context?: string) => void;
@@ -111,21 +118,32 @@ async function deliverCallback(
 
 	const prompt = renderCallbackPrompt({ fire, output });
 
+	// A callback only ever lands in the conversation that asked for it. With no
+	// such tab it opens a fresh one, never the caller's ACTIVE tab: that tab is
+	// whatever the user happens to be reading when the dispatch finishes, so the
+	// result arrived mid-thread in an unrelated conversation that then had to make
+	// sense of a plan it never made. Two cases have no tab: the dispatch came from
+	// a run with no tab at all (a Cue or bot run, which has exited by now), or the
+	// `--callback-tab` was closed while the dispatch ran.
+	const openTab = () => deps.openTab(entry.callerAgentId, prompt);
 	try {
-		let result = await deps.enqueue(entry.callerAgentId, prompt, entry.callerTabId);
-
-		// The caller closed its `--callback-tab` while the dispatch was running, so
-		// the wake has nowhere specific to land. Rather than drop it (the whole
-		// class of failure V1/W1 document), retry once at agent level - the exact
-		// path a `--notify-on-complete` without `--callback-tab` already takes, so
-		// the notification lands in the caller's active tab where the user sees it.
-		// Only this cause is retried: dropping the tab id fixes none of the others.
-		if (!result.success && entry.callerTabId && result.reason === 'tab-not-found') {
+		let result: { success: boolean; error?: string; reason?: string };
+		if (!entry.callerTabId) {
 			deps.logger?.info(
-				`Callback ${entry.callbackId}: caller tab ${entry.callerTabId} no longer exists, delivering to ${entry.callerAgentId} at agent level instead`,
+				`Callback ${entry.callbackId}: no caller tab, delivering to a new tab in ${entry.callerAgentId}`,
 				LOG_CONTEXT
 			);
-			result = await deps.enqueue(entry.callerAgentId, prompt);
+			result = await openTab();
+		} else {
+			result = await deps.enqueue(entry.callerAgentId, prompt, entry.callerTabId);
+			// Only a closed tab is retried: a new tab fixes none of the other causes.
+			if (!result.success && result.reason === 'tab-not-found') {
+				deps.logger?.info(
+					`Callback ${entry.callbackId}: caller tab ${entry.callerTabId} no longer exists, delivering to a new tab in ${entry.callerAgentId} instead`,
+					LOG_CONTEXT
+				);
+				result = await openTab();
+			}
 		}
 
 		if (!result.success) {
@@ -135,6 +153,7 @@ async function deliverCallback(
 			);
 			return;
 		}
+		await deps.onDelivered?.(fire);
 		deps.logger?.info(
 			`Callback ${entry.callbackId} delivered to ${entry.callerAgentId} (status=${fire.status})`,
 			LOG_CONTEXT

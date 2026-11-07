@@ -193,8 +193,10 @@ export async function probeAvailability(
 	if (!snapshot) return false;
 	if (snapshot.authState === 'unauthenticated') return false;
 
+	// No session window on the panel means it cannot be the limit that is holding.
 	return (
-		snapshot.session.percent < LIMIT_THRESHOLD && snapshot.weekAllModels.percent < LIMIT_THRESHOLD
+		(snapshot.session?.percent ?? 0) < LIMIT_THRESHOLD &&
+		snapshot.weekAllModels.percent < LIMIT_THRESHOLD
 	);
 }
 

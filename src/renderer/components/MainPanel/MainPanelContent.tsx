@@ -311,6 +311,8 @@ export interface MainPanelContentProps {
 	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	onRefreshModels?: () => void;
+	refreshingModels?: boolean;
 }
 
 export const MainPanelContent = React.memo(function MainPanelContent(props: MainPanelContentProps) {
@@ -478,6 +480,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		availableEfforts,
 		onModelChange,
 		onEffortChange,
+		onRefreshModels,
+		refreshingModels,
 	} = props;
 
 	// Chat and terminal each carry their own font and size; an unset value means
@@ -1181,6 +1185,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						availableEfforts={availableEfforts}
 						onModelChange={onModelChange}
 						onEffortChange={onEffortChange}
+						onRefreshModels={onRefreshModels}
+						refreshingModels={refreshingModels}
 					/>
 				</div>
 			)}

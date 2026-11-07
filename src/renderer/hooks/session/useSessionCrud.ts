@@ -33,6 +33,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { PeerGrants } from '../../../shared/peerAgents';
 import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -99,7 +100,8 @@ export interface UseSessionCrudReturn {
 		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
 		peerGrants?: PeerGrants,
 		/** Group defaults the create form has no control for; stamped onto the new agent. */
-		seedExtras?: GroupDefaultsCreateExtras
+		seedExtras?: GroupDefaultsCreateExtras,
+		harnessControlMode?: HarnessControlMode
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -204,7 +206,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
 			peerGrants?: PeerGrants,
 			/** Group defaults the create form has no control for; stamped onto the new agent. */
-			seedExtras?: GroupDefaultsCreateExtras
+			seedExtras?: GroupDefaultsCreateExtras,
+			harnessControlMode?: HarnessControlMode
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -316,6 +319,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customEnvVarsDisabled: seedExtras?.customEnvVarsDisabled,
 					tierTargets: seedExtras?.tierTargets,
 					systemOneOptOut: seedExtras?.systemOneOptOut,
+					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 					claudeInteractive: newAgentClaudeInteractive(agentId),
 				};
 

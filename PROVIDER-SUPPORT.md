@@ -18,6 +18,8 @@ The multi-provider refactoring has established the pluggable architecture for su
 | IPC API             | ✅ Complete | `window.maestro.agentSessions.*` replaces `claude.*`               |
 | UI Capability Gates | ✅ Complete | Features hidden/shown based on agent capabilities                  |
 
+For native steering, approval propagation, and interaction ownership, see [Native Harness Control](docs/agent-guides/NATIVE-HARNESS-CONTROL.md). ACP catalog membership alone is not a support or steering claim.
+
 ### Adding a New Agent
 
 To add support for a new agent, follow this checklist. The agent completeness test (`agent-completeness.test.ts`) will fail CI if any required step is missed.
@@ -42,6 +44,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
 14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
 15. **Declare translation support or explicit limitations**: follow the [Provider Translation Contract](#provider-translation-contract). Native History browsing, native resume, and cross-provider context translation are separate capabilities; do not infer one from another. This contract is an onboarding requirement, not an additional completeness-test check today.
+16. **If adding native protocol control**: register the provider in `src/shared/maestro-lib/providers/native-control.ts`, implement the adapter behind `HarnessControlHandle`, route interactions through `InteractionBroker`, and add protocol conformance plus owner/lifecycle coverage. Keep the current transport available per agent until live qualification passes.
 
 #### CI Enforcement
 

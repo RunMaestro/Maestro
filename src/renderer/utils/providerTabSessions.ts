@@ -33,6 +33,10 @@ import {
 	type RunOnTarget,
 } from '../../shared/local-models/run-on';
 import type { TierRouting } from '../../shared/modelTiers';
+import {
+	codifyTurnSettings as codifyBaseTurnSettings,
+	captureQueuedTurnSettings as captureBaseQueuedTurnSettings,
+} from '../../shared/queuedTurnSettings';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
 	projectTabProvider,
@@ -103,10 +107,8 @@ export function codifyTurnSettings(
 	const effort = tab?.customEffort ?? session.customEffort;
 	if (isAutoModel(model)) return codifyAutoTurn(tab, session, effort, route);
 	return {
-		turnProvider: session.toolType,
 		turnSessionId: tab?.agentSessionId || undefined,
-		turnModel: model,
-		turnEffort: effort,
+		...codifyBaseTurnSettings(tab, session),
 		...codifiedRunOn(session),
 		turnRunOnTarget: session.runOn ?? { type: 'provider' },
 		turnRouting: undefined,
@@ -321,13 +323,11 @@ export function captureQueuedTurnSettings(
 	// tab. `route` is the router's answer when the caller already has it (a
 	// snapshot of a turn that was just settled); it means nothing on a named model.
 	const model = tab?.customModel ?? session.customModel;
-	const effort = tab?.customEffort ?? session.customEffort;
 	return {
 		provider: session.toolType,
 		runOn: structuredClone(session.runOn ?? { type: 'provider' }),
 		routing: structuredClone(tierRoutingOf(session)),
-		model,
-		effort,
+		...captureBaseQueuedTurnSettings(tab, session),
 		...(route && isAutoModel(model) ? { route } : {}),
 	};
 }

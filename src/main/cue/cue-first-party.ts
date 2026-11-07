@@ -25,11 +25,13 @@
  */
 
 import type { FirstPartySupervisorHooks } from '../plugins/first-party-bridge';
+import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 
 /** The narrow slice of CueEngine the supervisor hooks need. */
 export interface CueEngineLifecycle {
 	isEnabled(): boolean;
-	start(reason: 'system-boot'): void;
+	start(reason: 'system-boot'): void | Promise<void>;
 	stop(): void;
 }
 
@@ -45,7 +47,11 @@ export function createCueSupervisorHooks(
 		reconcile: () => {
 			const engine = getEngine();
 			if (!engine || engine.isEnabled()) return;
-			engine.start('system-boot');
+			// start() is async; a rejection must be logged, not left unhandled.
+			void Promise.resolve(engine.start('system-boot')).catch((err: unknown) => {
+				void captureException(err);
+				logger.error(`Cue engine failed to start during reconcile: ${err}`, 'Cue');
+			});
 		},
 		stopAll: () => {
 			getEngine()?.stop();

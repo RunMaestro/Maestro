@@ -17,9 +17,15 @@
 
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
+import { hostCallerRuns } from '../../agent-run/caller-identity';
+import { CALLER_RUN_PROOF_HEADER } from '../../../shared/agentDelegation';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
-import { sendBounded } from '../services/socket-send';
+import {
+	acknowledgeWebSocketChunk,
+	enableWebSocketChunks,
+	sendBounded,
+} from '../services/socket-send';
 import type {
 	Theme,
 	WebClient,
@@ -150,6 +156,7 @@ export class WsRoute {
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+			if (url.searchParams.get('bridgeChunks') === '1') enableWebSocketChunks(socket);
 			const sessionId = url.searchParams.get('sessionId') || undefined;
 
 			// A web-desktop client reconnecting after a dropped socket says where it
@@ -179,12 +186,12 @@ export class WsRoute {
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 				// Same moment, same reason: only the upgrade carries the CLI secret.
 				...(auth.cli ? { cli: true } : {}),
-				isAuthorized: () => {
+				isAuthorized: (context) => {
 					if (admission && !admission(request)) {
 						socket.close(4403, 'Host admission expired or revoked');
 						return false;
 					}
-					const currentAuth = resolveWebRequestAuth(request);
+					const currentAuth = resolveWebRequestAuth(request, context);
 					if (!isWebRequestAuthorized(currentAuth)) {
 						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 						return false;
@@ -193,6 +200,17 @@ export class WsRoute {
 					return true;
 				},
 			};
+			// The upgrade header stays off message echoes, receipts and client serialization.
+			const callerProof = request.headers[CALLER_RUN_PROOF_HEADER];
+			if (callerProof !== undefined) {
+				try {
+					hostCallerRuns.bind(client, callerProof);
+				} catch (error) {
+					if (!(error instanceof Error) || error.message !== 'CallerRunUnavailable') throw error;
+					socket.close(WS_CLOSE_POLICY_VIOLATION, 'CallerRunUnavailable');
+					return;
+				}
+			}
 			const admissionCheck = admission
 				? setInterval(() => client.isAuthorized?.(), 1000)
 				: undefined;
@@ -317,6 +335,11 @@ export class WsRoute {
 				if (!client.isAuthorized?.()) return;
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
+					if ((data as { type: string }).type === 'bridge.chunkAck') {
+						if (client.isAuthorized?.() !== false)
+							acknowledgeWebSocketChunk(socket, (data as unknown as { offset: unknown }).offset);
+						return;
+					}
 					this.callbacks.handleMessage?.(clientId, data);
 				} catch {
 					sendBounded(

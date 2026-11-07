@@ -4,30 +4,51 @@ description: Send messages to agents, list sessions, run playbooks, and manage M
 icon: square-terminal
 ---
 
-Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. The CLI requires Node.js (which you already have if you're using Claude Code).
+Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. It runs on the Electron runtime that ships inside Maestro, so it needs no separate Node.js.
 
 ## Installation
 
-The CLI is bundled with Maestro as a JavaScript file. Create a shell wrapper to run it:
+The CLI is bundled with Maestro as a JavaScript file, `maestro-cli.js`, in the app's resources folder. It must run under the app's own executable with `ELECTRON_RUN_AS_NODE=1` set, not under a system `node`: its SQLite module (used by Cue, `maestro-cli host`, and `cue activity`) is built for the app's Electron and does not load in a system Node.js, so there `host start` reports Cue as failed and `cue activity` cannot read `cue.db`.
+
+The simplest way is to let the app write the wrapper: **Settings → General → Maestro CLI → Install / Update CLI**. It writes `~/.local/bin/maestro-cli` (`maestro-cli.cmd` on Windows) in exactly that form and adds `~/.local/bin` to your `PATH`. Run it again after moving or updating the app.
+
+To write the wrapper by hand, use the line for your install:
 
 ```bash
-# macOS (after installing Maestro.app)
-printf '#!/bin/bash\nnode "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+# macOS (Maestro.app in /Applications)
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "/Applications/Maestro.app/Contents/MacOS/Maestro" "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
 
-# Linux (deb/rpm installs to /opt)
-printf '#!/bin/bash\nnode "/opt/Maestro/resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
-
-# Windows (PowerShell as Administrator) - create a batch file
-@"
-@echo off
-node "%ProgramFiles%\Maestro\resources\maestro-cli.js" %*
-"@ | Out-File -FilePath "$env:ProgramFiles\Maestro\maestro-cli.cmd" -Encoding ASCII
+# Linux (deb or rpm, installed to /opt/Maestro)
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "/opt/Maestro/maestro" "/opt/Maestro/resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
 ```
 
-Alternatively, run directly with Node.js:
+**Linux AppImage.** A running AppImage lives in a temporary mount (`/tmp/.mount_*`) that disappears when it exits, so neither a hand-written wrapper nor **Install / Update CLI** run from the AppImage can point into it. Extract it once to a directory that stays, and point the wrapper there:
 
 ```bash
-node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
+# Extracts to ./squashfs-root; repeat after each AppImage update
+./maestro-<version>-x86_64.AppImage --appimage-extract
+mv squashfs-root "$HOME/maestro-app"    # any directory you keep
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "%s/maestro-app/maestro" "%s/maestro-app/resources/maestro-cli.js" "$@"\n' "$HOME" "$HOME" | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+```
+
+**Windows.** The installer puts Maestro in `%LOCALAPPDATA%\Programs\Maestro` when installed for the current user (the default), or in `%ProgramFiles%\Maestro` when installed for all users; you may also have picked another folder. Set `$MaestroDir` to yours, then run in PowerShell (no Administrator needed):
+
+```powershell
+$MaestroDir = "$env:LOCALAPPDATA\Programs\Maestro"   # or "$env:ProgramFiles\Maestro"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\bin" | Out-Null
+@"
+@echo off
+set "ELECTRON_RUN_AS_NODE=1"
+"$MaestroDir\Maestro.exe" "$MaestroDir\resources\maestro-cli.js" %*
+"@ | Out-File -FilePath "$env:USERPROFILE\.local\bin\maestro-cli.cmd" -Encoding ASCII
+```
+
+Then add `%USERPROFILE%\.local\bin` to your user `PATH`. The portable build (`Maestro-Portable-*.exe`) unpacks itself to a temporary folder on each launch and deletes it on exit, so it cannot back a wrapper; use the installer build for the CLI.
+
+To run a single command without a wrapper, use the same form directly:
+
+```bash
+ELECTRON_RUN_AS_NODE=1 "/Applications/Maestro.app/Contents/MacOS/Maestro" "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
 ```
 
 ## Usage
@@ -217,7 +238,8 @@ maestro-cli dispatch <agent-id> "start a new review pass" --new-tab --visible
 # Continue a previous dispatch by targeting its tab
 maestro-cli dispatch <agent-id> "and now run the tests" -t <tab-id>
 
-# Force a write to a busy tab (requires allowConcurrentSend=true)
+# Force a write into a tab that is itself mid-turn (requires allowConcurrentSend=true).
+# An idle tab of a busy agent needs no --force: it runs its own turn in parallel.
 maestro-cli dispatch <agent-id> "interrupt with this" -f
 
 # Pick how an @mention runs instead of leaving it to the wording
@@ -237,15 +259,15 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 
 | Flag               | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--new-tab`        | Create a fresh AI tab in the target agent and deliver the prompt into it. The tab is hidden: it is named from the prompt and runs normally, but draws no chip in the tab strip until you open it from the completion toast or the caller's delegation pill. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass)                                                     |
+| `--new-tab`        | Create a fresh AI tab in the target agent and deliver the prompt into it. The tab is hidden: it is named from the prompt and runs normally, but draws no chip in the tab strip until you open it from the completion toast or the caller's delegation pill. It runs now, even while another tab of the agent is mid-turn. Mutually exclusive with `-t` and `-f` (a new tab is never mid-turn, so there is nothing to force)                                                                                                                |
 | `--visible`        | With `--new-tab`: give the new tab a chip in the tab strip instead of creating it hidden. `--focus` implies it                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `--background`     | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `--focus`          | Move the view to the target after dispatching                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `-t, --tab <id>`   | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `-f, --force`      | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `-f, --force`      | Write into a tab that is itself mid-turn (two answers interleave in one conversation). Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. An idle tab of a busy agent needs no `--force`. Cannot be combined with `--new-tab`                                                                                                                                                                                                                                                                                           |
 | `--routing <mode>` | How the message's `@mentions` run, the same pick as the composer's routing strip: `parallel` (both answer; this agent waits for the reply), `consult-first` (the mentioned agent answers first), `handoff` (this agent's answer is sent on), or `only` (just the mentioned agents answer). Overrides what the wording implies. Works with `--queue` and `--new-tab`. Errors with `INVALID_OPTIONS` for an unknown mode or a message that mentions no other agent. Read it back with `queue list`, which shows each item's `mentionRouting` |
 
-Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
+Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `DISPATCH_REFUSED`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `DISPATCH_REFUSED` fires when the desktop declines the prompt, most often because the target tab is mid-turn (use `--queue` to wait for it). `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
 ### Dispatch with Callback (`--notify-on-complete`)
 
@@ -274,7 +296,7 @@ The response echoes the armed callback:
 | Flag                              | Description                                                                               |
 | --------------------------------- | ----------------------------------------------------------------------------------------- |
 | `--notify-on-complete <agent-id>` | Agent to wake when this dispatch finishes. Requires `--new-tab` or `--tab`                |
-| `--callback-tab <id>`             | Specific caller tab to wake. Default: the tab that ran `dispatch`, else the active AI tab |
+| `--callback-tab <id>`             | Specific caller tab to wake. Default: the tab that ran `dispatch`, else a new tab         |
 | `--callback-prompt <text>`        | Replace the default wake-up prompt body. `{{DISPATCH_*}}` variables below are substituted |
 | `--callback-timeout <seconds>`    | Give up and fire a `timeout` callback after this long. Default 3600, hard cap 86400       |
 
@@ -283,8 +305,10 @@ The response echoes the armed callback:
 - **Correlated.** The callback is bound to the `(target agent, target tab)` pair established at dispatch time, and only arms once the dispatched process actually starts. Other tabs of the same agent, and a predecessor turn a `--queue`d dispatch is waiting behind, never trigger it. This is why an explicit `--new-tab` or `--tab` is required.
 - **Fires exactly once**, on final completion. A second exit is a no-op.
 - **Auto Run aware.** If the dispatched prompt starts an Auto Run, the callback waits for the whole batch, not for task 1. A 6-task run wakes the caller once.
+- **Retry aware.** If the provider refuses the turn for quota or availability and Agent Resilience holds it for a resend, the callback waits for the resend and reports how that went. It reports `failed` only if the retry is stopped or given up, and the callback timeout still applies while it waits.
 - **Carries a handle, not just a slice.** The inlined result is capped at 5000 characters (same as Cue's `{{CUE_SOURCE_OUTPUT}}`); `{{DISPATCH_TARGET_ID}}` and `{{DISPATCH_TAB_ID}}` let the caller read the untruncated transcript with `maestro-cli session show <tabId>`.
 - **Busy-safe delivery.** The wake-up turn goes through the same execution queue `dispatch --queue` uses, so a busy caller gets it on its next idle turn instead of having it dropped or interleaved.
+- **Lands where it was asked for.** The wake-up goes to the tab that ran `dispatch` (or `--callback-tab`). When there is no such tab, because the dispatch came from a Cue or bot run, from your own shell, or the tab was closed meanwhile, it opens a new background tab in the caller agent. It never lands in whatever tab happens to be active.
 - **Self-cleaning.** Entries live in a main-process registry, never in `cue.yaml`. They expire on timeout and are dropped when the dispatch is rejected. They do not survive a desktop restart.
 - **Non-blocking.** The dispatching turn ends normally; the callback opens a new turn later.
 
@@ -1193,6 +1217,14 @@ maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
 
+# Pinned messages of an AI tab (default: the active tab; --tab names another).
+maestro-cli tab pins                                  # list, in transcript order
+maestro-cli tab pins add --last agent                 # pin the newest agent reply
+maestro-cli tab pins add <message-id> --tab <tab-id>  # pin one message
+maestro-cli tab pins rename <pin-id> Key decision     # no label restores the title
+maestro-cli tab pins remove <pin-id>
+maestro-cli tab pins show                             # open the pin panel (moves the view)
+
 # The tab menu's Context items. Each acts on the active tab unless you name one,
 # and prints the tab it produced. Merge and transfer move the transcript verbatim.
 maestro-cli tab compact -a <agent-id>                         # summarize into a new tab
@@ -1205,6 +1237,10 @@ maestro-cli unbookmark <agent-id>
 ```
 
 `tab reopen` prints the restored tab's new ID; without `-a` it acts on the agent selected in the desktop, and an empty stack or a bad `--index` / `--tab` exits 1 with a message. The closed-tab stack is kept across restarts, capped at 25 entries per agent.
+
+### Message Pins
+
+`tab pins` is the CLI half of the pin button on a message and the pin panel (see [Pinned Messages](./general-usage#pinned-messages)). Every verb answers with the tab's pins after it ran, so `--json` output is enough to verify a change. Only user messages and agent replies can be pinned. `add` takes any transcript entry ID (exact or a unique prefix; a later chunk of a streamed reply pins the whole reply) or `--last user|agent`, and pinning a message twice reports `alreadyPinned` instead of failing. A pin listed as `loaded: false` points at a message older than what the tab has read back. `remove` and `rename` take a pin ID (exact or a unique prefix). `show` selects the agent and the tab, then opens the panel; it refuses a tab with no pins.
 
 `tab compact` prints the compacted tab's ID and how much smaller its context is; it refuses a tab too small to compact. `tab merge` sends into the target agent's active tab unless `--target-tab` names another (another tab of the same agent works too); with `--background` the context waits on that tab and sends when it is next opened, which the output says. `tab transfer` prints the new tab's ID in the target agent; a busy target queues the context behind its running turn. A compaction can take minutes, so the CLI waits up to 10 minutes; if any of the three runs out of time it exits 5 and says the operation may still be running, rather than reporting a failure.
 
@@ -2645,11 +2681,13 @@ Starts the host as a detached process and returns once it is listening. The host
 
 `start` reports the pid, the port, the log file, and where Cue stands. A Cue that did not start does not fail the start: the host still serves turns and Auto Runs, and the output says Cue is not running and why.
 
-**Signals.** SIGTERM or SIGINT (`systemctl stop`, `systemctl restart`, Ctrl+C on `--foreground`) drains the host: it waits up to `--stop-grace` seconds for chat turns, Auto Runs, group chat rounds, consults, and Cue runs to finish, then stops. A second signal stops it at once. New work is not turned away during the wait, so work that starts in it is waited for too, up to the same deadline. Keep the grace below your service manager's own stop timeout (systemd sends SIGKILL after 90 seconds by default).
+**Signals.** SIGTERM or SIGINT (`systemctl stop`, `systemctl restart`, Ctrl+C on `--foreground`) drains the host: it waits up to `--stop-grace` seconds for chat turns, Auto Runs, group chat rounds, consults, and Cue runs to finish, then stops. A second signal stops it at once. New work is not turned away during the wait, so work that starts in it is waited for too, up to the same deadline. Keep the grace below your service manager's own stop timeout (systemd sends SIGKILL after 90 seconds by default), with a few seconds to spare: Cue runs still going when the grace runs out get up to about 7 more seconds to exit after they are stopped.
+
+Cue drains the way [`cue engine start`](/maestro-cue-server#stop) does. On the first signal every trigger is disarmed at once, so no subscription fires while the host waits, and events already accepted by Cue remain queued instead of run. Cue runs in flight get the same `--stop-grace`; the ones still running when it ends are stopped and recorded as `stopped`. Queued events and fan-ins still waiting on sources are saved and pick up on the next start of whichever Cue engine serves the data directory. A second signal stops every Cue run and kills its processes at once, and still saves the queue. `host stop` and a host that lost its data directory drain Cue the same way with no wait. Switching Cue off in the settings while the host runs is not a shutdown: it stops the runs and clears the queue, as on the desktop.
 
 ### `host status`
 
-Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
+Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. If another Cue engine takes the Cue lock over while the host runs (the host was suspended long enough for its lock to go stale, say), the host stops its Cue runs and gives Cue up, and the Cue state names the new holder (`not running here: desktop pid 1234 holds the Cue lock`) instead of `running`. The host does not take Cue back on its own: switching Cue off and on again in the settings, or restarting the host, tries again. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
 
 | Flag                | Description                        | Default                       |
 | ------------------- | ---------------------------------- | ----------------------------- |
@@ -2722,6 +2760,42 @@ maestro-cli cue list --json
 ```
 
 Shows each subscription's name, event type, agent, enabled status, and last trigger time.
+
+### Recent Runs
+
+```bash
+# The 20 newest runs across every agent
+maestro-cli cue activity
+
+# One agent's 5 newest, as JSON
+maestro-cli cue activity --agent <agent-id> --limit 5 --json
+```
+
+Each line is a run's start time, status (`running`, `completed`, `failed`), subscription, event type, and duration (or how long a running one has run so far).
+
+### Turning a Subscription On or Off
+
+```bash
+maestro-cli cue disable nightly-report
+maestro-cli cue enable nightly-report --agent <agent-id>
+```
+
+This writes the subscription's `enabled` flag into its cue.yaml, as the switch on the Cue dashboard does. Pass `--agent`, or the full id from `cue list --json`, when two agents share the name.
+
+### Where the Answer Comes From
+
+`cue list`, `cue activity`, `cue enable`, and `cue disable` ask whatever serves the data directory (`--data-dir`, or `MAESTRO_USER_DATA`, or the platform default):
+
+| Serving the data directory                                                                                      | `cue list` / `cue activity`                                                                                                                                                                                    | `cue enable` / `cue disable`                 |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| The desktop app                                                                                                 | The app's engine answers (run output included under `--json`)                                                                                                                                                  | The app's engine writes it                   |
+| `maestro-cli host`, running Cue                                                                                 | The host's engine answers, the same rows the desktop shows (run output included under `--json`)                                                                                                                | The host's engine writes it                  |
+| `maestro-cli host`, not running Cue (another engine holds the Cue lock, or Cue did not start), or an older host | Read from each agent's cue.yaml and from `cue.db`. A run in flight in another engine still reads `running`. Run output is not included even under `--json`, and a line on stderr says where the list came from | Refused, with the reason and what to do      |
+| Nothing (`cue activity` only)                                                                                   | Read from `cue.db`, with the same stderr note. `cue list` reports that the app is not running (exit 3)                                                                                                         | Reports that the app is not running (exit 3) |
+
+A host draining after SIGTERM or SIGINT keeps answering reads (`cue list` and `cue activity`) and refuses `cue enable`, `cue disable`, and `cue trigger` until its Cue runs have finished. `host stop` (any form) unpublishes first, so from then on reads fall back as if no host were running (`cue list` reports exit 3, `cue activity` reads `cue.db`). If another engine takes the Cue lock over from a host, the host stops answering for Cue, so reads come from disk and a refused change names the engine that now holds the lock.
+
+An older desktop build that does not know a command, or a peer that does not answer in time, is still reported as an error (exit 4 or 5): the CLI never covers a real failure with figures from disk. With Maestro Cue switched off in Encore Features every `cue` verb except `cue engine stop` is refused before it asks anyone (`cue engine stop` remains available so an existing standalone runner can be stopped). `cue pipeline` manages the desktop Pipeline Graph layout and is not served by a host; beside one it says so and points at cue.yaml.
 
 ### Scheduling Tasks
 
@@ -2959,7 +3033,7 @@ Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh
 
 ## Agent Integration
 
-Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS.
+Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS. That form runs on whatever `node` is on the agent's `PATH`, which is enough for every command that talks to the running app or host. The Cue commands that open `cue.db` themselves (`cue engine`, `host start`, and `cue activity` when neither the app nor the host answers for Cue) need the app's runtime when using the bundled Electron-built SQLite module, or Node with a compatible `better-sqlite3` build as described under [Installing on a Machine With No Desktop](#installing-on-a-machine-with-no-desktop).
 
 This means agents can:
 

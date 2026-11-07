@@ -1,3 +1,6 @@
+import { generateUUID } from '../../shared/uuid';
+import { isPianolaScopeId } from '../../shared/pianola/pianola-scope';
+import type { PianolaDispatchReceipt } from '../../shared/pianola/pianola-dispatch';
 // Dispatch command - hand off a prompt to the Maestro desktop app and return
 // addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
 // the same tab on follow-up calls without owning a persistent channel.
@@ -24,9 +27,15 @@ import type { ConsultChain } from '../../shared/consultBudget';
 import { ExitCode, exitWith } from '../exit-codes';
 
 export interface DispatchOptions {
+	dispatchId?: string;
 	newTab?: boolean;
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
+	/**
+	 * Write into a tab that is itself mid-turn (two answers interleaving in one
+	 * conversation). Gated by `allowConcurrentSend`. An idle tab of a busy agent
+	 * needs no force: it runs its own turn in parallel.
+	 */
 	force?: boolean;
 	/**
 	 * With `--new-tab`: draw the new tab's chip in the strip. Without it the tab
@@ -92,6 +101,11 @@ export interface DispatchOptions {
 const MAX_CALLBACK_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export interface DispatchResponse {
+	durable?: boolean;
+	queuedAccepted?: boolean;
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	success: boolean;
 	agentId?: string;
 	/** Tab id the prompt was delivered to. Identical to `tabId` - the duplicate
@@ -100,9 +114,9 @@ export interface DispatchResponse {
 	tabId?: string | null;
 	error?: string;
 	code?: string;
-	/** True when the prompt was queued (target busy); false when dispatched now.
-	 *  Set by the --queue path and by --new-tab, whose fresh tab inherits the
-	 *  agent's busy state and so queues behind the turn already running. */
+	/** True when the prompt was queued (target tab busy); false when dispatched
+	 *  now. Set by the --queue path. A desktop build older than this CLI may also
+	 *  report it for --new-tab at a busy agent. */
 	queued?: boolean;
 	/** True when --held queued the prompt paused; release it with `queue resume`. */
 	held?: boolean;
@@ -128,7 +142,9 @@ export interface DispatchResponse {
  * When an agent asks to be notified itself and names no `--callback-tab`, the
  * callback goes back to the tab that ran this command (from its stamped shell
  * identity). Falling back to the agent's ACTIVE tab dropped the result into
- * whatever unrelated conversation the user was viewing when the run finished.
+ * whatever unrelated conversation the user was viewing when the run finished,
+ * so a caller with no tab (a Cue or bot run, a human's shell) gets a new tab
+ * instead; main decides that at delivery time.
  */
 function buildCallbackFields(
 	options: DispatchOptions,
@@ -224,6 +240,17 @@ function buildCallbackFields(
 	};
 }
 
+/** A `command_result` refusal, carrying the desktop's reason and code. */
+class DispatchRefusedError extends Error {
+	constructor(
+		message: string,
+		readonly code: string
+	) {
+		super(message);
+		this.name = 'DispatchRefusedError';
+	}
+}
+
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
 }
@@ -255,6 +282,10 @@ function callbackNotArmedResponse(agentId: string, tabId: string | null): Dispat
 
 /** What an accepted `new_ai_tab_with_prompt` or `send_command` reply said. */
 interface DispatchedPrompt {
+	refused?: string;
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	tabId?: string;
 	callbackId?: string;
 	queued: boolean;
@@ -268,6 +299,10 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	}
 	if (error instanceof UnsupportedCommandError) {
 		return { success: false, error: error.message, code: 'UNSUPPORTED' };
+	}
+	// The desktop's own reason and code, passed through rather than re-sniffed.
+	if (error instanceof DispatchRefusedError) {
+		return { success: false, error: error.message, code: error.code };
 	}
 	const msg = error instanceof Error ? error.message : String(error);
 	// Checked before the substring sniffing below: this reason came from the
@@ -319,6 +354,12 @@ export async function runDispatch(
 	message: string,
 	options: DispatchOptions
 ): Promise<DispatchResponse> {
+	if (options.dispatchId && !isPianolaScopeId(options.dispatchId))
+		return {
+			success: false,
+			error: '--dispatch-id requires a UUID',
+			code: 'INVALID_OPTIONS',
+		};
 	if (options.newTab && options.tab) {
 		return {
 			success: false,
@@ -335,29 +376,31 @@ export async function runDispatch(
 		};
 	}
 
-	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
-	// and a prompt that cannot start because the AGENT is mid-turn is queued for
-	// the new tab rather than rejected. Reject the combo rather than silently
-	// ignoring --force, which would mismatch the help text and confuse callers
-	// debugging why nothing is being bypassed.
+	// `--new-tab --force` is meaningless - a fresh tab is never mid-turn, so
+	// there is nothing to bypass; it runs now even while another tab of the
+	// agent is working. Reject the combo rather than silently ignoring --force,
+	// which would mismatch the help text and confuse callers debugging why
+	// nothing is being bypassed.
 	if (options.newTab && options.force) {
 		return {
 			success: false,
-			error: '--new-tab cannot be combined with --force (a new tab owns no turn to bypass)',
+			error:
+				'--new-tab cannot be combined with --force (a new tab is never mid-turn, so it already runs now)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
 
 	// --queue is the safe counterpart to --force: instead of bypassing the busy
 	// guard, it respects it by waiting in line. Combining the two is
-	// contradictory. And --new-tab already does what --queue asks for - a prompt
-	// it cannot start now waits in the agent's queue - so the flag is redundant
-	// there; reject both combos rather than silently ignoring --queue.
+	// contradictory. And --queue waits for a busy TAB, which a fresh --new-tab
+	// never is, so the flag is meaningless there; reject both combos rather than
+	// silently ignoring --queue.
 	const queue = options.queue === true || options.wait === true || options.held === true;
 	if (queue && options.newTab) {
 		return {
 			success: false,
-			error: '--queue cannot be combined with --new-tab (--new-tab already queues a busy agent)',
+			error:
+				'--queue cannot be combined with --new-tab (a new tab is never busy, so there is no line to wait in)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
@@ -376,7 +419,8 @@ export async function runDispatch(
 	}
 
 	// --force is gated by the `allowConcurrentSend` setting. It's off by default
-	// because concurrent writes can interleave responses in the target tab.
+	// because a second turn in a tab that is already mid-turn interleaves two
+	// responses in one conversation. An idle tab of a busy agent never needs it.
 	if (options.force) {
 		const stored = readSettingValue('allowConcurrentSend');
 		const allowConcurrentSend =
@@ -454,11 +498,17 @@ export async function runDispatch(
 			...chain,
 		});
 	}
+	const dispatchId = options.dispatchId ?? generateUUID();
+	let awaitingDispatchAck = false;
 	try {
 		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
 			if (options.newTab) {
+				awaitingDispatchAck = true;
 				const result = await client.sendCommand<{
 					success?: boolean;
+					dispatchId?: string;
+					admission?: PianolaDispatchReceipt;
+					unknown?: boolean;
 					tabId?: string;
 					callbackId?: string;
 					queued?: boolean;
@@ -466,6 +516,7 @@ export async function runDispatch(
 				}>(
 					{
 						type: 'new_ai_tab_with_prompt',
+						dispatchId: dispatchId,
 						sessionId: agentId,
 						prompt: message,
 						// Background by default: a dispatched prompt is an agent talking to
@@ -481,12 +532,13 @@ export async function runDispatch(
 					},
 					'new_ai_tab_with_prompt_result'
 				);
+				awaitingDispatchAck = false;
 				// An explicit refusal is reported with the desktop's OWN reason.
 				// `sendCommand` resolves on any reply, success or not, so a refusal
 				// carrying no tab id used to fall through to the NEW_TAB_NO_ID branch
 				// below and be reported as a protocol fault - which is the one thing
 				// it is not (#1602).
-				if (result.success === false) {
+				if (result.success === false && !result.unknown) {
 					throw new Error(
 						`NEW_TAB_REFUSED:${result.error || 'Maestro desktop refused the dispatch'}`
 					);
@@ -497,26 +549,35 @@ export async function runDispatch(
 				// code so consumers (Maestro-Discord, Cue) can distinguish this
 				// from a generic command failure instead of silently returning
 				// `tabId: null` from a "successful" response.
-				if (!result.tabId) {
+				if (!result.tabId && !result.unknown) {
 					throw new Error('NEW_TAB_NO_ID: new_ai_tab_with_prompt acknowledged without a tabId');
 				}
 				return {
 					tabId: result.tabId,
+					...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+					...(result.admission ? { admission: result.admission } : {}),
+					...(result.unknown ? { unknown: true } : {}),
 					callbackId: result.callbackId,
 					queued: result.queued === true,
 				};
 			}
+			awaitingDispatchAck = true;
 			const result = await client.sendCommand<{
 				success?: boolean;
+				unknown?: boolean;
+				dispatchId?: string;
+				admission?: PianolaDispatchReceipt;
 				tabId?: string;
 				callbackId?: string;
 				queued?: boolean;
 				itemId?: string;
 				queuePosition?: number;
 				error?: string;
+				code?: string;
 			}>(
 				{
 					type: 'send_command',
+					dispatchId: dispatchId,
 					sessionId: agentId,
 					command: message,
 					inputMode: 'ai',
@@ -537,18 +598,29 @@ export async function runDispatch(
 				'command_result'
 			);
 			// Same rule as the new-tab branch above: `sendCommand` resolves on any
-			// reply, so a `command_result` that says `success: false` (a headless
-			// host refusing what it cannot do, or the desktop renderer turning the
-			// command away) has to be read here. Reporting it as delivered would
-			// tell the caller a message landed that was in fact dropped.
-			if (result.success === false) {
-				throw new Error(`DISPATCH_REFUSED:${result.error || 'Maestro refused the message'}`);
+			// reply, so a `command_result` that says `success: false` (target tab
+			// mid-turn, tab gone, agent missing, a headless host refusing what it
+			// cannot do) has to be read here. Reporting it as delivered would tell
+			// the caller a message landed that was in fact dropped.
+			awaitingDispatchAck = false;
+			if (result.success === false && !result.unknown) {
+				if (!result.admission)
+					throw new DispatchRefusedError(
+						result.error || 'Maestro refused the message',
+						result.code || 'DISPATCH_REFUSED'
+					);
 			}
 			return {
 				tabId: result.tabId,
+				...(result.success === false && !result.unknown
+					? { refused: result.error || 'Maestro refused the message' }
+					: {}),
+				...(result.unknown ? { unknown: true } : {}),
+				...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+				...(result.admission ? { admission: result.admission } : {}),
 				callbackId: result.callbackId,
-				// The desktop turns a busy agent away; a headless host queues the
-				// message behind the running turn and says so.
+				// A headless host queues the message behind the running turn and
+				// says so; the desktop answers a busy target tab with a refusal.
 				queued: result.queued === true,
 				itemId: result.itemId,
 				queuePosition: result.queuePosition,
@@ -559,16 +631,32 @@ export async function runDispatch(
 		// build / no active tab known), fall back to the value the caller
 		// supplied so callers can still chain dispatches deterministically.
 		const resolvedTabId = dispatched.tabId ?? options.tab ?? null;
-		if (callback.callerAgentId && !dispatched.callbackId) {
+		if (
+			callback.callerAgentId &&
+			!dispatched.callbackId &&
+			!dispatched.unknown &&
+			!dispatched.refused
+		) {
 			return callbackNotArmedResponse(agentId, resolvedTabId);
 		}
 		return {
-			success: true,
+			success: !dispatched.unknown && !dispatched.refused,
+			...(dispatched.refused ? { code: 'DISPATCH_REFUSED', error: dispatched.refused } : {}),
+			...(dispatched.dispatchId ? { dispatchId: dispatched.dispatchId } : {}),
+			...(dispatched.admission ? { admission: dispatched.admission } : {}),
+			...(dispatched.unknown
+				? {
+						unknown: true,
+						code: 'DISPATCH_UNKNOWN',
+						error:
+							'Delivery is unknown; reconcile with the same dispatch ID. Do not send a new dispatch.',
+					}
+				: {}),
 			agentId,
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
-			// `--new-tab` at a working agent creates the tab and queues the prompt
-			// behind the turn already running, so say which of the two happened.
+			// A queued reply (a slash command for a fresh tab, a headless host
+			// behind a running turn) says so, rather than reading as dispatched now.
 			...(dispatched.queued ? { queued: true } : {}),
 			...(dispatched.queued && dispatched.queuePosition !== undefined
 				? { queuePosition: dispatched.queuePosition }
@@ -578,6 +666,16 @@ export async function runDispatch(
 			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};
 	} catch (error) {
+		if (awaitingDispatchAck)
+			return {
+				success: false,
+				unknown: true,
+				dispatchId: dispatchId,
+				agentId,
+				code: 'DISPATCH_UNKNOWN',
+				error:
+					'The host acknowledgment was lost. Reconcile with the same dispatch ID; do not send a new dispatch.',
+			};
 		return mapDispatchError(error, agentId);
 	}
 }
@@ -600,10 +698,18 @@ async function runQueueDispatch(
 	/** Who is dispatching and the target's place in the consult chain. */
 	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
+	const dispatchId = options.dispatchId ?? generateUUID();
+	let awaitingQueueAck = false;
 	try {
-		const result = await withMaestroClient(async (client) =>
-			client.sendCommand<{
+		const result = await withMaestroClient(async (client) => {
+			awaitingQueueAck = true;
+			const reply = await client.sendCommand<{
 				success?: boolean;
+				durable?: boolean;
+				queuedAccepted?: boolean;
+				unknown?: boolean;
+				dispatchId?: string;
+				admission?: PianolaDispatchReceipt;
 				tabId?: string;
 				queued?: boolean;
 				queuePosition?: number;
@@ -614,6 +720,7 @@ async function runQueueDispatch(
 			}>(
 				{
 					type: 'enqueue_command',
+					dispatchId,
 					sessionId: agentId,
 					command: message,
 					inputMode: 'ai',
@@ -625,9 +732,24 @@ async function runQueueDispatch(
 					...callerFields,
 				},
 				'enqueue_command_result'
-			)
-		);
+			);
+			awaitingQueueAck = false;
+			return reply;
+		});
 
+		if (result.unknown || result.admission?.outcome === 'unknown')
+			return {
+				success: false,
+				unknown: true,
+				code: 'DISPATCH_UNKNOWN',
+				agentId,
+				dispatchId,
+				tabId: result.tabId ?? options.tab ?? null,
+				itemId: result.itemId,
+				admission: result.admission,
+				error:
+					'Queue admission unknown. Reconcile with the same --dispatch-id; do not resend with a new ID.',
+			};
 		if (result.success === false) {
 			const err = result.error ?? 'Enqueue failed';
 			const lower = err.toLowerCase();
@@ -636,7 +758,7 @@ async function runQueueDispatch(
 				: lower.startsWith('tab not found')
 					? 'TAB_NOT_FOUND'
 					: 'ENQUEUE_FAILED';
-			return { success: false, error: err, code };
+			return { success: false, error: err, code, dispatchId, admission: result.admission };
 		}
 
 		const resolvedTabId = result.tabId ?? options.tab ?? null;
@@ -648,7 +770,13 @@ async function runQueueDispatch(
 			agentId,
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
+			...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+			...(result.admission ? { admission: result.admission } : {}),
 			queued: result.queued === true,
+			...(typeof result.durable === 'boolean' ? { durable: result.durable } : {}),
+			...(typeof result.queuedAccepted === 'boolean'
+				? { queuedAccepted: result.queuedAccepted }
+				: {}),
 			...(options.held && result.queued ? { held: true } : {}),
 			...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 			...(result.itemId ? { itemId: result.itemId } : {}),
@@ -658,10 +786,24 @@ async function runQueueDispatch(
 				: {}),
 		};
 	} catch (error) {
+		if (awaitingQueueAck)
+			return {
+				success: false,
+				unknown: true,
+				dispatchId,
+				agentId,
+				code: 'DISPATCH_UNKNOWN',
+				error:
+					'Queue acknowledgment lost. Reconcile with the same --dispatch-id; do not resend with a new ID.',
+			};
 		return mapDispatchError(error, agentId);
 	}
 }
 
+/**
+ * Print the dispatch receipt and exit with the CLI error code on failure. Preserve admission
+ * and unknown outcomes in JSON so callers can reconcile without resending.
+ */
 export async function dispatch(
 	agentIdArg: string,
 	message: string,
@@ -670,7 +812,8 @@ export async function dispatch(
 	const result = await runDispatch(agentIdArg, message, options);
 
 	if (!result.success) {
-		emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
+		if (result.unknown || result.admission) console.log(JSON.stringify(result, null, 2));
+		else emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
 		exitWith(
 			result.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError
 		);
@@ -684,7 +827,11 @@ export async function dispatch(
 				agentId: result.agentId,
 				sessionId: result.sessionId,
 				tabId: result.tabId,
+				...(result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+				...(result.admission ? { admission: result.admission } : {}),
 				...(result.queued !== undefined ? { queued: result.queued } : {}),
+				...(result.durable !== undefined ? { durable: result.durable } : {}),
+				...(result.queuedAccepted !== undefined ? { queuedAccepted: result.queuedAccepted } : {}),
 				...(result.held ? { held: true } : {}),
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 				...(result.itemId ? { itemId: result.itemId } : {}),

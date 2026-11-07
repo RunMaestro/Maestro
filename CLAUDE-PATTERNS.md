@@ -4,15 +4,16 @@ Core implementation patterns for the Maestro codebase. For the main guide, see [
 
 ## 1. Process Management
 
-Each agent runs **two processes** simultaneously:
+Each agent runs one process **per tab**, keyed by a composite id:
 
-- AI agent process (Claude Code, etc.) - spawned with `-ai` suffix
-- Terminal process (PTY shell) - spawned with `-terminal` suffix
+- AI tab: `{sessionId}-ai-{tabId}` (the bare `{sessionId}-ai` form is legacy; see `src/renderer/utils/sessionIdParser.ts`)
+- Terminal tab: `{sessionId}-terminal-{tabId}` (`getTerminalSessionId()` in `src/renderer/utils/terminalTabHelpers.ts`)
 
 ```typescript
-// Agent stores both PIDs (code interface: Session object)
-session.aiPid; // AI agent process
-session.terminalPid; // Terminal process
+// Code interface: Session object
+session.aiPid; // AI process (0 for batch-mode agents, which spawn per message)
+session.terminalTabs[n].pid; // Each terminal tab owns its own PTY pid
+// session.terminalPid is DEPRECATED - do not read or write it
 ```
 
 ## 2. Security Requirements
@@ -32,16 +33,18 @@ const result = await execFileNoThrow('git', ['status'], cwd);
 Settings live in the zustand store `src/renderer/stores/settingsStore.ts`, not in component state. A new setting touches four files, and skipping the hydration mapping is the classic "setting resets on restart" bug:
 
 1. `src/shared/settingsMetadata.ts` - the `SETTINGS_METADATA` entry (`description`, `type`, `default`, `category`).
-2. `src/renderer/stores/settingsStore.ts` - interface field, setter signature, initial-state default, setter action (which must call `window.maestro.settings.set`), and the `allSettings[...]` hydration mapping.
+2. `src/renderer/stores/settingsStore.ts` (or the matching `settings*Slice.ts` domain slice) - interface field, setter signature, initial-state default, setter action (which must call `window.maestro.settings.set`), and the `allSettings[...]` hydration mapping.
 3. `src/renderer/hooks/settings/useSettings.ts` - the field and setter on `UseSettingsReturn`.
 4. `src/main/stores/defaults.ts` - only when `MaestroSettings` requires the key.
 
 The full six-step checklist, with the Settings modal style rules, is [[CLAUDE-SETTINGS.md]] §9.
 
+Skipping step 3 is the classic "setting resets on restart" bug. Full checklist, including metadata and `defaults.ts`: [[CLAUDE-SETTINGS.md]] §9.
+
 **MANDATORY: Register the setting with Settings Search.** Every user-facing setting must be findable from the Settings modal search bar (Cmd+F). Two steps, both required:
 
 1. Wrap the rendered control in `<div data-setting-id="<tab>-<slug>">…</div>` inside the appropriate tab file (e.g., `src/renderer/components/Settings/tabs/GeneralTab/GeneralTab.tsx`). The id must be unique and kebab-case.
-2. Add a matching entry to the corresponding array in `src/renderer/components/Settings/searchableSettings.ts` (`GENERAL_SETTINGS`, `DISPLAY_SETTINGS`, etc.) with `id`, `tab`, `tabLabel`, `label`, `description`, and `keywords` covering every visible string a user might type after seeing the section in the UI.
+2. Add a matching entry to the per-tab registry file (`searchableSettingsGeneral.ts`, `searchableSettingsDisplay.ts`, `searchableSettingsMisc.ts`, `searchableSettingsNotifications.ts`, `searchableSettingsEncore.ts` under `src/renderer/components/Settings/`; `searchableSettings.ts` only composes them) with `id`, `tab`, `tabLabel`, `label`, `description`, and `keywords` covering every visible string a user might type after seeing the section in the UI.
 
 The DOM-parity test at `src/__tests__/renderer/components/Settings/searchableSettings.test.ts` enforces both directions (rendered-id ↔ registry-entry). It will fail CI if either is missing. For any new visible string you want guaranteed-findable, add a query to the `it.each` block in that test.
 
@@ -49,7 +52,8 @@ The DOM-parity test at `src/__tests__/renderer/components/Settings/searchableSet
 
 1. Create component in `src/renderer/components/`
 2. Add priority in `src/renderer/constants/modalPriorities.ts`
-3. Register with the layer stack through `useModalLayer()` (`src/renderer/hooks/ui/useModalLayer.ts`). Do NOT hand-roll `registerLayer()` / `unregisterLayer()` in an effect, and do not handle Escape locally:
+3. Add its open/closed state to the `ModalId` union in `src/renderer/stores/modalStore.ts`
+4. Register with the layer stack through `useModalLayer()` (`src/renderer/hooks/ui/useModalLayer.ts`), or build on `ui/Modal.tsx`, which already calls it. Do NOT hand-roll `registerLayer()` / `unregisterLayer()` in an effect, and do not handle Escape locally:
 
 ```typescript
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -62,6 +66,8 @@ function MyModal({ onClose }: { onClose: () => void }) {
 ```
 
 Pass `{ enabled: isOpen }` in the options to skip registration without unmounting the host, and `blocksAppShortcuts: false` for a passive panel that registers only so Escape closes it. A surface the user opens also needs its hotkey, palette entry, menu item, and `UI_SURFACES` row: see [UI-PATTERNS.md → Every Surface Needs Three Ways In](docs/agent-guides/UI-PATTERNS.md#every-surface-needs-three-ways-in-and-two-ways-out).
+
+Why not `registerLayer()` by hand: `BaseLayer` also requires `blocksLowerLayers`, `capturesFocus` and `focusTrap` (`src/renderer/types/layer.ts`), and the hook owns registration, unregistration and escape-handler updates.
 
 **Max size:** The Maestro Cue modal (`90vw x 90vh`) is the maximum modal footprint - no modal, including "expanded"/"fullscreen" states, should exceed it (never `w-screen h-screen`). See [UI-PATTERNS.md → Modal Sizing](docs/agent-guides/UI-PATTERNS.md#modal-sizing-max-footprint).
 
@@ -80,17 +86,23 @@ Agents support multiple AI conversation tabs and file preview tabs in a unified 
 
 ### Critical Invariant: `unifiedTabOrder` Must Stay in Sync
 
-**Every tab in `aiTabs` or `filePreviewTabs` MUST have a corresponding entry in `unifiedTabOrder`.** The TabBar renders from `unifiedTabOrder` - tabs missing from this array are invisible even if their content renders.
+**Every tab in `aiTabs`, `filePreviewTabs`, `browserTabs` or `terminalTabs` MUST have a corresponding entry in `unifiedTabOrder`.** The TabBar renders from `unifiedTabOrder` - tabs missing from this array are invisible even if their content renders.
 
 ```typescript
-// Session tab state (three arrays that MUST stay in sync)
+// Session tab state (four typed arrays that MUST stay in sync with the order)
 session.aiTabs: AITab[]                    // AI conversation tab data
 session.filePreviewTabs: FilePreviewTab[]  // File preview tab data
+session.browserTabs: BrowserTab[]          // Embedded browser tab data
+session.terminalTabs: TerminalTab[]        // Terminal tab data (one PTY each)
 session.unifiedTabOrder: UnifiedTabRef[]   // Visual order - TabBar source of truth
 
-session.activeTabId: string                // Active AI tab
-session.activeFileTabId: string | null     // Active file tab (null if AI tab active)
+session.activeTabId: string                   // Active AI tab
+session.activeFileTabId: string | null        // Active file tab (null if not a file tab)
+session.activeBrowserTabId: string | null     // Active browser tab
+session.activeTerminalTabId: string | null    // Active terminal tab
 ```
+
+Only one of the non-AI selections may be set; see the `*FocusFields` helpers in [[CLAUDE.md]] for the render precedence.
 
 ### When Adding Tabs
 
@@ -130,7 +142,7 @@ return {
 
 ### Shared Utilities (`tabHelpers`)
 
-- **`buildUnifiedTabs(session)`** - Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth used by both `useTabHandlers.ts` and `tabStore.ts`.
+- **`buildUnifiedTabs(session)`** - Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth for `TabBar.tsx`, `hooks/tabs/internal/useTabDerivedState.ts`, `useFilePreviewTabHandlers.ts` and `utils/unifiedTabOrderUtils.ts`.
 - **`ensureInUnifiedTabOrder(order, type, id)`** - Returns order unchanged if tab is present, appends it otherwise. Zero-cost no-op when no repair needed (returns same reference).
 
 ## 7. Execution Queue
@@ -138,16 +150,22 @@ return {
 Messages are queued when the AI is busy:
 
 ```typescript
-// Queue items for sequential execution
+// src/renderer/types/index.ts
+type QueuedItemType = 'message' | 'command';
 interface QueuedItem {
-	type: 'message' | 'slashCommand';
-	content: string;
+	id: string;
 	timestamp: number;
+	tabId: string; // Target tab, re-resolved at drain time
+	type: QueuedItemType;
+	text?: string; // type 'message'
+	images?: string[];
+	command?: string; // type 'command' (e.g. '/commit'), plus commandArgs / commandDescription
+	tabName?: string; // Last-known label, FALLBACK only
+	turnSettings?: ...; // Frozen at queue time via captureQueuedTurnSettings()
 }
-
-// Add to queue instead of sending directly when busy
-session.executionQueue.push({ type: 'message', content, timestamp: Date.now() });
 ```
+
+Build items with `buildQueuedMessageItem()` / `enqueuePromptForTab()` (`src/renderer/services/queuedPrompt.ts`) rather than pushing a literal onto `session.executionQueue`; see the queue entries in [[CLAUDE.md]].
 
 ## 8. Auto Run
 
@@ -159,10 +177,10 @@ session.autoRunFolderPath?: string;    // Document folder path
 session.autoRunSelectedFile?: string;  // Currently selected document
 session.autoRunMode?: 'edit' | 'preview';
 
-// API for Auto Run operations
-window.maestro.autorun.listDocuments(folderPath);
-window.maestro.autorun.readDocument(folderPath, filename);
-window.maestro.autorun.saveDocument(folderPath, filename, content);
+// API for Auto Run operations (src/main/preload/autorun.ts); sshRemoteId is optional on each
+window.maestro.autorun.listDocs(folderPath, sshRemoteId);
+window.maestro.autorun.readDoc(folderPath, filename, sshRemoteId);
+window.maestro.autorun.writeDoc(folderPath, filename, content, sshRemoteId);
 ```
 
 **Worktree Support:** Auto Run can operate in a git worktree, allowing users to continue interactive editing in the main repo while Auto Run processes tasks in the background. When `batchRunState.worktreeActive` is true, read-only mode is disabled and a git branch icon appears in the UI. See `useBatchProcessor.ts` for worktree setup logic.
@@ -192,66 +210,25 @@ Documents can reference assets using `{{AUTORUN_FOLDER}}/assets/filename`. The m
 
 ## 9. Tab Hover Overlay Menu
 
-AI conversation tabs display a hover overlay menu after a 400ms delay when hovering over tabs with an established provider session. The overlay includes tab management and context operations:
+Every tab chip (AI, file, terminal, browser, group) opens an action menu on hover; on a touch screen it opens on long-press instead. Three shared pieces, no per-chip timers or portals:
 
-**Menu Structure:**
+- **`useTabHoverOverlay()`** (`src/renderer/hooks/tabs/useTabHoverOverlay.ts`) owns timing and position: 400ms to open, 100ms grace on leave so the pointer can cross from chip to menu, anchored at the chip's `rect.bottom` / `rect.left`. Pass `shouldOpen` to gate it; the AI tab's rule is "open unless this is the ONLY tab and it has neither a provider session nor logs" (`TabBar/AITab.tsx`).
+- **`<LongPressable>`** (`src/renderer/components/shared/LongPressable.tsx`) wraps each chip: tap selects, `onLongPress={openOverlay}` opens the menu. `draggable` is off on coarse pointers because a long-press is also how the OS starts an HTML5 drag.
+- **`<TabOverlayPortal>`** (`src/renderer/components/TabBar/TabOverlayPortal.tsx`) renders the menu: a `fixed z-[100]` portal on desktop, a `<PhoneBottomSheet>` on a phone (where an anchored menu ran off the bottom of the screen). The menu content is the same in both shapes.
 
-```typescript
-// Tab operations (always shown)
-- Copy Session ID (if provider session exists)
-- Star/Unstar Session (if provider session exists)
-- Rename Tab
-- Mark as Unread
+**AI tab menu** (`TabBar/AITabOverlayMenu.tsx`), top to bottom:
 
-// Context management (shown when applicable)
-- Context: Compact (if tab has 5+ messages)
-- Context: Merge Into (if provider session exists)
-- Context: Send to Agent (if provider session exists)
-
-// Tab close actions (always shown)
-- Close (disabled if only one tab)
-- Close Others (disabled if only one tab)
-- Close Tabs to the Left (disabled if first tab)
-- Close Tabs to the Right (disabled if last tab)
+```
+Copy Session ID / Copy Deep Link / Star Session   (provider session exists)
+Rename Tab / Mark as Unread / Export as HTML / Snooze Tab
+Context: Copy to Clipboard / Copy with Reasoning / Compact (5+ messages)
+Context: Merge Into / Send to Agent               (tab has at least one log entry)
+Context: Publish as GitHub Gist
+Move to First Position / Move to Last Position
+Close Tab / Close Other Tabs / Close Tabs to Left / Close Tabs to Right
 ```
 
-**Implementation Pattern:**
-
-```typescript
-const [overlayOpen, setOverlayOpen] = useState(false);
-const [overlayPosition, setOverlayPosition] = useState<{ top: number; left: number } | null>(null);
-
-const handleMouseEnter = () => {
-  if (!tab.agentSessionId) return; // Only for tabs with provider sessions
-
-  hoverTimeoutRef.current = setTimeout(() => {
-    if (tabRef.current) {
-      const rect = tabRef.current.getBoundingClientRect();
-      setOverlayPosition({ top: rect.bottom + 4, left: rect.left });
-    }
-    setOverlayOpen(true);
-  }, 400);
-};
-
-// Render overlay via portal to escape stacking context
-{overlayOpen && overlayPosition && createPortal(
-  <div style={{ top: overlayPosition.top, left: overlayPosition.left }}>
-    {/* Overlay menu items */}
-  </div>,
-  document.body
-)}
-```
-
-**Key Features:**
-
-- Appears after 400ms hover delay (only for tabs with `agentSessionId`)
-- Fixed positioning at tab bottom
-- Mouse can move from tab to overlay without closing
-- Disabled states with visual feedback (opacity-40, cursor-default)
-- Theme-aware styling
-- Dividers separate action groups
-
-See `src/renderer/components/TabBar/TabBar.tsx` (Tab component) for implementation details.
+Disabled items keep their row with `opacity-40` and `cursor-default`; dividers separate the groups; every chord badge is a `<ShortcutHint>` (hidden on phones via `data-shortcut-hint`). See `TabBar/AITab.tsx` for the wiring and `FileTab.tsx` / `TerminalTabItem.tsx` / `BrowserTabItem.tsx` / `GroupTabChip.tsx` for the other chips.
 
 ## 10. SSH Remote Agents
 
@@ -365,46 +342,32 @@ element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 
 ## 12. Encore Features (Feature Gating)
 
-Optional features that not all users need should be gated behind Encore Features - disabled by default, completely invisible when off (no shortcuts, menus, or command palette entries).
+Optional features are gated behind Encore Features and are completely invisible when off (no shortcuts, menus, or command palette entries). Each one is a tile in the Settings **Plugins** tab (`EncoreTab`, which IS the Extensions marketplace). Defaults are per feature: `directorNotes`, `usageStats`, `symphony` and `maestroCue` ship ON, the rest OFF.
 
-**Critical architecture detail:** `encoreFeatures` state lives in App.tsx's `useSettings()` and is passed to SettingsModal as **props** (not consumed via SettingsModal's own `useSettings()`). This ensures toggles propagate immediately to App.tsx for gating.
+**One copy of the defaults.** `ENCORE_FEATURE_DEFAULTS` in `src/shared/encoreFeatureDefaults.ts` is spread into both `settingsStore.ts` and `src/main/stores/defaults.ts`; main reads the raw store for its own gates (Cue engine boot, stats recording), so a renderer-only default used to show a feature as on while main treated it as off. `SettingsModal` and `EncoreTab` are self-sourced from `useSettings()`; nothing is threaded through as props.
 
 ### Gating Checklist
 
 When adding a new Encore Feature, gate **all** access points:
 
-1. **Type flag** - Add to `EncoreFeatureFlags` in `src/renderer/types/index.ts`
-2. **Default** - Set to `false` in `ENCORE_FEATURE_DEFAULTS` in `src/shared/encoreFeatureDefaults.ts` (the renderer store reads it as `DEFAULT_ENCORE_FEATURES` in `src/renderer/stores/settingsStore.ts`)
-3. **Toggle UI** - Add section in SettingsModal's Encore tab (follow Director's Notes pattern)
-4. **App.tsx** - Gate modal rendering and callback props on `encoreFeatures.yourFeature`
+1. **Flag** - Add the key to `ENCORE_FEATURE_DEFAULTS` (`src/shared/encoreFeatureDefaults.ts`), to `EncoreFeatureFlags` in `src/renderer/types/index.ts`, and to the `FirstPartyEncoreFlag` union in `src/shared/plugins/first-party.ts` (`extensionModel.ts` compile-time-asserts the union stays assignable to `keyof EncoreFeatureFlags`). Default it to `false`; the renderer store reads the defaults as `DEFAULT_ENCORE_FEATURES` in `src/renderer/stores/settingsStore.ts`
+2. **Tile** - Add a full `FirstPartyPluginDefinition` to `FIRST_PARTY_PLUGIN_DEFINITIONS` in `first-party.ts`: `id` (`com.maestro.*`), `name`, `description`, `category`, `permissions`, `settingsNamespace`, `encoreFlag`, `releaseDate` (required; the marketplace sorts by it), `backgroundServices`, and its `usage` block (step 11)
+3. **Per-feature settings** - Add an entry to the `settingsBodies` map in `tabs/EncoreTab/EncoreTab.tsx`, keyed by the flag; `ExtensionDetails` renders it in the tile's Settings sub-tab. Features with no inline config are simply absent from the map
+4. **Modals** - Gate the render in `src/renderer/components/AppStandaloneModals.tsx` and the callback props in `App.tsx` on `encoreFeatures.yourFeature` (`encoreFeatures.x ? () => setXOpen(true) : undefined`)
 5. **Keyboard shortcuts** - Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`, AND add the shortcut id to `SHORTCUT_ENCORE_FLAGS` in `src/renderer/utils/encoreShortcuts.ts` so it leaves Shortcuts Help, Settings -> Shortcuts, and the mastery count while the feature is off. A native menu item sets `encoreFlag` in `src/main/app-menu.ts`
-6. **Hamburger menu** - Make the setter optional, conditionally render the menu item in `SessionList.tsx`
+6. **Hamburger menu** - In `SessionList/HamburgerMenuContent.tsx`, read `useSettingsStore((s) => s.encoreFeatures)` and wrap the item in `{encoreFeatures.yourFeature && (…)}`; the setter comes from `getModalActions()` (e.g. `setDirectorNotesOpen`, `setCueModalOpen`)
 7. **Command palette** - Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
 8. **Settings outside the tile** - A control that configures the feature but lives on another Settings tab is gated on the flag where it renders, and its search entry sets `requiresEncore` (never on the tile's own entry)
 9. **Prompts and template variables** - Text that tells an agent to use the feature goes in its own prompt delivered by `systemPromptSection` in `src/shared/plugins/first-party.ts`, never in `maestro-system-prompt.md` (the base prompt reaches every agent, flag or not). Give each of the feature's prompts an `encoreFlag` in `src/shared/promptDefinitions.ts` and each of its template variables an `encoreFlag` in `src/shared/templateVariables.ts` so Settings -> Maestro Prompts and the `{{` pickers leave them out while the feature is off
 10. **Left Bar / cycling** - A feature that adds a pinned AGENT (like Pianola) must also be hidden from the keyboard orders: the agent persists in the session store while the flag is off, so add it to `isSessionVisibleInSidebar()` in `src/renderer/utils/sessionVisibility.ts` or `Cmd+[` / `Cmd+]` still lands on it, and run every list that offers agents (palette jump targets, the `@` picker, Send to Agent / Merge targets) through `filterSessionsVisibleInSidebar()`
 11. **Usage guide** - Fill in the entry's one-line `description` in `src/shared/plugins/first-party.ts` and its `usage` block. `usage` is REQUIRED (the type rejects a definition without one): it is the details pane's Help tab, which every tile has and which a disabled tile opens on. Sections: `overview` (what it does), `access` (every way in - name a `shortcutId` rather than literal key text so the pane prints the user's LIVE binding), `steps` (an ordered walkthrough when setup takes more than one action), `notes` (guard rails worth stating before someone enables it), `agentCommands`, and `docsSlug`. `UsageGuide.tsx` renders whichever sections exist, so nothing is hard-coded per feature in the view
+12. **Zero footprint when off** - no UI, CLI verb, prompt text, background work, or agent-list trace may leak while the flag is off
 
 ### Reference Implementations
 
-**Director's Notes** - First Encore Feature, canonical example:
+**Director's Notes** (`encoreFeatures.directorNotes`): modal in `AppStandaloneModals.tsx` under `{encoreFeatures.directorNotes && directorNotesOpen && (…)}`, `onOpenDirectorNotes` passed from `App.tsx` as `encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined`, `ctx.encoreFeatures?.directorNotes` guard in `useMainKeyboardHandler.ts`, hamburger item gated in `HamburgerMenuContent.tsx`, settings body `DirectorNotesSection` in the `settingsBodies` map.
 
-- **Flag:** `encoreFeatures.directorNotes` in `EncoreFeatureFlags`
-- **App.tsx gating:** Modal render wrapped in `{encoreFeatures.directorNotes && directorNotesOpen && (…)}`, callback passed as `encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined`
-- **Keyboard shortcut:** `ctx.encoreFeatures?.directorNotes` guard in `useMainKeyboardHandler.ts`
-- **Hamburger menu:** `setDirectorNotesOpen` made optional in `SessionList.tsx`, button conditionally rendered with `{setDirectorNotesOpen && (…)}`
-- **Command palette:** `onOpenDirectorNotes` already conditionally renders in `QuickActionsModal.tsx` - passing `undefined` from App.tsx is sufficient
-
-**Maestro Cue** - Event-driven automation, second Encore Feature:
-
-- **Flag:** `encoreFeatures.maestroCue` in `EncoreFeatureFlags`
-- **App.tsx gating:** Cue modal, hooks (`useCue`, `useCueAutoDiscovery`), and engine lifecycle gated on `encoreFeatures.maestroCue`
-- **Keyboard shortcut:** `ctx.encoreFeatures?.maestroCue` guard in `useMainKeyboardHandler.ts`
-- **Hamburger menu:** `setMaestroCueOpen` made optional in `SessionList.tsx`
-- **Command palette:** `onOpenMaestroCue` conditionally renders in `QuickActionsModal.tsx`
-- **Session list:** Cue status indicator (Zap icon) gated on `maestroCueEnabled`
-
-When adding a new Encore Feature, mirror this pattern across all access points.
+**Maestro Cue** (`encoreFeatures.maestroCue`): Cue modal, hooks (`useCue`, `useCueAutoDiscovery`) and engine lifecycle gated on the flag; hamburger setter is `setCueModalOpen`; `onOpenMaestroCue` conditionally renders in `QuickActionsModal.tsx`; Cue status indicator (Zap icon) in the Left Bar gated on the flag; settings body `CueSettingsSection`.
 
 See [CONTRIBUTING.md → Encore Features](CONTRIBUTING.md#encore-features-feature-gating) for the full contributor guide.
 
@@ -416,7 +379,7 @@ When a `<webview>` has focus, keyboard events are trapped in its guest Chromium 
 2. **Renderer IPC listener** - blurs the webview and re-dispatches as a native `KeyboardEvent` on `window`
 3. **Focus-steal prevention** - `BrowserTabView` blocks auto-focus from page content (autofocus elements, `window.focus()`) so the webview only captures keyboard input after an explicit user click
 
-**Key files:** `window-manager.ts` (before-input-event + guest injection), `preload/system.ts` (IPC bridge), `useMainKeyboardHandler.ts` (IPC → dispatch), `BrowserTabView.tsx` (focus guard)
+**Key files:** `src/main/app-lifecycle/guest-webview-security.ts` (`before-input-event` handler + `browser-tab:shortcutKey` send; `window-manager.ts` only calls `attachGuestWebviewSecurity()`), `preload/system.ts` (IPC bridge), `useMainKeyboardHandler.ts` (IPC → dispatch), `BrowserTabView.tsx` (focus guard)
 
 **Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers`) must explicitly handle `browser` type tabs - they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
 
@@ -431,17 +394,21 @@ Any search or filter input that is dismissible via Escape **must** display an in
 - The input is meant for searching, filtering, or fuzzy-matching (not free-form text entry like chat input).
 - Pressing Escape clears the query, collapses the search bar, or closes the surrounding modal or panel.
 
-Use `<EscCloseButton>` from `src/renderer/components/ui/EscCloseButton.tsx`. Do NOT hand-roll the pill: the inert copy-pasted version used to exist in nine places.
+**Use the shared component**, never a hand-rolled `<button>ESC</button>`: `<EscCloseButton>` in `src/renderer/components/ui/EscCloseButton.tsx`. `variant="inline"` (default) sits in a flex row beside the input; `variant="adornment"` is absolutely positioned inside a `relative` input wrapper for in-panel filter bars.
 
 ```tsx
-<EscCloseButton theme={theme} onClose={closeSearch} />
+import { EscCloseButton } from './ui/EscCloseButton';
+
+<EscCloseButton theme={theme} onClose={handleEscape} />
+<EscCloseButton theme={theme} onClose={clearFilter} variant="adornment" label="Clear filter (Esc)" />
 ```
 
 **Rules:**
 
-1. `onClose` must do **exactly** what the Escape handler does. Extract the body into a shared `useCallback` rather than duplicating it, so the pill can never diverge from the keyboard.
-2. For an input inside a modal registered with the layer stack, the pill still belongs: Escape closes the layer, and the pill mirrors that.
-3. A text box that narrows a list should be `<FilterInput>` (`src/renderer/components/ui/FilterInput.tsx`), which already carries its own clear control.
+1. The pill must perform the **same action** as Escape - extract the handler into one `useCallback` and pass it to both; never let the pill diverge from the keyboard handler.
+2. The component owns the muted-but-discoverable styling and renders a real `<button>` (focusable, click-dismissible), so do not restyle it per surface.
+3. For inputs inside modals registered with the LayerStack, the pill still belongs - Escape closes the layer, the pill mirrors that.
+4. A text box that narrows a list should be `<FilterInput>` (`src/renderer/components/ui/FilterInput.tsx`), which already carries its own clear control.
 
 Full rules: [UI-PATTERNS.md → Every Modal Needs a Graphical Exit](docs/agent-guides/UI-PATTERNS.md#every-modal-needs-a-graphical-exit-escclosebutton).
 

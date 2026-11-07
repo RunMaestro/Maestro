@@ -22,6 +22,18 @@ That agent is a real chat agent, so you can talk to it like any other. Its works
 
 With no rules at all, Pianola is a monitor. It tells you who is stuck and stays out of the way. That is a genuinely useful mode and it is where you should start, because the rules worth writing are the ones your own agents teach you they need.
 
+## Controlled legacy handover
+
+The host supervisor API can transfer legacy tab watches into a selected agent/group scope. It requires an explicit standing manager policy and a native census. Enabled legacy watches are fenced at host send admission before the scope takes ownership; disabled tab watches remain concrete exceptions, while sibling chats and local worktree descendants follow the selected scope.
+
+The existing selection editor uses the verified native owner connection to authorize observation. The host verifies the chosen manager against its native census and derives the rule revision from the actual saved rules. It creates a standing observation policy without changing answer rules. Repeating an identical selection reuses its scope under the registry lock and retains pauses. After changing rules, save that selection again as the owner to renew its standing delegation policy against the current saved rules. This increments the policy revision without recreating the scope, rebaselining chats, clearing uncertain deliveries, enabling a paused policy, or editing answer rules. Already admitted tasks retain their original policy fingerprint; renewal does not authorize their release under different rules.
+
+`maestro-cli pianola supervise scope` uses the same host service over the bridge. The CLI can reconcile an exact selection with an existing enabled standing policy, including legacy takeover. It cannot create owner consent or change the selected agents, manager, policy, or pause state. Save a new selection in the owner UI first; otherwise the host returns `NeedsConfiguration` without changing ownership. A future-agent selection can be reconciled by passing its existing `--id` and `--future-local-agents` along with its exact selection. The host supplies its recorded baseline. A CLI secret, agent environment variable, or supplied manager field does not establish human ownership. To request configuration or rule-revision renewal through the CLI, pass `--request-owner-approval` (and the existing `--id` for renewal). The native owner reviews the selection, manager and current rules once. Any rule, registry, enrollment or owner-identity change during that review invalidates approval, as does a disconnected caller. An unchanged standing configuration reconciles silently; ordinary delegation never asks for this dialog.
+
+The registry retains the handover receipt and retired-owner fences across restart. Existing questions are baselined before publication, and uncertain deliveries are not resent. This transfer changes observation coverage; it does not add answer rules.
+
+The API returns `NeedsConfiguration` with a concrete reason if the manager, policy, or old owner's send fence cannot be verified. An older manager handoff containing an unbound direct-answer command also requires reconciliation before takeover. In these cases, existing legacy ownership is preserved. The host path does not migrate a running installation automatically.
+
 ## The workspace
 
 Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab strip. The manager and rules also open from the Settings tab and from the command palette under **Pianola**.
@@ -30,7 +42,13 @@ Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab 
 
 Who needs you, who is working, who just finished. The **Watching** section lists what Pianola is babysitting, and the **+** button adds one of your other agents. Lists with more than five watches start collapsed; use **Show agents** to expand them.
 
-Turn on **Automatically watch new agents** in this section to watch newly created top-level agents as soon as they have an AI tab. This option is off by default and does not add existing agents or worktree children. A manually paused watch stays paused. Automatic watches are removed when their agent is closed.
+Use **Automatically watch future local agents** in this section to configure a standing selection with an explicitly chosen manager. Save the selection, then resume it to enable monitoring. New local agents, all their AI chats, and local worktree descendants share one scope worker. Existing identities are recorded by the host at configuration time and are not implicitly selected; add existing agents or groups in the selection editor. Paused scopes/tabs and exclusions remain effective. Remote, consult, and ephemeral chats are excluded.
+
+An older Auto-Watch boolean without a manager policy displays **NeedsConfiguration** and cannot create legacy tab watchers. Both persisted sessions and plugin-created agents use the same dynamic scope path. Repeated creation notifications do not register another watcher or reset checkpoints. Closed agents lose coverage when absent from the native census. Disabling Pianola stops its supervised workers. This observation policy adds no global answer rule.
+
+Selected agent/group scopes react to native transcript and lifecycle changes, combining bursts into one serial check. A recovery census runs at least every 20 seconds while idle. For an agent whose known tabs are all busy, transcript chunks share a five-second wakeup budget; chunks cannot keep postponing it. Pending retry and manager deadlines keep their earlier wakeups, and exit/lifecycle hints shorten the wait to 50 ms. Unknown or mixed busy/idle membership keeps the normal 50 ms hint path. File hints reuse only stable nanosecond file identities; neither file hints nor cached membership authorize replies. Larger scopes drain in batches of 20 so pending decisions cannot starve later chats. Events do not shorten retry or manager response deadlines, and only verified current-turn evidence can authorize a reply.
+
+When enrolling a running native turn, Pianola may answer the first question that develops in a row proven question-free at enrollment. If that row already contained a question, subsequent wording, punctuation, Unicode, Markdown, or progress-text changes cannot authorize an answer, even if the question hash changes. Answer that historical row manually. Fresh native rows, turns, and supported question requests retain their own provenance checks. Missing or ambiguous enrollment evidence, restart, or scope renewal cannot grant permission to replay a historical question. Full original turn context still determines risk.
 
 The collapsed watch list still shows a count of failed or backing-off watches. On startup, Pianola removes automatic watches whose agents are no longer stored; manually added watches are preserved.
 
@@ -40,11 +58,52 @@ Each watch is supervised by the desktop app. It restarts on crash and comes back
 
 The audit trail, and the most important tab in the feature. For every decision it records what was asked, how it was classified, which rule matched, what Pianola sent, and how it turned out.
 
-**Every decision is recorded before anything is dispatched.** That ordering is deliberate. It means a rule that turns out to be wrong is always visible after the fact, rather than being a thing that happened invisibly at 3am.
+**Every watcher decision is recorded before anything is dispatched.** That ordering is deliberate. It means a rule that turns out to be wrong is always visible after the fact, rather than being a thing that happened invisibly at 3am. (Program-loop wakes persist their reservation before dispatch and append their Recent decisions entry afterward.)
+
+Decision claims and receipts share one revision check and append/compaction lock across desktop and CLI writers. Desktop receipt and resolution writes yield while another writer owns the log. The final synchronous claim tries the lock once and refuses a busy log before sending; it never waits for the other process. A stale revision is refused even after the lock becomes available. Re-read the pending decision before retrying a refused claim; an uncertain admitted answer remains blocked until native acknowledgment, rather than being sent again.
+
+Scope enrollment and owner configuration also yield while another process holds the checkpoint lock. The host captures the current native baseline and verifies authority after acquiring the lock, then commits the durable checkpoint before publishing enrollment or registry changes. Final synchronous queue and answer fences refuse a busy checkpoint immediately. If a decision claim was already committed, that refusal preserves the claim and prevents an automatic resend. CLI workers retain the same file locks, enrollment revision checks, and durable receipts.
 
 ### Suggestions
 
 Pianola can read your own past CLI transcripts and propose rules and a decision profile that match how you already answer. Proposals sit here until you approve them. Approving only writes config, and an approved rule still goes through every safety check at runtime.
+
+### Memory
+
+The **Memory** tab contains **Setup**, **Memory bank**, and **Activity**. Enable memory separately, choose local or hosted processing, select native history roots, and explicitly attribute your human-authored pools. Unattributed roots stay out of learning. **Save & start learning** saves the configuration, discovers the selected history, and starts or resumes processing in one step.
+
+The processing provider can use any supported Maestro CLI: **Claude Code, Codex, Antigravity, Qwen3 Coder, Hermes, Pi, Oh My Pi, OpenCode, Factory Droid, Copilot CLI, or Grok**. Local Ollama and the OpenAI/NaN APIs remain available. Maestro detects CLI executables, configured model defaults, and API credential presence automatically; secret values are never copied into the bank. CLI extraction disables tools where supported, otherwise enforces the provider's read-only mode, and always runs in an isolated temporary workspace with the same consent, checkpoints, budgets, and transport accounting as API extraction. Advanced settings are only for overrides. Maestro fills the detected defaults for you.
+
+Inspect the original evidence, support label, scope, and current/proposed/contested/superseded status before relying on a claim.
+
+Memory retains preferences, project knowledge, decisions and rejected alternatives, episodes, commitments, and broader context. It uses a desktop-owned SQLite bank with lexical search and a pinned local semantic embedding model. The manager, watchers, and dispatched tasks receive bounded, relevant context, not the whole bank.
+
+You can explicitly remember information, correct a claim while retaining earlier decision history, pin or unpin a record, forget it, and export the bank. Native transcripts and external backups are not deleted by forgetting. Forgetting deletes the bank's linked evidence and indexes and persists suppression against learning the same evidence again.
+
+## Backfilling historical memory
+
+Keep the desktop running. Memory operations use its existing host transport; the CLI does not open the database directly.
+
+```bash
+# Use an existing Claude Code CLI account; omit --model to inherit its configured default.
+maestro-cli pianola memory configure --mine --mode cli --cli-provider claude-code --consent-hosted
+# Or use local Ollama instead.
+maestro-cli pianola memory configure --mine --mode local --model qwen3:8b --endpoint http://127.0.0.1:11434 --tokens 1000000 --dollars 0
+maestro-cli pianola memory discover
+maestro-cli pianola memory start
+maestro-cli pianola memory status --json
+maestro-cli pianola memory recall "storage decisions" --project /path/to/project
+```
+
+`--mine` explicitly attributes selected history pools to you. Do not use it for shared accounts. Native automation origins and delegated sessions remain automated; their prompts cannot become human preferences or approved decisions. Unknown authorship cannot establish human preferences.
+
+Discovery supports Claude Code, Codex, OpenCode, Factory Droid, Copilot CLI, OMP, and Grok. Select custom roots with `--provider` and `--root`; exclude roots, projects, or files with `--exclude`. Exclusions include descendants and linked Git worktrees and are enforced before evidence extraction or hosted submission.
+
+Local extraction uses a loopback Ollama endpoint; embeddings also remain local. CLI, Hosted, and Batch modes require explicit off-device consent, and Hosted/Batch modes require credentials and configured budgets. CLI mode uses the detected executable and configured account, disables tools where supported or enforces read-only mode, and uses an isolated temporary workspace; omitting `--model` inherits the CLI's default. Prompts that exceed the operating system's command-line limit are rejected before they are marked as sent. Changing provider clears consent unless it is explicitly supplied again. Pause stops ingestion without deleting the bank; resume retains checkpoints and budget reservations.
+
+Assertions require exact citations and independent evidence verification. Default recall returns a bounded advisory shortlist and does not assess answerability. Use `--intent current|previous|proposed|contested|history`, or `--intent as-of --at <date>` for lifecycle-specific recall. Optional `--qualify` applies model review; optional `--rerank` sends the question and shortlisted assertions to the configured hosted reranker. Neither feature grants authority or overrides exclusions, evidence status, or validity dates.
+
+Use `memory remember`, `memory correct`, `memory evidence`, `memory pin`, `memory unpin`, and `memory forget` for explicit bank operations. `memory list --history` browses lifecycle history, while `memory export --out <file>` writes a JSON export. `memory retry` explicitly retries uncertain work and may incur another provider charge.
 
 ## Putting a watch on an agent
 
@@ -88,6 +147,52 @@ These are not configurable, and that is the point.
 - **A low-confidence read escalates.** It does not guess.
 - **Only agents with a watch are touched.** You can add watches manually or enable automatic watching for newly created agents. Everything else is left alone.
 
+## Product programs and the founder brief
+
+Pianola can keep a standing charter for each product. Apply a YAML or JSON manifest containing a programs: array with each program's id, title, root, charter, and named roles. Missing role agents are created once in the background; repeat applies retain their agent ids and preserve unrelated environment settings. A role may specify an agent provider and model. Concurrent apply and pause operations preserve the latest pause state. Pause or resume a program without deleting its charter:
+
+```bash
+maestro-cli pianola program apply --file maestro-programs.yaml --json
+maestro-cli pianola program list --json
+maestro-cli pianola program show <id> --json
+maestro-cli pianola program pause <id> --json
+maestro-cli pianola program resume <id> --json
+```
+
+An optional programId on a task plan ties it to a product. A program accepts only one unfinished plan at a time. Plans without a program retain their existing behavior.
+
+The founder brief combines programs, plans, open founder asks, recent watcher escalations, and the AgentRun ledger. It reports tasks as verified only when a completed task has a passed independent-validation check; ordinary completion does not count.
+
+```bash
+maestro-cli pianola escalate --title "Need a decision" --detail "Choose the launch date" --program <id> --severity high --json
+maestro-cli pianola needs-me --json
+maestro-cli pianola brief --json
+maestro-cli pianola resolve <ask-id> --option "Next Tuesday" --json
+maestro-cli pianola dismiss <ask-id> --json
+```
+
+An open ask from the same agent and program is updated, preserving the higher severity; pass --distinct to record a separate ask. Founder asks can be resolved or dismissed in the dashboard too. Pianola still asks before creating agents or dispatching plans on the founder's behalf.
+
+## Program loop
+
+Supervise a product program to wake its lead only for a new bounded outcome, a newly blocked or failed task, resolved founder decisions (including notes and originating agent/tab), or the completion of the last plan. A busy lead is never interrupted. The loop supervises the active plan's orchestrator and watches the lead's tab after a successful wake; the lead writes plans with `pianola plan set --file` but does not dispatch tasks. Pending wakes recover from interruption by reconciling their receipt in the lead's transcript, and per-program locking prevents overlapping ticks from dispatching twice. Idle handoffs are at least 60 minutes apart. Pausing a program suspends its loop, its plans' supervised orchestrators, and its lead watch without deleting its charter or touching each target's own enabled flag, so resuming never revives a target you disabled by hand. A paused tick cannot register new targets.
+
+```bash
+maestro-cli pianola supervise program <program-id> --interval 120
+maestro-cli pianola program-loop <program-id> --once --json
+maestro-cli pianola program pause <program-id>
+```
+
+Ctrl+C stops an interactive program loop immediately, including while it waits for the next interval.
+
+Loop memo state is stored in maestro-pianola-program-loop.json in the Maestro data directory. Program-loop actions appear in Recent decisions without creating a Needs you escalation; no-op ticks are not recorded. The brief reports whether each program is supervised and its last wake reason and time.
+
+In the dashboard, clicking an in-flight task opens the tab running that task, not merely the agent's currently active tab.
+
+The command-center dashboard leads with a compact status summary, then puts **Needs you** beside **Working now** so pending decisions and active work are visible without scanning audit history. Programs, outcomes, watched agents, and recent decisions share one tabbed workspace; only the selected workspace appears below the main panels. Clicking an in-flight task opens the tab running that task.
+
+Applying a program also writes Cue routines into a local Windows root's `.maestro/cue.yaml`. Product programs get a weekday 08:30 standup and a weekday 17:00 marketing draft sweep over verified work from the last day. The portfolio program gets Monday CTO and CMO reviews and a Wednesday social draft sweep. These write drafts and reviews only, never publish. Re-apply replaces only that program's marked generated block, preserving other programs and hand-written subscriptions; existing legacy Cue configuration migrates without losing its subscriptions or settings. For a remote root, the CLI writes through `remoteRootOnHost` and skips the Cue file when that value is unset. Mounted remote Cue files use host-visible roots for storage and remote POSIX roots for execution and prompt path variables.
+
 ## Task plans
 
 Beyond watching, Pianola can run a saved task plan, dispatching each task as its dependencies finish:
@@ -96,6 +201,7 @@ Beyond watching, Pianola can run a saved task plan, dispatching each task as its
 maestro-cli pianola plan list
 maestro-cli pianola plan show <plan-id>
 maestro-cli pianola orchestrate <plan-id>
+maestro-cli pianola plan revise <plan-id> <task-id> --prompt "<founder-approved correction>" --json
 ```
 
 Orchestrations are recorded in the agent run ledger alongside everything else, so a plan that ran overnight has the same audit trail as a prompt that was answered by a rule.
@@ -123,11 +229,63 @@ Every named check must exist on the task's active `runId` and be `passed`. Missi
 
 Read the saved plan with `pianola plan show <plan-id> --json` to find the active `runId`; the deterministic `pianola:<plan>:<task>` projection is not necessarily the worker's run. `executionRunId` identifies the current physical process receipt. A repair gets a fresh tab and receipt while `runId` continues to identify the acceptance ledger the repair must update. Waiting for a missing or still-running check never triggers a repair by itself.
 
-The controller persists a claim before dispatch and the confirmed tab afterward. On controller recovery it retains those bindings. If a response was lost, a claim without a tab waits for reconciliation rather than dispatching the same prompt again. Desktop restart recovery marks interrupted physical runs failed; dispatch callbacks are in memory and do not survive a desktop restart. Use one controller to release dependents.
+The controller persists a claim before dispatch and the confirmed tab afterward. On controller recovery it retains those bindings. If a response was lost, a claim without a tab waits for reconciliation rather than dispatching the same prompt again. Desktop restart recovery marks interrupted physical runs failed; ordinary dispatch callbacks are in memory and do not survive a desktop restart. A managed queued dispatch can restore its pending callback only from its authenticated, durable callback intent while the original expiry and caller/target identities still match. Use one controller to release dependents.
+
+### Managed queue execution
+
+Authenticated managed queue work keeps its technical hold until the owning desktop window requests an actual spawn. The host checks FIFO eligibility, idle state, user pause, current scope policy, exact item and conversation identity, then durably records the release before native execution. Hold/Resume does not bypass this admission. Deleting an item or its tab cancels the stored request.
+
+Only the matching native spawn and captured AgentRun ID establish execution. A lost response can reconcile an already recorded run without spawning again; an uncertain release stays held for reconciliation. Pending callbacks ignore predecessor and unrelated spawns, and are released only by their own capture. Missing callback reconstruction evidence blocks execution explicitly. Managed queue mentions support `parallel`, `only`, `consult-first` and `handoff`. Their original queue row remains a barrier until the native routing work completes; a send acknowledgment is not a completion. The host pins recipient identities and current peer permissions before each native start. Unknown starts and releases cannot be resent after a reconnect or restart.
+
+| Managed routing | Queue behavior                                                                                                                                                           | Completion callback                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `parallel`      | Consults and the initial local turn run together. After their native terminals, one host-derived local continuation receives the replies and the initial local findings. | Waits for the native continuation terminal as well as both earlier branches. |
+| `only`          | Consults run without a local process or local AgentRun.                                                                                                                  | Waits for every native consult terminal.                                     |
+| `consult-first` | All native consult replies arrive before exactly one host-derived local continuation.                                                                                    | Waits for the native local continuation terminal.                            |
+| `handoff`       | The source runs locally first. Its matching native terminal output is forwarded once to each currently permitted recipient.                                              | Waits for the source terminal and every native handoff terminal.             |
+
+The original accepted intent and live host release bind every delayed continuation and handoff. Renderer text, context and outcome IDs cannot grant another send; recipient write permission is checked again before each handoff. Deletion revokes the live release, including a handoff waiting on its local turn. A failed required branch or empty local handoff answer reports failure without starting a successful continuation; an unknown branch retains its hold. A host-confirmed preparation failure or cancellation before native spawn counts as a failed branch without inventing a child or native exit. The parent waits for the other required branches, including already running children, before failing once and clearing the queue barrier. A throw or failed acknowledgment after the native spawn boundary remains unknown; an error chunk alone cannot prove nonstart or successful execution. Unmanaged queue routing retains its existing behavior.
+
+Supervisor health, reconciliation and shutdown discard expired or revoked live releases in all four modes, including handoffs waiting for their local turn. These entries share the existing bounded host registry; a handoff entry carries no consult start capability. Removing a future release also drops its aggregate callback, while already running native children retain their process supervision and terminal journal. Cleanup never reconstructs a release from disk or retries an unknown start.
+
+### Managed dispatch payload retention
+
+The desktop keeps the complete prompts and outputs for the most recent 32 safely completed managed queue dispatches. A dispatch qualifies only after native routing is complete, every child is settled with terminal evidence, and any requested parent callback has been accepted by its destination queue or new tab. A timeout, callback firing, or persisted child terminal alone does not qualify it. Active, unknown, unreconciled and unconfirmed callback records retain their payloads, including across restart.
+
+Older qualifying dispatches become explicit payload-retired tombstones. Their receipt, caller, target and immutable intent remain available for reconciliation and prevent resending the dispatch; their full payload is no longer available. Stale writes cannot restore retired payloads. Tombstones themselves are retained.
+
+Cleanup runs asynchronously after desktop journal writes (including failed writes) and at supervisor startup, using the existing admission lock. It commits and fsyncs the tombstone before deleting payloads and rechecks the journal under that lock. Unreferenced artifacts from failed writes are reclaimed without another write to that dispatch. An artifact with no journal gets a 24-hour grace period and is reclaimed on a later lifecycle cleanup. Each cleanup lock turn examines at most 16 artifact names (up to 32 synchronous stat/delete operations for journal-less artifacts), plus fixed journal validation and any durable retirement write. Cleanup releases the lock and yields to the event loop between batches, then rechecks the storage directory and exact journal contents before deleting more files. This bounds metadata operation counts; filesystem latency and durable writes remain synchronous, so it is not a maximum latency guarantee. There is no background polling timer. Legacy or non-routing records without sufficient native completion evidence remain protected; the limit applies to safely completed payload sets, not all evidence on disk.
 
 ### Combining Cue, dispatch and watchers
 
 Use Cue for triggers and technical monitoring, dispatch callbacks for worker return, Pianola watchers for waiting questions, and explicit acceptance evidence for dependency release. A heartbeat can detect stale runs and missing callbacks; deduplicate it against the controller and avoid answering the same question concurrently with a watcher. Completion callbacks report execution ending and are not acceptance evidence.
+After a founder resolves blocked work, the lead uses `plan revise` to correct a task in `needs_review` or `failed`. It requeues only that task and unblocks eligible descendants, preserving the plan ID, completed tasks, dependencies, role agent, and validation oracle. Prior execution bindings and corrective-attempt counters are cleared; the supervised orchestrator dispatches the revised instructions. Revision and complete orchestrator ticks share per-plan ownership, and each tick reloads the saved plan so a running supervisor cannot overwrite the correction. Active or completed tasks cannot be revised; a terminal plan cannot reopen while another unfinished plan belongs to the same program. `plan set` still refuses to replace any started plan.
+
+Failed tasks in the command center offer **Restart**, **Revise**, and **Skip task**. Restart reuses the original instructions; Revise replaces them before reopening the task. Skip requires confirmation, clears the failed item from the attention queue, and leaves dependent tasks blocked rather than pretending they succeeded.
+
+From the terminal, use `maestro-cli pianola plan revise <plan-id> <task-id> --prompt "<corrected instructions>"` to revise, or `maestro-cli pianola plan skip <plan-id> <task-id>` to skip with the same dependent-blocking behavior.
+
+Each fresh dispatch starts with an empty attempt-scoped check and review ledger, so findings from a rejected attempt cannot send the correction back to review. Earlier dispatch and validation events remain in the AgentRun audit history.
+
+Founder revision yields while an in-flight orchestration/validation tick holds the plan lock. Plan owners renew their lock every ten seconds; a revision can wait through a long validation while those heartbeats continue, but returns a timeout after thirty seconds without lock progress. A live PID alone does not permit indefinite waiting, and a timed-out revision neither changes the plan nor steals the lock. Other mutation waits retain their five-second deadline; dead-owner recovery remains enabled. If revision reopens a completed plan with an enabled supervised target, reconciliation automatically starts its stopped orchestrator again, including when revision races with the prior child's clean exit. Completed plans without new work, disabled targets, and paused programs remain stopped.
+
+On Windows, long local `omp` task prompts use temporary file transport instead of exceeding the command-line limit. The CLI removes the prompt file when the turn settles, including launch failures. SSH turns retain remote prompt delivery and do not create a local prompt file.
+
+## Validation
+
+An engineer task can include a validation oracle with command (argv), target (workspace), optional artifacts, and timeoutSeconds. After the agent settles, Pianola runs the command inside a Linux sandbox, with the target mounted read-only and temporary tool output redirected to /tmp. Artifacts must be inside the target. A passing oracle appends an independent-validation Agent Run check and lets the task finish; a failed oracle routes it to review and the bounded fix cycle. Sandbox startup, timeout, and read-only write errors are unknown, not candidate failures; two unknown observations request review.
+
+Validation failures stop at `needs_review` unless the separate Autopilot feature is enabled. With Autopilot enabled, the orchestrator dispatches bounded corrective attempts and independently validates again; the current program charter caps concurrency and corrective attempts. Plan updates are serialized across processes so concurrent products cannot overwrite each other's progress.
+
+The artifact manifest is limited to 256 unique regular files and 64 MiB total; traversal and file or parent-directory symlinks are rejected. A symlink to the workspace itself is supported, without relaxing artifact checks. Missing claimed files, including missing parent directories, are candidate failures. Artifact contents are sealed, and project/toolchain bind sources are pinned before launch so replacing their pathnames cannot redirect those mounts. Captured output is limited to 100,000 bytes per stream; both streams are still drained and the exit receipt is required. Truncation is reported in outputTruncated. The runner scans all stderr chunks, including discarded output and markers spanning chunks, for Read-only file system or EROFS and reports readOnlyWriteDetected. A nonzero exit with this flag is unknown; truncation alone does not change a successful or failed verdict.
+
+Virtualenv toolchain discovery reads only regular pyvenv.cfg files, with an 8 KiB configuration limit, before the sandbox starts; malformed or oversized configuration produces an unknown observation.
+
+The runner requires --trusted-root, supplied by the CLI from the operator-declared program root or a standalone task's cwd. Both root and target are canonicalized inside the runner's Linux filesystem; a target outside that root, including a symlink escape, is refused before launch with policyViolation and a failed verdict. Do not put credentials or host Unix-domain sockets in an approved workspace/toolchain: a read-only directory mount exposes its contents, and network namespace isolation does not prevent connections to filesystem Unix sockets visible in that mount.
+
+Run an oracle manually with maestro-cli pianola validate <planId> <taskId> --json.
+
+The optional pianola.sandboxRunner setting overrides the validator with a non-empty argv prefix, for example ["python3", "/opt/maestro/sandbox_runner.py"]. By default, Pianola resolves scripts/pianola-sandbox/sandbox_runner.py relative to the installed CLI: beside its bundle first (the CLI build copies it to dist/cli/scripts/pianola-sandbox/), then from the repository root above dist/cli. Linux/macOS invoke python3 <path>; Windows invokes wsl.exe --exec python3 /mnt/<drive>/... using the default WSL distro and user, with target and artifact paths translated to /mnt paths. Direct WSL modes retain literal arguments; configured default/login-shell modes apply POSIX quoting with verbatim Windows transport so quote characters do not leak into the oracle. The runner requires a Linux host with bubblewrap and resource-controlling user-manager support; macOS therefore requires a configured Linux launcher. A missing default script or invalid override is a configuration error naming pianola.sandboxRunner, not an unknown oracle verdict. A program charter with validationRequired: false disables automatic validation; true requires each task to declare a validation spec. Manual validation remains available. Output is drained to EOF with a bounded head per stream and truncation flags, without losing the exit verdict. The launcher is killed if it exceeds timeoutSeconds (default 120) plus 60 seconds of launch grace. The verb exits 0 when verified, 2 when failed, 3 when unknown, and 1 for configuration errors.
 
 ## Learning from how you already work
 
@@ -141,13 +299,27 @@ This crawls your installed CLI transcripts into a labeled decision corpus, then 
 
 The desktop app keeps watchers alive across crashes and restarts:
 
+In the dashboard, **Watch an agent** opens an agent selection: choose its manager
+and save the selection. New selections start paused; saving registers them but
+does not prove the worker is running or that every chat is covered. The dashboard
+shows the worker and coverage separately. Existing tab watches can require a
+host-verified handover; if configuration is missing, the selection stays open
+with the reason and the old ownership remains unchanged. Selecting agents does
+not itself grant permission to answer their questions.
+
+The **Automatically watch future local agents** switch uses the owner-configured
+selection described above for all eligible chats and local worktree children.
+Existing legacy tab watches are shown separately in the dashboard.
+
 ```bash
-maestro-cli pianola supervise list
+maestro-cli pianola supervise list             # stored registry
+maestro-cli pianola supervise list --live --json # host worker and coverage evidence
 maestro-cli pianola supervise watch <tab-id>
 maestro-cli pianola supervise disable <id>
 ```
 
 A supervised watcher retires itself, and its target is removed, when its tab has been closed or deleted for two minutes (a snoozed tab still counts as present), or when the tab has had no activity for six hours with nothing waiting on Pianola. Change the idle limit with `--idle-hours <hours>` (`0` keeps the watcher forever). The next `supervise watch` on that tab registers it again.
+Automatic agent-watch registration, retirement, and startup pruning use asynchronous, locked registry updates. Concurrent CLI and desktop updates preserve each other's targets; session creation and deletion wait for the automatic-watch update before acknowledging completion.
 
 Full flag-level reference for every verb is in the [CLI reference](/cli-reference).
 
@@ -171,3 +343,156 @@ Pianola declares its permissions up front, and the Plugins tile shows them befor
 | `background:service`  | Keep supervised watchers running while the app is open                 |
 
 The `settings:read` entry matters more than it looks. Pianola re-reads your consent flag before every supervised action, so turning the feature off takes effect on the next action rather than whenever a long-running watcher happens to notice.
+
+## Native current-turn observation protocol
+
+The desktop host exposes an additive, versioned read contract for observation
+clients. Send `get_session_history` with `tabId` and `currentTurn: true` to receive
+`currentTurn.version: 1`. Optional `expectedCursor` pins the read to a census
+revision. `list_desktop_sessions` includes the same cursor and completeness state
+under each tab's `supervision.currentTurn`, without copying transcript content.
+Legacy history reads retain their existing `sinceMs` and `tail` behavior.
+
+Pianola scope workers and native decision checks send
+`currentTurnInterest: "pianola"`. These reads never create generic observation
+interest: feature enablement owns their capture lifetime. Disable clears retained
+rows and invalidates delivery cursors; stopping or disconnecting a worker leaves
+no generic lease behind. The interest field only controls capture and grants no
+send authority.
+
+Generic `currentTurn: true` reads without that field remain supported while
+Pianola is off. Each read renews a 30-second lease on that single tab, within the
+2,048-tab cap. The latest reader owns the lease; closing its host-identified
+socket releases it. Other readers renew on their next read. Expiry is checked
+lazily before off-mode commits and reads, without background timers; expired tabs
+do no row cloning or serialization and emit no commit hints. Direct host readers
+without a socket expire on the same lease. Tab-cap eviction releases the oldest
+lease and its off-mode retained rows. When capture was lost through disconnect,
+expiry, eviction, or an Off-to-On transition, reconnect never restores earlier
+evidence: a fresh submitted boundary and native spawn must establish a complete
+turn again.
+
+A cursor identifies the host generation, native renderer incarnation, agent,
+tab creation, provider session, captured AgentRun, submitted user-log boundary,
+and monotone revision. Equal-length rewrites and streaming updates advance the
+revision. A host restart creates a new generation. This cursor is evidence about
+data, and grants no authority to reply; enrollment, ownership, pause, policy,
+and delivery guards remain separate.
+
+For a busy tab enrolled while its last assistant row is still streaming, the host
+also reports that row's prose revision and SHA-256 signature, plus the last
+ordered-prefix mutation revision. A changed timestamp, metadata update or
+identical upsert does not change the prose proof. The worker may answer a
+same-ID question only when its prose differs from the enrolled baseline, changed
+after enrollment in the same native turn, and the ordered prefix stayed intact.
+A restored historical text, pause/resume, scope renewal or lost native continuity
+cannot reuse that exception. Classification still includes the full turn and
+risk context. Native admission and the final spawn fence recheck the bound
+cursor after asynchronous preparation. Hashing runs only for changed,
+size-checked prose at commit time; census reads copy constant-size proof fields.
+
+A `complete` read contains the entire observed current turn from its submitted
+user row, including earlier assistant, system, thinking, and tool rows and their
+native payloads. It reads ordered commits from the owning desktop renderer,
+independently of the 100-entry persisted history window. Direct composer sends
+and queued sends carry their actual submitted row ID to native AgentRun capture.
+Other spawn paths without that boundary, pre-existing turns after host restart,
+missing commits, transcript trimming/reset, provider replacement, snoozed tabs,
+and upstream truncated tool output cannot produce a complete risk context.
+
+Each complete full or delta read also carries `observedRisk`, the highest risk
+seen in size-checked native row commits during that turn. Replacing assistant,
+system, or tool prose or structured payloads cannot lower it, even before the
+worker's first read. The worker folds it into classification, native admission
+reclassifies with the host's value, and the final delivery fence refuses an
+answer classified below the retained risk. Only a new submitted user boundary
+with matching native AgentRun capture resets it. Missing older-host evidence
+is treated as high risk. This retains one severity per tab, without synthetic
+transcript rows or a list of text versions. Risk scans stop once high is reached;
+quotes and code receive the same conservative treatment as other turn content.
+
+The host returns `incomplete`, `gap`, `reset`, or `unknown` with a concrete reason
+and no actionable message subset when that proof is unavailable. Clients must
+refresh or suspend observation in those cases. A supplied cursor must match
+exactly. Clients may request a delta with a matching `deltaBase` and compose it
+with the retained full turn. A lost base requires a complete refresh. Native
+send fencing revalidates the submitted boundary before spawning.
+
+The in-memory projection retains at most 8,192 rows and 2 MiB per tab, 2,048 tabs,
+and 32 MiB of serialized row payloads across the host. Eviction and overflow are
+explicitly unavailable, never successful truncated reads. Completed turns remain
+readable until a new native turn or those bounds require eviction. These limits
+bound retained payloads; they are not measured process RSS limits or a claim of
+live provider acceptance.
+
+### Enrolling a newly created empty chat
+
+A new idle chat can join its owner's scope before its first spawn. Its native
+creator publishes a one-time empty-creation attestation with its first ordered
+owner snapshot. The host exposes `empty-enrollment`, with a null transcript
+baseline and no run or turn ID. This authorizes enrollment only. It cannot be
+composed as a current turn, classified, or used as an answer guard.
+
+The existing owner-authorized scope configuration and durable persistence
+consumer use that same census. Plugin create/delete uses the main-registered
+`plugin-session-lifecycle` adapter. Duplicate IDs fail before persistence or
+activation. A host-created plugin tab stages a bounded, memory-only birth
+binding before the store flush; only a successful flush can confirm it. Its
+first authenticated owner snapshot must still be ordered, empty and idle.
+A spawn or owner commit during the flush consumes the pending evidence and
+cannot be undone by the later flush acknowledgement. Failed writes, deletion,
+feature transitions and native lifecycle changes discard unused evidence.
+The first question becomes eligible only after a
+new submitted user row, matching native AgentRun capture and a complete turn.
+An intervening incomplete first submission keeps the enrollment barrier without
+reading or classifying partial history. Pause, scope changes and unknown native
+continuity retain the usual fresh-baseline behavior.
+
+Creation evidence is held in memory by the creator and consumed once. Disk
+hydration, unknown empty windows, renderer or host restart, eviction, commit
+gaps, trims and transcript resets cannot reconstruct it. These remain blocked
+until a later genuine native turn establishes a safe baseline.
+
+### Questions from a process that is still running
+
+A scoped watcher can answer an actual open Claude Code `AskUserQuestion` relay
+request while the original process waits. It classifies a bounded projection of
+that request alongside the complete native turn and its retained risk. The
+projection is never written as a captured transcript row. Standing answer rules
+still decide whether to reply; high-risk requests stay with the human.
+
+Automation requires an intact raw single-select schema with explicit
+`multiSelect: false`, one nonblank question, and 1-32 object options with unique
+nonblank labels. String options, filtered or ambiguous fields, missing flags,
+invalid descriptions and oversized content stay with the human. The tolerant
+question picker and human answer channel continue to accept their existing
+inputs. Raw admission and native wire validation share bounded question/option
+content checks.
+
+A synchronous desktop census indexes pending processes once and shares one
+host policy/owner fingerprint read across its open questions. This observation
+is private to that census and supplies no answer authority. Each request commit
+and final answer read policy/owners freshly; there is no cross-census cache,
+TTL, timer or caller-provided authority snapshot.
+
+| Provider / input path                                                                                                      | Active-process support                                                             | Consumer                                            |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Claude Code standard API/print mode, one single-select AskUserQuestion through the permission relay                        | Supported with a complete authenticated native run/turn and matching standing rule | Exact pending request's deny/message answer channel |
+| Claude Code multi-question or multi-select request, malformed/oversized input, or missing native turn                      | Needs human                                                                        | Existing question picker                            |
+| Claude Code Bash/Edit/Write or another permission request                                                                  | No question automation                                                             | Existing permission policy and allow/deny UI        |
+| Claude Code TUI without this relay; Codex, OpenCode and other providers without an authenticated question response channel | Unsupported for active-process answers; needs human                                | Provider's native input surface                     |
+
+Each request is bound to its host/source generation, native run, turn, process,
+owner census and policy at request commit. Human response, cancellation, timeout,
+disconnect, restart, transcript reset, ownership or policy changes prevent an
+old request from being answered. A changed census or policy conservatively
+invalidates request automation, even for an unrelated ownership edit; the human
+relay remains available. Final admission rechecks the exact request and current
+rules after any waits. No new provider process, generic stdin write or automatic
+tool permission grant is used.
+
+The durable claim precedes the single-use response. A committed host response
+gets one decision receipt and closes its UI request; it does not assert that the
+provider executed or completed anything. A missing receipt remains unknown and
+must be reconciled without resending. Native request commits use the existing
+coalesced scope wakeup channel, with no new per-tab watcher or model observation.

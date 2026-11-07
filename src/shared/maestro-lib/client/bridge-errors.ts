@@ -17,6 +17,7 @@ export { MaestroNotRunningError } from './not-running';
  */
 export class UnsupportedCommandError extends Error {
 	readonly commandType: string;
+	readonly hostKind: CliServerInfo['hostKind'];
 	constructor(commandType: string, hostKind?: CliServerInfo['hostKind']) {
 		super(
 			hostKind === 'headless'
@@ -27,6 +28,7 @@ export class UnsupportedCommandError extends Error {
 		);
 		this.name = 'UnsupportedCommandError';
 		this.commandType = commandType;
+		this.hostKind = hostKind;
 	}
 }
 

@@ -16,6 +16,7 @@ import type {
 } from '../../types';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { STEP_INDEX, INDEX_TO_STEP, WIZARD_TOTAL_STEPS } from './WizardContext/constants';
 import { generateMessageId } from './WizardContext/messageIds';
 import {
@@ -166,6 +167,10 @@ export function WizardProvider({ children }: WizardProviderProps) {
 
 	const setCodexTransport = useCallback((transport: CodexTransport) => {
 		dispatch({ type: 'SET_CODEX_TRANSPORT', transport });
+	}, []);
+
+	const setHarnessControlMode = useCallback((mode: HarnessControlMode) => {
+		dispatch({ type: 'SET_HARNESS_CONTROL_MODE', mode });
 	}, []);
 
 	const setPlannerModel = useCallback((model: string | undefined) => {
@@ -368,6 +373,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setMaestroPMode,
 			setMaestroPPath,
 			setCodexTransport,
+			setHarnessControlMode,
 			setPlannerModel,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,

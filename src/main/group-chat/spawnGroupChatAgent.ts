@@ -37,6 +37,8 @@ function sshRemoteName(
 }
 
 export interface SpawnGroupChatAgentConfig {
+	/** Host capability: final synchronous fence after all asynchronous preparation. */
+	beforeSpawn?: () => void;
 	/** Stable session id for the process manager */
 	sessionId: string;
 	/** Agent id (e.g. 'claude-code', 'codex') - used as `toolType` */
@@ -218,6 +220,7 @@ export async function spawnGroupChatAgent(
 		}
 	);
 
+	config.beforeSpawn?.();
 	return processManager.spawn({
 		sessionId: prepared.processId,
 		toolType: prepared.providerId,

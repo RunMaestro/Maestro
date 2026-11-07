@@ -450,6 +450,16 @@ List all configured SSH remotes
 maestro-cli list ssh-remotes --json
 ```
 
+## `maestro-cli list models <provider>`
+
+List the models a provider offers (e.g. opencode, claude-code), as the model pickers see them
+
+| Option              | Description                                                        | Default |
+| ------------------- | ------------------------------------------------------------------ | ------- |
+| `--refresh`         | Re-run discovery past the cache and update every open model picker | -       |
+| `--ssh-remote <id>` | Discover on this SSH remote instead of this machine                | -       |
+| `--json`            | Output as JSON (for scripting)                                     | -       |
+
 ## `maestro-cli list terminals`
 
 List open terminal tabs in the desktop app (all agents unless --agent is given)
@@ -535,7 +545,7 @@ Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 maestro-cli goal-run <agent-id> "Make the build pass" --exit-criteria "npm test exits 0" --max-iterations 5
 ```
 
-## `maestro-cli run-doc <docs>`
+## `maestro-cli run-doc <docs...>`
 
 Run one or more Auto Run documents headlessly (no saved playbook required)
 
@@ -607,18 +617,19 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 
 | Option                            | Description                                                                                                                                                                                                                                                                                                                                                                                    | Default |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).                       | -       |
+| `--dispatch-id <uuid>`            | For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it                                                                                                                                                                                                                                                                      | -       |
+| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. It runs now, even while another tab of the agent is working.                                                                                                                       | -       |
 | `--visible`                       | With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)                                                                                                                                                                                                                                                       | -       |
 | `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                                                                                                     | -       |
 | `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                                                                                                                                       | -       |
-| `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)                                                                                                                                                                                                                                                 | -       |
+| `-f, --force`                     | Write into a tab that is itself mid-turn (interleaves two answers); requires allowConcurrentSend. An idle tab of a busy agent needs no --force. Cannot be combined with --new-tab.                                                                                                                                                                                                             | -       |
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                                                  | -       |
-| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                                            | -       |
+| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target tab dispatches immediately, even while another tab of the agent is working. Cannot be combined with --new-tab or --force. Returns the queue position.                                                                                                                      | -       |
 | `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                                              | -       |
 | `--routing <mode>`                | How the message's @mentions run, like the composer's routing strip: parallel (both answer, this agent waits for the reply), consult-first (the mentioned agent answers first), handoff (this agent's answer is sent on), or only (just the mentioned agents answer). Overrides what the wording implies. Requires an @mention of another agent in the message; read it back with `queue list`. | -       |
 | `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                                                | -       |
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                                                    | -       |
-| `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else its active AI tab)                                                                                                                                                                                                                                                        | -       |
+| `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else a new tab)                                                                                                                                                                                                                                                                | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                                                 | -       |
 | `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                                                                                                  | -       |
 | `--json`                          | Output as JSON (this verb always does; accepted so every verb takes --json)                                                                                                                                                                                                                                                                                                                    | -       |
@@ -1154,7 +1165,7 @@ Open a file as a preview tab in the Maestro desktop app (audio and video play in
 maestro-cli open-file ./README.md --agent <agent-id> --background
 ```
 
-## `maestro-cli open-graph [paths]`
+## `maestro-cli open-graph [paths...]`
 
 Open the Document Graph over specific markdown files or a directory
 
@@ -1332,7 +1343,7 @@ Refresh Auto Run documents in the Maestro desktop app
 maestro-cli refresh-auto-run --agent <agent-id>
 ```
 
-## `maestro-cli auto-run <docs>`
+## `maestro-cli auto-run <docs...>`
 
 Configure and optionally launch an auto-run with documents
 
@@ -1581,9 +1592,10 @@ maestro-cli cue trigger "Nightly review" --prompt "Focus on the auth module"
 
 List all Cue subscriptions across agents
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ```bash
 maestro-cli cue list --json
@@ -1613,10 +1625,11 @@ maestro-cli cue model "Nightly review" --clear-model
 
 Turn a Cue subscription on (name, or the full id from `cue list --json`)
 
-| Option             | Description                              | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `-a, --agent <id>` | Disambiguate a name several agents share | -       |
-| `--json`           | Output as JSON (for scripting)           | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Disambiguate a name several agents share                                        | -       |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ```bash
 maestro-cli cue enable "Nightly review" --agent <agent-id>
@@ -1626,10 +1639,11 @@ maestro-cli cue enable "Nightly review" --agent <agent-id>
 
 Turn a Cue subscription off without deleting it
 
-| Option             | Description                              | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `-a, --agent <id>` | Disambiguate a name several agents share | -       |
-| `--json`           | Output as JSON (for scripting)           | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Disambiguate a name several agents share                                        | -       |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ```bash
 maestro-cli cue disable "Nightly review" --agent <agent-id>
@@ -1671,12 +1685,12 @@ maestro-cli cue screen "PR opened" --mode on --threshold 0.8
 
 Show recent Cue runs, newest first
 
-| Option              | Description                                                                                                         | Default |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`  | Only runs for this agent                                                                                            | -       |
-| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                  | -       |
-| `--json`            | Output as JSON (for scripting)                                                                                      | -       |
-| `--data-dir <path>` | Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default) | -       |
+| Option              | Description                                                                                                                                   | Default |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Only runs for this agent                                                                                                                      | -       |
+| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                                            | -       |
+| `--json`            | Output as JSON (for scripting)                                                                                                                | -       |
+| `--data-dir <path>` | Data directory whose app or host is asked, and whose cue.db is read when neither answers (default: MAESTRO_USER_DATA or the platform default) | -       |
 
 ```bash
 maestro-cli cue activity --agent <agent-id> --limit 20
@@ -2789,6 +2803,61 @@ Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
 maestro-cli tab reopen --agent <agent-id> --index 0 --background
 ```
 
+## `maestro-cli tab pins`
+
+Read and change an AI tab's pinned messages (default: list them)
+
+## `maestro-cli tab pins list`
+
+List a tab's pinned messages in transcript order
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins add [message-id]`
+
+Pin a message by transcript entry id, or the newest one with --last
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+| `--last <who>`       | Pin the newest message of this kind: user or agent              | -       |
+
+## `maestro-cli tab pins remove <pin-id>`
+
+Unpin a message (pin id: exact or unique prefix)
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins rename <pin-id> [label...]`
+
+Rename a pin; no label restores the message's own first line
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab pins show`
+
+Open the pin panel over the tab (selects the agent and the tab)
+
+| Option               | Description                                                     | Default |
+| -------------------- | --------------------------------------------------------------- | ------- |
+| `-t, --tab <tab-id>` | The AI tab (exact, unique prefix, or "active"; default: active) | -       |
+| `-a, --agent <id>`   | Whose active tab, when the tab is "active"                      | -       |
+| `--json`             | Output as JSON (for scripting)                                  | -       |
+
 ## `maestro-cli tab compact [tab-id]`
 
 Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id
@@ -3186,7 +3255,7 @@ Import a theme JSON file, apply it live, and activate it
 maestro-cli theme import ./my-theme.json
 ```
 
-## `maestro-cli theme set [assignments]`
+## `maestro-cli theme set [assignments...]`
 
 Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 
@@ -3452,14 +3521,16 @@ maestro-cli computer-history config --digest-source local
 
 Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
-## `maestro-cli pianola resolve <decision-id>`
+## `maestro-cli pianola resolve <id>`
 
-Resolve a persisted manager handoff after recipient and pending-ask revalidation
+Resolve a persisted manager handoff or founder ask after revalidation
 
 | Option                | Description                                             | Default |
 | --------------------- | ------------------------------------------------------- | ------- |
 | `--answer <text>`     | Answer the requesting agent exactly once                | -       |
 | `--escalation <text>` | Ask the human to decide, with a concrete recommendation | -       |
+| `--option <text>`     | Resolve a founder ask with this option                  | -       |
+| `--note <text>`       | Add a note to a founder-ask resolution                  | -       |
 | `--background`        | Preserve the active agent and tab                       | -       |
 | `--json`              | Output as JSON                                          | -       |
 
@@ -3579,6 +3650,41 @@ Save a learned decision profile from --file or stdin (per-project or global)
 maestro-cli pianola set-profile --project ~/code/api --file profile.md --pair-count 120
 ```
 
+## `maestro-cli pianola memory [action] [value...]`
+
+Backfill and retrieve evidence-backed user and project memory
+
+| Option                     | Description                                                                                               | Default |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| `--project <path>`         | Project scope                                                                                             | -       |
+| `--provider <id>`          | Historical provider for a custom root                                                                     | -       |
+| `--root <path>`            | Custom account/data root                                                                                  | -       |
+| `--mine`                   | Explicitly attribute selected pools to your human-authored history                                        | -       |
+| `--mode <mode>`            | local, cli, hosted, or batch                                                                              | -       |
+| `--cli-provider <id>`      | Installed Maestro CLI to use for extraction                                                               | -       |
+| `--hosted-provider <id>`   | Hosted extraction provider: openai or nan                                                                 | -       |
+| `--model <model>`          | Extraction model                                                                                          | -       |
+| `--endpoint <url>`         | Loopback local extraction endpoint                                                                        | -       |
+| `--qualify-model <model>`  | Recall qualification model (default: qwen3:8b)                                                            | -       |
+| `--qualify-provider <id>`  | Recall qualification provider: local or hosted                                                            | -       |
+| `--qualify-endpoint <url>` | Qualification endpoint (loopback for local)                                                               | -       |
+| `--rerank-model <model>`   | Hosted recall reranker model (default: rerank)                                                            | -       |
+| `--rerank-endpoint <url>`  | Hosted reranker endpoint                                                                                  | -       |
+| `--tokens <n>`             | Total token cap including reservations                                                                    | -       |
+| `--dollars <n>`            | Total cost cap including reservations                                                                     | -       |
+| `--exclude <paths...>`     | Exclude absolute roots/projects/files before reads                                                        | -       |
+| `--consent-hosted`         | Consent to off-device processing of selected excerpts                                                     | -       |
+| `--ongoing`                | Continue incremental learning after backfill completes                                                    | -       |
+| `--no-ongoing`             | Stop after the current backfill completes                                                                 | -       |
+| `--kind <kind>`            | preference, project, decision, episode, commitment, or context                                            | -       |
+| `--history`                | List-only: browse all lifecycle statuses and dates                                                        | -       |
+| `--intent <mode>`          | Recall: current, as-of, previous, proposed, contested, or history (default: current; --qualify may infer) | -       |
+| `--at <date>`              | Required instant for --intent as-of                                                                       | -       |
+| `--qualify`                | Opt into slower, fallible local model review; not a correctness guarantee                                 | -       |
+| `--rerank`                 | Opt into hosted reranking; sends the question and shortlisted assertions                                  | -       |
+| `--out <file>`             | Write JSON output to a file                                                                               | -       |
+| `--json`                   | JSON output                                                                                               | -       |
+
 ## `maestro-cli pianola log`
 
 Show recent Pianola decisions from the audit log
@@ -3591,6 +3697,73 @@ Show recent Pianola decisions from the audit log
 ```bash
 maestro-cli pianola log --limit 20
 ```
+
+## `maestro-cli pianola program`
+
+Manage product programs
+
+## `maestro-cli pianola program apply`
+
+| Option          | Description                   | Default |
+| --------------- | ----------------------------- | ------- |
+| `--file <path>` | YAML or JSON program manifest | -       |
+| `--json`        | Output as JSON                | -       |
+
+## `maestro-cli pianola program list`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program show <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program pause <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program resume <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola escalate`
+
+| Option                      | Description | Default |
+| --------------------------- | ----------- | ------- |
+| `--title <text>`            | -           | -       |
+| `--detail <text>`           | -           | -       |
+| `--program <id>`            | -           | -       |
+| `--agent <id>`              | -           | -       |
+| `--tab <id>`                | -           | -       |
+| `--severity <level>`        | -           | -       |
+| `--requested-action <text>` | -           | -       |
+| `--distinct`                | -           | -       |
+| `--json`                    | -           | -       |
+
+## `maestro-cli pianola needs-me`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
+## `maestro-cli pianola dismiss <askId>`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
+## `maestro-cli pianola brief`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
 
 ## `maestro-cli pianola plan`
 
@@ -3608,6 +3781,23 @@ Save a plan from --file or piped stdin (validated before write)
 ```bash
 maestro-cli pianola plan set --file plan.json
 ```
+
+## `maestro-cli pianola plan revise <planId> <taskId>`
+
+Revise a reviewed or failed task and queue it again without replacing its plan
+
+| Option            | Description                                                       | Default |
+| ----------------- | ----------------------------------------------------------------- | ------- |
+| `--prompt <text>` | Corrected implementation instructions; validation stays unchanged | -       |
+| `--json`          | Output as JSON (for scripting)                                    | -       |
+
+## `maestro-cli pianola plan skip <planId> <taskId>`
+
+Skip a failed task while keeping its dependents blocked
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli pianola plan list`
 
@@ -3648,23 +3838,41 @@ Run a saved plan to completion, dispatching tasks as their dependencies finish
 maestro-cli pianola orchestrate <plan-id> --concurrency 2 --once
 ```
 
+## `maestro-cli pianola validate <planId> <taskId>`
+
+Run the task validation oracle in the sandbox and append its Agent Run check
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola program-loop <programId>`
+
+| Option                 | Description                    | Default |
+| ---------------------- | ------------------------------ | ------- |
+| `--interval <seconds>` | Polling interval (default 120) | -       |
+| `--once`               | Perform one tick and exit      | -       |
+| `--json`               | Output as JSON                 | -       |
+
 ## `maestro-cli pianola supervise`
 
 Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
 
 ## `maestro-cli pianola supervise scope`
 
-Create or replace an agent/group watch selection (new selections start paused)
+Configure or reconcile an owner-authorized agent/group selection through the desktop host
 
-| Option                 | Description                        | Default |
-| ---------------------- | ---------------------------------- | ------- |
-| `--manager <agent-id>` | Manager agent id                   | -       |
-| `--label <label>`      | Selection label                    | -       |
-| `--id <scope-id>`      | Replace an existing selection      | -       |
-| `--agents <ids>`       | Comma-separated agent IDs          | -       |
-| `--groups <ids>`       | Comma-separated group IDs          | -       |
-| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
-| `--json`               | Output as JSON                     | -       |
+| Option                     | Description                                                             | Default |
+| -------------------------- | ----------------------------------------------------------------------- | ------- |
+| `--manager <agent-id>`     | Manager agent id                                                        | -       |
+| `--label <label>`          | Selection label                                                         | -       |
+| `--id <scope-id>`          | Existing owner-authorized selection id                                  | -       |
+| `--agents <ids>`           | Comma-separated agent IDs                                               | -       |
+| `--groups <ids>`           | Comma-separated group IDs                                               | -       |
+| `--exclude <ids>`          | Comma-separated excluded agent IDs                                      | -       |
+| `--future-local-agents`    | Include future local agents (requires --id or --request-owner-approval) | -       |
+| `--request-owner-approval` | Request one native owner confirmation for this exact configuration      | -       |
+| `--json`                   | Output as JSON                                                          | -       |
 
 ```bash
 maestro-cli pianola supervise scope --manager <agent-id> --label "Project agents" --agents <agent-id>
@@ -3699,13 +3907,21 @@ Register a supervised plan orchestration the desktop keeps alive
 maestro-cli pianola supervise orchestrate <plan-id> --concurrency 2
 ```
 
+## `maestro-cli pianola supervise program <programId>`
+
+| Option                 | Description                    | Default |
+| ---------------------- | ------------------------------ | ------- |
+| `--interval <seconds>` | Polling interval (default 120) | -       |
+| `--json`               | Output as JSON                 | -       |
+
 ## `maestro-cli pianola supervise list`
 
 List registered supervised targets
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option   | Description                                           | Default |
+| -------- | ----------------------------------------------------- | ------- |
+| `--live` | Read worker and coverage status from the desktop host | -       |
+| `--json` | Output as JSON (for scripting)                        | -       |
 
 ```bash
 maestro-cli pianola supervise list
@@ -4554,7 +4770,7 @@ End the recording in progress and close the microphone
 maestro-cli voice wake stop
 ```
 
-## `maestro-cli voice wake add <phrase> <files>`
+## `maestro-cli voice wake add <phrase> <files...>`
 
 Add recordings from 16-bit PCM WAV files instead of the microphone, one recording of the phrase per file
 
@@ -5311,7 +5527,7 @@ Ask one yes or no question about a state: prints P(yes) and yes, no or uncertain
 maestro-cli s1 yes "Does this diff change public API?" --state-file change.diff
 ```
 
-## `maestro-cli s1 pick <question> <options>`
+## `maestro-cli s1 pick <question> <options...>`
 
 Pick one option, each as NAME or NAME=description: prints the option, the probability of each, and confidence; exits 1 under --min-confidence (requires the desktop app)
 
@@ -5330,7 +5546,7 @@ Pick one option, each as NAME or NAME=description: prints the option, the probab
 maestro-cli s1 pick "Which team owns this?" "backend=API or database,frontend=UI,infra=build and deploy" --state "Login page returns 500"
 ```
 
-## `maestro-cli s1 rate <question> <levels>`
+## `maestro-cli s1 rate <question> <levels...>`
 
 Rate a state on a rubric of 2 to 10 levels, low to high, each describing a situation: prints the position and confidence; exits 1 under --min-confidence (requires the desktop app)
 
@@ -5373,7 +5589,7 @@ Ask several questions about one state in one request, in any mix of --noul, --ch
 maestro-cli s1 ask --state-file report.md --noul urgent "Is it urgent?" --choice team "Which team?" backend frontend infra
 ```
 
-## `maestro-cli s1 rank [candidates]`
+## `maestro-cli s1 rank [candidates...]`
 
 Rank or filter many candidates against a query, one question per candidate; the last line says whether every candidate was judged, and an unjudged one is unknown (requires the desktop app)
 
@@ -5728,7 +5944,7 @@ Show the window state, the agent, the mode, and the current conversation
 maestro-cli quick-chat status --json
 ```
 
-## `maestro-cli quick-chat send [message]`
+## `maestro-cli quick-chat send [message...]`
 
 Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 

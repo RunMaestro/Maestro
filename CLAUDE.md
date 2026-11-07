@@ -89,6 +89,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
+- **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
 - **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
@@ -141,6 +142,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Proving a sealed file is the newest one (rollback and deletion):** `createKeyringAnchor(service, account)`, `AnchorStore`, `keyringAnchor()`, `noAnchor()` in `src/main/utils/keyring-anchor.ts`
 - **A per-device state file that holds a secret:** `createPrivateStateFile()`, `sealSecret()`, `unsealSecret()`, `isStoredSecret()`, `SealedSecretError` in `src/main/utils/sealed-state-file.ts`; `SecretStorage`, `describeSecretStorage()` in `src/shared/secretStorage.ts`
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
+- **Which store holds a provider session's origin record:** `sessionOriginStoreFor()` in `src/shared/sessionOriginStore.ts`
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
@@ -219,6 +221,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Showing a committed provider translation:** `ContextTranslationRecord` in `src/shared/maestro-lib/translation/types.ts`; `<ContextTranslationCard>` in `src/renderer/components/ContextTranslationCard.tsx`
 - **Translating context before a send:** `prepareTabForSend()`, `pendingTranslationSource()`, `TranslationSendHeldError` in `src/shared/maestro-lib/translation/send.ts`; `NativeTranslationService` in `translation/service.ts`; `prepareProviderTranslationForSend()` in `src/renderer/services/providerTranslation.ts`
 - **Finding a Codex native transcript:** `findCodexSessionFile()`, `listCodexSessionFiles()`, `extractSessionIdFromFilename()` in `src/shared/maestro-lib/codex/session-files.ts`
+- **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Provider translation version compatibility:** `translationVersionLimitation()` in `src/shared/maestro-lib/translation/support.ts`
@@ -231,6 +234,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
+- **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
 - **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrapper in `src/main/agents/provider-account-dirs.ts`)
 - **Naming the account a login acts on:** `<AccountPill>`, `ghAccountLabel()` in `src/renderer/components/ui/AccountPill.tsx`; `parseGhActiveAccount()` in `src/main/utils/ghErrors.ts`
@@ -287,6 +291,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
 - **Storing the closed-tab stack (Cmd+Shift+T):** `projectClosedTabHistory()`, `normalizeStoredClosedTabs()`, `MAX_CLOSED_TAB_HISTORY` in `src/shared/closedTabHistory.ts`; `loadReopenedTabContent()` in `src/renderer/services/reopenedTabContent.ts`
 - **Reading or reopening the closed-tab stack from a script (`maestro-cli tab closed` / `tab reopen`):** `runRemoteClosedTabCommand()`, `listClosedTabs()`, `getClosedTabLabel()` in `src/renderer/services/closedTabCommands.ts`, wire in `src/shared/closedTabCommands.ts`
+- **Pinning a message in a tab (pin button, pin panel, `maestro-cli tab pins`):** `toggleMessagePin()`, `persistTabPins()`, `runRemoteMessagePinCommand()` in `src/renderer/services/messagePins.ts`, over `resolvePinnedRows()`, `findPinForRow()` in `src/shared/messagePins.ts`
 - **Compact, Merge Into, or Send to Agent from a script (`maestro-cli tab compact` / `merge` / `transfer`):** `runRemoteTabContextOp()` in `src/renderer/services/tabContextOps.ts`, wire in `src/shared/tabContextOps.ts`
 - **Forcing a tracked sessions flush from outside App's hook tree:** `flushSessionPersistenceNow()`, `registerSessionPersistenceFlush()` in `src/renderer/services/sessionPersistenceFlush.ts`
 - **Which tab a Quick Chat message goes to:** `decideRoute()`, `parseRouteAnswer()` in `src/shared/quickChatRouting.ts`; `routeQuickChatMessage()`, `reopenClosedConversation()` in `src/renderer/services/quickChatRouter.ts`
@@ -308,6 +313,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Parking, waking, dismissing, or rescheduling ONE snooze:** `snoozeTabWithMirror()`, `wakeSnoozeNow()`, `dismissSnoozeNow()`, `rescheduleSnoozeNow()` in `src/renderer/services/snoozeActions.ts`
 
 #### Composer, queue, and transcript
+
+- **Native current-turn observation:** `isCurrentTurnCursor()`, `sameCurrentTurnCursor()`, `composeCurrentTurn()`, `currentTurnMessages()`, `isNativeQuestionRequest()`, `nativeQuestionMessage()` in `src/shared/currentTurn.ts`
+- **Coalescing Pianola scope wakeups:** `PianolaScopeWakeups` in `src/cli/commands/pianola-scope-watch.ts`
+- **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
@@ -452,6 +461,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### UI components and widgets
 
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
+- **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
@@ -599,11 +609,13 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The Dataview vault index (query, status, rebuild, change events):** `DataviewService`, `getDataviewService()` in `src/main/dataview/dataview-service.ts`
 - **Whether a DataviewJS block may run:** `dataviewJsRunPolicy()`, `isTrustedDataviewRoot()` in `src/shared/dataview/trust.ts`; `useDataviewJsRunPolicy()` in `src/renderer/hooks/file/useDataviewJsRunPolicy.ts`
 - **A message from the DataviewJS sandbox:** `parseSandboxMessage(raw, from)` in `src/shared/dataview/sandboxProtocol.ts`
+- **What a Dataview block shows while it computes:** `DataviewSkeleton`, `DataviewRefreshing`, `DataviewInlineRefreshing`, `DataviewCalculatingPill`, `useDataviewRefreshIndicator()` in `src/renderer/components/Markdown/components/DataviewLoading.tsx`
 - **What counts as a wiki link, embed, or file path in markdown text:** `WIKI_LINK_PATTERN`, `IMAGE_EMBED_PATTERN`, `PATH_PATTERN` in `src/shared/fileLinkPatterns.ts`
 
 #### Layout, scroll, sizing, and hook utilities
 
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
+- **Keeping a scrolling strip's active item on screen:** `useRevealActiveItem()`, `revealActiveProps()`, `computeRevealScroll()` in `src/renderer/hooks/ui/useRevealActiveItem.ts`
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect, never a `ref` on the row; a plain list uses `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Sizing a virtualized row the user's font decides:** `virtualizer.measureElement` + `data-index` and NO inline `height` (see `HistoryPanel`, `FileSearchModal`)
@@ -794,8 +806,9 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `pi`            | Pi              | **Beta**   |
 | `qwen3-coder`   | Qwen3 Coder     | **Beta**   |
 | `terminal`      | Terminal        | Internal   |
+| `gemini-cli`    | Gemini CLI      | Hidden     |
 
-Rows are in picker order (alphabetical by display name); the registry is `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`. `terminal` is internal and never offered.
+Rows are in picker order (alphabetical by display name); the registry is `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`, and the picker default comes from `AGENT_AUTOSELECT_ORDER`. `terminal` is internal and never offered. `gemini-cli` is hidden (superseded by Antigravity, kept for type and back-compat reasons).
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
 
@@ -823,101 +836,104 @@ npm run test:watch    # Run tests in watch mode
 ```
 src/
 ├── main/                    # Electron main process (Node.js)
-│   ├── index.ts            # Entry point, IPC handlers
+│   ├── index.ts            # Entry point (app lifecycle, window, startup wiring)
+│   ├── ipc/bootstrap/      # setupIpcHandlers(): the live IPC registration
+│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
 │   ├── preload/            # Secure IPC bridge (one module per namespace)
-│   ├── process-manager.ts  # Process spawning (PTY + child_process)
-│   ├── agent-*.ts          # Agent detection, capabilities, session storage
-│   ├── cue/               # Maestro Cue event-driven automation engine
+│   ├── process-manager/    # Process spawning (PTY + child_process)
+│   ├── agents/             # Agent definitions, detection, capabilities, model discovery
+│   ├── cue/                # Maestro Cue event-driven automation engine
 │   ├── parsers/            # Per-agent output parsers + error patterns
 │   ├── storage/            # Per-agent session storage implementations
-│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
+│   ├── plugins/            # Plugin manager, sandbox, broker, consent
+│   ├── stats/              # Usage stats SQLite (stats-db.ts, schema, aggregations)
+│   ├── web-server/         # WebSocket bridge for web-desktop and the CLI
 │   └── utils/              # Utilities (execFile, ssh-spawn-wrapper, etc.)
 │
 ├── renderer/               # React frontend (desktop)
 │   ├── App.tsx            # Main coordinator
 │   ├── components/        # UI components
 │   ├── hooks/             # Custom React hooks
-│   ├── services/          # IPC wrappers (git.ts, process.ts)
+│   ├── stores/            # Zustand stores (sessions, settings, ui, modal, ...)
+│   ├── services/          # Renderer-side services (shell commands, mentions, ...)
 │   ├── constants/         # Themes, shortcuts, priorities
 │   └── contexts/          # Context providers (LayerStack, etc.)
 │
 ├── web-desktop/            # Browser build of the renderer (WebSocket IPC bridge)
 │
-├── web/                    # PWA assets (public/) + service worker; rest is legacy dead code
+├── web/                    # PWA assets (public/) + utils/serviceWorker.ts; the rest is legacy, unimported
 │
-├── cli/                    # CLI tooling for batch automation
-│   ├── commands/          # CLI command implementations
-│   └── services/          # Playbook and batch processing
+├── cli/                    # maestro-cli: commands/ and services/ (playbooks, batch, spawner)
+│
+├── maestro-p/              # maestro-p TUI wrapper for provider CLIs
 │
 ├── prompts/                # System prompts (editable .md files)
 │
-├── shared/                 # Shared types and utilities
+├── shared/                 # Shared types and utilities (both processes, CLI-safe)
 │
-└── docs/                   # Mintlify documentation (docs.runmaestro.ai)
+├── types/                  # Ambient type declarations
+│
+└── __tests__/              # Vitest suite (mirrors src/ layout)
+
+docs/                       # Mintlify documentation (docs.runmaestro.ai) + docs/agent-guides/
 ```
 
 ---
 
 ## Key Files for Common Tasks
 
-| Task                                 | Primary Files                                                                                                                                                                                                                                                        |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add IPC handler                      | `src/main/index.ts`, `src/main/preload/` (one module per namespace)                                                                                                                                                                                                  |
-| Add UI component                     | `src/renderer/components/`                                                                                                                                                                                                                                           |
-| Add browser/mobile touch affordance  | `src/renderer/components/`, `src/renderer/utils/touch.ts`, `src/renderer/hooks/utils/` (gate on `isCoarsePointer()`; PWA assets in `src/web/public/`)                                                                                                                |
-| Add keyboard shortcut                | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                                                                                                                     |
-| Add theme                            | `src/renderer/constants/themes.ts`                                                                                                                                                                                                                                   |
-| Add modal                            | Component + `src/renderer/constants/modalPriorities.ts`                                                                                                                                                                                                              |
-| Add tab overlay menu                 | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                                                                                                                         |
-| Add setting                          | `src/shared/settingsMetadata.ts`, `src/renderer/stores/settingsStore.ts`, `searchableSettings.ts` + a `data-setting-id` wrapper (checklist: [[CLAUDE-SETTINGS.md]] §9)                                                                                               |
-| Add template variable                | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                                                                                                                         |
-| Modify system prompts                | `src/prompts/*.md` (wizard, Auto Run, etc.) or edit via **Maestro Prompts** tab in Settings                                                                                                                                                                          |
-| Customize prompts                    | Use **Maestro Prompts** tab in Settings, or edit `userData/core-prompts-customizations.json`                                                                                                                                                                         |
-| Add new prompt                       | `src/prompts/*.md`, `src/shared/promptDefinitions.ts` (add to `CORE_PROMPTS` array and `PROMPT_IDS`)                                                                                                                                                                 |
-| Add Spec-Kit command                 | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                                                                                                                |
-| Add OpenSpec command                 | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                                                                                                              |
-| Add CLI command                      | `src/cli/commands/`, `src/cli/index.ts`, and an example in `src/cli/command-examples.ts` (`src/__tests__/cli/command-tree.test.ts` fails a verb without one)                                                                                                         |
-| Add new agent                        | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` - see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)                                                                                        |
-| Add agent output parser              | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                                                                                                                                                     |
-| Add parquet viewer feature           | `src/renderer/components/ParquetViewer/` (UI), `src/main/parquet/` (query engine), `src/shared/parquet/` (filter language + wire types)                                                                                                                              |
-| Add agent session storage            | `src/main/storage/` (extend `BaseSessionStorage`), `src/main/storage/index.ts`                                                                                                                                                                                       |
-| Add agent error patterns             | `src/shared/agentErrorPatterns.ts`                                                                                                                                                                                                                                   |
-| Add agent context window             | `src/shared/agentConstants.ts` (`DEFAULT_CONTEXT_WINDOWS`, `FALLBACK_CONTEXT_WINDOW`)                                                                                                                                                                                |
-| Add playbook feature                 | `src/cli/services/playbooks.ts`                                                                                                                                                                                                                                      |
-| Add marketplace playbook             | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                                                                                                                                                          |
-| Playbook import/export               | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                                                                                                                                                      |
-| Modify wizard flow                   | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                                                                                                                         |
-| Add tour step                        | `src/renderer/components/Wizard/tour/tourSteps.tsx`                                                                                                                                                                                                                  |
-| Modify file linking                  | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                                                                                                                |
-| Add documentation page               | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                                                                                                                           |
-| Add documentation screenshot         | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                                                                                                                         |
-| MCP server integration               | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                                                                                                                         |
-| Add stats/analytics feature          | `src/main/stats/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                                                                                                       |
-| Add Usage Dashboard chart            | `src/renderer/components/UsageDashboard/`                                                                                                                                                                                                                            |
-| Add Document Graph feature           | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                                                                                                                                                   |
-| Add colorblind palette               | `src/renderer/constants/colorblindPalettes.ts`                                                                                                                                                                                                                       |
-| Add performance metrics              | `src/shared/performance-metrics.ts`                                                                                                                                                                                                                                  |
-| Capture/analyze perf trace           | `src/main/profiling/` (Chromium contentTracing capture), `scripts/analyze-perf-trace.mjs` (offline analysis), `CLAUDE-PERFORMANCE.md` -> Field Performance Traces                                                                                                    |
-| Add power management                 | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts`                                                                                                                                                                                                       |
-| Spawn agent with SSH support         | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution)                                                                                                                                                                                            |
-| Modify file preview tabs             | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System)                                                                                                                                                                     |
-| Add Director's Notes feature         | `src/renderer/components/DirectorNotes/`, `src/shared/directorNotesNarrative.ts`, `src/shared/directorNotesGrouping.ts`, `src/main/ipc/handlers/director-notes.ts`                                                                                                   |
-| Add Encore Feature                   | `src/renderer/types/index.ts` (flag), `src/shared/plugins/first-party.ts` (tile + settings body), gating checklist in [[CLAUDE-PATTERNS.md]] §12                                                                                                                     |
-| Modify history components            | `src/renderer/components/History/`                                                                                                                                                                                                                                   |
-| Modify history activity graph        | `src/renderer/components/History/ActivityGraph.tsx`, `src/main/utils/history-bucket-cache.ts` (disk-cached aggregates), `src/main/utils/history-bucket-builder.ts`                                                                                                   |
-| Modify Auto Run Thought Stream       | `src/renderer/stores/thoughtStreamStore.ts`, `ThoughtStreamPanel.tsx`, `useThoughtStream{Capture,Tool}Listener.ts`, `src/renderer/utils/toolActivityLabel.ts`                                                                                                        |
-| Add A Cappella voice feature         | `src/main/acappella/` (session, providers, router, audio, wake, transport), `src/main/ipc/handlers/acappella.ts`, `src/renderer/components/ACappella/` - read [docs/architecture/acappella/system-overview.md](docs/architecture/acappella/system-overview.md) first |
-| Add a voice provider (STT/TTS/brain) | `src/main/acappella/providers/` + `src/shared/acappella/provider-catalog.ts`. Register in `provider-registry.ts`; NEVER substitute one provider for another (see `capability-gate.ts`)                                                                               |
-| Surface a voice session in the UI    | `useOwnsVoiceSession()` in `src/renderer/components/ACappella/` - voice events are broadcast to EVERY window, so any new voice surface must gate on it or it renders in all of them                                                                                  |
-| Change local speech-to-text          | Engines are core: `src/main/local-models/stt/` (Parakeet, Whisper), leased via `SpeechToTextPool` in `local-models/speech-to-text.ts`. Voice's streaming policy: `acappella/providers/local/chunked-stt.ts`. ONNX Runtime only                                       |
-| Add a local-model task               | `src/shared/local-models/tasks.ts` (`LOCAL_MODEL_TASK_IDS` + `LOCAL_MODEL_TASKS`), then call `runLocalTask()` or a twin in `src/main/local-models/task-router.ts`; a text task adds a `*-local` prompt in `src/prompts/`. NEVER call llama or an endpoint directly   |
-| Add a downloadable native runtime    | `src/shared/local-models/native-runtimes.ts` (descriptor) + `runtime-artifacts.ts` (pinned tarball, hash, and `dependencies`). A tarball is NOT an install: anything the payload `require()`s must be listed, or it verifies clean and throws `MODULE_NOT_FOUND`     |
-| Add Cue event type                   | `src/main/cue/cue-types.ts`, `src/main/cue/cue-engine.ts`                                                                                                                                                                                                            |
-| Add Cue template variable            | `src/shared/templateVariables.ts`, `src/main/cue/cue-executor.ts`                                                                                                                                                                                                    |
-| Modify Cue modal                     | `src/renderer/components/CueModal/`                                                                                                                                                                                                                                  |
-| Configure Cue engine                 | `src/main/cue/cue-engine.ts`, `src/main/ipc/handlers/cue.ts`                                                                                                                                                                                                         |
-| Add terminal feature                 | `src/renderer/components/XTerminal.tsx`, `src/renderer/components/TerminalView.tsx`                                                                                                                                                                                  |
-| Modify terminal tabs                 | `src/renderer/utils/terminalTabHelpers.ts`, `src/renderer/stores/tabStore.ts`                                                                                                                                                                                        |
+| Task                                | Primary Files                                                                                                                                                                 |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add IPC handler                     | `src/main/ipc/handlers/` (handler module), `src/main/ipc/bootstrap/index.ts` (`setupIpcHandlers`), `src/main/preload/` (one module per namespace)                             |
+| Add UI component                    | `src/renderer/components/`                                                                                                                                                    |
+| Add browser/mobile touch affordance | `src/renderer/components/`, `src/renderer/utils/touch.ts`, `src/renderer/hooks/utils/` (gate on `isCoarsePointer()`; PWA assets in `src/web/public/`)                         |
+| Add keyboard shortcut               | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                              |
+| Add theme                           | `src/renderer/constants/themes.ts`                                                                                                                                            |
+| Add modal                           | Component + `src/renderer/constants/modalPriorities.ts`                                                                                                                       |
+| Add tab overlay menu                | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                                  |
+| Add setting                         | `src/shared/settingsMetadata.ts`, `src/renderer/stores/settingsStore.ts`, `searchableSettings.ts` + a `data-setting-id` wrapper (checklist: [[CLAUDE-SETTINGS.md]] §9)        |
+| Add template variable               | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                                  |
+| Modify system prompts               | `src/prompts/*.md` (wizard, Auto Run, etc.) or edit via **Maestro Prompts** tab in Settings                                                                                   |
+| Customize prompts                   | Use **Maestro Prompts** tab in Settings, or edit `userData/core-prompts-customizations.json`                                                                                  |
+| Add new prompt                      | `src/prompts/*.md`, `src/shared/promptDefinitions.ts` (add to `CORE_PROMPTS` array and `PROMPT_IDS`)                                                                          |
+| Add Spec-Kit command                | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                         |
+| Add OpenSpec command                | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                       |
+| Add CLI command                     | `src/cli/commands/`, `src/cli/index.ts`, and an example in `src/cli/command-examples.ts` (`src/__tests__/cli/command-tree.test.ts` fails a verb without one)                  |
+| Add new agent                       | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` - see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) |
+| Add agent output parser             | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                                                              |
+| Add parquet viewer feature          | `src/renderer/components/ParquetViewer/` (UI), `src/main/parquet/` (query engine), `src/shared/parquet/` (filter language + wire types)                                       |
+| Add agent session storage           | `src/main/storage/` (extend `BaseSessionStorage`), `src/main/storage/index.ts`                                                                                                |
+| Add agent error patterns            | `src/shared/agentErrorPatterns.ts`                                                                                                                                            |
+| Add agent context window            | `src/shared/agentConstants.ts` (`DEFAULT_CONTEXT_WINDOWS`, `FALLBACK_CONTEXT_WINDOW`)                                                                                         |
+| Add playbook feature                | `src/cli/services/playbooks.ts`                                                                                                                                               |
+| Add marketplace playbook            | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                                                                   |
+| Playbook import/export              | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                                                               |
+| Modify wizard flow                  | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                                  |
+| Add tour step                       | `src/renderer/components/Wizard/tour/tourSteps.tsx`                                                                                                                           |
+| Modify file linking                 | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                         |
+| Add documentation page              | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                                    |
+| Add documentation screenshot        | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                                  |
+| MCP server integration              | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                                  |
+| Add stats/analytics feature         | `src/main/stats/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                |
+| Add Usage Dashboard chart           | `src/renderer/components/UsageDashboard/`                                                                                                                                     |
+| Add Document Graph feature          | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                                                            |
+| Add colorblind palette              | `src/renderer/constants/colorblindPalettes.ts`                                                                                                                                |
+| Add performance metrics             | `src/shared/performance-metrics.ts`                                                                                                                                           |
+| Capture/analyze perf trace          | `src/main/profiling/` (Chromium contentTracing capture), `scripts/analyze-perf-trace.mjs` (offline analysis), `CLAUDE-PERFORMANCE.md` -> Field Performance Traces             |
+| Add power management                | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts`                                                                                                                |
+| Spawn agent with SSH support        | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution)                                                                                                     |
+| Modify file preview tabs            | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System)                                                                              |
+| Add Director's Notes feature        | `src/renderer/components/DirectorNotes/`, `src/shared/directorNotesNarrative.ts`, `src/shared/directorNotesGrouping.ts`, `src/main/ipc/handlers/director-notes.ts`            |
+| Add Encore Feature                  | `src/renderer/types/index.ts` (flag), `src/shared/plugins/first-party.ts` (tile + settings body), gating checklist in [[CLAUDE-PATTERNS.md]] §12                              |
+| Modify history components           | `src/renderer/components/History/`                                                                                                                                            |
+| Modify history activity graph       | `src/renderer/components/History/ActivityGraph.tsx`, `src/main/utils/history-bucket-cache.ts` (disk-cached aggregates), `src/main/utils/history-bucket-builder.ts`            |
+| Modify Auto Run Thought Stream      | `src/renderer/stores/thoughtStreamStore.ts`, `ThoughtStreamPanel.tsx`, `useThoughtStream{Capture,Tool}Listener.ts`, `src/renderer/utils/toolActivityLabel.ts`                 |
+| Add Cue event type                  | `src/main/cue/cue-types.ts`, `src/main/cue/cue-engine.ts`                                                                                                                     |
+| Add Cue template variable           | `src/shared/templateVariables.ts`, `src/main/cue/cue-executor.ts`                                                                                                             |
+| Modify Cue modal                    | `src/renderer/components/CueModal/`                                                                                                                                           |
+| Configure Cue engine                | `src/main/cue/cue-engine.ts`, `src/main/ipc/handlers/cue.ts`                                                                                                                  |
+| Add terminal feature                | `src/renderer/components/XTerminal.tsx`, `src/renderer/components/TerminalView.tsx`                                                                                           |
+| Modify terminal tabs                | `src/renderer/utils/terminalTabHelpers.ts`, `src/renderer/stores/tabStore.ts`                                                                                                 |
 
 ---
 

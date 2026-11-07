@@ -16,8 +16,10 @@
  * wins. That keeps this correct as agents are added without touching callers.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { describeModelsRefresh, summarizeModelsRefresh } from '../../../shared/agentModelsRefresh';
 
 export interface AgentModelEffortOptions {
 	/** Model ids the agent offers. Empty when the agent has no model selection. */
@@ -35,6 +37,14 @@ export interface AgentModelEffortOptions {
 	 * nothing to show.
 	 */
 	loaded: boolean;
+	/**
+	 * Re-run model discovery past the cache (a model just pulled into Ollama,
+	 * say) and report the result in a center flash. Every other open picker
+	 * picks the new list up from the main-process broadcast.
+	 */
+	refreshModels: () => Promise<void>;
+	/** True while a refresh started by THIS surface is in flight. */
+	refreshingModels: boolean;
 }
 
 /**
@@ -52,11 +62,20 @@ export function useAgentModelEffortOptions(
 	sshRemoteId?: string
 ): AgentModelEffortOptions {
 	const [result, setResult] = useState<
-		AgentModelEffortOptions & {
+		Omit<AgentModelEffortOptions, 'refreshModels' | 'refreshingModels'> & {
 			agentId?: string;
 			sshRemoteId?: string;
 		}
 	>({ models: [], efforts: [], defaultModel: '', defaultEffort: '', loaded: false });
+	const [refreshingModels, setRefreshingModels] = useState(false);
+	const scopeRef = useRef({ agentId, sshRemoteId });
+	scopeRef.current = { agentId, sshRemoteId };
+	const resultRef = useRef(result);
+	resultRef.current = result;
+	const refreshSequence = useRef(0);
+	const refreshed = useRef<{ agentId: string; sshRemoteId?: string; models: string[] } | null>(
+		null
+	);
 
 	useEffect(() => {
 		if (!agentId) return;
@@ -75,7 +94,10 @@ export function useAgentModelEffortOptions(
 			setResult({
 				agentId,
 				sshRemoteId,
-				models,
+				models:
+					refreshed.current?.agentId === agentId && refreshed.current.sshRemoteId === sshRemoteId
+						? refreshed.current.models
+						: models,
 				efforts: effortOpts.length > 0 ? effortOpts : reasoningOpts,
 				defaultModel: config?.model || '',
 				defaultEffort: readEffortFromConfig(config) ?? '',
@@ -87,11 +109,70 @@ export function useAgentModelEffortOptions(
 		};
 	}, [agentId, sshRemoteId]);
 
+	useEffect(() => {
+		if (!agentId) return;
+		return window.maestro.agents.onModelsRefreshed((payload) => {
+			if (payload.agentId !== agentId || payload.sshRemoteId !== (sshRemoteId ?? null)) return;
+			refreshed.current = { agentId, sshRemoteId, models: payload.models };
+			setResult((previous) =>
+				previous.agentId === agentId && previous.sshRemoteId === sshRemoteId
+					? { ...previous, models: payload.models }
+					: previous
+			);
+		});
+	}, [agentId, sshRemoteId]);
+
+	const refreshModels = useCallback(async () => {
+		if (!agentId) return;
+		const sequence = ++refreshSequence.current;
+		const isCurrent = () =>
+			sequence === refreshSequence.current &&
+			scopeRef.current.agentId === agentId &&
+			scopeRef.current.sshRemoteId === sshRemoteId;
+		const previous =
+			resultRef.current.agentId === agentId && resultRef.current.sshRemoteId === sshRemoteId
+				? resultRef.current.models
+				: [];
+		setRefreshingModels(true);
+		try {
+			const models = await window.maestro.agents.getModels(agentId, true, sshRemoteId);
+			if (!isCurrent()) return;
+			refreshed.current = { agentId, sshRemoteId, models };
+			setResult((current) =>
+				current.agentId === agentId && current.sshRemoteId === sshRemoteId
+					? { ...current, models }
+					: current
+			);
+			notifyCenterFlash({
+				message: 'Models refreshed',
+				detail: describeModelsRefresh(summarizeModelsRefresh(previous, models)),
+				color: 'green',
+			});
+		} catch (error) {
+			if (isCurrent())
+				notifyCenterFlash({
+					message: 'Could not refresh models',
+					detail: error instanceof Error ? error.message : String(error),
+					color: 'red',
+				});
+		} finally {
+			if (sequence === refreshSequence.current) setRefreshingModels(false);
+		}
+	}, [agentId, sshRemoteId]);
+
 	// Hide the previous scope synchronously, including the render before the
 	// effect runs. A slow response must never offer another provider's knobs.
 	return agentId && result.agentId === agentId && result.sshRemoteId === sshRemoteId
-		? result
-		: { models: [], efforts: [], defaultModel: '', defaultEffort: '', loaded: false };
+		? { ...result, refreshModels, refreshingModels }
+		: {
+				models: [],
+				efforts: [],
+				defaultModel: '',
+				defaultEffort: '',
+				loaded: false,
+				refreshModels,
+				refreshingModels,
+			};
 }
 
 /**

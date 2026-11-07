@@ -109,7 +109,8 @@ export function registerCommandCallbacks(
 			background?: boolean,
 			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
-			requireDeliveryReceipt?: boolean
+			requireDeliveryReceipt?: boolean,
+			pianolaDispatchId?: string
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
@@ -163,6 +164,7 @@ export function registerCommandCallbacks(
 						background,
 						consultChain,
 						mentionRouting,
+						...(pianolaDispatchId ? [pianolaDispatchId] : []),
 					],
 				}
 			);

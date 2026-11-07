@@ -383,6 +383,7 @@ export async function reopenClosedConversation(
 			name: resumable.name,
 			starred: resumable.starred,
 			usageStats: resumable.usageStats,
+			pinnedMessages: resumable.pinnedMessages,
 			saveToHistory: defaultSaveToHistory,
 			showThinking: defaultShowThinking,
 			activate: false,

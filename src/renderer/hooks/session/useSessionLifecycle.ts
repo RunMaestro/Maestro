@@ -48,6 +48,7 @@ import { canonicalJson } from '../../../shared/canonicalJson';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargets } from '../../../shared/modelTiers';
 import type { PeerGrants } from '../../../shared/peerAgents';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { flushGroupsToDisk } from '../../services/groupPersistence';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
@@ -125,7 +126,8 @@ export interface SessionLifecycleReturn {
 		migrationPlanId?: string,
 		projectResourcesIntoRepo?: boolean,
 		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-		convertProviderHistory?: boolean
+		convertProviderHistory?: boolean,
+		harnessControlMode?: HarnessControlMode
 	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -232,7 +234,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			migrationPlanId?: string,
 			projectResourcesIntoRepo?: boolean,
 			/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-			convertProviderHistory?: boolean
+			convertProviderHistory?: boolean,
+			harnessControlMode?: HarnessControlMode
 		) => {
 			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			const switchingProvider = !!toolType && !!before && toolType !== before.toolType;
@@ -337,6 +340,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// Codex because `resolveCodexTransport` ignores it there. Only the
 					// opt-in is stored, so choosing Standard clears the field.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 				};
 
 				const next = { ...s, ...updatedFields };

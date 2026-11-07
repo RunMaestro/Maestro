@@ -6,13 +6,21 @@
  * `cue schedule --pause/--resume` only reaches clock-driven subscriptions;
  * these reach every event type. The toggle writes the subscription's
  * `enabled` flag into its cue.yaml through the engine, exactly as the UI's
- * switch does, and `cue gate` writes `gate` / `gate_on_unavailable` the same
- * way, as `cue screen` does `screen_injection` / `injection_threshold`.
+ * switch does, and cue gate and cue screen update the matching gate/screen fields.
+ *
+ * `activity` asks the peer serving the data directory first (the desktop app,
+ * or a headless `maestro-cli host` from the engine it runs), since its
+ * in-memory log holds runs still in flight and their output. When no app is
+ * running, or a headless host cannot answer (its Cue is held by another engine
+ * or did not start, or it is an older build), it reads `cue.db` itself,
+ * read-only, through the same mapping the app uses.
  */
 
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import {
+	diskFallbackPeer,
 	errorFrameMessage,
+	type DiskFallbackPeer,
 	failCommand,
 	resolveAgentOrFail,
 	failFromError,
@@ -34,8 +42,7 @@ import {
 } from '../../shared/cue/injection-screen';
 import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
-import { MaestroNotRunningError } from '../services/maestro-not-running';
-import { applyDataDirOption } from '../services/data-dir-option';
+import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 import { readSessions } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
 import {
@@ -45,6 +52,7 @@ import {
 } from '../../main/cue/cue-activity-entries';
 import type { CueActivityEntry } from '../../main/web-server/types';
 import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
+import { readCueSubscriptionsFromDisk } from './cue-list';
 
 interface CueSubscriptionSummary {
 	id: string;
@@ -62,6 +70,8 @@ interface CueSubscriptionSummary {
 interface ToggleOptions {
 	agent?: string;
 	json?: boolean;
+	/** Explicit data directory; decides which host (or desktop) is asked. */
+	dataDir?: string;
 }
 
 interface GateOptions {
@@ -113,16 +123,30 @@ export function resolveSubscription(
 }
 
 async function setEnabled(target: string, enabled: boolean, options: ToggleOptions): Promise<void> {
+	if (options.dataDir !== undefined) {
+		applyDataDirOption(options.dataDir);
+		requireDataDirOrExit({ json: options.json });
+	}
 	const agentId = options.agent ? resolveAgentOrFail(options.agent, options.json) : undefined;
 	let sub: CueSubscriptionSummary;
 	let reply: Record<string, unknown>;
 	try {
 		reply = await withMaestroClient(async (client) => {
-			const list = await client.sendCommand<{ subscriptions?: CueSubscriptionSummary[] }>(
-				{ type: 'get_cue_subscriptions' },
-				'cue_subscriptions'
-			);
-			sub = resolveSubscription(list.subscriptions ?? [], target, agentId);
+			let subscriptions: CueSubscriptionSummary[];
+			try {
+				const list = await client.sendCommand<{ subscriptions?: CueSubscriptionSummary[] }>(
+					{ type: 'get_cue_subscriptions' },
+					'cue_subscriptions'
+				);
+				subscriptions = list.subscriptions ?? [];
+			} catch (error) {
+				// A headless host that is not running Cue cannot list, but it
+				// refuses the toggle below with the reason and what to do, which
+				// is the answer worth giving. So the name is resolved from disk.
+				if (diskFallbackPeer(error) !== 'headless-host') throw error;
+				subscriptions = readCueSubscriptionsFromDisk();
+			}
+			sub = resolveSubscription(subscriptions, target, agentId);
 			return client.sendCommand<Record<string, unknown>>(
 				{ type: 'toggle_cue_subscription', subscriptionId: sub.id, enabled },
 				'toggle_cue_subscription_result'
@@ -495,9 +519,16 @@ export async function cueScreen(target: string, options: ScreenOptions): Promise
 		);
 	}
 }
+/** Why the activity was read from disk, as the stderr note and a read failure say it. */
+const FALLBACK_REASON: Record<DiskFallbackPeer, string> = {
+	'app-not-running': 'Neither the desktop app nor `maestro-cli host` is running',
+	'headless-host':
+		'The headless host (`maestro-cli host`) is not running Cue here, or is an older build that cannot answer',
+};
 
 /**
- * Activity from `cue.db`, for when the desktop app is not running: the same
+ * Activity from `cue.db`, for when no app answers: none is running, or a
+ * headless host is not running Cue (or is too old to answer): the same
  * window of runs the app restores at start, through the same mapping, filter
  * and limit, so `--json` is the same `CueActivityEntry[]` either way. Never
  * `initCueDb()`: a headless engine may own the database, possibly as another
@@ -506,6 +537,7 @@ export async function cueScreen(target: string, options: ScreenOptions): Promise
 async function readActivityFromCueDb(
 	sessionId: string | undefined,
 	limit: number,
+	peer: DiskFallbackPeer,
 	json?: boolean
 ): Promise<CueActivityEntry[]> {
 	const { readRecentCueEventsReadOnly } = await import('../../main/cue/cue-db');
@@ -529,7 +561,7 @@ async function readActivityFromCueDb(
 	}
 	if (!read.ok) {
 		failCommand(
-			`The desktop app is not running and Cue run history could not be read: ${read.reason}`,
+			`${FALLBACK_REASON[peer]}, and Cue run history could not be read: ${read.reason}`,
 			json
 		);
 	}
@@ -538,6 +570,10 @@ async function readActivityFromCueDb(
 		keepRunning: engineLive,
 	});
 	return toCueActivityEntries(runs, { sessionId, limit });
+}
+
+function lowerFirst(text: string): string {
+	return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 /** `cue activity` - recent Cue runs, newest first. */
@@ -552,6 +588,7 @@ export async function cueActivity(options: ActivityOptions): Promise<void> {
 	}
 
 	let reply: ({ entries?: CueActivityEntry[] } & Record<string, unknown>) | null;
+	let peer: DiskFallbackPeer | null = null;
 	try {
 		reply = await withMaestroClient((client) =>
 			client.sendCommand<{ entries?: CueActivityEntry[] } & Record<string, unknown>>(
@@ -560,10 +597,12 @@ export async function cueActivity(options: ActivityOptions): Promise<void> {
 			)
 		);
 	} catch (error) {
-		// Only an absent app falls back. Any other failure (an old build, a
-		// timeout, a renderer that never answered) is reported as before
-		// rather than masked by figures from disk.
-		if (!(error instanceof MaestroNotRunningError)) failFromError(error, options.json);
+		// Only an absent app, or a headless host that could not answer, falls
+		// back. Any other failure (an old desktop build, a timeout, a renderer
+		// that never answered) is reported as before rather than masked by
+		// figures from disk.
+		peer = diskFallbackPeer(error);
+		if (!peer) failFromError(error, options.json);
 		reply = null;
 	}
 
@@ -573,18 +612,17 @@ export async function cueActivity(options: ActivityOptions): Promise<void> {
 		if (frameError) failCommand(frameError, options.json);
 		entries = reply.entries ?? [];
 	} else {
-		entries = await readActivityFromCueDb(sessionId, limit, options.json);
+		entries = await readActivityFromCueDb(sessionId, limit, peer!, options.json);
 	}
-	const fromDatabase = reply === null;
 
 	if (options.json) {
 		console.log(JSON.stringify(entries, null, 2));
 		return;
 	}
-	if (fromDatabase) {
+	if (peer) {
 		// stderr, so stdout stays the same lines the app's answer prints.
 		console.error(
-			'Read from cue.db: the desktop app is not running, so run output is not included.'
+			`Read from cue.db: ${lowerFirst(FALLBACK_REASON[peer])}, so run output is not included.`
 		);
 	}
 	if (entries.length === 0) {

@@ -16,6 +16,10 @@ export type { ShellInfo, UpdateStatus } from '../../shared/types';
 export function createDialogApi() {
 	return {
 		selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
+		selectFile: (options: {
+			filters?: Array<{ name: string; extensions: string[] }>;
+			title?: string;
+		}): Promise<string | null> => ipcRenderer.invoke('dialog:selectFile', options),
 		saveFile: (options: {
 			defaultPath?: string;
 			filters?: Array<{ name: string; extensions: string[] }>;

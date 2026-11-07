@@ -99,8 +99,9 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 	readdirSync: vi.fn(),
 	accessSync: vi.fn(),
-	constants: { R_OK: 4 },
+	constants: { F_OK: 0, R_OK: 4 },
 	promises: {
+		access: vi.fn(),
 		readdir: vi.fn(),
 		readFile: vi.fn(),
 	},
@@ -119,6 +120,8 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
+import { setModelsRefreshedBroadcaster } from '../../../../main/agents/model-discovery';
+import { MODELS_REFRESHED_CHANNEL } from '../../../../shared/agentModelsRefresh';
 import * as fs from 'fs';
 import { getCodexSkillDirs, getCodexPromptDirs } from '../../../../main/agents/codex-config';
 
@@ -1379,6 +1382,47 @@ describe('agents IPC handlers', () => {
 			expect(mockAgentDetector.discoverModels).toHaveBeenCalledWith('opencode', true);
 		});
 
+		describe('refreshed-models broadcast', () => {
+			const broadcast = vi.fn();
+			beforeEach(() => {
+				broadcast.mockReset();
+				setModelsRefreshedBroadcaster(broadcast);
+			});
+			afterEach(() => setModelsRefreshedBroadcaster(undefined));
+
+			it('pushes the fresh list to every open picker on a forced refresh', async () => {
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b', 'ollama/new']);
+
+				const handler = handlers.get('agents:getModels');
+				await handler!({} as any, 'opencode', true);
+
+				expect(broadcast).toHaveBeenCalledWith(MODELS_REFRESHED_CHANNEL, {
+					agentId: 'opencode',
+					sshRemoteId: null,
+					models: ['ollama/qwen3:8b', 'ollama/new'],
+				});
+			});
+
+			it('stays quiet on a cached read', async () => {
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b']);
+
+				const handler = handlers.get('agents:getModels');
+				await handler!({} as any, 'opencode', false);
+
+				expect(broadcast).not.toHaveBeenCalled();
+			});
+
+			it('still returns the list when the broadcast throws', async () => {
+				broadcast.mockImplementation(() => {
+					throw new Error('window gone');
+				});
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b']);
+
+				const handler = handlers.get('agents:getModels');
+				await expect(handler!({} as any, 'opencode', true)).resolves.toEqual(['ollama/qwen3:8b']);
+			});
+		});
+
 		it('should return empty array when agent does not support model selection', async () => {
 			mockAgentDetector.discoverModels.mockResolvedValue([]);
 
@@ -2389,7 +2433,7 @@ describe('agents IPC handlers', () => {
 
 			expect(getAllSpy).toHaveBeenCalled();
 			expect(result).toHaveProperty('/Users/me/.claude');
-			expect(result['/Users/me/.claude'].session.percent).toBe(42);
+			expect(result['/Users/me/.claude'].session?.percent).toBe(42);
 			getAllSpy.mockRestore();
 		});
 
@@ -2402,6 +2446,78 @@ describe('agents IPC handlers', () => {
 
 			expect(result).toEqual({});
 			getAllSpy.mockRestore();
+		});
+
+		// Snapshots are retained for weeks, and the dashboard draws a row for
+		// every snapshot key, so a deleted config dir kept its row long after the
+		// account list had forgotten it. Its snapshot is dropped and forgotten here.
+		it('drops and forgets the snapshot of an account whose dir was deleted', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const snapshot = (configDirKey: string) => ({
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey,
+				weekAllModels: { percent: 7 },
+				weekSonnetOnly: { percent: 3 },
+			});
+			const retainedSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({
+				'/Users/me/.claude-smash': snapshot('/Users/me/.claude-smash'),
+				'/Users/me/.claude-adrian': snapshot('/Users/me/.claude-adrian'),
+			});
+			const forgetSpy = vi.spyOn(claudeUsageStore, 'forgetSnapshots').mockImplementation(() => {});
+			vi.mocked(fs.promises.access).mockImplementation(async (target) => {
+				if (String(target).endsWith('.claude-adrian')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+
+			try {
+				const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+				const result = await handler({} as any);
+
+				expect(Object.keys(result)).toEqual(['/Users/me/.claude-smash']);
+				expect(forgetSpy).toHaveBeenCalledWith(new Set(['/Users/me/.claude-adrian']));
+			} finally {
+				vi.mocked(fs.promises.access).mockReset();
+				retainedSpy.mockRestore();
+				forgetSpy.mockRestore();
+			}
+		});
+	});
+
+	describe('agents:getCodexUsageSnapshots', () => {
+		it('drops and forgets the snapshot of a Codex home that was deleted', async () => {
+			const codexUsageStore = await import('../../../../main/stores/codexUsageStore');
+			const snapshot = (codexHomeKey: string) => ({
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey,
+				authState: 'authenticated' as const,
+			});
+			const retainedSpy = vi
+				.spyOn(codexUsageStore, 'getRetainedCodexUsageSnapshots')
+				.mockReturnValue({
+					'/Users/me/.codex': snapshot('/Users/me/.codex'),
+					'/Users/me/.codex-old': snapshot('/Users/me/.codex-old'),
+				} as any);
+			const forgetSpy = vi
+				.spyOn(codexUsageStore, 'forgetCodexUsageSnapshots')
+				.mockImplementation(() => {});
+			vi.mocked(fs.promises.access).mockImplementation(async (target) => {
+				if (String(target).endsWith('.codex-old')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+
+			try {
+				const handler = handlers.get('agents:getCodexUsageSnapshots')!;
+				const result = await handler({} as any);
+
+				expect(Object.keys(result)).toEqual(['/Users/me/.codex']);
+				expect(forgetSpy).toHaveBeenCalledWith(new Set(['/Users/me/.codex-old']));
+			} finally {
+				vi.mocked(fs.promises.access).mockReset();
+				retainedSpy.mockRestore();
+				forgetSpy.mockRestore();
+			}
 		});
 	});
 

@@ -123,6 +123,7 @@ export class DispatchCallbackRegistry {
 		const timeoutMs = Math.min(Math.max(requestedTimeoutMs, 1000), MAX_CALLBACK_TIMEOUT_MS);
 		const entry: DispatchCallbackEntry = {
 			...registration,
+			admissionId: registration.pendingAdmissionId,
 			timeoutMs,
 			callbackId: this.generateId(),
 			processSessionId: buildProcessSessionId(registration.targetAgentId, registration.targetTabId),
@@ -135,7 +136,7 @@ export class DispatchCallbackRegistry {
 		// this registration landed. The tab id is brand new, so a recent spawn
 		// against it can only be our dispatch.
 		let replayExit: { at: number; exitCode: number | null } | undefined;
-		if (registration.armFromRecentSpawn) {
+		if (registration.armFromRecentSpawn && !registration.pendingAdmissionId) {
 			const spawnedAt = this.recentSpawns.get(entry.processSessionId);
 			if (spawnedAt !== undefined && now - spawnedAt <= SPAWN_LOOKBACK_MS) {
 				entry.state = 'armed';
@@ -165,13 +166,36 @@ export class DispatchCallbackRegistry {
 	 * A process started. Flips the matching pending entry to `armed` so the next
 	 * exit of that tab is recognised as ours.
 	 */
+	/** Next-stage host drain calls this only after its exact admission/release guard. */
+	releaseQueueAdmission(callbackId: string, dispatchId: string): void {
+		const entry = this.entries.get(callbackId);
+		if (!entry || entry.state !== 'pending' || entry.pendingAdmissionId !== dispatchId)
+			throw new Error('DispatchCallbackAdmissionMismatch');
+		delete entry.pendingAdmissionId;
+	}
+
+	/** Host native routing aggregate; stays pending through every child/local exit. */
+	completeQueueAdmission(callbackId: string, dispatchId: string, failed: boolean): void {
+		const entry = this.entries.get(callbackId);
+		if (!entry || entry.state !== 'pending' || entry.pendingAdmissionId !== dispatchId)
+			throw new Error('DispatchCallbackAdmissionMismatch');
+		this.fire(entry, failed ? 'failed' : 'completed');
+	}
+
 	noteSpawn(processSessionId: string): void {
 		const now = this.now();
 		this.recentSpawns.set(processSessionId, now);
 		this.prunePendingSpawns(now);
 		for (const entry of this.entries.values()) {
 			if (entry.processSessionId !== processSessionId) continue;
-			if (entry.state !== 'pending') continue;
+			if (entry.state === 'awaiting-retry') {
+				// Agent Resilience's resend of the failed turn: the same dispatch, still
+				// ours. startedAt is kept so the reported duration covers the outage.
+				entry.state = 'armed';
+				entry.retryPending = false;
+				continue;
+			}
+			if (entry.state !== 'pending' || entry.pendingAdmissionId) continue;
 			entry.state = 'armed';
 			entry.startedAt = now;
 		}
@@ -213,6 +237,14 @@ export class DispatchCallbackRegistry {
 			entry.exitCode = exitCode;
 			entry.durationMs = this.now() - (entry.startedAt ?? entry.createdAt);
 
+			if (entry.retryPending && exitCode !== 0) {
+				entry.state = 'awaiting-retry';
+				this.deps.logger?.info(
+					`[DispatchCallback] ${entry.callbackId} parked - a retry of the failed turn is scheduled`
+				);
+				continue;
+			}
+
 			if (this.shouldAwaitAutoRun(entry)) {
 				entry.state = 'awaiting-autorun';
 				this.deps.logger?.info(
@@ -249,6 +281,40 @@ export class DispatchCallbackRegistry {
 			if (entry.targetAgentId !== agentId) continue;
 			if (entry.state !== 'awaiting-autorun') continue;
 			this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed', progress);
+		}
+	}
+
+	/**
+	 * The renderer's Agent Resilience state for one tab: `pending` while a retry
+	 * of its failed turn is scheduled or in flight, `false` once that retry is
+	 * gone. The renderer is the only side that knows whether a failure will be
+	 * retried (strategy, settings, a captured prompt), so it says so here.
+	 *
+	 * A clean exit is never parked: no retry follows a turn that succeeded.
+	 */
+	noteRetryState(agentId: string, tabId: string, pending: boolean): void {
+		const key = buildProcessSessionId(agentId, tabId);
+		for (const entry of [...this.entries.values()]) {
+			if (entry.processSessionId !== key || this.isTerminal(entry)) continue;
+			if (pending) {
+				if (entry.state === 'armed') {
+					// The exit has not reached us yet; park it when it does.
+					entry.retryPending = true;
+				} else if (entry.state === 'grace' && entry.exitCode !== 0) {
+					this.clearGraceTimer(entry.callbackId);
+					entry.state = 'awaiting-retry';
+					this.deps.logger?.info(
+						`[DispatchCallback] ${entry.callbackId} parked - a retry of the failed turn is scheduled`
+					);
+				}
+				continue;
+			}
+			if (entry.state === 'armed') {
+				entry.retryPending = false;
+			} else if (entry.state === 'awaiting-retry') {
+				// The retry was dropped (Stop, superseded, given up) with no resend.
+				this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed');
+			}
 		}
 	}
 

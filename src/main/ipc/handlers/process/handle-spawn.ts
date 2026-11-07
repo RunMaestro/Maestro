@@ -1,3 +1,4 @@
+import { pianolaNewTabSpawns } from '../../../pianola/pianola-new-tab-dispatch';
 import {
 	projectTabProvider,
 	type ProviderSwitchAgent,
@@ -17,6 +18,10 @@ import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
 import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
+import { hostCallerRuns } from '../../../agent-run/caller-identity';
+import type { PluginToolRunProofFile } from '../../../plugins/plugin-tool-run-proof-file';
+import { PluginAuthorityError } from '../../../plugins/plugin-authority';
+import { generateUUID } from '../../../../shared/uuid';
 import {
 	pluginToolRunIdentity,
 	createPluginRunProofFile,
@@ -43,6 +48,7 @@ import {
 import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
 } from '../../../../shared/agentDelegation';
 import {
 	buildConsultChainEnv,
@@ -82,7 +88,18 @@ import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
 import { resolveCodexSpawnTransport } from './resolve-codex-spawn-transport';
-import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
+import { resolveHarnessControlSpawnMode } from './resolve-harness-control-mode';
+import {
+	buildNativeAcpBaseArgs,
+	buildNativeRpcBaseArgs,
+	nativeRpcProtocol,
+} from '../../../../shared/maestro-lib/providers/native-control';
+import {
+	mergeClaudeSpawnEnvLayers,
+	type ClaudeSpawnEnvLayers,
+} from '../../../agents/claudeSpawnCore';
+import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
+import { hasStandardApprovalChannel } from '../../../../shared/agentMetadata';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
@@ -122,6 +139,7 @@ export function cancelPendingDesktopSpawns(processId: string): boolean {
 
 /** Dependencies injected into the `process:spawn` orchestration handler. */
 export interface SpawnHandlerDependencies {
+	assertQueueOwner?: () => void;
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
@@ -140,13 +158,19 @@ export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
-	const proofCleanup: { release?: () => void } = {};
-	const manager = requireProcessManager(deps.getProcessManager);
+	const admissionGuard = pianolaNewTabSpawns.claim(
+		config.sessionId,
+		config.pianolaDispatchId,
+		config.pianolaQueueItemId,
+		config.transcriptBoundaryId
+	);
+	const proofCleanup: { release?: () => void; notStarted: boolean } = { notStarted: true };
 	const controller = new AbortController();
 	const pending = pendingDesktopSpawns.get(config.sessionId) ?? new Set<AbortController>();
 	pending.add(controller);
 	pendingDesktopSpawns.set(config.sessionId, pending);
 	try {
+		const manager = requireProcessManager(deps.getProcessManager);
 		const records = () =>
 			(deps.sessionsStore?.get('sessions', []) ?? []) as Array<{
 				id: string;
@@ -233,7 +257,13 @@ export async function handleProcessSpawn(
 			manager.on('session-id', onSessionId);
 		}
 		try {
-			const result = await handleProcessSpawnImpl(config, deps, proofCleanup, controller.signal);
+			const result = await handleProcessSpawnImpl(
+				config,
+				deps,
+				proofCleanup,
+				controller.signal,
+				admissionGuard
+			);
 			if (!result.success) cleanupSessionRelay(config.sessionId);
 			if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
 			return result;
@@ -245,12 +275,13 @@ export async function handleProcessSpawn(
 			} catch (cleanupError) {
 				captureException(
 					cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
-					{ context: 'plugin run proof cleanup', sessionId: config.sessionId }
+					{ context: 'agent run proof cleanup', sessionId: config.sessionId }
 				);
 			}
 			throw error;
 		}
 	} finally {
+		if (proofCleanup.notStarted) admissionGuard.notStarted();
 		pending.delete(controller);
 		if (!pending.size && pendingDesktopSpawns.get(config.sessionId) === pending)
 			pendingDesktopSpawns.delete(config.sessionId);
@@ -260,9 +291,11 @@ export async function handleProcessSpawn(
 async function handleProcessSpawnImpl(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies,
-	proofCleanup: { release?: () => void },
-	signal: AbortSignal
+	proofCleanup: { release?: () => void; notStarted: boolean },
+	signal: AbortSignal,
+	admissionGuard: () => void
 ) {
+	const callerSpawnGeneration = generateUUID();
 	const {
 		getProcessManager,
 		getAgentDetector,
@@ -440,6 +473,11 @@ async function handleProcessSpawnImpl(
 		resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore),
 		'exec'
 	);
+	const harnessControlMode = runOnHarnessMode(
+		launchRunOn,
+		resolveHarnessControlSpawnMode(config, baseSessionId, deps.sessionsStore, config.sessionId),
+		'current'
+	);
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -465,6 +503,36 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	});
 	finalArgs = configResolution.args;
+	const effectivePermissionMode =
+		config.permissionMode ?? (config.readOnlyMode === true ? 'readonly' : undefined);
+	const nativeAcpBaseArgs =
+		harnessControlMode === 'native' && agent
+			? buildNativeAcpBaseArgs(agent, effectivePermissionMode)
+			: null;
+	const nativeAcpArgs = nativeAcpBaseArgs
+		? applyAgentConfigOverrides(agent, nativeAcpBaseArgs, {
+				agentConfigValues,
+				sessionCustomModel: config.sessionCustomModel,
+				sessionCustomEffort: config.sessionCustomEffort,
+				sessionCustomEnvVars: config.sessionCustomEnvVars,
+				sessionCustomArgs: config.sessionCustomArgs,
+				readOnlyMode: effectivePermissionMode === 'readonly',
+			}).args
+		: undefined;
+	const nativeRpcProtocolId =
+		(harnessControlMode === 'native' && agent ? nativeRpcProtocol(agent.id) : null) ?? undefined;
+	const nativeRpcBaseArgs =
+		nativeRpcProtocolId && agent ? buildNativeRpcBaseArgs(agent, effectivePermissionMode) : null;
+	const nativeRpcArgs = nativeRpcBaseArgs
+		? applyAgentConfigOverrides(agent, nativeRpcBaseArgs, {
+				agentConfigValues,
+				sessionCustomModel: config.sessionCustomModel,
+				sessionCustomEffort: config.sessionCustomEffort,
+				sessionCustomArgs: config.sessionCustomArgs,
+				sessionCustomEnvVars: config.sessionCustomEnvVars,
+				readOnlyMode: effectivePermissionMode === 'readonly',
+			}).args
+		: undefined;
 
 	if (configResolution.modelSource === 'session' && config.sessionCustomModel) {
 		logger.debug(`Using session-level model for ${config.toolType}`, LOG_CONTEXT, {
@@ -479,12 +547,8 @@ async function handleProcessSpawnImpl(
 		);
 	}
 
-	// Derive effective read-only state, honoring the legacy boolean flag only
-	// when permissionMode wasn't explicitly set (back-compat for older configs).
-	const hasExplicitPermissionMode = config.permissionMode !== undefined;
-	const isReadOnly =
-		config.permissionMode === 'readonly' ||
-		(!hasExplicitPermissionMode && config.readOnlyMode === true);
+	// Native adapters consume the same effective read-only decision as CLI args.
+	const isReadOnly = effectivePermissionMode === 'readonly';
 
 	// Settings -> Environment (`globalShellEnvVars`, read above before
 	// resolveClaudeSpawnContext). Loaded for every process type: terminals get it
@@ -718,23 +782,24 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
-	// MCP plugin-tool bridge: when the plugins feature is on, this agent
-	// supports a verified ephemeral MCP config, and at least one plugin tool
-	// is registered, point the agent at `maestro-cli mcp serve` so its model
-	// can call plugin tools (each call risk-gated in the app). Local spawns
-	// only - the bridge reaches the app over a localhost WebSocket + discovery
-	// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
-	// intentionally skipped to avoid breaking their startup with a wrong shape.
+	// Host caller proofs and optional plugin proofs share exact-process cleanup.
+	// Their registries and authority stay separate, including with Plugins off.
 	let pluginRunToken: string | undefined;
 	let pluginRunProofFile: string | undefined;
+	let callerRunProof: PluginToolRunProofFile | undefined;
+	let spawnReturned = false;
 	const exitListener: { current?: (sessionId: string) => void } = {};
-	const cleanupPluginRunProof = (): void => {
+	const cleanupRunProofs = (): void => {
+		const callerProof = callerRunProof;
+		callerRunProof = undefined;
+		signal.removeEventListener('abort', cleanupRunProofs);
 		const token = pluginRunToken;
 		const file = pluginRunProofFile;
 		pluginRunToken = undefined;
 		pluginRunProofFile = undefined;
 		if (exitListener.current) processManager.off('exit', exitListener.current);
 		if (token) pluginToolRunIdentity.revoke(token);
+		callerProof?.dispose();
 		if (file) {
 			try {
 				removePluginRunProofFile(file);
@@ -745,7 +810,50 @@ async function handleProcessSpawnImpl(
 			}
 		}
 	};
-	proofCleanup.release = cleanupPluginRunProof;
+	proofCleanup.release = cleanupRunProofs;
+	// Clear inherited/configured delivery paths. Only this host may issue one,
+	// and an SSH process cannot use a local private file or localhost bridge.
+	effectiveCustomEnvVars = { ...effectiveCustomEnvVars, [CALLER_RUN_PROOF_FILE_ENV_VAR]: '' };
+	const callerTabId = config.tabId ?? config.sessionId.match(REGEX_AI_TAB_ID)?.[1];
+	const callerAgentExists = () =>
+		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+			(session) => session?.id === baseSessionId
+		);
+	if (
+		config.toolType !== 'terminal' &&
+		!isSshEnabled &&
+		callerTabId &&
+		config.sessionId === `${baseSessionId}-ai-${callerTabId}` &&
+		callerAgentExists()
+	) {
+		try {
+			callerRunProof = hostCallerRuns.issue(
+				{ agentId: baseSessionId, tabId: callerTabId, spawnGeneration: callerSpawnGeneration },
+				{
+					signal,
+					unattended: config.querySource !== 'user',
+					assertActive: () => {
+						if (
+							!callerAgentExists() ||
+							(spawnReturned &&
+								(!callerProcess || processManager.get(config.sessionId) !== callerProcess))
+						)
+							throw new Error('CallerRunUnavailable');
+					},
+				},
+				app.getPath('userData')
+			);
+			effectiveCustomEnvVars[CALLER_RUN_PROOF_FILE_ENV_VAR] = callerRunProof.runTokenFile;
+			signal.addEventListener('abort', cleanupRunProofs, { once: true });
+		} catch (error) {
+			if (!(error instanceof PluginAuthorityError)) throw error;
+			// Unsupported private storage leaves a normal human turn unverified
+			// for admission. Never substitute env IDs or expose a raw path/error.
+			logger.warn('Caller run identity unavailable', LOG_CONTEXT);
+		}
+	}
+	// MCP plugin tools remain gated separately. Only verified local provider
+	// configs can reach the localhost bridge; SSH and maestro-p are skipped.
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
 	if (
 		mcpCap?.verified &&
@@ -771,7 +879,7 @@ async function handleProcessSpawnImpl(
 			try {
 				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
 			} catch (error) {
-				cleanupPluginRunProof();
+				cleanupRunProofs();
 				throw error;
 			}
 			const mcpSpec = {
@@ -840,7 +948,12 @@ async function handleProcessSpawnImpl(
 	// or the interactive (maestro-p/TUI) path, which renders its own
 	// native prompts.
 	// ========================================================================
-	if (isClaudeCode && claudeResolvedMode === 'api' && config.permissionMode === 'standard') {
+	if (
+		harnessControlMode !== 'native' &&
+		isClaudeCode &&
+		claudeResolvedMode === 'api' &&
+		config.permissionMode === 'standard'
+	) {
 		if (isSshEnabled) {
 			// Fail loud: never silently downgrade to full/unsafe over SSH.
 			// The relay socket is local-only, so it cannot mediate a remote
@@ -856,7 +969,7 @@ async function handleProcessSpawnImpl(
 				'Standard permission mode is not available for Claude Code over SSH. ' +
 					'Switch this agent to Full Access or Read-Only, or disable SSH.'
 			);
-			cleanupPluginRunProof();
+			cleanupRunProofs();
 			return { success: false, pid: 0 };
 		}
 		signal.throwIfAborted();
@@ -881,9 +994,38 @@ async function handleProcessSpawnImpl(
 				'Could not start the permission relay for Standard mode. ' +
 					'Switch to Full Access or Read-Only to continue.'
 			);
-			cleanupPluginRunProof();
+			cleanupRunProofs();
 			return { success: false, pid: 0 };
 		}
+	}
+
+	const standardApprovalChannel = hasStandardApprovalChannel({
+		toolType: config.toolType,
+		harnessControlMode,
+		codexTransport,
+		opencodeServer: encoreFeatures?.opencodeServer === true,
+		hasPrompt: !!config.prompt,
+		sshEnabled: isSshEnabled,
+		hasImages: (config.images?.length ?? 0) > 0,
+	});
+	if (config.permissionMode === 'standard' && !standardApprovalChannel) {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Standard permission mode needs a native approval channel. Select Native ACP or switch to Full Access or Read-Only.'
+		);
+		cleanupRunProofs();
+		return { success: false, pid: 0 };
+	}
+
+	if (harnessControlMode === 'native' && isSshEnabled) {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Native ACP control is currently local-only. Disable SSH or select the current transport.'
+		);
+		cleanupRunProofs();
+		return { success: false, pid: 0 };
 	}
 
 	signal.throwIfAborted();
@@ -1056,15 +1198,18 @@ async function handleProcessSpawnImpl(
 		commandToSpawn,
 		argsToSpawn,
 		customEnvVarsToPass,
+		harnessControlMode,
 	});
 	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = interactiveSpawn);
 	const interactiveClaudeBinPath = interactiveSpawn.claudeBinPath;
 
-	persistClaudeInteractiveMode(config, claudeContext, {
-		sessionsStore: deps.sessionsStore,
-		safeSend,
-		getMainWindow,
-	});
+	if (harnessControlMode !== 'native') {
+		persistClaudeInteractiveMode(config, claudeContext, {
+			sessionsStore: deps.sessionsStore,
+			safeSend,
+			getMainWindow,
+		});
+	}
 
 	if (config.sessionCustomPath) {
 		logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
@@ -1277,10 +1422,10 @@ async function handleProcessSpawnImpl(
 	}
 
 	exitListener.current = (sessionId: string): void => {
-		if (sessionId !== config.sessionId || !pluginRunToken) return;
-		cleanupPluginRunProof();
+		if (sessionId !== config.sessionId) return;
+		cleanupRunProofs();
 	};
-	if (pluginRunToken && exitListener.current) processManager.on('exit', exitListener.current);
+	if (pluginRunToken || callerRunProof) processManager.on('exit', exitListener.current);
 	// ========================================================================
 	// Prompt delivery: argv vs stdin, decided HERE by the host, never by the
 	// caller, and from the FINAL prompt (system prompt and preambles folded in).
@@ -1325,8 +1470,14 @@ async function handleProcessSpawnImpl(
 	}
 
 	if (signal.aborted) throw new Error('Agent run cancelled');
+	deps.assertQueueOwner?.();
+	admissionGuard();
+	// Exceptions after entering native spawn are uncertain; retain the fence.
+	proofCleanup.notStarted = false;
 	const result = processManager.spawn({
 		...config,
+		// Native capture must see the resolved resume identity, including argument-based resumes.
+		agentSessionId,
 		command: commandToSpawn,
 		args: argsToSpawn,
 		// When using SSH, use user's home directory as local cwd
@@ -1338,6 +1489,7 @@ async function handleProcessSpawnImpl(
 		// For SSH, prompt is included in the stdin script, not passed separately
 		// For local execution, pass prompt (with system prompt embedded for non-append-system-prompt agents)
 		prompt: sshRemoteUsed ? undefined : effectivePrompt,
+		appendSystemPrompt: config.appendSystemPrompt,
 		// Host-authoritative (see above): overrides whatever the caller sent.
 		sendPromptViaStdin,
 		sendPromptViaStdinRaw,
@@ -1351,7 +1503,20 @@ async function handleProcessSpawnImpl(
 		customEnvVars: customEnvVarsToPass,
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 		imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
+		harnessControlMode,
+		nativeAcpArgs,
+		nativeRpcProtocol: nativeRpcProtocolId,
+		nativeRpcArgs,
+		effort: config.sessionCustomEffort,
+		...(harnessControlMode === 'native'
+			? {
+					modelId: configResolution.modelId ?? config.modelId,
+					effort: configResolution.effort ?? config.sessionCustomEffort,
+					permissionMode: effectivePermissionMode,
+				}
+			: {}),
 		promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+		promptFileArgs: agent?.promptFileArgs, // Prompt-in-a-file delivery for CLIs that accept it (omp @path)
 		noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 		// Stats tracking: use cwd as projectPath if not explicitly provided
 		projectPath: config.cwd,
@@ -1369,7 +1534,38 @@ async function handleProcessSpawnImpl(
 		// SSH app-server launch, when this Codex turn wants app-server.
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
-	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
+	proofCleanup.notStarted = !result.success;
+	const pianolaRunId = result.success
+		? pianolaNewTabSpawns.started(
+				config.sessionId,
+				undefined,
+				config.pianolaDispatchId,
+				config.pianolaQueueItemId
+			)
+		: undefined;
+	const callerProcess = processManager.get(config.sessionId);
+	spawnReturned = true;
+	if (!result.success) exitListener.current?.(config.sessionId);
+	if (
+		result.success &&
+		harnessControlMode === 'native' &&
+		config.toolType === 'claude-code' &&
+		processManager.getHarnessControlCapabilities(config.sessionId)
+	) {
+		persistClaudeInteractiveMode(
+			config,
+			{
+				...claudeContext,
+				isClaudeCode: true,
+				claudeResolvedMode: 'api',
+				claudeResolvedReason: 'auto',
+				resolvedConfigDirKey:
+					claudeContext.resolvedConfigDirKey ??
+					resolveConfigDirKey(mergeClaudeSpawnEnvLayers(claudeEnvLayers)),
+			},
+			{ sessionsStore: deps.sessionsStore, safeSend, getMainWindow }
+		);
+	}
 	if (result.success) proofCleanup.release = undefined;
 
 	// The prime outran the spawn cap, so the process started without a usable
@@ -1421,6 +1617,7 @@ async function handleProcessSpawnImpl(
 		// the user's custom vars or be inherited from whatever launched Maestro.
 		const probeEnv = buildChildProcessEnv(customEnvVarsToPass, false, globalShellEnvVars);
 		delete probeEnv.MAESTRO_CLAUDE_BIN;
+		delete probeEnv[CALLER_RUN_PROOF_FILE_ENV_VAR];
 		void probeClaudeSlashCommandsCached(interactiveClaudeBinPath, config.cwd, probeEnv).then(
 			(commands) => {
 				if (commands && commands.length > 0) {
@@ -1440,6 +1637,7 @@ async function handleProcessSpawnImpl(
 		resolvedMaestroPBinPath &&
 		resolvedConfigDirKey &&
 		deps.interactiveReplayController &&
+		harnessControlMode !== 'native' &&
 		agent
 	) {
 		const replayPrompt = config.prompt ?? '';
@@ -1507,6 +1705,9 @@ async function handleProcessSpawnImpl(
 				const replayEnv = originalCustomEnvVars ? { ...originalCustomEnvVars } : undefined;
 				if (replayEnv) {
 					delete replayEnv.MAESTRO_CLAUDE_BIN;
+					// This replay bypasses handleProcessSpawn. It cannot inherit the
+					// completed generation's authority; admission must see it as unmanaged.
+					delete replayEnv[CALLER_RUN_PROOF_FILE_ENV_VAR];
 				}
 
 				const apiCommand = originalAgent.apiCommand ?? 'claude';
@@ -1565,6 +1766,7 @@ async function handleProcessSpawnImpl(
 	// Return spawn result with SSH remote info if used
 	return {
 		...result,
+		...(config.pianolaQueueItemId ? { pianolaRunId } : {}),
 		sshRemote: sshRemoteUsed
 			? {
 					id: sshRemoteUsed.id,

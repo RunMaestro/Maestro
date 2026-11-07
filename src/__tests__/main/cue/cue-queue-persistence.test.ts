@@ -23,7 +23,8 @@ import {
 	createCueQueuePersistence,
 	type PersistableQueueEntry,
 } from '../../../main/cue/cue-queue-persistence';
-import type { CueCommand, CueEvent } from '../../../main/cue/cue-types';
+import type { CueCommand, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import { createCueRunManager } from '../../../main/cue/cue-run-manager';
 
 function makeEvent(type: CueEvent['type'] = 'time.heartbeat'): CueEvent {
 	return {
@@ -380,7 +381,6 @@ describe('cue-queue-persistence', () => {
 			expect(restored.has('s-1')).toBe(false);
 			expect(restored.get('s-2')).toHaveLength(1);
 		});
-
 		it('clearAll wipes every row', () => {
 			const p = makePersistence({ known: ['s-1', 's-2'] });
 			p.persist('s-1', 'a', makeEntry());
@@ -593,6 +593,92 @@ describe('cue-queue-persistence', () => {
 			const p = makePersistence({ timeoutMs });
 			p.persist('s-1', 'crash', makeEntry({ queuedAt: NOW - 5 * 60 * 60 * 1000 - 5 * 60_000 }));
 			expect(p.restoreAll()!.size).toBe(0);
+		});
+	});
+
+	// A shutdown drain re-persists every queued entry with its drain stamp. It
+	// must write the same payload execute() wrote when the entry was queued, or
+	// a queued Auto Run comes back with no documents, a notify loses its config,
+	// and any run loses the subscription's model and effort.
+	describe('a drain re-persists what was queued, payload included', () => {
+		it('restores an autorun entry with autoRun and turnSettings, and a notify entry with notify', () => {
+			const persistence = makePersistence({ now: Date.now() });
+			const manager = createCueRunManager({
+				getSessions: () => [{ id: 's-1', name: 'S1' }] as never,
+				getSessionSettings: () => ({
+					timeout_minutes: 30,
+					timeout_on_fail: 'break',
+					max_concurrent: 1,
+					queue_size: 10,
+				}),
+				// Never settles: the first run keeps the only slot, so the rest queue.
+				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+				onStopCueRun: vi.fn(() => true),
+				onLog: vi.fn(),
+				onRunCompleted: vi.fn(),
+				onRunStopped: vi.fn(),
+				onPreventSleep: vi.fn(),
+				onAllowSleep: vi.fn(),
+				queuePersistence: persistence,
+			});
+			const autoRun = {
+				documents: ['/work/plan.md'],
+				reset_on_completion: [false],
+				loop_enabled: true,
+				max_loops: 3,
+			};
+			const turnSettings = { tier: 'high' as const, effort: 'low' as const };
+			const notify = { message: 'deploy done', sticky: true };
+
+			manager.execute('s-1', 'busy', makeEvent(), 'busy');
+			manager.execute(
+				's-1',
+				'run the plan',
+				makeEvent(),
+				'nightly-plan',
+				undefined,
+				0,
+				undefined,
+				'autorun',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				autoRun,
+				turnSettings
+			);
+			manager.execute(
+				's-1',
+				'deploy done',
+				makeEvent(),
+				'tell-me',
+				undefined,
+				0,
+				undefined,
+				'notify',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				notify
+			);
+			expect(manager.getQueueStatus().get('s-1')).toBe(2);
+
+			// The drain's tail: stamp and re-persist the queue, then forget it in memory.
+			manager.setDraining(true);
+			expect(manager.persistQueueForRestart(Date.now())).toBe(2);
+			manager.discardInMemory();
+
+			const restored = makePersistence({ now: Date.now() }).restoreAll()!.get('s-1') ?? [];
+			const plan = restored.find((e) => e.subscriptionName === 'nightly-plan');
+			const tell = restored.find((e) => e.subscriptionName === 'tell-me');
+			expect(plan).toMatchObject({ action: 'autorun', autoRun, turnSettings });
+			expect(plan?.drainedAt).toEqual(expect.any(Number));
+			expect(tell).toMatchObject({ action: 'notify', notify });
+			expect(tell?.drainedAt).toEqual(expect.any(Number));
 		});
 	});
 });

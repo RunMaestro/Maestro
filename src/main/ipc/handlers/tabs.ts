@@ -9,6 +9,8 @@
  * Today the only consumer is the dispatch-callback registry: a callback armed
  * against a tab that the user then closes would otherwise sit armed until its
  * timeout and wake the caller with a bogus `timeout` up to an hour later (W1).
+ * It also hears when Agent Resilience holds a tab's failed turn for a retry, so
+ * a callback waits for the resend instead of reporting the first refusal.
  */
 
 import { ipcMain } from 'electron';
@@ -33,6 +35,25 @@ export function registerTabsHandlers(): void {
 			);
 		}
 	});
+
+	// Fire-and-forget, same as above: `pending` while Agent Resilience holds a
+	// retry of this tab's failed turn, false once that retry is gone.
+	ipcMain.on(
+		'tabs:aiTabRetryState',
+		(_event, agentId: unknown, tabId: unknown, pending: unknown) => {
+			if (
+				typeof agentId !== 'string' ||
+				typeof tabId !== 'string' ||
+				!agentId ||
+				!tabId ||
+				typeof pending !== 'boolean'
+			) {
+				logger.warn(`Ignoring malformed tabs:aiTabRetryState notification`, LOG_CONTEXT);
+				return;
+			}
+			getDispatchCallbackRegistry()?.noteRetryState(agentId, tabId, pending);
+		}
+	);
 
 	logger.info('Tabs IPC handlers registered', LOG_CONTEXT);
 }

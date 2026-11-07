@@ -14,6 +14,10 @@ import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { PianolaSupervisor } from './pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola-relearn-scheduler';
 import { runRelearnJob } from './pianola-relearn';
+import { initializePianolaMemory } from './memory-host';
+import { discoverMemoryCliProviders, readMemoryCliEnvironments } from './memory-provider-discovery';
+import type { AgentDetector } from '../agents/detector';
+import type { PianolaMemoryHost } from './memory-host';
 import { isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
 import {
 	readRules,
@@ -25,7 +29,7 @@ import {
 } from './pianola-store-main';
 import { settledDecisionPairs, type DecisionPair } from '../../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../../shared/pianola/types';
-import type { getSettingsStore, getSessionsStore } from '../stores';
+import type { getAgentConfigsStore, getSettingsStore, getSessionsStore } from '../stores';
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -98,12 +102,15 @@ export function readExistingForRelearn(): { rules: PianolaRule[]; profile: strin
 export interface PianolaLifecycleDependencies {
 	settingsStore: ReturnType<typeof getSettingsStore>;
 	sessionsStore: ReturnType<typeof getSessionsStore>;
+	agentConfigsStore: ReturnType<typeof getAgentConfigsStore>;
+	agentDetector: AgentDetector;
 	logger: { info: (msg: string, tag: string) => void };
 }
 
 export interface PianolaLifecycle {
 	supervisor: PianolaSupervisor;
 	relearnScheduler: PianolaRelearnScheduler;
+	memoryHost: PianolaMemoryHost;
 }
 
 export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): PianolaLifecycle {
@@ -152,5 +159,13 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 		},
 	});
 
-	return { supervisor, relearnScheduler };
+	return {
+		supervisor,
+		relearnScheduler,
+		memoryHost: initializePianolaMemory(
+			() => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
+			() => discoverMemoryCliProviders(deps.agentDetector, deps.agentConfigsStore),
+			() => readMemoryCliEnvironments(deps.agentConfigsStore)
+		),
+	};
 }

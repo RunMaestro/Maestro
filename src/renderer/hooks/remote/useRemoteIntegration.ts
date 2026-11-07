@@ -2,6 +2,8 @@ import { canonicalJson } from '../../../shared/canonicalJson';
 import { inspectTabProvider } from '../../../shared/desktopTabs';
 import { resolveTabProvider } from '../../utils/providerTabSessions';
 import { getAgentCommands } from '../../utils/agentCommands';
+import { prepareSessionForPersistence } from '../utils/useDebouncedPersistence';
+import type { PianolaNewTabControl } from '../../../shared/pianola/pianola-dispatch';
 import { dispatchToastClickAction } from '../../services/toastClickActions';
 import { jumpToAgent } from '../../services/agentNavigation';
 import { startNotificationHistorySync } from '../../stores/notificationStore';
@@ -12,6 +14,7 @@ import type { Session, ThinkingMode, QueuedItem, CustomAICommand } from '../../t
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
@@ -39,10 +42,12 @@ import { routeQueuedAutoItem } from '../../services/autoTurn';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
+import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
+import type { MessagePinCommandResult } from '../../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 import { TAB_CONTEXT_OP_EVENT, type TabContextOpEventDetail } from '../../services/tabContextOps';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
@@ -374,7 +379,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				background?: boolean,
 				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => {
 				// Delivery receipt for the web server's `executeCommand` promise.
 				// Every early return below must answer it, or the caller waits out
@@ -418,23 +424,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server,
-				// but double-check). `force: true` (from `dispatch --force`) opts
-				// out of the guard so a queued follow-up can land on a busy tab.
-				if (targetSession.state === 'busy' && !force) {
-					logger.warn(
-						'[useRemoteIntegration] Session is busy, dropping command. State:',
-						undefined,
-						targetSession.state
-					);
-					rejectDelivery('session-busy');
-					return;
-				}
-				logger.info(
-					'[useRemoteIntegration] Session state check passed:',
-					undefined,
-					targetSession.state
-				);
+				// No busy check here: busy is decided per TAB in handleRemoteCommand,
+				// which resolves the target tab. An agent-level check at this point
+				// would refuse an idle tab just because a sibling tab is working.
 
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
@@ -492,6 +484,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							// The turn's place in a consult chain, when another agent's
 							// `maestro-cli dispatch` sent this command.
 							...(consultChain ? { consultChain } : {}),
+							pianolaDispatchId,
 						},
 					})
 				);
@@ -780,10 +773,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 
 		// Handle remote "new AI tab with prompt" from CLI (dispatch --new-tab).
-		// Atomically creates a fresh AI tab and delivers the prompt into it. An
-		// IDLE agent is dispatched through the same maestro:remoteCommand event
-		// path a plain dispatch uses, so downstream spawn/history/state flows are
-		// identical; a BUSY agent has the prompt queued for the new tab instead.
+		// Atomically creates a fresh AI tab and delivers the prompt into it through
+		// the same maestro:remoteCommand event path a plain dispatch uses, so
+		// downstream spawn/history/state flows are identical. A fresh tab is never
+		// mid-turn, so the prompt runs now even while another tab of the agent is
+		// working - the same as opening a new desktop tab and sending.
 		// A background dispatch (the default) creates the new tab without focus so
 		// the user's current view is preserved; `dispatch --focus` makes the new
 		// tab active instead. A hidden dispatch (the `dispatch --new-tab` default)
@@ -798,15 +792,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Ack the renderer result on responseChannel so the CLI only reports
 		// success when a tab was actually created - and reports the REASON when it
 		// was not, rather than leaving the CLI to infer one from a missing tab id.
+		const releasedAdmissions = new Set<string>();
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(
+			async (
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
 				consultChain?: ConsultChain,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: PianolaNewTabControl
 			) => {
 				const ack = (result: {
 					success: boolean;
@@ -814,124 +810,182 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queued?: boolean;
 					error?: string;
 				}) => window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, result);
-				// A missing agent is the one unrecoverable case: there is nothing to
-				// create the tab on. Check before creating so we never leave an
-				// orphan tab behind a failed ack.
-				const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
-				if (!targetSession) {
-					logger.warn(
-						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session not found, dropping prompt'
-					);
-					ack({ success: false, error: `Agent not found: ${sessionId}` });
-					return;
-				}
-				if (targetSession.toolType === 'terminal') {
-					ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
-					return;
-				}
-				// A BUSY agent is deliberately NOT a refusal here. Busy is an
-				// agent-level state, so a brand-new tab inherits it even though it
-				// owns no process, and `dispatch --new-tab` rejects both --force and
-				// --queue as meaningless ("a fresh tab is never busy") - which left
-				// no flag able to express what the caller wanted and turned every
-				// dispatch at a working agent into a dropped prompt (#1602). The
-				// prompt is queued below instead.
-				let createdTabId: string | undefined;
-				flushSync(() => {
-					updateSessionWith(sessionId, (s) => {
-						const result = createTab(s, {
-							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking,
-							// Background dispatch is the default (`--focus` opts into the
-							// foreground): create the tab without making it active so the
-							// user's current view is preserved.
-							activate: !background,
-							hidden: background && hidden === true,
-						});
-						if (!result) return s;
-						createdTabId = result.tab.id;
-						return result.session;
-					});
-					if (createdTabId && !background) {
-						setActiveSessionId(sessionId);
-						// Same reason as the plain new-tab handler above: without this
-						// the poll broadcasts the new active tab with
-						// `activeTabChanged: false`, and a browser watching this agent
-						// keeps rendering the tab the user was already on.
-						noteDesktopAiTabSelection(sessionId, createdTabId);
-					}
-				});
-				if (!createdTabId) {
-					logger.warn(
-						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
-					);
-					ack({ success: false, error: 'Could not create a new AI tab' });
-					return;
-				}
-				// Re-read the agent rather than trusting the snapshot taken before
-				// the tab was created: the store write above is the only thing that
-				// ran in between, but the decision below is about live state.
-				const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
-				const commandName = prompt.trim().split(/\s/, 1)[0];
-				const isSlashCommand =
-					commandName.startsWith('/') &&
-					[
-						...(deps.customAICommandsRef?.current ?? []),
-						...(deps.speckitCommandsRef?.current ?? []),
-						...(deps.openspecCommandsRef?.current ?? []),
-						...(deps.bmadCommandsRef?.current ?? []),
-						...(getAgentCommands(
-							targetSession,
-							targetSession.aiTabs.find((tab) => tab.id === createdTabId)
-						) ?? []),
-					].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
-				if (isBusy || isSlashCommand) {
-					// Busy agents wait for their current turn. Slash commands also use
-					// the command queue on idle agents, as the composer does: its drain
-					// resolves custom and project commands and substitutes $ARGUMENTS.
-					// Sending them as plain messages would skip that resolution when
-					// busy, while the direct remote-command path lacks project commands.
-					const queued = enqueuePromptForTab({
-						sessionId,
-						tabId: createdTabId,
-						text: prompt,
-						consultChain,
-						slashCommand: isSlashCommand,
-						mentionRouting,
-					});
-					if (!queued) {
+				try {
+					// A missing agent is the one unrecoverable case: there is nothing to
+					// create the tab on. Check before creating so we never leave an
+					// orphan tab behind a failed ack.
+					const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!targetSession) {
 						logger.warn(
-							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: could not queue prompt for the new tab'
+							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session not found, dropping prompt'
 						);
-						ack({
-							success: false,
-							tabId: createdTabId,
-							error: 'Created the tab but could not queue the prompt for it',
-						});
+						ack({ success: false, error: `Agent not found: ${sessionId}` });
 						return;
 					}
-					ack({ success: true, tabId: createdTabId, queued: true });
-					return;
-				}
-				// Pass the new tab id explicitly so the renderer writes into the tab
-				// we just created - without it, useRemoteHandlers would fall back to
-				// activeTabId, which is correct here but would race in any future
-				// caller that doesn't atomically setActiveSessionId.
-				window.dispatchEvent(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: {
+					if (targetSession.toolType === 'terminal') {
+						ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
+						return;
+					}
+					// A BUSY agent is deliberately NOT a refusal here (#1602), and no
+					// longer a reason to queue either: busy is an agent-level state, but
+					// the turn runs in the fresh tab, which owns no process.
+					if (control && planCrossAgentMentions(prompt, sessionId, mentionRouting)) {
+						ack({ success: false, error: 'DispatchMentionRoutingUnavailable' });
+						return;
+					}
+					let createdTabId: string | undefined;
+					if (control?.phase === 'release') {
+						if (releasedAdmissions.has(control.dispatchId)) {
+							ack({ success: false, error: 'DispatchAlreadyReleased' });
+							return;
+						}
+						const tab = targetSession.aiTabs.find((t) => t.id === control.tabId);
+						if (
+							!tab ||
+							targetSession.agentErrorPaused ||
+							tab.agentError ||
+							targetSession.state === 'busy' ||
+							tab.logs.length ||
+							tab.state === 'busy' ||
+							tab.wizardState?.isActive
+						) {
+							ack({ success: false, error: 'DispatchTargetUnavailable' });
+							return;
+						}
+						createdTabId = tab.id;
+					}
+					if (!createdTabId) {
+						flushSync(() => {
+							updateSessionWith(sessionId, (s) => {
+								if (control && s.aiTabs.some((t) => t.id === control.tabId)) {
+									createdTabId = control.tabId;
+									return s;
+								}
+								const result = createTab(s, {
+									...(control ? { id: control.tabId } : {}),
+									saveToHistory: defaultSaveToHistory,
+									showThinking: defaultShowThinking,
+									// Background dispatch is the default (`--focus` opts into the
+									// foreground): create the tab without making it active so the
+									// user's current view is preserved.
+									activate: !background,
+									hidden: background && hidden === true,
+								});
+								if (!result) return s;
+								createdTabId = result.tab.id;
+								return result.session;
+							});
+							if (createdTabId && !background) {
+								setActiveSessionId(sessionId);
+								// Same reason as the plain new-tab handler above: without this
+								// the poll broadcasts the new active tab with
+								// `activeTabChanged: false`, and a browser watching this agent
+								// keeps rendering the tab the user was already on.
+								noteDesktopAiTabSelection(sessionId, createdTabId);
+							}
+						});
+					}
+					if (!createdTabId) {
+						logger.warn(
+							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
+						);
+						ack({ success: false, error: 'Could not create a new AI tab' });
+						return;
+					}
+					if (control?.phase === 'prepare') {
+						try {
+							const updated = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+							if (!updated) throw new Error('DispatchTargetUnavailable');
+							const saved = await window.maestro.sessions.setMany(
+								[prepareSessionForPersistence(updated)],
+								[],
+								[prepareSessionForPersistence(targetSession)]
+							);
+							if (saved === false) throw new Error('DispatchTabPersistenceFailed');
+							ack({ success: true, tabId: createdTabId });
+						} catch (error) {
+							ack({
+								success: false,
+								error: error instanceof Error ? error.message : 'DispatchTabPersistenceFailed',
+							});
+						}
+						return;
+					}
+
+					// Re-read the agent rather than trusting the snapshot taken before
+					// the tab was created: the store write above is the only thing that
+					// ran in between, but the supervised refusal below is about live
+					// state. A busy agent does not hold back an unsupervised prompt: the
+					// fresh tab runs its own turn beside the one already working.
+					const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
+					const commandName = prompt.trim().split(/\s/, 1)[0];
+					const isSlashCommand =
+						commandName.startsWith('/') &&
+						[
+							...(deps.customAICommandsRef?.current ?? []),
+							...(deps.speckitCommandsRef?.current ?? []),
+							...(deps.openspecCommandsRef?.current ?? []),
+							...(deps.bmadCommandsRef?.current ?? []),
+							...(getAgentCommands(
+								targetSession,
+								targetSession.aiTabs.find((tab) => tab.id === createdTabId)
+							) ?? []),
+						].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
+					if (control && (isBusy || isSlashCommand)) {
+						ack({ success: false, error: 'Supervised new-tab queue admission is unavailable' });
+						return;
+					}
+					if (isSlashCommand) {
+						// Slash commands use the command queue, as the composer does: its
+						// drain resolves custom and project commands and substitutes
+						// $ARGUMENTS. The direct remote-command path lacks project commands.
+						const queued = enqueuePromptForTab({
 							sessionId,
-							command: prompt,
-							inputMode: 'ai',
 							tabId: createdTabId,
-							// Unexpanded provider commands go to the provider as typed.
-							literalPrompt: commandName.startsWith('/'),
-							...(consultChain ? { consultChain } : {}),
+							text: prompt,
+							slashCommand: isSlashCommand,
+							consultChain,
 							mentionRouting,
-						},
-					})
-				);
-				ack({ success: true, tabId: createdTabId });
+						});
+						if (!queued) {
+							logger.warn(
+								'[useRemoteIntegration] onRemoteNewAITabWithPrompt: could not queue prompt for the new tab'
+							);
+							ack({
+								success: false,
+								tabId: createdTabId,
+								error: 'Created the tab but could not queue the prompt for it',
+							});
+							return;
+						}
+						ack({ success: true, tabId: createdTabId, queued: true });
+						return;
+					}
+					if (control) releasedAdmissions.add(control.dispatchId);
+					// Pass the new tab id explicitly so the renderer writes into the tab
+					// we just created - without it, useRemoteHandlers would fall back to
+					// activeTabId, which is correct here but would race in any future
+					// caller that doesn't atomically setActiveSessionId.
+					window.dispatchEvent(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId,
+								command: prompt,
+								inputMode: 'ai',
+								tabId: createdTabId,
+								// Unexpanded provider commands go to the provider as typed.
+								literalPrompt: commandName.startsWith('/'),
+								mentionRouting,
+								pianolaDispatchId: control?.dispatchId,
+								consultChain,
+							},
+						})
+					);
+					ack({ success: true, tabId: createdTabId });
+				} catch (error) {
+					ack({ success: false, error: 'Remote new-tab preparation failed' });
+					void captureException(error, { tags: { operation: 'remote-new-tab' } });
+				}
 			}
 		);
 
@@ -1214,6 +1268,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// `maestro-cli tab pins ...`. Pins live on this window's tab, so they are
+		// read and changed through the same functions the pin button and panel use.
+		const unsubscribeMessagePinCommand = window.maestro.process.onRemoteMessagePinCommand(
+			(request, responseChannel) => {
+				let result: MessagePinCommandResult;
+				try {
+					result = runRemoteMessagePinCommand(request, { selectAgent: setActiveSessionId });
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Message pin command failed', undefined, error);
+					result = {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
+				window.maestro.process.sendRemoteMessagePinCommandResponse(responseChannel, result);
+			}
+		);
+
 		// `maestro-cli tab compact|merge|transfer`: the overlay menu's Context
 		// items. Their handlers live in App's hooks, so the request crosses to
 		// useAppRemoteEventListeners (mounted after them), which answers on the
@@ -1270,7 +1342,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// removable, and the closed-tab resolver (resolveQueuedItemTarget) applies at
 		// drain time.
 		const unsubscribeEnqueueCommand = window.maestro.process.onRemoteEnqueueCommand(
-			(
+			async (
 				sessionId: string,
 				command: string,
 				responseChannel: string,
@@ -1280,7 +1352,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				background?: boolean,
 				held?: boolean,
 				consultChain?: ConsultChain,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1317,12 +1391,52 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 					const resolvedTabId = targetTab.id;
+					if (control) {
+						const item = control.item;
+						if (
+							item.tabId !== resolvedTabId ||
+							item.pendingAdmissionId !== control.dispatchId ||
+							item.text !== command ||
+							item.type !== 'message'
+						)
+							throw new Error('DispatchQueueIntentMismatch');
+						const existing = session.executionQueue.filter(
+							(q) => q.id === item.id || q.pendingAdmissionId === control.dispatchId
+						);
+						if (existing.length) throw new Error('DispatchQueueAlreadyPrepared');
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: [...s.executionQueue, item],
+						}));
+						const updated = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+						if (!updated) throw new Error('DispatchTargetUnavailable');
+						const saved = await window.maestro.sessions.setMany(
+							[prepareSessionForPersistence(updated)],
+							[],
+							[prepareSessionForPersistence(session)]
+						);
+						if (saved !== true) throw new Error('DispatchQueuePersistenceUnknown');
+						reply({
+							success: true,
+							tabId: resolvedTabId,
+							queued: true,
+							itemId: item.id,
+							queueLength: updated.executionQueue.length,
+							queuePosition: updated.executionQueue.length,
+						});
+						return;
+					}
 
-					// Idle target: no line to wait in, dispatch now through the shared
-					// remote-command path (identical to a plain `dispatch`). Respect the
-					// dispatch --focus opt-in via `background`. A held send (Queue Held,
-					// `dispatch --queue --held`) never dispatches now: it waits paused.
-					if (session.state !== 'busy' && !held) {
+					// Idle target TAB with nothing queued for it: no line to wait in,
+					// dispatch now through the shared remote-command path (identical to a
+					// plain `dispatch`). Another tab of the agent being busy is not a line:
+					// that tab's turn runs beside this one, as desktop tabs do. Respect
+					// the dispatch --focus opt-in via `background`. A held send (Queue
+					// Held, `dispatch --queue --held`) never dispatches now: it waits paused.
+					const lineForTab = (session.executionQueue ?? []).some(
+						(item) => item.tabId === resolvedTabId
+					);
+					if (targetTab.state !== 'busy' && !lineForTab && !held) {
 						if (!background) {
 							setActiveSessionId(sessionId);
 						}
@@ -1358,6 +1472,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							mentionRouting,
 						}),
 						...(held && { paused: true }),
+						...(dispatchCallback && { dispatchCallback: true }),
 					};
 
 					// Position is deterministic from the snapshot we already read: the item
@@ -1549,6 +1664,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
 			unsubscribeClosedTabCommand();
+			unsubscribeMessagePinCommand();
 			unsubscribeSummarizeContext();
 			unsubscribeMergeContext();
 			unsubscribeTransferContext();

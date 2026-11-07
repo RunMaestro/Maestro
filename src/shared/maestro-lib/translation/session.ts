@@ -386,6 +386,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			maestroPPath: undefined,
 			maestroPMode: undefined,
 			codexTransport: undefined,
+			harnessControlMode: undefined,
 		}),
 	};
 }

@@ -8,7 +8,7 @@ const METHODS: Record<string, string> = {
 	agent: 'clearError retryAfterError',
 	agentRun: 'cancel event events list merge record resolveFinding retry show',
 	agentSessions:
-		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionStarred snapshotStarredTranscript',
+		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionPins setSessionStarred snapshotStarredTranscript',
 	agents:
 		'translateProvider consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
 	aiCommand: 'suggest',
@@ -44,6 +44,7 @@ const METHODS: Record<string, string> = {
 	groupChat:
 		'addHistoryEntry addParticipant appendMessage archive clearHistory create delete deleteHistoryEntry getHistory getHistoryFilePath getImages getMessages getModeratorSessionId getQueue list load queueAdd queueRemove queueReorder queueResume queueSteer removeParticipant rename reportAutoRunComplete resetParticipantContext saveImage sendToModerator sendToParticipant startModerator stopAll stopModerator submitMessage update',
 	groups: 'getAll setAll',
+	harnessControl: 'listPending respond',
 	history:
 		'add clear delete getAll getAllPaginated getCueGroupRuns getFilePath getGraphData getOffsetForTimestamp listSessions reload update updateSessionName',
 	images: 'resolve',
@@ -63,7 +64,7 @@ const METHODS: Record<string, string> = {
 	parquet: 'close export open query',
 	permission: 'respond',
 	pianola:
-		'apply-suggestion get-decisions get-rules get-suggestions resolve-decision review-suggestion save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
+		'apply-suggestion dismiss-ask get-asks get-brief get-decisions get-programs get-rules get-suggestions memory resolve-ask resolve-decision review-suggestion revise-plan-task save-rules set-program-status skip-plan-task supervise-program supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
@@ -112,12 +113,12 @@ const EVENTS: Record<string, string> = {
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
-		'call-usage claude-mode-resolved command-exit data exit headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',
+		'call-usage claude-mode-resolved command-exit data exit harness-interaction-request harness-interaction-settled headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',
 	// Display-only remote pushes, not owner command/reply listeners. Movement
 	// is mirrored intentionally so host-created Concerto panels remain visible.
 	remote:
 		'movement cadenza cadenzaFlash cadenzaHidden notifyToast notifyCenterFlash autoRunStateMirror',
-	sessions: 'lifecycleSync transcriptSync',
+	sessions: 'lifecycleSync transcriptSync transcriptCommitted',
 	settings: 'externalChange',
 	stats: 'updated',
 	symphony: 'contributionStarted prCreated updated',

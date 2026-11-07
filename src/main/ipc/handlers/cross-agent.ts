@@ -1,3 +1,4 @@
+import { startReleasedQueueConsult } from '../../pianola/pianola-queue-routing';
 /**
  * Cross-Agent Dispatch IPC Handlers (Phase 03).
  *
@@ -67,6 +68,8 @@ export interface CrossAgentHandlerDependencies {
 	getCustomEnvVars?: (toolType: string) => Record<string, string> | undefined;
 	/** Safe renderer push used to stream `cross-agent:chunk` events. */
 	safeSend: SafeSendFn;
+	getWebServer?: () => import('../../web-server/WebServer').WebServer | null;
+	getWindowForSession?: (sessionId: string) => import('electron').BrowserWindow | null | undefined;
 }
 
 /**
@@ -138,13 +141,132 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 	};
 
 	ipcMain.handle(
-		'cross-agent:send',
+		'cross-agent:prepare-queue',
+		(event, input: { sourceSessionId: string; sourceTabId: string; dispatchId: string }) =>
+			withIpcErrorLogging(handlerOpts('prepare-queue'), async () => {
+				const assertOwner = () => {
+					const win = deps.getWindowForSession?.(input.sourceSessionId);
+					if (
+						'clientId' in event ||
+						!win ||
+						event.sender !== win.webContents ||
+						event.sender.isDestroyed()
+					)
+						throw new Error('DispatchWindowOwnerMismatch');
+				};
+				assertOwner();
+				const server = deps.getWebServer?.();
+				if (!server) throw new Error('DispatchQueueDrainUnavailable');
+				const prepared = await server.prepareQueueSpawnFromMain(
+					input.sourceSessionId,
+					input.sourceTabId,
+					input.dispatchId,
+					assertOwner,
+					{
+						onSettled: (progress) =>
+							safeSend('cross-agent:queue-settled', {
+								sourceSessionId: input.sourceSessionId,
+								sourceTabId: input.sourceTabId,
+								dispatchId: input.dispatchId,
+								...progress,
+							}),
+					}
+				);
+				if (
+					!('routing' in prepared) ||
+					!prepared.routing ||
+					!prepared.generation ||
+					!prepared.targetSessionIds
+				)
+					throw new Error('DispatchRoutingReleaseUnavailable');
+				return {
+					generation: prepared.generation,
+					routing: prepared.routing,
+					targetSessionIds: prepared.targetSessionIds,
+				};
+			})(event)
+	);
+
+	ipcMain.handle('cross-agent:send', (event, wirePayload: CrossAgentSendRequest) =>
 		withIpcErrorLogging(
 			handlerOpts('send'),
 			async (payload: CrossAgentSendRequest): Promise<{ requestId: string }> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
+				const source = sessionsStore
+					.get('sessions', [])
+					.find((s) => s.id === payload.sourceSessionId);
+				if (
+					!payload.managedQueue &&
+					source?.executionQueue?.some(
+						(item: { tabId?: string; pendingAdmissionId?: string; admissionRelease?: unknown }) =>
+							item.tabId === payload.sourceTabId && item.pendingAdmissionId && item.admissionRelease
+					)
+				) {
+					throw new Error('DispatchRoutingQueueConsumerRequired');
+				}
+				if (payload.managedQueue) {
+					const assertOwner = () => {
+						const win = deps.getWindowForSession?.(payload.sourceSessionId);
+						if (
+							'clientId' in event ||
+							!win ||
+							event.sender !== win.webContents ||
+							event.sender.isDestroyed()
+						) {
+							throw new Error('DispatchWindowOwnerMismatch');
+						}
+					};
+					assertOwner();
+					// Never use a renderer prompt, transcript, resume id or handoff answer to
+					// expand a durable queue intent. The host builds this branch itself.
+					if (
+						payload.handoffAnswer !== undefined ||
+						payload.resumeAgentSessionId ||
+						payload.transcript.length
+					) {
+						throw new Error('DispatchRoutingContextUnavailable');
+					}
+					const server = deps.getWebServer?.();
+					const start = payload.managedQueue.handoff
+						? server?.startQueueHandoffFromMain.bind(server)
+						: undefined;
+					if (payload.managedQueue.handoff && !start)
+						throw new Error('DispatchRoutingReleaseUnavailable');
+					const nativeStart = start
+						? (
+								locator: { dispatchId: string; generation: string },
+								source: string,
+								tab: string,
+								target: string,
+								opts: Parameters<typeof startReleasedQueueConsult>[4]
+							) => start(source, tab, locator, target, opts)
+						: startReleasedQueueConsult;
+					return nativeStart(
+						payload.managedQueue,
+						payload.sourceSessionId,
+						payload.sourceTabId,
+						payload.targetSessionId,
+						{
+							assertNativeOwner: assertOwner,
+							processManager,
+							agentDetector,
+							sshStore,
+							getTargetSession: (id) => {
+								assertOwner();
+								return getTargetSession(id);
+							},
+							getAgentConfig,
+							getCustomEnvVars,
+							writable: resolveCrossAgentWritable({}, settingsStore),
+							maxConsultationsPerTurn: normalizeMaxConsultationsPerTurn(
+								settingsStore.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+							),
+							onChunk: (chunk) => safeSend('cross-agent:chunk', chunk),
+						}
+					);
+				}
 				const requestId = generateUUID();
 				const request: CrossAgentRequest = {
 					requestId,
@@ -221,7 +343,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 
 				return { requestId };
 			}
-		)
+		)(event, wirePayload)
 	);
 
 	ipcMain.handle(

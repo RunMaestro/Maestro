@@ -21,6 +21,7 @@ import {
 import {
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	buildCallerIdentityEnv,
 } from '../../../../shared/agentDelegation';
 import {
@@ -33,12 +34,17 @@ describe('envBuilder caller identity', () => {
 	const saved = new Map<string, string | undefined>();
 
 	beforeEach(() => {
-		for (const key of [CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR]) {
+		for (const key of [
+			CALLER_AGENT_ID_ENV_VAR,
+			CALLER_TAB_ID_ENV_VAR,
+			CALLER_RUN_PROOF_FILE_ENV_VAR,
+		]) {
 			saved.set(key, process.env[key]);
 		}
 		// What Maestro inherits when it was launched from inside another agent.
 		process.env[CALLER_AGENT_ID_ENV_VAR] = 'launcher-agent';
 		process.env[CALLER_TAB_ID_ENV_VAR] = 'launcher-tab';
+		process.env[CALLER_RUN_PROOF_FILE_ENV_VAR] = '/private/launcher-proof';
 	});
 
 	afterEach(() => {
@@ -53,6 +59,7 @@ describe('envBuilder caller identity', () => {
 		const env = buildChildProcessEnv();
 		expect(env[CALLER_AGENT_ID_ENV_VAR]).toBeUndefined();
 		expect(env[CALLER_TAB_ID_ENV_VAR]).toBeUndefined();
+		expect(env[CALLER_RUN_PROOF_FILE_ENV_VAR]).toBeUndefined();
 	});
 
 	it('keeps the identity the spawn stamps through the session layer', () => {
@@ -65,6 +72,7 @@ describe('envBuilder caller identity', () => {
 		const env = buildPtyTerminalEnv();
 		expect(env[CALLER_AGENT_ID_ENV_VAR]).toBeUndefined();
 		expect(env[CALLER_TAB_ID_ENV_VAR]).toBeUndefined();
+		expect(env[CALLER_RUN_PROOF_FILE_ENV_VAR]).toBeUndefined();
 	});
 });
 

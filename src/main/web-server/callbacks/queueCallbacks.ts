@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
@@ -35,11 +36,25 @@ function parseEnqueueFailureReason(raw: unknown): EnqueueCommandFailureReason | 
 	return ENQUEUE_FAILURE_REASONS.find((reason) => reason === raw);
 }
 
+/**
+ * Wire renderer queue operations to the window owning each session. Keep native release and
+ * durability confirmation callbacks on the main-process path; renderer replies describe
+ * queue outcomes rather than native spawn proof.
+ */
 export function registerQueueCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
+	deps: Pick<
+		WebServerFactoryDependencies,
+		'getMainWindow' | 'getWindowForSession' | 'confirmQueueItem' | 'releaseQueueItem'
+	>
 ): void {
 	const { getMainWindow, getWindowForSession } = deps;
+	// Only callable from main; this is not registered in CallbackRegistry or a
+	// network message handler. Admission integration will consume it separately.
+	server.setReleaseQueueItemCallback(deps.releaseQueueItem);
+	server.setConfirmQueueItemCallback(
+		deps.confirmQueueItem ?? (async () => ({ durable: false, reason: 'store-unavailable' }))
+	);
 	// Each window owns its own agents' queues, so a request about ONE agent has to
 	// reach the window that owns it. The primary would answer from a queue that
 	// does not hold the item.
@@ -61,7 +76,9 @@ export function registerQueueCallbacks(
 			background?: boolean,
 			held?: boolean,
 			consultChain?: ConsultChain,
-			mentionRouting?: MentionRouting
+			mentionRouting?: MentionRouting,
+			dispatchCallback?: boolean,
+			control?: PianolaQueueControl
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -112,7 +129,9 @@ export function registerQueueCallbacks(
 					background,
 					held,
 					consultChain,
-					mentionRouting
+					mentionRouting,
+					dispatchCallback,
+					...(control ? [control] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

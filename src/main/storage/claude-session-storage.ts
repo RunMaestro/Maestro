@@ -773,9 +773,16 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (line.trim()) collect(line);
 			}
 		} else {
-			// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
-			const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
-			await forEachJsonlLine(sessionFile, collect);
+			const sessionFile =
+				options?.filePath ?? (await this.locateLocalSessionFile(projectPath, sessionId));
+			if (options?.content !== undefined) {
+				for (const line of options.content.split('\n')) {
+					if (line.trim()) collect(line);
+				}
+			} else {
+				// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
+				await forEachJsonlLine(sessionFile, collect);
+			}
 		}
 
 		return page.result();

@@ -1,4 +1,10 @@
 /** Native admission and receipt handling shared by the CLI and explicit human answers. */
+import { answerPendingQuestion } from '../permission-relay/registry';
+import { getSettingsStore } from '../stores';
+import { requireEncoreFeature } from '../../shared/encoreFeatureDefaults';
+import { nativeCurrentTurns } from './current-turn';
+import { pianolaNewTabSpawns } from './pianola-new-tab-dispatch';
+import { decide } from '../../shared/pianola/pianola-policy';
 import * as defaultStore from './pianola-store-main';
 import type { MessageHandlerCallbacks } from '../web-server/handlers/messageHandlers/types';
 import {
@@ -13,12 +19,18 @@ import {
 } from '../../shared/pianola/pianola-decision-lifecycle';
 import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { enrichWithAwaitingInput } from '../../shared/pianola/pianola-awaiting-detector';
-import { rateRisk } from '../../shared/pianola/pianola-risk';
+import { maxRisk, rateRisk } from '../../shared/pianola/pianola-risk';
 import {
 	PIANOLA_DECISION_RECORD_MAX_BYTES,
 	type PianolaDecisionRecord,
 } from '../../shared/pianola/storage';
 import { generateUUID } from '../../shared/uuid';
+import {
+	composeCurrentTurn,
+	nativeQuestionMessage,
+	currentTurnMessages,
+	sameCurrentTurnCursor,
+} from '../../shared/currentTurn';
 import { canonicalJson } from '../../shared/canonicalJson';
 
 type NativeCallbacks = Partial<
@@ -27,30 +39,60 @@ type NativeCallbacks = Partial<
 		'listDesktopSessions' | 'getSessionHistory' | 'executeCommand' | 'notifyToast'
 	>
 >;
-type DecisionStore = Parameters<typeof validatePianolaScopeDelivery>[2];
+type DecisionStore = Parameters<typeof validatePianolaScopeDelivery>[2] &
+	Partial<Pick<typeof defaultStore, 'appendDecisionAsync'>>;
 
+/**
+ * Reclassify the exact pending ask against its current transcript and native request. Throw
+ * if identity, cursor, evidence or risk changed so a stale decision cannot answer a
+ * different question.
+ */
 function currentAsk(callbacks: NativeCallbacks, record: PianolaDecisionRecord) {
-	const history = callbacks.getSessionHistory?.(record.tabId);
 	const cursor = record.lifecycle!.guard.cursor;
+	const history = callbacks.getSessionHistory?.(
+		record.tabId,
+		cursor.native
+			? { currentTurn: true, currentTurnInterest: 'pianola', expectedCursor: cursor.native }
+			: undefined
+	);
+	if (cursor.native) {
+		if (!history?.currentTurn || !sameCurrentTurnCursor(history.currentTurn.cursor, cursor.native))
+			throw new Error('Requesting native turn changed');
+		history.messages = currentTurnMessages(composeCurrentTurn(history.currentTurn));
+	}
 	if (
 		!history ||
 		history.agentId !== record.agentId ||
 		history.tabId !== record.tabId ||
 		history.messages.length !== cursor.count ||
 		history.messages.at(-1)?.id !== cursor.id ||
-		history.messages.at(-1)?.content.length !== cursor.textLength
+		(!cursor.native && history.messages.at(-1)?.content.length !== cursor.textLength)
 	)
 		throw new Error('Requesting transcript no longer matches the pending ask');
-	const classification = classifyMessages(enrichWithAwaitingInput(history.messages));
+	const request = record.lifecycle!.guard.nativeQuestion;
+	const classification = classifyMessages(
+		enrichWithAwaitingInput(
+			request ? [...history.messages, nativeQuestionMessage(request)] : history.messages
+		),
+		cursor.native
+			? maxRisk(history.currentTurn?.observedRisk ?? 'high', request?.observedRisk ?? 'low')
+			: undefined
+	);
 	if (
 		classification.kind === 'none' ||
 		classification.evidence.messageId !== record.classification.evidence.messageId ||
-		classification.risk !== record.classification.risk
+		classification.risk !== record.classification.risk ||
+		(request && classification.questionText !== record.classification.questionText)
 	)
 		throw new Error('The requesting agent is no longer awaiting this answer');
 	return classification;
 }
 
+/**
+ * Deliver an already claimed decision after rechecking native authority and risk. Journal
+ * accepted, rejected or unknown outcomes; transport uncertainty retains the hold and
+ * requires reconciliation rather than resend.
+ */
 async function sendClaimedDecision(
 	callbacks: NativeCallbacks,
 	record: PianolaDecisionRecord,
@@ -60,33 +102,152 @@ async function sendClaimedDecision(
 ): Promise<PianolaScopeDeliveryResult> {
 	const phase = record.lifecycle!.phase;
 	let result: PianolaScopeDeliveryResult;
+	let sent = false;
+	let held = false;
 	try {
-		if (!callbacks.executeCommand) throw new Error('Native send callback unavailable');
-		const accepted = await callbacks.executeCommand(
-			destination.agentId,
-			command,
-			'ai',
-			destination.tabId,
-			false,
-			undefined,
-			true,
-			undefined,
-			undefined,
-			true
-		);
-		result = accepted
-			? { status: 'accepted' }
-			: { status: 'rejected', error: 'Renderer refused the decision message' };
-	} catch {
-		result = {
-			status: 'unknown',
-			error: 'Native delivery receipt unavailable; reconcile before retrying',
-		};
+		const guard = record.lifecycle!.guard;
+		const native = guard.cursor.native;
+		const question = guard.nativeQuestion;
+		if (question && phase === 'answer') {
+			requireEncoreFeature(getSettingsStore(), 'pianola', 'PianolaDisabled');
+			const snapshot = pianolaScopeSnapshotFromDesktop({
+				success: true,
+				...callbacks.listDesktopSessions?.(),
+			});
+			const { record: current } = validatePianolaScopeDelivery(guard, snapshot, store, false);
+			if (
+				current.deliveryStatus !== 'admitted' ||
+				current.lifecycle?.phase !== 'answer' ||
+				current.lifecycle.delivery !== 'intent' ||
+				current.lifecycle.status === 'done' ||
+				current.lifecycle.status === 'paused' ||
+				canonicalJson(current.lifecycle.source) !== canonicalJson(record.lifecycle!.source)
+			)
+				throw new Error('Native question authority changed');
+			const classification = currentAsk(callbacks, current);
+			if (classification.risk === 'high' || rateRisk(command) === 'high')
+				throw new Error('Sensitive native question requires the human relay');
+			sent = true;
+			result = answerPendingQuestion(question, command)
+				? { status: 'accepted' }
+				: { status: 'rejected', error: 'Native question already closed or transport unavailable' };
+		} else {
+			if (!callbacks.executeCommand) throw new Error('Native send callback unavailable');
+			if (native) {
+				if (pianolaNewTabSpawns.isHeld(destination.agentId, destination.tabId))
+					throw new Error('Decision destination already held');
+				pianolaNewTabSpawns.hold(destination.agentId, destination.tabId);
+				held = true;
+				pianolaNewTabSpawns.arm(
+					destination.agentId,
+					destination.tabId,
+					(boundaryId) => {
+						requireEncoreFeature(getSettingsStore(), 'pianola', 'PianolaDisabled');
+						if (!boundaryId) throw new Error('Native decision reply boundary required');
+						const snapshot = pianolaScopeSnapshotFromDesktop({
+							success: true,
+							...callbacks.listDesktopSessions?.(),
+						});
+						const recipient = snapshot.tabs.find(
+							(tab) => tab.agentId === destination.agentId && tab.tabId === destination.tabId
+						);
+						if (
+							!recipient ||
+							recipient.paused ||
+							recipient.busy ||
+							recipient.consult ||
+							recipient.ephemeral
+						)
+							throw new Error('Decision destination unavailable');
+						const current = store.readDecisions().find((row) => row.id === record.id);
+						if (
+							!current?.lifecycle ||
+							current.lifecycle.status === 'done' ||
+							current.lifecycle.status === 'paused' ||
+							current.lifecycle.phase !== phase ||
+							(current.lifecycle.delivery !== 'intent' &&
+								current.lifecycle.delivery !== 'accepted') ||
+							current.deliveryStatus !== 'admitted' ||
+							canonicalJson(current.lifecycle.source) !== canonicalJson(record.lifecycle!.source)
+						)
+							throw new Error('Decision authority changed during delivery');
+						const appended = nativeCurrentTurns.assertDelivery(
+							native,
+							guard.cursor.count,
+							destination.agentId === record.agentId && destination.tabId === record.tabId
+								? boundaryId
+								: undefined,
+							command,
+							guard.cursor.questionSignatures,
+							record.classification.risk
+						);
+						if (appended) {
+							const tab = snapshot.tabs.find(
+								(tab) => tab.agentId === record.agentId && tab.tabId === record.tabId
+							);
+							if (!tab) throw new Error('Decision tab closed');
+							tab.cursor = guard.cursor;
+							tab.cursorAvailable = true;
+						}
+						validatePianolaScopeDelivery(guard, snapshot, store, false);
+						if (phase === 'answer' && record.decision.matchedRuleId) {
+							const owner = snapshot.owners.find((owner) => owner.id === record.agentId)!;
+							const allowed = decide(record.classification, store.readRules(), {
+								agentId: record.agentId,
+								tabId: record.tabId,
+								projectPath: owner.cwd,
+								groupId: owner.groupId,
+							});
+							if (
+								allowed.action !== 'auto_answer' ||
+								allowed.answer !== command ||
+								allowed.matchedRuleId !== record.decision.matchedRuleId
+							)
+								throw new Error('Answer rule revoked during delivery');
+						}
+					},
+					() => {},
+					record.id
+				);
+			}
+			sent = true;
+			const accepted = await callbacks.executeCommand(
+				destination.agentId,
+				command,
+				'ai',
+				destination.tabId,
+				false,
+				undefined,
+				true,
+				undefined,
+				undefined,
+				true,
+				...(native ? [record.id] : [])
+			);
+			if (!accepted && native)
+				pianolaNewTabSpawns.cancelHold(destination.agentId, destination.tabId);
+			result = accepted
+				? { status: 'accepted' }
+				: { status: 'rejected', error: 'Renderer refused the decision message' };
+		}
+	} catch (error) {
+		if (!sent && held) pianolaNewTabSpawns.cancelHold(destination.agentId, destination.tabId);
+		result = sent
+			? {
+					status: 'unknown',
+					error: 'Native delivery receipt unavailable; reconcile before retrying',
+				}
+			: {
+					status: 'rejected',
+					error: error instanceof Error ? error.message : 'Native delivery refused',
+				};
 	}
 	// A manager may already have answered while its handoff receipt was in flight.
 	const current = store.readDecisions().find((candidate) => candidate.id === record.id);
 	if (
 		current?.lifecycle?.phase === phase &&
+		current.lifecycle.status !== 'done' &&
+		current.lifecycle.status !== 'paused' &&
 		(current.lifecycle.delivery === 'intent' || current.lifecycle.delivery === 'unknown') &&
 		canonicalJson(current.lifecycle.source) === canonicalJson(record.lifecycle!.source)
 	) {
@@ -121,10 +282,20 @@ async function sendClaimedDecision(
 								? 'The renderer refused the answer; inspect the recipient before retrying'
 								: 'Reconcile the native receipt or recipient transcript; do not resend',
 				...(judgment && result.status === 'accepted' ? { deadlineAt: Date.now() + 60_000 } : {}),
+				...(phase === 'answer' &&
+				record.lifecycle!.guard.nativeQuestion &&
+				result.status === 'accepted'
+					? {
+							status: 'done',
+							nextActor: 'none',
+							nextAction: 'Native question response committed; provider execution is not asserted',
+							acknowledgedAt: new Date().toISOString(),
+						}
+					: {}),
 			},
 			new Date().toISOString()
 		);
-		store.appendDecision({
+		await (store.appendDecisionAsync ?? store.appendDecision)({
 			...next,
 			dispatched: phase === 'answer' && result.status === 'accepted',
 			...(result.status === 'accepted' ? {} : { error: result.error }),
@@ -147,7 +318,7 @@ export async function deliverPianolaScopeDecision(
 	});
 	const checked = validatePianolaScopeDelivery(rawGuard, snapshot, store);
 	let record = checked.record;
-	if (!record.lifecycle || !callbacks.executeCommand)
+	if (!record.lifecycle || (!checked.guard.nativeQuestion && !callbacks.executeCommand))
 		throw new Error('Native decision lifecycle unavailable');
 	const classification = currentAsk(callbacks, record);
 	if (classification.risk === 'high')
@@ -167,9 +338,16 @@ export async function deliverPianolaScopeDecision(
 			{ managerTabId: managerTab.tabId },
 			new Date().toISOString()
 		);
-		store.appendDecision(record);
+		await (store.appendDecisionAsync ?? store.appendDecision)(record);
 	}
-	admitPianolaScopeReply(rawGuard, command, snapshot, store, judgment);
+	// Metadata persistence may yield under contention. Admission must re-read
+	// native membership and the asking turn after that wait.
+	const admissionSnapshot = pianolaScopeSnapshotFromDesktop({
+		success: true,
+		...callbacks.listDesktopSessions?.(),
+	});
+	currentAsk(callbacks, record);
+	admitPianolaScopeReply(rawGuard, command, admissionSnapshot, store, judgment);
 	return sendClaimedDecision(callbacks, record, command, destination, store);
 }
 
@@ -264,7 +442,7 @@ export async function resolvePianolaDecision(
 			: { kind: 'human' as const, actorId: actor.actorId, timestamp: now };
 	const groupId = snapshot.owners.find((owner) => owner.id === record.agentId)?.groupId ?? null;
 	if (request.escalation !== undefined) {
-		store.appendDecision(
+		await (store.appendDecisionAsync ?? store.appendDecision)(
 			updatePianolaDecision(
 				{ ...record, decision: { action: 'escalate', matchedRuleId: null, reason: text } },
 				{
@@ -289,7 +467,8 @@ export async function resolvePianolaDecision(
 		});
 		return { status: 'accepted' };
 	}
-	if (!callbacks.executeCommand) throw new Error('Native send callback unavailable');
+	if (!life.guard.nativeQuestion && !callbacks.executeCommand)
+		throw new Error('Native send callback unavailable');
 	const history = callbacks.getSessionHistory?.(record.tabId);
 	const question = history?.messages.find((message) => message.id === life.guard.messageId);
 	const owner = snapshot.owners.find((candidate) => candidate.id === record.agentId);

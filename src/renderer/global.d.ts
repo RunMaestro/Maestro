@@ -1,7 +1,14 @@
+import type { PianolaQueueControl } from '../shared/pianola/pianola-dispatch';
 import type {
 	TranslationRequest,
 	TranslationReport,
 } from '../shared/maestro-lib/translation/types';
+import type {
+	HarnessInteractionRequest,
+	HarnessInteractionResolveResult,
+	HarnessInteractionResponse,
+	HarnessInteractionSettledEvent,
+} from '../shared/harness-control/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -55,7 +62,12 @@ type LocalFileScanNode = {
 };
 
 interface ProcessConfig {
+	/** Native submitted transcript boundary, checked against owner commits by the host. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	pianolaQueueStepId?: string;
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -69,6 +81,8 @@ interface ProcessConfig {
 	modelId?: string;
 	yoloMode?: boolean;
 	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** Optional provider-native protocol mode for this turn. */
+	harnessControlMode?: import('../shared/maestro-lib/providers/native-control').HarnessControlMode;
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -249,6 +263,10 @@ import type { GroupSeededCreateReport } from '../shared/groupAgentDefaults';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { ClosedTabCommandRequest, ClosedTabCommandResult } from '../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../shared/tabContextOps';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -412,7 +430,9 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/autoRunRemote').AutoRunRemoteResult
 		) => void;
-		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
+		spawn: (
+			config: ProcessConfig
+		) => Promise<import('../main/preload/process/core').ProcessSpawnResponse>;
 		spawnTerminalTab: (config: {
 			sessionId: string;
 			cwd: string;
@@ -457,6 +477,7 @@ interface MaestroAPI {
 		}) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
+		closeAgent: (agentId: string) => Promise<boolean>;
 		resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
 		runCommand: (config: {
 			sessionId: string;
@@ -549,6 +570,16 @@ interface MaestroAPI {
 				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
 				| { behavior: 'deny'; message: string }
 		) => Promise<boolean>;
+		onHarnessInteractionRequest: (
+			callback: (request: HarnessInteractionRequest) => void
+		) => () => void;
+		onHarnessInteractionSettled: (
+			callback: (event: HarnessInteractionSettledEvent) => void
+		) => () => void;
+		listHarnessInteractions: () => Promise<HarnessInteractionRequest[]>;
+		respondHarnessInteraction: (
+			response: HarnessInteractionResponse
+		) => Promise<HarnessInteractionResolveResult>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
@@ -595,7 +626,8 @@ interface MaestroAPI {
 				background?: boolean,
 				consultChain?: import('../shared/consultBudget').ConsultChain,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => void
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
@@ -671,6 +703,14 @@ interface MaestroAPI {
 		sendRemoteClosedTabCommandResponse: (
 			responseChannel: string,
 			result: ClosedTabCommandResult
+		) => void;
+		// `maestro-cli tab pins ...` requests; returns unsubscribe.
+		onRemoteMessagePinCommand: (
+			callback: (request: MessagePinCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMessagePinCommandResponse: (
+			responseChannel: string,
+			result: MessagePinCommandResult
 		) => void;
 		// `maestro-cli tab compact|merge|transfer` (the overlay menu's Context items);
 		// each returns unsubscribe and is answered with a TabContextOpResult.
@@ -955,7 +995,8 @@ interface MaestroAPI {
 				background?: boolean,
 				hidden?: boolean,
 				consultChain?: import('../shared/consultBudget').ConsultChain,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				control?: import('../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -1003,7 +1044,9 @@ interface MaestroAPI {
 				background?: boolean,
 				held?: boolean,
 				consultChain?: import('../shared/consultBudget').ConsultChain,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -2131,6 +2174,9 @@ interface MaestroAPI {
 			global: string[];
 		}>;
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		onModelsRefreshed: (
+			callback: (payload: import('../shared/agentModelsRefresh').ModelsRefreshedPayload) => void
+		) => () => void;
 		getConfigOptions: (
 			agentId: string,
 			optionKey: string,
@@ -2171,7 +2217,7 @@ interface MaestroAPI {
 					accountEmail?: string;
 					accountUuid?: string;
 					organizationName?: string;
-					session: { percent: number; resetsAt?: string };
+					session?: { percent: number; resetsAt?: string };
 					weekAllModels: { percent: number; resetsAt?: string };
 					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
@@ -2395,8 +2441,22 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string
 		) => Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{
+					origin?: 'user' | 'auto';
+					sessionName?: string;
+					starred?: boolean;
+					pinnedMessages?: unknown;
+				}
+			>
 		>;
+		setSessionPins: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string,
+			pins: import('../shared/messagePins').MessagePin[]
+		) => Promise<void>;
 		setSessionName: (
 			agentId: string,
 			projectPath: string,
@@ -2424,6 +2484,10 @@ interface MaestroAPI {
 	};
 	dialog: {
 		selectFolder: () => Promise<string | null>;
+		selectFile: (options: {
+			filters?: Array<{ name: string; extensions: string[] }>;
+			title?: string;
+		}) => Promise<string | null>;
 		saveFile: (options: {
 			defaultPath?: string;
 			filters?: Array<{ name: string; extensions: string[] }>;
@@ -2780,6 +2844,7 @@ interface MaestroAPI {
 						sessionName?: string;
 						starred?: boolean;
 						contextUsage?: number;
+						pinnedMessages?: unknown;
 				  }
 			>
 		>;
@@ -3505,25 +3570,7 @@ interface MaestroAPI {
 		onActivityChange: (handler: () => void) => () => void;
 	};
 	// Cross-Agent Dispatch API (@mentions)
-	crossAgent: {
-		/** Dispatch a cross-agent request; response streams back via onChunk. */
-		send: (
-			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
-		) => Promise<{ requestId: string }>;
-		/** Stop every consult this source agent (or one of its tabs) still has in flight (Stop button). */
-		cancel: (sourceSessionId: string, sourceTabId?: string) => Promise<{ canceled: number }>;
-		/**
-		 * Where the consultation budget stands for a turn about to be spawned. No
-		 * chain means a root turn (nothing spent); `null` means it cannot be read.
-		 */
-		consultBudget: (
-			consultChain?: import('../shared/consultBudget').ConsultChain
-		) => Promise<import('../shared/consultBudget').ConsultBudgetStatus | null>;
-		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
-		onChunk: (
-			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
-		) => () => void;
-	};
+	crossAgent: import('../main/preload/crossAgent').CrossAgentApi;
 	// Group Chat API (multi-agent coordination)
 	groupChat: {
 		// Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts)
@@ -4707,6 +4754,7 @@ interface MaestroAPI {
 		// running as an orphan). Main retires anything scoped to that tab, e.g. an
 		// armed dispatch callback that would otherwise time out an hour later.
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
+		notifyAiTabRetryState: (agentId: string, tabId: string, pending: boolean) => void;
 	};
 
 	// User Journey API (per-agent log of user actions inside Maestro). Record
@@ -4957,13 +5005,14 @@ interface MaestroAPI {
 			projectRoot: string,
 			name: string
 		) => Promise<{ removed: boolean; reason?: string }>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
+		readYaml: (projectRoot: string, sessionId?: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,
 			content: string,
-			promptFiles?: Record<string, string>
+			promptFiles?: Record<string, string>,
+			sessionId?: string
 		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		deleteYaml: (projectRoot: string, sessionId?: string) => Promise<boolean>;
 		renamePipeline: (
 			oldName: string,
 			newName: string
@@ -5007,12 +5056,38 @@ interface MaestroAPI {
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
+		memory: (request: import('../shared/pianola/memory').MemoryRequest) => Promise<unknown>;
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
 		resolveDecision: (
 			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
 		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
+		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		superviseProgram: (programId: string) => Promise<void>;
+		setProgramStatus: (
+			programId: string,
+			status: import('../shared/pianola/pianola-programs').PianolaProgramStatus
+		) => Promise<void>;
+		getAsks: (
+			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;
+		resolveAsk: (
+			id: string,
+			option: string,
+			note?: string
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		dismissAsk: (id: string) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		getBrief: () => Promise<import('../shared/pianola/pianola-programs').PianolaBrief>;
+		revisePlanTask: (
+			planId: string,
+			taskId: string,
+			prompt?: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
+		skipPlanTask: (
+			planId: string,
+			taskId: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
 		confirmDesktopOwner: () => Promise<void>;
 		reviewSuggestion: (
@@ -5041,8 +5116,8 @@ interface MaestroAPI {
 			flag: FirstPartyEncoreFlag,
 			enabled: boolean
 		) => Promise<FirstPartyBridgeState>;
-		install: (sourceDir: string) => Promise<PluginInstallResult>;
-		update: (sourceDir: string) => Promise<PluginListSnapshot>;
+		install: (sourcePath: string) => Promise<PluginInstallResult>;
+		update: (sourcePath: string, expectedId?: string) => Promise<PluginListSnapshot>;
 		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
 		contributions: () => Promise<PluginContributions>;
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;

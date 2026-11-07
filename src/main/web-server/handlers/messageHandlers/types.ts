@@ -49,6 +49,7 @@ import type {
 	RenameTabResult,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -154,7 +155,8 @@ export interface MessageHandlerCallbacks {
 		background?: boolean,
 		consultChain?: ConsultChain,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -175,6 +177,8 @@ export interface MessageHandlerCallbacks {
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli tab closed` / `tab reopen` - read and reopen the closed-tab stack. */
 	closedTabCommand: ClosedTabCommandCallback;
+	/** `maestro-cli tab pins` - list, add, remove, rename, and show a tab's message pins. */
+	messagePinCommand: MessagePinCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
@@ -231,8 +235,9 @@ export interface MessageHandlerCallbacks {
 		background?: boolean,
 		hidden?: boolean,
 		consultChain?: ConsultChain,
-		mentionRouting?: MentionRouting
-	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+		mentionRouting?: MentionRouting,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	) => Promise<import('../../types').NewAITabWithPromptResult>;
 	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
 	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
@@ -248,8 +253,12 @@ export interface MessageHandlerCallbacks {
 		background?: boolean,
 		held?: boolean,
 		consultChain?: ConsultChain,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		dispatchCallback?: boolean,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 	) => Promise<EnqueueCommandResult>;
+	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
+	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];

@@ -16,6 +16,24 @@ type SessionPersistenceFlush = (latestSessions?: Session[]) => Promise<void>;
 
 let flush: SessionPersistenceFlush | null = null;
 
+type TranscriptFlush = (sessionId: string, tabId: string, boundaryId: string) => Promise<void>;
+let flushTranscript: TranscriptFlush | null = null;
+
+/** The native transcript owner registers its IPC acknowledgment fence. Disk persistence
+ * alone cannot attest a submitted user row to NativeCurrentTurns. */
+export function registerSessionTranscriptFlush(fn: TranscriptFlush | null): void {
+	flushTranscript = fn;
+}
+
+export function flushSessionTranscriptNow(
+	sessionId: string,
+	tabId: string,
+	boundaryId: string
+): Promise<void> {
+	if (!flushTranscript) return Promise.reject(new Error('DispatchTranscriptOwnerUnavailable'));
+	return flushTranscript(sessionId, tabId, boundaryId);
+}
+
 /** Wire App's `flushNow`. Called with `null` on teardown. */
 export function registerSessionPersistenceFlush(fn: SessionPersistenceFlush | null): void {
 	flush = fn;

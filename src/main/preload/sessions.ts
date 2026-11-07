@@ -332,9 +332,18 @@ export function createAgentSessionsApi() {
 		): Promise<
 			Record<
 				string,
-				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+				{
+					origin?: 'user' | 'auto' | 'relay';
+					sessionName?: string;
+					starred?: boolean;
+					pinnedMessages?: unknown;
+				}
 			>
 		> => ipcRenderer.invoke('agentSessions:getOrigins', agentId, projectPath),
+
+		/** Mirror a tab's message pins onto its provider session's origin record. */
+		setSessionPins: (agentId: string, projectPath: string, sessionId: string, pins: unknown[]) =>
+			ipcRenderer.invoke('agentSessions:setSessionPins', agentId, projectPath, sessionId, pins),
 
 		setSessionName: (
 			agentId: string,

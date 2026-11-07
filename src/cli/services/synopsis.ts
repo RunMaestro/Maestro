@@ -93,6 +93,8 @@ export async function requestCliSynopsis(
 					runOn: request.runOn ?? session.runOn,
 					requiredSecrets: session.requiredSecrets,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
+					harnessControlMode: session.harnessControlMode,
+					nativeSessionId: session.id,
 					// A synopsis is never someone typing, whatever turn it summarizes.
 					querySource: 'auto',
 					// Honor the agent's Claude token source for the synopsis turn too.

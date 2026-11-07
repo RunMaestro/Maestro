@@ -15,6 +15,7 @@
  */
 
 import { ipcMain } from 'electron';
+import { hostCallerRuns } from '../../agent-run/caller-identity';
 import { logger } from '../../utils/logger';
 import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
@@ -61,6 +62,13 @@ const FAKE_EVENT: BridgeFakeEvent = {
 
 let broadcastSink: ((channel: string, args: unknown[]) => void) | null = null;
 
+interface SessionBridge {
+	broadcast: (channel: string, args: unknown[], sessionId: string) => boolean;
+	isOwner: (clientId: string, sessionId: string) => boolean;
+}
+
+let sessionBridge: SessionBridge | null = null;
+
 /**
  * Wire the bridge's main→renderer fanout to the live BroadcastService.
  * Once installed, `broadcastBridgeEvent(channel, args)` (called from
@@ -83,6 +91,16 @@ export function installWebContentsBridgeHook(broadcastService: BroadcastService)
 			timestamp: Date.now(),
 		});
 	};
+	sessionBridge = {
+		broadcast: (channel, args, sessionId) =>
+			broadcastService.broadcastToSubscribers(sessionId, {
+				type: 'bridge.event',
+				channel,
+				args,
+				timestamp: Date.now(),
+			}),
+		isOwner: (clientId, sessionId) => broadcastService.isClientSubscribed(clientId, sessionId),
+	};
 	logger.info('Bridge event fanout installed', LOG_CONTEXT);
 }
 
@@ -96,6 +114,7 @@ export function uninstallWebContentsBridgeHook(): void {
 		broadcastSink = null;
 		logger.info('Bridge event fanout removed', LOG_CONTEXT);
 	}
+	sessionBridge = null;
 }
 
 /**
@@ -120,11 +139,36 @@ export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
 	}
 }
 
+/** Send a private interaction only to authorized subscribers of its owning session. */
+export function broadcastBridgeEventToSessionSubscribers(
+	channel: string,
+	args: unknown[],
+	sessionId: string
+): boolean {
+	if (!sessionBridge || !isRemoteEventAllowed(channel) || isDesktopOnlyChannel(channel)) {
+		return false;
+	}
+	try {
+		return sessionBridge.broadcast(channel, args, sessionId);
+	} catch (err) {
+		logger.warn(`session bridge fanout failed: ${(err as Error).message}`, LOG_CONTEXT);
+		return false;
+	}
+}
+
+/** Fail closed unless this bridge connection is an authorized subscriber of the session. */
+export function isBridgeSessionOwner(clientId: string, sessionId: string): boolean {
+	return sessionBridge?.isOwner(clientId, sessionId) === true;
+}
+
 /**
  * Handle a bridge.invoke message - dispatch to the registered ipcMain handler
  * and send a bridge.response back to the originating client.
  */
-export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 'user' | 'cli'>>(
+export async function handleBridgeInvoke<
+	TClient extends Pick<WebClient, 'id' | 'user' | 'cli'> &
+		Partial<Pick<WebClient, 'socket' | 'isAuthorized' | 'cliAuthenticated'>>,
+>(
 	client: TClient,
 	message: InvokeMessage,
 	send: (client: TClient, payload: object) => void
@@ -132,7 +176,27 @@ export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 
 	const requestId = message.requestId;
 	const channel = message.channel;
 	let args = Array.isArray(message.args) ? message.args : [];
-	const event = { ...FAKE_EVENT, clientId: client.id };
+	const event = {
+		...FAKE_EVENT,
+		clientId: client.id,
+		cli: client.cli === true,
+		// Host closure, never a bridge argument. Rechecked after native consent.
+		/**
+		 * Check that the bridge caller is still connected and authorized. Known run clients must
+		 * retain a resolvable active native binding; revoked bindings cannot fall back to ordinary
+		 * CLI authority.
+		 */
+		isCallerActive: () => {
+			if (client.socket?.readyState !== 1 || client.isAuthorized?.() !== true) return false;
+			// Run-client membership survives removal of its revoked binding. Never
+			// reinterpret an expired agent connection as an ordinary human CLI.
+			if (!hostCallerRuns.isRunClient(client)) return true;
+			const caller = hostCallerRuns.resolve(client);
+			if (!caller) return false;
+			caller.assertActive();
+			return true;
+		},
+	};
 
 	if (typeof channel !== 'string' || !channel) {
 		send(client, {

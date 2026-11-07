@@ -1,4 +1,7 @@
 import { inspectTabProvider } from '../../../shared/desktopTabs';
+import { sameCurrentTurnCursor } from '../../../shared/currentTurn';
+import { getPendingQuestionsSnapshot } from '../../permission-relay/registry';
+import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import type { StoredSession } from '../../stores/types';
@@ -126,6 +129,7 @@ export function registerSessionCallbacks(
 	// then reconciles it with live managed-process and CLI-activity evidence.
 	server.setListDesktopSessionsCallback(() => {
 		const capturedAt = Date.now();
+		const pendingQuestions = getPendingQuestionsSnapshot();
 		const sessions = readLiveSessions();
 		const byId = new Map(sessions.map((session) => [session.id, session]));
 		const processManager = getProcessManager();
@@ -239,8 +243,45 @@ export function registerSessionCallbacks(
 						// CLI activity is agent-scoped; do not infer which sibling
 						// tab is safe to address from its selected-tab status.
 						busy: managedProcessActive || cliBusy,
+						nativeQuestion: (() => {
+							if (!managedProcessActive || cliBusy || s.toolType !== 'claude-code')
+								return undefined;
+							const turn = nativeCurrentTurns.read(
+								{
+									agentId: s.id,
+									tabId: tab.id,
+									createdAt: tab.createdAt,
+									provider: s.toolType,
+									agentSessionId: tab.agentSessionId ?? null,
+									open: true,
+								},
+								undefined,
+								false
+							);
+							const question = pendingQuestions.get(`${s.id}-ai-${tab.id}`);
+							return turn.status === 'complete' &&
+								question &&
+								sameCurrentTurnCursor(question.cursor, turn.cursor)
+								? question
+								: undefined;
+						})(),
 						consult: !!tab.consultOrigin,
 						ephemeral: tab.quickChat === true && tab.hidden === true,
+						currentTurn: (() => {
+							const { messages: _messages, ...observation } = nativeCurrentTurns.read(
+								{
+									agentId: s.id,
+									tabId: tab.id,
+									createdAt: tab.createdAt,
+									provider: s.toolType,
+									agentSessionId: tab.agentSessionId ?? null,
+									open: true,
+								},
+								undefined,
+								false
+							);
+							return observation;
+						})(),
 						cursorAvailable:
 							Array.isArray(tab.logs) &&
 							(!lastLog || (typeof lastLog.id === 'string' && lastLog.id.length > 0)),
@@ -280,6 +321,32 @@ export function registerSessionCallbacks(
 			// TAB_NOT_FOUND for it would make a Pianola watcher retire the target.
 			const tab = findStoredAiTab(s, tabId) as Record<string, any> | undefined;
 			if (!tab) continue;
+			if (options?.currentTurn) {
+				if (options.currentTurnInterest !== 'pianola')
+					nativeCurrentTurns.observe(s.id, tabId, options.observationClient);
+				const currentTurn = nativeCurrentTurns.read(
+					{
+						agentId: s.id,
+						tabId,
+						createdAt: tab.createdAt,
+						provider: s.toolType,
+						agentSessionId: tab.agentSessionId ?? null,
+						open: s.aiTabs?.some((open: { id: string }) => open.id === tabId) === true,
+					},
+					options.expectedCursor,
+					true,
+					options.deltaBase
+				);
+				return {
+					tabId,
+					sessionId: tabId,
+					agentId: s.id,
+					agentSessionId: tab.agentSessionId ?? null,
+					projectPath: s.cwd,
+					messages: [],
+					currentTurn,
+				};
+			}
 			const rawLogs = (tab.logs as Array<Record<string, any>> | undefined) ?? [];
 			let logs = rawLogs;
 			if (options?.sinceMs !== undefined) {

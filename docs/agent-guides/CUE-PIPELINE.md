@@ -71,8 +71,7 @@ Constructor dependencies (`CueEngineDeps`):
 Key public methods:
 
 - `start(reason?)` / `stop()` - Enable/disable the engine; `reason` (`'system-boot'` vs `'user-toggle'`) gates whether `app.startup` fires
-- `retryPendingPluginEvents()` - Re-admit only rejected durable startup rows after plugin discovery/service activation and on the existing heartbeat; preserve original payload/age, recheck authority, and remove old rows only after acceptance. Accepted live rows are excluded from retries. Unknown owners and initially invalid/unavailable configurations park durable rows until refresh establishes their source; a watcher losing live-owner visibility also holds accepted in-memory durable work, including when an active run finishes while hidden. `canDrainSession` pauses only readiness; retained durable queues retry in a microtask after synchronous source registration and still recheck current authority. The heartbeat does not repeatedly read parked rows. A valid configuration that removed a source, an observed removal of a previously valid config, or explicit stored-owner deletion is terminal.
-- `refreshSession(sessionId, projectRoot)` - Hot-reloads YAML via `sessionRuntimeService` (tears down old, re-initializes)
+- `refreshSession(sessionId, projectRoot)` - Asynchronously hot-reloads YAML via `sessionRuntimeService`; callers must await or handle its rejected promise
 - `removeSession(sessionId)` - Delegates to `sessionRuntimeService` to tear down subscriptions and clear ordinary queue rows; durable rows remain parked across root moves/temporary filtering unless the raw persisted owner is actually absent. `onDurableRowsDetached` reports only detached queued rows to the engine after map mutation; it never retries synchronously. If the startup snapshot failed, these IDs are merged into the eventual snapshot without replaying still-active current-start writes. Stop All clears live state immediately; retained queued durable rows can retry on a later refresh/heartbeat while Cue remains enabled, with fresh authority. Active stopped runs are not included.
 - `notifyAgentCompleted(sessionId, completionData?)` - Handles `agent.completed` triggers; routes to `completionService`
 - `getStatus()` / `getActiveRuns()` / `getActivityLog()` / `getQueueStatus()` / `getSettings()` / `getGraphData()` - Read-only projections via `queryService`
@@ -80,6 +79,8 @@ Key public methods:
 - `triggerSubscription(subscriptionName)` - Manual "Run Now" by subscription name
 
 Note: per-session `initSession` and central `dispatchSubscription` are not exposed as public `CueEngine` methods - they live on `CueSessionRuntimeService` and `CueDispatchService` respectively, invoked internally by `start()` and by trigger-source callbacks.
+
+The runtime installs its YAML watcher before loading the configuration. A filesystem read failure preserves the existing subscriptions and trigger sources but invalidates the loaded-file snapshot, so watcher reconciliation retries even when the file bytes are unchanged. Confirmed removal still tears down the configuration; a transient missing read is rechecked before removing a live registration.
 
 Composed submodules (created in constructor):
 

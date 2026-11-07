@@ -1,3 +1,5 @@
+import { generateUUID } from '../../uuid';
+import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * `createWsMaestroClient`: the `MaestroClient` interface over the running
  * desktop's WebSocket bridge (milestone M1).
@@ -1664,7 +1666,9 @@ class WsMaestroClient implements MaestroClient {
 		if (!input.text?.trim() && !hasImages) {
 			return this.fail('turns.send', 'invalid', 'There is nothing to send.');
 		}
+		const dispatchId = input.dispatchId ?? generateUUID();
 		const message: Record<string, unknown> = {
+			dispatchId,
 			type: 'enqueue_command',
 			sessionId: agentId,
 			tabId,
@@ -1675,14 +1679,50 @@ class WsMaestroClient implements MaestroClient {
 		if (hasImages) message.images = input.images;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
-		if (!sent.ok) return sent;
+		if (!sent.ok)
+			return {
+				ok: false,
+				error: {
+					...sent.error,
+					dispatchId,
+					...(['timeout', 'host-lost'].includes(sent.error.code)
+						? {
+								unknown: true,
+								message:
+									sent.error.message +
+									' Reconcile with the same dispatchId; do not resend with a new ID.',
+							}
+						: {}),
+				},
+			};
+		const admission = sent.value.admission as PianolaDispatchReceipt | undefined;
+		if (sent.value.unknown === true || admission?.outcome === 'unknown')
+			return {
+				ok: false,
+				error: {
+					code: 'failed',
+					method: 'turns.send',
+					dispatchId,
+					admission,
+					unknown: true,
+					message:
+						'Queue admission unknown. Reconcile with the same dispatchId; do not resend with a new ID.',
+				},
+			};
 		const checked = this.checkResult('turns.send', sent.value);
-		if (!checked.ok) return checked;
+		if (!checked.ok)
+			return {
+				ok: false,
+				error: { ...checked.error, dispatchId, ...(admission ? { admission } : {}) },
+			};
 		const reply = sent.value;
 		if (reply.queued === true) {
 			const queueLength = typeof reply.queueLength === 'number' ? reply.queueLength : 1;
 			return ok({
 				status: 'queued',
+				...(typeof reply.dispatchId === 'string' ? { dispatchId: reply.dispatchId } : {}),
+				...(admission ? { admission } : {}),
+				...(typeof reply.durable === 'boolean' ? { durable: reply.durable } : {}),
 				itemId: asString(reply.itemId) ?? '',
 				position: typeof reply.queuePosition === 'number' ? reply.queuePosition : queueLength,
 				queueLength,

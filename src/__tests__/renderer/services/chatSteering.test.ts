@@ -30,6 +30,7 @@ import {
 	steerQueuedItem,
 	steerQueuedItemOrExplain,
 } from '../../../renderer/services/chatSteering';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
@@ -135,9 +136,34 @@ describe('steerQueuedItem', () => {
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result).toMatchObject({ outcome: 'refused', refusal: 'blocking-dialog' });
-		expect(queue()).toEqual([item()]);
+		expect(queue()).toEqual([{ ...item(), paused: undefined, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 		expect(tabLogs()).toEqual([]);
+	});
+
+	it('retains repeated refused-steer recoveries against older dequeue writes', async () => {
+		const baseline = steerableSession([item()]);
+		useSessionStore.setState({ sessions: [baseline] });
+		steer.mockResolvedValue({
+			type: 'steering',
+			id: 'steer-1',
+			verdict: 'refused',
+			refusal: 'blocking-dialog',
+		});
+		for (let generation = 1; generation <= 2; generation++) {
+			await steerQueuedItem('sess-1', 'item-a');
+			expect(queue()[0].dispatchRecoveryGeneration).toBe(generation);
+			const current = useSessionStore.getState().sessions[0];
+			expect(
+				mergeSessionPersistenceChanges(
+					{ ...baseline, executionQueue: [] },
+					current,
+					baseline,
+					true,
+					true
+				).executionQueue
+			).toEqual(queue());
+		}
 	});
 
 	it('reports an unknown item as not-found without steering', async () => {
@@ -170,7 +196,7 @@ describe('steerQueuedItem', () => {
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result.outcome).toBe('unconfirmed');
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 	});
 
 	it('puts the steered message in the transcript and parks it on the agent', async () => {
@@ -239,7 +265,7 @@ describe('steerQueuedItem', () => {
 
 		await steerQueuedItem('sess-1', 'item-a');
 
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 	});
 
@@ -282,7 +308,7 @@ describe('steerQueuedItem', () => {
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result).toMatchObject({ outcome: 'unconfirmed', detail: 'ipc closed' });
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 	});
 
 	it('names the provider that took the message, not always Claude', async () => {
@@ -558,7 +584,7 @@ describe('settlePendingSteersOnExit', () => {
 
 		settlePendingSteersOnExit(PROCESS_KEY);
 
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 	});
 
@@ -588,7 +614,7 @@ describe('reconcilePendingSteers', () => {
 
 		await reconcilePendingSteers();
 
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 	});
 

@@ -348,7 +348,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 					/>
 				</div>
 				<p className="text-xs-plus leading-snug mt-1.5" style={{ color: theme.colors.textDim }}>
-					Right-click Send always shows this menu.
+					Right-click always shows this menu.
 				</p>
 			</div>
 		</div>,

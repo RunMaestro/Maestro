@@ -10,7 +10,11 @@ import {
 	isBlankEnvValue,
 	type EnvVarMerge,
 } from '../../agentEnvironment';
-import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../agentDelegation';
+import {
+	CALLER_AGENT_ID_ENV_VAR,
+	CALLER_TAB_ID_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
+} from '../../agentDelegation';
 import { CONSULT_CHAIN_ENV_VAR, CONSULT_DEPTH_ENV_VAR } from '../../consultBudget';
 import { PROVIDER_ENV_VAR_SUGGESTIONS } from '../../envVarCatalog';
 
@@ -118,6 +122,7 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	// typed into one must not spend the budget of whichever turn launched Maestro.
 	delete env[CONSULT_CHAIN_ENV_VAR];
 	delete env[CONSULT_DEPTH_ENV_VAR];
+	delete env[CALLER_RUN_PROOF_FILE_ENV_VAR];
 
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
@@ -186,6 +191,7 @@ const STRIPPED_ENV_VARS = [
 	// spawns in one stale chain and exhaust its budget for all of them.
 	CONSULT_CHAIN_ENV_VAR,
 	CONSULT_DEPTH_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	// Maestro's own NODE_ENV should not leak to agents
 	'NODE_ENV',
 ];
@@ -716,6 +722,7 @@ const SERVER_ENV_ALLOWED_PREFIXES: readonly string[] = ['LC_', 'XDG_', 'SSH_', '
 const SERVER_ENV_DENIED_NAMES: readonly string[] = [
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	QUERY_SOURCE_ENV_VAR,
 ];
 

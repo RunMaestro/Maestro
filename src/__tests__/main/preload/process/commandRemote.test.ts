@@ -30,6 +30,39 @@ describe('Process CommandRemote Preload API', () => {
 	});
 
 	describe('onRemoteCommand', () => {
+		it('keeps the host dispatch marker separate from the reply channel', () => {
+			const callback = vi.fn();
+			api.onRemoteCommand(callback);
+			const handler = mockOn.mock.calls.find((c) => c[0] === 'remote:executeCommand')![1];
+			handler(
+				{},
+				'worker',
+				'work',
+				'ai',
+				'tab',
+				false,
+				undefined,
+				true,
+				{ chainId: 'chain', depth: 1 },
+				undefined,
+				'dispatch-id',
+				'reply-channel'
+			);
+			expect(callback).toHaveBeenCalledWith(
+				'worker',
+				'work',
+				'ai',
+				'tab',
+				false,
+				undefined,
+				true,
+				{ chainId: 'chain', depth: 1 },
+				undefined,
+				'reply-channel',
+				'dispatch-id'
+			);
+		});
+
 		it('should register listener and invoke callback with all parameters including tabId, force, images, background, the consult chain, and mentionRouting', () => {
 			const callback = vi.fn();
 			let registeredHandler: (

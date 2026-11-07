@@ -292,6 +292,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 	});
 	registerProcessHandlers({
+		groupsStore: deps.groupsStore,
+		getWebServer: deps.getWebServer,
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,

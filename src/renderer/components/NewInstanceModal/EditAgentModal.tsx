@@ -85,6 +85,7 @@ import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -168,6 +169,7 @@ export function EditAgentModal({
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
 	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
 	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
+	const [harnessControlMode, setHarnessControlMode] = useState<HarnessControlMode>('current');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -548,6 +550,7 @@ export function EditAgentModal({
 		);
 		setTierTargets(isProviderSwitch ? {} : { ...session.tierTargets });
 		setTierTargetsError(undefined);
+		setHarnessControlMode(session.harnessControlMode === 'native' ? 'native' : 'current');
 
 		return () => {
 			stale = true;
@@ -906,6 +909,7 @@ export function EditAgentModal({
 					worktreePeerAccess,
 				},
 			];
+			if (harnessControlMode === 'native') saveArguments[32] = 'native';
 			if (converting) {
 				saveArguments[27] = acceptTranslationLimitations;
 				saveArguments[28] = [];
@@ -960,6 +964,7 @@ export function EditAgentModal({
 		retryOnTokenExhaustion,
 		codexAutoReset,
 		codexTransport,
+		harnessControlMode,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -1550,6 +1555,8 @@ export function EditAgentModal({
 											codexAutoResetOnExhaustion={codexAutoReset}
 											onCodexAutoResetChange={setCodexAutoReset}
 											codexTransport={codexTransport}
+											harnessControlMode={harnessControlMode}
+											onHarnessControlModeChange={setHarnessControlMode}
 											onCodexTransportChange={setCodexTransport}
 										/>
 									</div>

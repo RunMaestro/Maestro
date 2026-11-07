@@ -224,6 +224,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// reconcile work there at all).
 	const ownedGate = useOwnedSessionGate();
 	const reconcileRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const runtimeReconciliation = useRef<{
+		controller: AbortController;
+		requested: boolean;
+	} | null>(null);
 	const retrySessionLoad = useRef<() => void>(() => {});
 	const deferredLoadsInFlight = useRef(new Map<string, Promise<boolean>>());
 	const deferredLoadGeneration = useRef(0);
@@ -233,6 +237,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	useEffect(
 		() => () => {
 			if (reconcileRetryTimer.current) clearTimeout(reconcileRetryTimer.current);
+			runtimeReconciliation.current?.controller.abort();
+			runtimeReconciliation.current = null;
 		},
 		[]
 	);
@@ -286,10 +292,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// the indicators back. On a cold Electron start the process table is empty, so
 	// this costs one round trip and changes nothing.
 	const reattachLiveAiTurns = useCallback(
-		async (signal?: AbortSignal) => {
+		async (signal?: AbortSignal, requireHostReply = false) => {
 			const turns = await fetchLiveAiTurns();
 			signal?.throwIfAborted();
-			if (signal && !turns) throw new Error('Host running-turn recovery failed');
+			if (requireHostReply && !turns) throw new Error('Host running-turn recovery failed');
 			// null means the probe failed, which is not the same answer as "nothing is
 			// running" - leave the restored state alone rather than guessing.
 			if (!turns) {
@@ -332,13 +338,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// and process liveness cannot tell us whether the host still needs input.
 	// Use the same private, metadata-only snapshots and stale-turn guard as
 	// deferred runtime hydration; never load background transcripts here.
-	const refreshWebRuntime = useCallback(async () => {
+	const refreshWebRuntime = useCallback(async (signal?: AbortSignal) => {
 		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return;
 		const baselines = new Map(
 			useSessionStore.getState().sessions.map((session) => [session.id, session])
 		);
 		try {
 			const bootstrap = await window.maestro.sessions.getBootstrap();
+			signal?.throwIfAborted();
 			for (const session of bootstrap) {
 				const baseline = baselines.get(session.id);
 				if (!baseline) continue;
@@ -356,7 +363,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 		} catch (error) {
-			if (!isExpectedBridgeError(error)) {
+			if (!signal?.aborted && !isExpectedBridgeError(error)) {
 				logger.warn('Failed to refresh owning host runtime after reconnect', 'Sessions', error);
 				captureException(error, { tags: { operation: 'refreshWebRuntime' } });
 			}
@@ -1031,20 +1038,47 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, (event: Event) => {
 		const detail = (event as CustomEvent<WebBridgeReconcileDetail>).detail;
 		if (!detail?.authoritative) {
+			if (authoritativeRecoverySignal.current) return;
 			deferredLoadsFailed.current.clear();
 			if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
 			void loadActiveDeferredContent();
+			// Failed submit probes can request recovery repeatedly while the host
+			// is still answering the first read. Keep one pass in flight and retain
+			// one follow-up so the latest request still gets a fresh process table.
+			if (runtimeReconciliation.current) {
+				runtimeReconciliation.current.requested = true;
+				return;
+			}
+			const reconciliation = { controller: new AbortController(), requested: false };
+			runtimeReconciliation.current = reconciliation;
+			const { signal } = reconciliation.controller;
 			void (async () => {
-				await reattachLiveAiTurns();
-				await refreshWebRuntime();
+				try {
+					do {
+						reconciliation.requested = false;
+						await reattachLiveAiTurns(signal);
+						signal.throwIfAborted();
+						await refreshWebRuntime(signal);
+					} while (reconciliation.requested && !signal.aborted);
+				} finally {
+					// Release ownership in the same microtask as the loop decision.
+					// An event after this point must start a fresh pass, not set a
+					// follow-up flag on a loop that has already finished.
+					if (runtimeReconciliation.current === reconciliation)
+						runtimeReconciliation.current = null;
+				}
 			})().catch((error) => {
-				if (!isExpectedBridgeError(error)) {
+				if (!signal.aborted && !isExpectedBridgeError(error)) {
 					logger.warn('Failed to reconcile host runtime', 'Sessions', error);
 					captureException(error, { tags: { operation: 'reconcileHostRuntime' } });
 				}
 			});
 			return;
 		}
+		// An older ordinary read must not overwrite the authoritative snapshot
+		// when it eventually answers, or survive this hook being unmounted.
+		runtimeReconciliation.current?.controller.abort();
+		runtimeReconciliation.current = null;
 		detail.waitUntil(
 			(async () => {
 				const { signal } = detail;
@@ -1178,8 +1212,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					if (!(await loadActiveDeferredContent(true)))
 						throw new Error('Visible host conversation recovery failed');
 					signal.throwIfAborted();
-					await reattachLiveAiTurns(signal);
-					await refreshWebRuntime();
+					await reattachLiveAiTurns(signal, true);
+					await refreshWebRuntime(signal);
 					signal.throwIfAborted();
 				} finally {
 					signal.removeEventListener('abort', invalidateDeferredReads);

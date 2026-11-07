@@ -1,3 +1,4 @@
+import { isNativeQuestionRequest, sameCurrentTurnCursor } from '../currentTurn';
 /**
  * Pianola storage contract - shared constants, the audit record type, and a
  * pure validator. The fs/electron specifics live in the CLI store
@@ -17,12 +18,20 @@ import type {
 // Runtime enum arrays are single-sourced from types.ts; the union types derive from them.
 import { RULE_SCOPES, ACTION_KINDS, RISKS, SIGNAL_KINDS } from './types';
 import { validatePlan, type PianolaPlan, type PianolaTask } from './pianola-tasks';
+import {
+	validatePianolaProgram,
+	validatePianolaAsk,
+	type PianolaProgram,
+	type PianolaAsk,
+} from './pianola-programs';
 import { learnableDecisionAction, matchHasNarrowingPredicate } from './pianola-policy';
 import { canonicalJson } from '../canonicalJson';
 import { isPianolaOwnerPrincipal, type PianolaOwnerPrincipal } from './owner-identity';
 import {
 	isPianolaScopeId,
 	validatePianolaScopeSelection,
+	validatePianolaDelegationPolicy,
+	type PianolaDelegationPolicy,
 	type PianolaScopeSelection,
 } from './pianola-scope';
 
@@ -31,6 +40,9 @@ export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
 
 /** Persisted orchestrator plans (JSON), in the Maestro config dir. */
 export const PIANOLA_PLANS_FILENAME = 'maestro-pianola-plans.json';
+export const PIANOLA_PROGRAMS_FILENAME = 'maestro-pianola-programs.json';
+export const PIANOLA_ASKS_FILENAME = 'maestro-pianola-asks.json';
+export const PIANOLA_PROGRAM_LOOP_FILENAME = 'maestro-pianola-program-loop.json';
 
 /** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
 export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
@@ -135,6 +147,8 @@ export interface RulesLoadResult {
 
 /** One recorded decision in the audit log. */
 export interface PianolaDecisionRecord {
+	/** Store-issued compare-and-append token. Preserve the token of the row being changed. */
+	mutationRevision?: string;
 	id: string;
 	/** ISO-8601 timestamp of when the decision was made. */
 	timestamp: string;
@@ -345,6 +359,11 @@ export function validatePianolaDecisionRecord(raw: unknown): PianolaDecisionReco
 	if (typeof raw.dispatched !== 'boolean' || typeof raw.dryRun !== 'boolean') return null;
 	if (raw.projectPath !== undefined && typeof raw.projectPath !== 'string') return null;
 	if (raw.error !== undefined && typeof raw.error !== 'string') return null;
+	if (
+		raw.mutationRevision !== undefined &&
+		(typeof raw.mutationRevision !== 'string' || !/^[a-f0-9]{64}$/.test(raw.mutationRevision))
+	)
+		return null;
 	if (raw.deliveryStatus !== undefined && raw.deliveryStatus !== 'admitted') return null;
 	if (raw.lifecycle !== undefined && !isValidLifecycle(raw.lifecycle)) return null;
 	if (!isValidClassification(raw.classification)) return null;
@@ -398,6 +417,11 @@ export function isValidHumanDecisionEvidence(raw: unknown): raw is PianolaHumanD
 	);
 }
 
+/**
+ * Validate persisted decision lifecycle shape and its guard/source bindings. Native question
+ * evidence must agree with the guard cursor and rule digest; this validator does not itself
+ * reauthorize a send.
+ */
 function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 	if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.guard) || !isRecord(raw.source))
 		return false;
@@ -412,6 +436,18 @@ function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
 			'messageId',
 			'decisionId',
 		].every((key) => typeof guard[key] === 'string' && guard[key].length > 0) &&
+		(guard.enrollmentRevision === undefined ||
+			(Number.isSafeInteger(guard.enrollmentRevision) &&
+				(guard.enrollmentRevision as number) >= 0)) &&
+		(guard.nativeQuestion === undefined ||
+			(isNativeQuestionRequest(guard.nativeQuestion) &&
+				typeof guard.ruleRevision === 'string' &&
+				/^[a-f0-9]{64}$/.test(guard.ruleRevision) &&
+				guard.messageId === guard.nativeQuestion.requestId &&
+				sameCurrentTurnCursor(
+					guard.nativeQuestion.cursor,
+					(guard.cursor as { native?: import('../currentTurn').CurrentTurnCursor })?.native
+				))) &&
 		isRecord(guard.cursor) &&
 		typeof guard.cursor.id === 'string' &&
 		Number.isSafeInteger(guard.cursor.count) &&
@@ -508,6 +544,28 @@ export function resolveProfile(
 export interface PianolaPlansFile {
 	plans: PianolaPlan[];
 }
+export interface PianolaProgramsFile {
+	programs: PianolaProgram[];
+}
+export interface PianolaAsksFile {
+	asks: PianolaAsk[];
+}
+export function validatePianolaProgramsFile(raw: unknown): PianolaProgramsFile {
+	const entries = raw && typeof raw === 'object' && 'programs' in raw ? raw.programs : undefined;
+	return {
+		programs: Array.isArray(entries)
+			? entries.map(validatePianolaProgram).filter((p): p is PianolaProgram => p !== null)
+			: [],
+	};
+}
+export function validatePianolaAsksFile(raw: unknown): PianolaAsksFile {
+	const entries = raw && typeof raw === 'object' && 'asks' in raw ? raw.asks : undefined;
+	return {
+		asks: Array.isArray(entries)
+			? entries.map(validatePianolaAsk).filter((a): a is PianolaAsk => a !== null)
+			: [],
+	};
+}
 
 /**
  * Validate an untrusted plans payload, dropping any malformed plans (reusing
@@ -529,13 +587,14 @@ export function validatePianolaPlansFile(raw: unknown): PianolaPlansFile {
 /** Filename for the persisted supervised-target registry, in the Maestro config dir. */
 export const PIANOLA_SUPERVISOR_FILENAME = 'maestro-pianola-supervisor.json';
 
-/** Kinds of background process the desktop supervisor keeps alive. */
-export type PianolaSupervisedKind = 'watch' | 'watch-scope' | 'orchestrate';
+/** Background process kinds kept alive by the desktop supervisor. */
+export type PianolaSupervisedKind = 'watch' | 'watch-scope' | 'orchestrate' | 'program';
 
 /**
  * One persisted background target the desktop supervisor manages. A 'watch'
  * target babysits a tab and needs both tabId and agentId; an 'orchestrate'
- * target drives a saved plan to completion and needs planId. The optional
+ * target drives a saved plan to completion and needs planId; a 'program'
+ * target drives a program lead loop and needs programId. The optional
  * intervalSeconds / concurrency / idleHours tune the spawned CLI command. A 'watch-scope'
  * target selects whole agents/groups and needs selection + managerAgentId.
  */
@@ -547,11 +606,17 @@ export interface PianolaSupervisedTarget {
 	tabId?: string;
 	agentId?: string;
 	planId?: string;
+	programId?: string;
 	intervalSeconds?: number;
 	concurrency?: number;
 	/** Agent/group selection, or a readable legacy selection awaiting migration. */
 	selection?: PianolaScopeSelection;
 	managerAgentId?: string;
+	delegationPolicy?: PianolaDelegationPolicy;
+	/** Durable handover tombstone: never executable, even if enabled is edited later. */
+	migratedToScopeId?: string;
+	/** Same registry commit as the fences; checkpoints are written before publication. */
+	legacyMigration?: { version: 1; watchIds: string[]; completedAt: number };
 	/** Auto-watch targets are removed when their agent session is closed. */
 	autoCreated?: boolean;
 	/** Watch only: hours idle before the watcher retires itself (0 = never). */
@@ -566,13 +631,19 @@ export interface PianolaSupervisorFile {
 /**
  * Validate one untrusted supervised-target object, or null when the shape is
  * invalid. Kind-specific required fields are enforced (watch needs tabId +
- * agentId, orchestrate needs planId) so a target that could never spawn a valid
- * CLI command is dropped rather than persisted.
+ * agentId, orchestrate needs planId, program needs programId) so a target
+ * that cannot spawn a valid CLI command is dropped rather than persisted.
  */
 export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervisedTarget | null {
 	if (!isRecord(raw)) return null;
 	if (typeof raw.id !== 'string' || raw.id.length === 0) return null;
-	if (raw.kind !== 'watch' && raw.kind !== 'watch-scope' && raw.kind !== 'orchestrate') return null;
+	if (
+		raw.kind !== 'watch' &&
+		raw.kind !== 'watch-scope' &&
+		raw.kind !== 'orchestrate' &&
+		raw.kind !== 'program'
+	)
+		return null;
 	if (typeof raw.enabled !== 'boolean') return null;
 	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) return null;
 
@@ -594,6 +665,10 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 	if (raw.planId !== undefined) {
 		if (typeof raw.planId !== 'string') return null;
 		target.planId = raw.planId;
+	}
+	if (raw.programId !== undefined) {
+		if (typeof raw.programId !== 'string') return null;
+		target.programId = raw.programId;
 	}
 	if (raw.intervalSeconds !== undefined) {
 		if (typeof raw.intervalSeconds !== 'number' || !Number.isFinite(raw.intervalSeconds)) {
@@ -632,10 +707,52 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 		target.managerAgentId = raw.managerAgentId;
 	}
 
+	if (raw.migratedToScopeId !== undefined) {
+		if (
+			target.kind !== 'watch' ||
+			typeof raw.migratedToScopeId !== 'string' ||
+			!isPianolaScopeId(raw.migratedToScopeId)
+		)
+			return null;
+		target.migratedToScopeId = raw.migratedToScopeId;
+		target.enabled = false;
+	}
+	if (raw.legacyMigration !== undefined) {
+		const migration = raw.legacyMigration;
+		if (
+			target.kind !== 'watch-scope' ||
+			!isRecord(migration) ||
+			migration.version !== 1 ||
+			!Array.isArray(migration.watchIds) ||
+			migration.watchIds.length > 10000 ||
+			migration.watchIds.some((id) => typeof id !== 'string' || !id || id.length > 500) ||
+			!Number.isSafeInteger(migration.completedAt) ||
+			(migration.completedAt as number) < 0
+		)
+			return null;
+		target.legacyMigration = {
+			version: 1,
+			watchIds: [...new Set(migration.watchIds as string[])],
+			completedAt: migration.completedAt as number,
+		};
+	}
+	if (raw.delegationPolicy !== undefined) {
+		const policy = validatePianolaDelegationPolicy(raw.delegationPolicy);
+		if (
+			!policy ||
+			target.kind !== 'watch-scope' ||
+			policy.managerAgentId !== target.managerAgentId ||
+			target.selection?.mode !== 'agents-and-groups'
+		)
+			return null;
+		target.delegationPolicy = policy;
+	}
+
 	// Drop targets that lack the fields their kind needs to spawn a valid command.
 	if (target.kind === 'watch' && (!target.tabId || !target.agentId)) return null;
 	if (target.kind === 'orchestrate' && !target.planId) return null;
 
+	if (target.kind === 'program' && !target.programId) return null;
 	return target;
 }
 

@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	AGENT_CAPABILITIES,
 	AGENT_DEFINITIONS,
 	getAgentDefinition,
 	getAgentIds,
@@ -14,6 +15,7 @@ import {
 	type AgentConfigOption,
 } from '../../../main/agents';
 import { getAgentCapabilities } from '../../../main/agents/capabilities';
+import { getAgentLoginCommand } from '../../../shared/agentMetadata';
 
 describe('agent-definitions', () => {
 	describe('AGENT_DEFINITIONS', () => {
@@ -95,7 +97,7 @@ describe('agent-definitions', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode).toBeDefined();
 			expect(opencode?.batchModePrefix).toEqual(['run']);
-			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json']);
+			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json', '--thinking']);
 			// noPromptSeparator removed: '--' separator prevents yargs from misinterpreting prompt content (#527)
 			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});
@@ -596,5 +598,33 @@ describe('additionalDirArgs', () => {
 
 	it('opencode has no native mechanism and falls back to the prompt', () => {
 		expect(argsFor('opencode')).toBeUndefined();
+	});
+});
+
+/**
+ * The definition, the capability record, and the login table describe one
+ * binary from three files. They drifted for Qwen: the definition wired
+ * `--approval-mode plan` with `readOnlyCliEnforced: true` while the capability
+ * record said read-only was unsupported (so the composer never offered the
+ * toggle), and the login table named a binary `qwen3-coder` that does not
+ * exist (`binaryName` is `qwen`).
+ */
+describe('definition / capability / login parity', () => {
+	it('advertises read-only mode for every agent whose CLI enforces it', () => {
+		for (const def of AGENT_DEFINITIONS) {
+			if (!def.readOnlyCliEnforced || !def.readOnlyArgs?.length) continue;
+			expect(
+				AGENT_CAPABILITIES[def.id]?.supportsReadOnlyMode,
+				`${def.id} enforces read-only on the CLI but hides the toggle`
+			).toBe(true);
+		}
+	});
+
+	it('runs the login flow through the same binary the agent spawns with', () => {
+		for (const def of AGENT_DEFINITIONS) {
+			const login = getAgentLoginCommand(def.id);
+			if (!login) continue;
+			expect(login.binary, `${def.id} login binary`).toBe(def.binaryName);
+		}
 	});
 });

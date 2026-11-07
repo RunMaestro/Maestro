@@ -16,6 +16,7 @@ import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
+import { useSessionTranscriptSync } from '../../../renderer/hooks/session/useSessionTranscriptSync';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 import { resetAutoTurnForTests } from '../../../renderer/services/autoTurn';
 import { markTabRunningQueuedItem } from '../../../renderer/utils/tabHelpers';
@@ -1435,6 +1436,31 @@ describe('agentStore', () => {
 				turnProvider: 'claude-code',
 			});
 		});
+		it('enters the owning-host path with exact markers and retains the row without capture', async () => {
+			(window.maestro as any).sessions = {
+				onTranscriptSync: () => () => {},
+				publishTranscript: vi.fn().mockResolvedValue(true),
+			};
+			const { unmount } = renderHook(() => useSessionTranscriptSync(async () => {}));
+			const item = createQueuedItem({ pendingAdmissionId: 'dispatch-1' });
+			useSessionStore
+				.getState()
+				.setSessions([createMockSession({ id: 'session-1', executionQueue: [item] })]);
+			await expect(
+				useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+			).rejects.toThrow('DispatchCaptureUnknown');
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					pianolaDispatchId: 'dispatch-1',
+					pianolaQueueItemId: 'item-1',
+					sessionId: 'session-1-ai-default-tab',
+				})
+			);
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([item]);
+			unmount();
+		});
+
 		it.each(['user', 'auto', undefined] as const)(
 			'preserves queued message and command provenance %s without promoting unknown callers',
 			async (querySource) => {
@@ -1487,6 +1513,26 @@ describe('agentStore', () => {
 			useSessionStore.getState().setSessions([session]);
 
 			const item = createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' });
+			useSessionStore.getState().setSessions([
+				{
+					...session,
+					aiTabs: [
+						{
+							...session.aiTabs[0],
+							logs: [
+								{ id: 'historical', source: 'user', text: item.text!, timestamp: 1 },
+								{
+									id: 'submitted',
+									source: 'user',
+									text: item.text!,
+									timestamp: 2,
+									queuedItemId: item.id,
+								},
+							],
+						},
+					],
+				},
+			]);
 
 			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
 
@@ -1494,6 +1540,7 @@ describe('agentStore', () => {
 			expect(mockSpawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					sessionId: 'session-1-ai-tab-1',
+					transcriptBoundaryId: 'submitted',
 					toolType: 'claude-code',
 					prompt: 'Build the feature',
 					cwd: '/test',
@@ -2107,6 +2154,39 @@ describe('agentStore', () => {
 			const spawnCall = mockSpawn.mock.calls[0][0];
 			expect(spawnCall.readOnlyMode).toBe(false);
 			expect(spawnCall.permissionMode).toBe('full');
+		});
+
+		it('preserves Standard for queued Codex app-server image turns', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex',
+				codexTransport: 'app-server',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						permissionMode: 'standard',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'Describe this image',
+				images: ['base64encodedimage'],
+			});
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn.mock.calls[0][0].permissionMode).toBe('standard');
 		});
 
 		it('processes slash command and spawns agent', async () => {

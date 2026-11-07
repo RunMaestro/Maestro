@@ -35,7 +35,11 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { resolveTurnProvider } from '../utils/providerTabSessions';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
-import { describeSteerBlocked, getSteerEligibility } from '../utils/executionQueue';
+import {
+	describeSteerBlocked,
+	getSteerEligibility,
+	recoverQueuedItem,
+} from '../utils/executionQueue';
 import type { CodexTransport } from '../../shared/codexTransport';
 import { mapAgentAiTabs } from '../../shared/maestro-lib/translation/session';
 import { parseSessionId } from '../utils/sessionIdParser';
@@ -199,7 +203,7 @@ export function returnPendingSteersToQueue(
 			next = mapTabLogs(next, p.tabId, (logs) => logs.filter((l) => l.id !== p.logEntryId));
 		}
 		if (!next.executionQueue.some((i) => i.id === p.item.id)) {
-			restored.push({ ...p.item, paused: paused || undefined });
+			restored.push(recoverQueuedItem({ ...p.item, paused: paused || undefined }));
 		}
 	}
 	return { ...next, executionQueue: [...restored, ...next.executionQueue] };

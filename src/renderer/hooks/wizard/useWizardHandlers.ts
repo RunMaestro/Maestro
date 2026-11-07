@@ -56,6 +56,7 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { getSessionSshRemoteId, isSessionRemote } from '../../utils/sessionHelpers';
 import { resolveAgentAccountKey } from '../../../shared/providerProfiles';
 import { parseSynopsis } from '../../../shared/synopsis';
+import { supportsNativeControl } from '../../../shared/maestro-lib/providers/native-control';
 
 let cachedAutorunSynopsisPrompt: string | null = null;
 let wizardHandlersPromptsLoaded = false;
@@ -1273,6 +1274,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				maestroPMode,
 				maestroPPath,
 				codexTransport,
+				harnessControlMode,
 				sessionSshRemoteConfig,
 				autoRunMode,
 			} = wizardState;
@@ -1422,6 +1424,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				// Only the opt-in is stored; `exec` is the default.
 				codexTransport:
 					selectedAgent === 'codex' && codexTransport === 'app-server' ? 'app-server' : undefined,
+				harnessControlMode:
+					supportsNativeControl(selectedAgent) && harnessControlMode === 'native'
+						? 'native'
+						: undefined,
 				claudeInteractive:
 					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};

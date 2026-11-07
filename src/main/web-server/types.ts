@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -20,6 +21,10 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
@@ -32,6 +37,7 @@ import type {
 } from '../../shared/throughputGaugeCommands';
 import type { AdditionalDirectory, UsageStats } from '../../shared/types';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
@@ -265,7 +271,7 @@ export interface WebClient {
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
 	/** Revalidate the upgrade session/current login policy before commands and delivery. */
-	isAuthorized?: () => boolean;
+	isAuthorized?: (context?: import('./auth/web-login-policy').WebLoginPolicyContext) => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -382,7 +388,8 @@ export type ExecuteCommandCallback = (
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
 	mentionRouting?: MentionRouting,
 	/** Throw on a missing/malformed receipt instead of reporting a rejection. */
-	requireDeliveryReceipt?: boolean
+	requireDeliveryReceipt?: boolean,
+	pianolaDispatchId?: string
 ) => Promise<boolean>;
 
 /**
@@ -473,6 +480,14 @@ export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<S
 export type ClosedTabCommandCallback = (
 	request: ClosedTabCommandRequest
 ) => Promise<ClosedTabCommandResult>;
+/**
+ * One message-pin verb (`maestro-cli tab pins ...`), forwarded to the renderer
+ * that owns the agent - pins live on its tab - and answered with the tab's
+ * pins after the verb ran. Resolves rather than rejects on a miss.
+ */
+export type MessagePinCommandCallback = (
+	request: MessagePinCommandRequest
+) => Promise<MessagePinCommandResult>;
 /**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than
@@ -600,23 +615,10 @@ export type NoteAgentDelegationCallback = (notice: AgentDelegationNotice) => voi
  * a refusal, so the CLI can report what actually happened instead of inferring
  * one from a missing tab id.
  */
-export type NewAITabWithPromptResult = {
-	success: boolean;
-	tabId?: string;
-	queued?: boolean;
-	error?: string;
-};
-export type NewAITabWithPromptCallback = (
-	sessionId: string,
-	prompt: string,
-	background?: boolean,
-	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
-	hidden?: boolean,
-	/** The new tab's turn's place in a consult chain (see ExecuteCommandCallback). */
-	consultChain?: ConsultChain,
-	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
-	mentionRouting?: MentionRouting
-) => Promise<NewAITabWithPromptResult>;
+export type {
+	NewAITabWithPromptResult,
+	NewAITabWithPromptCallback,
+} from '../../shared/pianola/pianola-dispatch';
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
  * renderer's authoritative execution queue. When the target session is busy the
@@ -657,7 +659,13 @@ export type EnqueueCommandCallback = (
 	/** The queued turn's place in a consult chain (see ExecuteCommandCallback). */
 	consultChain?: ConsultChain,
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
-	mentionRouting?: MentionRouting
+	mentionRouting?: MentionRouting,
+	/**
+	 * The prompt is a `dispatch --notify-on-complete` wake, sent by main. The
+	 * queued item is marked so it can never be steered into a running turn.
+	 */
+	dispatchCallback?: boolean,
+	control?: PianolaQueueControl
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -1085,6 +1093,7 @@ export interface SessionHistoryMessage {
 }
 
 export interface SessionHistoryResult extends TabProviderInspection {
+	currentTurn?: import('../../shared/currentTurn').CurrentTurnRead;
 	tabId: string;
 	sessionId: string;
 	agentId: string;
@@ -1095,6 +1104,14 @@ export interface SessionHistoryResult extends TabProviderInspection {
 }
 
 export interface GetSessionHistoryOptions {
+	/** Explicit full native current-turn observation; legacy filters do not apply. */
+	currentTurn?: boolean;
+	/** Internal reads do not establish generic capture interest. Grants no send authority. */
+	currentTurnInterest?: 'pianola';
+	/** Host-only socket identity; never populated from a payload. */
+	observationClient?: { once(event: 'close', listener: () => void): unknown };
+	expectedCursor?: import('../../shared/currentTurn').CurrentTurnCursor;
+	deltaBase?: import('../../shared/currentTurn').CurrentTurnCursor;
 	/** Drop messages with timestamp ≤ this epoch ms. Use for poll-friendly cursoring. */
 	sinceMs?: number;
 	/** After other filters, keep only the last N messages. */
@@ -1370,6 +1387,8 @@ export interface CreateSessionConfig {
 	codexAutoResetOnExhaustion?: boolean;
 	/** Codex only: chat-turn transport. Absent means `exec`. */
 	codexTransport?: CodexTransport;
+	/** Optional native protocol mode. Absent means current. */
+	harnessControlMode?: HarnessControlMode;
 }
 
 export type CreateSessionCallback = (

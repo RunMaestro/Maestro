@@ -24,6 +24,7 @@ import { clearLiveDraft } from '../utils/liveDraftStore';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { snapshotClosedTabTranscript } from '../utils/starredSessions';
+import { persistTabPins } from './messagePins';
 import { addAiTabToUnifiedHistory, closeTab, hasActiveWizard } from '../utils/tabHelpers';
 import { requestDesktopTabClose } from './desktopTabClose';
 
@@ -48,6 +49,7 @@ export function closeAiTabInSession(
 		return true;
 	}
 	snapshotClosedTabTranscript(sessionBeforeClose, tabBeforeClose);
+	if (tabBeforeClose.pinnedMessages?.length) persistTabPins(sessionBeforeClose, tabBeforeClose);
 
 	clearLiveDraft(tabId);
 	updateSessionWith(sessionId, (s) => {

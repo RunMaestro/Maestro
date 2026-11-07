@@ -24,6 +24,11 @@ export type DispatchCallbackStatus = 'completed' | 'failed' | 'timeout' | 'cance
  * - `awaiting-autorun` - the process exited while an Auto Run is running in the
  *   target agent. We stay parked until the Auto Run's running -> not-running
  *   edge so an N-task run wakes the caller once, not N times.
+ * - `awaiting-retry` - the turn failed and the renderer's Agent Resilience
+ *   scheduled a resend of it (a quota or availability outage). The resend's
+ *   spawn re-arms the entry; if the retry is dropped without one, it fires
+ *   `failed` then. Without this the caller heard `failed` seconds into an
+ *   outage and nothing when the resend finished the work.
  * - `fired` / `cancelled` - terminal.
  */
 export type DispatchCallbackState =
@@ -31,6 +36,7 @@ export type DispatchCallbackState =
 	| 'armed'
 	| 'grace'
 	| 'awaiting-autorun'
+	| 'awaiting-retry'
 	| 'fired'
 	| 'cancelled';
 
@@ -44,7 +50,10 @@ export interface DispatchCallbackRegistration {
 	targetName?: string;
 	/** Agent to wake when the dispatch finishes. */
 	callerAgentId: string;
-	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	/**
+	 * Specific caller tab to wake. Without one, the callback opens a new tab in
+	 * the caller agent (never its active tab, which may be unrelated work).
+	 */
 	callerTabId?: string;
 	/** Overrides the whole default callback prompt body. */
 	callbackPrompt?: string;
@@ -61,10 +70,14 @@ export interface DispatchCallbackRegistration {
 	 * arm (and then fire) the callback.
 	 */
 	armFromRecentSpawn?: boolean;
+	/** Held queue admission; unrelated spawns cannot arm this callback. */
+	pendingAdmissionId?: string;
 }
 
 export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	callbackId: string;
+	/** Immutable queue identity survives release of the pending spawn fence. */
+	admissionId?: string;
 	/**
 	 * Composite process session id the exit listener sees for this tab:
 	 * `{agentId}-ai-{tabId}`. This is the correlation key - completions from
@@ -78,6 +91,11 @@ export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	startedAt?: number;
 	exitCode?: number | null;
 	durationMs?: number;
+	/**
+	 * The renderer reported a pending retry for this tab while the process was
+	 * still running, so a failing exit parks instead of firing.
+	 */
+	retryPending?: boolean;
 }
 
 /** Payload handed to the delivery side when a callback fires. */

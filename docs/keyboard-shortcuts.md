@@ -162,6 +162,7 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode       | `Cmd+R`               | `Ctrl+R`              |
 | Toggle Show Thinking        | `Cmd+Shift+K`         | `Ctrl+Shift+K`        |
 | Toggle Tab Star             | `Cmd+Shift+S`         | `Ctrl+Shift+S`        |
+| Toggle Pinned Messages      | `Ctrl+Cmd+P`          | `Ctrl+Win+P`          |
 | Toggle Tab Unread           | `Cmd+Shift+U`         | `Ctrl+Shift+U`        |
 | Filter Unread Agents        | `Opt+U`               | `Alt+U`               |
 | Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
@@ -218,6 +219,8 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
+
+Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort).
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 

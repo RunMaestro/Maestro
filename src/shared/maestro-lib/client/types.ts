@@ -1,3 +1,4 @@
+import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * The `MaestroClient` interface: the one surface the TUI programs against.
  *
@@ -18,6 +19,7 @@ import type { LogEntryRecord } from '../store/transcript';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
+import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
@@ -50,6 +52,9 @@ export type ClientErrorCode =
 	| 'failed';
 
 export interface ClientError {
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	code: ClientErrorCode;
 	/** Safe to show a person. Never holds a token or a secret. */
 	message: string;
@@ -219,6 +224,8 @@ export interface AgentPatch {
 	maestroPPath?: string | null;
 	/** Codex only. `exec` is the default and is stored as an unset field, as is `null`. */
 	codexTransport?: CodexTransport | null;
+	/** Optional native protocol mode. `current` and `null` are stored as unset. */
+	harnessControlMode?: HarnessControlMode | null;
 }
 
 export type AgentPatchField = keyof AgentPatch;
@@ -312,6 +319,8 @@ export interface TabsApi {
 // ---------------------------------------------------------------------------
 
 export interface TurnInput {
+	/** Reconcile a prior send with the same ID; changed intent is refused. */
+	dispatchId?: string;
 	/**
 	 * What the person typed. The host adds the system prompt, conductor
 	 * profile, nudge, and template variables (CH-2).
@@ -325,7 +334,15 @@ export type TurnSendReceipt =
 	/** The agent was idle; the turn is running now. */
 	| { status: 'started' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
-	| { status: 'queued'; itemId: string; position: number; queueLength: number };
+	| {
+			status: 'queued';
+			itemId: string;
+			position: number;
+			queueLength: number;
+			dispatchId?: string;
+			admission?: PianolaDispatchReceipt;
+			durable?: boolean;
+	  };
 
 export interface QueuedTurn {
 	itemId: string;

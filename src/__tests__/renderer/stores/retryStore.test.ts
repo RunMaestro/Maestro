@@ -113,6 +113,30 @@ afterEach(() => {
 	registerDispatchDepsProvider(null);
 });
 
+// A dispatch callback armed on a tab must wait for Agent Resilience's resend
+// rather than report the first refusal, so main hears every change to whether a
+// tab's failed turn is being held.
+describe('retry state reaches main for dispatch callbacks', () => {
+	it('reports pending when a retry is scheduled and not pending once it is cancelled', () => {
+		const notifyAiTabRetryState = vi.fn();
+		const maestro = (window as unknown as { maestro: Record<string, unknown> }).maestro;
+		const previousTabs = maestro.tabs;
+		maestro.tabs = { ...(previousTabs as object), notifyAiTabRetryState };
+		try {
+			setupSession('s1', 't1');
+			seedSnapshot('s1', 't1');
+
+			expect(scheduleRetryForError('s1', 't1', quota())).toBe(true);
+			expect(notifyAiTabRetryState).toHaveBeenLastCalledWith('s1', 't1', true);
+
+			cancelRetry('s1', 't1');
+			expect(notifyAiTabRetryState).toHaveBeenLastCalledWith('s1', 't1', false);
+		} finally {
+			maestro.tabs = previousTabs;
+		}
+	});
+});
+
 describe('scheduleRetryForError - classification gating', () => {
 	it('schedules an availability retry when resilience is on and a snapshot exists', () => {
 		setupSession('s1', 't1');

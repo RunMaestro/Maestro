@@ -34,6 +34,7 @@
 import { useCallback } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { readableTextOn } from '../../../shared/colorContrast';
+import { revealActiveProps, useRevealActiveItem } from '../../hooks/ui/useRevealActiveItem';
 import type { Theme } from '../../types';
 
 export interface SegmentedOption<T extends string> {
@@ -115,8 +116,13 @@ export function SegmentedControl<T extends string>({
 		[options, value, onChange]
 	);
 
+	// A bar that scrolls has to keep the chosen segment in view, or the active
+	// option can be one the user cannot see.
+	const revealRef = useRevealActiveItem<HTMLDivElement>(value);
+
 	return (
 		<div
+			ref={revealRef}
 			// Scrolls sideways when the row cannot hold every segment, rather
 			// than clipping. `overflow-hidden` is what rounds the corners, and it
 			// used to mean a bar wider than its row simply lost its last options:
@@ -148,6 +154,7 @@ export function SegmentedControl<T extends string>({
 					<button
 						key={opt.value}
 						type="button"
+						{...revealActiveProps(isActive)}
 						onClick={() => onChange(opt.value)}
 						className={`shrink-0 flex items-center justify-center gap-1.5 text-xs transition-colors whitespace-nowrap ${
 							pills

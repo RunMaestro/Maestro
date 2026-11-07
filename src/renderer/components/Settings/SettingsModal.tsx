@@ -33,6 +33,7 @@ import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { useOptionalContentFits } from '../../hooks/ui/useOptionalLabelFits';
+import { revealActiveProps, useRevealActiveItem } from '../../hooks/ui/useRevealActiveItem';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { useModalTabCycling } from '../ui/ModalTabStrip';
@@ -171,6 +172,7 @@ function SettingsTabButton({
 	const Chevron = expanded ? ChevronDown : ChevronRight;
 	const tabButton = (
 		<button
+			{...revealActiveProps(isActive)}
 			onClick={onClick}
 			className={`flex items-center gap-2.5 ${padding} ${child ? 'text-[13px]' : 'text-sm'} text-left transition-colors cursor-pointer ${vertical ? 'w-full' : 'flex-shrink-0'} ${isActive ? 'font-bold' : 'opacity-70 hover:opacity-100'}`}
 			style={{
@@ -335,6 +337,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const [activeTab, setActiveTab] = useState<SettingsTabId>(
 		() => initialTab || lastOpenSettingsTab || 'general'
 	);
+	// Both tab navs scroll (the sidebar on a short window, the strip on a
+	// phone), and Settings reopens on the last tab, which can sit past the fold.
+	// Only one nav is mounted at a time, so they share the one ref.
+	const tabNavRef = useRevealActiveItem<HTMLElement>(activeTab);
 	const resizableModal = useResizableModal({
 		resizeKey: 'settings',
 		defaultSize: { width: 1200, height: 900 },
@@ -628,7 +634,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// when it would not. Measured, not a breakpoint: the font size is a user
 	// setting, and plugin settings pages add rows. The key re-measures when the
 	// rows change or the sidebar is mounted again.
-	const sidebarRef = useRef<HTMLElement>(null);
+	const sidebarRef = useRef<HTMLElement | null>(null);
 	const subtreesFit = useOptionalContentFits(sidebarRef, {
 		axis: 'height',
 		contentKey: `${isOpen}:${isXs}:${tabItems.length}`,
@@ -760,6 +766,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					{isXs ? (
 						/* Horizontal tab strip above content (xs phones) */
 						<nav
+							ref={tabNavRef}
 							className="flex-shrink-0 flex border-b overflow-x-auto scrollbar-thin"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 							aria-label="Settings tabs"
@@ -769,7 +776,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					) : (
 						/* Left Sidebar Tabs (sm and up) */
 						<nav
-							ref={sidebarRef}
+							ref={(node) => {
+								sidebarRef.current = node;
+								tabNavRef(node);
+							}}
 							className="w-[248px] flex-shrink-0 border-r py-2 overflow-y-auto scrollbar-thin"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 							aria-label="Settings tabs"

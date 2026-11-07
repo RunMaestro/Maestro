@@ -530,6 +530,46 @@ describe('CodexPlanUsage - refresh wiring', () => {
 		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
 	});
 
+	it('keeps sampling after the panel unmounts and fills the store in when done', async () => {
+		let finishSample!: (value: unknown) => void;
+		refreshCodexUsageSnapshotsMock.mockReturnValue(
+			new Promise((resolve) => {
+				finishSample = resolve;
+			})
+		);
+		getCodexUsageSnapshotsMock.mockResolvedValue({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T01:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 11, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekly: { percent: 2, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		const { unmount } = render(<CodexPlanUsage theme={theme} />);
+		fireEvent.click(screen.getByTestId('codex-plan-refresh'));
+		await waitFor(() => expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+
+		// Switching dashboard tabs unmounts the panel mid-sample.
+		unmount();
+
+		// Coming back while main is still sampling shows the run as busy, and a
+		// click joins it instead of starting a second sample.
+		render(<CodexPlanUsage theme={theme} />);
+		const button = screen.getByTestId('codex-plan-refresh') as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		expect(button.textContent).toContain('Sampling');
+		fireEvent.click(button);
+		expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+
+		finishSample({ refreshed: 1 });
+		await waitFor(() => {
+			expect(screen.getByTestId('codex-plan-row-default')).toBeInTheDocument();
+		});
+		await waitFor(() => expect(button.disabled).toBe(false));
+	});
+
 	it('disables the refresh button while a refresh is already in flight', () => {
 		useCodexUsageStore.setState({
 			snapshots: {},

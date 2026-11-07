@@ -32,7 +32,7 @@ import {
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
 import type { ConsultChain } from '../../../shared/consultBudget';
-import { settleConsultHold } from '../../services/crossAgentConsultHold';
+import { settleConsultHold, settleManagedQueue } from '../../services/crossAgentConsultHold';
 import { prepareProviderTranslationForSend } from '../../services/providerTranslation';
 import {
 	projectTabProvider,
@@ -120,6 +120,7 @@ export interface SendCrossAgentRequestOptions {
 	 * transcript BEFORE that turn, so the answer is not sent twice.
 	 */
 	handoffAnswer?: string;
+	managedQueue?: { dispatchId: string; generation: string; handoff?: boolean };
 	/**
 	 * The consulted agent's place in a consult chain, when the consult was
 	 * already admitted by whoever asked for it (see `CrossAgentRequest.consultChain`).
@@ -515,7 +516,7 @@ async function enrichConsultDetail(opts: {
  * React, and both callers must share the one `pendingRequests` tracker so the
  * streamed chunks land on a single LogEntry.
  */
-export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void {
+export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promise<void> {
 	const strategy = inferContextStrategy(opts.userPrompt);
 	// Subject for the target's History entry + attribution pill. Derived once,
 	// synchronously, from the user's question (mentions stripped).
@@ -531,13 +532,15 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 	// question is persisted immediately and we know which provider session to
 	// resume. A repeat mention from the same source tab reuses the tab (and its
 	// captured `agentSessionId`); a fresh source tab makes a new one.
-	const consult = ensureConsultTab({
-		targetSessionId: opts.targetSessionId,
-		sourceSessionId: opts.sourceSessionId,
-		sourceTabId: opts.sourceTabId,
-		sourceAgentName: opts.sourceAgentName,
-		question: opts.userPrompt,
-	});
+	const consult = opts.managedQueue
+		? null
+		: ensureConsultTab({
+				targetSessionId: opts.targetSessionId,
+				sourceSessionId: opts.sourceSessionId,
+				sourceTabId: opts.sourceTabId,
+				sourceAgentName: opts.sourceAgentName,
+				question: opts.userPrompt,
+			});
 
 	// Capture this consult's provider before any asynchronous translation or IPC.
 	// Reuse the normal send gate so an empty destination never drops its source context.
@@ -551,15 +554,16 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			targetProvider: consult?.targetProvider,
 			resumeAgentSessionId: consult?.resumeAgentSessionId,
 			userPrompt: opts.userPrompt,
-			transcript,
+			transcript: opts.managedQueue ? [] : transcript,
+			...(opts.managedQueue && { managedQueue: opts.managedQueue }),
 			strategy,
 			sourceCwd: opts.sourceCwd,
 			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
 			...(opts.consultChain && { consultChain: opts.consultChain }),
 			...(opts.sourceConsultChain && { sourceConsultChain: opts.sourceConsultChain }),
 		});
-	// Fire-and-forget: never await before the caller clears the input.
-	void (
+	// Return the start acknowledgement for managed routing; interactive callers may ignore it.
+	return (
 		consult
 			? prepareProviderTranslationForSend(
 					opts.targetSessionId,
@@ -629,6 +633,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			// A rejected send never produces a chunk, so nothing else will ever
 			// settle a caller blocked on the answer - or the source turn's consult
 			// hold, which would otherwise wait on this target forever.
+			if (opts.managedQueue) throw err; // native uncertainty owns the held queue row
 			const error = err instanceof Error ? err.message : String(err);
 			settleConsultHold({
 				sourceSessionId: opts.sourceSessionId,
@@ -784,6 +789,15 @@ export function useCrossAgentDispatch(
 			// Drop it from the live "N agents responding…" indicator.
 			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
 		}
+	}, []);
+
+	useEffect(() => {
+		const settled = window.maestro.crossAgent.onQueueSettled?.((result) => {
+			void settleManagedQueue(result).catch((error) =>
+				logger.error('[CrossAgent] Managed reply held', undefined, error)
+			);
+		});
+		return () => settled?.();
 	}, []);
 
 	useEffect(() => {

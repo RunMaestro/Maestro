@@ -130,9 +130,27 @@ describe('claude-mode-selector', () => {
 		// window left to wait out, so a prior fallback must not latch.
 		it('sticky-limit does NOT latch on a window with no scraped reset time', () => {
 			const snap = snapshot({ sessionPercent: 10, weekPercent: 10 });
-			delete snap.session.resetsAt;
+			delete snap.session?.resetsAt;
 			delete snap.weekAllModels.resetsAt;
 			expect(selectMode(input({ perTabReason: 'limit', usageSnapshot: snap }))).toEqual({
+				mode: 'interactive',
+				reason: 'auto',
+			});
+		});
+
+		// claude 2.1.317 paints no 5-hour window, so the snapshot carries no
+		// `session`. The weekly window alone must still decide the fallback.
+		it('a snapshot with no session window falls back on the weekly limit alone', () => {
+			const exhausted = snapshot({ weekPercent: 100 });
+			delete exhausted.session;
+			expect(selectMode(input({ usageSnapshot: exhausted }))).toEqual({
+				mode: 'api',
+				reason: 'limit',
+			});
+
+			const healthy = snapshot({ weekPercent: 20 });
+			delete healthy.session;
+			expect(selectMode(input({ usageSnapshot: healthy }))).toEqual({
 				mode: 'interactive',
 				reason: 'auto',
 			});

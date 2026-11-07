@@ -7,6 +7,7 @@ import type {
 	ToolType,
 } from '../../../types';
 import type { CodexTransport } from '../../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../../shared/maestro-lib/providers/native-control';
 
 export type WizardStep =
 	| 'agent-selection'
@@ -56,6 +57,8 @@ export interface WizardState {
 	maestroPPath?: string;
 	/** Codex transport choice (codex only). Undefined means `exec`, the default. */
 	codexTransport?: CodexTransport;
+	/** Optional native protocol mode. Undefined means current. */
+	harnessControlMode?: HarnessControlMode;
 	/**
 	 * Model the WIZARD plans with, for this run only. Undefined means "whatever
 	 * the agent is configured to use". Deliberately not carried onto the created
@@ -113,6 +116,7 @@ export type WizardAction =
 	| { type: 'SET_ENABLE_MAESTRO_P'; value: boolean | undefined }
 	| { type: 'SET_MAESTRO_P_MODE'; mode: 'interactive' | 'dynamic' }
 	| { type: 'SET_CODEX_TRANSPORT'; transport: CodexTransport }
+	| { type: 'SET_HARNESS_CONTROL_MODE'; mode: HarnessControlMode }
 	| { type: 'SET_MAESTRO_P_PATH'; path: string | undefined }
 	| { type: 'SET_PLANNER_MODEL'; model: string | undefined }
 	| {
@@ -185,6 +189,7 @@ export interface WizardContextAPI {
 	setMaestroPMode: (mode: 'interactive' | 'dynamic') => void;
 	setMaestroPPath: (path: string | undefined) => void;
 	setCodexTransport: (transport: CodexTransport) => void;
+	setHarnessControlMode: (mode: HarnessControlMode) => void;
 	setPlannerModel: (model: string | undefined) => void;
 	setSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig | undefined) => void;
 	setDirectoryPath: (path: string) => void;

@@ -8,6 +8,7 @@ import type { CodexTransport } from './codexTransport';
 import type { BackgroundRequests } from './local-models/background-requests';
 import type { RunOnTarget } from './local-models/run-on';
 import type { TierTargets } from './modelTiers';
+import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 
 /**
  * Union type of all valid agent IDs.
@@ -450,6 +451,8 @@ export interface SessionInfo {
 	 * Resolve with `resolveCodexTransport` in shared/codexTransport.
 	 */
 	codexTransport?: CodexTransport;
+	/** Optional native protocol control mode. Absent means the current transport. */
+	harnessControlMode?: HarnessControlMode;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
@@ -1149,6 +1152,13 @@ export interface SshRemoteConfig {
 	 */
 	sshOptionsDisabled?: Record<string, string>;
 
+	/**
+	 * Host path at which this remote's filesystem root is also visible locally
+	 * (`\\wsl.localhost\Ubuntu` for a WSL distro, an SMB or sshfs mount). Lets
+	 * host-side readers such as Cue open an agent's remote project root.
+	 */
+	hostMountRoot?: string;
+
 	/** Enable this remote configuration */
 	enabled: boolean;
 
@@ -1335,4 +1345,14 @@ export interface UpdateStatus {
 	info?: { version: string };
 	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
 	error?: string;
+}
+
+/** Persisted peer access, shared with the native roster resolver. */
+export interface PeerAccess {
+	read: boolean;
+	write: boolean;
+}
+export interface PeerAgent extends PeerAccess {
+	sessionId: string;
+	description?: string;
 }

@@ -8,6 +8,7 @@
  */
 
 import { AGENT_IDS } from '../../../../shared/agentIds';
+import { isCurrentTurnCursor, type CurrentTurnCursor } from '../../../../shared/currentTurn';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
 import type { CreateSessionConfig } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -128,6 +129,9 @@ export function handleCreateSession(
 	if (message.codexAutoResetOnExhaustion === true) config.codexAutoResetOnExhaustion = true;
 	if (message.codexTransport === 'app-server' || message.codexTransport === 'exec') {
 		config.codexTransport = message.codexTransport;
+	}
+	if (message.harnessControlMode === 'native' || message.harnessControlMode === 'current') {
+		config.harnessControlMode = message.harnessControlMode;
 	}
 	const hasConfig = Object.keys(config).length > 0;
 
@@ -583,7 +587,36 @@ export function handleGetSessionHistory(
 			? Math.floor(message.tail)
 			: undefined;
 
-	const result = ctx.callbacks.getSessionHistory(tabId, { sinceMs, tail });
+	const currentTurn = message.currentTurn === true;
+	let expectedCursor: CurrentTurnCursor | undefined;
+	let deltaBase: CurrentTurnCursor | undefined;
+	for (const field of ['expectedCursor', 'deltaBase'] as const) {
+		const value = message[field];
+		if (value === undefined) continue;
+		if (!currentTurn || !isCurrentTurnCursor(value)) {
+			ctx.send(client, {
+				type: 'session_history_result',
+				success: false,
+				code: 'INVALID_CURSOR',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		if (field === 'expectedCursor') expectedCursor = value;
+		else deltaBase = value;
+	}
+	const result = ctx.callbacks.getSessionHistory(
+		tabId,
+		currentTurn
+			? {
+					currentTurn,
+					expectedCursor,
+					deltaBase,
+					currentTurnInterest: message.currentTurnInterest === 'pianola' ? 'pianola' : undefined,
+					observationClient: client.socket,
+				}
+			: { sinceMs, tail }
+	);
 	if (!result) {
 		ctx.send(client, {
 			type: 'session_history_result',
@@ -612,6 +645,7 @@ export function handleGetSessionHistory(
 		runOn: result.runOn,
 		projectPath: result.projectPath,
 		messages: result.messages,
+		...(result.currentTurn && { currentTurn: result.currentTurn }),
 		requestId: message.requestId,
 	});
 }
