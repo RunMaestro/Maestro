@@ -388,6 +388,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | User Journey (read-only agent surface; the desktop records it as the user works, so there is no UI write counterpart)                                                                                                                                                                                                                                                                                           | `journey [--agent <id>] [--since <time>] [--tail <n>] [--kind <kinds>] [--json]`                                                                                                                                                                                                                                                                                                                                                                                  |
 | User Journey switch (Settings > General > User Journey)                                                                                                                                                                                                                                                                                                                                                         | `settings set userJourneyEnabled false` / `true`, read back with `settings get userJourneyEnabled`                                                                                                                                                                                                                                                                                                                                                                |
 | Timeline (read-only agent surface: the merged history, User Journey, and commits; no UI counterpart)                                                                                                                                                                                                                                                                                                            | `timeline [--agent <id>] [--since <time>] [--until <time>] [--sources <list>] [--tail <n>] [--per-source <n>] [--grep <text>] [--json]`, `timeline show <entry> [--agent <id>] [--json]`                                                                                                                                                                                                                                                                          |
+| Federation host endpoint (pairing plumbing a laptop reads over SSH on every connect; never shown in a UI, so no UI counterpart)                                                                                                                                                                                                                                                                                 | `host endpoint --json` (on the host; owner-only, hidden from `--help` while Federation is off)                                                                                                                                                                                                                                                                                                                                                                    |
 
 ### Isolated Lite connection controls
 
@@ -513,6 +514,26 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    means moving the layout mutations (`pipeline-layout-mutations.ts`) behind a
    service the host also serves, and deciding how a layout edited with no
    window reconciles with an open editor.
+
+### Federation: CLI first, desktop pending
+
+The Federation Encore Feature ships its CLI verbs first (FED-SSH-01 and 02);
+the desktop halves arrive in FED-SSH-05 (read-only Left Bar mirror) and
+FED-SSH-06 (input for mirrored agents). Until then each verb below is
+CLI-only. Close a row by moving it to Covered when its UI half lands, through
+the same bridge message the CLI sends.
+
+| CLI verb                                                                     | Missing UI half                                                   | Arrives in                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `remote-host status <ssh-remote>`                                            | Host state per peer (connection dot on the peer's Left Bar group) | FED-SSH-05                                                                       |
+| `remote-host start <ssh-remote>`                                             | A Start Host control for a stopped peer                           | No phase plans one yet; FED-SSH-05 mirrors only running hosts                    |
+| `list agents --peer <name>`, `list agents --all-peers`                       | One Left Bar group per peer, with its mirrored agents             | FED-SSH-05                                                                       |
+| `show agent <peer:agent>`                                                    | Open a mirrored agent: tabs, transcript, live output (read-only)  | FED-SSH-05                                                                       |
+| `send <peer:agent> <message>`                                                | The composer on a mirrored agent                                  | FED-SSH-06                                                                       |
+| `interrupt <peer:agent>`                                                     | Stop on a mirrored agent's running turn                           | FED-SSH-06                                                                       |
+| `dispatch <peer:agent> <message>` (new tab or queue)                         | New tab on a mirrored agent, then send                            | FED-SSH-06                                                                       |
+| `ask <peer:agent> <question>`                                                | An `@mention` of a mirrored agent from a local composer           | No phase plans one yet; FED-SSH-06 covers send, interrupt, new tab, rename, star |
+| Worktrees for host-owned agents (no verb either: `create-worktree` is local) | Worktree create and scan for a mirrored agent                     | Out of scope for v1 (decision D5)                                                |
 
 ### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
