@@ -13,10 +13,12 @@ import {
 } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
+import { createBoardIsolationFixture } from '../../src/__tests__/helpers/boardIsolationFixture';
+import { requireBoardIsolation } from '../../src/main/board/board-isolation';
 
 // Interface for our extended test fixtures
 interface ElectronTestFixtures {
+	boardIsolation: ReturnType<typeof createBoardIsolationFixture>;
 	electronApp: ElectronApplication;
 	window: Page;
 	appPath: string;
@@ -32,18 +34,6 @@ function getMainPath(): string {
 }
 
 /**
- * Create a unique test data directory for isolation
- */
-function createTestDataDir(): string {
-	const testDir = path.join(
-		os.tmpdir(),
-		`maestro-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	fs.mkdirSync(testDir, { recursive: true });
-	return testDir;
-}
-
-/**
  * Extended test with Electron fixtures
  *
  * Usage:
@@ -56,17 +46,18 @@ function createTestDataDir(): string {
  * ```
  */
 export const test = base.extend<ElectronTestFixtures>({
-	// Test data directory for isolation
+	// The child receives the complete admitted contract; no global env install.
 	// eslint-disable-next-line no-empty-pattern
-	testDataDir: async ({}, use) => {
-		const dir = createTestDataDir();
-		await use(dir);
-		// Cleanup after test
+	boardIsolation: async ({}, use) => {
+		const fixture = createBoardIsolationFixture({ syncInUserData: true });
 		try {
-			fs.rmSync(dir, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
+			await use(fixture);
+		} finally {
+			await fixture.cleanup();
 		}
+	},
+	testDataDir: async ({ boardIsolation }, use) => {
+		await use(boardIsolation.contract.userData);
 	},
 
 	// Optional per-suite environment overrides for the Electron main process
@@ -92,32 +83,30 @@ export const test = base.extend<ElectronTestFixtures>({
 	},
 
 	// Launch Electron application
-	electronApp: async ({ appPath, testDataDir, electronLaunchEnv }, use) => {
+	electronApp: async ({ appPath, testDataDir, electronLaunchEnv, boardIsolation }, use) => {
+		const env = {
+			...boardIsolation.env,
+			MAESTRO_DEMO_DIR: testDataDir,
+			MAESTRO_DATA_DIR: testDataDir,
+			ELECTRON_DISABLE_GPU: '1',
+			NODE_ENV: 'test',
+			MAESTRO_E2E_TEST: 'true',
+			...electronLaunchEnv,
+		};
+		requireBoardIsolation({ env, expected: boardIsolation.contract });
 		// Launch the Electron app
 		const app = await electron.launch({
 			args: [appPath],
-			env: {
-				...process.env,
-				// Use the app's real demo-mode redirect so every persisted store,
-				// including Group Chats, resolves inside this test directory.
-				MAESTRO_DEMO_DIR: testDataDir,
-				MAESTRO_DATA_DIR: testDataDir,
-				// Disable hardware acceleration for CI
-				ELECTRON_DISABLE_GPU: '1',
-				// Set NODE_ENV to test
-				NODE_ENV: 'test',
-				// Ensure we're in a testing context
-				MAESTRO_E2E_TEST: 'true',
-				...electronLaunchEnv,
-			},
+			env,
 			// Increase timeout for slow CI environments
 			timeout: 30000,
 		});
 
-		await use(app);
-
-		// Close the application after test
-		await app.close();
+		try {
+			await use(app);
+		} finally {
+			await app.close();
+		}
 	},
 
 	// Get the main window

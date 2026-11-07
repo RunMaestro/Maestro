@@ -39,6 +39,7 @@ export type FirstPartyEncoreFlag =
 	| 'coworking'
 	| 'opencodeServer'
 	| 'concerto'
+	| 'board'
 	| 'groupsPlus'
 	| 'webLogin'
 	| 'computerHistory'
@@ -980,6 +981,88 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
+/** Board dispatch and its central SQLite database are host-owned. The file
+ * permissions below describe legacy source discovery and the still-active
+ * project Profiles editor; they do not grant the plugin direct DB access. */
+export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	releaseDate: '2026-09-28',
+	id: 'com.maestro.board',
+	name: 'Board',
+	description: 'Collect tasks centrally, assign them to workers, and let Maestro Cue process them.',
+	firstParty: true,
+	category: 'automation',
+	usage: {
+		overview: ['Dispatch a task DAG to workers on the Maestro Cue tick.'],
+		access: [
+			{
+				label: 'Open Board',
+				shortcutId: 'openBoard',
+				commandPalette: 'Board',
+				menu: 'Left Bar hamburger > Board',
+			},
+		],
+		agentCommands: [{ label: 'List boards', command: 'maestro-cli board list --agent <agent>' }],
+	},
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason:
+				'Re-read the Board and Maestro Cue Encore flags each tick (Board requires Cue) before doing any dispatch work.',
+		},
+		{
+			capability: 'sessions:read',
+			reason:
+				"Resolve a card's assignee profile to its base Left Bar agent (identity, tool type, SSH/custom config) so the run spawns as the right agent.",
+		},
+		{
+			capability: 'notifications:toast',
+			reason:
+				'Announce terminal card transitions: a sticky toast when a card blocks and needs a human, an auto-dismissing one when a card completes (naming its worktree branch when the run was isolated).',
+		},
+		{
+			capability: 'fs:read',
+			scope: '.maestro/board.yaml',
+			reason: 'Read legacy Board files for source discovery and migration.',
+		},
+		{
+			capability: 'fs:read',
+			scope: '.maestro/profiles.yaml',
+			reason: 'Read legacy profiles for migration and the project Profiles editor.',
+		},
+		{
+			// Profile saves use a temporary file and rename within the directory.
+			capability: 'fs:write',
+			scope: '.maestro/',
+			reason: 'Save project profiles.yaml edits using an atomic temporary-file rename.',
+		},
+		// NOTE: `agents:dispatch` and `process:spawn` are deliberately ABSENT,
+		// mirroring Cue (see MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS) and
+		// Pianola. Both are FC2 allowlist scopes naming exact static targets; the
+		// Board dispatches each card to a dynamically-resolved profile/base-agent
+		// target that a static manifest scope cannot name. That authority stays
+		// HOST-OWNED (the supervised engine tick, gated by the Encore flag) until a
+		// runtime grant seam is designed - see `Plans/rfc-runtime-dispatch-grants.md`,
+		// which specifies that seam and the tier-2 Board plugin it would unblock.
+		//
+		// The same rationale covers Phase 4's per-card worktree isolation, which is
+		// why no `fs:write` scope names it: provisioning a card's checkout runs
+		// `git worktree add` into a `worktrees/` directory BESIDE the project root
+		// and then spawns the agent with that cwd. Both halves are host-owned spawn
+		// machinery (`src/main/board/board-worktree.ts`, driven from `board-spawn.ts`),
+		// not something a sandboxed plugin performs through the broker - a plugin
+		// able to write arbitrary sibling directories and run git is `process:spawn`
+		// by another name.
+	],
+	settingsNamespace: 'board',
+	encoreFlag: 'board',
+	// No supervised background service of its own: the Board runs NO timer or
+	// loop - it rides the existing Cue engine tick / background service (the same
+	// empty-services rationale as `concerto`). Disable = flag off + the dual-gate
+	// in the Cue tick's board pass short-circuits; nothing Board-owned keeps
+	// running.
+	backgroundServices: [],
+};
+
 /** Groups+ uses the host-owned group model and renderer; it only needs to
  * re-read its Encore setting before surfacing optional hierarchy and appearance UI. */
 export const GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID = 'com.maestro.groups-plus';
@@ -1472,6 +1555,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	COWORKING_FIRST_PARTY_PLUGIN,
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
+	BOARD_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
@@ -1498,6 +1582,7 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	coworking: COWORKING_FIRST_PARTY_PLUGIN,
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
+	board: BOARD_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,

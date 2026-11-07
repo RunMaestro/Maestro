@@ -35,6 +35,9 @@ vi.mock('../../../../renderer/utils/browserTabPersistence', () => ({
 }));
 vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-tab-id' }));
 
+const registerWorker = vi.fn().mockResolvedValue([]);
+const enableWorker = vi.fn().mockResolvedValue([]);
+const listWorkers = vi.fn().mockResolvedValue([{ agentId: 'session-1' }]);
 const ack = vi.fn();
 const setMany = vi.fn().mockResolvedValue(undefined);
 
@@ -81,12 +84,16 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	registerWorker.mockResolvedValue([]);
+	enableWorker.mockResolvedValue([]);
+	listWorkers.mockResolvedValue([{ agentId: 'session-1' }]);
 	(window as any).maestro = {
 		process: {
 			sendRemoteUpdateSessionConfigResponse: ack,
 			kill: vi.fn().mockResolvedValue(undefined),
 		},
 		sessions: { setMany },
+		board: { registerWorker, enableWorker, listWorkers },
 	};
 });
 
@@ -372,4 +379,57 @@ describe('provider migration parity', () => {
 		expect(setSessions).not.toHaveBeenCalled();
 		expect(setMany).not.toHaveBeenCalled();
 	});
+});
+
+describe('remote Board worker opt-in parity', () => {
+	it.each([true, false])('persists boardWorker=%s before acknowledging', async (value) => {
+		const sessions = [createMockSession({ id: 'session-1', boardWorker: !value })];
+		const { setSessions } = setup(sessions);
+		dispatchPatch('session-1', { boardWorker: value });
+		await flush();
+		expect(applyUpdate(setSessions, sessions)[0].boardWorker).toBe(value);
+		expect(setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'session-1', boardWorker: value })],
+			[]
+		);
+		expect(setMany.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+		expect(enableWorker).toHaveBeenCalledWith('session-1', value);
+		expect(enableWorker.mock.invocationCallOrder[0]).toBeLessThan(
+			setMany.mock.invocationCallOrder[0]
+		);
+		if (value) expect(registerWorker).toHaveBeenCalledWith('session-1');
+		else expect(registerWorker).not.toHaveBeenCalled();
+	});
+	it('rejects a non-boolean opt-in without writing', async () => {
+		const { setSessions } = setup([createMockSession({ id: 'session-1' })]);
+		dispatchPatch('session-1', { boardWorker: 'true' });
+		await flush();
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: "Invalid value for field 'boardWorker'",
+		});
+	});
+});
+
+it('does not persist a worker flag when native registry admission refuses it', async () => {
+	registerWorker.mockRejectedValueOnce(new Error('BoardDisabled'));
+	const { setSessions } = setup([createMockSession({ id: 'session-1' })]);
+	dispatchPatch('session-1', { boardWorker: true });
+	await flush();
+	expect(setSessions).not.toHaveBeenCalled();
+	expect(setMany).not.toHaveBeenCalled();
+	expect(ack).toHaveBeenCalledWith('ch', { success: false, error: 'BoardDisabled' });
+});
+
+it('clears an unregistered worker flag without creating a registry entry', async () => {
+	listWorkers.mockResolvedValueOnce([]);
+	const sessions = [createMockSession({ id: 'session-1', boardWorker: true })];
+	const { setSessions } = setup(sessions);
+	dispatchPatch('session-1', { boardWorker: false });
+	await flush();
+	expect(registerWorker).not.toHaveBeenCalled();
+	expect(enableWorker).not.toHaveBeenCalled();
+	expect(applyUpdate(setSessions, sessions)[0].boardWorker).toBe(false);
 });

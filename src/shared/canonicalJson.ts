@@ -46,7 +46,7 @@
  * and still give the bytes it gave before.
  */
 export function canonicalJson(value: unknown): string {
-	return serialize(value, new Set());
+	return serialize(value, new Set(), new Map());
 }
 
 function fail(what: string): never {
@@ -63,7 +63,7 @@ function fail(what: string): never {
  * does not sort it: an engine lists integer-like keys first, in numeric order,
  * whatever order they were added in.
  */
-function serialize(value: unknown, ancestors: Set<object>): string {
+function serialize(value: unknown, ancestors: Set<object>, keys: Map<string, string>): string {
 	if (value === null) return 'null';
 	if (typeof value === 'boolean') return value ? 'true' : 'false';
 	if (typeof value === 'string') return JSON.stringify(value);
@@ -77,23 +77,27 @@ function serialize(value: unknown, ancestors: Set<object>): string {
 	if (ancestors.has(value)) fail('a circular reference');
 	ancestors.add(value);
 	const text = Array.isArray(value)
-		? serializeArray(value, ancestors)
-		: serializeObject(value, ancestors);
+		? serializeArray(value, ancestors, keys)
+		: serializeObject(value, ancestors, keys);
 	ancestors.delete(value);
 	return text;
 }
 
-function serializeArray(value: unknown[], ancestors: Set<object>): string {
+function serializeArray(
+	value: unknown[],
+	ancestors: Set<object>,
+	keys: Map<string, string>
+): string {
 	const elements: string[] = [];
 	// By index, not `map`: `map` skips the holes of a sparse array, and a hole
 	// must be refused like any other `undefined`.
 	for (let index = 0; index < value.length; index += 1) {
-		elements.push(serialize(value[index], ancestors));
+		elements.push(serialize(value[index], ancestors, keys));
 	}
 	return `[${elements.join(',')}]`;
 }
 
-function serializeObject(value: object, ancestors: Set<object>): string {
+function serializeObject(value: object, ancestors: Set<object>, keys: Map<string, string>): string {
 	const prototype: unknown = Object.getPrototypeOf(value);
 	if (prototype !== null && prototype !== Object.prototype) {
 		const name: unknown = (prototype as { constructor?: { name?: unknown } }).constructor?.name;
@@ -106,7 +110,14 @@ function serializeObject(value: object, ancestors: Set<object>): string {
 	for (const key of Object.keys(value).sort()) {
 		const member = (value as Record<string, unknown>)[key];
 		if (member === undefined) continue;
-		members.push(`${JSON.stringify(key)}:${serialize(member, ancestors)}`);
+		// Large arrays often repeat the same field names. Cache only their JSON
+		// escaping within this call; values are always read and serialized anew.
+		let encoded = keys.get(key);
+		if (encoded === undefined) {
+			encoded = JSON.stringify(key);
+			keys.set(key, encoded);
+		}
+		members.push(`${encoded}:${serialize(member, ancestors, keys)}`);
 	}
 	return `{${members.join(',')}}`;
 }

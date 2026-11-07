@@ -31,6 +31,6 @@
  */
 
 // Keep the translation import path on the runtime's canonical atomic writer.
-export { atomicWriteJson, atomicWriteFile } from '../store/atomic-write';
+export { atomicWriteJson, atomicWriteFile, atomicWriteFileSync } from '../store/atomic-write';
 
 export { createKeyedWriteQueue, type KeyedWriteQueue } from '../../keyedWriteQueue';

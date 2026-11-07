@@ -1353,6 +1353,7 @@ describe('modalStore', () => {
 					'agentSessions',
 					'computerHistory',
 					'directorNotes',
+					'openBoard',
 					'openCue',
 					'openMemoryViewer',
 					'openSymphony',

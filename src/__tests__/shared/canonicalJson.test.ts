@@ -151,6 +151,13 @@ describe('canonicalJson', () => {
 			);
 		});
 
+		it('re-reads changed values and escapes repeated unusual keys', () => {
+			const value = [{ '"\n': 1 }, { '"\n': 2 }];
+			expect(canonicalJson(value)).toBe('[{"\\\"\\n":1},{"\\\"\\n":2}]');
+			value[0]['"\n'] = 3;
+			expect(canonicalJson(value)).toBe('[{"\\\"\\n":3},{"\\\"\\n":2}]');
+		});
+
 		it('keeps a "__proto__" key that came from parsed JSON', () => {
 			const value: unknown = JSON.parse('{"b":1,"__proto__":{"x":1},"a":2}');
 

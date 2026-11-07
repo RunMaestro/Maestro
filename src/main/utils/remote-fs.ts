@@ -702,7 +702,7 @@ export async function readBinaryFileRemoteAsBase64(
 		const error = result.stderr || `Failed to read file: ${filePath}`;
 		return {
 			success: false,
-			error: error.includes('No such file')
+			error: /no such file/i.test(error)
 				? `File not found: ${filePath}`
 				: error.includes('Is a directory')
 					? `Path is a directory: ${filePath}`

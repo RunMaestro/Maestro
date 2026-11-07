@@ -94,6 +94,11 @@ export interface CueExecutionConfig {
 	isServerMode?: boolean;
 	/** Aborted when the run is stopped: a launch not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
 	signal?: AbortSignal;
+	/** Host-owned synchronous gate at the existing native spawn boundary. */
+	beforeLaunch?: () => boolean;
+	/** Host IO proof after asynchronous launch preparation, before the synchronous fence. */
+	prepareLaunch?: () => Promise<boolean>;
+	onStarted?: (pid: number | undefined) => void;
 	/**
 	 * Called once with the run's raw transcript after an agent process has run
 	 * and the result is built. It has no way to change the result, the cleaned
@@ -254,7 +259,10 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	let rawStdout = '';
 	let processResult;
 	try {
+		if (config.prepareLaunch && !(await config.prepareLaunch()))
+			return failedResult('Host launch artifact changed during preparation');
 		processResult = await runProcess(runId, spec, {
+			agentId: session.id,
 			toolType: config.toolType,
 			timeoutMs,
 			sshRemoteEnabled: sshActuallyUsed,
@@ -263,6 +271,8 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 			onLog,
 			onActivity: wakaHeartbeat,
 			signal: config.signal,
+			beforeLaunch: config.beforeLaunch,
+			onStarted: config.onStarted,
 			...(config.onRunTranscript
 				? {
 						onRawStdout: (raw: string) => {
@@ -297,6 +307,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		event,
 		status: processResult.status,
 		executionStarted: processResult.executionStarted,
+		terminationConfirmed: processResult.terminationConfirmed,
 		stdout: processResult.stdout,
 		stderr: processResult.stderr,
 		exitCode: processResult.exitCode,

@@ -46,6 +46,9 @@ export function canLoadNodeSqlite(): boolean {
  */
 class NodeSqliteDatabaseShim {
 	private readonly db: DatabaseSync;
+	readonly name: string;
+	private savepoint = 0;
+	private transactionDepth = 0;
 
 	/**
 	 * Honors the better-sqlite3 options whose behavior a caller can depend on:
@@ -57,6 +60,7 @@ class NodeSqliteDatabaseShim {
 		filename: string,
 		options: { readonly?: boolean; fileMustExist?: boolean; timeout?: number } = {}
 	) {
+		this.name = filename;
 		const inMemory = filename === '' || filename === ':memory:';
 		if (options.fileMustExist && !inMemory && !existsSync(filename)) {
 			throw Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' });
@@ -89,23 +93,38 @@ class NodeSqliteDatabaseShim {
 	}
 
 	/**
-	 * better-sqlite3's `transaction(fn)` returns a wrapper that runs `fn`
-	 * between BEGIN and COMMIT, rolling back and rethrowing if it throws.
+	 * better-sqlite3's `transaction(fn)` returns a function that runs `fn`
+	 * between BEGIN and COMMIT and rolls back when it throws. Board uses both
+	 * IMMEDIATE writes and nested read snapshots, modeled with real savepoints.
 	 */
 	transaction<Args extends unknown[], Result>(
 		fn: (...args: Args) => Result
-	): (...args: Args) => Result {
-		return (...args) => {
-			this.db.exec('BEGIN');
+	): ((...args: Args) => Result) & { immediate: (...args: Args) => Result } {
+		const run = (mode: string, args: Args) => {
+			const savepoint = this.inTransaction ? `shim_${++this.savepoint}` : null;
+			this.db.exec(savepoint ? `SAVEPOINT ${savepoint}` : mode);
+			this.transactionDepth++;
 			try {
 				const result = fn(...args);
-				this.db.exec('COMMIT');
+				this.db.exec(savepoint ? `RELEASE ${savepoint}` : 'COMMIT');
 				return result;
-			} catch (err) {
-				this.db.exec('ROLLBACK');
-				throw err;
+			} catch (error) {
+				if (savepoint) {
+					this.db.exec(`ROLLBACK TO ${savepoint}`);
+					this.db.exec(`RELEASE ${savepoint}`);
+				} else this.db.exec('ROLLBACK');
+				throw error;
+			} finally {
+				this.transactionDepth--;
 			}
 		};
+		return Object.assign((...args: Args) => run('BEGIN', args), {
+			immediate: (...args: Args) => run('BEGIN IMMEDIATE', args),
+		});
+	}
+
+	get inTransaction(): boolean {
+		return this.db.isTransaction ?? this.transactionDepth > 0;
 	}
 
 	function(name: string, fn: () => number): this {

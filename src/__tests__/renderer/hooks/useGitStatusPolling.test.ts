@@ -9,6 +9,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'node:path';
+import os from 'node:os';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import {
 	useGitStatusPolling,
@@ -24,6 +26,8 @@ vi.mock('../../../renderer/services/git', () => ({
 		getStatus: vi.fn(),
 		getNumstat: vi.fn(),
 		isRepo: vi.fn().mockResolvedValue(false),
+		getBranches: vi.fn().mockResolvedValue(['main']),
+		getTags: vi.fn().mockResolvedValue(['v1']),
 	},
 }));
 
@@ -232,6 +236,48 @@ describe('useGitStatusPolling', () => {
 				await result.current.refreshGitStatus();
 			});
 			expect(gitService.isRepo).toHaveBeenCalledTimes(2);
+		});
+
+		it('checks each distinct non-git directory and SSH identity once per poll', async () => {
+			const sessions = [
+				createMockSession({ id: 'a', isGitRepo: false, cwd: path.join(os.tmpdir(), 'same') }),
+				createMockSession({ id: 'b', isGitRepo: false, cwd: path.join(os.tmpdir(), 'same') }),
+				createMockSession({
+					id: 'remote',
+					isGitRepo: false,
+					cwd: path.join(os.tmpdir(), 'same'),
+					sshRemoteId: 'ssh-a',
+				}),
+				createMockSession({ id: 'other', isGitRepo: false, cwd: path.join(os.tmpdir(), 'other') }),
+			];
+			const { result } = renderHook(() => useGitStatusPolling(sessions));
+			await waitFor(() => expect(gitService.isRepo).toHaveBeenCalledTimes(3));
+			expect(gitService.isRepo).toHaveBeenCalledWith(path.join(os.tmpdir(), 'same'), undefined);
+			expect(gitService.isRepo).toHaveBeenCalledWith(path.join(os.tmpdir(), 'same'), 'ssh-a');
+			expect(gitService.isRepo).toHaveBeenCalledWith(path.join(os.tmpdir(), 'other'), undefined);
+			await act(async () => {
+				await result.current.refreshGitStatus();
+			});
+			await waitFor(() => expect(gitService.isRepo).toHaveBeenCalledTimes(6));
+		});
+
+		it('updates all agents sharing a newly initialized repository', async () => {
+			vi.mocked(gitService.isRepo).mockResolvedValueOnce(true);
+			const sessions = ['a', 'b'].map((id) =>
+				createMockSession({ id, isGitRepo: false, cwd: path.join(os.tmpdir(), 'same') })
+			);
+			renderHook(() => useGitStatusPolling(sessions));
+			await waitFor(() => expect(updateSessionWith).toHaveBeenCalledTimes(2));
+			expect(gitService.isRepo).toHaveBeenCalledOnce();
+			expect(gitService.getBranches).toHaveBeenCalledOnce();
+			expect(gitService.getTags).toHaveBeenCalledOnce();
+			for (const [index, id] of ['a', 'b'].entries()) {
+				const [updatedId, update] = vi.mocked(updateSessionWith).mock.calls[index];
+				expect(updatedId).toBe(id);
+				expect(update(sessions[index])).toEqual(
+					expect.objectContaining({ isGitRepo: true, gitBranches: ['main'], gitTags: ['v1'] })
+				);
+			}
 		});
 
 		it('keeps the last good counts when a status check times out', async () => {

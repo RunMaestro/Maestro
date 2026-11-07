@@ -5,6 +5,7 @@ import type { GroupChatSpawn } from '../../../shared/maestro-lib/groupchat/types
 describe('toSpawnGroupChatAgentConfig', () => {
 	const spawn: GroupChatSpawn = {
 		processId: 'cross-agent-r1',
+		originWorkerId: 'real-worker',
 		providerId: 'codex',
 		agent: { id: 'codex' } as never,
 		command: '/opt/codex',
@@ -30,6 +31,7 @@ describe('toSpawnGroupChatAgentConfig', () => {
 
 		expect(config).toEqual({
 			sessionId: 'cross-agent-r1',
+			originWorkerId: 'real-worker',
 			agentId: 'codex',
 			agent: spawn.agent,
 			command: '/opt/codex',

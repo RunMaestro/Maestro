@@ -3,6 +3,10 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import { spawnAgent } from '../../../cli/services/agent-spawner';
+import {
+	issueAgentTurnAdmission,
+	revokeAgentTurnAdmission,
+} from '../../../main/utils/headless-agent-activity';
 
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: () => undefined,
@@ -84,5 +88,25 @@ describe.skipIf(process.platform !== 'linux')(
 			});
 			expect(result).toMatchObject({ success: true, response: 'Done' });
 		});
+	}
+);
+
+it.each(['origin', 'admission', 'both'])(
+	'rejects managed native control identified by %s before provider preparation',
+	async (identity) => {
+		const proof = issueAgentTurnAdmission('worker');
+		try {
+			const result = await spawnAgent('claude-code', process.cwd(), 'fixture', undefined, {
+				...(identity !== 'admission' ? { originWorkerId: 'worker' } : {}),
+				...(identity !== 'origin' ? { workerAdmission: proof } : {}),
+				harnessControlMode: 'native',
+				timeoutMs: 1000,
+				agentCommand: '/must-not-start',
+			});
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('admission-managed');
+		} finally {
+			revokeAgentTurnAdmission(proof);
+		}
 	}
 );

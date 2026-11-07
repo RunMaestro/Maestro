@@ -1,3 +1,4 @@
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotificationApi } from '../../../../main/preload/notifications';
@@ -32,6 +33,7 @@ describe('useSessionSwitchCallbacks', () => {
 		nativeIpc.invoke.mockResolvedValue(undefined);
 		window.maestro.notification.onClickAction = createNotificationApi().onClickAction;
 		resetTabHandlerStores();
+		useSessionStore.setState({ sessionsLoaded: true, initialLoadComplete: true });
 		clearDesktopAiTabSelections();
 		if (!window.maestro.app.onDeepLink) {
 			(window.maestro.app as any).onDeepLink = vi.fn();

@@ -43,6 +43,13 @@ import { migrateWindowStateToMultiWindow } from './migrations/multi-window-state
 import { readExistingAgentIds } from '../window-state-persistence';
 import { trackStoreWrites } from './write-tracker';
 import { deferStoreWrites, type DeferredWriteStore } from './deferred-writes';
+import {
+	assertBoardIsolationBootstrap,
+	assertBoardIsolationPath,
+	isBoardIsolationRequested,
+	readBoardIsolationRegistries,
+	requireBoardIsolation,
+} from '../board/board-isolation';
 
 /**
  * `deserialize` hook for the store named `name` under `cwd`.
@@ -83,6 +90,15 @@ let _productionDataPath: string | null = null;
 // Initialization
 // ============================================================================
 
+/** Select the configured storage location without opening a store. */
+export function selectStoreSyncPath(
+	userDataPath: string,
+	customSyncPath: () => string | undefined,
+	isolatedSyncPath?: string
+): string {
+	return isolatedSyncPath ?? (customSyncPath() || userDataPath);
+}
+
 export interface StoreInitOptions {
 	/** The production userData path (before any dev mode modifications) */
 	productionDataPath: string;
@@ -99,8 +115,40 @@ export function initializeStores(options: StoreInitOptions): {
 	bootstrapStore: Store<BootstrapSettings>;
 } {
 	const { productionDataPath } = options;
-	_productionDataPath = productionDataPath;
 	const userDataPath = app.getPath('userData');
+	const isolated = isBoardIsolationRequested() ? requireBoardIsolation() : undefined;
+	if (isolated) {
+		if (userDataPath !== isolated.userData || productionDataPath !== isolated.userData) {
+			throw new Error('Board isolation store paths differ from the admitted userData');
+		}
+		assertBoardIsolationBootstrap(isolated);
+		readBoardIsolationRegistries(isolated);
+		// Check every constructor's leaf before the FIRST Store can open or create anything.
+		for (const [directory, names] of [
+			[
+				isolated.userData,
+				[
+					'maestro-bootstrap',
+					'maestro-agent-configs',
+					'maestro-agent-capabilities',
+					'maestro-window-state',
+				],
+			],
+			[
+				isolated.sync,
+				[
+					'maestro-settings',
+					'maestro-groups',
+					'maestro-claude-session-origins',
+					'maestro-agent-session-origins',
+				],
+			],
+		] as const) {
+			for (const name of names)
+				assertBoardIsolationPath(isolated, path.join(directory, `${name}.json`));
+		}
+	}
+	_productionDataPath = productionDataPath;
 
 	// 1. Initialize bootstrap store first (determines sync path)
 	_bootstrapStore = new Store<BootstrapSettings>({
@@ -111,7 +159,12 @@ export function initializeStores(options: StoreInitOptions): {
 	});
 
 	// 2. Determine sync path
-	_syncPath = getCustomSyncPath(_bootstrapStore) || userDataPath;
+	_syncPath = selectStoreSyncPath(
+		userDataPath,
+		() => getCustomSyncPath(_bootstrapStore!),
+		isolated?.sync
+	);
+	if (isolated) _bootstrapStore.set('customSyncPath', isolated.sync);
 
 	// Log paths for debugging
 	console.log(`[STARTUP] userData path: ${userDataPath}`);
@@ -139,10 +192,13 @@ export function initializeStores(options: StoreInitOptions): {
 	// reads this file. See stores/deferred-writes.ts.
 	const sessionsWriter = deferStoreWrites(
 		new Store<SessionsData>({
-			name: 'maestro-sessions',
-			cwd: _syncPath,
+			name: isolated ? path.basename(isolated.agentRegistry, '.json') : 'maestro-sessions',
+			cwd: isolated ? path.dirname(isolated.agentRegistry) : _syncPath,
 			defaults: SESSIONS_DEFAULTS,
-			deserialize: deserializeStoreJson('maestro-sessions', _syncPath),
+			deserialize: deserializeStoreJson(
+				isolated ? path.basename(isolated.agentRegistry, '.json') : 'maestro-sessions',
+				isolated ? path.dirname(isolated.agentRegistry) : _syncPath
+			),
 		}),
 		'sessions'
 	);

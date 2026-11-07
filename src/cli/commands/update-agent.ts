@@ -55,6 +55,7 @@ interface UpdateAgentOptions {
 	maestroPPath?: string;
 	codexTransport?: string;
 	bookmark?: string;
+	boardWorker?: string;
 	json?: boolean;
 }
 
@@ -102,6 +103,10 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 	strField(options.model, 'customModel');
 	strField(options.effort, 'customEffort');
 	strField(options.maestroPPath, 'maestroPPath');
+
+	if (options.boardWorker !== undefined) {
+		patch.boardWorker = parseCliBool(options.boardWorker, '--board-worker');
+	}
 
 	if (options.bookmark !== undefined) {
 		patch.bookmarked = parseCliBool(options.bookmark, '--bookmark');

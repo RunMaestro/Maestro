@@ -249,57 +249,72 @@ describe('update-agent command', () => {
 		);
 	});
 
-	it('sends bookmarked in the config patch for --bookmark', async () => {
-		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
-		const sendCommand = vi.fn().mockResolvedValue({
-			type: 'update_session_config_result',
-			success: true,
-		});
-		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
-			return action({ sendCommand } as never);
-		});
+	it.each(['bookmark', 'boardWorker'] as const)(
+		'sends the opted-in config patch for %s',
+		async (option) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				return action({ sendCommand } as never);
+			});
 
-		await updateAgent('agent-1', { bookmark: 'true' });
+			await updateAgent('agent-1', { [option]: 'true' });
 
-		expect(sendCommand).toHaveBeenCalledWith(
-			expect.objectContaining({
-				type: 'update_session_config',
-				configPatch: { bookmarked: true },
-			}),
-			'update_session_config_result'
-		);
-	});
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_config',
+					configPatch: { [option === 'bookmark' ? 'bookmarked' : 'boardWorker']: true },
+				}),
+				'update_session_config_result'
+			);
+		}
+	);
 
-	it('sends bookmarked:false for --bookmark false rather than dropping the key', async () => {
-		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
-		const sendCommand = vi.fn().mockResolvedValue({
-			type: 'update_session_config_result',
-			success: true,
-		});
-		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
-			return action({ sendCommand } as never);
-		});
+	it.each(['bookmark', 'boardWorker'] as const)(
+		'keeps a false config patch for %s',
+		async (option) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				return action({ sendCommand } as never);
+			});
 
-		await updateAgent('agent-1', { bookmark: 'no' });
+			await updateAgent('agent-1', { [option]: 'no' });
 
-		expect(sendCommand).toHaveBeenCalledWith(
-			expect.objectContaining({ configPatch: { bookmarked: false } }),
-			'update_session_config_result'
-		);
-	});
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					configPatch: { [option === 'bookmark' ? 'bookmarked' : 'boardWorker']: false },
+				}),
+				'update_session_config_result'
+			);
+		}
+	);
 
-	it('rejects a non-boolean --bookmark value before contacting the app', async () => {
-		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
-		const sendCommand = vi.fn();
-		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
-			return action({ sendCommand } as never);
-		});
+	it.each(['bookmark', 'boardWorker'] as const)(
+		'rejects non-boolean %s before contacting the app',
+		async (option) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			const sendCommand = vi.fn();
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				return action({ sendCommand } as never);
+			});
 
-		await updateAgent('agent-1', { bookmark: 'maybe' });
+			await updateAgent('agent-1', { [option]: 'maybe' });
 
-		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--bookmark expects'));
-		expect(sendCommand).not.toHaveBeenCalled();
-	});
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					option === 'bookmark' ? '--bookmark expects' : '--board-worker expects'
+				)
+			);
+			expect(sendCommand).not.toHaveBeenCalled();
+		}
+	);
 
 	it('rejects an invalid --token-source value before contacting the app', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
