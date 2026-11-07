@@ -124,9 +124,10 @@ import type {
 import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
 import type { SpokenNoticeResult } from '../../../shared/spokenNotices';
 import type { WorkSearchResult } from '../../../shared/local-models/work-search';
-import type {
-	TokenProxyBlockDetail,
-	TokenProxyReport,
+import {
+	validateTokenProxyOriginalLineRange,
+	type TokenProxyBlockDetail,
+	type TokenProxyReport,
 } from '../../../shared/local-models/token-proxy';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
@@ -509,7 +510,11 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		'localModels:proxy:block',
 		withIpcErrorLogging(
 			handlerOpts('proxy:block'),
-			async (hash: unknown): Promise<TokenProxyBlockDetail | null> => readTokenProxyBlock(hash)
+			async (hash: unknown, range?: unknown): Promise<TokenProxyBlockDetail | null> =>
+				readTokenProxyBlock(
+					hash,
+					range === undefined ? undefined : validateTokenProxyOriginalLineRange(range)
+				)
 		)
 	);
 

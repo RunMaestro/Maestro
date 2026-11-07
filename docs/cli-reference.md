@@ -4841,14 +4841,17 @@ maestro-cli models proxy status --json
 
 Show one compressed block from the cache: a diff of what the agent sent against what was sent in its place (requires the desktop app)
 
-| Option         | Description                           | Default |
-| -------------- | ------------------------------------- | ------- |
-| `--original`   | Print only the text the agent sent    | -       |
-| `--compressed` | Print only the text sent in its place | -       |
-| `--json`       | Output as JSON (for scripting)        | -       |
+| Option                | Description                                                                                                                                                                          | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--original`          | Print only the text the agent sent                                                                                                                                                   | -       |
+| `--compressed`        | Print only the text sent in its place                                                                                                                                                | -       |
+| `--lines <start:end>` | Original lines, inclusive and 1-based, at most 1000 lines / 256 KiB (requires --original); exact text on stdout, range completeness on stderr or in JSON; EOF may return fewer lines | -       |
+| `--json`              | Output as JSON (for scripting)                                                                                                                                                       | -       |
 
 ```bash
 maestro-cli models proxy block <hash> --original
+maestro-cli models proxy block <hash> --original --lines 10:30
+maestro-cli models proxy block <hash> --original --lines 10:30 --json
 ```
 
 ## `maestro-cli models server`

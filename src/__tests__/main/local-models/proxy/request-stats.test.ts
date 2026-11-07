@@ -83,7 +83,19 @@ function compressedEntry(): TokenProxyRequestLog {
 				cacheHits: 1,
 				originalTokens: 4_000,
 				compressedTokens: 500,
-				compressors: { json: 0, logs: 2, 'long-lines': 0, model: 0 },
+				compressors: {
+					json: 0,
+					logs: 2,
+					'long-lines': 0,
+					model: 0,
+					'git-status': 0,
+					'git-log': 0,
+					search: 0,
+					'test-output': 0,
+					'build-output': 0,
+					'lint-output': 0,
+					'json-table': 0,
+				},
 				modelFailures: 0,
 				storeFailures: 0,
 			},
@@ -146,6 +158,42 @@ describe('proxyRequestFromLog', () => {
 			],
 		});
 	});
+
+	it.each([
+		'git-status',
+		'git-log',
+		'search',
+		'test-output',
+		'build-output',
+		'lint-output',
+		'json-table',
+	] as const)(
+		'carries %s counts and new-block attribution through the existing request ledger',
+		(compressor) => {
+			const entry = compressedEntry();
+			const compression = entry.compression!;
+			if (!compression.stats || !compression.blocks) throw new Error('Missing compression fixture');
+			compression.stats.compressors = {
+				...compression.stats.compressors,
+				logs: 0,
+				[compressor]: 2,
+			};
+			compression.blocks = compression.blocks.map((block) => ({
+				...block,
+				compressors: [compressor],
+			}));
+			const row = proxyRequestFromLog(entry);
+			expect(row?.compressorCounts).toEqual(compression.stats.compressors);
+			expect(row?.newBlocks).toEqual([
+				{
+					hash: freshBlock.hash,
+					originalTokens: 2000,
+					compressedTokens: 250,
+					compressors: [compressor],
+				},
+			]);
+		}
+	);
 
 	it('records the target of a routed request, and nothing for one that stayed', () => {
 		const routed = proxyRequestFromLog(

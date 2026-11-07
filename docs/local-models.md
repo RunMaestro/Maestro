@@ -1016,10 +1016,11 @@ Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Cho
 What both compress modes do, and do not do:
 
 - **They shorten only tool results**, and only ones over about 1,000 tokens. Your messages, the system prompt, tool definitions, and the agent's own text are never changed.
+- **Explicit failures and recognized original-recovery commands stay whole.** These checks run before cached replacements are used. Unknown tool status is not treated as success.
 - **The same text always shortens to the same bytes.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working.
 - **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine.
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
-- **A local model is optional.** Rules do most of the work (minified JSON, repeated log lines folded, long lines cut). Assign the **Token proxy** task a model on **Models -> System Two** to also summarize results that are still very large.
+- **A local model is optional.** Rules handle JSON, repeated logs, protected diagnostic lines, and recognized Git, search, successful test/build, and warning-only lint output. Eligible scalar JSON rows use a labelled table that preserves key/value lexemes and distinguishes missing keys from null. Other JSON can still use lossy array sampling. Assign the **Token proxy** task a model on **Models -> System Two** to also summarize results that are still very large.
 
 Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. Tokens saved is an estimate at 4 characters per token. On output full of paths, digits and stack traces the real saving can be about twice the figure shown. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
 
@@ -1030,7 +1031,10 @@ maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough 
 maestro-cli show agent <agent-id> --json                    # tokenProxyMode
 maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
 maestro-cli models proxy block <hash>                       # a diff of one shortened block
+maestro-cli models proxy block <hash> --original --lines 10:30
 ```
+
+`--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. Executable recovery hints await launch-environment proof; compressed markers currently identify the archive by hash.
 
 ### Background requests
 

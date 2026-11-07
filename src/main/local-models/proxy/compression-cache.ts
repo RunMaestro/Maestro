@@ -26,11 +26,28 @@
  * Nothing prunes the directory. An entry that vanished would be decided again,
  * and for a block the model wrote that could mean different bytes mid
  * conversation.
+ *
+ * Compressor upgrades apply only to unseen hashes. The record version names
+ * the storage layout, not an algorithm revision; keep version-1 records and
+ * legacy compressor IDs readable when adding a compressor. Never invalidate
+ * old verdicts to activate a newer algorithm.
+ *
+ * Request eligibility belongs to compressRequestBody: failure/recovery vetoes
+ * run before cache lookup and leave all stored files untouched. Eligible
+ * requests use resolveBlock's per-hash queue to read before deciding/writing.
+ * This store's write is a commit primitive, not a cross-process first-writer
+ * lock; callers must not use it to replace an existing verdict.
  */
 
 import { createHash } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import {
+	TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES,
+	validateTokenProxyOriginalLineRange,
+	type TokenProxyOriginalLineRange,
+	type TokenProxyOriginalRangeRead,
+} from '../../../shared/local-models/token-proxy';
 import { atomicWriteFile, atomicWriteJson } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 import { localModelsDataDir } from '../paths';
@@ -41,11 +58,17 @@ const LOG_CONTEXT = '[TokenProxy]';
 /** The cache root, relative to the data dir. */
 export const TOKEN_PROXY_CACHE_DIRNAME = 'proxy-cache';
 
-/** The record layout. A record with another version is read as absent. */
+/**
+ * The record layout, not the compressor revision. Do not bump for new algorithms:
+ * records with another version are read as absent and would be decided again.
+ */
 export const COMPRESSION_RECORD_VERSION = 1;
 
 /** Verdicts held in memory, so a request does not read the disk per block. */
 const DEFAULT_MEMORY_ENTRIES = 1024;
+
+/** Bound recovery work even when a requested line is absent or unusually long. */
+const ORIGINAL_RANGE_MAX_SCAN_BYTES = 64 * 1024 * 1024;
 
 /** Everything that can shorten a block: the heuristics, then the local model. */
 export type CompressorId = HeuristicCompressorId | 'model';
@@ -70,6 +93,8 @@ export type CompressionVerdict =
 			text: string;
 			compressedTokens: number;
 			compressors: CompressorId[];
+			/** Hint route/environment hash. Null preserves an unreadable scope as a veto. */
+			recoveryScope?: string | null;
 	  })
 	/** The block is sent as it is: nothing shortened it enough. */
 	| (VerdictBase & { outcome: 'kept' });
@@ -77,10 +102,19 @@ export type CompressionVerdict =
 export interface CompressionCache {
 	/** The verdict for a hash, or `null` when none is stored (or it is unreadable). */
 	read(hash: string): Promise<CompressionVerdict | null>;
-	/** Store a verdict. For a `compressed` one, the original and replacement too. */
+	/**
+	 * Commit a previously absent verdict after the caller's serialized read.
+	 * For a `compressed` one, persist both texts before publishing the record.
+	 * Rejection must not publish the verdict in memory or authorize its use.
+	 */
 	write(verdict: CompressionVerdict, original: string): Promise<void>;
 	/** The text the agent sent, for a `compressed` block. `null` when not stored. */
 	readOriginal(hash: string): Promise<string | null>;
+	/** Bounded exact lines from that same file; missing is null, invalid/failed reads throw. */
+	readOriginal(
+		hash: string,
+		range: TokenProxyOriginalLineRange
+	): Promise<TokenProxyOriginalRangeRead | null>;
 }
 
 export interface CompressionCacheOptions {
@@ -108,11 +142,20 @@ function isTokenCount(value: unknown): value is number {
 	return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
+// Extend alongside CompressorId for new filters; retain legacy IDs so their
+// frozen replacement text remains readable without rerunning an algorithm.
 const COMPRESSOR_IDS: ReadonlySet<unknown> = new Set<CompressorId>([
 	'json',
 	'logs',
 	'long-lines',
 	'model',
+	'git-status',
+	'git-log',
+	'search',
+	'test-output',
+	'build-output',
+	'lint-output',
+	'json-table',
 ]);
 
 /** The record file's shape, as far as every verdict shares it. */
@@ -123,6 +166,7 @@ interface StoredRecord {
 	modelFailure?: unknown;
 	compressedTokens?: unknown;
 	compressors?: unknown;
+	recoveryScope?: unknown;
 }
 
 /** Whether a parsed record file is a verdict this version wrote for `hash`. */
@@ -201,7 +245,93 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			if (isMissing(error)) return unreadable(hash, 'its compressed text is missing');
 			throw error;
 		}
-		return { ...base, outcome: 'compressed', text, compressedTokens, compressors };
+		return {
+			...base,
+			outcome: 'compressed',
+			text,
+			compressedTokens,
+			compressors,
+			// Never discard/re-decide a verdict because its scope is unreadable.
+			...('recoveryScope' in parsed
+				? { recoveryScope: isContentHash(parsed.recoveryScope) ? parsed.recoveryScope : null }
+				: {}),
+		};
+	}
+
+	function readOriginal(hash: string): Promise<string | null>;
+	function readOriginal(
+		hash: string,
+		range: TokenProxyOriginalLineRange
+	): Promise<TokenProxyOriginalRangeRead | null>;
+	async function readOriginal(
+		hash: string,
+		range?: TokenProxyOriginalLineRange
+	): Promise<string | TokenProxyOriginalRangeRead | null> {
+		const requested = range === undefined ? undefined : validateTokenProxyOriginalLineRange(range);
+		if (!isContentHash(hash)) return null;
+		const file = entryPath(hash, '.original.txt');
+		try {
+			if (requested === undefined) return await fs.readFile(file, 'utf-8');
+			const handle = await fs.open(file, 'r');
+			try {
+				const stat = await handle.stat();
+				if (!stat.isFile()) throw new Error('The cached original is not a regular file.');
+				const buffer = Buffer.alloc(64 * 1024);
+				const parts: Buffer[] = [];
+				let position = 0;
+				let line = 1;
+				let selectedBytes = 0;
+				let lastLine: number | null = null;
+				while (position < stat.size && line <= requested.endLine) {
+					const length = Math.min(
+						buffer.length,
+						stat.size - position,
+						ORIGINAL_RANGE_MAX_SCAN_BYTES - position
+					);
+					if (length <= 0) {
+						throw new RangeError('Original line range exceeds the 64 MiB scan limit.');
+					}
+					const { bytesRead } = await handle.read(buffer, 0, length, position);
+					if (bytesRead === 0) throw new Error('The cached original ended during range recovery.');
+					const chunk = buffer.subarray(0, bytesRead);
+					let offset = 0;
+					while (offset < bytesRead && line <= requested.endLine) {
+						const newline = chunk.indexOf(10, offset);
+						const end = newline < 0 ? bytesRead : newline + 1;
+						if (line >= requested.startLine) {
+							selectedBytes += end - offset;
+							if (selectedBytes > TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES) {
+								throw new RangeError(
+									`Original line range exceeds the ${TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES}-byte output limit; request fewer or shorter lines.`
+								);
+							}
+							parts.push(Buffer.from(chunk.subarray(offset, end)));
+							lastLine = line;
+						}
+						position += end - offset;
+						offset = end;
+						if (newline >= 0) line++;
+					}
+				}
+				return {
+					text: Buffer.concat(parts, selectedBytes).toString('utf-8'),
+					range: {
+						hash,
+						source: 'original',
+						requested,
+						returned:
+							lastLine === null ? null : { startLine: requested.startLine, endLine: lastLine },
+						complete: lastLine === requested.endLine,
+						hasMore: position < stat.size,
+					},
+				};
+			} finally {
+				await handle.close();
+			}
+		} catch (error) {
+			if (isMissing(error)) return null;
+			throw error;
+		}
 	}
 
 	return {
@@ -238,20 +368,13 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 				await atomicWriteFile(entryPath(hash, '.compressed.txt'), verdict.text);
 				record.compressedTokens = verdict.compressedTokens;
 				record.compressors = verdict.compressors;
+				if (verdict.recoveryScope !== undefined) record.recoveryScope = verdict.recoveryScope;
 			}
 			await atomicWriteJson(entryPath(hash, '.json'), record);
 			remember(verdict);
 		},
 
-		async readOriginal(hash: string): Promise<string | null> {
-			if (!isContentHash(hash)) return null;
-			try {
-				return await fs.readFile(entryPath(hash, '.original.txt'), 'utf-8');
-			} catch (error) {
-				if (isMissing(error)) return null;
-				throw error;
-			}
-		},
+		readOriginal,
 	};
 }
 

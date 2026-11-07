@@ -3,11 +3,11 @@
  * @description Tests for `maestro-cli models proxy status` and `models proxy
  * block`: each request crosses the WS bridge in the shape the desktop handler
  * expects, the report and a block are printed as a person reads them (and
- * whole as JSON), and the exit code is non-zero only for a proxy that could
- * not start or a block the cache does not hold.
+ * whole as JSON). Bounded original recovery preserves exact text and reports
+ * completeness; invalid ranges, missing originals and unsupported desktops fail.
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../cli/services/maestro-client')>()),
@@ -120,18 +120,35 @@ const BLOCK: TokenProxyBlockDetail = {
 	createdAt: Date.now() - 60_000,
 };
 
+const RANGED_BLOCK: TokenProxyBlockDetail = {
+	...BLOCK,
+	original: 'خط دو\r\n三',
+	originalRange: {
+		hash: HASH,
+		source: 'original',
+		requested: { startLine: 2, endLine: 3 },
+		returned: { startLine: 2, endLine: 3 },
+		complete: true,
+		hasMore: true,
+	},
+};
+
 let logSpy: MockInstance;
 let errorSpy: MockInstance;
 let exitSpy: MockInstance;
+let writeSpy: MockInstance;
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+	writeSpy = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
 	exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
 		throw new Error('__exit__');
 	});
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('models proxy status command', () => {
 	it('asks the app for the report and prints the listener, agents, usage, and compressions', async () => {
@@ -281,15 +298,225 @@ describe('models proxy block command', () => {
 		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({ success: true, block: BLOCK });
 	});
 
-	it('exits non-zero for a hash the cache holds no compressed block for', async () => {
-		mockSend({ success: true, block: null });
+	it('sends typed inclusive bounds and prints exact ranged text with metadata on stderr', async () => {
+		const captured = mockSend({ success: true, block: RANGED_BLOCK });
 
-		await expect(modelsProxyBlock(HASH, {})).rejects.toThrow('__exit__');
+		await modelsProxyBlock(` ${HASH.toUpperCase()} `, { original: true, lines: '2:3' });
 
-		expect(errorSpy).toHaveBeenCalledWith(
-			formatError(`The proxy cache holds no compressed block for ${HASH}.`)
+		expect(captured.payload).toEqual({
+			type: 'local_models_proxy_block',
+			hash: HASH,
+			range: { startLine: 2, endLine: 3 },
+		});
+		expect(captured.responseType).toBe('local_models_proxy_block_result');
+		expect(writeSpy).toHaveBeenCalledExactlyOnceWith('خط دو\r\n三');
+		expect(logSpy).not.toHaveBeenCalled();
+		expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+			`Original ${HASH}: requested 2:3; returned 2:3; complete=true; hasMore=true`
 		);
+		expect(exitSpy).not.toHaveBeenCalled();
 	});
+
+	it('preserves a single blank original line without adding a terminator', async () => {
+		mockSend({
+			success: true,
+			block: {
+				...RANGED_BLOCK,
+				original: '\n',
+				originalRange: {
+					...RANGED_BLOCK.originalRange!,
+					requested: { startLine: 2, endLine: 2 },
+					returned: { startLine: 2, endLine: 2 },
+				},
+			},
+		});
+
+		await modelsProxyBlock(HASH, { original: true, lines: '2:2' });
+
+		expect(writeSpy).toHaveBeenCalledExactlyOnceWith('\n');
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('returned 2:2; complete=true'));
+	});
+
+	it('keeps the JSON block envelope, provenance, completeness and whole-block totals', async () => {
+		mockSend({ success: true, block: RANGED_BLOCK });
+
+		await modelsProxyBlock(HASH, { original: true, lines: '2:3', json: true });
+
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: true,
+			block: RANGED_BLOCK,
+		});
+		expect(writeSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ text: 'last\n', returned: { startLine: 2, endLine: 2 }, label: '2:2' },
+		{ text: '', returned: null, label: 'none' },
+	])('reports clipped or absent EOF lines: $label', async ({ text, returned, label }) => {
+		mockSend({
+			success: true,
+			block: {
+				...RANGED_BLOCK,
+				original: text,
+				originalRange: {
+					...RANGED_BLOCK.originalRange!,
+					returned,
+					complete: false,
+					hasMore: false,
+				},
+			},
+		});
+
+		await modelsProxyBlock(HASH, { original: true, lines: '2:3' });
+
+		expect(writeSpy).toHaveBeenCalledExactlyOnceWith(text);
+		expect(errorSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`returned ${label}; complete=false; hasMore=false`)
+		);
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it('accepts the inclusive 1000-line limit', async () => {
+		const range = { startLine: 1, endLine: 1000 };
+		const block = {
+			...RANGED_BLOCK,
+			original: 'x\n'.repeat(1000),
+			originalRange: {
+				...RANGED_BLOCK.originalRange!,
+				requested: range,
+				returned: range,
+			},
+		};
+		const captured = mockSend({ success: true, block });
+
+		await modelsProxyBlock(HASH, { original: true, lines: '1:1000', json: true });
+
+		expect(captured.payload?.range).toEqual(range);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({ success: true, block });
+	});
+
+	it.each([
+		{ lines: '1:2' },
+		{ lines: '1:2', compressed: true },
+		{ lines: '1:2', compressed: true, original: true },
+	])('refuses incompatible range flags before the bridge: %j', async (options) => {
+		await expect(modelsProxyBlock(HASH, { ...options, json: true })).rejects.toThrow('__exit__');
+
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toMatchObject({ success: false });
+		expect(writeSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		'',
+		'1',
+		'1-2',
+		':2',
+		'1:',
+		'1:2:3',
+		' 1:2',
+		'1:2 ',
+		'1:2\n',
+		'1:2\r\n',
+		'1.0:2',
+		'1e2:102',
+		'0x1:2',
+		'-1:2',
+		'+1:2',
+		'1:2suffix',
+		'0:2',
+		'2:1',
+		'1:1001',
+		'9007199254740992:9007199254740992',
+	])('rejects malformed or out-of-bounds lines %j before the bridge', async (lines) => {
+		await expect(modelsProxyBlock(HASH, { original: true, lines, json: true })).rejects.toThrow(
+			'__exit__'
+		);
+
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toMatchObject({
+			success: false,
+			error: expect.any(String),
+		});
+		expect(writeSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		undefined,
+		null,
+		{ ...RANGED_BLOCK.originalRange!, requested: { startLine: 1, endLine: 4 } },
+		{ ...RANGED_BLOCK.originalRange!, hash: 'b'.repeat(64) },
+	])('refuses an unconfirmed range, including older desktops: %j', async (originalRange) => {
+		mockSend({ success: true, block: { ...BLOCK, originalRange } });
+
+		await expect(
+			modelsProxyBlock(HASH, { original: true, lines: '2:3', json: true })
+		).rejects.toThrow('__exit__');
+
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.Unsupported);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: false,
+			error: expect.stringContaining('did not confirm'),
+		});
+		expect(writeSpy).not.toHaveBeenCalled();
+	});
+
+	it('fails explicitly when a ranged original is missing, including JSON callers', async () => {
+		mockSend({ success: true, block: { ...BLOCK, original: null, originalRange: null } });
+
+		await expect(
+			modelsProxyBlock(HASH, { original: true, lines: '2:3', json: true })
+		).rejects.toThrow('__exit__');
+
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toMatchObject({
+			success: false,
+			error: expect.stringContaining('no longer in the cache'),
+		});
+		expect(writeSpy).not.toHaveBeenCalled();
+	});
+
+	it('keeps the full JSON behavior when an original is missing and no range was requested', async () => {
+		const block = { ...BLOCK, original: null };
+		mockSend({ success: true, block });
+
+		await modelsProxyBlock(HASH, { original: true, json: true });
+
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({ success: true, block });
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		'Original line range exceeds the output byte limit',
+		'Original line range exceeds the archive scan limit',
+		'EACCES: archive cannot be read',
+	])('propagates archive failures without printing an excerpt: %s', async (error) => {
+		mockSend({ success: false, error });
+
+		await expect(
+			modelsProxyBlock(HASH, { original: true, lines: '2:3', json: true })
+		).rejects.toThrow('__exit__');
+
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({ success: false, error });
+		expect(writeSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([{}, { original: true, lines: '2:3' }])(
+		'fails for a missing block with options %j',
+		async (options) => {
+			mockSend({ success: true, block: null });
+
+			await expect(modelsProxyBlock(HASH, options)).rejects.toThrow('__exit__');
+
+			expect(errorSpy).toHaveBeenCalledWith(
+				formatError(`The proxy cache holds no compressed block for ${HASH}.`)
+			);
+		}
+	);
 
 	it('says so when the original is gone, and still prints what was sent', async () => {
 		mockSend({ success: true, block: { ...BLOCK, original: null } });

@@ -7331,6 +7331,10 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		expect(run).not.toHaveBeenCalled();
 	});
 	describe('Local Models endpoints (maestro-cli models endpoints)', () => {
+		beforeEach(() => {
+			vi.mocked(readTokenProxyBlock).mockClear();
+		});
+
 		const lastResponse = () => {
 			const calls = (client.socket.send as any).mock.calls;
 			return JSON.parse(calls[calls.length - 1][0]);
@@ -8242,12 +8246,132 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			const hash = 'a'.repeat(64);
 			handler.handleMessage(client, { type: 'local_models_proxy_block', hash, requestId: 'pb-1' });
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_block_result'));
-			expect(readTokenProxyBlock).toHaveBeenCalledWith(hash);
+			expect(readTokenProxyBlock).toHaveBeenCalledWith(hash, undefined);
 			expect(lastResponse()).toMatchObject({
 				success: true,
 				requestId: 'pb-1',
 				block: { hash, original: 'long', compressed: 'short' },
 			});
+			expect(lastResponse().block).not.toHaveProperty('originalRange');
+		});
+
+		it('local_models_proxy_block preserves a clipped range and its completeness metadata', async () => {
+			const hash = 'a'.repeat(64);
+			const range = { startLine: 2, endLine: 4 };
+			const block = {
+				hash,
+				original: 'line two\r\nlast',
+				originalRange: {
+					hash,
+					source: 'original' as const,
+					requested: range,
+					returned: { startLine: 2, endLine: 3 },
+					complete: false,
+					hasMore: false,
+				},
+				compressed: 'full frozen replacement',
+				originalTokens: 100,
+				compressedTokens: 20,
+				compressors: ['logs'],
+				createdAt: 1,
+			};
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(block);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash,
+				range,
+				requestId: 'pb-range',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-range'));
+			expect(readTokenProxyBlock).toHaveBeenCalledExactlyOnceWith(hash, range);
+			expect(lastResponse()).toEqual({
+				type: 'local_models_proxy_block_result',
+				success: true,
+				block,
+				requestId: 'pb-range',
+			});
+		});
+
+		it.each([
+			null,
+			[],
+			{},
+			'1:2',
+			{ startLine: '1', endLine: 2 },
+			{ startLine: 0, endLine: 2 },
+			{ startLine: 2, endLine: 1 },
+			{ startLine: 1, endLine: 1001 },
+			{ startLine: 1, endLine: Number.MAX_SAFE_INTEGER + 1 },
+			{ startLine: 1 },
+			{ startLine: 1, endLine: 2, path: '/another/archive' },
+		])('local_models_proxy_block refuses malformed ranges without reading: %j', async (range) => {
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash: 'a'.repeat(64),
+				range,
+				requestId: 'pb-invalid-range',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-invalid-range'));
+			expect(lastResponse()).toMatchObject({
+				type: 'local_models_proxy_block_result',
+				success: false,
+				error: expect.stringContaining('Original line range'),
+			});
+			expect(lastResponse()).not.toHaveProperty('block');
+			expect(readTokenProxyBlock).not.toHaveBeenCalled();
+		});
+
+		it('local_models_proxy_block distinguishes a missing original from an absent block with ranges', async () => {
+			const hash = 'a'.repeat(64);
+			const range = { startLine: 1, endLine: 2 };
+			const block = {
+				hash,
+				original: null,
+				originalRange: null,
+				compressed: 'short',
+				originalTokens: 100,
+				compressedTokens: 20,
+				compressors: ['logs'],
+				createdAt: 1,
+			};
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(block).mockResolvedValueOnce(null);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash,
+				range,
+				requestId: 'pb-no-original',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-no-original'));
+			expect(lastResponse()).toMatchObject({ success: true, block });
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash,
+				range,
+				requestId: 'pb-no-block',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-no-block'));
+			expect(lastResponse()).toMatchObject({ success: true, block: null });
+			expect(readTokenProxyBlock).toHaveBeenNthCalledWith(1, hash, range);
+			expect(readTokenProxyBlock).toHaveBeenNthCalledWith(2, hash, range);
+		});
+
+		it('local_models_proxy_block reports archive failures as a failed correlated reply', async () => {
+			vi.mocked(readTokenProxyBlock).mockRejectedValueOnce(
+				new RangeError('Original line range exceeds the byte limit.')
+			);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash: 'a'.repeat(64),
+				range: { startLine: 1, endLine: 2 },
+				requestId: 'pb-read-failed',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-read-failed'));
+			expect(lastResponse()).toMatchObject({
+				type: 'local_models_proxy_block_result',
+				success: false,
+				error: 'Original line range exceeds the byte limit.',
+			});
+			expect(lastResponse()).not.toHaveProperty('block');
 		});
 
 		it('local_models_proxy_block answers null for a block the cache does not hold, and an error for a value that is not a hash', async () => {

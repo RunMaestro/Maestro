@@ -47,7 +47,9 @@
  */
 
 import * as fs from 'fs/promises';
+import { randomBytes } from 'crypto';
 import * as path from 'path';
+import { estimateTokenCount } from '../../../shared/formatters';
 import {
 	backgroundRequestsUnavailable,
 	parseBackgroundRequests,
@@ -59,13 +61,16 @@ import { formatRunOnSpec, type RunOnSourceTarget } from '../../../shared/local-m
 import {
 	asStoredTokenProxyMode,
 	gatewayPointsAtTokenProxy,
+	resolveTokenProxyTarget,
 	TOKEN_PROXY_HOST,
 	TOKEN_PROXY_NAME,
 	TOKEN_PROXY_ROUTES,
 	tokenProxyAgentGatewayUrl,
 	tokenProxyGatewayUrl,
+	validateTokenProxyOriginalLineRange,
 	type TokenProxyAgentRow,
 	type TokenProxyBlockDetail,
+	type TokenProxyOriginalLineRange,
 	type TokenProxyReport,
 	type TokenProxyRequestMode,
 	type TokenProxyRouteId,
@@ -79,7 +84,7 @@ import { isTcpPort, pickFreePort } from '../../utils/tcp-port';
 import { localModelsDataDir } from '../paths';
 import { resolveSourceCallTarget, type SourceCallTarget } from '../run-on';
 import { reportLocalTaskUnavailable } from '../task-notices';
-import { compressRequestBody } from './compress';
+import { compressRequestBody, type LocalRecoveryCapability } from './compress';
 import { getCompressionCache, isContentHash } from './compression-cache';
 import { readTokenProxyUsage, recordTokenProxyRequest } from './request-stats';
 import {
@@ -117,6 +122,56 @@ let server: TokenProxyServer | null = null;
 let knownPort: number | null | undefined;
 let lastError: string | null = null;
 
+/** No eviction: at capacity, a new launch retains hash-only recovery. */
+const MAX_RECOVERY_LAUNCHES = 256;
+let recoveryLaunchGeneration = 0;
+const recoveryLaunches = new Map<
+	string,
+	{
+		agentId: string;
+		route: string;
+		recovery: Readonly<LocalRecoveryCapability>;
+	}
+>();
+
+// Fixed-size process-lifetime observations, not a second request ledger.
+// No hash, command, path, agent or session content is retained here.
+const recoveryReadCounters = {
+	invocations: 0,
+	rangedInvocations: 0,
+	recoveredOriginals: 0,
+	unavailableBlocks: 0,
+	missingOriginals: 0,
+	failedReads: 0,
+	returnedOriginalBytes: 0,
+	returnedOriginalTokenEstimate: 0,
+};
+
+function countRecoveryRead(counter: keyof typeof recoveryReadCounters, amount = 1): void {
+	recoveryReadCounters[counter] = Math.min(
+		Number.MAX_SAFE_INTEGER,
+		recoveryReadCounters[counter] + amount
+	);
+}
+
+/** Read-only snapshot for phase 06; forwarding historical tool text never increments it. */
+export function getTokenProxyRecoveryObservations() {
+	return {
+		...recoveryReadCounters,
+		scope: 'process-lifetime' as const,
+		coverage: 'canonical-block-reader' as const,
+		tokenCountKind: 'character-estimate' as const,
+		// The reader serves inspection and CLI alike, including --compressed.
+		// Returned archive text is not proof that a model received it.
+		cliInvocations: null,
+		modelExposure: 'unknown' as const,
+		unobservedRetrievals: 'unknown' as const,
+		saturated: Object.values(recoveryReadCounters).some(
+			(value) => value === Number.MAX_SAFE_INTEGER
+		),
+	};
+}
+
 // Every start, stop and port choice runs on one chain: a stop requested while
 // a start is still binding must wait for it, not race it.
 const lifecycle = createKeyedWriteQueue();
@@ -124,6 +179,8 @@ const LIFECYCLE_KEY = 'token-proxy';
 
 /** Point the proxy at the app's stores. Starts nothing. */
 export function configureTokenProxy(next: TokenProxyDeps): void {
+	recoveryLaunchGeneration++;
+	recoveryLaunches.clear();
 	deps = next;
 }
 
@@ -353,9 +410,22 @@ async function start(port: number): Promise<void> {
 			},
 			modeFor,
 			backgroundRouteFor,
-			compress: (kind, body, { early }) =>
+			recoveryFor: (target) => {
+				const launch = target.launchBinding
+					? recoveryLaunches.get(target.launchBinding)
+					: undefined;
+				if (!launch || launch.agentId !== target.agentId || launch.route !== target.route)
+					return undefined;
+				if (launch.recovery.dataDir !== localModelsDataDir()) {
+					recoveryLaunches.delete(target.launchBinding!);
+					return undefined;
+				}
+				return { ...launch.recovery };
+			},
+			compress: (kind, body, { early, recovery }) =>
 				compressRequestBody(kind, body, {
 					early,
+					...(recovery ? { recovery } : {}),
 					onModelUnavailable: (verdict) =>
 						reportLocalTaskUnavailable({
 							safeSend: deps?.safeSend,
@@ -381,6 +451,8 @@ async function start(port: number): Promise<void> {
  * turn it already started).
  */
 async function stop(force: boolean): Promise<void> {
+	recoveryLaunchGeneration++;
+	recoveryLaunches.clear();
 	const closing = server;
 	if (!closing) return;
 	server = null;
@@ -465,6 +537,86 @@ export async function tokenProxyLaunchGatewayUrl(
 	if (!agentId || !gatewayUrl) return gatewayUrl;
 	const port = await readPort();
 	return port === null ? gatewayUrl : tokenProxyAgentGatewayUrl(gatewayUrl, port, agentId);
+}
+
+/**
+ * Main-process-only registration after a caller proves the real launch's tool,
+ * CLI and archive visibility. This transport does not prove that evidence.
+ * No launch caller supplies it yet (03.4b3); never expose it over IPC/HTTP.
+ * Starts nothing, persists nothing. The launch owner must release on exit,
+ * failed spawn or any change to the proven execution environment.
+ */
+export function registerTokenProxyRecoveryLaunch(
+	agentId: string,
+	gatewayUrl: string,
+	recovery: LocalRecoveryCapability
+): Promise<{ gatewayUrl: string; release: () => void } | null> {
+	const generation = recoveryLaunchGeneration;
+	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
+		const port = await readPort();
+		if (
+			generation !== recoveryLaunchGeneration ||
+			!server ||
+			port === null ||
+			recoveryLaunches.size >= MAX_RECOVERY_LAUNCHES ||
+			!agentId ||
+			agentId.length > 256 ||
+			/[\x00-\x1f\x7f]/.test(agentId) ||
+			recovery?.kind !== 'local-posix-cli' ||
+			!isContentHash(recovery.environmentId) ||
+			recovery.environmentId.length !== 64 ||
+			![recovery.runtimePath, recovery.cliPath, recovery.dataDir].every(
+				(value) => typeof value === 'string' && value.length <= 2048
+			) ||
+			recovery.dataDir !== localModelsDataDir() ||
+			!gatewayPointsAtTokenProxy(gatewayUrl, port)
+		)
+			return null;
+		const source = new URL(gatewayUrl);
+		if (
+			source.protocol !== 'http:' ||
+			source.username ||
+			source.password ||
+			source.search ||
+			source.hash
+		)
+			return null;
+		const binding = randomBytes(32).toString('hex');
+		if (recoveryLaunches.has(binding)) return null;
+		const url = tokenProxyAgentGatewayUrl(gatewayUrl, port, agentId, binding);
+		const parsed = new URL(url);
+		const target = resolveTokenProxyTarget('POST', parsed.pathname);
+		if (
+			!target.ok ||
+			target.agentId !== agentId ||
+			target.launchBinding !== binding ||
+			parsed.search ||
+			parsed.hash ||
+			parsed.username ||
+			parsed.password ||
+			!Object.values(TOKEN_PROXY_ROUTES).some(
+				(route) => route.gatewayPath === `/${target.route}${target.path}`
+			)
+		)
+			return null;
+		recoveryLaunches.set(binding, {
+			agentId,
+			route: target.route,
+			recovery: Object.freeze({
+				kind: recovery.kind,
+				environmentId: recovery.environmentId,
+				runtimePath: recovery.runtimePath,
+				cliPath: recovery.cliPath,
+				dataDir: recovery.dataDir,
+			}),
+		});
+		return {
+			gatewayUrl: url,
+			release: () => {
+				recoveryLaunches.delete(binding);
+			},
+		};
+	});
 }
 
 export interface SpawnGatewayInput {
@@ -577,26 +729,51 @@ export async function getTokenProxyReport(): Promise<TokenProxyReport> {
  * Both sides of one compressed block, from the content-addressed cache: what
  * the agent sent and what went out in its place. Null for a hash the cache
  * holds no compressed verdict for. `hash` arrives over IPC and the CLI, so it
- * is checked before it is used as a path.
+ * is checked before it is used as a path. A range selects original lines only;
+ * the replacement and token totals still describe the entire frozen block.
  */
-export async function readTokenProxyBlock(hash: unknown): Promise<TokenProxyBlockDetail | null> {
+export async function readTokenProxyBlock(
+	hash: unknown,
+	range?: TokenProxyOriginalLineRange
+): Promise<TokenProxyBlockDetail | null> {
 	if (!isContentHash(hash)) {
 		throw new Error(
 			'A compressed block is named by its SHA-256 hash: 64 lowercase hex characters.'
 		);
 	}
-	const cache = getCompressionCache();
-	const verdict = await cache.read(hash);
-	if (!verdict || verdict.outcome !== 'compressed') return null;
-	return {
-		hash,
-		original: await cache.readOriginal(hash),
-		compressed: verdict.text,
-		originalTokens: verdict.originalTokens,
-		compressedTokens: verdict.compressedTokens,
-		compressors: [...verdict.compressors],
-		createdAt: verdict.createdAt,
-	};
+	const requested = range === undefined ? undefined : validateTokenProxyOriginalLineRange(range);
+	countRecoveryRead('invocations');
+	if (requested !== undefined) countRecoveryRead('rangedInvocations');
+	try {
+		const cache = getCompressionCache();
+		const verdict = await cache.read(hash);
+		if (!verdict || verdict.outcome !== 'compressed') {
+			countRecoveryRead('unavailableBlocks');
+			return null;
+		}
+		const original = requested === undefined ? await cache.readOriginal(hash) : undefined;
+		const ranged = requested === undefined ? undefined : await cache.readOriginal(hash, requested);
+		const text = requested === undefined ? (original ?? null) : (ranged?.text ?? null);
+		if (text === null) countRecoveryRead('missingOriginals');
+		else {
+			countRecoveryRead('recoveredOriginals');
+			countRecoveryRead('returnedOriginalBytes', Buffer.byteLength(text, 'utf8'));
+			countRecoveryRead('returnedOriginalTokenEstimate', estimateTokenCount(text));
+		}
+		return {
+			hash,
+			original: text,
+			...(requested === undefined ? {} : { originalRange: ranged?.range ?? null }),
+			compressed: verdict.text,
+			originalTokens: verdict.originalTokens,
+			compressedTokens: verdict.compressedTokens,
+			compressors: [...verdict.compressors],
+			createdAt: verdict.createdAt,
+		};
+	} catch (error) {
+		countRecoveryRead('failedReads');
+		throw error;
+	}
 }
 
 /** Stop the proxy and cut what it is carrying. For app shutdown and tests. */
@@ -610,4 +787,7 @@ export async function resetTokenProxyForTests(): Promise<void> {
 	deps = null;
 	knownPort = undefined;
 	lastError = null;
+	for (const key of Object.keys(recoveryReadCounters) as Array<keyof typeof recoveryReadCounters>) {
+		recoveryReadCounters[key] = 0;
+	}
 }

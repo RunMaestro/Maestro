@@ -32,7 +32,10 @@ import {
 	type TokenProxyServer,
 	type TokenProxyServerOptions,
 } from '../../../../main/local-models/proxy/server';
-import type { CompressRequestResult } from '../../../../main/local-models/proxy/compress';
+import type {
+	CompressRequestResult,
+	LocalRecoveryCapability,
+} from '../../../../main/local-models/proxy/compress';
 
 interface SeenRequest {
 	method: string;
@@ -97,7 +100,10 @@ interface RunningProxy {
 
 async function startProxy(
 	upstreams: Record<string, string>,
-	extra: Pick<TokenProxyServerOptions, 'modeFor' | 'compress' | 'backgroundRouteFor'> = {}
+	extra: Pick<
+		TokenProxyServerOptions,
+		'modeFor' | 'compress' | 'backgroundRouteFor' | 'recoveryFor'
+	> = {}
 ): Promise<RunningProxy> {
 	const logs: TokenProxyRequestLog[] = [];
 	const proxy = createTokenProxyServer({
@@ -805,7 +811,19 @@ describe('token proxy server, compress mode', () => {
 				cacheHits: 0,
 				originalTokens: changed ? 2000 : 0,
 				compressedTokens: changed ? 200 : 0,
-				compressors: { json: 0, logs: changed ? 1 : 0, 'long-lines': 0, model: 0 },
+				compressors: {
+					json: 0,
+					logs: changed ? 1 : 0,
+					'long-lines': 0,
+					model: 0,
+					'git-status': 0,
+					'git-log': 0,
+					search: 0,
+					'test-output': 0,
+					'build-output': 0,
+					'lint-output': 0,
+					'json-table': 0,
+				},
 				modelFailures: 0,
 				storeFailures: 0,
 			},
@@ -822,6 +840,202 @@ describe('token proxy server, compress mode', () => {
 		'Content-Length',
 		String(body.length),
 	];
+
+	it.each(['compress', 'compress-early'] as const)(
+		'passes host-resolved evidence in %s without forwarding the binding prefix',
+		async (mode) => {
+			const recovery: LocalRecoveryCapability = {
+				kind: 'local-posix-cli',
+				environmentId: 'e'.repeat(64),
+				runtimePath: '/runtime',
+				cliPath: '/maestro-cli.js',
+				dataDir: '/archive',
+			};
+			const binding = 'a'.repeat(64);
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(429);
+				res.write('retry');
+				res.end(' later');
+			});
+			const compress = vi.fn(async (_kind: string, text: string) => compressResult(text, false));
+			const recoveryFor = vi.fn(() => recovery);
+			const { port, logs } = await startProxy(
+				{
+					anthropic: upstream.origin,
+					openai: upstream.origin,
+					chatgpt: upstream.origin + '/backend-api/codex',
+				},
+				{ modeFor: () => mode, compress, recoveryFor }
+			);
+			for (const [route, suffix, kind, base] of [
+				['anthropic', '/v1/messages', 'anthropic-messages', ''],
+				['openai', '/v1/responses', 'openai-responses', ''],
+				['chatgpt', '/responses', 'openai-responses', '/backend-api/codex'],
+			]) {
+				const body = Buffer.from(original);
+				const response = await send(port, {
+					path: `/agent/a%20b/launch/${binding}/${route}${suffix}?beta=%2f&x=a%20b&x=`,
+					headers: jsonHeaders(body),
+					body,
+				});
+				expect(response.status).toBe(429);
+				expect(response.body.toString()).toBe('retry later');
+				expect(recoveryFor).toHaveBeenLastCalledWith(
+					expect.objectContaining({ agentId: 'a b', launchBinding: binding, route, kind })
+				);
+				expect(compress).toHaveBeenLastCalledWith(kind, original, {
+					early: mode === 'compress-early',
+					recovery,
+				});
+				expect(upstream.seen.at(-1)).toMatchObject({
+					url: `${base}${suffix}?beta=%2f&x=a%20b&x=`,
+					body,
+				});
+			}
+			await vi.waitFor(() => expect(logs).toHaveLength(3));
+			expect(JSON.stringify(logs)).not.toContain(binding);
+			expect(JSON.stringify(logs)).not.toContain('/archive');
+		}
+	);
+
+	it('ignores client capability claims and keeps unknown bindings without recovery', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async (_kind: string, text: string) => compressResult(text, false));
+		const recoveryFor = vi.fn(() => undefined);
+		const { port } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => 'compress', compress, recoveryFor }
+		);
+		const text = JSON.stringify({
+			recovery: { kind: 'local-posix-cli', environmentId: 'e'.repeat(64) },
+			launchBinding: 'a'.repeat(64),
+			messages: [],
+		});
+		const body = Buffer.from(text);
+		for (const path of [
+			'/anthropic/v1/messages',
+			'/agent/a/anthropic/v1/messages',
+			`/agent/a/launch/${'a'.repeat(64)}/anthropic/v1/messages`,
+		]) {
+			await send(port, { path, headers: [...jsonHeaders(body), 'X-Maestro-Recovery', text], body });
+			expect(compress).toHaveBeenLastCalledWith('anthropic-messages', text, { early: false });
+			expect(upstream.seen.at(-1)?.body.equals(body)).toBe(true);
+		}
+		expect(recoveryFor).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not resolve recovery for passthrough or non-message requests', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const recoveryFor = vi.fn();
+		const compress = vi.fn();
+		let mode: 'passthrough' | 'compress' = 'passthrough';
+		const { port } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => mode, compress, recoveryFor }
+		);
+		const prefix = `/agent/a/launch/${'a'.repeat(64)}/anthropic`;
+		const body = Buffer.from(original);
+		await send(port, { path: prefix + '/v1/messages', headers: jsonHeaders(body), body });
+		mode = 'compress';
+		await send(port, {
+			path: prefix + '/v1/messages/count_tokens',
+			headers: jsonHeaders(body),
+			body,
+		});
+		expect(compress).not.toHaveBeenCalled();
+		expect(recoveryFor).not.toHaveBeenCalled();
+	});
+
+	it('forwards original bytes if host capability resolution fails', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn();
+		const { port, logs } = await startProxy(
+			{ anthropic: upstream.origin },
+			{
+				modeFor: () => 'compress',
+				compress,
+				recoveryFor: () => {
+					throw new Error('lookup unavailable');
+				},
+			}
+		);
+		const body = Buffer.from(original);
+		await send(port, {
+			path: `/agent/a/launch/${'a'.repeat(64)}/anthropic/v1/messages`,
+			headers: jsonHeaders(body),
+			body,
+		});
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		expect(compress).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0].compression).toMatchObject({
+			changed: false,
+			skipped: 'failed',
+			error: 'lookup unavailable',
+		});
+	});
+
+	it('looks up recovery after buffering so revocation during upload supplies no capability', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		let active = true;
+		let arrived!: () => void;
+		const began = new Promise<void>((resolve) => {
+			arrived = resolve;
+		});
+		const recovery: LocalRecoveryCapability = {
+			kind: 'local-posix-cli',
+			environmentId: 'e'.repeat(64),
+			runtimePath: '/runtime',
+			cliPath: '/maestro-cli.js',
+			dataDir: '/archive',
+		};
+		const recoveryFor = vi.fn(() => (active ? recovery : undefined));
+		const compress = vi.fn(async (_kind: string, text: string) => compressResult(text, false));
+		const { port } = await startProxy(
+			{ anthropic: upstream.origin },
+			{
+				modeFor: () => {
+					arrived();
+					return 'compress';
+				},
+				compress,
+				recoveryFor,
+			}
+		);
+		const body = Buffer.from(original);
+		let request!: http.ClientRequest;
+		const finished = new Promise<void>((resolve, reject) => {
+			request = http.request(
+				{
+					host: '127.0.0.1',
+					port,
+					method: 'POST',
+					path: `/agent/a/launch/${'a'.repeat(64)}/anthropic/v1/messages`,
+					headers: jsonHeaders(body),
+					agent: false,
+				},
+				(res) => {
+					res.resume();
+					res.on('end', resolve);
+					res.on('error', reject);
+				}
+			);
+			request.on('error', reject);
+			request.write(body.subarray(0, 1));
+		});
+		try {
+			await began;
+			expect(recoveryFor).not.toHaveBeenCalled();
+			active = false;
+			request.end(body.subarray(1));
+			await finished;
+			expect(recoveryFor).toHaveBeenCalledTimes(1);
+			expect(compress).toHaveBeenLastCalledWith('anthropic-messages', original, { early: false });
+			expect(upstream.seen[0].body.equals(body)).toBe(true);
+		} finally {
+			request.destroy();
+		}
+	});
 
 	it('tells the compressor when the agent chose to compress early', async () => {
 		const upstream = await startUpstream((_req, res) => res.end('ok'));
@@ -1611,7 +1825,19 @@ describe('token proxy server, background routing', () => {
 					cacheHits: 0,
 					originalTokens: 10,
 					compressedTokens: 5,
-					compressors: { json: 0, logs: 1, 'long-lines': 0, model: 0 },
+					compressors: {
+						json: 0,
+						logs: 1,
+						'long-lines': 0,
+						model: 0,
+						'git-status': 0,
+						'git-log': 0,
+						search: 0,
+						'test-output': 0,
+						'build-output': 0,
+						'lint-output': 0,
+						'json-table': 0,
+					},
 					modelFailures: 0,
 					storeFailures: 0,
 				},

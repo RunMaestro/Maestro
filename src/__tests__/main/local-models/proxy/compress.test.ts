@@ -17,6 +17,10 @@ vi.mock('electron', () => ({
 	app: { getPath: () => tempRoot.dir },
 }));
 
+vi.mock('fs/promises', async (importOriginal) => ({
+	...(await importOriginal<typeof import('fs/promises')>()),
+}));
+
 const logger = vi.hoisted(() => ({
 	debug: vi.fn(),
 	info: vi.fn(),
@@ -36,12 +40,15 @@ vi.mock('../../../../main/local-models/task-router', () => ({
 import {
 	compressRequestBody,
 	DEFAULT_COMPRESS_MIN_TOKENS,
+	findToolResultDescriptors,
+	findToolResultSpans,
 	formatCompressionMarker,
 	MODEL_CHUNK_MAX_TOKENS,
 	MODEL_MAX_INPUT_TOKENS,
 	parseCompressionMarker,
 	summarizeToolResult,
 	type CompressRequestOptions,
+	type LocalRecoveryCapability,
 	type ModelSummary,
 } from '../../../../main/local-models/proxy/compress';
 import {
@@ -49,9 +56,25 @@ import {
 	createCompressionCache,
 	type CompressionCache,
 } from '../../../../main/local-models/proxy/compression-cache';
+import { compressWithHeuristics } from '../../../../main/local-models/proxy/compressors';
+import { shellEscape } from '../../../../main/utils/shell-escape';
 import { runLocalTask } from '../../../../main/local-models/task-router';
+import {
+	memberOf,
+	parseJsonSpans,
+	stringValue,
+} from '../../../../main/local-models/proxy/json-spans';
 
 const SOURCE = { type: 'local', modelId: 'qwen3-1.7b' } as const;
+
+// Synthetic host evidence only; none of these paths is opened or executed.
+const LOCAL_RECOVERY: LocalRecoveryCapability = {
+	kind: 'local-posix-cli',
+	environmentId: contentHash('synthetic same-host tool environment'),
+	runtimePath: "/opt/Maestro's $bundle/Maestro",
+	cliPath: "/opt/Maestro's $bundle/maestro-cli.js",
+	dataDir: "/home/user/Maestro's $data",
+};
 
 /** A log the heuristics fold to two lines. About 2500 tokens. */
 const LOG = 'INFO worker heartbeat ok\n'.repeat(400);
@@ -105,6 +128,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await fs.rm(tempRoot.dir, { recursive: true, force: true });
 });
 
@@ -118,6 +142,748 @@ describe('the compression marker', () => {
 			originalTokens: 4321,
 		});
 		expect(parseCompressionMarker('a tool result nobody compressed')).toBeNull();
+	});
+});
+
+describe('request-local tool result descriptors', () => {
+	const formats = [
+		{
+			kind: 'anthropic-messages' as const,
+			call: { type: 'tool_use', id: 'one', name: 'shell', input: { command: 'printf ok' } },
+			result: { type: 'tool_result', tool_use_id: 'one', content: 'ok' },
+			contentKey: 'content',
+			resultIdKey: 'tool_use_id',
+			wrap: (calls: unknown[], results: unknown[], answered = true) =>
+				JSON.stringify({
+					messages: [
+						{ role: 'assistant', content: calls },
+						{ role: 'user', content: results },
+						...(answered
+							? [
+									{ role: 'assistant', content: 'done' },
+									{ role: 'user', content: 'next' },
+								]
+							: []),
+					],
+				}),
+		},
+		{
+			kind: 'openai-chat-completions' as const,
+			call: {
+				type: 'function',
+				id: 'one',
+				function: { name: 'shell', arguments: '{"command":"printf ok"}' },
+			},
+			result: { role: 'tool', tool_call_id: 'one', content: 'ok' },
+			contentKey: 'content',
+			resultIdKey: 'tool_call_id',
+			wrap: (calls: unknown[], results: unknown[], answered = true) =>
+				JSON.stringify({
+					messages: [
+						{ role: 'assistant', tool_calls: calls },
+						...results,
+						...(answered ? [{ role: 'assistant', content: 'done' }] : []),
+					],
+				}),
+		},
+		{
+			kind: 'openai-responses' as const,
+			call: {
+				type: 'function_call',
+				call_id: 'one',
+				name: 'shell',
+				arguments: '{"command":"printf ok"}',
+			},
+			result: { type: 'function_call_output', call_id: 'one', output: 'ok' },
+			contentKey: 'output',
+			resultIdKey: 'call_id',
+			wrap: (calls: unknown[], results: unknown[], answered = true) =>
+				JSON.stringify({
+					input: [
+						...calls,
+						...results,
+						...(answered ? [{ type: 'message', role: 'assistant', content: [] }] : []),
+					],
+				}),
+		},
+	];
+
+	it.each(formats)(
+		'$kind links a unique call and preserves an unreplaced body',
+		async ({ kind, call, result, wrap }) => {
+			const body = wrap([call], [result]);
+			const root = parseJsonSpans(body)!;
+			const [descriptor] = findToolResultDescriptors(kind, body, root);
+			expect(descriptor).toMatchObject({
+				callId: 'one',
+				linkage: 'matched',
+				toolName: 'shell',
+				input: { kind: 'structured' },
+				contentStatus: 'text',
+				failureStatus: 'unknown',
+				recoveryEligibility: 'inspectable',
+			});
+			expect(body.slice(descriptor.call!.start, descriptor.call!.end)).toBe(JSON.stringify(call));
+			expect(body.slice(descriptor.result.start, descriptor.result.end)).toBe(
+				JSON.stringify(result)
+			);
+			if (descriptor.input.kind !== 'structured') throw new Error('Expected structured input');
+			expect(stringValue(descriptor.input.source, memberOf(descriptor.input.span, 'command'))).toBe(
+				'printf ok'
+			);
+			expect(descriptor.contentSpans.map((span) => stringValue(body, span))).toEqual(['ok']);
+			expect(findToolResultSpans(kind, body, root)).toEqual(descriptor.eligibleSpans);
+			const compressed = await compressRequestBody(kind, body, options());
+			expect(compressed.body).toBe(body);
+			expect(compressed.changed).toBe(false);
+			expect(await fs.readdir(tempRoot.dir)).toEqual([]);
+		}
+	);
+
+	it.each(formats)(
+		'$kind leaves absent calls, absent IDs and non-string IDs unresolved',
+		({ kind, call, result, resultIdKey, wrap }) => {
+			for (const id of ['absent', '', undefined, 7, null]) {
+				const body = wrap([call], [{ ...result, [resultIdKey]: id }]);
+				const [descriptor] = findToolResultDescriptors(kind, body, parseJsonSpans(body)!);
+				expect(descriptor).toMatchObject({
+					linkage: 'missing',
+					call: null,
+					toolName: null,
+					input: { kind: 'unknown' },
+					recoveryEligibility: 'unknown',
+				});
+			}
+			const body = wrap([], [result]);
+			expect(findToolResultDescriptors(kind, body, parseJsonSpans(body)!)[0].linkage).toBe(
+				'missing'
+			);
+		}
+	);
+
+	it.each(formats)(
+		'$kind refuses duplicate call IDs and duplicate result IDs, including fresh results',
+		({ kind, call, result, wrap }) => {
+			for (const body of [wrap([call, call], [result]), wrap([call], [result, result], false)]) {
+				const descriptors = findToolResultDescriptors(kind, body, parseJsonSpans(body)!);
+				for (const descriptor of descriptors) {
+					expect(descriptor).toMatchObject({
+						callId: 'one',
+						linkage: 'ambiguous',
+						call: null,
+						toolName: null,
+						input: { kind: 'unknown' },
+						recoveryEligibility: 'unknown',
+					});
+				}
+			}
+		}
+	);
+
+	it.each(formats)(
+		'$kind refuses repeated identifier keys and conflicting failure flags',
+		({ kind, call, result, resultIdKey, wrap }) => {
+			const callKey = kind === 'openai-responses' ? 'call_id' : 'id';
+			const body = wrap([call], [{ ...result, is_error: true }]);
+			for (const [target, key] of [
+				[JSON.stringify(call), callKey],
+				[JSON.stringify({ ...result, is_error: true }), resultIdKey],
+			]) {
+				const repeated = body.replace(
+					target,
+					target.replace(`"${key}":"one"`, `"${key}":"other","${key}":"one"`)
+				);
+				const [descriptor] = findToolResultDescriptors(kind, repeated, parseJsonSpans(repeated)!);
+				expect(descriptor).toMatchObject({
+					linkage: 'ambiguous',
+					call: null,
+					recoveryEligibility: 'unknown',
+				});
+			}
+			const conflicting = body.replace('"is_error":true', '"is_error":true,"is_error":false');
+			expect(
+				findToolResultDescriptors(kind, conflicting, parseJsonSpans(conflicting)!)[0].failureStatus
+			).toBe('unknown');
+		}
+	);
+
+	it.each(formats)(
+		'$kind treats repeated input or name fields as unknown recovery evidence',
+		({ kind, call, result, wrap }) => {
+			const body = wrap([call], [result]);
+			const inputKey = kind === 'anthropic-messages' ? 'input' : 'arguments';
+			const repeatedInput = body.replace(`"${inputKey}":`, `"${inputKey}":null,"${inputKey}":`);
+			const [input] = findToolResultDescriptors(
+				kind,
+				repeatedInput,
+				parseJsonSpans(repeatedInput)!
+			);
+			expect(input).toMatchObject({
+				linkage: 'matched',
+				input: { kind: 'unknown' },
+				recoveryEligibility: 'unknown',
+			});
+			const repeatedName = body.replace('"name":"shell"', '"name":"other","name":"shell"');
+			const [name] = findToolResultDescriptors(kind, repeatedName, parseJsonSpans(repeatedName)!);
+			expect(name).toMatchObject({
+				linkage: 'matched',
+				toolName: null,
+				recoveryEligibility: 'unknown',
+			});
+		}
+	);
+
+	it.each(formats)(
+		'$kind reads only explicit boolean failure evidence',
+		({ kind, call, result, contentKey, wrap }) => {
+			for (const [is_error, expected] of [
+				[true, 'failed'],
+				[false, 'not-failed'],
+				[undefined, 'unknown'],
+				['true', 'unknown'],
+				[1, 'unknown'],
+				[null, 'unknown'],
+			]) {
+				const body = wrap(
+					[call],
+					[{ ...result, [contentKey]: 'ERROR: exit code 1', is_error, status: 'completed' }]
+				);
+				const [descriptor] = findToolResultDescriptors(kind, body, parseJsonSpans(body)!);
+				expect(descriptor.failureStatus).toBe(expected);
+				// Descriptors retain span selection; the request layer applies vetoes.
+				expect(descriptor.eligibleSpans).toHaveLength(1);
+			}
+		}
+	);
+
+	it.each(formats)(
+		'$kind reports mixed or malformed content as unknown without changing span selection',
+		({ kind, call, result, contentKey, wrap }) => {
+			for (const content of [
+				[
+					{ type: 'text', text: 'ok' },
+					{ type: 'image', source: { data: 'not decoded' } },
+				],
+				[
+					{ type: 'text', text: 'ok' },
+					{ type: 'text', text: 7 },
+				],
+				null,
+			]) {
+				const body = wrap([call], [{ ...result, [contentKey]: content }]);
+				const root = parseJsonSpans(body)!;
+				const [descriptor] = findToolResultDescriptors(kind, body, root);
+				expect(descriptor.contentStatus).toBe('unknown');
+				expect(descriptor.contentSpans.map((span) => stringValue(body, span))).toEqual(
+					content === null ? [] : ['ok']
+				);
+				expect(findToolResultSpans(kind, body, root)).toEqual(descriptor.eligibleSpans);
+			}
+		}
+	);
+
+	it.each(formats)(
+		'$kind retains freshness and cache-control gates in both modes',
+		({ kind, call, result, contentKey, wrap }) => {
+			const fresh = wrap([call], [result], false);
+			const freshRoot = parseJsonSpans(fresh)!;
+			expect(findToolResultDescriptors(kind, fresh, freshRoot)[0]).toMatchObject({
+				linkage: 'matched',
+				eligibleSpans: [],
+			});
+			expect(findToolResultSpans(kind, fresh, freshRoot, { early: true })).toHaveLength(1);
+			const marked = wrap([call], [{ ...result, cache_control: { type: 'ephemeral' } }]);
+			expect(findToolResultSpans(kind, marked, parseJsonSpans(marked)!)).toEqual([]);
+			expect(
+				findToolResultSpans(kind, marked, parseJsonSpans(marked)!, { early: true })
+			).toHaveLength(1);
+			const parts = wrap(
+				[call],
+				[
+					{
+						...result,
+						[contentKey]: [
+							{ type: 'text', text: 'marked', cache_control: { type: 'ephemeral' } },
+							{ type: 'text', text: 'plain', cache_control: null },
+						],
+					},
+				]
+			);
+			const root = parseJsonSpans(parts)!;
+			const [descriptor] = findToolResultDescriptors(kind, parts, root);
+			expect(descriptor.contentSpans.map((span) => stringValue(parts, span))).toEqual([
+				'marked',
+				'plain',
+			]);
+			expect(descriptor.eligibleSpans.map((span) => stringValue(parts, span))).toEqual(['plain']);
+			expect(findToolResultSpans(kind, parts, root, { early: true })).toHaveLength(2);
+		}
+	);
+
+	it('preserves exact numeric lexemes and escapes in structured inputs across APIs', () => {
+		const input = '{ "command":"printf \\u006f\\u006b", "limit":900719925474099312345 }';
+		for (const format of formats) {
+			const call =
+				format.kind === 'anthropic-messages'
+					? { ...format.call, input: 'RAW_INPUT' }
+					: format.kind === 'openai-chat-completions'
+						? { ...format.call, function: { name: 'shell', arguments: input } }
+						: { ...format.call, arguments: input };
+			const body = format.wrap([call], [format.result]).replace('"RAW_INPUT"', input);
+			const [descriptor] = findToolResultDescriptors(format.kind, body, parseJsonSpans(body)!);
+			if (descriptor.input.kind !== 'structured') throw new Error('Expected structured input');
+			expect(
+				descriptor.input.source.slice(descriptor.input.span.start, descriptor.input.span.end)
+			).toBe(input);
+			expect(stringValue(descriptor.input.source, memberOf(descriptor.input.span, 'command'))).toBe(
+				'printf ok'
+			);
+		}
+	});
+
+	it.each(formats)('$kind keeps malformed or non-object inputs explicitly unknown', (format) => {
+		for (const input of [
+			'not JSON',
+			'[]',
+			'null',
+			'{"command":"bad\\q"}',
+			'{"command":"one","command":"two"}',
+		]) {
+			const call =
+				format.kind === 'anthropic-messages'
+					? { ...format.call, input: 'RAW_INPUT' }
+					: format.kind === 'openai-chat-completions'
+						? { ...format.call, function: { name: 'shell', arguments: input } }
+						: { ...format.call, arguments: input };
+			let body = format.wrap([call], [format.result]);
+			if (format.kind === 'anthropic-messages' && input !== 'not JSON')
+				body = body.replace('"RAW_INPUT"', input);
+			const [descriptor] = findToolResultDescriptors(format.kind, body, parseJsonSpans(body)!);
+			expect(descriptor).toMatchObject({
+				linkage: 'matched',
+				input: { kind: 'unknown' },
+				recoveryEligibility: 'unknown',
+			});
+		}
+	});
+
+	it('retains custom Responses input as text and refuses a mismatched call type', () => {
+		const body = JSON.stringify({
+			input: [
+				{
+					type: 'custom_tool_call',
+					call_id: 'custom',
+					name: 'apply_patch',
+					input: '*** Begin Patch',
+				},
+				{ type: 'custom_tool_call_output', call_id: 'custom', output: 'ok' },
+				{ type: 'function_call', call_id: 'wrong-kind', name: 'shell', arguments: '{}' },
+				{ type: 'custom_tool_call_output', call_id: 'wrong-kind', output: 'ok' },
+			],
+		});
+		const [custom, mismatch] = findToolResultDescriptors(
+			'openai-responses',
+			body,
+			parseJsonSpans(body)!
+		);
+		expect(custom).toMatchObject({
+			linkage: 'matched',
+			toolName: 'apply_patch',
+			input: { kind: 'custom', text: '*** Begin Patch' },
+			recoveryEligibility: 'unknown',
+		});
+		expect(mismatch).toMatchObject({ linkage: 'missing', call: null, input: { kind: 'unknown' } });
+	});
+
+	it('does not attach a later call or infer the missing name from a tool result', () => {
+		const body = JSON.stringify({
+			input: [
+				{ type: 'function_call_output', call_id: 'later', output: 'ok', name: 'shell' },
+				{ type: 'function_call', call_id: 'later', name: 'shell', arguments: '{}' },
+				{ type: 'function_call', call_id: 'unnamed', arguments: '{}' },
+				{ type: 'function_call_output', call_id: 'unnamed', output: 'ok', name: 'shell' },
+			],
+		});
+		const [later, unnamed] = findToolResultDescriptors(
+			'openai-responses',
+			body,
+			parseJsonSpans(body)!
+		);
+		expect(later).toMatchObject({ linkage: 'missing', call: null, toolName: null });
+		expect(unnamed).toMatchObject({
+			linkage: 'matched',
+			toolName: null,
+			recoveryEligibility: 'unknown',
+		});
+	});
+
+	describe('compression eligibility vetoes', () => {
+		const hash = contentHash(LOG);
+		const recovery = `maestro-cli models proxy block ${hash} --original`;
+
+		function withInvocation(format: (typeof formats)[number], name: string, input: unknown) {
+			if (format.kind === 'anthropic-messages') return { ...format.call, name, input };
+			if (format.kind === 'openai-chat-completions')
+				return { ...format.call, function: { name, arguments: JSON.stringify(input) } };
+			return { ...format.call, name, arguments: JSON.stringify(input) };
+		}
+
+		it.each(formats)(
+			'$kind vetoes a failed copy before reading a frozen successful verdict in either mode',
+			async ({ kind, call, result, contentKey, wrap }) => {
+				for (const early of [false, true]) {
+					const cache = newCache();
+					const successful = wrap(
+						[call],
+						[{ ...result, [contentKey]: LOG, is_error: false }],
+						!early
+					);
+					const first = await compressRequestBody(kind, successful, options({ cache, early }));
+					expect(first.stats.compressed).toBe(1);
+					const frozen = await cache.read(hash);
+					const read = vi.spyOn(cache, 'read');
+					const write = vi.spyOn(cache, 'write');
+					const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+					const failed = wrap(
+						[call],
+						[{ ...result, [contentKey]: LOG, is_error: true }],
+						!early
+					).replace('{', '{  "exact":9007199254740993, ');
+					const guarded = await compressRequestBody(
+						kind,
+						failed,
+						options({ cache, early, summarize, modelMinTokens: 1 })
+					);
+					expect(guarded).toMatchObject({
+						body: failed,
+						changed: false,
+						blocks: [],
+						stats: {
+							candidates: 0,
+							compressed: 0,
+							cacheHits: 0,
+							eligibilityVetoes: { failed: 1, recovery: 0 },
+						},
+					});
+					expect(read).not.toHaveBeenCalled();
+					expect(write).not.toHaveBeenCalled();
+					expect(summarize).not.toHaveBeenCalled();
+					expect(await newCache().read(hash)).toEqual(frozen);
+					const repeated = await compressRequestBody(kind, successful, options({ cache, early }));
+					expect(repeated.body).toBe(first.body);
+					expect(repeated.blocks[0].cached).toBe(true);
+					expect(write).not.toHaveBeenCalled();
+				}
+			}
+		);
+
+		it.each(formats)(
+			'$kind changes only the successful occurrence of identical output in one request',
+			async ({ kind, call, result, contentKey, resultIdKey, wrap }) => {
+				const body = wrap(
+					[call, { ...call, [kind === 'openai-responses' ? 'call_id' : 'id']: 'two' }],
+					[
+						{ ...result, [contentKey]: LOG, is_error: false },
+						{ ...result, [resultIdKey]: 'two', [contentKey]: LOG, is_error: true },
+					]
+				);
+				const compressed = await compressRequestBody(kind, body, options());
+				expect(compressed.body).toBe(
+					body.replace(JSON.stringify(LOG), JSON.stringify(compressedLog()))
+				);
+				expect(compressed.stats).toMatchObject({
+					compressed: 1,
+					eligibilityVetoes: { failed: 1, recovery: 0 },
+				});
+			}
+		);
+
+		it.each(formats)(
+			'$kind protects every failed text part even without call linkage or a usable store',
+			async ({ kind, result, contentKey, wrap }) => {
+				const cache = newCache();
+				const read = vi.spyOn(cache, 'read').mockRejectedValue(new TypeError('must not read'));
+				const write = vi.spyOn(cache, 'write');
+				const body = wrap(
+					[],
+					[
+						{
+							...result,
+							is_error: true,
+							[contentKey]: [
+								{ type: 'text', text: LOG },
+								{ type: 'image', source: {} },
+								{ type: 'text', text: OTHER_LOG },
+							],
+						},
+					]
+				);
+				const guarded = await compressRequestBody(kind, body, options({ cache }));
+				expect(guarded.body).toBe(body);
+				expect(guarded.stats.eligibilityVetoes).toEqual({ failed: 2, recovery: 0 });
+				expect(read).not.toHaveBeenCalled();
+				expect(write).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(formats)(
+			'$kind leaves unknown statuses and error-looking prose eligible',
+			async ({ kind, call, result, contentKey, wrap }) => {
+				for (const flags of [
+					{},
+					{ is_error: false },
+					{ is_error: 'true' },
+					{ is_error: 1 },
+					{ is_error: null },
+					{ status: 'failed' },
+				]) {
+					const body = wrap(
+						[call],
+						[{ ...result, ...flags, [contentKey]: `ERROR: exit code 1\n${LOG}` }]
+					);
+					const compressed = await compressRequestBody(kind, body, options());
+					expect(compressed.changed).toBe(true);
+					expect(compressed.stats.eligibilityVetoes).toBeUndefined();
+				}
+			}
+		);
+
+		it.each(formats)(
+			'$kind exempts literal original recovery, argv, quoting and numeric ranges before cache reuse',
+			async (format) => {
+				const { kind, call, result, contentKey, wrap } = format;
+				const cache = newCache();
+				const primed = await compressRequestBody(
+					kind,
+					wrap([call], [{ ...result, [contentKey]: LOG }]),
+					options({ cache })
+				);
+				expect(primed.stats.compressed).toBe(1);
+				const frozen = await cache.read(hash);
+				const read = vi.spyOn(cache, 'read');
+				const write = vi.spyOn(cache, 'write');
+				const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+				const dataDir = path.join(os.tmpdir(), "Maestro's $data");
+				const runtime = path.join(os.tmpdir(), 'Maestro bundle', 'Maestro');
+				const cli = path.join(os.tmpdir(), 'Maestro bundle', 'maestro-cli.js');
+				const scoped = `MAESTRO_USER_DATA=${shellEscape(dataDir)}`;
+				const bundled = `${scoped} ELECTRON_RUN_AS_NODE=1 ${shellEscape(runtime)} ${shellEscape(cli)} models proxy block ${hash} --original`;
+				for (const [name, input] of [
+					['Bash', { command: recovery }],
+					['Bash', { command: `${scoped} ${recovery}` }],
+					[
+						'exec_command',
+						{
+							cmd: `${scoped} node ${shellEscape(cli)} models proxy block ${hash} --original --lines 2:8`,
+						},
+					],
+					['exec_command', { cmd: bundled }],
+					['Bash', { command: `${bundled} --lines=2:8 --json` }],
+					['shell', { command: ['sh', '-lc', `${bundled} --lines 2:8`] }],
+					[
+						'bash',
+						{
+							command: `node '/Applications/Maestro App/maestro-cli.js' models proxy block '${hash}' --original --lines 2:8`,
+						},
+					],
+					[
+						'shell',
+						{
+							command: [
+								'/usr/local/bin/node',
+								'/Applications/Maestro App/maestro-cli.js',
+								'models',
+								'proxy',
+								'block',
+								hash,
+								'--original',
+								'--lines=2:8',
+							],
+						},
+					],
+					['shell', { command: ['/bin/bash', '-lc', `${recovery} --start-line=2 --end-line 8`] }],
+					[
+						'shell',
+						{
+							command: [
+								'node.exe',
+								'C:\\Program Files\\Maestro\\maestro-cli.js',
+								'models',
+								'proxy',
+								'block',
+								hash,
+								'--original',
+							],
+						},
+					],
+					[
+						'shell_command',
+						{
+							command: `node /Applications/Maestro\\ App/maestro-cli.js models proxy block ${hash} --lines 2:8 --original`,
+						},
+					],
+					[
+						'exec_command',
+						{
+							cmd: `node "/Applications/Maestro App/maestro-cli.js" models proxy block ${hash.toUpperCase()} --original --json`,
+						},
+					],
+					[
+						'functions.exec_command',
+						{
+							cmd: `maestro-cli models proxy block ${hash} --start-line 2 --original --end-line=8`,
+						},
+					],
+				] as const) {
+					for (const early of [false, true]) {
+						const body = wrap(
+							[withInvocation(format, name, input)],
+							[{ ...result, [contentKey]: LOG }],
+							!early
+						);
+						const guarded = await compressRequestBody(
+							kind,
+							body,
+							options({ cache, early, summarize, modelMinTokens: 1 })
+						);
+						expect(guarded).toMatchObject({
+							body,
+							changed: false,
+							stats: { candidates: 0, cacheHits: 0, eligibilityVetoes: { failed: 0, recovery: 1 } },
+						});
+					}
+				}
+				expect(read).not.toHaveBeenCalled();
+				expect(write).not.toHaveBeenCalled();
+				expect(summarize).not.toHaveBeenCalled();
+				expect(await newCache().read(hash)).toEqual(frozen);
+			}
+		);
+
+		it.each(formats)(
+			'$kind does not exempt mentions, compound commands or ambiguous recovery options',
+			async (format) => {
+				const { kind, result, contentKey, wrap } = format;
+				const dataDir = shellEscape(path.join(os.tmpdir(), 'Maestro data'));
+				const runtime = shellEscape(path.join(os.tmpdir(), 'Maestro bundle', 'Maestro'));
+				const cli = shellEscape(path.join(os.tmpdir(), 'Maestro bundle', 'maestro-cli.js'));
+				for (const command of [
+					`echo '${recovery}'`,
+					`printf '%s' '${recovery}'`,
+					`cat file # ${recovery}`,
+					`echo ok && ${recovery}`,
+					`${recovery} | cat`,
+					`${recovery}\necho done`,
+					`${recovery} > output.txt`,
+					`${recovery} --compressed`,
+					`${recovery} --help`,
+					`${recovery} --no-original=1`,
+					`maestro-cli models proxy block ${hash} -- --original`,
+					`maestro-cli models proxy block ${hash} --original=false`,
+					`maestro-cli models proxy block ${hash} --note --original`,
+					`maestro-cli models proxy block ${hash} --compressed`,
+					`maestro-cli models proxy block bad-hash --original`,
+					`maestro-cli models proxy block ${hash} '--original`,
+					`maestro-cli models proxy block ${hash} --original\\`,
+					`node "$CLI_PATH" models proxy block ${hash} --original`,
+					`node other-maestro-cli.js models proxy block ${hash} --original`,
+					`MAESTRO_USER_DATA=relative ${recovery}`,
+					`MAESTRO_USER_DATA= ${recovery}`,
+					`MAESTRO_USER_DATA="$HOME" ${recovery}`,
+					`MAESTRO_USER_DATA=$(pwd) ${recovery}`,
+					`'MAESTRO_USER_DATA'=${dataDir} ${recovery}`,
+					`MAESTRO_USER_DATA'='${dataDir} ${recovery}`,
+					`'MAESTRO_USER_DATA=/literal/data' ${recovery}`,
+					`MAESTRO_USER_DATA\\=/literal/data ${recovery}`,
+					`MAESTRO_USER_DATA=${dataDir} MAESTRO_USER_DATA=${dataDir} ${recovery}`,
+					`NODE_OPTIONS=--require=other.js ${recovery}`,
+					`PATH=/other ${recovery}`,
+					`ELECTRON_RUN_AS_NODE=0 ${runtime} ${cli} models proxy block ${hash} --original`,
+					`ELECTRON_RUN_AS_NODE=1 Maestro ${cli} models proxy block ${hash} --original`,
+					`ELECTRON_RUN_AS_NODE=1 ${runtime} other-cli.js models proxy block ${hash} --original`,
+					`ELECTRON_RUN_AS_NODE=1 ${recovery}`,
+					`MAESTRO_USER_DATA=${dataDir} ${recovery} | cat`,
+					`MAESTRO_USER_DATA=${dataDir} ${recovery} --compressed`,
+					`MAESTRO_USER_DATA=${dataDir} ${recovery} --data-dir ${dataDir}`,
+				]) {
+					const body = wrap(
+						[withInvocation(format, 'Bash', { command })],
+						[{ ...result, [contentKey]: LOG }]
+					);
+					const compressed = await compressRequestBody(kind, body, options());
+					expect(compressed.changed).toBe(true);
+					expect(compressed.stats.eligibilityVetoes).toBeUndefined();
+				}
+			}
+		);
+
+		it.each(formats)(
+			'$kind requires a recognized shell tool, structured input and unique linkage for recovery',
+			async (format) => {
+				const { kind, result, contentKey, wrap } = format;
+				const call = withInvocation(format, 'Bash', { command: recovery });
+				for (const calls of [
+					[],
+					[call, call],
+					[withInvocation(format, 'Read', { command: recovery })],
+					[withInvocation(format, 'Bash', recovery)],
+					[withInvocation(format, 'Bash', { command: ['maestro-cli', 1, '--original'] })],
+					[
+						withInvocation(format, 'shell', {
+							command: [
+								`MAESTRO_USER_DATA=${path.join(os.tmpdir(), 'Maestro data')}`,
+								'maestro-cli',
+								'models',
+								'proxy',
+								'block',
+								hash,
+								'--original',
+							],
+						}),
+					],
+				]) {
+					const body = wrap(calls, [{ ...result, [contentKey]: LOG }]);
+					const compressed = await compressRequestBody(kind, body, options());
+					expect(compressed.changed).toBe(true);
+					expect(compressed.stats.eligibilityVetoes).toBeUndefined();
+				}
+			}
+		);
+
+		it.each(formats)(
+			'$kind retains freshness/cache-control gates before counting vetoes',
+			async (format) => {
+				const { kind, result, contentKey, wrap } = format;
+				for (const [call, is_error, expectedVetoes] of [
+					[format.call, true, { failed: 1, recovery: 0 }],
+					[
+						withInvocation(format, 'Bash', { command: recovery }),
+						undefined,
+						{ failed: 0, recovery: 1 },
+					],
+					[withInvocation(format, 'Bash', { command: recovery }), true, { failed: 1, recovery: 0 }],
+				]) {
+					const body = wrap(
+						[call],
+						[
+							{
+								...result,
+								[contentKey]: LOG,
+								is_error,
+								cache_control: { type: 'ephemeral' },
+							},
+						],
+						false
+					);
+					const delayed = await compressRequestBody(kind, body, options());
+					expect(delayed).toMatchObject({ body, changed: false, stats: { candidates: 0 } });
+					expect(delayed.stats.eligibilityVetoes).toBeUndefined();
+					const early = await compressRequestBody(kind, body, options({ early: true }));
+					expect(early.body).toBe(body);
+					expect(early.stats.eligibilityVetoes).toEqual(expectedVetoes);
+				}
+			}
+		);
 	});
 });
 
@@ -562,6 +1328,325 @@ describe('compressRequestBody: what it leaves alone', () => {
 		expect(second.body).toBe(body);
 		expect(second.stats).toMatchObject({ kept: 1, cacheHits: 1 });
 	});
+
+	it('keeps protected diagnostics when the recovery marker erases the minimum reduction', async () => {
+		const diagnostic = `Error: ${'x'.repeat(4000)}`;
+		const original = `${diagnostic}\n${'z'.repeat(1440)}`;
+		const shortened = `${diagnostic}\n${'z'.repeat(800)} [maestro: 640 more characters on this line]`;
+		const marker = formatCompressionMarker(contentHash(original), Math.ceil(original.length / 4));
+		// The line cut alone clears 10%, but its full recovery marker does not.
+		expect(shortened.length).toBeLessThan(original.length * 0.9);
+		expect(`${shortened}\n${marker}`.length).toBeGreaterThan(original.length * 0.9);
+		const body = anthropicBody(original);
+		const cache = newCache();
+		const result = await compressRequestBody('anthropic-messages', body, options({ cache }));
+		expect(result.body).toBe(body);
+		expect(result.changed).toBe(false);
+		expect(result.stats).toMatchObject({ kept: 1, compressed: 0 });
+		expect(await cache.read(contentHash(original))).toMatchObject({ outcome: 'kept' });
+	});
+});
+
+describe('compressRequestBody: prepared local recovery hints', () => {
+	it('freezes a quoted bounded recovery command and includes its entire size in accounting', async () => {
+		const cache = newCache();
+		const body = anthropicBody(LOG);
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({ cache, recovery: LOCAL_RECOVERY })
+		);
+		const hash = contentHash(LOG);
+		const verdict = await cache.read(hash);
+		if (verdict?.outcome !== 'compressed') throw new Error('Expected a frozen replacement');
+		const command = `MAESTRO_USER_DATA=${shellEscape(LOCAL_RECOVERY.dataDir)} ELECTRON_RUN_AS_NODE=1 ${shellEscape(LOCAL_RECOVERY.runtimePath)} ${shellEscape(LOCAL_RECOVERY.cliPath)} models proxy block ${hash} --original --lines 1:200`;
+		expect(verdict.text).toBe(
+			`${LOG_FOLDED}\n[maestro-recovery ${command}]\n${formatCompressionMarker(hash, LOG_TOKENS)}`
+		);
+		expect(verdict.recoveryScope).toMatch(/^[0-9a-f]{64}$/);
+		expect(parseCompressionMarker(verdict.text)).toEqual({ hash, originalTokens: LOG_TOKENS });
+		expect(result.stats).toMatchObject({
+			compressed: 1,
+			compressedTokens: Math.ceil(verdict.text.length / 4),
+		});
+		expect(result.blocks[0].compressedTokens).toBe(verdict.compressedTokens);
+		expect(result.body).toBe(body.replace(JSON.stringify(LOG), JSON.stringify(verdict.text)));
+		expect(await newCache().readOriginal(hash)).toBe(LOG);
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		undefined,
+		{ ...LOCAL_RECOVERY, kind: 'remote' },
+		{ ...LOCAL_RECOVERY, environmentId: '' },
+		{ ...LOCAL_RECOVERY, environmentId: `${LOCAL_RECOVERY.environmentId}\n` },
+		{ ...LOCAL_RECOVERY, runtimePath: 'node' },
+		{ ...LOCAL_RECOVERY, cliPath: '/opt/other-cli.js' },
+		{ ...LOCAL_RECOVERY, cliPath: 'C:\\Maestro\\maestro-cli.js' },
+		{ ...LOCAL_RECOVERY, dataDir: '~/.maestro' },
+		{ ...LOCAL_RECOVERY, dataDir: '/data\nother' },
+		{ ...LOCAL_RECOVERY, dataDir: '/data\0other' },
+		{ ...LOCAL_RECOVERY, dataDir: '/data\tother' },
+		{ ...LOCAL_RECOVERY, dataDir: `/${'x'.repeat(2048)}` },
+		{ ...LOCAL_RECOVERY, runtimePath: `/${'x'.repeat(1000)}`, dataDir: `/${'y'.repeat(1000)}` },
+	])('keeps hash-only output for absent/unsupported route syntax %#', async (recovery) => {
+		const cache = newCache();
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			anthropicBody(LOG),
+			options({
+				cache,
+				recovery: recovery as LocalRecoveryCapability | undefined,
+			})
+		);
+		expect(result.body).toContain(JSON.stringify(compressedLog()));
+		expect(result.body).not.toContain('[maestro-recovery ');
+		expect(await cache.read(contentHash(LOG))).not.toHaveProperty('recoveryScope');
+	});
+
+	it('replays only the same route/environment after memory reuse and disk reload', async () => {
+		const cache = newCache();
+		const body = anthropicBody(LOG);
+		const first = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({ cache, recovery: LOCAL_RECOVERY })
+		);
+		const frozen = await cache.read(contentHash(LOG));
+		const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'ok', text: 'changed' }));
+		for (const currentCache of [cache, newCache()]) {
+			const write = vi.spyOn(currentCache, 'write');
+			for (const recovery of [
+				undefined,
+				{ ...LOCAL_RECOVERY, environmentId: contentHash('another host') },
+				{ ...LOCAL_RECOVERY, runtimePath: '/opt/other-runtime' },
+				{ ...LOCAL_RECOVERY, cliPath: '/opt/other/maestro-cli.js' },
+				{ ...LOCAL_RECOVERY, dataDir: '/other-data' },
+			]) {
+				const rejected = await compressRequestBody(
+					'anthropic-messages',
+					body,
+					options({ cache: currentCache, recovery, summarize, modelMinTokens: 1 })
+				);
+				expect(rejected).toMatchObject({
+					body,
+					changed: false,
+					blocks: [],
+					stats: {
+						kept: 1,
+						compressed: 0,
+						cacheHits: 1,
+						recoveryScopeVetoes: 1,
+						originalTokens: 0,
+						compressedTokens: 0,
+					},
+				});
+			}
+			const repeated = await compressRequestBody(
+				'anthropic-messages',
+				body,
+				options({
+					cache: currentCache,
+					recovery: { ...LOCAL_RECOVERY },
+					summarize,
+					modelMinTokens: 1,
+				})
+			);
+			expect(repeated.body).toBe(first.body);
+			expect(repeated.stats).toMatchObject({ compressed: 1, cacheHits: 1 });
+			expect(repeated.stats.recoveryScopeVetoes).toBeUndefined();
+			expect(write).not.toHaveBeenCalled();
+			expect(await currentCache.read(contentHash(LOG))).toEqual(frozen);
+		}
+		expect(summarize).not.toHaveBeenCalled();
+	});
+
+	it('serializes simultaneous proven and unproven requests without a second verdict', async () => {
+		const body = anthropicBody(LOG);
+		const cache = newCache();
+		const write = vi.spyOn(cache, 'write');
+		const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+		const [local, unknown] = await Promise.all([
+			compressRequestBody(
+				'anthropic-messages',
+				body,
+				options({ cache, recovery: LOCAL_RECOVERY, summarize, modelMinTokens: 1 })
+			),
+			compressRequestBody(
+				'anthropic-messages',
+				body,
+				options({ cache: newCache(), summarize, modelMinTokens: 1 })
+			),
+		]);
+		expect(local.changed).toBe(true);
+		expect(unknown).toMatchObject({
+			body,
+			changed: false,
+			stats: { cacheHits: 1, recoveryScopeVetoes: 1 },
+		});
+		expect(write).toHaveBeenCalledTimes(1);
+		expect(summarize).toHaveBeenCalledTimes(1);
+		expect(await newCache().read(contentHash(LOG))).toEqual(await cache.read(contentHash(LOG)));
+	});
+
+	it.each([undefined, null, 'not-a-scope', 42])(
+		'withholds a hinted record with missing/malformed scope %# without re-deciding it',
+		async (scope) => {
+			const body = anthropicBody(LOG);
+			await compressRequestBody('anthropic-messages', body, options({ recovery: LOCAL_RECOVERY }));
+			const hash = contentHash(LOG);
+			const recordPath = path.join(tempRoot.dir, hash.slice(0, 2), `${hash}.json`);
+			const record = JSON.parse(await fs.readFile(recordPath, 'utf-8'));
+			if (scope === undefined) delete record.recoveryScope;
+			else record.recoveryScope = scope;
+			const serialized = JSON.stringify(record);
+			await fs.writeFile(recordPath, serialized);
+			const cache = newCache();
+			const write = vi.spyOn(cache, 'write');
+			const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+			const result = await compressRequestBody(
+				'anthropic-messages',
+				body,
+				options({ cache, recovery: LOCAL_RECOVERY, summarize, modelMinTokens: 1 })
+			);
+			expect(result).toMatchObject({
+				body,
+				changed: false,
+				stats: { cacheHits: 1, recoveryScopeVetoes: 1, kept: 1 },
+			});
+			expect(write).not.toHaveBeenCalled();
+			expect(summarize).not.toHaveBeenCalled();
+			expect(await fs.readFile(recordPath, 'utf-8')).toBe(serialized);
+		}
+	);
+
+	it('does not add a hint to a frozen hash-only verdict or retry a kept verdict', async () => {
+		for (const text of [LOG, SOURCE_FILE]) {
+			const body = anthropicBody(text);
+			const cache = newCache();
+			const first = await compressRequestBody('anthropic-messages', body, options({ cache }));
+			const frozen = await cache.read(contentHash(text));
+			const write = vi.spyOn(cache, 'write');
+			const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'ok', text: 'short' }));
+			const second = await compressRequestBody(
+				'anthropic-messages',
+				body,
+				options({ cache, recovery: LOCAL_RECOVERY, summarize, modelMinTokens: 1 })
+			);
+			expect(second.body).toBe(first.body);
+			expect(second.body).not.toContain('[maestro-recovery ');
+			expect(second.stats.cacheHits).toBe(1);
+			expect(write).not.toHaveBeenCalled();
+			expect(summarize).not.toHaveBeenCalled();
+			expect(await newCache().read(contentHash(text))).toEqual(frozen);
+		}
+	});
+
+	it('counts the full hint against minimum reduction, freezing a kept result when it does not fit', async () => {
+		const text = 'INFO worker heartbeat ok\n'.repeat(30);
+		const candidate = compressWithHeuristics(text);
+		expect(
+			`${candidate.text}\n${formatCompressionMarker(contentHash(text), Math.ceil(text.length / 4))}`
+				.length
+		).toBeLessThan(text.length * 0.9);
+		const cache = newCache();
+		const body = anthropicBody(text);
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({
+				cache,
+				minTokens: 1,
+				recovery: { ...LOCAL_RECOVERY, dataDir: `/${'x'.repeat(650)}` },
+			})
+		);
+		expect(result).toMatchObject({ body, changed: false, stats: { kept: 1, compressed: 0 } });
+		expect(await cache.read(contentHash(text))).toMatchObject({ outcome: 'kept' });
+		expect(await cache.read(contentHash(text))).not.toHaveProperty('recoveryScope');
+	});
+
+	it('also counts Unicode hint bytes against serialized UTF-8 reduction', async () => {
+		const text = SOURCE_FILE.slice(0, 2000);
+		const recovery = { ...LOCAL_RECOVERY, dataDir: `/${'界'.repeat(850)}` };
+		const hint = `[maestro-recovery MAESTRO_USER_DATA=${shellEscape(recovery.dataDir)} ELECTRON_RUN_AS_NODE=1 ${shellEscape(recovery.runtimePath)} ${shellEscape(recovery.cliPath)} models proxy block ${contentHash(text)} --original --lines 1:200]`;
+		const replacement = `short\n${hint}\n${formatCompressionMarker(contentHash(text), Math.ceil(text.length / 4))}`;
+		expect(replacement.length).toBeLessThan(text.length * 0.9);
+		expect(Buffer.byteLength(JSON.stringify(replacement))).toBeGreaterThan(
+			Buffer.byteLength(JSON.stringify(text))
+		);
+		const body = anthropicBody(text);
+		const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'ok', text: 'short' }));
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({ recovery, minTokens: 1, modelMinTokens: 1, summarize })
+		);
+		expect(result).toMatchObject({ body, changed: false, stats: { kept: 1, compressed: 0 } });
+		expect(summarize).toHaveBeenCalledTimes(1);
+	});
+
+	it('exposes no command if the original archive cannot be committed', async () => {
+		const cache = newCache();
+		const error = Object.assign(new Error('archive full'), { code: 'ENOSPC' });
+		const write = vi.spyOn(cache, 'write').mockRejectedValue(error);
+		const body = anthropicBody(LOG);
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({ cache, recovery: LOCAL_RECOVERY })
+		);
+		expect(result).toMatchObject({
+			body,
+			changed: false,
+			blocks: [],
+			stats: { storeFailures: 1, compressed: 0 },
+		});
+		expect(write).toHaveBeenCalledWith(
+			expect.objectContaining({
+				outcome: 'compressed',
+				recoveryScope: expect.any(String),
+				text: expect.stringContaining('[maestro-recovery '),
+			}),
+			LOG
+		);
+		expect(await newCache().read(contentHash(LOG))).toBeNull();
+	});
+
+	it('exempts repeated results of the generated command before cache/model work', async () => {
+		const cache = newCache();
+		await compressRequestBody(
+			'anthropic-messages',
+			anthropicBody(LOG),
+			options({ cache, recovery: LOCAL_RECOVERY })
+		);
+		const frozen = await cache.read(contentHash(LOG));
+		if (frozen?.outcome !== 'compressed') throw new Error('Expected a frozen replacement');
+		const hint = frozen.text.split('\n').find((line) => line.startsWith('[maestro-recovery '))!;
+		const command = hint.slice('[maestro-recovery '.length, -1);
+		const body = JSON.parse(anthropicBody(LOG));
+		body.messages[1].content[0].input = { command };
+		const original = JSON.stringify(body);
+		const read = vi.spyOn(cache, 'read');
+		const write = vi.spyOn(cache, 'write');
+		const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+		for (const early of [false, true]) {
+			const result = await compressRequestBody(
+				'anthropic-messages',
+				original,
+				options({ cache, recovery: LOCAL_RECOVERY, summarize, modelMinTokens: 1, early })
+			);
+			expect(result).toMatchObject({
+				body: original,
+				changed: false,
+				stats: { eligibilityVetoes: { failed: 0, recovery: 1 } },
+			});
+		}
+		expect(read).not.toHaveBeenCalled();
+		expect(write).not.toHaveBeenCalled();
+		expect(summarize).not.toHaveBeenCalled();
+		expect(runLocalTask).not.toHaveBeenCalled();
+		expect(await newCache().read(contentHash(LOG))).toEqual(frozen);
+	});
 });
 
 describe('compressRequestBody: determinism', () => {
@@ -586,6 +1671,78 @@ describe('compressRequestBody: determinism', () => {
 		expect(reloaded.body).toBe(first.body);
 		expect(reloaded.blocks[0].cached).toBe(true);
 	});
+
+	it.each(['compressed', 'kept'] as const)(
+		'preserves a legacy %s verdict through upgrades, guard vetoes and repeat requests',
+		async (outcome) => {
+			const hash = contentHash(LOG);
+			const prefix = path.join(tempRoot.dir, hash.slice(0, 2), hash);
+			const text = 'old compressor output\r\n{"id":9007199254740993,"label":"東京"}\n';
+			const record = ` {"version":1,"hash":"${hash}","outcome":"${outcome}","originalTokens":${LOG_TOKENS},"createdAt":1760000000000${outcome === 'compressed' ? ',"compressedTokens":20,"compressors":["model"]' : ''}}\n`;
+			const files = [
+				['.json', record],
+				...(outcome === 'compressed'
+					? [
+							['.original.txt', LOG],
+							['.compressed.txt', text],
+						]
+					: []),
+			];
+			await fs.mkdir(path.dirname(prefix), { recursive: true });
+			for (const [suffix, contents] of files) await fs.writeFile(`${prefix}${suffix}`, contents);
+
+			// LOG is shortened by today's heuristics, but even an old kept verdict wins.
+			const body = anthropicBody(LOG).replace('{', '{ "exact":9007199254740993, ');
+			const expected =
+				outcome === 'compressed' ? body.replace(JSON.stringify(LOG), JSON.stringify(text)) : body;
+			const cache = newCache();
+			const read = vi.spyOn(cache, 'read');
+			const write = vi.spyOn(cache, 'write');
+			const summarize = vi.fn(
+				async (): Promise<ModelSummary> => ({
+					status: 'ok',
+					text: 'a new summary must never replace the old verdict',
+				})
+			);
+			for (const guardedBody of [
+				body.replace('"tool_use_id":"t1"', '"tool_use_id":"t1","is_error":true'),
+				body.replace(
+					'"input":{}',
+					`"input":${JSON.stringify({ command: `maestro-cli models proxy block ${hash} --original` })}`
+				),
+			]) {
+				const guarded = await compressRequestBody(
+					'anthropic-messages',
+					guardedBody,
+					options({ cache, summarize, modelMinTokens: 1 })
+				);
+				expect(guarded).toMatchObject({ body: guardedBody, changed: false, blocks: [] });
+				expect(read).not.toHaveBeenCalled();
+				expect(write).not.toHaveBeenCalled();
+			}
+			for (const currentCache of [cache, cache, newCache()]) {
+				const result = await compressRequestBody(
+					'anthropic-messages',
+					body,
+					options({ cache: currentCache, summarize, modelMinTokens: 1 })
+				);
+				expect(result.body).toBe(expected);
+				expect(result.stats).toMatchObject({
+					cacheHits: 1,
+					compressed: outcome === 'compressed' ? 1 : 0,
+					kept: outcome === 'kept' ? 1 : 0,
+				});
+			}
+			expect(write).not.toHaveBeenCalled();
+			expect(summarize).not.toHaveBeenCalled();
+			for (const [suffix, contents] of files) {
+				expect(await fs.readFile(`${prefix}${suffix}`)).toEqual(Buffer.from(contents, 'utf-8'));
+			}
+			expect((await fs.readdir(path.dirname(prefix))).sort()).toEqual(
+				files.map(([suffix]) => `${hash}${suffix}`).sort()
+			);
+		}
+	);
 
 	it('gives the same bytes in a second, unrelated run with an empty cache', async () => {
 		const body = anthropicBody(LOG);
@@ -632,6 +1789,235 @@ describe('compressRequestBody: determinism', () => {
 		await compressRequestBody('anthropic-messages', anthropicBody(LOG), options({ cache }));
 		expect(await newCache().readOriginal(contentHash(LOG))).toBe(LOG);
 		expect((await newCache().read(contentHash(LOG)))?.outcome).toBe('compressed');
+	});
+});
+
+describe('compressRequestBody: deterministic filter integration', () => {
+	const fixtures = [
+		{
+			compressor: 'git-status',
+			text: Array.from({ length: 500 }, (_, index) => ` M f${index}.ts`).join('\n'),
+			retained: 'f499.ts',
+		},
+		{
+			compressor: 'git-log',
+			text: [
+				`commit ${'a'.repeat(40)}`,
+				'Author: Fixture <fixture@example.invalid>',
+				'Date:   Fri Nov 6 10:11:12 2026 -0600',
+				'',
+				'    Preserve this subject',
+				...Array.from({ length: 50 }, (_, index) => `    detail ${index} ${'x'.repeat(100)}`),
+			].join('\n'),
+			retained: `commit ${'a'.repeat(40)}`,
+		},
+		{
+			compressor: 'search',
+			text: Array.from(
+				{ length: 100 },
+				(_, index) => `src/工程/directory with spaces/file.ts:${index + 1}:match ${index}`
+			).join('\n'),
+			retained: '100:match 99',
+		},
+		{
+			compressor: 'test-output',
+			text: [
+				' RUN  v4.1.11 /fixture/maestro',
+				...Array.from({ length: 500 }, (_, index) => ` ✓ a${index} (1 test) 1ms`),
+				' Test Files  500 passed (500)',
+				'      Tests  500 passed (500)',
+				'Exit code: 0',
+			].join('\n'),
+			retained: 'a499 (1 test) 1ms',
+		},
+		{
+			compressor: 'build-output',
+			text: [
+				'vite v8.3.4 building client environment for production...',
+				'transforming...',
+				'✓ 1200 modules transformed.',
+				...Array.from(
+					{ length: 60 },
+					(_, index) => `dist/a${index}.js${' '.repeat(60)}1.23 kB  | gzip: 0.80 kB`
+				),
+				'✓ built in 2.34s',
+			].join('\n'),
+			retained: 'dist/a59.js 1.23 kB | gzip: 0.80 kB',
+		},
+		{
+			compressor: 'lint-output',
+			text: [
+				'/fixture/src/工程/file.ts',
+				...Array.from(
+					{ length: 50 },
+					(_, index) =>
+						`        ${index + 1}:3        warning${' '.repeat(40)}Unused binding ${index}  no-unused-vars`
+				),
+				'✖ 50 problems (0 errors, 50 warnings)',
+			].join('\n'),
+			retained: '50:3 warning Unused binding 49  no-unused-vars',
+		},
+		{
+			compressor: 'json-table',
+			text:
+				'[' +
+				Array.from(
+					{ length: 100 },
+					(_, index) =>
+						`{"record_identifier":9007199254740993,"record_label":"東京 ${index}","optional_value":null}`
+				).join(',') +
+				']',
+			retained: '9007199254740993\t"東京 99"\tnull',
+		},
+	] as const;
+	// Handwritten envelopes expose changes to escapes, ordering, large numbers,
+	// system/developer/user/assistant text, tool declarations and call linkage.
+	const envelopes = [
+		{
+			kind: 'anthropic-messages',
+			before: String.raw`{ "model":"fixture", "system":"Caf\u00e9 \/ rules", "tools":[{"name":"Bash","input_schema":{"b":9007199254740993,"1":2}}], "messages":[{"role":"user","content":"keep  spacing"},{"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"printf fixture"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":`,
+			after: String.raw`} ]},{"role":"assistant","content":[{"type":"text","text":"Done \/ exactly"}]},{"role":"user","content":"next  step"}] }`,
+		},
+		{
+			kind: 'openai-chat-completions',
+			before: String.raw`{ "model":"fixture", "tools":[{"type":"function","function":{"name":"shell","parameters":{"b":9007199254740993,"1":2}}}], "messages":[{"role":"system","content":"Caf\u00e9 \/ rules"},{"role":"user","content":"keep  spacing"},{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"shell","arguments":"{\"command\":\"git status\"}"}}]},{"role":"tool","tool_call_id":"c1","content":`,
+			after: String.raw`},{"role":"assistant","content":"Done \/ exactly"},{"role":"user","content":"next  step"}] }`,
+		},
+		{
+			kind: 'openai-responses',
+			before: String.raw`{ "model":"fixture", "instructions":"Caf\u00e9 \/ rules", "tools":[{"type":"function","name":"exec_command","parameters":{"b":9007199254740993,"1":2}}], "input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"keep  spacing"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"original  request"}]},{"type":"function_call","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"rg fixture\"}"},{"type":"function_call_output","call_id":"c1","output":`,
+			after: String.raw`},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done \/ exactly"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"next  step"}]}] }`,
+		},
+	] as const;
+
+	it.each(fixtures)(
+		'integrates $compressor once across APIs and modes, preserving every surrounding byte',
+		async ({ compressor, text, retained }) => {
+			const cache = newCache();
+			const write = vi.spyOn(cache, 'write');
+			const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+			let replacement: string | undefined;
+			for (const { kind, before, after } of envelopes) {
+				const body = `${before}${JSON.stringify(text)}${after}`;
+				const first = await compressRequestBody(kind, body, options({ cache, summarize }));
+				const verdict = await cache.read(contentHash(text));
+				expect(verdict?.outcome).toBe('compressed');
+				if (verdict?.outcome !== 'compressed') throw new Error('Expected a frozen replacement');
+				replacement ??= verdict.text;
+				expect(verdict.text).toBe(replacement);
+				expect(replacement).toContain(retained);
+				expect(verdict.compressors).toEqual([compressor]);
+				expect(parseCompressionMarker(replacement)).toEqual({
+					hash: contentHash(text),
+					originalTokens: Math.ceil(text.length / 4),
+				});
+				expect(replacement.length).toBeLessThanOrEqual(text.length * 0.9);
+				expect(first.changed).toBe(true);
+				expect(first.body).toBe(`${before}${JSON.stringify(replacement)}${after}`);
+				expect(Buffer.byteLength(first.body)).toBeLessThan(Buffer.byteLength(body));
+				expect(first.stats.compressors[compressor]).toBe(1);
+				expect(Object.values(first.stats.compressors).reduce((sum, count) => sum + count, 0)).toBe(
+					1
+				);
+				for (const [currentCache, early] of [
+					[cache, false],
+					[newCache(), true],
+				] as const) {
+					const again = await compressRequestBody(
+						kind,
+						body,
+						options({ cache: currentCache, summarize, early })
+					);
+					expect(again.body).toBe(first.body);
+					expect(again.stats).toMatchObject({ compressed: 1, cacheHits: 1 });
+					expect(again.stats.compressors[compressor]).toBe(1);
+				}
+			}
+			expect(write).toHaveBeenCalledTimes(1);
+			expect(summarize).not.toHaveBeenCalled();
+			expect(runLocalTask).not.toHaveBeenCalled();
+			expect(await newCache().readOriginal(contentHash(text))).toBe(text);
+		}
+	);
+
+	it.each(['kept', 'compressed'] as const)(
+		'retains an existing %s verdict for newly recognized table content',
+		async (outcome) => {
+			const text = fixtures[6].text;
+			const hash = contentHash(text);
+			const cache = newCache();
+			const base = { hash, originalTokens: Math.ceil(text.length / 4), createdAt: 1760000000000 };
+			const legacy = 'legacy replacement bytes';
+			await cache.write(
+				outcome === 'kept'
+					? { ...base, outcome }
+					: { ...base, outcome, text: legacy, compressedTokens: 6, compressors: ['json'] },
+				text
+			);
+			const write = vi.spyOn(cache, 'write');
+			for (const currentCache of [cache, newCache()]) {
+				const body = anthropicBody(text);
+				const result = await compressRequestBody(
+					'anthropic-messages',
+					body,
+					options({ cache: currentCache })
+				);
+				expect(result.body).toBe(
+					outcome === 'kept' ? body : body.replace(JSON.stringify(text), JSON.stringify(legacy))
+				);
+				expect(result.stats.cacheHits).toBe(1);
+			}
+			expect(write).not.toHaveBeenCalled();
+		}
+	);
+
+	it('counts the recovery marker before accepting a new command filter', async () => {
+		const text = Array.from({ length: 80 }, (_, index) => ` M a${index}.ts`).join('\n');
+		const candidate = compressWithHeuristics(text);
+		expect(candidate.applied).toEqual(['git-status']);
+		expect(candidate.text.length).toBeLessThan(text.length * 0.9);
+		const marker = formatCompressionMarker(contentHash(text), Math.ceil(text.length / 4));
+		expect(`${candidate.text}\n${marker}`.length).toBeGreaterThan(text.length * 0.9);
+		const body = anthropicBody(text);
+		const cache = newCache();
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({ cache, minTokens: 1 })
+		);
+		expect(result).toMatchObject({ body, changed: false, stats: { kept: 1, compressed: 0 } });
+		expect(await cache.read(contentHash(text))).toMatchObject({ outcome: 'kept' });
+	});
+
+	it('does not follow or expand a native persisted-output stub', async () => {
+		const nativeFile = path.join(tempRoot.dir, 'native-output.txt');
+		await fs.writeFile(nativeFile, fixtures[6].text);
+		const read = vi.spyOn(fs, 'readFile');
+		const text = `Tool output truncated.\nFull output saved to: ${nativeFile}\nPreview: first row only`;
+		const body = anthropicBody(text);
+		const result = await compressRequestBody('anthropic-messages', body, options({ minTokens: 1 }));
+		expect(result).toMatchObject({ body, changed: false });
+		expect(read.mock.calls.filter(([file]) => file === nativeFile)).toEqual([]);
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it('keeps a shorter decoded candidate when its serialized UTF-8 would expand the result', async () => {
+		const text = SOURCE_FILE.slice(0, 1000);
+		const summary = '界'.repeat(400);
+		const replacement = `${summary}\n${formatCompressionMarker(contentHash(text), Math.ceil(text.length / 4))}`;
+		expect(replacement.length).toBeLessThan(text.length * 0.9);
+		expect(Buffer.byteLength(JSON.stringify(replacement))).toBeGreaterThan(
+			Buffer.byteLength(JSON.stringify(text))
+		);
+		const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'ok', text: summary }));
+		const body = anthropicBody(text);
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			body,
+			options({ minTokens: 1, modelMinTokens: 1, summarize })
+		);
+		expect(result).toMatchObject({ body, changed: false, stats: { kept: 1, compressed: 0 } });
+		expect(summarize).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -750,6 +2136,42 @@ describe('compressRequestBody: a cache that cannot be used', () => {
 			readOriginal: real.readOriginal,
 		};
 	}
+
+	it.each([false, true])(
+		'waits for the archive commit before exposing a replacement (hint=%s)',
+		async (hinted) => {
+			const cache = newCache();
+			const commit = cache.write;
+			let release: () => void = () => {};
+			const ready = new Promise<void>((resolve) => (release = resolve));
+			const write = vi.spyOn(cache, 'write').mockImplementation(async (verdict, original) => {
+				await ready;
+				await commit(verdict, original);
+			});
+			let finished = false;
+			const request = compressRequestBody(
+				'anthropic-messages',
+				anthropicBody(LOG),
+				options({ cache, recovery: hinted ? LOCAL_RECOVERY : undefined })
+			);
+			void request.then(() => (finished = true));
+			try {
+				await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+				expect(finished).toBe(false);
+				expect(await newCache().read(contentHash(LOG))).toBeNull();
+			} finally {
+				release();
+			}
+			const result = await request;
+			expect(result.stats.compressed).toBe(1);
+			expect(await newCache().readOriginal(contentHash(LOG))).toBe(LOG);
+			expect(await newCache().read(contentHash(LOG))).toMatchObject({
+				outcome: 'compressed',
+				text: hinted ? expect.stringContaining('[maestro-recovery ') : compressedLog(),
+				...(hinted ? { recoveryScope: expect.stringMatching(/^[0-9a-f]{64}$/) } : {}),
+			});
+		}
+	);
 
 	it.each(['read', 'write'] as const)(
 		'sends the block as it was when the cache %s fails',

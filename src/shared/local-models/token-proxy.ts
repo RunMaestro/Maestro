@@ -116,6 +116,8 @@ export type TokenProxyTarget =
 			kind: TokenProxyRequestKind;
 			/** The agent the base URL named, or null when it named none. */
 			agentId: string | null;
+			/** Opaque host-issued launch token. Parsing it does not establish capability. */
+			launchBinding?: string;
 	  }
 	| { ok: false; error: string };
 
@@ -125,8 +127,17 @@ export type TokenProxyTarget =
  */
 export const TOKEN_PROXY_AGENT_SEGMENT = 'agent';
 
+/** Reserved only after an agent prefix; never forwarded to a provider. */
+export const TOKEN_PROXY_LAUNCH_SEGMENT = 'launch';
+
+export function isTokenProxyLaunchBinding(value: unknown): value is string {
+	return typeof value === 'string' && value.length === 64 && /^[0-9a-f]{64}$/.test(value);
+}
+
 /** Split `/agent/<id>` off the front of a request path, when it is there. */
-function splitAgentPrefix(rawPath: string): { agentId: string | null; path: string } | null {
+function splitAgentPrefix(
+	rawPath: string
+): { agentId: string | null; path: string; launchBinding?: string } | null {
 	const match = new RegExp(`^/${TOKEN_PROXY_AGENT_SEGMENT}(?:/([^/]*)(/.*)?)?$`).exec(rawPath);
 	if (!match) return { agentId: null, path: rawPath };
 	let agentId = '';
@@ -136,6 +147,14 @@ function splitAgentPrefix(rawPath: string): { agentId: string | null; path: stri
 		return null;
 	}
 	if (agentId === '' || match[2] === undefined) return null;
+	if (
+		match[2] === `/${TOKEN_PROXY_LAUNCH_SEGMENT}` ||
+		match[2].startsWith(`/${TOKEN_PROXY_LAUNCH_SEGMENT}/`)
+	) {
+		const launch = /^\/launch\/([^/]+)(\/.*)$/.exec(match[2]);
+		if (!launch || !isTokenProxyLaunchBinding(launch[1])) return null;
+		return { agentId, launchBinding: launch[1], path: launch[2] };
+	}
 	return { agentId, path: match[2] };
 }
 
@@ -177,6 +196,7 @@ export function resolveTokenProxyTarget(
 		query,
 		kind: classifyTokenProxyPath(method, path),
 		agentId: scoped?.agentId ?? null,
+		...(scoped?.launchBinding ? { launchBinding: scoped.launchBinding } : {}),
 	};
 }
 
@@ -219,7 +239,8 @@ export function gatewayPointsAtTokenProxy(
 export function tokenProxyAgentGatewayUrl(
 	gatewayUrl: string,
 	port: number,
-	agentId: string
+	agentId: string,
+	launchBinding?: string
 ): string {
 	if (agentId === '' || !gatewayPointsAtTokenProxy(gatewayUrl, port)) return gatewayUrl;
 	let parsed: URL;
@@ -228,9 +249,18 @@ export function tokenProxyAgentGatewayUrl(
 	} catch {
 		return gatewayUrl;
 	}
-	if (splitAgentPrefix(parsed.pathname)?.agentId) return gatewayUrl;
-	const path = parsed.pathname.replace(/\/+$/, '');
-	return `${parsed.protocol}//${parsed.host}/${TOKEN_PROXY_AGENT_SEGMENT}/${encodeURIComponent(agentId)}${path}`;
+	if (launchBinding === undefined) {
+		if (splitAgentPrefix(parsed.pathname)?.agentId) return gatewayUrl;
+		const path = parsed.pathname.replace(/\/+$/, '');
+		return `${parsed.protocol}//${parsed.host}/${TOKEN_PROXY_AGENT_SEGMENT}/${encodeURIComponent(agentId)}${path}`;
+	}
+	const scoped = splitAgentPrefix(parsed.pathname);
+	if (!scoped || scoped.launchBinding) return gatewayUrl;
+	if (scoped.agentId && scoped.agentId !== agentId) return gatewayUrl;
+	if (!isTokenProxyLaunchBinding(launchBinding)) return gatewayUrl;
+	const path = scoped.path.replace(/\/+$/, '');
+	const launch = `/${TOKEN_PROXY_LAUNCH_SEGMENT}/${launchBinding}`;
+	return `${parsed.protocol}//${parsed.host}/${TOKEN_PROXY_AGENT_SEGMENT}/${encodeURIComponent(agentId)}${launch}${path}${parsed.search}${parsed.hash}`;
 }
 
 /**
@@ -409,11 +439,66 @@ export interface TokenProxyReport {
 	recentCompressions: ProxyCompressionEntry[];
 }
 
+/** Inclusive, 1-based original lines. LF ends a line; a trailing LF adds no empty line. */
+export interface TokenProxyOriginalLineRange {
+	startLine: number;
+	endLine: number;
+}
+
+export const TOKEN_PROXY_ORIGINAL_RANGE_MAX_LINES = 1000;
+export const TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES = 256 * 1024;
+
+/** Validate before any archive access, including when the hash has no stored verdict. */
+export function validateTokenProxyOriginalLineRange(value: unknown): TokenProxyOriginalLineRange {
+	if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+		const range = value as Record<string, unknown>;
+		const { startLine, endLine } = range;
+		if (
+			Object.keys(range).length === 2 &&
+			Object.prototype.hasOwnProperty.call(range, 'startLine') &&
+			Object.prototype.hasOwnProperty.call(range, 'endLine') &&
+			typeof startLine === 'number' &&
+			typeof endLine === 'number' &&
+			Number.isSafeInteger(startLine) &&
+			Number.isSafeInteger(endLine) &&
+			startLine >= 1 &&
+			endLine >= startLine &&
+			endLine - startLine < TOKEN_PROXY_ORIGINAL_RANGE_MAX_LINES
+		) {
+			return { startLine, endLine };
+		}
+	}
+	throw new RangeError(
+		`Original line range requires only startLine and endLine: positive safe integers in ascending order, at most ${TOKEN_PROXY_ORIGINAL_RANGE_MAX_LINES} lines.`
+	);
+}
+
+export interface TokenProxyOriginalRangeInfo {
+	/** Archive key, not proof of provider/session ownership or a reverified full-file hash. */
+	hash: string;
+	source: 'original';
+	requested: TokenProxyOriginalLineRange;
+	/** Null for an empty original or a request starting past EOF. */
+	returned: TokenProxyOriginalLineRange | null;
+	/** Every requested line was returned. A byte/scan limit throws instead of truncating. */
+	complete: boolean;
+	/** More original bytes follow the returned selection; no total line count is inferred. */
+	hasMore: boolean;
+}
+
+export interface TokenProxyOriginalRangeRead {
+	/** Exact selected text, including original LF/CRLF terminators. */
+	text: string;
+	range: TokenProxyOriginalRangeInfo;
+}
+
 /** Both sides of one compressed block, from the content-addressed cache. */
 export interface TokenProxyBlockDetail {
 	hash: string;
-	/** The text the agent sent. Null when the cache no longer holds it. */
+	/** Full original, or the exact requested lines. Null when not stored. */
 	original: string | null;
+	/** Present only for range requests; null when the original is missing. */
+	originalRange?: TokenProxyOriginalRangeInfo | null;
 	/** The text sent in its place, marker included. */
 	compressed: string;
 	originalTokens: number;

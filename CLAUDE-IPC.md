@@ -79,6 +79,14 @@ visible and show an error. Preserve logs appended while deletion is pending.
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
 
+`window.maestro.localModels.proxy.block(hash, range?)` returns the cached original
+and frozen replacement. An optional `{ startLine, endLine }` selects inclusive,
+1-based original lines only, capped at 1,000 lines and 256 KiB. Range replies add
+`originalRange` with requested/returned bounds, completeness and `hasMore`; a
+missing original gives null text and range metadata. Token totals and replacement
+text always describe the full block. IPC and the CLI WebSocket route validate
+ranges before archive access; invalid bounds and failed reads reject explicitly.
+
 ## Semantic Index API
 
 `window.maestro.localModels.semanticIndex` exposes the shared index behind Semantic search:

@@ -38,6 +38,7 @@ import type { RunOnTestRequest, RunOnTestResult } from '../../shared/local-model
 import type { HarnessTierOptions } from '../../shared/local-models/tier-options';
 import type {
 	TokenProxyBlockDetail,
+	TokenProxyOriginalLineRange,
 	TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
 import type { DownloadProgress, DownloadResult } from '../local-models/model-downloader';
@@ -255,9 +256,12 @@ function createTokenProxyApi() {
 		/** The proxy's port, chosen and persisted on the first call. */
 		ensurePort: (): Promise<number> => ipcRenderer.invoke('localModels:proxy:ensurePort'),
 
-		/** Both sides of one compressed block, or null when the cache has none. */
-		block: (hash: string): Promise<TokenProxyBlockDetail | null> =>
-			ipcRenderer.invoke('localModels:proxy:block', hash),
+		/** Both sides, optionally selecting original lines only. Null when no block is stored. */
+		block: (
+			hash: string,
+			range?: TokenProxyOriginalLineRange
+		): Promise<TokenProxyBlockDetail | null> =>
+			ipcRenderer.invoke('localModels:proxy:block', hash, range),
 	};
 }
 

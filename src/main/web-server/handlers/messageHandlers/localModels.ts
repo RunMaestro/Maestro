@@ -63,6 +63,7 @@ import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../../local-models/work-search';
 import { suggestTabCleanup } from '../../../local-models/tab-cleanup';
 import { getTokenProxyReport, readTokenProxyBlock } from '../../../local-models/proxy/service';
+import { validateTokenProxyOriginalLineRange } from '../../../../shared/local-models/token-proxy';
 import {
 	getModelServerKey,
 	startModelServer,
@@ -412,7 +413,8 @@ export function handleLocalModelsProxyStatus(
  * Handle local_models_proxy_block - both sides of one compressed block from the
  * content-addressed cache (`maestro-cli models proxy block <hash>`). A hash the
  * cache has no compressed verdict for answers `block: null`; a value that is
- * not a hash is an error.
+ * not a hash is an error. An optional `range` selects original lines only;
+ * replacement text and token totals continue to describe the full block.
  */
 export function handleLocalModelsProxyBlock(
 	ctx: MessageHandlerContext,
@@ -420,7 +422,10 @@ export function handleLocalModelsProxyBlock(
 	message: WebClientMessage
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_proxy_block_result', async () => ({
-		block: await readTokenProxyBlock(message.hash),
+		block: await readTokenProxyBlock(
+			message.hash,
+			message.range === undefined ? undefined : validateTokenProxyOriginalLineRange(message.range)
+		),
 	}));
 }
 

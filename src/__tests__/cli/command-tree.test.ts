@@ -107,6 +107,22 @@ describe('maestro-cli command tree', () => {
 		}
 	});
 
+	it('registers bounded original recovery and examples on the existing proxy block command', () => {
+		const command = descendCommandTree(['models', 'proxy', 'block']).command;
+		const lines = command.options.find((option) => option.long === '--lines');
+
+		expect(lines?.flags).toBe('--lines <start:end>');
+		expect(lines?.required).toBe(true);
+		expect(lines?.description).toContain('requires --original');
+		expect(lines?.description).toContain('completeness');
+		expect(examplesFor('models proxy block')).toContain(
+			'maestro-cli models proxy block <hash> --original --lines 10:30'
+		);
+		expect(examplesFor('models proxy block')).toContain(
+			'maestro-cli models proxy block <hash> --original --lines 10:30 --json'
+		);
+	});
+
 	it('registers every command docs/cli-reference.md documents', () => {
 		const markdown = fs.readFileSync(
 			path.join(__dirname, '../../../docs/cli-reference.md'),

@@ -75,6 +75,7 @@ import {
 	type TokenProxyErrorCode,
 	type TokenProxyRequestKind,
 	type TokenProxyRequestMode,
+	type TokenProxyTarget,
 	type TokenProxyUpstreams,
 } from '../../../shared/local-models/token-proxy';
 import {
@@ -83,7 +84,12 @@ import {
 	type BackgroundRoutePlan,
 	type BackgroundRouteSkip,
 } from './background-route';
-import type { CompressedBlock, CompressRequestResult, CompressRequestStats } from './compress';
+import type {
+	CompressedBlock,
+	CompressRequestResult,
+	CompressRequestStats,
+	LocalRecoveryCapability,
+} from './compress';
 
 /**
  * The largest request body `compress` mode reads into memory, encoded or
@@ -237,6 +243,10 @@ export interface TokenProxyServerOptions {
 	 * the user changes applies to the next request. Defaults to `passthrough`.
 	 */
 	modeFor?: (agentId: string | null) => TokenProxyRequestMode;
+	/** Host registry lookup only. Request bodies/headers cannot supply evidence. */
+	recoveryFor?: (
+		target: Extract<TokenProxyTarget, { ok: true }>
+	) => LocalRecoveryCapability | undefined;
 	/**
 	 * Shortens a request body in `compress` mode (`compressRequestBody`). It
 	 * takes and returns text. Without it every request is a passthrough.
@@ -244,7 +254,7 @@ export interface TokenProxyServerOptions {
 	compress?: (
 		kind: TokenProxyRequestKind,
 		body: string,
-		options: { early: boolean }
+		options: { early: boolean; recovery?: LocalRecoveryCapability }
 	) => Promise<CompressRequestResult>;
 	/**
 	 * Where one agent's background requests go, or null when they go to the
@@ -772,8 +782,12 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 				if (read.error !== undefined) log.error = read.error;
 			} else {
 				try {
+					// Resolve after body buffering, so a binding revoked during upload is stale.
+					const recovery =
+						target.agentId && target.launchBinding ? options.recoveryFor?.(target) : undefined;
 					const result = await compress(kind, read.text, {
 						early: entry.mode === 'compress-early',
+						...(recovery ? { recovery } : {}),
 					});
 					log.originalTokens = estimateTokenCount(read.text);
 					log.sentTokens = log.originalTokens;

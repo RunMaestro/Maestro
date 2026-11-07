@@ -4245,6 +4245,10 @@ modelProxy
 	)
 	.option('--original', 'Print only the text the agent sent')
 	.option('--compressed', 'Print only the text sent in its place')
+	.option(
+		'--lines <start:end>',
+		'Original lines, inclusive and 1-based, at most 1000 lines / 256 KiB (requires --original); exact text on stdout, range completeness on stderr or in JSON; EOF may return fewer lines'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsProxyBlock);
 

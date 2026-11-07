@@ -17,6 +17,7 @@ import {
 	defaultTokenProxyUpstreams,
 	gatewayPointsAtTokenProxy,
 	isCompressingTokenProxyMode,
+	isTokenProxyLaunchBinding,
 	resolveTokenProxyMode,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_MODE_DESCRIPTIONS,
@@ -31,6 +32,21 @@ import {
 import { parseGatewayUrl } from '../../shared/local-models/gateway';
 
 describe('resolveTokenProxyTarget', () => {
+	it('requires an exact literal launch token, including rejecting trailing line terminators', () => {
+		const binding = 'a'.repeat(64);
+		expect(isTokenProxyLaunchBinding(binding)).toBe(true);
+		for (const value of [
+			undefined,
+			null,
+			123,
+			binding + '\n',
+			binding + '\r',
+			binding + '\u2028',
+			binding.toUpperCase(),
+		]) {
+			expect(isTokenProxyLaunchBinding(value)).toBe(false);
+		}
+	});
 	it('routes by the first path segment to the real providers', () => {
 		expect(resolveTokenProxyTarget('POST', '/anthropic/v1/messages')).toEqual({
 			ok: true,
@@ -127,6 +143,57 @@ describe('resolveTokenProxyTarget', () => {
 		expect(resolveTokenProxyTarget('GET', '/__proto__/x').ok).toBe(false);
 	});
 
+	it('strips a launch token without normalizing upstream path or query bytes', () => {
+		const binding = 'a'.repeat(64);
+		for (const route of ['anthropic', 'openai', 'chatgpt']) {
+			expect(
+				resolveTokenProxyTarget(
+					'POST',
+					`/agent/a%20b/launch/${binding}/${route}/v1/files/a%2fb//x?x=a%20b&x=%2f&empty=`
+				)
+			).toMatchObject({
+				ok: true,
+				agentId: 'a b',
+				launchBinding: binding,
+				route,
+				path: '/v1/files/a%2fb//x',
+				query: '?x=a%20b&x=%2f&empty=',
+			});
+		}
+		// Tokens are just selectors; no capability fields are decoded from them.
+		expect(
+			resolveTokenProxyTarget('POST', `/agent/a/launch/${binding}/openai/v1/responses`)
+		).toMatchObject({ kind: 'openai-responses' });
+		expect(resolveTokenProxyTarget('POST', '/agent/a/anthropic/v1/messages')).not.toHaveProperty(
+			'launchBinding'
+		);
+		expect(
+			resolveTokenProxyTarget('POST', '/anthropic/v1/messages?launchBinding=' + binding)
+		).not.toHaveProperty('launchBinding');
+	});
+
+	it('rejects malformed or unscoped launch tokens instead of treating them as routes', () => {
+		for (const token of [
+			'',
+			'a'.repeat(63),
+			'a'.repeat(65),
+			'A'.repeat(64),
+			'%61'.repeat(64),
+			'not-issued',
+		]) {
+			expect(
+				resolveTokenProxyTarget('POST', `/agent/a/launch/${token}/anthropic/v1/messages`).ok
+			).toBe(false);
+		}
+		for (const url of [
+			'/agent/a/launch',
+			`/agent/a/launch/${'a'.repeat(64)}`,
+			`/launch/${'a'.repeat(64)}/anthropic`,
+		]) {
+			expect(resolveTokenProxyTarget('POST', url).ok).toBe(false);
+		}
+	});
+
 	it('routes with the table it is given', () => {
 		expect(
 			resolveTokenProxyTarget('POST', '/fake/v1/messages', { fake: 'http://127.0.0.1:9' })
@@ -213,6 +280,25 @@ describe('tokenProxyErrorBody', () => {
 });
 
 describe('tokenProxyAgentGatewayUrl', () => {
+	it('adds an explicit binding once, and only for the same agent on this proxy', () => {
+		const binding = 'b'.repeat(64);
+		for (const route of Object.keys(TOKEN_PROXY_ROUTES) as Array<keyof typeof TOKEN_PROXY_ROUTES>) {
+			const plain = tokenProxyGatewayUrl(41234, route);
+			const scoped = tokenProxyAgentGatewayUrl(plain, 41234, 'a b');
+			const bound = tokenProxyAgentGatewayUrl(scoped, 41234, 'a b', binding);
+			expect(bound).toBe(tokenProxyAgentGatewayUrl(plain, 41234, 'a b', binding));
+			expect(resolveTokenProxyTarget('POST', new URL(bound).pathname)).toMatchObject({
+				ok: true,
+				route,
+				agentId: 'a b',
+				launchBinding: binding,
+			});
+			expect(tokenProxyAgentGatewayUrl(bound, 41234, 'a b', 'c'.repeat(64))).toBe(bound);
+			expect(tokenProxyAgentGatewayUrl(scoped, 41234, 'other', binding)).toBe(scoped);
+			expect(tokenProxyAgentGatewayUrl(plain, 41234, 'a b', 'invalid')).toBe(plain);
+			expect(tokenProxyAgentGatewayUrl(plain, 41235, 'a b', binding)).toBe(plain);
+		}
+	});
 	it('puts the agent in front of the route of a gateway that is the proxy', () => {
 		expect(tokenProxyAgentGatewayUrl('http://127.0.0.1:41234/anthropic', 41234, 'agent-1')).toBe(
 			'http://127.0.0.1:41234/agent/agent-1/anthropic'

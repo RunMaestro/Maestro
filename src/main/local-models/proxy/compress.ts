@@ -43,7 +43,8 @@
  *
  * ## The order of work for one block
  *
- *   1. Hash the original (SHA-256). A verdict already in the cache is used as
+ *   1. Leave explicit failures and recognized original-recovery output whole.
+ *      Otherwise hash the original (SHA-256). A verdict already in the cache is used as
  *      it is: the same bytes as every earlier turn.
  *   2. Otherwise run the heuristics (`compressors.ts`).
  *   3. When the result is still at or above the model threshold, ask the
@@ -59,16 +60,20 @@
  * original_tokens=<n>]` on its own line.
  */
 
-import { estimateTokenCount } from '../../../shared/formatters';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { estimateTokenCount, getBasename, isAbsolutePath } from '../../../shared/formatters';
+import { serializedJsonByteLength } from '../../../shared/jsonUtils';
 import type { TokenProxyRequestKind } from '../../../shared/local-models/token-proxy';
 import { getPrompt } from '../../prompt-manager';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
+import { shellEscape } from '../../utils/shell-escape';
 import { runLocalTask, type LocalTaskUnavailable } from '../task-router';
 import { chunkText } from '../text-chunker';
 import {
 	contentHash,
 	getCompressionCache,
+	isContentHash,
 	type CompressionCache,
 	type CompressionVerdict,
 	type CompressorId,
@@ -145,6 +150,22 @@ export type ModelSummary =
 
 export type ToolResultSummarizer = (text: string) => Promise<ModelSummary>;
 
+/**
+ * Host-issued evidence for one request's tool execution environment. Paths alone
+ * are not proof: a launch binding must establish local POSIX tool/CLI visibility
+ * and the archive's desktop/data-directory namespace before supplying this.
+ * Never build it from a request body, agent ID or stored SSH settings.
+ * No production caller currently supplies it; launch/request wiring is pending.
+ */
+export interface LocalRecoveryCapability {
+	kind: 'local-posix-cli';
+	/** Opaque SHA-256 identity of the proven environment, not the agent identity. */
+	environmentId: string;
+	runtimePath: string;
+	cliPath: string;
+	dataDir: string;
+}
+
 export interface CompressRequestOptions {
 	/** Defaults to {@link DEFAULT_COMPRESS_MIN_TOKENS}. */
 	minTokens?: number;
@@ -154,6 +175,8 @@ export interface CompressRequestOptions {
 	cache?: CompressionCache;
 	/** The model tier. Defaults to {@link summarizeToolResult}. */
 	summarize?: ToolResultSummarizer;
+	/** Explicit host-side capability only. Absent/unsupported means hash-only. */
+	recovery?: LocalRecoveryCapability;
 	/**
 	 * Called when the assigned model could not run, so the caller can tell the
 	 * user (`reportLocalTaskUnavailable`). The block falls back to its heuristic
@@ -180,8 +203,10 @@ export interface CompressedBlock {
 }
 
 export interface CompressRequestStats {
-	/** Tool results outside the protected regions. */
+	/** Text spans outside protected regions and eligibility vetoes. */
 	candidates: number;
+	/** Selected text spans vetoed before hashing/cache access; absent when none. */
+	eligibilityVetoes?: { failed: number; recovery: number };
 	/** Candidates under the size threshold, left alone without being hashed. */
 	belowThreshold: number;
 	compressed: number;
@@ -198,6 +223,8 @@ export interface CompressRequestStats {
 	modelFailures: number;
 	/** Blocks left alone because the cache could not be read or written. */
 	storeFailures: number;
+	/** Cached hints withheld from an unproven/different execution environment. */
+	recoveryScopeVetoes?: number;
 }
 
 export interface CompressRequestResult {
@@ -217,7 +244,19 @@ function emptyStats(): CompressRequestStats {
 		cacheHits: 0,
 		originalTokens: 0,
 		compressedTokens: 0,
-		compressors: { json: 0, logs: 0, 'long-lines': 0, model: 0 },
+		compressors: {
+			json: 0,
+			logs: 0,
+			'long-lines': 0,
+			'git-status': 0,
+			'git-log': 0,
+			search: 0,
+			'test-output': 0,
+			'build-output': 0,
+			'lint-output': 0,
+			'json-table': 0,
+			model: 0,
+		},
 		modelFailures: 0,
 		storeFailures: 0,
 	};
@@ -235,6 +274,27 @@ const RESPONSES_OUTPUT_TYPES: ReadonlySet<string> = new Set([
 	'function_call_output',
 	'custom_tool_call_output',
 ]);
+
+/** Request-local evidence only; none of these fields changes a cached verdict. */
+export interface ToolResultDescriptor {
+	result: JsonSpan;
+	callId: string | null;
+	linkage: 'matched' | 'missing' | 'ambiguous';
+	call: JsonSpan | null;
+	toolName: string | null;
+	input:
+		| { kind: 'structured'; source: string; span: JsonSpan }
+		| { kind: 'custom'; text: string }
+		| { kind: 'unknown' };
+	/** All recognized text, including protected parts. Other content stays unknown. */
+	contentSpans: JsonSpan[];
+	contentStatus: 'text' | 'unknown';
+	/** The existing freshness/cache-control selection, independent of metadata. */
+	eligibleSpans: JsonSpan[];
+	failureStatus: 'failed' | 'not-failed' | 'unknown';
+	/** Inspectable means a named, linked structured call, not a recovery match. */
+	recoveryEligibility: 'inspectable' | 'unknown';
+}
 
 function field(body: string, span: JsonSpan, key: string): string | undefined {
 	return stringValue(body, memberOf(span, key));
@@ -273,30 +333,92 @@ function collectText(
 	}
 }
 
-function anthropicToolResults(body: string, root: JsonSpan, early: boolean): JsonSpan[] {
+function describeToolResult(
+	body: string,
+	result: JsonSpan,
+	content: JsonSpan | undefined,
+	eligible: boolean,
+	early: boolean
+): ToolResultDescriptor {
+	const contentSpans: JsonSpan[] = [];
+	collectText(body, content, contentSpans, true);
+	const eligibleSpans: JsonSpan[] = [];
+	if (eligible) collectText(body, content, eligibleSpans, early);
+	const textOnly =
+		content?.kind === 'string' ||
+		(content?.kind === 'array' && content.items.length === contentSpans.length);
+	const error = memberOf(result, 'is_error');
+	const errorLiteral =
+		error?.kind === 'scalar' &&
+		result.kind === 'object' &&
+		result.members.filter((member) => member.key === 'is_error').length === 1
+			? body.slice(error.start, error.end)
+			: undefined;
+	return {
+		result,
+		callId: null,
+		linkage: 'missing',
+		call: null,
+		toolName: null,
+		input: { kind: 'unknown' },
+		contentSpans,
+		contentStatus:
+			textOnly && contentSpans.every((span) => stringValue(body, span) !== undefined)
+				? 'text'
+				: 'unknown',
+		eligibleSpans,
+		failureStatus:
+			errorLiteral === 'true' ? 'failed' : errorLiteral === 'false' ? 'not-failed' : 'unknown',
+		recoveryEligibility: 'unknown',
+	};
+}
+
+function anthropicToolResults(
+	body: string,
+	root: JsonSpan,
+	early: boolean,
+	calls: JsonSpan[]
+): ToolResultDescriptor[] {
 	const messages = memberOf(root, 'messages');
 	if (messages?.kind !== 'array') return [];
 	// Fresh tool results arrive in the last user message. It goes out whole,
 	// unless the mode is early. Only `tool_result` blocks are ever collected, so
 	// what the user typed in that message is not read in either mode.
 	const lastUser = lastIndexWhere(messages.items, (item) => field(body, item, 'role') === 'user');
-	const out: JsonSpan[] = [];
+	const out: ToolResultDescriptor[] = [];
 	messages.items.forEach((message, index) => {
-		if (!early && index === lastUser) return;
 		const content = memberOf(message, 'content');
 		if (content?.kind !== 'array') return;
 		for (const block of content.items) {
+			if (
+				field(body, message, 'role') === 'assistant' &&
+				field(body, block, 'type') === 'tool_use'
+			) {
+				calls.push(block);
+			}
 			if (field(body, block, 'type') !== 'tool_result') continue;
 			// The breakpoint sits on the newest block, which in early mode is the
 			// one to shorten. Only the text is rewritten; the marker stays.
-			if (!early && hasCacheControl(body, block)) continue;
-			collectText(body, memberOf(block, 'content'), out, early);
+			out.push(
+				describeToolResult(
+					body,
+					block,
+					memberOf(block, 'content'),
+					early || (index !== lastUser && !hasCacheControl(body, block)),
+					early
+				)
+			);
 		}
 	});
 	return out;
 }
 
-function chatCompletionsToolResults(body: string, root: JsonSpan, early: boolean): JsonSpan[] {
+function chatCompletionsToolResults(
+	body: string,
+	root: JsonSpan,
+	early: boolean,
+	calls: JsonSpan[]
+): ToolResultDescriptor[] {
 	const messages = memberOf(root, 'messages');
 	if (messages?.kind !== 'array') return [];
 	// A tool message after the last assistant message has not been answered yet.
@@ -305,12 +427,25 @@ function chatCompletionsToolResults(body: string, root: JsonSpan, early: boolean
 		(item) => field(body, item, 'role') === 'assistant'
 	);
 	const end = early ? messages.items.length : lastAssistant;
-	const out: JsonSpan[] = [];
-	for (let index = 0; index < end; index++) {
+	const out: ToolResultDescriptor[] = [];
+	for (let index = 0; index < messages.items.length; index++) {
 		const message = messages.items[index];
+		if (field(body, message, 'role') === 'assistant') {
+			const toolCalls = memberOf(message, 'tool_calls');
+			if (toolCalls?.kind === 'array') {
+				for (const call of toolCalls.items) calls.push(call);
+			}
+		}
 		if (field(body, message, 'role') !== 'tool') continue;
-		if (!early && hasCacheControl(body, message)) continue;
-		collectText(body, memberOf(message, 'content'), out, early);
+		out.push(
+			describeToolResult(
+				body,
+				message,
+				memberOf(message, 'content'),
+				index < end && (early || !hasCacheControl(body, message)),
+				early
+			)
+		);
 	}
 	return out;
 }
@@ -322,20 +457,152 @@ function isModelItem(body: string, item: JsonSpan): boolean {
 	return type === 'reasoning' || type.endsWith('_call');
 }
 
-function responsesToolResults(body: string, root: JsonSpan, early: boolean): JsonSpan[] {
+function responsesToolResults(
+	body: string,
+	root: JsonSpan,
+	early: boolean,
+	calls: JsonSpan[]
+): ToolResultDescriptor[] {
 	const input = memberOf(root, 'input');
 	if (input?.kind !== 'array') return [];
 	// An output after the last model item has not been answered yet.
 	const lastModel = lastIndexWhere(input.items, (item) => isModelItem(body, item));
 	const end = early ? input.items.length : lastModel;
-	const out: JsonSpan[] = [];
-	for (let index = 0; index < end; index++) {
+	const out: ToolResultDescriptor[] = [];
+	for (let index = 0; index < input.items.length; index++) {
 		const item = input.items[index];
+		const type = field(body, item, 'type');
+		if (type === 'function_call' || type === 'custom_tool_call') calls.push(item);
 		if (!RESPONSES_OUTPUT_TYPES.has(field(body, item, 'type') ?? '')) continue;
-		if (!early && hasCacheControl(body, item)) continue;
-		collectText(body, memberOf(item, 'output'), out, early);
+		out.push(
+			describeToolResult(
+				body,
+				item,
+				memberOf(item, 'output'),
+				index < end && (early || !hasCacheControl(body, item)),
+				early
+			)
+		);
 	}
 	return out;
+}
+
+/** Validate decoded input strings without materializing numbers or duplicate keys. */
+function isReadableInput(source: string, span: JsonSpan): boolean {
+	if (span.kind === 'string') return stringValue(source, span) !== undefined;
+	if (span.kind === 'array') return span.items.every((item) => isReadableInput(source, item));
+	if (span.kind !== 'object') return true;
+	return (
+		new Set(span.members.map((member) => member.key)).size === span.members.length &&
+		span.members.every(
+			(member) =>
+				stringValue(source, { kind: 'string', start: member.keyStart, end: member.keyEnd }) !==
+					undefined && isReadableInput(source, member.value)
+		)
+	);
+}
+
+function toolCallInput(
+	kind: TokenProxyRequestKind,
+	body: string,
+	call: JsonSpan
+): ToolResultDescriptor['input'] {
+	if (!isReadableInput(body, call)) return { kind: 'unknown' };
+	if (kind === 'openai-responses' && field(body, call, 'type') === 'custom_tool_call') {
+		const text = field(body, call, 'input');
+		return text === undefined ? { kind: 'unknown' } : { kind: 'custom', text };
+	}
+	const container = kind === 'openai-chat-completions' ? memberOf(call, 'function') : call;
+	const input = memberOf(container, kind === 'anthropic-messages' ? 'input' : 'arguments');
+	const source = kind === 'anthropic-messages' ? body : stringValue(body, input);
+	const span =
+		kind === 'anthropic-messages' ? input : source === undefined ? null : parseJsonSpans(source);
+	return source !== undefined && span?.kind === 'object' && isReadableInput(source, span)
+		? { kind: 'structured', source, span }
+		: { kind: 'unknown' };
+}
+
+/**
+ * One descriptor path for all APIs, including protected results. Link only a
+ * unique call/result pair in this request, with the call before its result.
+ * No transcript, filesystem or agent-wide state supplies missing evidence.
+ */
+export function findToolResultDescriptors(
+	kind: TokenProxyRequestKind,
+	body: string,
+	root: JsonSpan,
+	options: { early?: boolean } = {}
+): ToolResultDescriptor[] {
+	const early = options.early === true;
+	const calls: JsonSpan[] = [];
+	let results: ToolResultDescriptor[];
+	switch (kind) {
+		case 'anthropic-messages':
+			results = anthropicToolResults(body, root, early, calls);
+			break;
+		case 'openai-chat-completions':
+			results = chatCompletionsToolResults(body, root, early, calls);
+			break;
+		case 'openai-responses':
+			results = responsesToolResults(body, root, early, calls);
+			break;
+		case 'other':
+			return [];
+	}
+	const callKey = kind === 'openai-responses' ? 'call_id' : 'id';
+	const resultKey =
+		kind === 'anthropic-messages'
+			? 'tool_use_id'
+			: kind === 'openai-chat-completions'
+				? 'tool_call_id'
+				: 'call_id';
+	const byId = new Map<string, JsonSpan | null>();
+	for (const call of calls) {
+		const id = field(body, call, callKey);
+		if (id && call.kind === 'object') {
+			const repeatedKey = call.members.filter((member) => member.key === callKey).length !== 1;
+			byId.set(id, byId.has(id) || repeatedKey ? null : call);
+		}
+	}
+	const resultCounts = new Map<string, number>();
+	for (const result of results) {
+		result.callId = field(body, result.result, resultKey) || null;
+		if (result.callId) resultCounts.set(result.callId, (resultCounts.get(result.callId) ?? 0) + 1);
+	}
+	for (const result of results) {
+		if (!result.callId) continue;
+		const call = byId.get(result.callId);
+		const repeatedKey =
+			result.result.kind === 'object' &&
+			result.result.members.filter((member) => member.key === resultKey).length !== 1;
+		if (call === null || (resultCounts.get(result.callId) ?? 0) > 1 || repeatedKey) {
+			result.linkage = 'ambiguous';
+			continue;
+		}
+		if (!call || call.end > result.result.start) continue;
+		if (
+			kind === 'openai-responses' &&
+			`${field(body, call, 'type')}_output` !== field(body, result.result, 'type')
+		)
+			continue;
+		result.linkage = 'matched';
+		result.call = call;
+		const definition = kind === 'openai-chat-completions' ? memberOf(call, 'function') : call;
+		if (
+			!definition ||
+			(kind === 'openai-chat-completions' && field(body, call, 'type') !== 'function')
+		)
+			continue;
+		result.toolName =
+			definition.kind === 'object' &&
+			definition.members.filter((member) => member.key === 'name').length === 1
+				? field(body, definition, 'name') || null
+				: null;
+		result.input = toolCallInput(kind, body, call);
+		if (result.toolName && result.input.kind === 'structured')
+			result.recoveryEligibility = 'inspectable';
+	}
+	return results;
 }
 
 /**
@@ -349,17 +616,142 @@ export function findToolResultSpans(
 	root: JsonSpan,
 	options: { early?: boolean } = {}
 ): JsonSpan[] {
-	const early = options.early === true;
-	switch (kind) {
-		case 'anthropic-messages':
-			return anthropicToolResults(body, root, early);
-		case 'openai-chat-completions':
-			return chatCompletionsToolResults(body, root, early);
-		case 'openai-responses':
-			return responsesToolResults(body, root, early);
-		case 'other':
-			return [];
+	return findToolResultDescriptors(kind, body, root, options).flatMap(
+		(result) => result.eligibleSpans
+	);
+}
+
+/**
+ * Read a single literal shell invocation, never evaluate it. Custom-args
+ * splitters accept incomplete quotes/operators, so they cannot establish this
+ * evidence. Expansions, compound commands and unsupported syntax stay unknown.
+ */
+function literalCommandTokens(command: string, assignments: Set<number>): string[] | null {
+	if (/[\r\n\0]/.test(command)) return null;
+	const tokens: string[] = [];
+	let token = '';
+	let started = false;
+	let quote = '';
+	for (let at = 0; at < command.length; at++) {
+		const char = command[at];
+		// Quoting/escaping the name or '=' makes a word, not a shell assignment.
+		if (!started && /^[A-Za-z_][A-Za-z0-9_]*=/.test(command.slice(at))) {
+			assignments.add(tokens.length);
+		}
+		if (char === quote) {
+			quote = '';
+			continue;
+		}
+		if (quote === "'") {
+			token += char;
+			continue;
+		}
+		if (char === '\\') {
+			const next = command[++at];
+			if (next === undefined) return null;
+			token += quote === '"' && !'\\"$`'.includes(next) ? `\\${next}` : next;
+			started = true;
+			continue;
+		}
+		if (char === '$' || char === '`') return null;
+		if (!quote && (char === '"' || char === "'")) {
+			quote = char;
+			started = true;
+		} else if (!quote && /[;&|<>()#*?\[\]{}~]/.test(char)) {
+			return null;
+		} else if (!quote && (char === ' ' || char === '\t')) {
+			if (started) tokens.push(token);
+			token = '';
+			started = false;
+		} else {
+			token += char;
+			started = true;
+		}
 	}
+	if (quote) return null;
+	if (started) tokens.push(token);
+	return tokens;
+}
+
+/** Only linked, structured shell calls can prove an original-recovery request. */
+function isOriginalRecovery(result: ToolResultDescriptor): boolean {
+	if (result.recoveryEligibility !== 'inspectable' || result.input.kind !== 'structured')
+		return false;
+	const name = result.toolName?.replace(/^functions\./, '').toLowerCase();
+	if (!name || !['bash', 'shell', 'shell_command', 'exec_command'].includes(name)) return false;
+	const { source, span } = result.input;
+	const command = memberOf(span, name === 'exec_command' ? 'cmd' : 'command');
+	let tokens: string[] | null;
+	const assignments = new Set<number>();
+	if (command?.kind === 'array') {
+		const values = command.items.map((item) => stringValue(source, item));
+		if (values.some((value) => value === undefined)) return false;
+		tokens = values as string[];
+	} else {
+		const text = stringValue(source, command);
+		tokens = text === undefined ? null : literalCommandTokens(text, assignments);
+	}
+	if (!tokens?.length) return false;
+	// Codex may supply argv for a shell rather than the command itself. One
+	// literal -c/-lc wrapper is inspectable; other wrappers stay unknown.
+	if (
+		tokens.length === 3 &&
+		['sh', 'bash', 'zsh'].includes(getBasename(tokens[0])) &&
+		['-c', '-lc'].includes(tokens[1])
+	) {
+		tokens = literalCommandTokens(tokens[2], assignments);
+		if (!tokens?.length) return false;
+	}
+	// The bundled CLI uses Electron as Node, and MAESTRO_USER_DATA selects
+	// the archive's desktop bridge. These two literal assignments are the only
+	// supported environment prefix; argv alone cannot apply shell assignments.
+	let at = 0;
+	let dataDir = false;
+	let electronAsNode = false;
+	while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[at] ?? '')) {
+		if (!assignments.has(at)) return false;
+		const assignment = tokens[at++];
+		if (assignment.startsWith('MAESTRO_USER_DATA=') && !dataDir) {
+			if (!isAbsolutePath(assignment.slice('MAESTRO_USER_DATA='.length))) return false;
+			dataDir = true;
+		} else if (assignment === 'ELECTRON_RUN_AS_NODE=1' && !electronAsNode) {
+			electronAsNode = true;
+		} else return false;
+	}
+	const executable = getBasename(tokens[at] ?? '');
+	if (
+		(['node', 'node.exe'].includes(executable) ||
+			(electronAsNode && isAbsolutePath(tokens[at] ?? ''))) &&
+		getBasename(tokens[at + 1] ?? '') === 'maestro-cli.js'
+	)
+		at += 2;
+	else if (
+		!electronAsNode &&
+		['maestro-cli', 'maestro-cli.exe', 'maestro-cli.cmd'].includes(executable)
+	)
+		at++;
+	else return false;
+	if (tokens[at++] !== 'models' || tokens[at++] !== 'proxy' || tokens[at++] !== 'block')
+		return false;
+	if (!/^[0-9a-f]{64}$/i.test(tokens[at++] ?? '')) return false;
+	let original = false;
+	for (; at < tokens.length; at++) {
+		const option = tokens[at];
+		if (option === '--original' && !original) original = true;
+		else if (option === '--json') continue;
+		else if (
+			['--original', '--no-original', '--compressed', '--help', '--version'].includes(
+				option.split('=')[0]
+			)
+		)
+			return false;
+		// Accept literal numeric/range options without choosing future range flag
+		// names. No flag value can swallow --original, nor can `--` quote it.
+		else if (/^--[a-z][a-z-]*=\d+(?::\d+)?$/.test(option)) continue;
+		else if (/^--[a-z][a-z-]*$/.test(option) && /^\d+(?::\d+)?$/.test(tokens[at + 1] ?? '')) at++;
+		else return false;
+	}
+	return original;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +833,37 @@ interface BlockContext {
 	modelMinTokens: number;
 	cache: CompressionCache;
 	summarize: ToolResultSummarizer;
+	recovery: { scope: string; command: string } | null;
+}
+
+const RECOVERY_HINT_PREFIX = '[maestro-recovery ';
+
+/** Validate bounded syntax, not execution capability; the host must prove that. */
+function localRecoveryRoute(
+	capability: LocalRecoveryCapability | undefined
+): BlockContext['recovery'] {
+	if (
+		capability?.kind !== 'local-posix-cli' ||
+		!isContentHash(capability.environmentId) ||
+		capability.environmentId.length !== 64 ||
+		![capability.runtimePath, capability.cliPath, capability.dataDir].every(
+			(value) =>
+				typeof value === 'string' &&
+				value.length <= 2048 &&
+				value.startsWith('/') &&
+				isAbsolutePath(value) &&
+				!/[\x00-\x1f\x7f]/.test(value)
+		) ||
+		getBasename(capability.cliPath) !== 'maestro-cli.js'
+	)
+		return null;
+	const { environmentId, runtimePath, cliPath, dataDir } = capability;
+	const command = `MAESTRO_USER_DATA=${shellEscape(dataDir)} ELECTRON_RUN_AS_NODE=1 ${shellEscape(runtimePath)} ${shellEscape(cliPath)} models proxy block`;
+	if (command.length > 2048) return null;
+	return {
+		command,
+		scope: contentHash(canonicalJson({ version: 1, environmentId, runtimePath, cliPath, dataDir })),
+	};
 }
 
 type BlockResolution =
@@ -482,7 +905,10 @@ async function decideBlock(
 		}
 	}
 
-	const replacement = `${shortened}\n${formatCompressionMarker(hash, originalTokens)}`;
+	const hint = context.recovery
+		? `${RECOVERY_HINT_PREFIX}${context.recovery.command} ${hash} --original --lines 1:200]\n`
+		: '';
+	const replacement = `${shortened}\n${hint}${formatCompressionMarker(hash, originalTokens)}`;
 	const base = {
 		hash,
 		originalTokens,
@@ -492,12 +918,22 @@ async function decideBlock(
 	if (compressors.length === 0 || replacement.length > text.length * (1 - MIN_SAVING_RATIO)) {
 		return { ...base, outcome: 'kept' };
 	}
+	// Compare serialized UTF-8 only after the marker-inclusive reduction gate.
+	// Delimiters/escapes and Unicode need not cost their decoded string lengths.
+	// The complete first replacement is frozen, hint included. Scope mismatches
+	// withhold it; they never produce another replacement for this content hash.
+	const replacementBytes = serializedJsonByteLength(replacement);
+	const originalBytes = serializedJsonByteLength(text);
+	if (replacementBytes === null || originalBytes === null || replacementBytes >= originalBytes) {
+		return { ...base, outcome: 'kept' };
+	}
 	return {
 		...base,
 		outcome: 'compressed',
 		text: replacement,
 		compressedTokens: estimateTokenCount(replacement),
 		compressors,
+		...(context.recovery ? { recoveryScope: context.recovery.scope } : {}),
 	};
 }
 
@@ -564,12 +1000,27 @@ export async function compressRequestBody(
 		minTokens: options.minTokens ?? DEFAULT_COMPRESS_MIN_TOKENS,
 		modelMinTokens: options.modelMinTokens ?? DEFAULT_MODEL_MIN_TOKENS,
 		cache: options.cache ?? getCompressionCache(),
+		recovery: localRecoveryRoute(options.recovery),
 		summarize:
 			options.summarize ??
 			((text) => summarizeToolResult(text, { onUnavailable: options.onModelUnavailable })),
 	};
 
-	const spans = findToolResultSpans(kind, body, root, { early: options.early });
+	const spans = findToolResultDescriptors(kind, body, root, { early: options.early }).flatMap(
+		(result) => {
+			if (result.eligibleSpans.length === 0) return [];
+			const veto =
+				result.failureStatus === 'failed'
+					? 'failed'
+					: isOriginalRecovery(result)
+						? 'recovery'
+						: null;
+			if (!veto) return result.eligibleSpans;
+			stats.eligibilityVetoes ??= { failed: 0, recovery: 0 };
+			stats.eligibilityVetoes[veto] += result.eligibleSpans.length;
+			return [];
+		}
+	);
 	stats.candidates = spans.length;
 	const resolutions = await Promise.all(
 		spans.map((span) => {
@@ -595,6 +1046,16 @@ export async function compressRequestBody(
 		if (cached) stats.cacheHits++;
 		else if (verdict.modelFailure !== undefined) stats.modelFailures++;
 		if (verdict.outcome === 'kept') {
+			stats.kept++;
+			return;
+		}
+		// A missing/malformed scope on hint-bearing text is also unsafe. Keep
+		// the original, with no model work, hint stripping or cache invalidation.
+		if (
+			(verdict.recoveryScope !== undefined || verdict.text.includes(RECOVERY_HINT_PREFIX)) &&
+			(!isContentHash(verdict.recoveryScope) || verdict.recoveryScope !== context.recovery?.scope)
+		) {
+			stats.recoveryScopeVetoes = (stats.recoveryScopeVetoes ?? 0) + 1;
 			stats.kept++;
 			return;
 		}

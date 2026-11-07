@@ -200,7 +200,15 @@ const tokenProxy = vi.hoisted(() => ({
 		usage: null,
 		recentCompressions: [],
 	},
-	block: { hash: 'a'.repeat(64), original: 'long', compressed: 'short' },
+	block: {
+		hash: 'a'.repeat(64),
+		original: 'long',
+		compressed: 'short',
+		originalTokens: 100,
+		compressedTokens: 20,
+		compressors: ['logs'],
+		createdAt: 1,
+	},
 }));
 
 vi.mock('../../../../main/local-models/proxy/service', () => ({
@@ -828,7 +836,65 @@ describe('token proxy channels', () => {
 		await expect(handlerFor('localModels:proxy:block')({}, '../not-a-hash')).resolves.toBe(
 			tokenProxy.block
 		);
-		expect(readTokenProxyBlock).toHaveBeenCalledWith('../not-a-hash');
+		expect(readTokenProxyBlock).toHaveBeenCalledWith('../not-a-hash', undefined);
+	});
+
+	it('returns the selected original and provenance without changing the frozen replacement', async () => {
+		const hash = tokenProxy.block.hash;
+		const range = { startLine: 2, endLine: 3 };
+		const block = {
+			...tokenProxy.block,
+			original: 'selected\r\nlast',
+			originalRange: {
+				hash,
+				source: 'original' as const,
+				requested: range,
+				returned: range,
+				complete: true,
+				hasMore: true,
+			},
+		};
+		vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(block);
+		await expect(handlerFor('localModels:proxy:block')({}, hash, range)).resolves.toBe(block);
+		expect(readTokenProxyBlock).toHaveBeenCalledExactlyOnceWith(hash, range);
+	});
+
+	it.each([
+		null,
+		[],
+		{},
+		'1:2',
+		{ startLine: '1', endLine: 2 },
+		{ startLine: 0, endLine: 2 },
+		{ startLine: 2, endLine: 1 },
+		{ startLine: 1, endLine: 1001 },
+		{ startLine: 1, endLine: Number.MAX_SAFE_INTEGER + 1 },
+		{ startLine: 1 },
+		{ startLine: 1, endLine: 2, path: '/another/archive' },
+	])('rejects malformed original ranges before calling the reader: %j', async (range) => {
+		await expect(
+			handlerFor('localModels:proxy:block')({}, tokenProxy.block.hash, range)
+		).rejects.toThrow('Original line range');
+		expect(readTokenProxyBlock).not.toHaveBeenCalled();
+	});
+
+	it('distinguishes an absent original from a missing compressed block for ranged callers', async () => {
+		const hash = tokenProxy.block.hash;
+		const range = { startLine: 1, endLine: 2 };
+		const block = { ...tokenProxy.block, original: null, originalRange: null };
+		vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(block).mockResolvedValueOnce(null);
+		await expect(handlerFor('localModels:proxy:block')({}, hash, range)).resolves.toBe(block);
+		await expect(handlerFor('localModels:proxy:block')({}, hash, range)).resolves.toBeNull();
+		expect(readTokenProxyBlock).toHaveBeenNthCalledWith(1, hash, range);
+		expect(readTokenProxyBlock).toHaveBeenNthCalledWith(2, hash, range);
+	});
+
+	it('propagates archive failures instead of returning an apparently complete excerpt', async () => {
+		const failure = new Error('The cached original ended during range recovery.');
+		vi.mocked(readTokenProxyBlock).mockRejectedValueOnce(failure);
+		await expect(
+			handlerFor('localModels:proxy:block')({}, tokenProxy.block.hash, { startLine: 1, endLine: 2 })
+		).rejects.toBe(failure);
 	});
 });
 
